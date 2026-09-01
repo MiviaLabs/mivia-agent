@@ -23,14 +23,15 @@ type WireEvent struct {
 	Name       string    `json:"name,omitempty"`
 	// Detail carries KindTurnStart's user-submitted text (events.Event.Detail
 	// - see relayedKinds' doc comment); other relayed kinds don't use it.
-	Detail     string `json:"detail,omitempty"`
-	Content    string `json:"content,omitempty"`
-	Input      string `json:"input,omitempty"`
-	Output     string `json:"output,omitempty"`
-	ErrorText  string `json:"error,omitempty"`
-	AgentTask  string `json:"agent_task,omitempty"`
-	AgentName  string `json:"agent_name,omitempty"`
-	AgentDepth int    `json:"agent_depth,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	Content     string `json:"content,omitempty"`
+	Input       string `json:"input,omitempty"`
+	Output      string `json:"output,omitempty"`
+	ErrorText   string `json:"error,omitempty"`
+	AgentTask   string `json:"agent_task,omitempty"`
+	AgentParent string `json:"agent_parent,omitempty"`
+	AgentName   string `json:"agent_name,omitempty"`
+	AgentDepth  int    `json:"agent_depth,omitempty"`
 	// Dropped is the cumulative number of events this hub failed to deliver to
 	// the receiving connection: its share of the relay's bounded bus queue plus
 	// its own bounded outbound queue. It is monotonic non-decreasing for the
@@ -83,6 +84,7 @@ func toWire(ev events.Event) WireEvent {
 		SessionID: ev.SessionID, TurnID: ev.TurnID, ToolCallID: ev.ToolCallID,
 		Name: ev.Name, Detail: ev.Detail, Content: ev.Content, Input: ev.Input, Output: ev.Output,
 		AgentTask: ev.AgentTask, AgentName: ev.AgentName, AgentDepth: ev.AgentDepth,
+		AgentParent: ev.AgentParent,
 	}
 	if ev.Compaction != nil {
 		w.Compaction = &WireCompaction{
@@ -116,6 +118,7 @@ func fromWire(w WireEvent) events.Event {
 		SessionID: w.SessionID, TurnID: w.TurnID, ToolCallID: w.ToolCallID,
 		Name: w.Name, Detail: w.Detail, Content: w.Content, Input: w.Input, Output: w.Output,
 		AgentTask: w.AgentTask, AgentName: w.AgentName, AgentDepth: w.AgentDepth,
+		AgentParent: w.AgentParent,
 	}
 	if w.Compaction != nil {
 		ev.Compaction = events.RehydrateCompactionEvent(events.CompactionEvent{

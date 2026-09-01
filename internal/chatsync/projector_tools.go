@@ -56,6 +56,15 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 	callID := applyTruncation(&env, "tool_call_id", ev.ToolCallID, BudgetShortField)
 
 	switch ev.Kind {
+	case events.KindSubagentBegin:
+		prompt := redactText(ev.Detail)
+		prompt = applyTruncation(&env, "prompt", prompt, BudgetPromptText)
+		payload := &SubagentStartedPayload{
+			Envelope: env,
+			Name:     name,
+			Prompt:   prompt,
+		}
+		return []WireEvent{p.nextWireEvent(TypeSubagentStarted, payload)}
 	case events.KindSubagentStart:
 		var input string
 		if shouldIncludeToolIO(p.opts) {
@@ -99,6 +108,13 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentProgress, payload)}
 	case events.KindSubagentDone:
+		// The run is over, so its streaming state is dead weight. Retiring it
+		// here keeps finished runs from occupying slots until they age out of
+		// the LRU, which is what would otherwise let a LIVE lane be evicted
+		// mid-stream: a lane that loses its state mid-run reports streamed as
+		// false again, and its aggregate then ships the full text a viewer has
+		// already received delta by delta.
+		p.retireLane(env.Turn, ev.AgentTask)
 		agentName := applyTruncation(&env, "name", ev.AgentName, BudgetShortField)
 		status := applyTruncation(&env, "status", ev.Detail, BudgetShortField)
 		payload := &SubagentEndedPayload{
@@ -114,8 +130,7 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 
 // projectSubagentAssistant projects one subagent's assistant output.
 //
-// It mirrors projectAssistant field for field, with two differences that are
-// the whole point of it existing separately:
+// It mirrors projectAssistant field for field, with two necessary differences:
 //
 //   - the wire types are the subagent ones, so a viewer can keep this text out
 //     of the main transcript on the type string alone; and
@@ -138,7 +153,6 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	if ev.Detail == "delta" {
 		ls.streamed = true
 		ls.fragments++
-		ls.bytes += len(ev.Content)
 		if !p.opts.StreamAssistant {
 			return nil
 		}

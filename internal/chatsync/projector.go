@@ -104,6 +104,26 @@ func (p *Projector) laneState(turnID, task string) *turnState {
 	return ls
 }
 
+// retireLane forgets one subagent run's streaming state. Called when the run
+// reports its terminal event: state kept past that point can only crowd out a
+// live run.
+func (p *Projector) retireLane(turnID, task string) {
+	if task == "" {
+		return
+	}
+	key := turnID + "\x00" + task
+	if _, ok := p.lanes[key]; !ok {
+		return
+	}
+	delete(p.lanes, key)
+	for i, cur := range p.laneOrder {
+		if cur == key {
+			p.laneOrder = append(p.laneOrder[:i], p.laneOrder[i+1:]...)
+			return
+		}
+	}
+}
+
 func (p *Projector) touchLane(key string) {
 	for i, cur := range p.laneOrder {
 		if cur == key {
@@ -230,7 +250,8 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		p.turn(turnID)
 		return p.projectTool(env, ev)
 
-	case events.KindSubagentStart, events.KindSubagentEnd, events.KindSubagentHeartbeat, events.KindSubagentDone:
+	case events.KindSubagentBegin, events.KindSubagentStart, events.KindSubagentEnd,
+		events.KindSubagentHeartbeat, events.KindSubagentDone:
 		p.turn(turnID)
 		return p.projectSubagent(env, ev)
 
@@ -333,9 +354,10 @@ func (p *Projector) buildEnvelope(ev events.Event, turnID string) Envelope {
 	}
 	if ev.AgentTask != "" || ev.AgentName != "" || ev.AgentDepth > 0 {
 		env.Agent = &AgentOrigin{
-			Task:  ev.AgentTask,
-			Name:  ev.AgentName,
-			Depth: ev.AgentDepth,
+			Task:       ev.AgentTask,
+			Name:       ev.AgentName,
+			Depth:      ev.AgentDepth,
+			ParentTask: ev.AgentParent,
 		}
 	}
 	return env

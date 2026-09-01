@@ -1,10 +1,12 @@
 package chatsync
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // proseOpts enables both prose gates so these tests exercise the published
@@ -222,5 +224,208 @@ func TestSubagentLaneStateIsBounded(t *testing.T) {
 	if payload.Fragments != 1 {
 		t.Errorf("root fragments = %d, want 1 - lane churn evicted the root turn's state",
 			payload.Fragments)
+	}
+}
+
+// TestSubagentProseIsRedacted is the safety proof for the whole change. The
+// reason publishing a subagent's prose is defensible is that it passes through
+// the same redaction as the root loop's text. Nothing enforced that claim, so
+// the redaction call could be deleted from either subagent path and every test
+// stayed green while secrets shipped.
+func TestSubagentProseIsRedacted(t *testing.T) {
+	pol, err := redact.Compile([]string{`SECRET_KEY_[0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	oldPol := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(oldPol) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+	const secret = "token is SECRET_KEY_998877 do not leak"
+
+	delta := p.Project(subagentEvent(events.KindAssistant, "task-1", secret, "delta"))
+	deltaText := delta[0].Payload.(*SubagentAssistantDeltaPayload).Text
+	assertRedacted(t, "assistant delta", deltaText)
+
+	agg := p.Project(subagentEvent(events.KindAssistant, "task-2", secret, ""))
+	aggText := agg[0].Payload.(*SubagentAssistantMessagePayload).Text
+	assertRedacted(t, "assistant message", aggText)
+
+	think := p.Project(subagentEvent(events.KindThinking, "task-1", secret, ""))
+	thinkText := think[0].Payload.(*SubagentThinkingDeltaPayload).Text
+	assertRedacted(t, "thinking delta", thinkText)
+}
+
+func assertRedacted(t *testing.T, label, got string) {
+	t.Helper()
+	if strings.Contains(got, "SECRET_KEY_998877") {
+		t.Errorf("%s = %q, carries an unredacted secret", label, got)
+	}
+	if !strings.Contains(got, "[redacted]") {
+		t.Errorf("%s = %q, missing the redaction placeholder", label, got)
+	}
+}
+
+// TestSubagentProseIsTruncated proves the byte budgets apply to a subagent's
+// text as well. An unbounded field is how one runaway subagent exhausts the
+// 64 KiB per-event ceiling the API enforces and poisons the stream.
+func TestSubagentProseIsTruncated(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	huge := strings.Repeat("x", BudgetAssistantText+BudgetDeltaText)
+
+	delta := p.Project(subagentEvent(events.KindAssistant, "task-1", huge, "delta"))
+	deltaPayload := delta[0].Payload.(*SubagentAssistantDeltaPayload)
+	if len(deltaPayload.Text) > BudgetDeltaText {
+		t.Errorf("delta text is %d bytes, over the %d budget", len(deltaPayload.Text), BudgetDeltaText)
+	}
+	if deltaPayload.Trunc == nil || len(deltaPayload.Trunc.Fields) == 0 {
+		t.Error("delta was truncated but recorded no trunc.fields entry")
+	}
+
+	agg := p.Project(subagentEvent(events.KindAssistant, "task-2", huge, ""))
+	aggPayload := agg[0].Payload.(*SubagentAssistantMessagePayload)
+	if len(aggPayload.Text) > BudgetAssistantText {
+		t.Errorf("aggregate text is %d bytes, over the %d budget", len(aggPayload.Text), BudgetAssistantText)
+	}
+	if aggPayload.Bytes != len(huge) {
+		t.Errorf("aggregate bytes = %d, want the real size %d", aggPayload.Bytes, len(huge))
+	}
+
+	think := p.Project(subagentEvent(events.KindThinking, "task-1", huge, ""))
+	thinkPayload := think[0].Payload.(*SubagentThinkingDeltaPayload)
+	if len(thinkPayload.Text) > BudgetDeltaText {
+		t.Errorf("thinking text is %d bytes, over the %d budget", len(thinkPayload.Text), BudgetDeltaText)
+	}
+}
+
+// TestSubagentThinkingIsLaneScoped pins the thinking path the way the
+// assistant path is pinned. Thinking has its own counter and its own block
+// key, and reverting either to the root's - the exact bug this change fixes
+// for assistant text - previously passed every test.
+func TestSubagentThinkingIsLaneScoped(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// The root streams thinking first, so a shared counter would be visible.
+	p.Project(rootEvent(events.KindThinking, "root reasoning", ""))
+
+	a := p.Project(subagentEvent(events.KindThinking, "task-a", "a", ""))
+	b := p.Project(subagentEvent(events.KindThinking, "task-b", "b", ""))
+	a2 := p.Project(subagentEvent(events.KindThinking, "task-a", "a again", ""))
+
+	payloadA := a[0].Payload.(*SubagentThinkingDeltaPayload)
+	payloadB := b[0].Payload.(*SubagentThinkingDeltaPayload)
+	payloadA2 := a2[0].Payload.(*SubagentThinkingDeltaPayload)
+
+	if payloadA.Index != 0 || payloadB.Index != 0 {
+		t.Errorf("first thinking indexes = %d and %d, want 0 each - one counter per run",
+			payloadA.Index, payloadB.Index)
+	}
+	if payloadA2.Index != 1 {
+		t.Errorf("task-a second thinking index = %d, want 1", payloadA2.Index)
+	}
+	if payloadA.Block == payloadB.Block {
+		t.Errorf("two runs share thinking block %q", payloadA.Block)
+	}
+	rootBlock := p.Project(rootEvent(events.KindThinking, "more root", ""))[0].
+		Payload.(*ThinkingDeltaPayload).Block
+	if payloadA.Block == rootBlock {
+		t.Errorf("a subagent shares the root's thinking block %q", rootBlock)
+	}
+}
+
+// TestRetiredLaneCannotBeEvictedIntoDuplicateText proves a finished run frees
+// its slot. Without retirement, finished runs crowd the bounded map until they
+// age out, which is what lets a LIVE run lose its state mid-stream - and a run
+// that loses ls.streamed re-ships as full text the answer a viewer already
+// received delta by delta.
+func TestRetiredLaneCannotBeEvictedIntoDuplicateText(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	done := subagentEvent(events.KindSubagentDone, "task-done", "", "completed")
+	p.Project(subagentEvent(events.KindAssistant, "task-done", "chunk", "delta"))
+	if len(p.lanes) != 1 {
+		t.Fatalf("lane count = %d before the terminal event, want 1", len(p.lanes))
+	}
+
+	p.Project(done)
+
+	if len(p.lanes) != 0 {
+		t.Errorf("lane count = %d after the run finished, want 0", len(p.lanes))
+	}
+	if len(p.laneOrder) != 0 {
+		t.Errorf("lane order holds %d keys after the run finished, want 0", len(p.laneOrder))
+	}
+}
+
+// TestSubagentBeginProjectsRunStart proves the run-level opening signal
+// reaches the wire with the task it was given. Before it existed a consumer
+// could only infer a run from its first nested tool call, and the task text
+// was reachable only by correlating the dispatching tool call separately.
+func TestSubagentBeginProjectsRunStart(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	ev := subagentEvent(events.KindSubagentBegin, "task-1", "", "review the diff")
+	ev.Name = "reviewer"
+	got := p.Project(ev)
+
+	if len(got) != 1 {
+		t.Fatalf("begin produced %d wire events, want 1", len(got))
+	}
+	if got[0].Type != TypeSubagentStarted {
+		t.Fatalf("type = %s, want %s", got[0].Type, TypeSubagentStarted)
+	}
+	payload := got[0].Payload.(*SubagentStartedPayload)
+	if payload.Prompt != "review the diff" {
+		t.Errorf("prompt = %q, want the task description", payload.Prompt)
+	}
+	if payload.Name != "reviewer" {
+		t.Errorf("name = %q, want reviewer", payload.Name)
+	}
+	if payload.At.IsZero() {
+		t.Error("envelope carries no timestamp; it is the run's start time")
+	}
+}
+
+// TestSubagentBeginPromptIsRedacted closes the same hole for the task text a
+// run is given, which is user-authored and can carry anything.
+func TestSubagentBeginPromptIsRedacted(t *testing.T) {
+	pol, err := redact.Compile([]string{`SECRET_KEY_[0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	oldPol := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(oldPol) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+	got := p.Project(subagentEvent(events.KindSubagentBegin, "task-1", "", "use SECRET_KEY_112233 to log in"))
+	assertRedacted(t, "begin prompt", got[0].Payload.(*SubagentStartedPayload).Prompt)
+}
+
+// TestEnvelopeCarriesParentTask proves a nested run reports WHICH run started
+// it. Depth alone cannot rebuild the tree: two runs at depth 2 under different
+// parents are indistinguishable by depth, so a viewer had to render every run
+// as a sibling of every other.
+func TestEnvelopeCarriesParentTask(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	child := subagentEvent(events.KindSubagentBegin, "task-child", "", "nested work")
+	child = child.WithAgentParent("task-parent")
+	got := p.Project(child)
+
+	payload := got[0].Payload.(*SubagentStartedPayload)
+	if payload.Agent == nil {
+		t.Fatal("envelope carries no agent origin")
+	}
+	if payload.Agent.ParentTask != "task-parent" {
+		t.Errorf("parent_task = %q, want task-parent", payload.Agent.ParentTask)
+	}
+
+	// A run the root dispatched reports no parent at all, so a consumer can
+	// read an absent parent as "top level" rather than "unknown".
+	top := p.Project(subagentEvent(events.KindSubagentBegin, "task-top", "", "top work"))
+	if parent := top[0].Payload.(*SubagentStartedPayload).Agent.ParentTask; parent != "" {
+		t.Errorf("root-dispatched run reports parent %q, want empty", parent)
 	}
 }

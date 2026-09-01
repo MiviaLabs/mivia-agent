@@ -160,9 +160,15 @@ func TestProcessEvent_NonOverflowOutboxErrorDoesNotConsumeSeq(t *testing.T) {
 	}
 
 	// Recovery: the next stored event must continue the stream with no hole.
+	//
+	// Two wire events are stored, not one: the lost event is now counted, so
+	// the recovery event is preceded by the sync.dropped marker that reports
+	// the hole. Both are STORED, which is what this test is about - the seq
+	// still tracks what reached the outbox. Before the append hop was counted
+	// this was seq 2 alone, and the lost event was invisible to any reader.
 	a.fail.Store(false)
 	publishTurnStart(bus, "sess-seq-1", "turn:3", "after recovery")
-	waitForSeq(t, syncSess, 2)
+	waitForSeq(t, syncSess, 3)
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

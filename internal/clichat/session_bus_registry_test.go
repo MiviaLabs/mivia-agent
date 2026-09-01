@@ -78,6 +78,7 @@ var allSubagentEventKindsForTest = []struct {
 	{"subagent_start", agent.EventSubagentStart, events.KindSubagentStart, true},
 	{"subagent_end", agent.EventSubagentEnd, events.KindSubagentEnd, true},
 	{"subagent_heartbeat", agent.EventSubagentHeartbeat, events.KindSubagentHeartbeat, true},
+	{"subagent_begin", agent.EventSubagentBegin, events.KindSubagentBegin, true},
 	{"subagent_done", agent.EventSubagentDone, events.KindSubagentDone, true},
 	{"thinking", agent.EventThinking, events.KindThinking, true},
 	{"assistant", agent.EventAssistant, events.KindAssistant, true},
@@ -88,6 +89,7 @@ var allSubagentEventKindsForTest = []struct {
 	// tool events must reach the bus through the SubagentStart/End mapping
 	// in OnEventForMultiStep, never directly.
 	{"tool_start", agent.EventToolStart, events.KindToolStart, false},
+	{"tool_end", agent.EventToolEnd, events.KindToolEnd, false},
 }
 
 // TestSessionBusRegistry_Allowlist is the mutation-proof allowlist table:
@@ -102,8 +104,10 @@ var allSubagentEventKindsForTest = []struct {
 //
 // Mutation proof: inverting busPublishableKind's switch (== becomes !=, or
 // the default flips to `return true`) makes this test fail on one half of
-// the table or the other - the six allowed rows stop publishing, or the
-// tool_start row starts leaking onto the bus.
+// the table or the other - the allowed rows stop publishing, or the raw tool
+// rows start leaking onto the bus. TWO negative rows, not one: a later change
+// that decides raw tool events should publish would flip a single negative row
+// and silently end the proof.
 func TestSessionBusRegistry_Allowlist(t *testing.T) {
 	for _, tc := range allSubagentEventKindsForTest {
 		t.Run(string(tc.name), func(t *testing.T) {

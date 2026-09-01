@@ -18,6 +18,7 @@ var syncKinds = []events.Kind{
 	events.KindThinking,
 	events.KindToolStart,
 	events.KindToolEnd,
+	events.KindSubagentBegin,
 	events.KindSubagentStart,
 	events.KindSubagentEnd,
 	events.KindSubagentHeartbeat,
@@ -168,6 +169,20 @@ type SyncSession struct {
 	// complete-LOOKING transcript that was silently missing content - the
 	// exact failure settled decision 6 exists to make visible.
 	chanDrops atomic.Uint64
+
+	// appendDrops counts events whose projection was built but never stored,
+	// because the durable append failed - overflow of the bounded outbox
+	// (ErrOutboxOverflow) above all, which is what a slow or offline uplink
+	// reaches first.
+	//
+	// This is a THIRD loss hop, and until it was counted it was the only
+	// silent one: the two upstream hops shed events into chanDrops and the
+	// bus counter, which surface as a sync.dropped marker, while this one
+	// rolled the seq back and returned, leaving a contiguous, complete-LOOKING
+	// transcript with content missing from the middle. That is precisely the
+	// failure settled decision 6 exists to make visible, so this counter feeds
+	// the same marker as the other two.
+	appendDrops atomic.Uint64
 
 	// running is atomic, not guarded by mu: HandleEvent runs on the bus
 	// delivery goroutine and must never contend for a lock the outbox writer
@@ -334,6 +349,12 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 	}
 
 	if err := s.appendLocked(wireEvents); err != nil {
+		// One SOURCE event was lost, whatever number of wire events its
+		// projection produced. Counting wire events here would overstate the
+		// hole against the two upstream counters, which both count source
+		// events. The next projected event carries a sync.dropped marker
+		// covering it, because currentDrops now includes this counter.
+		s.appendDrops.Add(1)
 		s.mu.Unlock()
 		return
 	}
@@ -386,16 +407,22 @@ func (s *SyncSession) currentDrops() uint64 {
 	return s.dropSource()
 }
 
-// preProjectionDrops is the total loss before projection: the bus's own
-// drop-oldest shedding plus this session's handler-to-worker channel. Both
-// counters are monotonic, so their sum is monotonic and the projector's
-// advance check stays correct.
+// preProjectionDrops is the total loss this session must report: the bus's own
+// drop-oldest shedding, this session's handler-to-worker channel, and events
+// whose durable append failed. All three counters are monotonic, so their sum
+// is monotonic and the projector's advance check stays correct.
+//
+// The third term is not, strictly, loss before projection - the projection was
+// built and then thrown away. It belongs here anyway, because what the marker
+// reports to a reader is "this transcript is missing N events", and a hole is a
+// hole whichever hop dropped it. The alternative was a second, separate marker
+// for the same fact.
 func (s *SyncSession) preProjectionDrops() uint64 {
 	var busDropped uint64
 	if s.sub != nil {
 		busDropped = s.sub.Drops()
 	}
-	return busDropped + s.chanDrops.Load()
+	return busDropped + s.chanDrops.Load() + s.appendDrops.Load()
 }
 
 func (s *SyncSession) triggerFlush() {

@@ -79,13 +79,35 @@ All mivia processes that share one store directory see each other's activity thr
 | Type | Meaning |
 |------|---------|
 | `external_turn_start` | A turn started in another process. `text` holds the user input, `run_id` identifies the turn. |
-| `external_chunk` | Answer text from the other process. |
-| `external_thinking` | Reasoning text from the other process. |
-| `external_tool_start` / `external_tool_end` | A tool call made by the other process, with the same fields as the local types. |
+| `external_chunk` | Answer text from the other process. Carries the `origin_*` fields when a subagent produced it. |
+| `external_thinking` | Reasoning text from the other process. Carries the `origin_*` fields when a subagent produced it. |
+| `external_tool_start` / `external_tool_end` | A tool call made by the other process, with the same fields as the local types, plus the `origin_*` fields when a subagent made the call. |
 | `external_done` | The other process's turn finished. |
 | `external_error` | The other process's turn failed. |
 | `external_compaction` | Another process compacted this session's context. Same payload as `compaction`, plus `run_id`. |
 | `external_dropped` | Relayed events were lost before they reached you. `dropped` is how many since the previous report; `total_dropped` is the running total for the current hub connection. Carries `session_id` like every other `external_*` type. |
+
+### Telling a subagent's activity from the root agent's
+
+`external_chunk`, `external_thinking`, `external_tool_start` and
+`external_tool_end` carry `origin_task_id`, `origin_agent` and `origin_depth`
+when a subagent produced them. **Their absence means the root agent produced
+the event.** A consumer that appends every `external_chunk` to one answer
+buffer therefore mixes each subagent's answer into the root agent's; read
+`origin_task_id` first and keep one buffer per value, with the empty value as
+the root agent's own.
+
+`origin_task_id` identifies one run: two runs of the same agent have
+different ids, so `origin_agent` is a label, not a key. Older versions of the
+CLI sent these fields on tool events only, and the relay reused the same four
+types before that. A consumer must therefore treat every `origin_*` field as
+optional.
+
+This is deliberately weaker than the chat-sync wire, which gives a subagent
+its own event TYPES (see
+[chat-sync-wire](chat-sync-wire.md#event-types-and-ordering)). This relay is a
+local, same-machine stream between cooperating processes, so it keeps the
+existing types and adds attribution fields to them.
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
 
