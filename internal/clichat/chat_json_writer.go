@@ -57,10 +57,14 @@ type ndjsonEvent struct {
 	// bundled CLI that predates this field", which a consumer should read
 	// as ok (the prior behavior), not as failure.
 	Status string `json:"status,omitempty"`
-	// OriginTaskID/OriginAgent/OriginDepth attribute a tool_start/tool_end
-	// (or a subagent_done) to the delegated subagent that produced it - see
-	// agent.EventOrigin. Omitted entirely for the root loop's own tool
-	// calls (the common case).
+	// OriginTaskID/OriginAgent/OriginDepth attribute an event to the
+	// delegated subagent that produced it - see agent.EventOrigin. They
+	// appear on tool_start/tool_end and subagent_done, and on the relayed
+	// external_chunk / external_thinking / external_tool_start /
+	// external_tool_end. Omitted entirely for the root loop's own events
+	// (the common case), so their ABSENCE is what marks a line as the root
+	// loop's - a consumer that ignores them merges every subagent's text
+	// into the root turn's.
 	OriginTaskID string `json:"origin_task_id,omitempty"`
 	OriginAgent  string `json:"origin_agent,omitempty"`
 	OriginDepth  int    `json:"origin_depth,omitempty"`

@@ -40,6 +40,7 @@ var relayedKinds = []events.Kind{
 	events.KindThinking,
 	events.KindToolStart,
 	events.KindToolEnd,
+	events.KindSubagentBegin,
 	events.KindSubagentStart,
 	events.KindSubagentEnd,
 	events.KindSubagentHeartbeat,

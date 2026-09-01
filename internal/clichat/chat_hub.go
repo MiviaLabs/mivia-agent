@@ -351,15 +351,6 @@ func renderExternalCompaction(w io.Writer, ev events.Event) {
 	writeNDJSONEvent(w, line)
 }
 
-// renderExternalTurnEvent's KindAssistant case only relays a "delta" chunk// (streamed live - see teeWriter) as it arrives, and only falls back to
-// relaying the turn-end aggregate (Detail!="delta") when this run never
-// streamed one at all - a run that already got live deltas would otherwise
-// see the same content twice, once incrementally and once again in full.
-// withExternalOrigin copies an event's subagent attribution onto a relayed
-// NDJSON line. Without it a relayed surface reads every subagent's text and
-// tool calls as the root turn's own, which is exactly the interleaving the
-// chat-sync wire carries Envelope.Agent to prevent. Unattributed events are
-// returned unchanged, so the root loop's lines keep no origin fields at all.
 func withExternalOrigin(line ndjsonEvent, ev events.Event) ndjsonEvent {
 	if ev.AgentTask == "" && ev.AgentName == "" && ev.AgentDepth == 0 {
 		return line
@@ -370,6 +361,15 @@ func withExternalOrigin(line ndjsonEvent, ev events.Event) ndjsonEvent {
 	return line
 }
 
+// renderExternalTurnEvent's KindAssistant case only relays a "delta" chunk// (streamed live - see teeWriter) as it arrives, and only falls back to
+// relaying the turn-end aggregate (Detail!="delta") when this run never
+// streamed one at all - a run that already got live deltas would otherwise
+// see the same content twice, once incrementally and once again in full.
+// withExternalOrigin copies an event's subagent attribution onto a relayed
+// NDJSON line. Without it a relayed surface reads every subagent's text and
+// tool calls as the root turn's own, which is exactly the interleaving the
+// chat-sync wire carries Envelope.Agent to prevent. Unattributed events are
+// returned unchanged, so the root loop's lines keep no origin fields at all.
 func renderExternalTurnEvent(w io.Writer, r *externalRun, ev events.Event) {
 	switch ev.Kind {
 	case events.KindAssistant:

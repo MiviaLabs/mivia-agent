@@ -170,7 +170,7 @@ func originForRequest(ctx context.Context, req runtime.Request) agent.EventOrigi
 	if id, ok := runtime.TaskIdentityFrom(ctx); ok && id.TaskID != "" {
 		taskID = id.TaskID
 	}
-	return agent.EventOrigin{
+	origin := agent.EventOrigin{
 		TaskID:          taskID,
 		Agent:           req.Name,
 		Depth:           req.Depth + 1,
@@ -178,6 +178,28 @@ func originForRequest(ctx context.Context, req runtime.Request) agent.EventOrigi
 		SessionID:       req.SessionID,
 		TurnID:          req.TurnID,
 	}
+	// The dispatching subagent, when there is one. StampEventOrigin keeps the
+	// INNERMOST origin, so without this edge a depth-2 run is reported as a
+	// sibling of its own parent rather than a child of it.
+	if parent, ok := OriginFrom(ctx); ok {
+		origin.ParentTaskID = parent.TaskID
+	}
+	return origin
+}
+
+// announceRunStart emits the run-level opening signal, the mirror of the
+// deferred Done in run. It fires before any work, so a consumer learns that
+// the run exists, and what it was asked to do, without waiting for the run's
+// first nested tool call. A nil sink makes it a no-op.
+func announceRunStart(stamped func(agent.Event), name, taskDescription string) {
+	if stamped == nil {
+		return
+	}
+	stamped(agent.Event{
+		Kind:   agent.EventSubagentBegin,
+		Name:   name,
+		Detail: taskDescription,
+	})
 }
 
 func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (out json.RawMessage, err error) {
@@ -190,15 +212,19 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	steps, maxTokens, toolTimeout := h.setupAgentLoop()
 	loop.Messages = h.seedMessages()
 
-	// Apply total timeout if specified - but only if it's tighter than parent.
-	// Never extend beyond parent deadline (that's the orchestrator's call).
-	callCtx, cancel := h.timeoutContext(ctx, req)
-	defer cancel()
-
 	// Every event this loop emits - including heartbeats - is stamped with
 	// the run's identity so the parent UI can attribute it. Without the
 	// stamp, parallel subagents are indistinguishable downstream.
-	stamped := StampEventOrigin(h.OnEvent, originForRequest(ctx, req))
+	origin := originForRequest(ctx, req)
+	stamped := StampEventOrigin(h.OnEvent, origin)
+
+	// Carry this run's origin into everything it dispatches, so a nested run
+	// can name its parent. Both the request context and the timeout-derived
+	// context are decorated: nested dispatch reaches originForRequest through
+	// whichever of the two the calling path happens to hold.
+	ctx = ContextWithOrigin(ctx, origin)
+
+	announceRunStart(stamped, req.Name, origin.TaskDescription)
 
 	// A run that ends must say so, and say HOW it ended. Nested tool events
 	// only ever report tool lifecycle, so without this terminal signal the
@@ -221,6 +247,12 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 			stamped(agent.Event{Kind: agent.EventSubagentDone, Name: req.Name, Status: terminalStatus(err)})
 		}()
 	}
+
+	// Apply total timeout if specified - but only if it's tighter than parent.
+	// Never extend beyond parent deadline (that's the orchestrator's call).
+	// Derived AFTER ctx carries this run's origin so callCtx inherits it.
+	callCtx, cancel := h.timeoutContext(ctx, req)
+	defer cancel()
 
 	compiled, appendix, cerr := h.compileOutputSchema(req)
 	if cerr != nil {

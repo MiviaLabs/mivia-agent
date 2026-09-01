@@ -118,7 +118,8 @@ func ClearSubagentProgress(token uint64) {
 // The allowlist stays fail-closed: a kind not named here is not published.
 func busPublishableKind(kind agent.EventKind) bool {
 	switch kind {
-	case agent.EventSubagentStart, agent.EventSubagentEnd, agent.EventSubagentHeartbeat, agent.EventSubagentDone:
+	case agent.EventSubagentBegin, agent.EventSubagentStart, agent.EventSubagentEnd,
+		agent.EventSubagentHeartbeat, agent.EventSubagentDone:
 		return true
 	case agent.EventAssistant, agent.EventThinking:
 		return true
@@ -163,7 +164,8 @@ func emitSubagentProgress(e agent.Event) {
 		e.Content,
 		e.Input,
 		e.Output,
-	).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+	).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth).
+		WithAgentParent(e.Origin.ParentTaskID)
 	// The session and turn come off the ORIGIN, because this sink is
 	// package-level and has none of its own. Without them the event is
 	// published with an empty SessionID and internal/hub's receiver drops

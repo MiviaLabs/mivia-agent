@@ -29,6 +29,16 @@ const (
 	EventSubagentStart     EventKind = "subagent_start"
 	EventSubagentEnd       EventKind = "subagent_end"
 	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
+	// EventSubagentBegin is the run-level OPENING signal for one subagent,
+	// the mirror of EventSubagentDone. Distinct from EventSubagentStart,
+	// which opens a single nested TOOL call.
+	//
+	// A run was previously only discoverable from its first nested event, so
+	// a consumer had no event carrying the run's own identity: the task it
+	// was given arrived, if at all, on the dispatching tool call, which a
+	// remote consumer has to correlate separately. Detail carries the bounded
+	// task description, and the event's own timestamp is the run's start.
+	EventSubagentBegin EventKind = "subagent_begin"
 	// EventSubagentDone is the run-level terminal signal for one subagent:
 	// its loop returned and it will emit nothing further. Distinct from
 	// EventSubagentEnd, which closes a single nested tool call - an agent
@@ -122,6 +132,15 @@ type EventOrigin struct {
 	// through agent.emit and gets both from Options instead.
 	SessionID string
 	TurnID    string
+	// ParentTaskID is the TaskID of the subagent that dispatched this one,
+	// empty when the root loop dispatched it.
+	//
+	// Depth alone cannot rebuild the tree: two subagents at depth 2 under
+	// different depth-1 parents are indistinguishable by depth, so a consumer
+	// showing nested runs had to render every run as a sibling of every
+	// other. This is the edge that makes the depth a position rather than
+	// just a number.
+	ParentTaskID string
 }
 
 // IsZero reports whether the origin is the root loop.

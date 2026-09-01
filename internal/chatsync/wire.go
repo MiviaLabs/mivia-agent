@@ -90,6 +90,7 @@ const (
 	TypeToolEnded           = "mivia.chat.v1.tool.ended"
 	TypeSubagentToolStarted = "mivia.chat.v1.subagent.tool.started"
 	TypeSubagentToolEnded   = "mivia.chat.v1.subagent.tool.ended"
+	TypeSubagentStarted     = "mivia.chat.v1.subagent.started"
 	TypeSubagentProgress    = "mivia.chat.v1.subagent.progress"
 	TypeSubagentEnded       = "mivia.chat.v1.subagent.ended"
 	// A subagent's own prose. These are DELIBERATELY distinct types rather
@@ -135,6 +136,7 @@ var wireEventSpecs = []WireEventSpec{
 	{Type: TypeToolEnded, Payload: ToolEndedPayload{}},
 	{Type: TypeSubagentToolStarted, Payload: SubagentToolStartedPayload{}},
 	{Type: TypeSubagentToolEnded, Payload: SubagentToolEndedPayload{}},
+	{Type: TypeSubagentStarted, Payload: SubagentStartedPayload{}},
 	{Type: TypeSubagentProgress, Payload: SubagentProgressPayload{}},
 	{Type: TypeSubagentEnded, Payload: SubagentEndedPayload{}},
 	{Type: TypeSubagentAssistantDelta, Payload: SubagentAssistantDeltaPayload{}},
@@ -187,6 +189,10 @@ type AgentOrigin struct {
 	Task  string `json:"task,omitempty"`
 	Name  string `json:"name,omitempty"`
 	Depth int    `json:"depth,omitempty"`
+	// ParentTask is the Task of the subagent that dispatched this one, empty
+	// when the root loop did. Depth reports how deep a run sits; this reports
+	// under WHICH run, which two runs at the same depth do not share.
+	ParentTask string `json:"parent_task,omitempty"`
 }
 
 // Truncation contains field-level truncation records.
@@ -276,6 +282,18 @@ type SubagentToolEndedPayload struct {
 	OutputBytes int    `json:"output_bytes"`
 	Detail      string `json:"detail,omitempty"`
 	Output      string `json:"output,omitempty"`
+}
+
+// SubagentStartedPayload is the payload of mivia.chat.v1.subagent.started:
+// the run-level opening signal for one subagent.
+//
+// The envelope's own timestamp is the run's start time, so this carries no
+// separate started_at. Prompt is the bounded task description the run was
+// given, redacted and truncated like every other text field.
+type SubagentStartedPayload struct {
+	Envelope
+	Name   string `json:"name,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // SubagentProgressPayload is the payload of mivia.chat.v1.subagent.progress.

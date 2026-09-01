@@ -28,6 +28,9 @@ const (
 	KindSubagentStart     Kind = "subagent_start"
 	KindSubagentEnd       Kind = "subagent_end"
 	KindSubagentHeartbeat Kind = "subagent_heartbeat"
+	// KindSubagentBegin mirrors agent.EventSubagentBegin: the run-level
+	// opening signal for one subagent, not the start of a nested tool call.
+	KindSubagentBegin Kind = "subagent_begin"
 	// KindSubagentDone mirrors agent.EventSubagentDone: the run-level
 	// terminal signal for one subagent, not the end of a nested tool call.
 	KindSubagentDone Kind = "subagent_done"
@@ -109,6 +112,11 @@ type Event struct {
 	AgentTask  string // runtime request/task id - the attribution key
 	AgentName  string // dispatched subagent/skill name
 	AgentDepth int    // nesting depth (root loop = 0)
+	// AgentParent is the AgentTask of the subagent that dispatched this
+	// event's producer, empty when the root loop did. Depth alone cannot
+	// rebuild the tree: two runs at the same depth under different parents
+	// are indistinguishable by depth.
+	AgentParent string
 	// Identity is the typed, allowlisted runtime identity. It never carries
 	// prompts, paths, digests, tools, content, errors, or arbitrary metadata.
 	Identity *Identity
@@ -457,6 +465,14 @@ func NewIdentity(name, source, instanceID string, generation uint64) (Identity, 
 // WithAgentAttribution returns a copy of e attributed to a producing agent.
 func (e Event) WithAgentAttribution(taskID, name string, depth int) Event {
 	e.AgentTask, e.AgentName, e.AgentDepth = taskID, name, depth
+	return e
+}
+
+// WithAgentParent returns a copy of e whose producer is recorded as a child of
+// parentTaskID. Separate from WithAgentAttribution so the many existing call
+// sites that have no parent to report keep their present signature.
+func (e Event) WithAgentParent(parentTaskID string) Event {
+	e.AgentParent = parentTaskID
 	return e
 }
 

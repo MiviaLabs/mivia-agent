@@ -47,7 +47,8 @@ func emit(opts Options, e Event) {
 			ev.Identity = &copy
 		}
 		if !e.Origin.IsZero() {
-			ev = ev.WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+			ev = ev.WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth).
+				WithAgentParent(e.Origin.ParentTaskID)
 		}
 		opts.EventBus.Publish(ev)
 	}

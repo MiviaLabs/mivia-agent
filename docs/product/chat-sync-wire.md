@@ -46,16 +46,26 @@ sensitive inside a synced session is withheld unless you ask for it:
 
 These controls apply to a subagent's own output exactly as they apply to the
 root loop's. A subagent runs in its own session, but its prose passes through
-the same redaction, the same truncation budgets, and the same
-`include_thinking` / `stream_assistant` settings. There is no separate
-subagent switch: what leaves this machine must not have two answers.
+the same redaction and the same truncation budgets. There is no separate
+subagent control, because the amount of text that leaves the machine must
+have one answer, not two.
 
-Subagent prose was formerly withheld from the wire whatever the settings
-said. That made a remote viewer strictly weaker than the local TUI - it could
-list a running subagent but never open it - so the prose now ships under the
-controls above. Operators who already enabled `stream_assistant` or
-`include_thinking` therefore send more text than before WITHOUT changing any
-setting. Set those options to `false` to withhold it.
+**A subagent's settled answer is sent by default.** Read this before you
+enable sync on sensitive work:
+
+- `include_thinking = false` withholds a subagent's reasoning text, as it
+  withholds the root loop's. Only the byte count is reported.
+- `stream_assistant = false` stops the per-delta stream. It does NOT stop the
+  settled `subagent.assistant.message`, exactly as it does not stop the root
+  loop's settled `assistant.message`. This option selects HOW answer text is
+  sent, not WHETHER it is sent.
+- To send no chat content at all, set `enabled = false`.
+
+Subagent prose was formerly withheld whatever the settings said. That made a
+remote viewer weaker than the local TUI, which shows a subagent's thread in
+full: the viewer could list a running subagent but never open it. The prose
+now ships. An operator who has sync on therefore sends a subagent's answers
+where earlier versions sent none, WITHOUT having changed any setting.
 
 ## Truncation Budgets
 
@@ -78,7 +88,7 @@ in the envelope `trunc.fields` map.
 
 ## Event Types and Ordering
 
-The sync stream uses 18 structured `mivia.chat.v1.*` event types. The list
+The sync stream uses 19 structured `mivia.chat.v1.*` event types. The list
 below is a copy for reading; the authoritative set is `KnownWireTypes` in
 `internal/chatsync/wire.go`, mirrored in `api/contracts/chat-sessions.v1.json`:
 
@@ -90,6 +100,7 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.thinking.delta`
 - `mivia.chat.v1.tool.started`
 - `mivia.chat.v1.tool.ended`
+- `mivia.chat.v1.subagent.started`
 - `mivia.chat.v1.subagent.ended`
 - `mivia.chat.v1.subagent.progress`
 - `mivia.chat.v1.subagent.tool.started`
@@ -107,6 +118,17 @@ types with `agent` set in the envelope. A viewer can therefore keep a
 subagent out of the main transcript on that prefix alone, including types
 added after the viewer shipped. `envelope.agent.task` names which subagent
 run an event belongs to; two runs of the same agent have different task ids.
+`envelope.agent.parent_task` names the run that dispatched it, and is absent
+for a run the root loop dispatched. Depth reports how deep a run sits;
+`parent_task` reports under which run, which two runs at the same depth do
+not share.
+
+A run reports its own start and end: `subagent.started` carries the task text
+the run was given, and its timestamp is the run's start time;
+`subagent.ended` carries the terminal status. `subagent.progress` carries a
+heartbeat, and its `detail` text holds the elapsed time, step count and tool
+count. That type once declared `elapsed_seconds`, `steps` and `tool_calls`
+fields as well; no version ever populated them, so they were removed.
 
 Every session maintains a strictly monotonic sequence (`1..N`). If the system
 drops events because of local queue saturation, a `sync.dropped` event consumes
