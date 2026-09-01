@@ -1,7 +1,6 @@
 package subagents
 
 import (
-	"context"
 	"encoding/json"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -45,31 +44,6 @@ func boundTaskDescription(s string) string {
 		return s
 	}
 	return textutil.TruncateRuneSafe(s, maxTaskDescriptionBytes) + "…"
-}
-
-type originContextKey struct{}
-
-// ContextWithOrigin carries a running subagent's own origin down into
-// everything it dispatches, so a nested run can name the run that started it.
-//
-// The parent origin cannot be derived from the child's runtime.Request:
-// Request.ParentID is the parent INVOCATION id, while the attribution key is
-// the TaskID, and the two differ whenever a coordinator supplies a workflow
-// task id. The only place the parent's TaskID is unambiguous is the parent
-// itself, which is why it travels on the context - the same reasoning that
-// puts SessionID and TurnID on the origin.
-func ContextWithOrigin(ctx context.Context, origin agent.EventOrigin) context.Context {
-	return context.WithValue(ctx, originContextKey{}, origin)
-}
-
-// OriginFrom returns the origin of the subagent whose execution ctx belongs
-// to. The second result is false for the root loop, which has none.
-func OriginFrom(ctx context.Context) (agent.EventOrigin, bool) {
-	origin, ok := ctx.Value(originContextKey{}).(agent.EventOrigin)
-	if !ok || origin.TaskID == "" {
-		return agent.EventOrigin{}, false
-	}
-	return origin, true
 }
 
 // StampEventOrigin decorates onEvent so every event it receives carries the

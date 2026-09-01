@@ -15,6 +15,14 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
+	// ParentTaskID is the ATTRIBUTION key of the task that caused this one to
+	// start, empty when the root loop did.
+	//
+	// It is not Owner, and not Request.ParentID which Owner feeds: those name
+	// the parent INVOCATION, which diverges from the attribution key whenever
+	// a coordinator supplies its own task id. A consumer drawing a tree of
+	// runs joins on the attribution key, so that is what has to travel.
+	ParentTaskID string
 	// RawID is the model-supplied task id verbatim, before dispatch_tasks
 	// namespaces it into ID for harness-level uniqueness
 	// (internal/cliorchestrate/task_namespace.go's namespacedTaskID). Kept
@@ -137,7 +145,8 @@ func (p *Pool) ValidateTask(t Task) error {
 		return fmt.Errorf("nil subagent pool")
 	}
 	return p.d.Validate(runtime.Request{
-		ID: t.ID, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		ID: t.ID, ParentID: t.Owner, ParentTaskID: t.ParentTaskID,
+		Name: t.Name, Kind: runtime.Subagent,
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role, Scope: t.Scope,
 		Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth,
 		Timeout: t.Timeout, AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
@@ -369,7 +378,8 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	// while the dispatcher requires a fresh opaque invocation identity.
 	id := runtime.NewSessionID()
 	r := p.d.Invoke(taskCtx, runtime.Request{
-		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		ID: id, ParentID: t.Owner, ParentTaskID: t.ParentTaskID,
+		Name: t.Name, Kind: runtime.Subagent,
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role,
 		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
 		AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,

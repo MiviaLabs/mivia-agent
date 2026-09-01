@@ -226,3 +226,38 @@ func TestOriginForRequestPrefersTheCoordinatorTaskID(t *testing.T) {
 		t.Errorf("TaskID = %q, want the coordinator's attempt id", got.TaskID)
 	}
 }
+
+// TestOriginCarriesTheParentTaskFromTheRequest is the end-to-end proof the
+// previous attempt lacked.
+//
+// Parentage was first carried on a context value, which no shipped path could
+// populate: the coordinator roots every task's context in context.Background(),
+// so nothing a caller puts on its own context reaches the task it starts. The
+// only test then existing set the field by hand on an events.Event, so it
+// could never have caught that. The value now rides the REQUEST, which is the
+// thing that actually crosses the boundary.
+func TestOriginCarriesTheParentTaskFromTheRequest(t *testing.T) {
+	origin := originForRequest(context.Background(), runtime.Request{
+		ID:           "task-child",
+		Name:         "reviewer",
+		ParentTaskID: "task-parent",
+	})
+
+	if origin.ParentTaskID != "task-parent" {
+		t.Errorf("ParentTaskID = %q, want task-parent", origin.ParentTaskID)
+	}
+	if origin.TaskID != "task-child" {
+		t.Errorf("TaskID = %q, want the child's own id", origin.TaskID)
+	}
+}
+
+// TestOriginReportsNoParentForARootDispatch proves a run the root loop started
+// reports no parent at all, so a consumer can read an absent parent as "top
+// level" rather than "unknown".
+func TestOriginReportsNoParentForARootDispatch(t *testing.T) {
+	origin := originForRequest(context.Background(), runtime.Request{ID: "task-1", Name: "builder"})
+
+	if origin.ParentTaskID != "" {
+		t.Errorf("ParentTaskID = %q for a root dispatch, want empty", origin.ParentTaskID)
+	}
+}

@@ -358,6 +358,19 @@ func (c *coordinator) recordAskTarget(runID, taskID, askID string) {
 	c.asks.byTarget[key] = append(c.asks.byTarget[key], askID)
 }
 
+// askerTaskID reports the task that registered askID, or "" when the ask is
+// unknown or its owner was already released.
+//
+// It exists so a referral spawned to answer an ask can name the task that
+// asked. That relationship is real - one task's work causes another's - and
+// the registry is the only place it is recorded.
+func (c *coordinator) askerTaskID(askID string) string {
+	reg := c.asks
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return reg.askOwner[askID].taskID
+}
+
 // releaseAskSlotLocked releases the per-task quota slot held by askID, if the
 // ask's owner is still recorded (purged at retry boundaries). No-op for asks
 // whose owner was reset away. Caller must hold reg.mu.
