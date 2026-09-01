@@ -126,6 +126,18 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	case uievent.ReasoningDeltaBody:
 		return m.handleReasoningDelta(b)
 	case uievent.TextEndBody:
+		// A pending REASONING span must be flushed, not discarded. text.end
+		// carries the answer, which says nothing about the reasoning that
+		// preceded it, so discarding here wiped the whole reasoning block of
+		// any agent that reasoned and then answered with no tool call in
+		// between - the exact shape of a subagent run.
+		//
+		// Only reasoning is flushed. A pending TEXT span is already contained
+		// in this event's own Text (the loop sends the full accumulated
+		// answer), so flushing that would render the answer twice.
+		if m.pendingKind == uievent.KindReasoning {
+			m = m.flushPending()
+		}
 		m.clearPending()
 		if b.Text == "" {
 			return m, nil
@@ -419,6 +431,13 @@ func (m *Model) clearPending() {
 }
 
 func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
+	// A change of kind ends the previous span. Without this, a text delta
+	// arriving after reasoning deltas concatenates into the same buffer and
+	// the reasoning renders as prose, attributed to the model's answer.
+	if m.pendingKind != "" && m.pendingKind != kind && m.pending != "" {
+		flushed := m.flushPending()
+		*m = flushed
+	}
 	m.pending += text
 	m.pendingKind = kind
 	if m.flushWait {
