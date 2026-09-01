@@ -89,3 +89,12 @@ func TestDefaultServerURLIsValidHTTPSURL(t *testing.T) {
 		t.Errorf("ValidateHTTPSURL(DefaultServerURL) error = %v, want nil", err)
 	}
 }
+
+// TestDefaultServerURLIsProductionAPI pins the literal: the default decides
+// where passwords are sent, so a change here must be a deliberate, reviewed
+// edit, not a typo.
+func TestDefaultServerURLIsProductionAPI(t *testing.T) {
+	if DefaultServerURL != "https://api.mivia.app" {
+		t.Errorf("DefaultServerURL = %q, want %q", DefaultServerURL, "https://api.mivia.app")
+	}
+}
