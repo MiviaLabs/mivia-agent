@@ -129,7 +129,7 @@
     },
     {
       "file": "internal/chatsync/poller.go",
-      "operand": "p.waitSeconds+5",
+      "operand": "p.waitSeconds+pollDeadlineSlackSeconds",
       "unit": "Second",
       "reason": "clamped to maxPollWaitSeconds (300) in NewInputPoller before the multiply"
     }
