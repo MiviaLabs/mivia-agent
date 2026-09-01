@@ -6,12 +6,15 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -146,19 +149,83 @@ func (c cancelingLineCompleter) ChatTurn(_ context.Context, req provider.Request
 	return nil, context.Canceled
 }
 
-// TestOneShotPrintsReplyBeforeAutosaveFailure used to pin that a legacy
-// autosave failure (SaveManager writing to a blocked session directory)
-// still let the reply print to stdout - shouldPrintOneShotOutput's
-// errors.Is(err, chat.ErrPersistence) check exists for exactly that.
-// Removed along with the legacy file-backed session store: a synthetic
-// context-checkpoint-commit failure does NOT reach that check (nothing on
-// the context-commit path wraps its error in chat.ErrPersistence), so a
-// faithful port would have to assert the OPPOSITE of what this test used to
-// prove - that finding is real and separate from this cleanup:
-// shouldPrintOneShotOutput's ErrPersistence branch is dead code for every
-// context-enabled session, i.e. every real session, and needs its own
-// decision (should a durable-commit failure still print the reply?), not a
-// silent behavior change smuggled into a test port.
+// alwaysFailingPublisher makes every durable checkpoint commit fail
+// unconditionally - the internal/clichat counterpart of package chat's own
+// (unexported, unreachable from here) plainCommitFailurePublisher test
+// fixture. Exercises the commitPlainContextTurn/commitInterruptedPlainContext
+// commit-failure branches (internal/chat/context_integration_turn.go) end to
+// end through oneShotContext.
+type alwaysFailingPublisher struct{}
+
+func (alwaysFailingPublisher) Commit(context.Context, contextmgr.Preparation, contextmgr.TurnResult) error {
+	return errors.New("checkpoint commit failed")
+}
+
+// TestOneShotPrintsReplyAfterContextCommitFailure pins the user-visible half
+// of the durable-context no-message-loss fix: when the checkpoint commit
+// fails after a successful stream, chat.Session.SendUser now returns an
+// error that satisfies errors.Is(err, chat.ErrPersistence)
+// (context_integration_turn.go's plainCommitPersistenceError). That is what
+// flips shouldPrintOneShotOutput (chat.go) to true, so the answer already
+// streamed into the MarkdownWriter buffer during the turn prints to stdout
+// instead of being suppressed - NOT because oneShotContext reads the
+// discarded reply string returned by SendUser (it never does: line 47 above
+// assigns it to `_`).
+func TestOneShotPrintsReplyAfterContextCommitFailure(t *testing.T) {
+	const answer = "Both fixes work."
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context_commit_failure.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	res := &config.Resolved{ProviderName: "test", Model: "model", SystemPrompt: "sys"}
+	sess := wireTestContextSessionWith(t, store, res, streamingLineCompleter{output: answer}, alwaysFailingPublisher{})
+	stdout := captureStdout(t)
+	err = oneShotContext(context.Background(), sess, "question", false, res, false)
+	gotOut := stdout()
+	if err == nil {
+		t.Fatal("oneShotContext returned nil, want the checkpoint commit failure")
+	}
+	if !errors.Is(err, chat.ErrPersistence) {
+		t.Fatalf("error = %v, want errors.Is(err, chat.ErrPersistence)", err)
+	}
+	if !strings.Contains(gotOut, answer) {
+		t.Fatalf("stdout = %q, want it to contain the streamed answer %q even though the commit failed", gotOut, answer)
+	}
+}
+
+// TestOneShotHidesUpstreamFailureOnContextPath covers the durable-context
+// counterpart TestOneShotHidesOrdinaryFailedStream does not reach: that test
+// wires a session with no SetContextManager call at all, so it exercises the
+// legacy plain path (sendPlainLegacy), never commitErroredPlainContext. This
+// test wires a REAL context manager (commit succeeds) with a completer whose
+// stream itself fails, so it goes through commitErroredPlainContext, which
+// must keep returning the upstream error UNWRAPPED (not tagged
+// ErrPersistence - see that function's own comment) so
+// shouldPrintOneShotOutput stays false and the untrustworthy partial output
+// never reaches stdout.
+func TestOneShotHidesUpstreamFailureOnContextPath(t *testing.T) {
+	upstream := errors.New("provider failed")
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context_upstream_failure.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	res := &config.Resolved{ProviderName: "test", Model: "model", SystemPrompt: "sys"}
+	sess := wireTestContextSessionWith(t, store, res, streamingLineCompleter{output: "uncommitted partial", err: upstream}, contextmgr.PreparationCommitter{Store: store})
+	stdout := captureStdout(t)
+	err = oneShotContext(context.Background(), sess, "question", false, res, false)
+	gotOut := stdout()
+	if !errors.Is(err, upstream) {
+		t.Fatalf("error = %v, want %v", err, upstream)
+	}
+	if errors.Is(err, chat.ErrPersistence) {
+		t.Fatalf("error = %v, want it NOT tagged chat.ErrPersistence - the stream itself failed, not just the save", err)
+	}
+	if strings.Contains(gotOut, "uncommitted partial") {
+		t.Fatalf("stdout exposed uncommitted output: %q", gotOut)
+	}
+}
 
 func TestOneShotPrintsPartialBeforeCancellation(t *testing.T) {
 	const partial = "The partial answer survives."

@@ -177,27 +177,25 @@ func (p plainCommitFailurePublisher) Commit(context.Context, contextmgr.Preparat
 	return p.err
 }
 
-// TestCompletedPlainContextTurnCommitFailureDropsTheTurn and
-// TestInterruptedPlainContextTurnCommitFailureDropsTheTurn pin CURRENT
-// behavior - they are not an endorsement of it. The legacy tests these
-// replace (TestCompletedPlainLegacyTurnReportsAutosaveFailure,
-// TestInterruptedPlainLegacyTurnReportsAutosaveFailure) proved a genuine
-// no-message-loss guarantee: a SaveManager autosave failure reported
-// ErrPersistence while the reply and the exchange survived in memory, so the
-// user could keep chatting or retry the save. commitPlainContextTurn and
-// commitInterruptedPlainContext (context_integration_turn.go) do not carry
-// that guarantee forward: on a commit failure they return an EMPTY reply and
-// the raw commit error, and never adopt the exchange into s.Messages at all.
-// The model's answer was already streamed to the caller's writer in real
-// time (plainTurnStreamWriter multi-writes it before the commit ever runs),
-// so an interactive caller still sees it on screen, but a one-shot (-p)
-// caller reading only the RETURNED reply gets nothing, and the exchange is
-// gone from the next turn's context and from /save either way. See the
-// spawned follow-up task for restoring the guarantee on this path; these
-// tests exist so that fix has a red/green marker, and so an accidental
-// further regression (e.g. the writer stops getting the streamed text
-// either) is still caught in the meantime.
-func TestCompletedPlainContextTurnCommitFailureDropsTheTurn(t *testing.T) {
+// TestCompletedPlainContextTurnCommitFailureKeepsTheTurn and
+// TestInterruptedPlainContextTurnCommitFailureKeepsTheTurn restore the
+// legacy no-message-loss guarantee on the durable-context plain path. The
+// legacy tests these replace (TestCompletedPlainLegacyTurnReportsAutosaveFailure,
+// TestInterruptedPlainLegacyTurnReportsAutosaveFailure) proved that a
+// SaveManager autosave failure reported ErrPersistence while the reply and
+// the exchange survived in memory, so the user could keep chatting or retry
+// the save. commitPlainContextTurn and commitInterruptedPlainContext
+// (context_integration_turn.go) now carry that guarantee forward: on a
+// commit failure they adopt the exchange into s.Messages (without advancing
+// contextHead/contextRevision, since nothing landed durably), return the
+// non-empty reply/partial, and tag the error so errors.Is(err,
+// ErrPersistence) holds alongside errors.Is(err, <cause>). One-shot (-p)
+// mode's user-visible fix comes entirely from that ErrPersistence tag
+// flipping shouldPrintOneShotOutput (internal/clichat/chat.go) so the
+// already-streamed answer buffer prints instead of being suppressed - NOT
+// from the returned reply string itself, which shipped one-shot callers
+// discard.
+func TestCompletedPlainContextTurnCommitFailureKeepsTheTurn(t *testing.T) {
 	const answer = "Both fixes work."
 	const question = "prove it"
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
@@ -227,30 +225,53 @@ func TestCompletedPlainContextTurnCommitFailureDropsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess.SetContextStore(store)
-	before := sess.contextRevision
+	beforeRevision := sess.contextRevision
+	beforeHead := sess.contextHead
 
 	var sink strings.Builder
 	reply, err := sess.SendUser(context.Background(), question, &sink)
 	if !errors.Is(err, want) {
-		t.Fatalf("error = %v, want the commit failure", err)
+		t.Fatalf("error = %v, want it to wrap the commit failure", err)
 	}
-	if reply != "" {
-		t.Fatalf("reply = %q, want empty - a commit failure loses the returned reply on the current context-plain path", reply)
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("error = %v, want it to satisfy errors.Is(err, ErrPersistence)", err)
+	}
+	if !strings.Contains(reply, answer) {
+		t.Fatalf("reply = %q, want it to contain the streamed answer %q", reply, answer)
 	}
 	if !strings.Contains(sink.String(), answer) {
 		t.Fatalf("caller's writer = %q, want it to still contain the streamed answer even though the commit failed", sink.String())
 	}
-	for _, m := range sess.MessagesCopy() {
-		if strings.Contains(m.Content, question) || strings.Contains(m.Content, answer) {
-			t.Fatalf("messages = %+v, want the exchange absent from memory - a commit failure adopts nothing on this path", sess.MessagesCopy())
+	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), answer, question)
+	if got := sess.contextRevision; got != beforeRevision {
+		t.Fatalf("contextRevision = %+v, want unchanged %+v - nothing landed durably", got, beforeRevision)
+	}
+	if got := sess.contextHead; got != beforeHead {
+		t.Fatalf("contextHead = %+v, want unchanged %+v - nothing landed durably", got, beforeHead)
+	}
+
+	// The commit failed, so no checkpoint was ever written durably: the
+	// active context bytes are still empty here (Load never errors on a
+	// pre-commit session, but there is nothing to decode - see
+	// context_integration.go's own len(...) > 0 guard before unmarshaling).
+	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded []provider.Message
+	if len(snapshot.Active.ActiveContext) > 0 {
+		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if got := sess.contextRevision; got != before {
-		t.Fatalf("revision = %+v, want unchanged %+v", got, before)
+	for _, m := range loaded {
+		if strings.Contains(m.Content, question) || strings.Contains(m.Content, answer) {
+			t.Fatalf("durable snapshot = %+v, want the exchange absent - the commit failed, nothing should look committed", loaded)
+		}
 	}
 }
 
-func TestInterruptedPlainContextTurnCommitFailureDropsTheTurn(t *testing.T) {
+func TestInterruptedPlainContextTurnCommitFailureKeepsTheTurn(t *testing.T) {
 	const partial = "Both fixes work. Here is the pro"
 	const question = "prove it"
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
@@ -280,25 +301,48 @@ func TestInterruptedPlainContextTurnCommitFailureDropsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess.SetContextStore(store)
-	before := sess.contextRevision
+	beforeRevision := sess.contextRevision
+	beforeHead := sess.contextHead
 
 	var sink strings.Builder
 	reply, err := sess.SendUser(context.Background(), question, &sink)
 	if !errors.Is(err, want) {
-		t.Fatalf("error = %v, want the commit failure", err)
+		t.Fatalf("error = %v, want it to wrap the commit failure", err)
 	}
-	if reply != "" {
-		t.Fatalf("reply = %q, want empty - a commit failure loses the returned reply on the current context-plain path", reply)
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("error = %v, want it to satisfy errors.Is(err, ErrPersistence)", err)
+	}
+	if !strings.Contains(reply, partial) {
+		t.Fatalf("reply = %q, want it to contain the streamed partial %q", reply, partial)
 	}
 	if !strings.Contains(sink.String(), partial) {
 		t.Fatalf("caller's writer = %q, want it to still contain the streamed partial even though the commit failed", sink.String())
 	}
-	for _, m := range sess.MessagesCopy() {
-		if strings.Contains(m.Content, question) || strings.Contains(m.Content, partial) {
-			t.Fatalf("messages = %+v, want the exchange absent from memory - a commit failure adopts nothing on this path", sess.MessagesCopy())
+	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), partial, question)
+	if got := sess.contextRevision; got != beforeRevision {
+		t.Fatalf("contextRevision = %+v, want unchanged %+v - nothing landed durably", got, beforeRevision)
+	}
+	if got := sess.contextHead; got != beforeHead {
+		t.Fatalf("contextHead = %+v, want unchanged %+v - nothing landed durably", got, beforeHead)
+	}
+
+	// The commit failed, so no checkpoint was ever written durably: the
+	// active context bytes are still empty here (Load never errors on a
+	// pre-commit session, but there is nothing to decode - see
+	// context_integration.go's own len(...) > 0 guard before unmarshaling).
+	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded []provider.Message
+	if len(snapshot.Active.ActiveContext) > 0 {
+		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if got := sess.contextRevision; got != before {
-		t.Fatalf("revision = %+v, want unchanged %+v", got, before)
+	for _, m := range loaded {
+		if strings.Contains(m.Content, question) || strings.Contains(m.Content, partial) {
+			t.Fatalf("durable snapshot = %+v, want the exchange absent - the commit failed, nothing should look committed", loaded)
+		}
 	}
 }

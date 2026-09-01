@@ -11,19 +11,24 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-func wireTestContextSession(t *testing.T, store *storage.SQLite, res *config.Resolved) *chat.Session {
+// wireTestContextSessionWith is the widened form of wireTestContextSession:
+// it lets a caller substitute the completer and the checkpoint publisher
+// (e.g. an always-failing one, to exercise a durable-commit failure) instead
+// of always getting the real nullCompleter/PreparationCommitter pair.
+func wireTestContextSessionWith(t *testing.T, store *storage.SQLite, res *config.Resolved, completer provider.Completer, publisher contextmgr.CheckpointPublisher) *chat.Session {
 	t.Helper()
-	sess := chat.NewSession(res, nullCompleter{})
+	sess := chat.NewSession(res, completer)
 	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{
 		PreparationManager:  contextmgr.StructuralPreparationManager{},
-		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		CheckpointPublisher: publisher,
 		Enabled:             true,
 	}
 	if err := sess.SetContextManager(manager, principal); err != nil {
@@ -33,6 +38,11 @@ func wireTestContextSession(t *testing.T, store *storage.SQLite, res *config.Res
 		t.Fatal(err)
 	}
 	return sess
+}
+
+func wireTestContextSession(t *testing.T, store *storage.SQLite, res *config.Resolved) *chat.Session {
+	t.Helper()
+	return wireTestContextSessionWith(t, store, res, nullCompleter{}, contextmgr.PreparationCommitter{Store: store})
 }
 
 // TestClearSlashSurvivesResume verifies that executing /clear in the REPL
