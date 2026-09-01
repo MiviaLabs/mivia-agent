@@ -16,6 +16,19 @@ import (
 	"time"
 )
 
+// defaultRequestTimeout bounds any chatsync HTTP request whose caller hasn't
+// already set its own deadline. Without it, a black-holed connection - the
+// shape a rolling backend deploy produces when a draining pod stops
+// responding instead of sending RST - hangs the single sync worker goroutine
+// forever: no request ever returns, so the existing retry/backoff logic
+// never gets a chance to run (DC-34-adjacent: a retry loop that can never
+// observe the failure it exists to retry). poller.go's long-poll already
+// sets its own, longer deadline before it ever reaches execRequest, so this
+// only fires for callers that pass a context with no deadline of their own.
+// A var, not a const: tests shrink it so a simulated hang doesn't cost real
+// wall-clock seconds per run.
+var defaultRequestTimeout = 20 * time.Second
+
 var (
 	ErrConflict     = errors.New("chatsync: session conflict (409)")
 	ErrUnauthorized = errors.New("chatsync: unauthorized (401)")
@@ -312,6 +325,11 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, r
 }
 
 func (c *Client) execRequest(ctx context.Context, method, path string, reqBody, respBody any, forceRefresh bool) error {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		defer cancel()
+	}
 	req, err := c.buildRequest(ctx, method, path, reqBody, forceRefresh)
 	if err != nil {
 		return err
