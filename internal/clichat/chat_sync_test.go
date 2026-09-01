@@ -219,6 +219,81 @@ func TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping(t *testing.T) {
 	}
 }
 
+// TestAttachCLISyncDetach_SurvivesASlowFinalFlush reproduces the second half
+// of the same live-dogfooding failure: even with the burst fully delivered to
+// chatsync's HandleEvent (the fix above), a REAL network round trip for the
+// final flush can take longer than a short ctx budget - FlushOutbox sends
+// the whole unflushed backlog as ONE request, uncapped, and a real remote
+// server plus a genuinely accumulated backlog (periodic mid-turn flushes
+// cannot always keep pace with local event generation once
+// [sync].stream_assistant multiplies event count) can legitimately take
+// several seconds. A ctx that expires first makes Stop return early via its
+// timedOut path, and the caller's own process exit right after kills the
+// goroutine Stop handed the rest of the work to - so the backlog is not
+// merely delayed, it is permanently lost (nothing re-opens a one-shot run's
+// outbox directory later). This pins detach()'s ctx budget
+// (chatsync.RecommendedStopTimeout) as long enough for the /events endpoint
+// to take 3 real seconds to respond.
+func TestAttachCLISyncDetach_SurvivesASlowFinalFlush(t *testing.T) {
+	var mu sync.Mutex
+	received := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: "cli-slow-1", Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.NextInput{Input: nil})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		// The real-network stand-in: this is what makes 2s fail and 15s pass -
+		// not the payload, not retries, just wall-clock time on one request.
+		time.Sleep(3 * time.Second)
+		var body struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		received += len(body.Events)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.AppendResult{LastSeq: int64(received), InsertedCount: len(body.Events)})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := events.New()
+	res := &config.Resolved{
+		Sync: config.ResolvedSync{
+			APIURL: srv.URL, PollWaitSeconds: 1, HeartbeatSeconds: 1, MaxUnflushed: 500,
+		},
+	}
+	installTestAuthToken(t)
+
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "cli-slow-1"
+	sess.SessionDir = t.TempDir()
+	sess.EventBus = bus
+
+	detach := attachCLISync(sess, res)
+	bus.Publish(events.Event{Kind: events.KindTurnStart, SessionID: sess.SessionID, TurnID: "turn:1", Detail: "hi"})
+	bus.Publish(events.Event{Kind: events.KindTurnEnd, SessionID: sess.SessionID, TurnID: "turn:1", Detail: "completed"})
+	detach()
+
+	mu.Lock()
+	got := received
+	mu.Unlock()
+	if got != 2 {
+		t.Errorf("server received %d events, want 2 (the final flush did not get enough time to complete a slow 3s request)", got)
+	}
+}
+
 // installTestAuthToken points HOME at a temp dir holding a valid, unexpired
 // CLI session, so the sync wiring resolves a real token provider without a
 // network round trip. Tests that omit it exercise the logged-out path.
