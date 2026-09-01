@@ -84,8 +84,13 @@ type Request struct {
 	// StreamTransport asks ChatTurn to use the SSE endpoint on the wire while
 	// keeping the non-stream contract: assemble the full Response, return it.
 	// Honored only when Stream is false and StreamWriter is nil. Callers that
-	// do not set it see no change. Completers that do not implement it
-	// (Anthropic family) see no change.
+	// do not set it see no change, and so do completers that do not implement
+	// it.
+	//
+	// The Anthropic family is NOT such a completer: anthropic.go's ChatTurn
+	// honors this field. Naming it here as an example of a non-implementer was
+	// wrong, and a reader choosing a transport on that basis would have chosen
+	// the wrong one.
 	StreamTransport bool
 	Tools           []ToolSpec
 	ToolChoice      string // "auto", "none", or empty

@@ -62,6 +62,15 @@ func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTransc
 	s.threads[key] = conv
 }
 
+// DroppedEvents reports how many events this conversation could not hand to a
+// listener. Non-zero means the live view is behind what History() holds, not
+// that content was lost.
+func (c *SubagentTranscriptConversation) DroppedEvents() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dropped
+}
+
 // Thread retrieves the conversation thread for a given tool call ID.
 func (s *SubagentThreads) Thread(callID string) (ports.Conversation, bool) {
 	s.mu.Lock()
@@ -168,6 +177,21 @@ type SubagentTranscriptConversation struct {
 	// reconstructed conversation clears the flag, because from then on it
 	// carries state no replay can rebuild.
 	reconstructed bool
+	// dropped counts events a listener's channel could not accept.
+	//
+	// The channel is bounded and the send is non-blocking, so a burst that
+	// outruns the UI's drain is shed. That is the right trade for a live view
+	// - a slow render must not stall the agent - but until this counter
+	// existed the loss was SILENT, and the dialog showed a truncated answer
+	// that looked complete. History() keeps every event regardless
+	// (applyEvent runs before this), so a non-zero count means "the live view
+	// is behind", not "content is gone".
+	//
+	// The session event bus solves the same problem by dropping the OLDEST
+	// entry and counting it (internal/events/subscription.go trySend). This
+	// drops the newest, which is a different trade and is left as it was;
+	// what it was missing is the count.
+	dropped uint64
 }
 
 // NewSubagentTranscriptConversation creates a new thread conversation.
@@ -293,6 +317,7 @@ func (c *SubagentTranscriptConversation) notifyListeners(e uievent.Event) {
 		select {
 		case ch <- e:
 		default:
+			c.dropped++
 		}
 	}
 	if e.Kind == uievent.KindTurnEnd || isDoneNotice(e) {

@@ -2,6 +2,7 @@ package uiadapter_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -793,5 +794,47 @@ func TestNamespacedTaskID(t *testing.T) {
 	}
 	if got := uiadapter.NamespacedTaskIDForTest("ns", "raw"); got != "ns:raw" {
 		t.Errorf("namespaced: got %q, want ns:raw", got)
+	}
+}
+
+// TestListenerOverflowIsCountedNotSilent covers a loss that used to leave no
+// trace at all.
+//
+// A listener's channel is bounded and the send is non-blocking, so a burst
+// that outruns the UI's drain is shed. That is the right trade - a slow render
+// must not stall the agent - but the shedding was silent, so a truncated
+// answer in the dialog was indistinguishable from a complete one. History()
+// keeps everything, because applyEvent runs before the notify, so the count
+// means "the live view is behind", not "content is gone".
+func TestListenerOverflowIsCountedNotSilent(t *testing.T) {
+	c := uiadapter.NewSubagentTranscriptConversation("worker", ports.ModelInfo{}, nil)
+	// ActiveTurn hands out a listener only once the conversation is active,
+	// which the first recorded event makes it.
+	c.RecordEvent(uievent.Event{Kind: uievent.KindTurnStart})
+	if _, ok := c.ActiveTurn(); !ok {
+		t.Fatal("no live turn handle, so no listener to overflow")
+	}
+
+	const burst = 200
+	for i := range burst {
+		c.RecordEvent(uievent.Event{
+			Kind: uievent.KindTextDelta,
+			Body: uievent.TextDeltaBody{Text: fmt.Sprintf("chunk-%d", i)},
+		})
+	}
+
+	dropped := c.DroppedEvents()
+	if dropped == 0 {
+		t.Fatal("a 200-event burst into an undrained 32-deep channel dropped nothing; " +
+			"either the buffer grew or the loss is still uncounted")
+	}
+
+	// The record is complete even though the live view is not.
+	var text string
+	for _, m := range c.History() {
+		text += m.Text
+	}
+	if !strings.Contains(text, "chunk-199") {
+		t.Errorf("History lost the last chunk; the drop must only affect the live view")
 	}
 }
