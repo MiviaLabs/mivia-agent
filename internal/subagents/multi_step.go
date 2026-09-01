@@ -178,12 +178,11 @@ func originForRequest(ctx context.Context, req runtime.Request) agent.EventOrigi
 		SessionID:       req.SessionID,
 		TurnID:          req.TurnID,
 	}
-	// The dispatching subagent, when there is one. StampEventOrigin keeps the
-	// INNERMOST origin, so without this edge a depth-2 run is reported as a
-	// sibling of its own parent rather than a child of it.
-	if parent, ok := OriginFrom(ctx); ok {
-		origin.ParentTaskID = parent.TaskID
-	}
+	// The task that caused this one to start, carried on the request itself.
+	// A context value cannot do this job: the coordinator roots every task's
+	// context in context.Background(), so nothing a caller puts on its own
+	// context is reachable from the task it starts.
+	origin.ParentTaskID = req.ParentTaskID
 	return origin
 }
 
@@ -217,12 +216,6 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	// stamp, parallel subagents are indistinguishable downstream.
 	origin := originForRequest(ctx, req)
 	stamped := StampEventOrigin(h.OnEvent, origin)
-
-	// Carry this run's origin into everything it dispatches, so a nested run
-	// can name its parent. Both the request context and the timeout-derived
-	// context are decorated: nested dispatch reaches originForRequest through
-	// whichever of the two the calling path happens to hold.
-	ctx = ContextWithOrigin(ctx, origin)
 
 	announceRunStart(stamped, req.Name, origin.TaskDescription)
 

@@ -22,6 +22,11 @@ const (
 
 type Request struct {
 	ID, ParentID, TurnID, SessionID, Role, Name, Scope string
+	// ParentTaskID is the attribution key of the task that caused this one to
+	// start. Distinct from ParentID, which is the parent INVOCATION id: the
+	// two diverge whenever a coordinator supplies its own task id, and it is
+	// the attribution key that a consumer joins a run tree on.
+	ParentTaskID string
 	// AgentName, AgentDigest, Skill, ProviderName and Model are immutable work metadata used by
 	// agent-routing handlers. They are not policy scope or permission grants.
 	AgentName, AgentDigest, Skill string

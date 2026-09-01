@@ -218,6 +218,11 @@ func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole st
 		Name:      toRole,
 		AgentName: toRole,
 		Input:     input,
+		// The asking task caused this one to start, so it is this run's
+		// parent. Without the edge a referral is reported as a sibling of the
+		// task that asked for it, and a consumer drawing a tree of runs has
+		// nothing to join on.
+		ParentTaskID: c.askerTaskID(ask.ID),
 	}
 	if len(meta) > 0 {
 		task.AgentDigest = meta[0].AgentDigest

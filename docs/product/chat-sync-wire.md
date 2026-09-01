@@ -122,14 +122,17 @@ run an event belongs to; two runs of the same agent have different task ids.
 how deep a run sits; `parent_task` reports under which run, which two runs at
 the same depth do not share.
 
-`parent_task` is absent whenever the root loop dispatched the run - the
-common case - and **it is absent in every shipped configuration today.** A
-subagent cannot dispatch a subagent: the mandatory tool denylist removes
-`delegate`, `dispatch_tasks` and `spawn_agent` from every spawned registry.
-The one path that starts work for a running agent, an `ask_agent` referral,
-does not yet carry the asking task's identity to the task it starts. A
-consumer must therefore treat an absent `parent_task` as "top level", never
-as "unknown", and must not require the field to draw a run.
+`parent_task` is absent whenever the root loop dispatched the run, which is
+the common case. A subagent cannot dispatch a subagent - the mandatory tool
+denylist removes `delegate`, `dispatch_tasks` and `spawn_agent` from every
+spawned registry - so the one relationship that produces a parent today is an
+`ask_agent` referral: a task asks a peer role a question, and the referral
+started to answer it reports the asking task as its parent.
+
+A consumer must treat an absent `parent_task` as "top level", never as
+"unknown", and must not require the field to draw a run. The parent can also
+be genuinely unreachable: an ask whose owner was released at a retry boundary
+reports no parent rather than a stale one.
 
 A run reports its own start and end: `subagent.started` carries `task`, a
 preview of what the run was asked to do that the producer bounds to 200
