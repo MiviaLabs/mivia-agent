@@ -3,10 +3,7 @@ package chat
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -15,23 +12,8 @@ import (
 
 // Session persistence constants.
 const (
-	// metaFileName is the metadata file inside a session directory.
-	metaFileName = "meta.json"
-
 	// AutoSaveName is the reserved name prefix for auto-save on exit.
 	AutoSaveName = "__last__"
-
-	// AutoSaveKeep is the maximum number of auto-saved sessions to retain.
-	// Older auto-saves beyond this count are pruned on each exit.
-	// Set high to prevent silent data loss across many sessions.
-	AutoSaveKeep = 50
-
-	// TurnSaveKeep is the maximum number of per-turn crash-recovery snapshots
-	// to retain. Turn snapshots exist only so an unexpected kill does not lose
-	// the current conversation, and each holds a full transcript copy, so the
-	// budget is far smaller than AutoSaveKeep. Without a budget they were never
-	// pruned at all: one directory per turn, forever.
-	TurnSaveKeep = 5
 
 	// turnSaveMarker distinguishes a per-turn crash-recovery snapshot from an
 	// exit auto-save. It is embedded in the directory name.
@@ -45,22 +27,6 @@ const (
 	// milliseconds were added. Still on disk in existing workspaces.
 	autoSaveLegacyTimeFormat = "20060102T150405"
 )
-
-// sessionIOLocks prevents readers and writers of the same session directory
-// from colliding on platforms whose rename semantics reject replacing an open
-// file (notably Windows). Different session directories remain concurrent.
-var sessionIOLocks sync.Map // map[string]*sync.RWMutex
-
-func sessionIOLock(dir string) *sync.RWMutex {
-	lock, _ := sessionIOLocks.LoadOrStore(filepath.Clean(dir), &sync.RWMutex{})
-	return lock.(*sync.RWMutex)
-}
-
-// cleanupSessionIOLock removes the I/O lock for a session directory.
-// Called after session deletion to prevent unbounded sync.Map growth.
-func cleanupSessionIOLock(dir string) {
-	sessionIOLocks.Delete(filepath.Clean(dir))
-}
 
 // SessionInfo is the public metadata for a saved session.
 type SessionInfo struct {
@@ -93,26 +59,6 @@ func (s SessionInfo) Reference() string {
 	return s.Name
 }
 
-// sessionMeta is the on-disk metadata shape (extensible).
-type sessionMeta struct {
-	Name         string    `json:"name"`
-	Model        string    `json:"model"`
-	Provider     string    `json:"provider"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	TurnCount    int       `json:"turn_count"`
-	TokenCount   int       `json:"token_count"`
-	ChunkCount   int       `json:"chunk_count"`
-	MessageCount int       `json:"message_count"`
-	// Dir is the absolute directory the session was created or used in.
-	Dir string `json:"dir,omitempty"`
-	// Worktree is the mivia worktree name when Dir lies inside one.
-	Worktree string `json:"worktree,omitempty"`
-	// ToolAdmission is the deferred-tool admitted set for this snapshot (plan
-	// tools/05 D3). Absent on sessions that admitted nothing.
-	ToolAdmission *contextstate.SessionAdmission `json:"tool_admission,omitempty"`
-}
-
 // --- Session methods ---
 
 // sanitizeSessionName prevents path traversal and encoding issues.
@@ -142,98 +88,16 @@ func sanitizeSessionName(name string) string {
 // mutation of s.Messages (e.g. from SendUser) while also never
 // blocking the session during disk operations.
 func (s *Session) Save(name string) error {
-	if s.ContextEnabled() {
-		name = sanitizeSessionName(name)
-		s.mu.Lock()
-		s.captureBindingLocked()
-		msgs := cloneContextMessages(s.Messages)
-		selection := s.binding
-		s.mu.Unlock()
-		return s.saveContextSession(name, msgs, selection)
+	if !s.ContextEnabled() {
+		return fmt.Errorf("context session catalog is not configured")
 	}
 	name = sanitizeSessionName(name)
-	if s.SessionDir == "" && s.sessionStore == nil {
-		return fmt.Errorf("session directory not set")
-	}
-
-	// Snapshot messages and model under lock, copied so I/O is lock-free.
 	s.mu.Lock()
 	s.captureBindingLocked()
-	msgs := make([]provider.Message, len(s.Messages))
-	copy(msgs, s.Messages)
+	msgs := cloneContextMessages(s.Messages)
 	selection := s.binding
 	s.mu.Unlock()
-
-	// If a session store is wired, delegate to it.
-	if s.sessionStore != nil {
-		if err := s.sessionStore.Save(name, msgs, selection.Model, selection.ProviderName); err != nil {
-			return err
-		}
-		return s.persistAdmission(name)
-	}
-
-	// Fallback: direct file I/O for backward compat.
-	return s.saveToSessionDir(name, msgs, selection)
-}
-
-// saveToSessionDir writes the transcript chunks and metadata directly under
-// SessionDir (the legacy path used when no session store is wired).
-func (s *Session) saveToSessionDir(name string, msgs []provider.Message, selection ModelBinding) error {
-	dir := filepath.Join(s.SessionDir, name)
-	// The directory the session lives in is the process working directory,
-	// not the session storage directory. Both names are needed in this
-	// function, so they stay distinct.
-	ctxDir, ctxWorktree := currentDirContext()
-	ioLock := sessionIOLock(dir)
-	ioLock.Lock()
-	defer ioLock.Unlock()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create session dir: %w", err)
-	}
-	chunkCount, err := writeSessionChunks(dir, msgs)
-	if err != nil {
-		return err
-	}
-
-	// Count real conversational turns. The session-owned core-memory frame is
-	// a user-role message that must not count as a turn (see
-	// conversationalTurnCount); pre-fix, every memory-enabled session's
-	// meta.json read realTurns+1.
-	turnCount := conversationalTurnCount(msgs)
-
-	// Build metadata. Preserve original CreatedAt if this is a re-save.
-	createdAt := time.Now()
-	if existingMeta, err := readMetaJSON(dir); err == nil {
-		createdAt = existingMeta.CreatedAt
-	}
-
-	meta := sessionMeta{
-		Name:         name,
-		Model:        selection.Model,
-		Provider:     selection.ProviderName,
-		CreatedAt:    createdAt,
-		UpdatedAt:    time.Now(),
-		TurnCount:    turnCount,
-		TokenCount:   provider.MessagesTokens(msgs, provider.ContextAccountingProfile{}),
-		ChunkCount:   chunkCount,
-		MessageCount: len(msgs),
-		Dir:          ctxDir,
-		Worktree:     ctxWorktree,
-	}
-	if record := s.admissionRecord(); len(record.Names) > 0 {
-		meta.ToolAdmission = &record
-	}
-
-	if err := writeMetaJSON(dir, meta); err != nil {
-		return fmt.Errorf("write meta: %w", err)
-	}
-	// Chunks at or beyond the newly committed count are stale (a larger
-	// previous snapshot, or an emptied session). Remove them only now that
-	// meta.json references the new count, so a failed save never leaves
-	// meta.json pointing at deleted chunk files.
-	removeStaleChunkFiles(dir, chunkCount)
-
-	return nil
+	return s.saveContextSession(name, msgs, selection)
 }
 
 // Load replaces this session's history, binding and tool surface with a saved
@@ -271,85 +135,21 @@ func (s *Session) LoadReadOnly(name string) error {
 
 // loadReserved performs the load with the session already reserved.
 func (s *Session) loadReserved(name string, readOnly bool) error {
-	if s.ContextEnabled() {
-		resolved := sanitizeSessionName(name)
-		isContextSession, err := s.loadContextCatalog(resolved, readOnly)
-		if err != nil {
-			return err
-		}
-		s.mu.Lock()
-		s.loadedContextSession = isContextSession
-		s.mu.Unlock()
-		// Replay the admitted tool surface synchronously, before this session
-		// can issue its first request (plan tools/05 D3/R2-3).
-		s.replayAdmission(resolved)
-		return nil
+	if !s.ContextEnabled() {
+		return fmt.Errorf("context session catalog is not configured")
 	}
-	name = sanitizeSessionName(name)
-	s.mu.Lock()
-	s.loadedContextSession = false
-	s.mu.Unlock()
-	if s.SessionDir == "" && s.sessionStore == nil {
-		return fmt.Errorf("session directory not set")
-	}
-	var err error
-	if s.sessionStore != nil {
-		err = s.loadFromStore(name)
-	} else {
-		err = s.loadFromFiles(name)
-	}
+	resolved := sanitizeSessionName(name)
+	isContextSession, err := s.loadContextCatalog(resolved, readOnly)
 	if err != nil {
 		return err
 	}
-	s.replayAdmission(name)
+	s.mu.Lock()
+	s.loadedContextSession = isContextSession
+	s.mu.Unlock()
+	// Replay the admitted tool surface synchronously, before this session
+	// can issue its first request (plan tools/05 D3/R2-3).
+	s.replayAdmission(resolved)
 	return nil
-}
-
-func (s *Session) loadFromStore(name string) error {
-	token := s.captureOperationToken("load:" + name)
-	msgs, info, err := s.sessionStore.LoadWithInfo(name)
-	if err != nil {
-		return fmt.Errorf("load session %q: %w", name, err)
-	}
-	factory := s.bindingFactorySnapshot()
-	if factory == nil {
-		return s.publishLoadedMessages(token, msgs, info.Model)
-	}
-	binding, err := factory(info.Provider, info.Model)
-	if err != nil {
-		return fmt.Errorf("prepare session binding: %w", err)
-	}
-	return s.publishLoadedSession(token, binding, msgs, nil)
-}
-
-func (s *Session) loadFromFiles(name string) error {
-	token := s.captureOperationToken("load:" + name)
-	dir := filepath.Join(s.SessionDir, name)
-	ioLock := sessionIOLock(dir)
-	ioLock.RLock()
-	defer ioLock.RUnlock()
-	meta, err := readMetaJSON(dir)
-	if err != nil {
-		return fmt.Errorf("session %q: %w", name, err)
-	}
-	var msgs []provider.Message
-	for i := 0; i < meta.ChunkCount; i++ {
-		chunkPath := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
-		chunkMsgs, readErr := readJSONL(chunkPath)
-		if readErr != nil {
-			return fmt.Errorf("read chunk %d: %w", i, readErr)
-		}
-		msgs = append(msgs, chunkMsgs...)
-	}
-	factory := s.bindingFactorySnapshot()
-	if factory == nil {
-		return s.publishLoadedMessages(token, msgs, meta.Model)
-	}
-	binding, err := factory(meta.Provider, meta.Model)
-	if err != nil {
-		return fmt.Errorf("prepare session binding: %w", err)
-	}
-	return s.publishLoadedSession(token, binding, msgs, nil)
 }
 
 func (s *Session) bindingFactorySnapshot() func(string, string) (ModelBinding, error) {

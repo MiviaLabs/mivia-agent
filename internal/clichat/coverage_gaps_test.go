@@ -24,6 +24,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -498,8 +499,12 @@ func TestHandleSlashLimitsAndBudgetBranches(t *testing.T) {
 }
 
 func TestHandleSlashSessionsBranches(t *testing.T) {
-	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, nullCompleter{})
-	sess.SessionDir = t.TempDir()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	sess := wireTestContextSession(t, store, &config.Resolved{ProviderName: "p", Model: "m"})
 	term := NewTestTerminal(&bytes.Buffer{})
 
 	// Missing-name usage lines.

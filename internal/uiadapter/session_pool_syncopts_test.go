@@ -128,9 +128,6 @@ func TestPoolSyncOptionsEmptyWSRootFailsClosed(t *testing.T) {
 func TestPoolSyncOptionsPersistsIdentityWithoutSessionDir(t *testing.T) {
 	wsRoot := t.TempDir()
 	sess := &chat.Session{SessionID: "principal-pool-resume"}
-	if sess.SessionDir != "" {
-		t.Fatalf("setup: SessionDir = %q, want empty - this test exists to prove the fix does not depend on it", sess.SessionDir)
-	}
 	res := &config.Resolved{}
 
 	first := poolSyncOptions(sess, sess.SessionID, wsRoot, res, nil)

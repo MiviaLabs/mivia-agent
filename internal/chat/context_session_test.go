@@ -85,9 +85,6 @@ func TestPlainTurnUsesPreparationTransaction(t *testing.T) {
 	if prep.prepares != 1 || pub.commits != 1 || prep.discards != 1 {
 		t.Fatalf("prepares=%d commits=%d discards=%d", prep.prepares, pub.commits, prep.discards)
 	}
-	if session.Store() != nil || session.SessionDir != "" {
-		t.Fatal("context-enabled turn retained a legacy JSONL store")
-	}
 }
 
 func TestContextPreparationRetainsWorktreeInstance(t *testing.T) {
@@ -142,9 +139,6 @@ func TestCheckpointFailureDoesNotFallbackToJSONL(t *testing.T) {
 	}
 	if pub.commits != 1 || prep.discards != 1 || session.MessagesCount() != 0 {
 		t.Fatalf("commits=%d discards=%d messages=%d", pub.commits, prep.discards, session.MessagesCount())
-	}
-	if session.Store() != nil || session.SessionDir != "" {
-		t.Fatal("checkpoint failure fell back to legacy JSONL")
 	}
 }
 

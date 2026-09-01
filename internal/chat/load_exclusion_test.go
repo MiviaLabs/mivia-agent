@@ -37,15 +37,13 @@ func liveSurface(sess *Session, names ...string) {
 // and bumps turnID under a turn boundary that already captured RequireTurnID,
 // fencing out its publication. All three are asserted here.
 func TestLoadRefusesWhileATurnIsActive(t *testing.T) {
-	// A file-backed session with no binding factory: publishLoadedMessages is
-	// the one publication path with no activeTurns check of its own, which is
-	// exactly why the exclusion has to live in Load.
-	store, err := NewFileSessionStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	sess.sessionStore = store
+	// A context-bound session with no binding factory: publishLoadedMessages
+	// is the one publication path with no activeTurns check of its own,
+	// which is exactly why the exclusion has to live in Load.
+	sess, _ := contextCatalogSession(t)
+	sess.mu.Lock()
+	sess.bindingFactory = nil
+	sess.mu.Unlock()
 	widener := &replayWidener{sess: sess}
 	sess.SetSurfaceWidener(widener.fn)
 	sess.SetAdmissionBinding("reader", "digest-1")

@@ -27,9 +27,15 @@ type SessionPool struct {
 	sessions     map[string]*chat.Session
 	convs        map[string]*Conversation
 	syncSessions map[string]*chatsync.SyncSession
-	res          *config.Resolved
-	agentState   *cliagents.AgentSessionState
-	toolsOn      bool
+	// busReleases holds the release func returned by SessionBusRegistrar for
+	// each session id whose bus was successfully registered, parallel to
+	// syncSessions (one entry per attachSyncLocked success). ReleaseLeases
+	// drains it alongside its existing sync-session teardown so a pooled
+	// session's chat-sync bus binding does not outlive the pool.
+	busReleases map[string]func()
+	res         *config.Resolved
+	agentState  *cliagents.AgentSessionState
+	toolsOn     bool
 	// threads is the one SubagentThreads registry shared by every
 	// Conversation the pool creates or resumes, so the activity panel's
 	// thread dialog (wired once, at startup, to this same instance) can
@@ -55,6 +61,18 @@ type SessionPool struct {
 // so a test can substitute a fixed identity without a real logged-in session
 // or a network call to Whoami.
 var AuthorUserIDProvider = chatsync.DefaultAuthorUserIDProvider
+
+// SessionBusRegistrar binds a session's EventBus into the CLI-side
+// session-keyed registry (internal/clichat.RegisterSessionBus) so
+// emitSubagentProgress - package-level, no session of its own - can
+// publish that session's subagent lifecycle events onto it. Nil (the
+// zero value) is a safe no-op: a caller that never wires this (a test,
+// or a build that never imports internal/cli) simply gets no chatsync
+// routing, exactly like an unset SubagentProgressRegistrar produces no
+// UI routing. Mirrors SubagentProgressRegistrar's indirection shape so
+// internal/uiadapter never imports internal/cli (INV-TUI-29): only
+// internal/newtui, which imports both, wires this at startup.
+var SessionBusRegistrar func(sessionID string, bus *events.Bus) (release func())
 
 // Threads returns the SubagentThreads registry every pooled Conversation is
 // wired to. Callers building the UI (internal/newtui) pass this same
@@ -179,6 +197,18 @@ func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 		syncList = append(syncList, pooledSync{bus: bus, ss: ss})
 	}
 	p.syncSessions = make(map[string]*chatsync.SyncSession)
+	// Drain busReleases alongside the sync-session teardown above: every
+	// entry here came from a successful attachSyncLocked, so its lifetime
+	// matches syncList's exactly. Missing entries (SessionBusRegistrar was
+	// nil at attach time, or a session was never sync-attached at all) are
+	// tolerated - the map simply has no release func for that id.
+	busReleaseList := make([]func(), 0, len(p.busReleases))
+	for _, release := range p.busReleases {
+		if release != nil {
+			busReleaseList = append(busReleaseList, release)
+		}
+	}
+	p.busReleases = make(map[string]func())
 	p.mu.Unlock()
 	// Release outside p.mu: ReleaseContextLease must run lock-free (it joins
 	// the heartbeat goroutine and issues a store write with its own timeout).
@@ -190,6 +220,9 @@ func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 			ps.bus.Flush()
 		}
 		_ = ps.ss.Stop(ctx)
+	}
+	for _, release := range busReleaseList {
+		release()
 	}
 }
 
@@ -212,6 +245,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		sessions:     make(map[string]*chat.Session),
 		convs:        make(map[string]*Conversation),
 		syncSessions: make(map[string]*chatsync.SyncSession),
+		busReleases:  make(map[string]func()),
 		res:          res,
 		agentState:   agentState,
 		toolsOn:      toolsOn,
@@ -234,8 +268,8 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 }
 
 // CreateFresh creates a brand-new session, inheriting runtime state (tools,
-// store, context manager, event bus, session directory) from the first
-// existing pool member. It does NOT call Load — the session starts empty.
+// context store, context manager, event bus) from the first existing pool
+// member. It does NOT call Load — the session starts empty.
 // The new conversation is registered in the pool and returned.
 func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	p.mu.Lock()
@@ -254,9 +288,6 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 
 	// Inherit runtime state from the first existing session.
 	for _, existing := range p.sessions {
-		if existing.SessionDir != "" {
-			sess.SessionDir = existing.SessionDir
-		}
 		if existing.Tools != nil {
 			sess.Tools = existing.Tools
 			sess.MaxToolResultChars = existing.MaxToolResultChars
@@ -265,9 +296,6 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 		}
 		if existing.EventBus != nil {
 			sess.EventBus = existing.EventBus
-		}
-		if store := existing.Store(); store != nil {
-			sess.SetSessionStore(store, nil)
 		}
 		if mgr := existing.ContextManager(); mgr != nil {
 			origPrincipal := existing.ContextPrincipal()
@@ -326,11 +354,8 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	sess := chat.NewSession(p.res, comp)
 	sess.UseTools = p.toolsOn
 
-	// Inherit session directory, tools, event bus, and session/context stores from existing session if set
+	// Inherit tools, event bus, and context store from existing session if set
 	for _, existing := range p.sessions {
-		if existing.SessionDir != "" {
-			sess.SessionDir = existing.SessionDir
-		}
 		if existing.Tools != nil {
 			sess.Tools = existing.Tools
 			sess.MaxToolResultChars = existing.MaxToolResultChars
@@ -339,9 +364,6 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 		}
 		if existing.EventBus != nil {
 			sess.EventBus = existing.EventBus
-		}
-		if store := existing.Store(); store != nil {
-			sess.SetSessionStore(store, nil)
 		}
 		if mgr := existing.ContextManager(); mgr != nil {
 			origPrincipal := existing.ContextPrincipal()
@@ -443,6 +465,58 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 		if opts.EnablePolling {
 			go p.pumpRemoteInputs(id, syncSess.Inputs())
 		}
+		// Bind this session's bus into the CLI-side session-keyed registry
+		// (internal/clichat.RegisterSessionBus, via the indirection var so
+		// this package never imports internal/cli - INV-TUI-29) so a
+		// subagent's lifecycle events, published through the package-level
+		// emitSubagentProgress sink, reach THIS session's chat-sync stream.
+		// Only after a successful attach: a session with no active sync has
+		// nothing for the bus binding to feed, and a nil SessionBusRegistrar
+		// (unwired build, most tests) is a safe no-op.
+		if SessionBusRegistrar != nil {
+			p.busReleases[id] = SessionBusRegistrar(id, sess.EventBus)
+		}
+	}
+}
+
+// ReattachSyncAfterLogin closes the login-after-session-start sync gap: a
+// session created (and pooled) while logged out never gets a chat-sync
+// session, because attachSyncLocked's `p.res.Sync.Active(tokens != nil)`
+// check is false at construction time and nothing re-checks it later. A
+// successful /login flips that check true for every session already in the
+// pool, so this re-runs attachSyncLocked for each one - idempotent per
+// session via attachSyncLocked's own `p.syncSessions[id]` guard, so a
+// session that was already syncing (this is the SECOND session pooled
+// after an earlier login, say) gains no duplicate attach.
+//
+// The session list is snapshotted under p.mu and then the lock is
+// RELEASED before iterating: chatsync.OpenSession does real network I/O
+// (an HTTP round trip to create or resume the remote session), and holding
+// p.mu across that for every pooled session would serialize a multi-session
+// pool's login-triggered sync behind one slow or hanging network call,
+// blocking every other pool operation (Session, GetOrCreate, IsActive) for
+// the duration. Each session's own attach still short-locks around
+// attachSyncLocked, matching every other call site's locking discipline.
+func (p *SessionPool) ReattachSyncAfterLogin() {
+	p.mu.Lock()
+	sessions := make([]*chat.Session, 0, len(p.sessions))
+	seen := make(map[*chat.Session]struct{}, len(p.sessions))
+	for _, sess := range p.sessions {
+		if sess == nil {
+			continue
+		}
+		if _, dup := seen[sess]; dup {
+			continue
+		}
+		seen[sess] = struct{}{}
+		sessions = append(sessions, sess)
+	}
+	p.mu.Unlock()
+
+	for _, sess := range sessions {
+		p.mu.Lock()
+		p.attachSyncLocked(sess)
+		p.mu.Unlock()
 	}
 }
 

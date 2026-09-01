@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -38,71 +37,6 @@ func (c erroringPlainCompleter) ChatTurn(_ context.Context, req provider.Request
 		_, _ = io.WriteString(req.StreamWriter, c.partial)
 	}
 	return nil, c.err
-}
-
-// TestNoMessageLossErroredPlainLegacyTurnIsPersisted pins the fix for the
-// legacy (no session/context store) plain path: sendPlainLegacy previously
-// discarded a non-interrupted error's history entirely ("Non-interrupted
-// errors keep today's drop-everything behavior"); the user's question and
-// any already-streamed partial reply must survive into the session's
-// in-memory history and the on-disk autosave, while the original error must
-// still surface to the caller exactly as before.
-func TestNoMessageLossErroredPlainLegacyTurnIsPersisted(t *testing.T) {
-	upstream := errors.New("upstream 500")
-	const partial = "Both fixes work. Here is the pro"
-	const question = "prove it"
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, erroringPlainCompleter{partial: partial, err: upstream})
-	sess.SetSessionStore(store, NewSaveManager(store, "test-model", "test-provider"))
-
-	var sink strings.Builder
-	_, sendErr := sess.SendUser(context.Background(), question, &sink)
-	if !errors.Is(sendErr, upstream) {
-		t.Fatalf("SendUser error = %v, want the original upstream error surfaced unchanged", sendErr)
-	}
-
-	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), partial, question)
-
-	names, err := store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) == 0 {
-		t.Fatal("errored turn was never persisted: no session on disk")
-	}
-	loaded, err := store.Load(names[0].Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertInterruptedPlainPersisted(t, loaded, partial, question)
-}
-
-// TestErroredPlainLegacyTurnBudgetExceededStillDiscards is defense-in-depth,
-// mirroring finishErroredContextTurn's identical guard on the agent path: an
-// over-budget history must never be adopted or persisted even if some future
-// completer implementation raises ErrPromptBudgetExceeded from ChatStream
-// itself rather than the pre-flight check in sendPlainLegacy.
-func TestErroredPlainLegacyTurnBudgetExceededStillDiscards(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, erroringPlainCompleter{err: agent.ErrPromptBudgetExceeded})
-	sess.SetSessionStore(store, NewSaveManager(store, "test-model", "test-provider"))
-
-	var sink strings.Builder
-	if _, err := sess.SendUser(context.Background(), "too much history", &sink); !errors.Is(err, agent.ErrPromptBudgetExceeded) {
-		t.Fatalf("SendUser error = %v, want ErrPromptBudgetExceeded surfaced unchanged", err)
-	}
-	names, _ := store.List()
-	if len(names) != 0 {
-		t.Fatal("budget-exceeded turn must not be persisted")
-	}
 }
 
 // TestNoMessageLossErroredPlainContextTurnIsPersisted is the durable-context

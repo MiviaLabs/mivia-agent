@@ -81,7 +81,6 @@ func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string) *u
 	}
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = sessionID
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)

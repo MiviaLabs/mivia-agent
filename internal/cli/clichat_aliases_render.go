@@ -82,9 +82,6 @@ var LifecycleStatusFailed = clichat.LifecycleStatusFailed
 // NewToolRenderItem re-exports the clichat.NewToolRenderItem function.
 var NewToolRenderItem = clichat.NewToolRenderItem
 
-// ReadAutosaveStatus re-exports the clichat.ReadAutosaveStatus function.
-var ReadAutosaveStatus = clichat.ReadAutosaveStatus
-
 // RenderChatBlocksWithWorkGroupsWindow re-exports the clichat.RenderChatBlocksWithWorkGroupsWindow function.
 var RenderChatBlocksWithWorkGroupsWindow = clichat.RenderChatBlocksWithWorkGroupsWindow
 
@@ -138,9 +135,6 @@ var WrapDisplayRows = clichat.WrapDisplayRows
 
 // WrapDisplayRowsWithSources re-exports the clichat.WrapDisplayRowsWithSources function.
 var WrapDisplayRowsWithSources = clichat.WrapDisplayRowsWithSources
-
-// WriteAutosaveStatus re-exports the clichat.WriteAutosaveStatus function.
-var WriteAutosaveStatus = clichat.WriteAutosaveStatus
 
 // BrandWorkFrames re-exports the clichat.BrandWorkFrames variable.
 var BrandWorkFrames = clichat.BrandWorkFrames

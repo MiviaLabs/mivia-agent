@@ -7,120 +7,27 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// TestTurnCommitSurvivesBenignAutosave locks the defect where a benign host
-// autosave (TUI periodic save, /clear) completing while a turn was in flight
-// fenced the turn out of its own commit: markDurableRevision bumped the
-// durable domain after EVERY successful SaveAfterTurn, so the in-flight turn's
-// captured token no longer matched the current fence and commitPreparedTurn
-// returned ErrStaleOperation - the turn's history was silently dropped from
-// memory and never persisted. Only turn-lifecycle tokens may advance the
-// durable domain, so the turn commit still adopts and persists its history.
-func TestTurnCommitSurvivesBenignAutosave(t *testing.T) {
-	store := newTestStore(t)
-	mgr := NewSaveManager(store, "test-model", "test-provider")
-	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, &fakeCompleter{out: "ok"})
-	sess.SetSessionStore(store, mgr)
-	sess.Messages = []provider.Message{
-		{Role: provider.RoleSystem, Content: "sys"},
-		{Role: provider.RoleUser, Content: "question"},
-		{Role: provider.RoleAssistant, Content: "answer"},
-	}
-
-	snapshot, done, err := sess.beginAgentTurn("next", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer done()
-
-	// A benign host autosave lands while the turn is in flight. Pre-fix this
-	// bumps the durable domain and is the trigger that fences the turn out of
-	// commitPreparedTurn.
-	if err := sess.saveAfterTurn(sess.currentSaveToken()); err != nil {
-		t.Fatalf("benign autosave: %v", err)
-	}
-
-	turnMsgs := append(cloneContextMessages(snapshot.messages),
-		provider.Message{Role: provider.RoleUser, Content: "next"},
-		provider.Message{Role: provider.RoleAssistant, Content: "turn answer"},
-	)
-	if err := sess.commitPreparedTurn(turnMsgs, snapshot.token, nil); err != nil {
-		t.Fatalf("commitPreparedTurn after a benign autosave: %v", err)
-	}
-
-	// The turn's history is adopted into the session...
-	blob := historyBlob(sess)
-	if !strings.Contains(blob, "next") || !strings.Contains(blob, "turn answer") {
-		t.Fatalf("turn history was not adopted into the session: %s", blob)
-	}
-	// ...and persisted to the rolling turn snapshot.
-	names, err := store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) != 1 {
-		t.Fatalf("expected one rolling turn snapshot, got %d", len(names))
-	}
-	loaded, err := store.Load(names[0].Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var parts []string
-	for _, m := range loaded {
-		parts = append(parts, m.Role+":"+m.Content)
-	}
-	joined := strings.Join(parts, "|")
-	if !strings.Contains(joined, "next") || !strings.Contains(joined, "turn answer") {
-		t.Fatalf("turn history was not persisted to the rolling snapshot: %s", joined)
-	}
-}
-
-// TestSupersededTurnStillRejectedAfterBenignAutosave pins that the durable
-// fix does not weaken the real stale-turn fence: a turn superseded by a newer
-// beginAgentTurn (turnID advanced) must still return ErrStaleOperation and
-// adopt nothing, even when a benign autosave completes in between. The
-// turnID/epoch/session/binding comparisons are unchanged by the fix.
-func TestSupersededTurnStillRejectedAfterBenignAutosave(t *testing.T) {
-	store := newTestStore(t)
-	mgr := NewSaveManager(store, "test-model", "test-provider")
-	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, &fakeCompleter{out: "ok"})
-	sess.SetSessionStore(store, mgr)
-	sess.Messages = []provider.Message{
-		{Role: provider.RoleSystem, Content: "sys"},
-		{Role: provider.RoleUser, Content: "question"},
-		{Role: provider.RoleAssistant, Content: "answer"},
-	}
-
-	first, doneFirst, err := sess.beginAgentTurn("first", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer doneFirst()
-	// A second turn supersedes the first: turnID advances.
-	_, doneSecond, err := sess.beginAgentTurn("second", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer doneSecond()
-
-	if err := sess.saveAfterTurn(sess.currentSaveToken()); err != nil {
-		t.Fatalf("benign autosave: %v", err)
-	}
-
-	turnMsgs := append(cloneContextMessages(first.messages),
-		provider.Message{Role: provider.RoleUser, Content: "first turn"},
-		provider.Message{Role: provider.RoleAssistant, Content: "first answer"},
-	)
-	if err := sess.commitPreparedTurn(turnMsgs, first.token, nil); !errors.Is(err, ErrStaleOperation) {
-		t.Fatalf("superseded turn error = %v, want ErrStaleOperation", err)
-	}
-	if blob := historyBlob(sess); strings.Contains(blob, "first answer") {
-		t.Fatalf("superseded turn adopted its history: %s", blob)
-	}
-}
+// TestTurnCommitSurvivesBenignAutosave and
+// TestSupersededTurnStillRejectedAfterBenignAutosave used to pin the defect
+// where a benign host autosave bumped the durable domain
+// (SaveManager.SaveAfterTurnWithRevision -> markDurableRevision) and fenced
+// an in-flight turn out of its own commit (commitPreparedTurn's
+// tokenCurrentLocked check). Removed along with the legacy file-backed
+// session store, for a stronger reason than mechanical unreachability:
+// verified against the current source that the bug CLASS is now structurally
+// impossible, not merely unreachable. SaveAfterTurn's only surviving path,
+// autoSaveContextSession -> Save -> saveContextSession, never calls
+// invalidateLocked - the sole call site that bumps operationEpoch
+// (fencing.go) - so a context-path autosave and a turn's own commit fence
+// (finishContextTurn's tokenCurrentLocked, same mechanism
+// commitPreparedTurn used) cannot collide by construction: autosave and
+// turn-commit read/write disjoint state. There is no equivalent scenario
+// left to test.
 
 // TestTurnStartAdmissionPublicationDoesNotFenceOwnTurn locks the defect where a
 // start-of-turn admission publication fenced the turn out of its own commit:
@@ -133,10 +40,13 @@ func TestSupersededTurnStillRejectedAfterBenignAutosave(t *testing.T) {
 // the turn's token pinned to its own turn id after the publication, so the
 // commit runs under the fence the loop actually executed on.
 func TestTurnStartAdmissionPublicationDoesNotFenceOwnTurn(t *testing.T) {
-	store := newTestStore(t)
-	mgr := NewSaveManager(store, "test-model", "test-provider")
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	sess := agentTurnSession(t, &fakeCompleter{out: "turn answer"})
-	sess.SetSessionStore(store, mgr)
+	bindContextSession(t, sess, store)
 	// The widener stands in for the host's rebuild (cli.newSurfaceWidener): it
 	// must build the candidate registry - core tool plus the admitted names -
 	// BEFORE publishing. Publishing the request as-is would install a nil
@@ -174,17 +84,16 @@ func TestTurnStartAdmissionPublicationDoesNotFenceOwnTurn(t *testing.T) {
 	if !strings.Contains(blob, "next") || !strings.Contains(blob, "turn answer") {
 		t.Fatalf("turn history was not adopted into the session: %s", blob)
 	}
-	// ...and persisted to exactly one rolling turn snapshot.
-	names, err := store.List()
+	// ...and persisted durably: SaveAfterTurn's context-path autosave
+	// (autoSaveContextSession) upserts the catalog row under the session's
+	// own id.
+	raw, _, err := store.LoadSession(context.Background(), sess.ContextPrincipal(), sess.SessionID)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("LoadSession: %v", err)
 	}
-	if len(names) != 1 {
-		t.Fatalf("expected one rolling turn snapshot, got %d", len(names))
-	}
-	loaded, err := store.Load(names[0].Name)
-	if err != nil {
-		t.Fatal(err)
+	var loaded []provider.Message
+	if err := contextstate.UnmarshalCanonical(raw, &loaded); err != nil {
+		t.Fatalf("decode persisted catalog record: %v", err)
 	}
 	var parts []string
 	for _, m := range loaded {
@@ -192,7 +101,7 @@ func TestTurnStartAdmissionPublicationDoesNotFenceOwnTurn(t *testing.T) {
 	}
 	joined := strings.Join(parts, "|")
 	if !strings.Contains(joined, "next") || !strings.Contains(joined, "turn answer") {
-		t.Fatalf("turn history was not persisted to the rolling snapshot: %s", joined)
+		t.Fatalf("turn history was not persisted to the catalog: %s", joined)
 	}
 }
 

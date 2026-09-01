@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -200,16 +201,20 @@ func TestSelectModelClearsTheEffortOverride(t *testing.T) {
 // profile, so it owes the same reset as every other rename path: the reasoning
 // surface left on the profile describes the model being renamed away from.
 func TestLoadingAnotherModelsSessionClearsTheReasoningSurface(t *testing.T) {
-	dir := t.TempDir()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	saved := effortSession(t, &requestCaptureCompleter{}, plainModel)
-	saved.SessionDir = dir
+	bindContextSession(t, saved, store)
 	saved.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
 	if err := saved.Save("plain"); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
 	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
-	s.SessionDir = dir
+	bindContextSession(t, s, store)
 	if err := s.SetReasoningEffort(reasoning.Low); err != nil {
 		t.Fatal(err)
 	}

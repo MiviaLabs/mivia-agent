@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 func (s *Session) contextCatalogState() (contextstate.SessionCatalog, contextstate.Principal, bool) {
@@ -22,6 +23,23 @@ func (s *Session) contextCatalogState() (contextstate.SessionCatalog, contextsta
 // without an installed policy).
 func catalogMessages(msgs []provider.Message) ([]byte, error) {
 	return contextstate.MarshalCanonical(redactReasoningForPersistence(msgs))
+}
+
+// redactReasoningForPersistence returns a deep copy of msgs whose assistant
+// ReasoningContent has passed through the process-wide redaction policy. It is
+// applied to the bytes written to disk, never to host history: callers keep the
+// raw reasoning for provider replay and only persist the redacted copy. The
+// policy is read via redact.Current() semantics (redact.Text), which is an
+// identity when no policy is installed, so unconfigured workspaces persist
+// exactly what they always did.
+func redactReasoningForPersistence(msgs []provider.Message) []provider.Message {
+	out := make([]provider.Message, len(msgs))
+	copy(out, msgs)
+	for i := range out {
+		out[i].ToolCalls = append([]provider.ToolCall(nil), msgs[i].ToolCalls...)
+		out[i].ReasoningContent = redact.Text(out[i].ReasoningContent)
+	}
+	return out
 }
 
 func decodeCatalogMessages(data []byte) ([]provider.Message, error) {
@@ -177,6 +195,15 @@ func (s *Session) fetchCatalogSessionData(name string) ([]byte, contextstate.Ses
 }
 
 func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
+	// Captured before fetchCatalogSessionData's (potentially slow) I/O, not
+	// after: a token captured post-fetch only ever compares the session's
+	// state against itself, since nothing observes the interval between
+	// capture and check - a concurrent Clear/SelectModel/Load racing the
+	// fetch would be invisible and this load would silently win over it
+	// (DC-34). Capturing first makes the token span the whole operation, the
+	// same guarantee the legacy file-store loader gave by capturing its
+	// token as its first line, before its own blocking read.
+	token := s.captureOperationToken("catalog-load:" + name)
 	data, info, principal, err := s.fetchCatalogSessionData(name)
 	if err != nil {
 		return false, err
@@ -189,7 +216,6 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 		return false, err
 	}
 	if readOnly {
-		token := s.captureOperationToken("catalog-load:" + name)
 		return isContextSession, s.adoptLoadedMessages(token, msgs)
 	}
 
@@ -236,7 +262,6 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 
 	if factory != nil {
 		if preparedBinding == nil {
-			token := s.captureOperationToken("catalog-load:" + name)
 			return isContextSession, s.adoptLoadedMessages(token, msgs)
 		}
 		var generation *uint64
@@ -244,10 +269,8 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 			g := reclaimedBinding.Generation
 			generation = &g
 		}
-		token := s.captureOperationToken("catalog-load:" + name)
 		return isContextSession, s.publishLoadedSession(token, *preparedBinding, msgs, generation)
 	}
-	token := s.captureOperationToken("catalog-load:" + name)
 	return isContextSession, s.publishLoadedMessages(token, msgs, info.Model)
 }
 

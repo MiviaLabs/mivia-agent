@@ -3,137 +3,66 @@ package chat
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 // ListSessions returns metadata for all saved sessions, sorted by most recently updated.
 func (s *Session) ListSessions() ([]SessionInfo, error) {
-	if catalog, principal, ok := s.contextCatalogState(); ok {
-		s.mu.RLock()
-		instance := s.contextWorktree
-		s.mu.RUnlock()
-		var infos []contextstate.SessionCatalogInfo
-		var err error
-		if !instance.IsZero() {
-			scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
-			if !scopedOK {
-				return nil, fmt.Errorf("worktree session catalog is not configured")
-			}
-			infos, err = scoped.ListWorktreeSessions(context.Background(), principal, instance)
-		} else {
-			infos, err = catalog.ListSessions(context.Background(), principal)
-		}
-		if err != nil {
-			return nil, err
-		}
-		out := make([]SessionInfo, 0, len(infos))
-		for _, info := range infos {
-			out = append(out, sessionInfoFromCatalog(info))
-		}
-		fillSessionTitles(context.Background(), catalog, principal, out)
-		return out, nil
+	catalog, principal, ok := s.contextCatalogState()
+	if !ok {
+		return nil, fmt.Errorf("context session catalog is not configured")
 	}
-	if s.SessionDir == "" && s.sessionStore == nil {
-		return nil, fmt.Errorf("session directory not set")
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	var infos []contextstate.SessionCatalogInfo
+	var err error
+	if !instance.IsZero() {
+		scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
+		if !scopedOK {
+			return nil, fmt.Errorf("worktree session catalog is not configured")
+		}
+		infos, err = scoped.ListWorktreeSessions(context.Background(), principal, instance)
+	} else {
+		infos, err = catalog.ListSessions(context.Background(), principal)
 	}
-	if s.sessionStore != nil {
-		return s.sessionStore.List()
-	}
-	entries, err := os.ReadDir(s.SessionDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	var infos []SessionInfo
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		metaPath := filepath.Join(s.SessionDir, e.Name(), metaFileName)
-		if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-			continue
-		}
-		meta, err := readMetaJSON(filepath.Join(s.SessionDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		infos = append(infos, SessionInfo{Name: meta.Name, Model: meta.Model, Provider: meta.Provider, CreatedAt: meta.CreatedAt, UpdatedAt: meta.UpdatedAt, TurnCount: meta.TurnCount, TokenCount: meta.TokenCount, ChunkCount: meta.ChunkCount, MessageCount: meta.MessageCount, Dir: meta.Dir, Worktree: meta.Worktree})
+	out := make([]SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, sessionInfoFromCatalog(info))
 	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].UpdatedAt.After(infos[j].UpdatedAt) })
-	return infos, nil
+	fillSessionTitles(context.Background(), catalog, principal, out)
+	return out, nil
 }
 
 // DeleteSession removes a saved session.
 func (s *Session) DeleteSession(name string) error {
-	if s.ContextEnabled() {
-		catalog, principal, ok := s.contextCatalogState()
-		if !ok {
-			return fmt.Errorf("context session catalog is not configured")
+	catalog, principal, ok := s.contextCatalogState()
+	if !ok {
+		return fmt.Errorf("context session catalog is not configured")
+	}
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	if !instance.IsZero() {
+		scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
+		if !scopedOK {
+			return fmt.Errorf("worktree session catalog is not configured")
 		}
-		s.mu.RLock()
-		instance := s.contextWorktree
-		s.mu.RUnlock()
-		if !instance.IsZero() {
-			scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
-			if !scopedOK {
-				return fmt.Errorf("worktree session catalog is not configured")
-			}
-			return scoped.DeleteWorktreeSessionSnapshot(context.Background(), principal, sanitizeSessionName(name), instance)
-		}
-		return catalog.DeleteSessionSnapshot(context.Background(), principal, sanitizeSessionName(name))
+		return scoped.DeleteWorktreeSessionSnapshot(context.Background(), principal, sanitizeSessionName(name), instance)
 	}
-	name = sanitizeSessionName(name)
-	if s.SessionDir == "" && s.sessionStore == nil {
-		return fmt.Errorf("session directory not set")
-	}
-	if s.sessionStore != nil {
-		return s.sessionStore.Delete(name)
-	}
-	dir := filepath.Join(s.SessionDir, name)
-	ioLock := sessionIOLock(dir)
-	ioLock.Lock()
-	defer ioLock.Unlock()
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return fmt.Errorf("session %q not found", name)
-	}
-	return os.RemoveAll(dir)
+	return catalog.DeleteSessionSnapshot(context.Background(), principal, sanitizeSessionName(name))
 }
 
-// SaveLast saves the session as auto-save on exit and prunes old auto-saves.
+// SaveLast is a permanent no-op: the legacy file-store's own auto-save-on-exit
+// mechanism (SaveManager) is gone, and context-enabled sessions - the only
+// kind that exist in production, since SetContextManager is always called -
+// commit durably to the context catalog as each turn happens, with no
+// separate "save on exit" step. Kept as a stable, harmless call for its
+// existing callers (internal/uiadapter/runner.go, internal/clichat/chat_repl.go).
 func (s *Session) SaveLast() error {
-	if s.ContextEnabled() {
-		return nil
-	}
-	if s.SessionDir == "" {
-		return nil
-	}
-	s.mu.Lock()
-	s.captureBindingLocked()
-	msgs := make([]provider.Message, len(s.Messages))
-	copy(msgs, s.Messages)
-	selection := s.binding
-	// A lone user message is real content (TestHasContent_UserOnly): the exit
-	// auto-save must not drop the question just because the transcript has no
-	// system prompt and no assistant reply yet.
-	hasContent := hasContent(msgs)
-	s.mu.Unlock()
-	if !hasContent {
-		return nil
-	}
-	if s.saveManager != nil {
-		return s.saveManager.SaveOnExitWithSelection(msgs, selection.ProviderName, selection.Model)
-	}
-	name := uniqAutoSaveName(s.SessionDir, "")
-	if err := s.Save(name); err != nil {
-		return err
-	}
-	s.pruneAutoSaves()
 	return nil
 }

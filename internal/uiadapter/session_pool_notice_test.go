@@ -60,7 +60,6 @@ func TestSessionPoolNoticesSyncIsRunning(t *testing.T) {
 	}}
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "pool-notice-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
@@ -112,7 +111,6 @@ func TestSessionPoolNoticesSyncStop(t *testing.T) {
 	}}
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "pool-stop-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)

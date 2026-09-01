@@ -58,9 +58,6 @@ func TestContextEnabledTurnCommitsSQLite(t *testing.T) {
 	if snapshot.Active.SourceRange.Start.Sequence != 1 || snapshot.Active.SourceRange.End.Sequence != 2 {
 		t.Fatalf("active source range = %+v", snapshot.Active.SourceRange)
 	}
-	if session.Store() != nil {
-		t.Fatal("context-enabled session exposed a legacy store")
-	}
 }
 
 func TestManagedEnsureAndRotationUseRetainedDirectory(t *testing.T) {

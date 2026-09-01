@@ -324,7 +324,6 @@ func listSessions(sess *chat.Session, term *Terminal) (bool, bool, error) {
 func showSession(sess *chat.Session, term *Terminal) (bool, bool, error) {
 	usage := sess.ContextUsage()
 	term.WriteString(fmt.Sprintf("\ncurrent: %d messages, %d turns, ~%d tokens (%d%% context)", len(sess.Messages), sess.UserTurns(), usage.UsedTokens, usage.Percent))
-	term.WriteString(fmt.Sprintf("\nsessions dir: %s", sess.SessionDir))
 	sessions, err := sess.ListSessions()
 	if err != nil {
 		term.WriteString(fmt.Sprintf("\nsaved: (list error: %v)", err))

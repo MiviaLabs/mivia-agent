@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 var (
@@ -135,57 +134,20 @@ func logStaleOperation(where string, err error) {
 // SaveAfterTurn saves the session as an auto-save without pruning. It is
 // fenced so a clear, load, switch, or newer turn cannot publish stale state.
 func (s *Session) SaveAfterTurn() {
-	if s.ContextEnabled() {
-		s.autoSaveContextSession()
-		return
-	}
-	if s.SessionDir == "" && s.saveManager == nil {
-		return
-	}
-	s.mu.Lock()
-	s.captureBindingLocked()
-	token := s.captureOperationTokenLocked("manual-save")
-	s.mu.Unlock()
-	if err := s.saveAfterTurn(token); err != nil {
-		if errors.Is(err, ErrStaleOperation) || errors.Is(err, ErrStaleAutosave) {
-			logStaleOperation("turn auto-save", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
-		}
-	}
+	s.autoSaveContextSession()
 }
 
+// saveAfterTurn is a permanent no-op, for the same reason SaveLast is: the
+// legacy file-store's own per-turn crash-recovery mechanism (SessionDir,
+// saveManager) is gone. Its remaining callers, persistPlainLegacyTurn and
+// commitPreparedTurn, are themselves unreachable in production - every real
+// session is context-enabled, and finishAgentTurn / the plain-turn path both
+// take the context-catalog branch instead - so this was already the
+// production behavior before this change: SessionDir and saveManager were
+// always unset for a context-enabled session, and this method's original
+// guard already returned nil on every real invocation.
 func (s *Session) saveAfterTurn(token OperationToken) error {
-	if s.SessionDir == "" && s.saveManager == nil {
-		return nil
-	}
-	s.mu.Lock()
-	s.captureBindingLocked()
-	if !s.tokenCurrentLocked(token) {
-		s.mu.Unlock()
-		return ErrStaleOperation
-	}
-	msgs := make([]provider.Message, len(s.Messages))
-	copy(msgs, s.Messages)
-	// A lone user message is real content (TestHasContent_UserOnly): the
-	// per-turn crash snapshot must not drop the question just because the
-	// transcript has no system prompt and no assistant reply yet.
-	hasContent := hasContent(msgs)
-	s.mu.Unlock()
-	if !hasContent {
-		return nil
-	}
-	if s.saveManager != nil {
-		if err := s.saveManager.SaveAfterTurnWithRevision(msgs, token); err != nil {
-			if errors.Is(err, ErrStaleAutosave) {
-				return err
-			}
-			return fmt.Errorf("%w: %v", ErrPersistence, err)
-		}
-		s.markDurableRevision(token)
-		return nil
-	}
-	return s.saveLegacyTurn(token, msgs)
+	return nil
 }
 
 // autoSaveContextSession promotes a live context-backed session into the
@@ -200,24 +162,6 @@ func (s *Session) autoSaveContextSession() {
 	if err := s.Save(s.SessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 	}
-}
-
-func (s *Session) saveLegacyTurn(token OperationToken, msgs []provider.Message) error {
-	s.mu.Lock()
-	if !s.tokenCurrentLocked(token) {
-		s.mu.Unlock()
-		return ErrStaleOperation
-	}
-	if s.turnSaveName == "" {
-		s.turnSaveName = uniqAutoSaveName(s.SessionDir, turnSaveMarker)
-	}
-	name := s.turnSaveName
-	s.mu.Unlock()
-	if err := s.Save(name); err != nil {
-		return fmt.Errorf("%w: %v", ErrPersistence, err)
-	}
-	s.markDurableRevision(token)
-	return nil
 }
 
 // isTurnToken reports whether the token belongs to a turn lifecycle (captured

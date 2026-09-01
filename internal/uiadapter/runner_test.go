@@ -138,11 +138,9 @@ func TestCommandRunner_New_NilSessionReturnsError(t *testing.T) {
 }
 
 func TestCommandRunner_New_SavesAndReturnsNewConversation(t *testing.T) {
-	dir := t.TempDir()
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "test", Model: "m1"}
 	sess := chat.NewSession(res, comp)
-	sess.SessionDir = dir
 	sess.SessionID = "original-sess"
 	runner := uiadapter.NewCommandRunner(sess, res, nil)
 
@@ -330,7 +328,6 @@ func setupSessionStoreFixture(t *testing.T) (*chat.Session, *config.Resolved, *s
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
 	sess := chat.NewSession(res, comp)
-	sess.SessionDir = tmpDir
 
 	store, err := storage.OpenSQLite(tmpDir + "/context.db")
 	if err != nil {
@@ -667,8 +664,11 @@ func TestCommandRunner_YoloToggle(t *testing.T) {
 	}
 }
 
-func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
-	dir := t.TempDir()
+// twoModelOllamaCatalogConfig returns a config.Resolved advertising models m1
+// and m2 on the ollama provider - the fixture shape
+// TestCommandRunner_SelectModel_InResumedSession needs to make SelectModel's
+// cross-session resolution actually see both models as selectable.
+func twoModelOllamaCatalogConfig() *config.Resolved {
 	res := &config.Resolved{
 		ProviderName: "ollama",
 		Model:        "m1",
@@ -699,14 +699,48 @@ func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
 			},
 		},
 	})
+	return res
+}
+
+// bindRunnerTestContextSession wires sess to a shared durable context store,
+// the fixture two or more sessions in the same test need to resume each
+// other via the same catalog.
+func bindRunnerTestContextSession(t *testing.T, sess *chat.Session, store *storage.SQLite) {
+	t.Helper()
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
+	dir := t.TempDir()
+	res := twoModelOllamaCatalogConfig()
+
+	store, err := storage.OpenSQLite(dir + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 
 	sess1 := chat.NewSession(res, nil)
-	sess1.SessionDir = dir
 	sess1.SessionID = "session-1"
+	bindRunnerTestContextSession(t, sess1, store)
 
 	sess2 := chat.NewSession(res, nil)
-	sess2.SessionDir = dir
 	sess2.SessionID = "session-2"
+	bindRunnerTestContextSession(t, sess2, store)
 	sess2.Messages = []provider.Message{
 		{Role: provider.RoleUser, Content: "Hello in session 2"},
 	}

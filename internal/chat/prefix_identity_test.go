@@ -108,7 +108,6 @@ func TestPrefixIdentityDistinctFromBindingFencePurpose(t *testing.T) {
 // trigger events.
 func TestPrefixIdentityNotCapturedOnPerTurnSavePath(t *testing.T) {
 	s := prefixSession(t)
-	s.SessionDir = t.TempDir()
 	before := s.prefixIdentityCaptureCountForTest()
 	if before == 0 {
 		t.Fatal("NewSession must have captured once")

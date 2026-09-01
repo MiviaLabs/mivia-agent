@@ -82,34 +82,6 @@ type agentTurnSnapshot struct {
 	Calibration contextmgr.Calibration
 }
 
-func (s *Session) Store() SessionStore {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sessionStore
-}
-
-func (s *Session) SetSessionStore(store SessionStore, mgr *SaveManager) {
-	s.mu.Lock()
-	if s.contextEnabledLocked() && store != nil {
-		s.mu.Unlock()
-		return
-	}
-	s.sessionStore, s.saveManager = store, mgr
-	if fstore, ok := store.(*FileSessionStore); ok {
-		s.SessionDir = fstore.Dir()
-	}
-	s.mu.Unlock()
-	if mgr != nil {
-		mgr.SetCurrentFence(s.currentSaveToken)
-		// Every autosave persists the session's admitted set beside the
-		// transcript so a resume from the snapshot replays the tools the
-		// transcript shows in use (plan tools/05 D3). The context-enabled
-		// early return above confines this to the file-store path where
-		// autosaves run.
-		mgr.SetAdmissionProvider(s.admissionRecord)
-	}
-}
-
 func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principal contextstate.Principal, policies ...contextstate.PolicySnapshot) error {
 	if manager != nil {
 		if err := principal.Validate(); err != nil {
@@ -135,7 +107,6 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 		if len(policies) > 0 {
 			s.contextPolicy = policies[0]
 		}
-		s.sessionStore, s.saveManager, s.SessionDir = nil, nil, ""
 	}
 	worktree := s.contextWorktree
 	sessionDir := s.contextSessionDir
