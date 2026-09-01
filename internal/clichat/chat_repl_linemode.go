@@ -69,6 +69,14 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 		// routing them through jw would gain nothing and risks getting stuck
 		// behind pending buffered bytes.
 		onEvent = jsonTurnEventCallback(os.Stdout)
+		// A subagent's events never reach onEvent. They travel through the
+		// progress registrar instead, and its sink was installed by the TUI
+		// and by nothing else - so on the one surface built to be parsed by a
+		// program, every subagent_* line was unreachable. Register the same
+		// writer for the turn, and clear it after: the sink is process-global,
+		// and the token makes the clear safe against a later turn's.
+		token := SetSubagentProgress(onEvent)
+		defer ClearSubagentProgress(token)
 	}
 	_, err := sess.SendUserWithEvent(ctx, line, w, onEvent)
 	for _, note := range sess.TakeAdmissionNotes() {

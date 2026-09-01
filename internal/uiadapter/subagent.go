@@ -304,6 +304,26 @@ func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 		if c.history[lastIdx].Text == "" {
 			c.history[lastIdx].Text = body.Text
 		}
+	case uievent.KindAssistantReset:
+		// A schema retry discards the reply it is replacing, and this dialog
+		// is the ONLY viewer a subagent's own reset ever reaches: the root
+		// transcript filters every subagent kind but tool output, so nothing
+		// downstream can repair what is kept here.
+		//
+		// Both shapes were wrong without this. Streaming concatenated the
+		// rejected reply with its replacement. Not streaming was worse: the
+		// text-end arm above writes only into an EMPTY message, so the
+		// rejected reply stayed and the accepted one was dropped.
+		//
+		// Only the message's text goes. Tool calls and their diffs record work
+		// that really ran and is not re-driven; reasoning is not re-sent by
+		// the retry, so clearing it would lose it outright.
+		if len(c.history) > 0 {
+			lastIdx := len(c.history) - 1
+			if c.history[lastIdx].Role == "assistant" {
+				c.history[lastIdx].Text = ""
+			}
+		}
 	}
 }
 
