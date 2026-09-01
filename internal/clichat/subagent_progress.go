@@ -123,6 +123,11 @@ func busPublishableKind(kind agent.EventKind) bool {
 		return true
 	case agent.EventAssistant, agent.EventThinking:
 		return true
+	case agent.EventAssistantReset:
+		// A retry discards the prose it replaces. The discard has to travel
+		// with the prose, or a viewer keeps text for an attempt that no
+		// longer exists.
+		return true
 	default:
 		return false
 	}

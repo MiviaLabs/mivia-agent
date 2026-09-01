@@ -55,6 +55,12 @@ enable sync on sensitive work:
 
 - `include_thinking = false` withholds a subagent's reasoning text, as it
   withholds the root loop's. Only the byte count is reported.
+- A configured redaction policy **turns per-delta streaming off by itself**.
+  Redaction is a regex over one string, so it cannot match a secret split
+  across two fragments: a pattern that catches a key in a settled message
+  catches nothing when the same bytes arrive in three deltas. With a policy
+  active the turn therefore sends one settled message, redacted as a whole.
+  The reader waits for the end of the turn and receives the same words.
 - `stream_assistant` is **on by default** and selects HOW answer text is sent,
   not WHETHER it is sent. On, a turn sends deltas and then a settled message
   with empty text; off, it sends one settled message carrying the same text.

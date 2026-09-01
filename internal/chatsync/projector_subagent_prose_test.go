@@ -244,14 +244,22 @@ func TestSubagentProseIsRedacted(t *testing.T) {
 	p := NewProjector("sess-1", 0, proseOpts())
 	const secret = "token is SECRET_KEY_998877 do not leak"
 
-	delta := p.Project(subagentEvent(events.KindAssistant, "task-1", secret, "delta"))
-	deltaText := delta[0].Payload.(*SubagentAssistantDeltaPayload).Text
-	assertRedacted(t, "assistant delta", deltaText)
+	// A delta does not ship at all while a policy is active: a regex cannot
+	// match across two fragments, so the only safe boundary is the settled
+	// message. TestRedactionPolicySuppressesDeltaStreaming owns that rule;
+	// here it means the delta path has no payload left to check.
+	if got := p.Project(subagentEvent(events.KindAssistant, "task-1", secret, "delta")); len(got) != 0 {
+		t.Fatalf("a delta shipped under a redaction policy: %v", got)
+	}
 
 	agg := p.Project(subagentEvent(events.KindAssistant, "task-2", secret, ""))
 	aggText := agg[0].Payload.(*SubagentAssistantMessagePayload).Text
 	assertRedacted(t, "assistant message", aggText)
 
+	// Thinking is not gated the same way: it has no settled aggregate to fall
+	// back to, so withholding its fragments would withhold it entirely. Each
+	// fragment is redacted on its own, which is weaker than a message-sized
+	// boundary and is why include_thinking is off by default.
 	think := p.Project(subagentEvent(events.KindThinking, "task-1", secret, ""))
 	thinkText := think[0].Payload.(*SubagentThinkingDeltaPayload).Text
 	assertRedacted(t, "thinking delta", thinkText)
@@ -551,5 +559,86 @@ func TestAssistantResetIsScopedToOneSubagentRun(t *testing.T) {
 	aggB := p.Project(subagentEvent(events.KindAssistant, "task-b", "b answer", ""))
 	if f := aggB[0].Payload.(*SubagentAssistantMessagePayload).Fragments; f != 1 {
 		t.Errorf("task-b fragments = %d, want 1 - one run's reset cleared another's state", f)
+	}
+}
+
+// TestRedactionPolicySuppressesDeltaStreaming is the privacy regression that
+// arrived with streaming on by default.
+//
+// redactText runs on one fragment at a time, and a regex cannot match across
+// two separate calls. A secret the policy would catch in a settled message
+// therefore escapes when the provider splits it across deltas - and because
+// INV-1 empties the settled message once anything streamed, the whole-message
+// text that WOULD have matched is never sent at all. The only redaction left
+// was the per-fragment one that cannot work.
+func TestRedactionPolicySuppressesDeltaStreaming(t *testing.T) {
+	pol, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]{10,}`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	old := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// The provider splits a key across three fragments. None matches alone.
+	for _, frag := range []string{"here is sk-live-", "AbCdEfGhIj", "KlMn and that is it"} {
+		if got := p.Project(rootEvent(events.KindAssistant, frag, "delta")); len(got) != 0 {
+			t.Fatalf("a delta shipped while a redaction policy was active: %v", got)
+		}
+	}
+
+	// The settled message carries the whole answer, redacted as one string -
+	// which is the boundary the policy was written against.
+	agg := p.Project(rootEvent(events.KindAssistant,
+		"here is sk-live-AbCdEfGhIjKlMn and that is it", ""))
+	payload := agg[0].Payload.(*AssistantMessagePayload)
+
+	if payload.Fragments != 0 {
+		t.Errorf("fragments = %d, want 0 - nothing was streamed", payload.Fragments)
+	}
+	if strings.Contains(payload.Text, "sk-live-AbCdEfGhIjKlMn") {
+		t.Errorf("the settled message leaked the key: %q", payload.Text)
+	}
+	if !strings.Contains(payload.Text, "[redacted]") {
+		t.Errorf("text = %q, want the placeholder", payload.Text)
+	}
+}
+
+// TestSubagentProseAlsoStopsStreamingUnderAPolicy covers the same hole on the
+// subagent path, which has its own copy of the streaming decision.
+func TestSubagentProseAlsoStopsStreamingUnderAPolicy(t *testing.T) {
+	pol, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]{10,}`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	old := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	if got := p.Project(subagentEvent(events.KindAssistant, "task-1", "sk-live-", "delta")); len(got) != 0 {
+		t.Fatalf("a subagent delta shipped under a redaction policy: %v", got)
+	}
+	agg := p.Project(subagentEvent(events.KindAssistant, "task-1",
+		"sk-live-AbCdEfGhIjKlMn done", ""))
+	payload := agg[0].Payload.(*SubagentAssistantMessagePayload)
+	if payload.Fragments != 0 || strings.Contains(payload.Text, "sk-live-AbCdEfGhIjKlMn") {
+		t.Errorf("subagent aggregate leaked or claimed fragments: %+v", payload)
+	}
+}
+
+// TestStreamingStillRunsWithNoPolicy proves the gate is the POLICY, not a
+// blanket disable - streaming on by default must still stream.
+func TestStreamingStillRunsWithNoPolicy(t *testing.T) {
+	old := redact.Current()
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+	if got := p.Project(rootEvent(events.KindAssistant, "hello", "delta")); len(got) != 1 {
+		t.Fatalf("delta produced %d wire events with no policy, want 1", len(got))
 	}
 }

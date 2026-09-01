@@ -141,6 +141,16 @@ func SetPolicy(p *Policy) { active.Store(p) }
 // Current returns the installed policy, or nil when none is set.
 func Current() *Policy { return active.Load() }
 
+// Active reports whether the process-wide policy would redact anything.
+//
+// A caller needs this to decide SHAPE, not content. Redaction is a regex over
+// one string, so it cannot match a secret split across two strings: a policy
+// that would catch a key in a whole message catches nothing when the same key
+// arrives as three fragments. A producer that can choose between sending
+// fragments and sending one message must therefore know whether a policy is
+// active before it chooses.
+func Active() bool { return !active.Load().empty() }
+
 // Text applies the process-wide policy.
 func Text(s string) string { return active.Load().Text(s) }
 
