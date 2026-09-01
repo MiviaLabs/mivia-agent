@@ -668,3 +668,33 @@ rules:
                   for ...; ...; $I = $I - $N {
                     ...
                   }
+
+  - id: mivia.go.no-locked-field-reread
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      $VAR was captured from $RECV.$FIELD under $RECV.$MU.Lock() above,
+      specifically so every later use of this value stays fenced against a
+      concurrent writer. Reading $RECV.$FIELD again directly here throws that
+      fence away: it is an unsynchronized read of a mutex-guarded field (data
+      race under -race), and it can observe a DIFFERENT value than $VAR
+      within the same logical operation if a writer runs in between - DC-29,
+      exactly what broke internal/chatsync/poller.go's ConsumeInput call
+      (fixed in a2e554d7): it re-read p.sessionID instead of reusing the
+      already-locked sessID, so a concurrent SetSessionID could send the
+      consume request against a different session than the one the input
+      was actually fetched from. Reuse the captured local instead.
+    paths:
+      include:
+        - /internal/**/*.go
+      exclude:
+        - /**/*_test.go
+    patterns:
+      - pattern-inside: |
+          $RECV.$MU.Lock()
+          $VAR := $RECV.$FIELD
+          $RECV.$MU.Unlock()
+          ...
+      - pattern: $RECV.$FIELD
+      - pattern-not-inside: $VAR := $RECV.$FIELD

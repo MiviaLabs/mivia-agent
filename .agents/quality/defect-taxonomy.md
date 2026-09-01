@@ -921,3 +921,46 @@ site, which is the evidence that it is a class and not one commit's oversight.
   unnamed member; a stop-by-default classifier only has to be wrong once, loudly.
 - Table the test over the vocabulary, not over the switch. A test that lists the same
   codes the switch lists proves only that the author wrote the same list twice.
+
+## DC-29 Locked capture, unlocked reuse
+
+**Mechanism.** A mutex-guarded field is correctly read under the lock and captured
+into a local: `mu.Lock(); x := p.field; mu.Unlock()`. A few lines later, in the same
+function, the field is needed again - and the author reaches for `p.field` a second
+time instead of reusing `x`. The lock discipline at the top of the function reads as
+proof the whole function is safe; the second, bare read quietly falls outside it.
+
+This is not "forgot to lock" in the usual sense - the author DID lock, once, and
+that is exactly what makes the second read easy to miss in review: the function
+already looks synchronized. The bug is that the capture's scope of protection ends
+at `Unlock()`, and nothing marks the second read as having stepped outside it.
+
+**Why it recurs.** The capture is usually written to satisfy the FIRST use (often a
+network call whose signature takes the value once). A second use gets added later -
+often for a follow-up request that logically belongs to the same operation - and the
+author's fingers reach for the field name they already know (`p.field`), not the
+local a few lines up that has scrolled out of view. The two reads then silently
+address different points in time if a writer runs between them.
+
+**Evidence.** `internal/chatsync/poller.go`'s `pollOnce` (fixed in `a2e554d7`)
+captured `sessID := p.sessionID` under `p.mu` for the `NextInput` call, then called
+`ConsumeInput(consumeCtx, p.sessionID, raw.ID)` three lines later - a fresh,
+unprotected read of the same field, racing `SetSessionID` under `-race` and, worse,
+able to consume an input fetched from one remote session against a different one if
+`SetSessionID` ran in between. `SetSessionID` had no production caller at fix time,
+so the window was latent rather than reachable, but the shape is the same regardless
+of who calls the setter.
+
+**Probes.**
+- For every `mu.Lock(); x := p.field; mu.Unlock()` capture, grep every other
+  reference to `p.field` in the same function and confirm each one reuses `x`, not a
+  fresh read.
+- Treat "the function locks somewhere" as a false signal of safety. Check EACH read
+  of the guarded field independently; a function can be half-protected.
+- Gate: `mivia.go.no-locked-field-reread` (`semgrep/agent-standards.yml`) matches
+  this exact shape statically for the common case where the capture and the reread
+  sit in the same block. It cannot see a reread in a DIFFERENT function or through
+  an intermediate helper - `go test -race` against a concurrency test that actually
+  exercises the write path (`TestInputPoller_ConsumeInputUsesTheSameSessionIDAsNextInput`,
+  `internal/chatsync/poller_session_race_test.go`) is what catches those; write one
+  whenever the field has a setter with any caller, present or planned.
