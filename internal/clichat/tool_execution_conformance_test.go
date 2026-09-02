@@ -206,6 +206,32 @@ func TestEveryPathHonoursRefOnlyTools(t *testing.T) {
 	}
 }
 
+// C8: a tool that does NOT declare a capability must still dedup.
+//
+// The unclassified default is ExecutionExternal (tools.CapabilityOf) - a tool
+// that says nothing about itself is assumed to have side effects. The shim
+// used `tools.Capability{}` instead, whose zero Class is ExecutionRead, so
+// Dedups() was false and SkipDedup was TRUE: an unclassified tool never
+// deduped, and a duplicate delivery re-ran its side effect.
+//
+// Unclassified is not hypothetical. workflow_run, workflow_deliver,
+// post_message and every ledger tool ship without a Capability method.
+func TestEveryPathDedupsAnUnclassifiedTool(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &unclassifiedProbe{name: "probe_tool"}
+			runProbeTurnCalls(t, path, probe,
+				namedCall("c1", "probe_tool", `{}`),
+				namedCall("c2", "probe_tool", `{}`))
+			checkContract(t, "unclassified-dedups", path.name, probe.runs.Load() == 1,
+				fmt.Sprintf("an unclassified tool executed %d times for two "+
+					"identical calls in one turn; a tool that declares nothing is "+
+					"assumed to have side effects, and a duplicate delivery must "+
+					"not repeat them", probe.runs.Load()))
+		})
+	}
+}
+
 // --- the harness ---------------------------------------------------------
 
 func runProbeTurn(t *testing.T, path execPath, probe tools.Tool, args string) string {
@@ -406,4 +432,18 @@ func (p *bulkyProbe) Capability(json.RawMessage) tools.Capability {
 }
 func (p *bulkyProbe) Execute(context.Context, json.RawMessage) (string, error) {
 	return strings.Repeat("x", p.size), nil
+}
+
+// unclassifiedProbe implements no Capability method at all, like every
+// workflow ledger tool and the messaging tools.
+type unclassifiedProbe struct {
+	name string
+	runs atomic.Int32
+}
+
+func (p *unclassifiedProbe) Name() string               { return p.name }
+func (p *unclassifiedProbe) Description() string        { return "declares nothing" }
+func (p *unclassifiedProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p *unclassifiedProbe) Execute(context.Context, json.RawMessage) (string, error) {
+	return fmt.Sprintf("run %d", p.runs.Add(1)), nil
 }

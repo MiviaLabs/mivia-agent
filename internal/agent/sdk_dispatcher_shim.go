@@ -331,10 +331,18 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	if err != nil {
 		return sdktools.Out{}, fmt.Errorf("agent: tool %q: marshal arguments: %w", d.inner.Name(), err)
 	}
-	capability := tools.Capability{}
-	if capable, ok := d.cli.(tools.CapableTool); ok {
-		capability = capable.Capability(args)
-	}
+	// tools.CapabilityOf, not a zero Capability. The zero value's Class is
+	// ExecutionRead (iota 0), so Dedups() was false and SkipDedup was TRUE for
+	// any tool that declares no capability - meaning an unclassified tool
+	// never deduped and a duplicate delivery re-ran its side effect. The
+	// canonical default is ExecutionExternal: a tool that says nothing about
+	// itself is assumed to have side effects.
+	//
+	// Unclassified is not hypothetical - workflow_run, workflow_deliver,
+	// post_message and every ledger tool ship without a Capability method -
+	// and d.cli is itself nil whenever an SDK tool has no CLI registry match,
+	// which CapabilityOf also answers with the safe default.
+	capability := tools.CapabilityOf(d.cli, args)
 	ctx, cancelTimeout, callTimeout := armDispatcherTimeout(ctx, d.opts, args, capability)
 	defer cancelTimeout()
 	var result, hookContext string
