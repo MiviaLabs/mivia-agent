@@ -91,6 +91,15 @@ fields use rune-safe byte budgets:
 | Error Message | 2 KiB | UTF-8 rune-safe truncation |
 | Metadata Labels | 200 B | UTF-8 rune-safe truncation |
 
+Tool Input and Tool Output are cut from the tool's **full redacted arguments
+and result** (`events.Event.InputBody` / `OutputBody`), not from the
+256/512-byte operator preview the local NDJSON stream and log show
+(`internal/agent/loop_tool_preview.go`). Until 2026-09-02 the projector read
+the preview, so every `read_file` reached the wire as 512 bytes reporting
+`output_bytes: 512` with no `trunc` marker, and a viewer could not tell a
+512-byte file from a cut 200 KB one. `input_bytes` / `output_bytes` now report
+the full size, and a result over budget carries `trunc.fields.output`.
+
 A budget counts the **JSON-escaped** size of the field, not its raw size. That
 is the unit the receiving store measures in, and the two are far apart for
 some content: a control byte occupies one raw byte and six escaped ones. A

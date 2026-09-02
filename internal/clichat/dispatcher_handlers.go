@@ -255,13 +255,13 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 		case agent.EventToolStart:
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentStart, ToolCallID: e.ToolCallID,
-				Name: e.Name, Detail: e.Detail, Input: e.Input,
+				Name: e.Name, Detail: e.Detail, Input: e.Input, InputBody: e.InputBody,
 				Origin: e.Origin,
 			})
 		case agent.EventToolEnd:
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentEnd, ToolCallID: e.ToolCallID,
-				Name: e.Name, Detail: e.Detail, Output: e.Output,
+				Name: e.Name, Detail: e.Detail, Output: e.Output, OutputBody: e.OutputBody,
 				Origin: e.Origin,
 			})
 		case agent.EventSubagentBegin, agent.EventAssistantReset:

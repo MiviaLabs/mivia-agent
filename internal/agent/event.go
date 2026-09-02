@@ -169,6 +169,11 @@ type Event struct {
 	Content    string
 	Input      string // bounded, redacted tool input preview
 	Output     string // bounded, redacted tool output preview
+	// InputBody and OutputBody are the same redacted text WITHOUT the
+	// preview cap, for a bus consumer that bounds and marks the cut itself
+	// (chatsync). See events.Event for the contract.
+	InputBody  string
+	OutputBody string
 	// Denied is set only for EventHook: true when this run blocked its tool
 	// call (a PreToolUse hook that denied). Renderers use it to give a
 	// blocking run a distinct visual treatment from an advisory one.

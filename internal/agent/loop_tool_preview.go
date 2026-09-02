@@ -27,26 +27,34 @@ func redactToolInput(raw string) string { return redactToolInputForTool("", raw)
 // re-parses that same preview as JSON - a cut mid-object silently breaks the
 // parse and collapses a multi-task batch back into one aggregate row.
 func redactToolInputForTool(name, raw string) string {
-	if strings.TrimSpace(raw) == "" {
-		return "{}"
-	}
 	maxBytes := 256
 	if name == "dispatch_tasks" {
 		maxBytes = editToolPreviewMaxBytes
 	}
-	// Default: operator-visible args, bounded and passed through the workspace
-	// redaction policy. With no policy configured that policy redacts nothing -
-	// see .agents/rules/10-security-privacy.md. RedactToolArgs opts into the
+	return truncatePreview(redactedToolInput(raw), maxBytes)
+}
+
+// redactedToolInput is the redacted arguments with NO preview cap: the body
+// Event.InputBody carries for chat-sync, which bounds and marks the cut
+// itself. Every operator preview is a prefix of this, so nothing reaches the
+// wider field that the preview's redaction would have hidden.
+func redactedToolInput(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "{}"
+	}
+	// Default: operator-visible args passed through the workspace redaction
+	// policy. With no policy configured that policy redacts nothing - see
+	// .agents/rules/10-security-privacy.md. RedactToolArgs opts into the
 	// stricter whole-field elision below; it is a separate control from the
 	// patterns and stays meaningful when no policy is set.
 	if !tools.RedactToolArgs() {
-		return truncatePreview(redact.Text(raw), maxBytes)
+		return redact.Text(raw)
 	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncatePreview(redact.Text(raw), maxBytes)
+		return redact.Text(raw)
 	}
-	return truncatePreview(encodeRedactedPreview(value, raw), maxBytes)
+	return encodeRedactedPreview(value, raw)
 }
 
 // encodeRedactedPreview redacts a decoded argument tree and re-encodes it,
@@ -125,7 +133,13 @@ func redactToolOutputForTool(name, output string) string {
 		"ledger_read", "read_output", "dispatch_tasks":
 		maxBytes = editToolPreviewMaxBytes
 	}
-	return truncatePreview(redact.Text(output), maxBytes)
+	return truncatePreview(redactedToolOutput(output), maxBytes)
+}
+
+// redactedToolOutput is the redacted result with NO preview cap: the body
+// Event.OutputBody carries for chat-sync. See redactedToolInput.
+func redactedToolOutput(output string) string {
+	return redact.Text(output)
 }
 
 func truncatePreview(value string, maxBytes int) string {
