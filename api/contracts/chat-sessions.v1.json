@@ -38,7 +38,8 @@
     "mivia.chat.v1.context.compacted",
     "mivia.chat.v1.turn.failed",
     "mivia.chat.v1.sync.dropped",
-    "mivia.chat.v1.sync.forked"
+    "mivia.chat.v1.sync.forked",
+    "mivia.chat.v1.hook.ran"
   ],
   "structs": {
     "session": {
@@ -428,6 +429,39 @@
           "detail": {
             "kind": "string",
             "optional": true
+          },
+          "output": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.hook.ran": {
+        "goType": "HookRanPayload",
+        "fields": {
+          "phase": {
+            "kind": "string",
+            "optional": false
+          },
+          "program": {
+            "kind": "string",
+            "optional": false
+          },
+          "tool": {
+            "kind": "string",
+            "optional": true
+          },
+          "tool_call_id": {
+            "kind": "string",
+            "optional": true
+          },
+          "blocked": {
+            "kind": "bool",
+            "optional": false
+          },
+          "output_bytes": {
+            "kind": "number",
+            "optional": false
           },
           "output": {
             "kind": "string",

@@ -1,8 +1,12 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // A refused tool call must not be reported to the operator as one that ran.
@@ -56,5 +60,70 @@ func TestTheFallbackStillCoversARealDuplicate(t *testing.T) {
 	}
 	if detail := sdkToolEndDetail(*outcome); strings.HasPrefix(detail, "failed") {
 		t.Errorf("detail = %q; a dedup-served call is not a failure", detail)
+	}
+}
+
+// TestEmitCarriesTheHookVerdictAcrossTheBus proves the producer hop, not the
+// consumer.
+//
+// The bus converts only agent.Event's generic string fields, so a hook's
+// phase, program, tool and - above all - its DENIED flag stopped at that
+// boundary. Every consumer past it (the chat-sync projector, the relay) could
+// then see that a hook ran and not whether it refused the call, which is the
+// only thing about a hook a reader must not be left to infer.
+func TestEmitCarriesTheHookVerdictAcrossTheBus(t *testing.T) {
+	bus := events.New()
+	t.Cleanup(bus.Close)
+
+	got := make(chan events.Event, 1)
+	bus.Subscribe(events.KindHook, events.HandlerFunc(func(_ context.Context, ev events.Event) { got <- ev }))
+
+	emit(Options{EventBus: bus, SessionID: "sess-1", TurnID: "turn:1"}, Event{
+		Kind:       EventHook,
+		Name:       "PreToolUse",
+		Program:    "guard.py",
+		Tool:       "run_command",
+		ToolCallID: "c1",
+		Output:     "policy: no network",
+		Denied:     true,
+	})
+
+	select {
+	case ev := <-got:
+		if ev.Hook == nil {
+			t.Fatal("the hook crossed the bus with no typed payload, so no consumer " +
+				"can tell a hook that reported from one that refused a tool call")
+		}
+		if !ev.Hook.Denied {
+			t.Error("the refusal did not survive the bus")
+		}
+		if ev.Hook.Program != "guard.py" || ev.Hook.Phase != "PreToolUse" || ev.Hook.Tool != "run_command" {
+			t.Errorf("the hook's identity did not survive: %+v", ev.Hook)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no hook event reached the bus")
+	}
+}
+
+// TestEmitAddsNoHookPayloadToOtherKinds keeps the branch specific. A payload on
+// every kind would be a lie about what those events describe.
+func TestEmitAddsNoHookPayloadToOtherKinds(t *testing.T) {
+	bus := events.New()
+	t.Cleanup(bus.Close)
+
+	got := make(chan events.Event, 1)
+	bus.Subscribe(events.KindToolEnd, events.HandlerFunc(func(_ context.Context, ev events.Event) { got <- ev }))
+
+	emit(Options{EventBus: bus, SessionID: "sess-1", TurnID: "turn:1"}, Event{
+		Kind: EventToolEnd, Name: "run_command", ToolCallID: "c1", Denied: true,
+	})
+
+	select {
+	case ev := <-got:
+		if ev.Hook != nil {
+			t.Errorf("a tool_end carried a hook payload: %+v", ev.Hook)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no tool end event reached the bus")
 	}
 }

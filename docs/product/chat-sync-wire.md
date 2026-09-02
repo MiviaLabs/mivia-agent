@@ -121,6 +121,13 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.thinking.delta`
 - `mivia.chat.v1.tool.started`
 - `mivia.chat.v1.tool.ended`
+- `mivia.chat.v1.hook.ran` - one lifecycle hook run on the operator's machine.
+  `blocked` is true for the run that REFUSED a tool call. That case is why the
+  event exists: a blocked call emits no `tool.ended`, so without this a reader
+  watches a `tool.started` that never finishes and is never told a local policy
+  stopped it. `program` is the script's name, never its path. `output` rides the
+  same include-tool-io gate as tool output and reports `output_bytes` even when
+  withheld, so silence is distinguishable from suppression.
 - `mivia.chat.v1.subagent.started`
 - `mivia.chat.v1.subagent.ended`
 - `mivia.chat.v1.subagent.progress`

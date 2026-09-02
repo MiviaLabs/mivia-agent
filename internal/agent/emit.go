@@ -40,6 +40,17 @@ func emit(opts Options, e Event) {
 			e.Input,
 			e.Output,
 		)
+		if e.Kind == EventHook {
+			// The generic conversion carries only strings, so the hook's
+			// verdict would stop here - and a consumer past the bus could not
+			// tell a hook that reported from one that refused a tool call.
+			ev.Hook = &events.HookEvent{
+				Phase:   e.Name,
+				Program: e.Program,
+				Tool:    e.Tool,
+				Denied:  e.Denied,
+			}
+		}
 		ev.SessionID = opts.SessionID
 		ev.TurnID = opts.TurnID
 		if opts.EventIdentity != nil {

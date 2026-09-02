@@ -333,3 +333,46 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 	}
 	return []WireEvent{p.nextWireEvent(TypeAssistantReset, payload)}
 }
+
+// projectHook projects one lifecycle hook run.
+//
+// The case that justifies the event is a hook that BLOCKED a tool call: a
+// blocked call emits no tool.ended, so without this a remote reader watches a
+// tool.started that never finishes and is never told a local policy stopped
+// it.
+//
+// The typed payload is required. Phase, Program, Tool and Denied live on
+// agent.Event and are not carried by the bus's generic string conversion, so
+// an event arriving here without events.HookEvent cannot say whether the call
+// was refused - and a hook row that cannot answer that is not worth sending.
+func (p *Projector) projectHook(env Envelope, ev events.Event) []WireEvent {
+	if ev.Hook == nil {
+		return nil
+	}
+	phase := applyTruncation(&env, "phase", ev.Hook.Phase, BudgetShortField)
+	program := applyTruncation(&env, "program", ev.Hook.Program, BudgetShortField)
+	tool := applyTruncation(&env, "tool", ev.Hook.Tool, BudgetShortField)
+	callID := applyTruncation(&env, "tool_call_id", ev.ToolCallID, BudgetShortField)
+
+	// A hook's output is text a local program printed, which is the same class
+	// as tool output and rides the same gate. Withholding still reports the
+	// byte count, so a reader can tell silence from suppression.
+	var output string
+	if shouldIncludeToolIO(p.opts) && !redactionActive() {
+		output = applyTruncation(&env, "output", redactText(ev.Output), BudgetToolOutput)
+	} else if ev.Output != "" {
+		env.Redacted = append(env.Redacted, "output")
+	}
+
+	payload := &HookRanPayload{
+		Envelope:    env,
+		Phase:       phase,
+		Program:     program,
+		Tool:        tool,
+		ToolCallID:  callID,
+		Blocked:     ev.Hook.Denied,
+		OutputBytes: len(ev.Output),
+		Output:      output,
+	}
+	return []WireEvent{p.nextWireEvent(TypeHookRan, payload)}
+}

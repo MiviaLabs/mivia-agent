@@ -92,6 +92,7 @@ const (
 	TypeThinkingDelta       = "mivia.chat.v1.thinking.delta"
 	TypeToolStarted         = "mivia.chat.v1.tool.started"
 	TypeToolEnded           = "mivia.chat.v1.tool.ended"
+	TypeHookRan             = "mivia.chat.v1.hook.ran"
 	TypeSubagentToolStarted = "mivia.chat.v1.subagent.tool.started"
 	TypeSubagentToolEnded   = "mivia.chat.v1.subagent.tool.ended"
 	TypeSubagentStarted     = "mivia.chat.v1.subagent.started"
@@ -139,6 +140,7 @@ var wireEventSpecs = []WireEventSpec{
 	{Type: TypeThinkingDelta, Payload: ThinkingDeltaPayload{}},
 	{Type: TypeToolStarted, Payload: ToolStartedPayload{}},
 	{Type: TypeToolEnded, Payload: ToolEndedPayload{}},
+	{Type: TypeHookRan, Payload: HookRanPayload{}},
 	{Type: TypeSubagentToolStarted, Payload: SubagentToolStartedPayload{}},
 	{Type: TypeSubagentToolEnded, Payload: SubagentToolEndedPayload{}},
 	{Type: TypeSubagentStarted, Payload: SubagentStartedPayload{}},
@@ -277,6 +279,39 @@ type ToolEndedPayload struct {
 	OutputBytes int    `json:"output_bytes"`
 	Detail      string `json:"detail,omitempty"`
 	Output      string `json:"output,omitempty"`
+}
+
+// HookRanPayload is the payload of mivia.chat.v1.hook.ran: one lifecycle hook
+// run on the operator's machine.
+//
+// It exists for one case above all. A hook can BLOCK a tool call, and a
+// blocked call never produces a tool.ended - so without this event a remote
+// reader watches a tool.started that simply never finishes, with no way to
+// learn that a local policy stopped it.
+//
+// ToolCallID ties the row to the call it gated. It is empty for a Stop hook,
+// which runs for the turn rather than for one call.
+type HookRanPayload struct {
+	Envelope
+	// Phase is PreToolUse, PostToolUse or Stop.
+	Phase string `json:"phase"`
+	// Program is the script's NAME, never its path. A path describes the
+	// operator's machine and this payload leaves it.
+	Program string `json:"program"`
+	// Tool is the call the hook ran for; empty for a Stop hook.
+	Tool       string `json:"tool,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	// Blocked is true for the run that refused the call. A reader must not
+	// have to infer this from the absence of a later event.
+	Blocked bool `json:"blocked"`
+	// OutputBytes always reports the real size, even when Output is withheld,
+	// so a reader can tell "the hook said nothing" from "the hook said
+	// something you are not being shown".
+	OutputBytes int `json:"output_bytes"`
+	// Output is what the hook printed - for a blocking hook, the reason. It
+	// rides the same include-tool-io gate as tool output, because it is the
+	// same class of thing: text a local program produced.
+	Output string `json:"output,omitempty"`
 }
 
 // SubagentToolStartedPayload is the payload of mivia.chat.v1.subagent.tool.started.
