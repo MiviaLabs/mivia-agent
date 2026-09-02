@@ -2,6 +2,7 @@ package chat
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // SetApprovalPolicy sets the active approval policy in a thread-safe manner.
@@ -59,4 +60,25 @@ func (s *Session) ToggleYOLO() (bool, string) {
 	}
 	s.ApprovalPolicy = config.ApprovalPolicyAuto
 	return true, s.ApprovalPolicy
+}
+
+// ApprovalSnapshot reads the session's approval wiring under the lock.
+//
+// It exists so a nested loop can be handed the operator's LIVE decision
+// surface without reaching into three fields itself: the gate is installed
+// after the dispatcher is built, and the policy changes mid-session through
+// /yolo and the settings screen, so anything captured earlier is either nil
+// or stale.
+func (s *Session) ApprovalSnapshot() sdkadapter.ApprovalDeps {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policy := s.ApprovalPolicy
+	if policy == "" {
+		policy = config.ApprovalPolicyWriteOnly
+	}
+	return sdkadapter.ApprovalDeps{
+		Policy:   policy,
+		Standing: s.ApprovalStanding,
+		Gate:     s.ApprovalGate,
+	}
 }

@@ -138,11 +138,11 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget)
 		},
 		func() error {
-			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool, opts.Approval)
 		},
 		func() error { return registerAgentHandlers(d, opts) },
 		func() error {
-			return registerSkillHandlers(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+			return registerSkillHandlers(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool, opts.Approval)
 		},
 	} {
 		if err := register(); err != nil {

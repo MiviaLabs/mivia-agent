@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -46,7 +47,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -73,6 +74,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// terminal deadline, not a transport fault.
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
 	h := &subagents.MultiStepHandler{
+		Approval:  approval,
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		Reasoning: dial.static, ReasoningFunc: dial.live,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
@@ -105,6 +107,9 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 // handler shares. One group keeps newSkillMultiStepHandler's signature
 // short and lets tests build a real handler without a whole session.
 type skillHandlerDeps struct {
+	// approval is the operator's live approval wiring; see
+	// subagents.MultiStepHandler.Approval for why it is a function.
+	approval         func() sdkadapter.ApprovalDeps
 	d                *runtime.Dispatcher
 	reg              *tools.Registry
 	comp             provider.Completer
@@ -145,6 +150,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 	// Tool-bearing surface: full report-budget variant.
 	sysPrompt = withReportBudget(sysPrompt, false)
 	h := &subagents.MultiStepHandler{
+		Approval:       deps.approval,
 		Completer:      deps.comp,
 		FullRegistry:   deps.reg,
 		Dispatcher:     deps.d,
@@ -180,7 +186,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 	return h
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -191,7 +197,8 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// instructions as the system prompt. Disallowed skills are not registered
 	// and gatedSkillHandler re-checks on every invoke (resume/retry).
 	deps := skillHandlerDeps{
-		d: d, reg: reg, comp: comp, model: model, dial: dial, budgets: budgets,
+		approval: approval,
+		d:        d, reg: reg, comp: comp, model: model, dial: dial, budgets: budgets,
 		maxContextTokens: maxContextTokens, maxTokens: maxTokens, budget: budget,
 		preparation: preparation, preparationInput: preparationInput, spool: spool,
 	}

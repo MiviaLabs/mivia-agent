@@ -287,6 +287,9 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	// before the loop soft-interrupts the in-flight LLM call. nil means the
 	// 300s default; an explicit 0 disables the watchdog (unbounded).
 	return &subagents.MultiStepHandler{
+		// The operator's approval wiring reaches the nested loop, so a
+		// delegated write tool faces the same gate the root path would.
+		Approval:  h.opts.Approval,
 		Completer: binding.Completer, FullRegistry: registry,
 		Dispatcher: h.dispatcher, Model: binding.Model, Reasoning: binding.Reasoning,
 		ReasoningFunc: binding.EffectiveReasoning,

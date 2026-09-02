@@ -17,6 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -34,6 +35,22 @@ const softInterruptCooldown = 5 * time.Second
 // with tool access. Sub-agents never receive delegation or orchestration
 // control tools; only the root orchestrator may create or control runs.
 type MultiStepHandler struct {
+	// Approval supplies the operator's live approval wiring for this run's
+	// nested loop: the gate, the policy, and the standing cache.
+	//
+	// It is a FUNCTION, read once per invocation, and both halves of that
+	// matter. The dispatcher is built before the TUI installs a gate, so a
+	// value captured at construction is always nil; and the policy changes
+	// mid-session through /yolo and the settings screen, so a value captured
+	// at the first invocation goes stale.
+	//
+	// Nil means no wiring, which is what every construction site did before
+	// this existed: the nested loop then runs ungated, exactly as it always
+	// has. That is a compatibility floor, not a design - a site that leaves
+	// this nil lets a delegated call skip an approval the same call would
+	// face on the root path.
+	Approval func() sdkadapter.ApprovalDeps
+
 	// Completer is the LLM provider used by the sub-agent loop.
 	Completer provider.Completer
 	// FullRegistry is the parent's complete tool registry.
@@ -354,6 +371,15 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		WorkLimits:             runtime.LowestPositiveWorkLimits(h.WorkLimits, req.WorkLimits),
 		DisableProviderReplay:  h.DisableProviderReplay || req.DisableProviderReplay,
 		WireStreamTransport:    h.WireStreamTransport,
+	}
+	// The operator's approval wiring, read HERE rather than captured: see the
+	// Approval field. Without it a delegated write tool ran unprompted while
+	// the same call on the root path was gated.
+	if h.Approval != nil {
+		deps := h.Approval()
+		opts.ApprovalGate = deps.Gate
+		opts.ApprovalStanding = deps.Standing
+		opts.ApprovalPolicy = deps.Policy
 	}
 	if h.ContextPreparationManager != nil {
 		input := h.ContextPreparationInput

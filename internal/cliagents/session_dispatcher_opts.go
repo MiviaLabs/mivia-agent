@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -37,9 +38,19 @@ type SessionDispatcherOpts struct {
 	// Nil defaults to Registry, which is the correct answer whenever nothing is
 	// deferred.
 	AuthorityRegistry *tools.Registry
-	Completer         provider.Completer
-	Model             string
-	ProviderName      string
+	// Approval supplies the operator's live approval wiring to every nested
+	// loop this dispatcher builds: the gate, the policy and the standing
+	// cache. Read per invocation, never captured - the gate is installed
+	// after the dispatcher is built, and the policy changes mid-session.
+	//
+	// Nil leaves subagents ungated, which is what they were before this
+	// existed: a delegated write tool then skips an approval the same call
+	// would face on the root path.
+	Approval func() sdkadapter.ApprovalDeps
+
+	Completer    provider.Completer
+	Model        string
+	ProviderName string
 	// AllowWorkspaceAgentProviders is the user-owned opt-in for static workflow
 	// panel provider routing.
 	AllowWorkspaceAgentProviders bool
