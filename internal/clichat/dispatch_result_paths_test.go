@@ -34,7 +34,7 @@ func TestRegisterLedgerToolsFailsWhenTheDispatcherAlreadyHasTheName(t *testing.T
 	if err := dispatcher.RegisterTool(tools.NewRegistry(), &ledgerReadTool{}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerLedgerTools(dispatcher, tools.NewRegistry(), ledger.NewMemoryLedgerRepository(), 0, nil)
+	_, err := registerLedgerTools(dispatcher, tools.NewRegistry(), ledger.NewMemoryLedgerRepository(), 0, nil, nil)
 	if err == nil {
 		t.Fatal("a dispatcher-level duplicate was accepted")
 	}

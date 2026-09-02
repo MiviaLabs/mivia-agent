@@ -70,7 +70,18 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 // RegisterSessionTool registers a privileged session-owned tool on both the
 // dispatcher and the tool registry. It fails fast if the tool name is already
 // present so registration conflicts surface at startup rather than at runtime.
-func RegisterSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
+// RegisterSessionTool installs a session-owned tool onto the live registry
+// and dispatcher.
+//
+// denylist is the operator's mandatory_tool_denylist. It is required because
+// these tools are registered AFTER the registry has been scoped, so no
+// earlier filter can see them: dispatch_tasks, post_message, read_output and
+// load_tools were all unreachable by an operator's guardrail, whatever it
+// said. Registration is the only point at which they can be refused.
+func RegisterSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool, denylist []string) error {
+	if tools.OperatorDenialSet(denylist)[tool.Name()] {
+		return fmt.Errorf("session tool %q is on the operator's tool denylist", tool.Name())
+	}
 	if _, privileged := tool.(tools.PrivilegedTool); !privileged {
 		return fmt.Errorf("session tool %q must implement tools.PrivilegedTool", tool.Name())
 	}
@@ -96,5 +107,5 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return RegisterSessionTool(d, opts.Registry, NewLoadToolsTool(opts.Session, opts.DeferredTools))
+	return RegisterSessionTool(d, opts.Registry, NewLoadToolsTool(opts.Session, opts.DeferredTools), opts.ToolDenylist)
 }

@@ -27,6 +27,10 @@ import (
 // other cliagents code can reference the type without importing cli.
 // internal/cli/dispatcher.go re-exports it via a type alias.
 type SessionDispatcherOpts struct {
+	// ToolDenylist is the operator's mandatory_tool_denylist. Session-owned
+	// tools are registered after the registry has been scoped, so this is the
+	// only point at which the operator's guardrail can refuse one.
+	ToolDenylist []string
 	// Registry is the advertised surface: what the root model is shown and what
 	// the root loop may invoke. Under a deferred tool tier this is only the core
 	// block plus whatever has been admitted.

@@ -191,7 +191,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 	approval := func() sdkadapter.ApprovalDeps {
 		return sdkadapter.ApprovalDeps{Policy: res.Approvals.ApprovalPolicy()}
 	}
-	opts := cliagents.SessionDispatcherOpts{Approval: approval, Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root, ToolRunTimeout: config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec)}
+	opts := cliagents.SessionDispatcherOpts{Approval: approval, ToolDenylist: setup.loaded.Global.MandatoryToolDenylistAdditions, Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root, ToolRunTimeout: config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec)}
 	dispatcher, err := WorkflowBuildDispatcher(opts)
 	if err != nil {
 		return nil, cliagents.SessionDispatcherOpts{}, nil, err

@@ -54,6 +54,16 @@ func sessionSkillRegistry(root string, ctx agentSessionContext, skillReg *skills
 	return cliagents.FilterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 }
 
+// sessionAgentContext is the session's agent context, or the zero value when
+// no agent state is attached (a hand-built caller, or a session that never
+// captured a surface).
+func sessionAgentContext(state *AgentSessionState) agentSessionContext {
+	if state == nil {
+		return agentSessionContext{}
+	}
+	return state.Context()
+}
+
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *AgentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
@@ -63,10 +73,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	ctx := agentSessionContext{}
-	if state != nil {
-		ctx = state.Context()
-	}
+	ctx := sessionAgentContext(state)
 	skillReg = sessionSkillRegistry(root, ctx, skillReg)
 	skillScope := cliagents.SkillScopeFromAgent(ctx.Selected)
 	modelCatalog := routing.Catalog
@@ -87,6 +94,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		// sees the gate installed after this dispatcher was built and any
 		// policy change since.
 		Approval:                  sess.ApprovalSnapshot,
+		ToolDenylist:              ctx.Global.MandatoryToolDenylistAdditions,
 		Registry:                  sess.Tools,
 		AuthorityRegistry:         surface.authority,
 		Repo:                      ledgerRepoOf(state),

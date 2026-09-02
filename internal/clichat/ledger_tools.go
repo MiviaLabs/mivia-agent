@@ -409,7 +409,7 @@ var (
 // The returned spool is the process-local grant map for read_output; callers
 // that truncate tool results should pass it into agent.Options.RemainderSpool
 // so notices and reads share one visibility domain. Nil when registration fails.
-func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository, toolResultCapBytes int, spool *remainder.Spool) (*remainder.Spool, error) {
+func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository, toolResultCapBytes int, spool *remainder.Spool, denylist []string) (*remainder.Spool, error) {
 	effective := cliorchestrate.EffectiveOrchestrationRepo(repo)
 	if spool == nil {
 		spool = newRemainderSpool(effective)
@@ -420,7 +420,13 @@ func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger
 		&readOutputTool{spool: spool, resultCapBytes: toolResultCapBytes},
 		&storeNoteTool{repo: effective},
 	}
+	denied := tools.OperatorDenialSet(denylist)
 	for _, tool := range toolSet {
+		// These are registered after the registry has been scoped, so this is
+		// the only point at which the operator's denylist can refuse one.
+		if denied[tool.Name()] {
+			continue
+		}
 		if _, exists := reg.Get(tool.Name()); exists {
 			return nil, fmt.Errorf("execution history tool %q already registered", tool.Name())
 		}

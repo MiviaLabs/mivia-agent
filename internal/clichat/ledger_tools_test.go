@@ -576,7 +576,7 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 	}
 	reg := tools.NewRegistry()
 	dispatcher := runtime.New(runtime.Policy{})
-	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err != nil {
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"ledger_read", "list_run_events", "read_output"} {
@@ -593,11 +593,11 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 	}
 	// cliagents.RegisterSessionTool must keep rejecting unprivileged tools; these
 	// two deliberately go through registerLedgerTools instead.
-	if err := cliagents.RegisterSessionTool(dispatcher, tools.NewRegistry(), &ledgerReadTool{}); err == nil {
+	if err := cliagents.RegisterSessionTool(dispatcher, tools.NewRegistry(), &ledgerReadTool{}, nil); err == nil {
 		t.Fatal("cliagents.RegisterSessionTool accepted an unprivileged tool")
 	}
 	// Re-registering must fail rather than shadow an existing name.
-	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err == nil {
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil, nil); err == nil {
 		t.Fatal("duplicate registration was accepted")
 	}
 }

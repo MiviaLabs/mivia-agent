@@ -45,7 +45,7 @@ func TestRegisterSessionToolRejectsUnmarkedTool(t *testing.T) {
 	d := newPrivilegeTestDispatcher(t)
 	reg := tools.NewRegistry()
 
-	err := cliagents.RegisterSessionTool(d, reg, unmarkedControlTool{})
+	err := cliagents.RegisterSessionTool(d, reg, unmarkedControlTool{}, nil)
 	if err == nil {
 		t.Fatal("registering an unmarked session tool must fail")
 	}
@@ -61,7 +61,7 @@ func TestRegisterSessionToolAcceptsMarkedTool(t *testing.T) {
 	d := newPrivilegeTestDispatcher(t)
 	reg := tools.NewRegistry()
 
-	if err := cliagents.RegisterSessionTool(d, reg, markedControlTool{}); err != nil {
+	if err := cliagents.RegisterSessionTool(d, reg, markedControlTool{}, nil); err != nil {
 		t.Fatalf("marked session tool must register: %v", err)
 	}
 	if _, exists := reg.Get("future_control"); !exists {

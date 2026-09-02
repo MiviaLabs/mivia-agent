@@ -93,3 +93,47 @@ func TestRootScope_CompiledDenialKeepsItsRootExemption(t *testing.T) {
 			"what a SPAWNED agent may reach, and the root agent keeps delegation")
 	}
 }
+
+// rootScopePrivilegedTool is a privileged (session-owned) tool: dispatch_tasks,
+// post_message, read_output and load_tools are all of this shape.
+type rootScopePrivilegedTool struct{ name string }
+
+func (t rootScopePrivilegedTool) Name() string               { return t.name }
+func (t rootScopePrivilegedTool) Description() string        { return t.name }
+func (t rootScopePrivilegedTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t rootScopePrivilegedTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "ok", nil
+}
+func (t rootScopePrivilegedTool) Privileged() {}
+
+// An operator's denial must outrank the privileged marker.
+//
+// scopeAdmits returned true for a PrivilegedTool BEFORE consulting the
+// operator's denylist, so `mandatory_tool_denylist = ["read_output"]` (or
+// post_message, dispatch_tasks, load_tools) did nothing at all: every
+// session-owned tool is privileged by construction.
+//
+// The COMPILED denylist keeps its root exemption - it bounds what a SPAWNED
+// agent may reach and the root agent is meant to keep delegation. An operator
+// addition is a rule about what this installation may run, and a tool being
+// session-owned is not a reason to exempt it from that.
+func TestRootScope_OperatorDenialOutranksThePrivilegedMarker(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(rootScopePrivilegedTool{name: "read_output"})
+	reg.Register(rootScopePrivilegedTool{name: "dispatch_tasks"})
+
+	scoped := tools.ScopedRegistry(reg, tools.ScopeOptions{
+		Mode:          tools.ScopeRoot,
+		ExtraDenylist: []string{"read_output"},
+	})
+
+	if _, ok := scoped.Get("read_output"); ok {
+		t.Error("an operator denied a session-owned tool and it survived, because " +
+			"the privileged marker was checked first; every session tool is " +
+			"privileged, so the guardrail could never reach any of them")
+	}
+	if _, ok := scoped.Get("dispatch_tasks"); !ok {
+		t.Error("a COMPILED denylist name lost its root exemption; the root agent " +
+			"keeps delegation")
+	}
+}
