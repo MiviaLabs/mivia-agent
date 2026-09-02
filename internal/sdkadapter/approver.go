@@ -161,6 +161,13 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 		// without it, the gate blocks forever after approval.
 		a.emitPending(callIDFromContext(ctx), a.cliName, approvalClassName(cap.Class), string(args))
 	}
+	if a.gate == nil {
+		// A call that needs approval with nobody to ask is denied, never run.
+		// This is reachable only when a deny policy built this adapter without
+		// a gate, but the direction matters more than the reachability: the
+		// absence of an approver must never read as approval.
+		return a.denied(ctx, "no approver is attached to this session")
+	}
 	res := a.gate(ctx, a.cliName, args)
 	if res.ApprovedForClass && a.standing != nil {
 		if res.Approved {

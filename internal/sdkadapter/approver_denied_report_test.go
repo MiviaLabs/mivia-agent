@@ -3,6 +3,7 @@ package sdkadapter
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -177,4 +178,83 @@ func TestAnApprovedCallReportsNoDenial(t *testing.T) {
 		t.Error("an approved call reported a denial; every ordinary tool call would " +
 			"be marked failed")
 	}
+}
+
+// TestADenyPolicyEnforcesItselfWithNoApprover is the fail-open the approval
+// wiring shipped with.
+//
+// The adapter that holds the deny short-circuit was only built when an
+// ApprovalGate was set, and a gate is set by the TUI and by nothing else. So
+// on every headless surface - line mode, --json, a sidecar - configuring
+// `[approvals] default_mode = "deny"` built no adapter, consulted no policy,
+// and ran every write tool. The operator who chose the most restrictive
+// setting got the least restrictive behaviour, with no error to notice.
+func TestADenyPolicyEnforcesItselfWithNoApprover(t *testing.T) {
+	cli := &deniableTool{}
+	reg := tools.NewRegistry()
+	reg.Register(cli)
+
+	// Exactly the headless shape: a deny policy and NO gate.
+	sdkReg, err := ConvertToolRegistryWithAdmission(reg, AdmissionPredicates{
+		ApprovalPolicy: "deny",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, ok := sdkReg.Get("deny_tool")
+	if !ok {
+		t.Fatal("deny_tool not in sdk reg")
+	}
+
+	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+		ID: "call-HEADLESS-1", Name: "deny_tool", Index: 0, Arguments: []byte(`{}`),
+	})
+	out, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	cli.mu.Lock()
+	ran := cli.ran
+	cli.mu.Unlock()
+	if ran {
+		t.Fatal("a write tool RAN under an approval policy of \"deny\" because no " +
+			"approver was attached; the policy is fail-open on every headless surface")
+	}
+	if s, _ := out.Value.(string); !strings.Contains(s, "denied") {
+		t.Errorf("the model was told %q, want a refusal", s)
+	}
+}
+
+// TestAnApprovalPolicyWithNoApproverDeniesRatherThanRuns holds the direction
+// for the other policies. The absence of an approver must never read as
+// approval.
+func TestAnApprovalPolicyWithNoApproverDeniesRatherThanRuns(t *testing.T) {
+	adapter := &approvalGatedToolAdapter{
+		inner:           &denyingInner{},
+		cliName:         "deny_tool",
+		policy:          "always",
+		getCapabilities: func(json.RawMessage) tools.Capability { return tools.Capability{Class: tools.ExecutionWrite} },
+	}
+
+	out, err := adapter.Run(context.Background(), sdktools.InOut{Value: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s, _ := out.Value.(string); !strings.Contains(s, "denied") {
+		t.Errorf("a call needing approval with no approver returned %q; the absence "+
+			"of an approver must not read as approval", s)
+	}
+}
+
+// denyingInner fails the test if it is ever reached.
+type denyingInner struct{}
+
+func (*denyingInner) Name() string        { return "deny_tool" }
+func (*denyingInner) Description() string { return "" }
+func (*denyingInner) Schema() map[string]any {
+	return map[string]any{"type": "object"}
+}
+func (*denyingInner) Run(context.Context, sdktools.InOut) (sdktools.Out, error) {
+	return sdktools.Out{Value: "ran"}, nil
 }
