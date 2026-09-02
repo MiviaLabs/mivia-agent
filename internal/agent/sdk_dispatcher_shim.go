@@ -85,6 +85,69 @@ type sdkTurnState struct {
 	toolMu        sync.Mutex
 	toolOutcomes  map[string]*toolCallOutcome
 	streamRevoked atomic.Bool
+	// cancels holds the per-call CancelFunc for every tool call
+	// currently in flight in this turn, keyed by call ID (the same
+	// key Run derives via toolCallKeyFromContext). Both the admitted
+	// path (dispatcherShim.Run, invoked directly from the registry)
+	// and the deferred/unadmitted path (RunUnadmittedTool, which
+	// funnels through the SAME Run method via its own throwaway shim
+	// instance) register here, so an external cancel-by-ID request
+	// reaches either path identically. Entries are removed on call
+	// completion (deferred alongside the timeout cancel) so the map
+	// never outlives the calls it tracks.
+	cancelMu sync.Mutex
+	cancels  map[string]context.CancelFunc
+}
+
+// registerCancel installs the CancelFunc for an in-flight call. A
+// blank callID is a no-op (mirrors the existing callKey == ""
+// guards elsewhere in this file for ID-less test fixtures).
+func (s *sdkTurnState) registerCancel(callID string, cancel context.CancelFunc) {
+	if s == nil || callID == "" || cancel == nil {
+		return
+	}
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	if s.cancels == nil {
+		s.cancels = make(map[string]context.CancelFunc)
+	}
+	s.cancels[callID] = cancel
+}
+
+// deregisterCancel removes the CancelFunc for callID without invoking
+// it, for the normal completion path where the call already finished
+// and the timeout cancel (deferred alongside this one) is the one
+// that actually releases the context. Safe to call more than once or
+// on a missing key.
+func (s *sdkTurnState) deregisterCancel(callID string) {
+	if s == nil || callID == "" {
+		return
+	}
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	delete(s.cancels, callID)
+}
+
+// cancelCall invokes and removes the CancelFunc for callID, returning
+// whether a matching in-flight call was found. This is the entry
+// point an external cancel request (e.g. a keypress in the UI) calls.
+// Safe to call more than once for the same callID: the second call
+// finds nothing and returns false.
+func (s *sdkTurnState) cancelCall(callID string) bool {
+	if s == nil || callID == "" {
+		return false
+	}
+	s.cancelMu.Lock()
+	cancel, ok := s.cancels[callID]
+	if ok {
+		delete(s.cancels, callID)
+	}
+	s.cancelMu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
 }
 
 func newSDKTurnState() *sdkTurnState { return &sdkTurnState{} }
@@ -345,9 +408,10 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	capability := tools.CapabilityOf(d.cli, args)
 	ctx, cancelTimeout, callTimeout := armDispatcherTimeout(ctx, d.opts, args, capability)
 	defer cancelTimeout()
-	var result, hookContext string
 	dispatcher, spool := d.dispatcherAndSpool()
 	callKey := toolCallKeyFromContext(ctx, d.inner.Name())
+	ctx, cleanupExplicitCancel := d.armExplicitCancel(ctx, callKey)
+	defer cleanupExplicitCancel()
 	// Legacy "running" tool_start: the analogue of loop_tool_exec.go's
 	// pre-dispatch emission, keyed on the call ID in context.
 	if callKey != "" {
@@ -359,6 +423,34 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		Kind: runtime.Tool, Name: d.inner.Name(), Input: args, Timeout: callTimeout,
 		Step: d.turn.currentStep(), SkipDedup: !capability.Dedups(),
 	})
+	return d.composeRunOutput(callKey, args, r, spool, capability)
+}
+
+// armExplicitCancel derives a second, independent cancel from ctx (already
+// narrowed by armDispatcherTimeout) and registers it in d.turn's registry
+// under callKey, so an external cancel-by-ID request can end this call
+// without waiting for its timeout. Both RunUnadmittedTool's throwaway shim
+// and the registry-installed shim funnel through Run, so this is the single
+// site both paths register through. The returned cleanup func cancels the
+// context and deregisters the call; callers defer it once.
+func (d *dispatcherShim) armExplicitCancel(ctx context.Context, callKey string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	if d.turn == nil || callKey == "" {
+		return ctx, cancel
+	}
+	d.turn.registerCancel(callKey, cancel)
+	return ctx, func() {
+		d.turn.deregisterCancel(callKey)
+		cancel()
+	}
+}
+
+// composeRunOutput turns one dispatcher outcome into Run's model-visible
+// result: capped, spooled, hook-annotated content and a recorded outcome -
+// split out of Run to keep it under the per-function line budget. Always
+// returns a nil error: see Run's own doc comment for why an errored call
+// must never surface as a hard Run failure.
+func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime.Result, spool *remainder.Spool, capability tools.Capability) (sdktools.Out, error) {
 	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
 	// fidelity, runtime/dispatcher.go), which did not run for THIS call - so
 	// emitting them here would show a hook firing that never happened for
@@ -374,13 +466,13 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	// in loop_tools.go operates on the originalBody for exactly this
 	// reason). Capture it BEFORE the notice rewrite.
 	originalBody := string(r.Output)
-	result = originalBody
+	result := originalBody
 	if r.IsDuplicate() {
 		result = duplicateDeliveryNotice
 	} else if r.Err != nil && strings.TrimSpace(result) == "" {
 		result = fmt.Sprintf("error: %v", r.Err)
 	}
-	hookContext = r.HookContext
+	hookContext := r.HookContext
 	// D10 mirror: an ephemeral body is capped with a NIL spool so the
 	// notice never mints a ref the scrub exists to remove.
 	_, ephemeral := d.cli.(tools.EphemeralResultTool)

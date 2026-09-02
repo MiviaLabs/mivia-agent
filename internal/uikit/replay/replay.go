@@ -107,3 +107,7 @@ type turnHandle struct {
 func (h *turnHandle) ID() string                   { return h.id }
 func (h *turnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *turnHandle) Cancel()                      { h.cancel() }
+
+// CancelToolCall is unsupported by the fixture player: it has no
+// in-flight tool calls to cancel, so this always reports a miss.
+func (h *turnHandle) CancelToolCall(string) bool { return false }

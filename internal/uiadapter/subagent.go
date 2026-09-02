@@ -462,3 +462,8 @@ func (h *subagentTurnHandle) Cancel() {
 		}
 	})
 }
+
+// CancelToolCall is not wired for subagent threads in this slice
+// (per-tool-call cancellation for subagents is a separate slice); it
+// always reports a miss.
+func (h *subagentTurnHandle) CancelToolCall(string) bool { return false }

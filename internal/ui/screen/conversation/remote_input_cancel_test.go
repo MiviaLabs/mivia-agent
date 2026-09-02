@@ -21,6 +21,7 @@ type cancelTrackingTurnHandle struct {
 func (h *cancelTrackingTurnHandle) ID() string                   { return h.id }
 func (h *cancelTrackingTurnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *cancelTrackingTurnHandle) Cancel()                      { h.cancelled = true }
+func (h *cancelTrackingTurnHandle) CancelToolCall(string) bool   { return false }
 
 // TestHandleRemoteInput_CancelKindCancelsActiveTurn proves a "cancel" remote
 // input event, targeted at the foreground session with an active turn,

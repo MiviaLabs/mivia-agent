@@ -608,6 +608,7 @@ type scriptedHandle struct{ ch chan uievent.Event }
 func (h scriptedHandle) ID() string                   { return "scripted" }
 func (h scriptedHandle) Events() <-chan uievent.Event { return h.ch }
 func (h scriptedHandle) Cancel()                      {}
+func (h scriptedHandle) CancelToolCall(string) bool   { return false }
 
 // TestPanelDTypesIntoTheFilterWhileNoDialogShows: the view toggle acts
 // on content, and the only content surface is the dialog - with the

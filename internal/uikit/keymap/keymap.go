@@ -51,38 +51,44 @@ type ID string
 
 // Action identifiers.
 const (
-	IDCancel        ID = "cancel"
-	IDQuit          ID = "quit"
-	IDSend          ID = "send"
-	IDNewline       ID = "newline"
-	IDClearLine     ID = "clear-line"
-	IDHelp          ID = "help"
-	IDThemeDialog   ID = "theme-dialog"
-	IDFocusNext     ID = "focus-next"
-	IDFocusPrev     ID = "focus-prev"
-	IDToggleBlock   ID = "toggle-block"
-	IDExpandAll     ID = "expand-all"
-	IDCollapseAll   ID = "collapse-all"
-	IDCopyBlock     ID = "copy-block"
-	IDScrollUp      ID = "scroll-up"
-	IDScrollDown    ID = "scroll-down"
-	IDScrollTop     ID = "scroll-top"
-	IDScrollBottom  ID = "scroll-bottom"
-	IDOpenPager     ID = "open-pager"
-	IDToggleReason  ID = "toggle-reasoning"
-	IDApproveOnce   ID = "approve-once"
-	IDApproveAlways ID = "approve-always"
-	IDDenyOnce      ID = "deny-once"
-	IDDenyAlways    ID = "deny-always"
-	IDAcceptPrefix  ID = "accept-prefix"
-	IDMenuNext      ID = "menu-next"
-	IDMenuPrev      ID = "menu-prev"
-	IDMenuAccept    ID = "menu-accept"
-	IDMenuDismiss   ID = "menu-dismiss"
-	IDDialogUp      ID = "dialog-up"
-	IDDialogDown    ID = "dialog-down"
-	IDDialogAccept  ID = "dialog-accept"
-	IDDialogCancel  ID = "dialog-cancel"
+	IDCancel      ID = "cancel"
+	IDQuit        ID = "quit"
+	IDSend        ID = "send"
+	IDNewline     ID = "newline"
+	IDClearLine   ID = "clear-line"
+	IDHelp        ID = "help"
+	IDThemeDialog ID = "theme-dialog"
+	IDFocusNext   ID = "focus-next"
+	IDFocusPrev   ID = "focus-prev"
+	IDToggleBlock ID = "toggle-block"
+	IDExpandAll   ID = "expand-all"
+	IDCollapseAll ID = "collapse-all"
+	IDCopyBlock   ID = "copy-block"
+	// IDCancelToolCall is distinct from IDCancel: IDCancel already means
+	// "return to the composer" inside ContextTranscript. This cancels ONE
+	// in-flight tool call - the block currently focused, if it is still
+	// running - and leaves the rest of the turn (and any concurrent
+	// sibling tool call) running.
+	IDCancelToolCall ID = "cancel-tool-call"
+	IDScrollUp       ID = "scroll-up"
+	IDScrollDown     ID = "scroll-down"
+	IDScrollTop      ID = "scroll-top"
+	IDScrollBottom   ID = "scroll-bottom"
+	IDOpenPager      ID = "open-pager"
+	IDToggleReason   ID = "toggle-reasoning"
+	IDApproveOnce    ID = "approve-once"
+	IDApproveAlways  ID = "approve-always"
+	IDDenyOnce       ID = "deny-once"
+	IDDenyAlways     ID = "deny-always"
+	IDAcceptPrefix   ID = "accept-prefix"
+	IDMenuNext       ID = "menu-next"
+	IDMenuPrev       ID = "menu-prev"
+	IDMenuAccept     ID = "menu-accept"
+	IDMenuDismiss    ID = "menu-dismiss"
+	IDDialogUp       ID = "dialog-up"
+	IDDialogDown     ID = "dialog-down"
+	IDDialogAccept   ID = "dialog-accept"
+	IDDialogCancel   ID = "dialog-cancel"
 
 	// Transcript mode (the pager). One ID per less-compatible action, so
 	// the help screen names every key the pager answers to
@@ -224,17 +230,6 @@ func Default() []Binding {
 		{ID: IDMenuPrev, Context: ContextCompletion, Keys: []string{"up"}, Help: "previous"},
 		{ID: IDMenuDismiss, Context: ContextCompletion, Keys: []string{"esc"}, Help: "dismiss"},
 
-		// Transcript, scoped to the live window.
-		{ID: IDFocusNext, Context: ContextTranscript, Keys: []string{"tab"}, Help: "focus the next block"},
-		{ID: IDFocusPrev, Context: ContextTranscript, Keys: []string{"shift+tab"}, Help: "focus the previous block"},
-		// "space", not " ": bubbletea/v2 Key.String reports the space bar
-		// as the word. A literal " " here silently never matches.
-		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{"space", "enter"}, Help: "collapse or expand"},
-		{ID: IDExpandAll, Context: ContextTranscript, Keys: []string{"ctrl+e"}, Help: "expand all"},
-		{ID: IDCollapseAll, Context: ContextTranscript, Keys: []string{"ctrl+g"}, Help: "collapse all"},
-		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
-		{ID: IDCancel, Context: ContextTranscript, Keys: []string{"esc"}, Help: "return to the composer"},
-
 		// Approval. wireframes-panes.md section 7. up/down (and the less
 		// spellings k/j) scroll the inline diff preview; the decision keys
 		// are letters the arrows never collide with.
@@ -252,7 +247,27 @@ func Default() []Binding {
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
 		{ID: IDForceSend, Context: ContextDialog, Keys: []string{"f", "F"}, Help: "force send the selected queued message", Short: "force"},
-	}, pagerBindings()...), append(filesBindings(), settingsBindings()...)...)
+	}, append(transcriptBindings(), pagerBindings()...)...), append(filesBindings(), settingsBindings()...)...)
+}
+
+// transcriptBindings is the transcript's live-window section, split out of
+// Default to keep that function under the per-function line budget.
+func transcriptBindings() []Binding {
+	return []Binding{
+		{ID: IDFocusNext, Context: ContextTranscript, Keys: []string{"tab"}, Help: "focus the next block"},
+		{ID: IDFocusPrev, Context: ContextTranscript, Keys: []string{"shift+tab"}, Help: "focus the previous block"},
+		// "space", not " ": bubbletea/v2 Key.String reports the space bar
+		// as the word. A literal " " here silently never matches.
+		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{"space", "enter"}, Help: "collapse or expand"},
+		{ID: IDExpandAll, Context: ContextTranscript, Keys: []string{"ctrl+e"}, Help: "expand all"},
+		{ID: IDCollapseAll, Context: ContextTranscript, Keys: []string{"ctrl+g"}, Help: "collapse all"},
+		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
+		// "x": unbound elsewhere in ContextTranscript (tab, shift+tab,
+		// space, enter, ctrl+e, ctrl+g, y, esc are all already claimed).
+		// A no-op unless the focused block is a still-running tool call.
+		{ID: IDCancelToolCall, Context: ContextTranscript, Keys: []string{"x"}, Help: "cancel this tool call, if it is still running"},
+		{ID: IDCancel, Context: ContextTranscript, Keys: []string{"esc"}, Help: "return to the composer"},
+	}
 }
 
 // settingsBindings is the full-screen settings modal's section. It does

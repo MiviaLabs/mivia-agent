@@ -593,6 +593,8 @@ func (s Screen) transcriptAction(id keymap.ID) (app.Screen, tea.Cmd) {
 			s.statusline.Notice("copied the block")
 			return s, tea.SetClipboard(text)
 		}
+	case keymap.IDCancelToolCall:
+		return s.cancelFocusedToolCall()
 	}
 	return s, nil
 }

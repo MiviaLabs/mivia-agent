@@ -68,6 +68,43 @@ func TestFocusOnAnEmptyWindowIsANoOp(t *testing.T) {
 	}
 }
 
+// TestFocusedBlock_ComposerFocusReturnsFalse pins the miss case: at rest
+// (composer focus, m.focus == -1) there is no block to return.
+func TestFocusedBlock_ComposerFocusReturnsFalse(t *testing.T) {
+	m := focused(t, 3)
+	if _, ok := m.FocusedBlock(); ok {
+		t.Fatal("FocusedBlock reported a block while the composer holds focus")
+	}
+}
+
+// TestFocusedBlock_ReturnsTheFocusedBlock proves FocusedBlock returns the
+// SAME block FocusIndex names, by identity (CallID) - the shape a caller
+// like the cancel-tool-call keybinding needs to check "is this the running
+// call I mean to act on" without re-deriving the index into m.blocks itself.
+func TestFocusedBlock_ReturnsTheFocusedBlock(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "call-1", Name: "run_command"},
+	})
+
+	m = m.FocusPrev() // composer -> the one live block
+	block, ok := m.FocusedBlock()
+	if !ok {
+		t.Fatal("FocusedBlock reported no block while one is focused")
+	}
+	if block.CallID != "call-1" {
+		t.Fatalf("got CallID %q, want %q", block.CallID, "call-1")
+	}
+	if block.Kind != uievent.KindToolStart {
+		t.Fatalf("got Kind %v, want KindToolStart", block.Kind)
+	}
+	if !block.Focused {
+		t.Fatal("the block FocusedBlock returned does not itself report Focused")
+	}
+}
+
 // TestOnlyOneBlockIsEverFocused pins the derived flag. Two blocks both
 // claiming the focus would draw two focus rings.
 func TestOnlyOneBlockIsEverFocused(t *testing.T) {
