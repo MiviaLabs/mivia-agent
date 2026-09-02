@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -184,5 +185,93 @@ func TestRunDeferredToolNowRunsWhenApproved(t *testing.T) {
 	}
 	if !strings.Contains(content, "WROTE") {
 		t.Errorf("content = %q, want the tool's own output", content)
+	}
+}
+
+// unclassifiedTool declares no Capability at all. Several real tools have this
+// shape - post_message and run_messages in internal/clichat, every workflow_*
+// tool in internal/workflows/ledger - so the "unclassified is ExecutionExternal"
+// default is production-reachable, not a defensive branch.
+type unclassifiedTool struct{ ran bool }
+
+func (*unclassifiedTool) Name() string               { return "workflow_deliver" }
+func (*unclassifiedTool) Description() string        { return "publishes a workflow run" }
+func (*unclassifiedTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *unclassifiedTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.ran = true
+	return "published", nil
+}
+
+// TestAnUnclassifiedToolIsGatedAtTheMostRestrictiveClass pins the default.
+//
+// It probes the class through the STANDING store rather than through "was the
+// gate asked". The gate signature carries no class, so asking it proves only
+// that the class is at or above Write - a mutation from External to Write
+// would survive that. A standing decision is recorded per class, so a denial
+// recorded at External is consulted only if the call really is classified
+// External.
+func TestAnUnclassifiedToolIsGatedAtTheMostRestrictiveClass(t *testing.T) {
+	standing := sdkadapter.NewApprovalStanding()
+	standing.Deny(sdkadapter.StandingKey{
+		Name:  "workflow_deliver",
+		Class: tools.ExecutionExternal,
+		Args:  json.RawMessage(`{}`),
+	})
+
+	var gateCalls int
+	s := &Session{
+		ApprovalPolicy:   "write-only",
+		ApprovalStanding: standing,
+		ApprovalGate: func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult {
+			gateCalls++
+			return sdkadapter.ApprovalResult{Approved: true}
+		},
+	}
+
+	got := s.decideDeferredApproval(context.Background(), &unclassifiedTool{},
+		"workflow_deliver", json.RawMessage(`{}`))
+
+	if got.Approved {
+		t.Error("an unclassified tool was approved past a standing denial recorded " +
+			"at ExecutionExternal, so it is not being classified there - a tool " +
+			"that declares nothing must be gated at the most restrictive class, " +
+			"not waved through")
+	}
+	if gateCalls != 0 {
+		t.Errorf("the gate was consulted %d times despite a matching standing "+
+			"denial, so the class the decision used is not the one recorded",
+			gateCalls)
+	}
+}
+
+// TestTheDeferredPathStampsThePolicyOnTheContext is the effect the empty-policy
+// default actually has.
+//
+// "" and "write-only" take identical branches inside DecideApproval, so a test
+// that only checks the outcome cannot see the default at all. What it changes
+// is the context stamp: WithApprovalPolicy skips an empty policy, and the gate
+// then falls back to ITS OWN session's policy - which is the cross-session
+// /yolo leak that stamp exists to close.
+func TestTheDeferredPathStampsThePolicyOnTheContext(t *testing.T) {
+	var stamped string
+	var found bool
+	s := &Session{
+		// Deliberately unset, the shape a session built by /new or /resume had.
+		ApprovalPolicy: "",
+		ApprovalGate: func(ctx context.Context, _ string, _ json.RawMessage) sdkadapter.ApprovalResult {
+			stamped, found = sdkadapter.ApprovalPolicyFromContext(ctx)
+			return sdkadapter.ApprovalResult{Approved: true}
+		},
+	}
+
+	s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+
+	if !found {
+		t.Fatal("the deciding policy was not stamped on the context, so a gate " +
+			"shared across sessions answers from a different session's policy")
+	}
+	if stamped != config.ApprovalPolicyWriteOnly {
+		t.Errorf("stamped %q, want write-only: an unset policy must resolve to a "+
+			"real one before it travels", stamped)
 	}
 }

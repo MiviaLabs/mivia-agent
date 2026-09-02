@@ -160,13 +160,12 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 // restrictive class - so an unclassified tool is gated rather than waved
 // through.
 func capabilitiesFor(t tools.Tool) func(json.RawMessage) tools.Capability {
-	if capable, ok := t.(tools.CapableTool); ok {
-		return func(args json.RawMessage) tools.Capability {
-			return capable.Capability(args)
-		}
-	}
-	return func(json.RawMessage) tools.Capability {
-		return tools.Capability{Class: tools.ExecutionExternal}
+	// One implementation of the unclassified default, in tools. This was a
+	// second copy of the same rule and the deferred path in internal/chat was
+	// a third; a review found one of them unpinned and the three free to
+	// diverge.
+	return func(args json.RawMessage) tools.Capability {
+		return tools.CapabilityOf(t, args)
 	}
 }
 

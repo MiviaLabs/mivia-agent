@@ -497,3 +497,24 @@ func pathCapabilityKey(args json.RawMessage, ws *workspace.Root) string {
 	}
 	return "path:" + filepath.ToSlash(filepath.Clean(input.Path))
 }
+
+// CapabilityOf reports the execution class of one tool VALUE.
+//
+// A tool that declares no capability is ExecutionExternal - the most
+// restrictive class - so an unclassified tool is gated rather than waved
+// through. That default is load-bearing on the approval paths: several real
+// tools declare no capability (post_message and run_messages in
+// internal/clichat, every workflow_* tool in internal/workflows/ledger), and
+// classifying one of those below Write would run it unprompted under a
+// write-only policy.
+//
+// This is deliberately the TOOL-value form. CapabilityFor above answers the
+// same question from a registry and a NAME, and carries a name-based fallback
+// for the compiled-in tools; the two are not interchangeable, and the approval
+// paths hold a tool rather than a name.
+func CapabilityOf(t Tool, args json.RawMessage) Capability {
+	if capable, ok := t.(CapableTool); ok {
+		return capable.Capability(args)
+	}
+	return Capability{Class: ExecutionExternal}
+}
