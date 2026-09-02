@@ -514,14 +514,36 @@ func (m *pass1Map) purge(callID string) {
 // with the dispatcher shim. It is a no-op when no dispatcher is wired
 // and no result cap is configured, so callers that never set either
 // knob keep the bare converter product.
-func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) {
-	if sdkReg == nil || opts.Dispatcher == nil {
-		return
+// applyDispatcherShim wraps every tool in sdkReg so it executes through the
+// dispatcher, and REFUSES rather than leaving one ungoverned.
+//
+// The shim is where the per-call timeout, the dedup declaration, the result
+// cap, the hook gate and advisory, the duplicate rules and the failure
+// outcome live. A tool the model can call without it runs with none of them.
+//
+// This used to degrade silently in three ways instead of refusing: a nil
+// dispatcher returned early and left the WHOLE registry unwrapped, a
+// non-SchemaTool was skipped, and a failed re-Add put the ORIGINAL ungoverned
+// tool back. None was reachable in a shipped session - composition always
+// builds a dispatcher and every adapter is a SchemaTool - but that was a
+// property of the callers, not of this code, and the failure mode was every
+// contract dropped at once with nothing logged.
+//
+// An empty registry with no dispatcher is fine: there is nothing to govern.
+func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) error {
+	if sdkReg == nil || len(sdkReg.Tools()) == 0 {
+		return nil
+	}
+	if opts.Dispatcher == nil {
+		return fmt.Errorf("agent: no dispatcher wired, so %d tool(s) would execute "+
+			"with no timeout, dedup, result cap, hooks or recorded outcome",
+			len(sdkReg.Tools()))
 	}
 	for _, t := range sdkReg.Tools() {
 		st, ok := t.(sdktools.SchemaTool)
 		if !ok {
-			continue
+			return fmt.Errorf("agent: tool %q carries no schema, so it cannot be "+
+				"governed by the dispatcher", t.Name())
 		}
 		name := t.Name()
 		var cliTool tools.Tool
@@ -533,9 +555,12 @@ func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts
 		sdkReg.Remove(name)
 		wrapped := &dispatcherShim{inner: t, schema: st, cli: cliTool, opts: opts, turn: turn}
 		if err := sdkReg.Add(wrapped); err != nil {
-			_ = sdkReg.Add(t)
+			// Deliberately NOT re-adding t. Restoring the unwrapped tool is
+			// how the failure path handed the model an ungoverned one.
+			return fmt.Errorf("agent: tool %q: install dispatcher shim: %w", name, err)
 		}
 	}
+	return nil
 }
 
 // RunUnadmittedTool executes ONE tool the host authorized for this call but

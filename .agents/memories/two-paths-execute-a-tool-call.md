@@ -63,12 +63,15 @@ defaults it to write-only and fails closed).
 
 ## What it still cannot catch
 
-- **A third path.** `applyDispatcherShim` returns early when
-  `opts.Dispatcher == nil`, leaving the SDK registry unshimmed: no dispatcher
-  means no hooks, no dedup, no capping, no outcome record. Not reachable in a
-  shipped session today - `composition` always builds a dispatcher - but
-  nothing enforces that, and the failure mode is losing every contract at once
-  in silence.
+- ~~A third path via a nil dispatcher.~~ **Closed.** `applyDispatcherShim`
+  used to return early when `opts.Dispatcher == nil`, leaving the whole
+  registry unshimmed, and had two smaller degrades beside it (a
+  non-SchemaTool was skipped; a failed re-Add restored the UNWRAPPED tool).
+  It now refuses instead, and
+  `TestNoToolReachesTheModelUngoverned` (`internal/agent`) asserts the
+  outcome - every tool in a built registry is a `*dispatcherShim`, or the
+  build failed. Six tests had been relying on the degrade while testing
+  something else; they now wire a real dispatcher.
 - **Contracts the table does not name.** `RefOnlyTools` is applied by a
   registry shim, so an operator who names a DEFERRED tool in `ref_only_tools`
   still gets its full body inline. Turn-shaping (`pass1`) and the

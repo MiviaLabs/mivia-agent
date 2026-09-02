@@ -80,10 +80,10 @@ func TestSDKTurnShapingZeroIsInert(t *testing.T) {
 func TestSDKTurnShapingKeepsToolsOffered(t *testing.T) {
 	f := newBatchFixture(t, []int{1 << 10})
 	loop := f.h.newLoop()
-	_ = loop
 	sdkOpts, _, err := buildAgentLoopOptions(loop, Options{
 		Model: "m", BatchResultBudgetBytes: 16 << 10,
 		SessionID: budgetTestSession, RemainderSpool: f.spool,
+		Dispatcher: governedDispatcher(t, loop.Tools),
 	}, "hi")
 	if err != nil {
 		t.Fatal(err)

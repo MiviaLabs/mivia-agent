@@ -182,7 +182,7 @@ func TestSurfaceRotationCarriesConfiguredRunTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(disp.Close)
-	opts := Options{Model: "test-model", ToolRunTimeout: 150 * time.Millisecond}
+	opts := Options{Model: "test-model", ToolRunTimeout: 150 * time.Millisecond, Dispatcher: disp}
 	rotatedReg := buildAndRotate(t, opts, fix, true)
 	start := time.Now()
 	_, err = rotatedReg.Run(context.Background(), "slow_tool", sdktools.InOut{Value: map[string]any{}})

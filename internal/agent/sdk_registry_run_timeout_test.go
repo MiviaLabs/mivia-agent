@@ -39,7 +39,7 @@ func TestBuildSDKToolRegistryHonorsToolRunTimeout(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&blockingNoProfileTool{name: "slow_tool", block: 2 * time.Second})
 	loop := &Loop{Tools: reg}
-	opts := Options{Model: "test-model", ToolRunTimeout: 150 * time.Millisecond}
+	opts := Options{Model: "test-model", ToolRunTimeout: 150 * time.Millisecond, Dispatcher: governedDispatcher(t, reg)}
 	sdkReg, err := buildSDKToolRegistry(loop, opts, reg, newSDKTurnState())
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestBuildSDKToolRegistryDefaultsToUncapped(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&blockingNoProfileTool{name: "slow_tool", block: 300 * time.Millisecond})
 	loop := &Loop{Tools: reg}
-	opts := Options{Model: "test-model"}
+	opts := Options{Model: "test-model", Dispatcher: governedDispatcher(t, reg)}
 	sdkReg, err := buildSDKToolRegistry(loop, opts, reg, newSDKTurnState())
 	if err != nil {
 		t.Fatal(err)
