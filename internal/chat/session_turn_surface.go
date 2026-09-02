@@ -212,13 +212,28 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 	if !registerDeferredTool(dispatcher, base, tool) {
 		return "", "", nil, false, false
 	}
+	capability := tools.CapabilityOf(tool, args)
 	result := dispatcher.Invoke(ctx, runtime.Request{
 		TurnID:    fmt.Sprintf("turn:%d", turnID),
 		SessionID: sessionID,
 		Kind:      runtime.Tool,
 		Name:      name,
 		Input:     args,
-		Timeout:   s.deferredCallTimeout(ctx, tool, args),
+		Timeout:   s.deferredCallTimeout(ctx, args, capability),
+		// The tool's own dedup declaration, which this path dropped.
+		// ExecutionRead calls must always execute fresh; Write/External tools
+		// dedup so a duplicate delivery does not repeat side effects. Without
+		// this a read-class deferred call was answered from a record of the
+		// first one - and with Step unset that record sits in the step-less
+		// bucket, so an identical read in a LATER step of the same turn got
+		// the older file back as though it had just been read.
+		//
+		// Step stays unset on purpose. This path has no step number of its
+		// own, and inventing one would file the call in a bucket no other
+		// caller shares; SkipDedup is what carries the tool's declaration,
+		// and for the Write/External calls that keep deduping, a same-turn
+		// repeat is intercepted by StagedToolMessage before it reaches here.
+		SkipDedup: !capability.Dedups(),
 	})
 	// HookContext is set unconditionally, including for a dedup-served
 	// duplicate: DC-9 (internal/runtime/dispatcher.go) answers a duplicate
@@ -360,11 +375,15 @@ func registerDeferredTool(dispatcher *runtime.Dispatcher, base *tools.Registry, 
 // armed by the dispatcher around the handler alone, which is also the only
 // span the admitted path bounds: its approval wrapper sits outside the shim
 // that starts the clock.
-func (s *Session) deferredCallTimeout(ctx context.Context, tool tools.Tool, args json.RawMessage) time.Duration {
+func (s *Session) deferredCallTimeout(ctx context.Context, args json.RawMessage, capability tools.Capability) time.Duration {
 	s.mu.RLock()
 	toolTimeout := s.ToolTimeout
 	s.mu.RUnlock()
-	return agent.ResolveToolCallTimeout(ctx, toolTimeout, args, tools.CapabilityOf(tool, args))
+	// args is passed, not dropped: it carries the model's own timeout_seconds,
+	// which the shared resolver honours when it is larger and the parent
+	// deadline leaves room. Passing nil here would silently cut short a long
+	// run_command on this path that the admitted path legitimately extends.
+	return agent.ResolveToolCallTimeout(ctx, toolTimeout, args, capability)
 }
 
 // capDeferredBody bounds a deferred call's model-facing body by the smaller of
