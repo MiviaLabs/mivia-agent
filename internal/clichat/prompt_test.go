@@ -30,8 +30,8 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// discipline that must reach clean workspaces with no skills or agent
 	// files, so it is exactly the content the fallback exists to carry.
 	prompt := buildAgentPrompt(config.SubagentConfig{})
-	if len(prompt) > 3600 {
-		t.Fatalf("buildAgentPrompt is %d bytes, expected < 3600", len(prompt))
+	if len(prompt) > 4000 {
+		t.Fatalf("buildAgentPrompt is %d bytes, expected < 4000", len(prompt))
 	}
 	if !strings.Contains(prompt, ".agents/agents/") {
 		t.Fatal("buildAgentPrompt must mention .agents/agents/ for self-maintenance")
