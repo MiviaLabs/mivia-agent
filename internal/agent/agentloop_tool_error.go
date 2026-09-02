@@ -23,15 +23,24 @@ import (
 
 // servedUnadmittedToolMessage builds the RoleTool message for a deferred
 // call UnadmittedToolHandler served synchronously: rendered exactly like an
-// ordinary successful call - no "error: " prefix, no failed tool_end, the
-// error text this path exists to remove. appendHookContext gives the model
-// the same framed, tag-neutralized advisory text dispatcherShim.Run gives
-// it for an admitted call - the recorded outcome and the returned message
-// carry the SAME body, exactly like the shim's capped+appended body.
+// ordinary ADMITTED call - no "error: " prefix of this path's own, which is
+// the framing it exists to remove. appendHookContext gives the model the
+// same framed, tag-neutralized advisory text dispatcherShim.Run gives it for
+// an admitted call - the recorded outcome and the returned message carry the
+// SAME body, exactly like the shim's capped+appended body.
+//
+// "Like an admitted call" includes its FAILURES. The outcome is recorded
+// with result.Failed, mirroring the shim's recordToolEventOutcome(..., r.Err,
+// ...): a deferred call that ran and errored, or that a hook blocked, or that
+// approval refused, is a failed call and must render as one.
 func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdkshape.ToolCall, result UnadmittedToolResult) sdkshape.Message {
 	body := appendHookContext(result.Content, result.HookContext)
 	if turn != nil {
-		turn.recordToolOutcomeWithPreview(callKey, call.Name, body, false, "", false, body)
+		// result.Failed, not a hardcoded false. A deferred call that ran and
+		// errored, one a PreToolUse hook blocked, and one approval refused all
+		// arrive here on the Ran path, and recording every one of them as a
+		// success is how a refusal reached every viewer as a completed call.
+		turn.recordToolOutcomeWithPreview(callKey, call.Name, body, result.Failed, "", false, body)
 	}
 	return sdkshape.Message{
 		Role:       provider.RoleTool,

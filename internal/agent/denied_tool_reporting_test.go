@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // A refused tool call must not be reported to the operator as one that ran.
@@ -137,5 +138,52 @@ func TestEmitAddsNoHookPayloadToOtherKinds(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no tool end event reached the bus")
+	}
+}
+
+// The same guarantee for the DEFERRED path, which has its own recorder call.
+//
+// servedUnadmittedToolMessage hardcoded failed=false, because Ran used to mean
+// "ran AND succeeded". So every deferred call that reached the dispatcher and
+// did not succeed - a tool that errored, a call a PreToolUse hook blocked, a
+// call approval refused - was recorded as a completed one, and every surface
+// classified it as success. That is the identical defect this file's first
+// test pins for the SDK path, on the route that path does not cover.
+func TestAFailedDeferredCallIsRecordedAsFailedNotCompleted(t *testing.T) {
+	var turn sdkTurnState
+	call := sdkshape.ToolCall{ID: "call-9", Name: "write_file"}
+
+	servedUnadmittedToolMessage(&turn, "call-9", call, UnadmittedToolResult{
+		Handled: true, Ran: true, Failed: true,
+		Content: `{"status":"failed","error":"disk full"}`,
+	})
+
+	outcome := turn.takeToolCallOutcome("call-9")
+	if outcome == nil {
+		t.Fatal("the deferred call recorded no outcome at all")
+	}
+	if detail := sdkToolEndDetail(*outcome); !strings.HasPrefix(detail, "failed") {
+		t.Errorf("detail = %q; every surface classifies on this prefix, so a "+
+			"deferred call that ran and failed renders as one that succeeded",
+			detail)
+	}
+}
+
+// ...and a deferred call that genuinely succeeded must still read as success,
+// or the fix above would just move the lie to the other side.
+func TestASucceedingDeferredCallIsStillRecordedAsCompleted(t *testing.T) {
+	var turn sdkTurnState
+	call := sdkshape.ToolCall{ID: "call-10", Name: "read_file"}
+
+	servedUnadmittedToolMessage(&turn, "call-10", call, UnadmittedToolResult{
+		Handled: true, Ran: true, Content: "the file body",
+	})
+
+	outcome := turn.takeToolCallOutcome("call-10")
+	if outcome == nil {
+		t.Fatal("no outcome recorded for the served call")
+	}
+	if detail := sdkToolEndDetail(*outcome); strings.HasPrefix(detail, "failed") {
+		t.Errorf("detail = %q, want a completed call", detail)
 	}
 }

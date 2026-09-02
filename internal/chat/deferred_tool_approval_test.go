@@ -144,7 +144,7 @@ func TestRunDeferredToolNowItselfRefuses(t *testing.T) {
 	t.Cleanup(d.Close)
 
 	s := &Session{ApprovalPolicy: "deny"}
-	content, _, _, ok := s.runDeferredToolNow(
+	content, _, _, failed, ok := s.runDeferredToolNow(
 		context.Background(), d, func() *tools.Registry { return reg },
 		"sess-1", 1, "write_file", json.RawMessage(`{}`),
 	)
@@ -160,6 +160,10 @@ func TestRunDeferredToolNowItselfRefuses(t *testing.T) {
 	if !strings.Contains(content, "denied") {
 		t.Errorf("the model was told %q, want a refusal", content)
 	}
+	if !failed {
+		t.Error("the refusal is reported as a completed call, so every viewer " +
+			"renders a denied write as a successful one")
+	}
 }
 
 // TestRunDeferredToolNowRunsWhenApproved is the other direction on the real
@@ -172,7 +176,7 @@ func TestRunDeferredToolNowRunsWhenApproved(t *testing.T) {
 	t.Cleanup(d.Close)
 
 	s := &Session{ApprovalPolicy: "auto"}
-	content, _, _, ok := s.runDeferredToolNow(
+	content, _, _, failed, ok := s.runDeferredToolNow(
 		context.Background(), d, func() *tools.Registry { return reg },
 		"sess-1", 1, "write_file", json.RawMessage(`{}`),
 	)
@@ -185,6 +189,9 @@ func TestRunDeferredToolNowRunsWhenApproved(t *testing.T) {
 	}
 	if !strings.Contains(content, "WROTE") {
 		t.Errorf("content = %q, want the tool's own output", content)
+	}
+	if failed {
+		t.Error("a call that ran and succeeded is marked failed")
 	}
 }
 
