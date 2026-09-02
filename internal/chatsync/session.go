@@ -70,8 +70,9 @@ type SessionOptions struct {
 	EventBufSize int
 
 	// OnStop is called exactly once, with the same string StopReason returns,
-	// when sync latches a terminal stop: a 409, a fatal auth failure, or a
-	// poison 400. It is never called for an orderly Stop.
+	// when sync latches a terminal stop: a fatal auth failure, a poison 400,
+	// or a recovery bound. It is never called for an orderly Stop, and never
+	// for a 409 or 404 on their own - those recover onto a new session.
 	//
 	// It exists because the contract's poison rule is "stop syncing and SAY
 	// SO", and a reason only a getter can reach says nothing: no host polls
@@ -164,9 +165,10 @@ type SyncSession struct {
 	// instead of racing the bus into shedding events.
 	dropSource func() uint64
 
-	// remoteEnded latches when the server reports the remote session is gone
-	// (409). Settled decision: a flush 409 stops the pusher, the poller and the
-	// heartbeat; it never forks. Local chat is untouched.
+	// remoteEnded latches a terminal stop: a fatal auth failure, a poison
+	// 400, or a recovery bound (see classifyFlushError and
+	// recoverRemoteSession). It stops the pusher, the poller and the
+	// heartbeat. Local chat is untouched.
 	remoteEnded atomic.Bool
 
 	// stopReason records WHY sync stopped. A terminal stop that says nothing
@@ -516,8 +518,9 @@ func (s *SyncSession) SessionID() string {
 	return s.sessionID
 }
 
-// Stopped reports whether sync has latched a terminal stop: a 409, a fatal
-// auth failure, or a poison 400. The local chat is unaffected either way.
+// Stopped reports whether sync has latched a terminal stop: a fatal auth
+// failure, a poison 400, or a recovery bound. The local chat is unaffected
+// either way.
 func (s *SyncSession) Stopped() bool { return s.remoteEnded.Load() }
 
 // StopReason returns why sync stopped, or the empty string while it runs.

@@ -8,11 +8,6 @@ import (
 )
 
 const (
-	// recoveryInterval is the least time between two recoveries. A second
-	// trigger inside it is DEFERRED, never refused for good: two web deletes
-	// in one minute must not kill sync. recoveryIntervalVar is what the code
-	// reads, so tests can shrink it (the defaultRequestTimeout precedent).
-	recoveryInterval = 60 * time.Second
 	// maxNoProgressRecoveries bounds recoveries that pushed nothing in
 	// between. Two in a row prove the new session fails exactly like the old
 	// one, and minting a third would be forking on the ticker.
@@ -29,8 +24,11 @@ const (
 // minutes (the defaultRequestTimeout precedent).
 var createThrottlePeriod = 5 * time.Minute
 
-// recoveryIntervalVar is recoveryInterval as read at runtime; see there.
-var recoveryIntervalVar = recoveryInterval
+// recoveryInterval is the least time between two recoveries. A second
+// trigger inside it is DEFERRED, never refused for good: two web deletes in
+// one minute must not kill sync. A var, not a const: tests shrink it (the
+// defaultRequestTimeout precedent).
+var recoveryInterval = 60 * time.Second
 
 // recoverRemoteSession abandons the current remote session and re-attaches
 // the unflushed backlog onto a fresh one. It runs on the worker.
@@ -60,12 +58,11 @@ func (s *SyncSession) recoverRemoteSession(ctx context.Context, cause error) {
 		return
 	}
 	// Interval and throttle refusals defer: no request, no counter moves.
-	if !s.lastRecoveryAt.IsZero() && now.Sub(s.lastRecoveryAt) < recoveryIntervalVar {
+	if !s.lastRecoveryAt.IsZero() && now.Sub(s.lastRecoveryAt) < recoveryInterval {
 		s.scheduleRetry()
 		return
 	}
 	if now.Before(s.createThrottledUntil) {
-		s.consecutiveCreateFailures++
 		s.scheduleRetry()
 		return
 	}
@@ -167,7 +164,3 @@ func (s *SyncSession) rebaseOntoSessionLocked(forkedFrom string) error {
 	}
 	return nil
 }
-
-// consecutiveCreateFailuresForTest exposes the create-failure counter to the
-// package tests that pin the throttle's reset.
-func (s *SyncSession) consecutiveCreateFailuresForTest() int { return s.consecutiveCreateFailures }
