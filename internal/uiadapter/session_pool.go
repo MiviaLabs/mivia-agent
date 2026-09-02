@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -297,16 +298,22 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 // Pending channel is what the prompt renders from. A fresh session with its
 // own unattached gate would block on an approver nobody is watching.
 //
-// The STANDING cache is deliberately NOT inherited. "Always allow this tool"
-// is a decision made about one conversation; carrying it across /new would
-// widen it to a conversation the operator has not seen yet. A fresh session
-// re-asks, which is the safe direction.
+// The STANDING cache is not inherited but IS created. "Always allow this call"
+// is a decision made about one conversation, so carrying it across /new would
+// widen it to a conversation the operator has not seen yet - and leaving the
+// session with no cache at all makes the affordance dead rather than fresh:
+// DecideApproval guards every standing read and write on a non-nil cache, so
+// "a always" would be accepted by the prompt and silently forgotten, in every
+// conversation after the first.
 func inheritApprovalLocked(sess, existing *chat.Session, res *config.Resolved) {
 	if sess == nil {
 		return
 	}
 	if existing != nil {
 		sess.ApprovalGate = existing.ApprovalGate
+	}
+	if sess.ApprovalStanding == nil {
+		sess.ApprovalStanding = sdkadapter.NewApprovalStanding()
 	}
 	policy := ""
 	if res != nil {
