@@ -663,6 +663,10 @@
           "new_session_id": {
             "kind": "string",
             "optional": false
+          },
+          "forked_from": {
+            "kind": "string",
+            "optional": true
           }
         }
       }

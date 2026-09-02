@@ -199,10 +199,10 @@ func assertRecoveredRecord(t *testing.T, st SyncStatus) {
 // why sync stopped.
 func TestStatusFileSurvivesProcessExit(t *testing.T) {
 	t.Run("terminal stop names the reason", func(t *testing.T) {
-		_, srv := newConflictServer(t)
+		_, srv := newPoisonServer(t)
 		dir := t.TempDir()
 		bus := events.New()
-		s, err := OpenSession(context.Background(), bus, "sess-409-status", SessionOptions{
+		s, err := OpenSession(context.Background(), bus, "sess-poison-status", SessionOptions{
 			TokenProvider:   testTokenProvider,
 			ClientOptions:   ClientOptions{BaseURL: srv.URL},
 			OutboxDir:       dir,
@@ -212,16 +212,16 @@ func TestStatusFileSurvivesProcessExit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("OpenSession: %v", err)
 		}
-		publishTurnStart(bus, "sess-409-status", "turn:1", "hello")
-		waitUntil(t, "the 409 to latch", s.Stopped)
+		publishTurnStart(bus, "sess-poison-status", "turn:1", "hello")
+		waitUntil(t, "the poison 400 to latch", s.Stopped)
 
 		// BEFORE Stop: the worker's own record is what survives a process
 		// killed between the latch and an orderly Stop, which is the case
 		// the file exists for. Stop re-derives the same reason, so reading
 		// only after Stop would pass with the worker-side write deleted.
 		latched := waitForStatusState(t, dir, SyncStateStopped)
-		if !strings.Contains(latched.Reason, "409") {
-			t.Fatalf("reason at latch = %q, want the 409 the worker latched on", latched.Reason)
+		if !strings.Contains(latched.Reason, "400") {
+			t.Fatalf("reason at latch = %q, want the 400 the worker latched on", latched.Reason)
 		}
 
 		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -232,11 +232,11 @@ func TestStatusFileSurvivesProcessExit(t *testing.T) {
 		if st.State != SyncStateStopped {
 			t.Fatalf("state = %q, want %q", st.State, SyncStateStopped)
 		}
-		if !strings.Contains(st.Reason, "409") {
+		if !strings.Contains(st.Reason, "400") {
 			t.Errorf("reason = %q, want the terminal reason the process died with", st.Reason)
 		}
 		if st.Unflushed == 0 {
-			t.Errorf("unflushed = 0, want the backlog the 409 stranded")
+			t.Errorf("unflushed = 0, want the backlog the poison stranded")
 		}
 	})
 

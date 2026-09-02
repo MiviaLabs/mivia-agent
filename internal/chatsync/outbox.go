@@ -443,6 +443,15 @@ func (ob *Outbox) writeCursorLocked(cur Cursor) error {
 	return nil
 }
 
+// Dead reports whether a failed rebase left this outbox permanently
+// unwritable (see rewriteEventsFileLocked). Recovery checks it before
+// minting a session it could never move the backlog into.
+func (ob *Outbox) Dead() bool {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+	return ob.eventsFile == nil
+}
+
 // UnflushedCount reports how many appended events the server has not acked.
 func (ob *Outbox) UnflushedCount() int {
 	ob.mu.Lock()

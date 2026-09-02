@@ -33,10 +33,9 @@ const (
 	degradedSilenceThreshold = 60 * time.Second
 )
 
-// SyncStatus is the record status.json holds. Fields the recovery slice owns
-// (recoveries, create_failures, create_throttled_until) are carried at zero
-// so the file has ONE shape across releases and a reader can tell a throttled
-// create stall (create_throttled_until set) from a plain push stall.
+// SyncStatus is the record status.json holds. A reader tells a throttled
+// create stall from a plain push stall by create_throttled_until, which is
+// null whenever no throttle is engaged.
 type SyncStatus struct {
 	State                string     `json:"state"`
 	Reason               string     `json:"reason"`
@@ -63,6 +62,12 @@ type syncHealth struct {
 	state               string
 	lastSuccessAt       time.Time
 	consecutiveFailures int
+
+	// Recovery bookkeeping, carried into every record so a throttled-create
+	// stall and a plain push stall do not serialise identically.
+	recoveries           int
+	createFailures       int
+	createThrottledUntil time.Time
 }
 
 func newSyncHealth(write func(SyncStatus) error) *syncHealth {
@@ -108,6 +113,28 @@ func (h *syncHealth) noteSuccess(unflushed int) string {
 	h.state = SyncStateRecovered
 	h.record(fmt.Sprintf("push succeeded after %d consecutive failures", failures), unflushed)
 	return SyncStateRecovered
+}
+
+// noteRecovery counts a completed recovery. It is recorded with the next
+// transition; a recovery is not itself one.
+func (h *syncHealth) noteRecovery() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.recoveries++
+	h.createFailures = 0
+	h.createThrottledUntil = time.Time{}
+}
+
+// noteCreateFailure records a CreateSession attempt that failed during
+// recovery. It counts toward the degraded streak like any failed push, and
+// carries the create counters so the record names the throttle when one is
+// engaged.
+func (h *syncHealth) noteCreateFailure(err error, unflushed, failures int, throttledUntil time.Time) string {
+	h.mu.Lock()
+	h.createFailures = failures
+	h.createThrottledUntil = throttledUntil
+	h.mu.Unlock()
+	return h.noteFailure(err, unflushed)
 }
 
 // noteFailure records a push that did not land. It transitions into degraded
@@ -158,11 +185,17 @@ func (h *syncHealth) record(reason string, unflushed int) {
 		Reason:              reason,
 		Unflushed:           unflushed,
 		ConsecutiveFailures: h.consecutiveFailures,
+		Recoveries:          h.recoveries,
+		CreateFailures:      h.createFailures,
 		At:                  h.now(),
 	}
 	if !h.lastSuccessAt.IsZero() {
 		at := h.lastSuccessAt
 		st.LastSuccessAt = &at
+	}
+	if !h.createThrottledUntil.IsZero() {
+		until := h.createThrottledUntil
+		st.CreateThrottledUntil = &until
 	}
 	// Best-effort by design (R8): the file is a diagnostic, and a diagnostic
 	// that cannot be written must not take the session down with it.

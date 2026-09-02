@@ -12,23 +12,25 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
-// conflictServer always answers the append endpoint with 409 and counts the
-// create, heartbeat and poll traffic so a test can prove they stopped.
-type conflictServer struct {
+// poisonServer always answers the append endpoint with a non-sequence 400 -
+// the one outcome that still latches sync terminally now that a 409 and a
+// 404 recover - and counts the create, heartbeat and poll traffic so a test
+// can prove they stopped.
+type poisonServer struct {
 	creates    atomic.Int32
 	heartbeats atomic.Int32
 	polls      atomic.Int32
 }
 
-func newConflictServer(t *testing.T) (*conflictServer, *httptest.Server) {
+func newPoisonServer(t *testing.T) (*poisonServer, *httptest.Server) {
 	t.Helper()
-	cs := &conflictServer{}
+	ps := &poisonServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
-		n := cs.creates.Add(1)
-		id := "sess-409-1"
+		n := ps.creates.Add(1)
+		id := "sess-poison-1"
 		if n > 1 {
-			id = "sess-409-forked"
+			id = "sess-poison-forked"
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -36,20 +38,20 @@ func newConflictServer(t *testing.T) (*conflictServer, *httptest.Server) {
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(ErrorEnvelope{
-			StatusCode: 409,
-			Error:      "Conflict",
-			Message:    json.RawMessage(`"session already ended"`),
+			StatusCode: 400,
+			Error:      "Bad Request",
+			Message:    json.RawMessage(`"type must be at most 100 characters"`),
 		})
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
-		cs.heartbeats.Add(1)
+		ps.heartbeats.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
 	})
 	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
-		cs.polls.Add(1)
+		ps.polls.Add(1)
 		select {
 		case <-time.After(40 * time.Millisecond):
 		case <-r.Context().Done():
@@ -59,31 +61,26 @@ func newConflictServer(t *testing.T) (*conflictServer, *httptest.Server) {
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return cs, srv
+	return ps, srv
 }
 
-// TestSyncSession_ConflictStopsSyncWithoutForking pins settled decision
-// "409 | session ended remotely. Stop pusher, poller, heartbeat. Local chat
-// continues" (chat-sync-cli-slice.md:197). A flush 409 must NOT mint a new
-// remote session; forking is settled only for the foreign-writer case at
-// attach time.
-func TestSyncSession_ConflictStopsSyncWithoutForking(t *testing.T) {
-	cs, srv := newConflictServer(t)
+// TestSyncSession_PoisonStopsSyncWithoutForking pins that the settled poison
+// rule survives recovery: a 400 the server will refuse identically from any
+// session must NOT mint a new one. Heartbeat and poller stop with the pusher.
+func TestSyncSession_PoisonStopsSyncWithoutForking(t *testing.T) {
+	ps, srv := newPoisonServer(t)
 
 	bus := events.New()
-	ctx := context.Background()
-
 	opts := SessionOptions{
 		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
 		OutboxDir:       t.TempDir(),
-		CreateTitle:     "Conflict Session",
+		CreateTitle:     "Poison Session",
 		HeartbeatPeriod: 20 * time.Millisecond,
 		EnablePolling:   true,
 		PollWaitSeconds: 1,
 	}
-
-	syncSess, err := OpenSession(ctx, bus, "sess-409-1", opts)
+	syncSess, err := OpenSession(context.Background(), bus, "sess-poison-1", opts)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
@@ -93,32 +90,75 @@ func TestSyncSession_ConflictStopsSyncWithoutForking(t *testing.T) {
 		_ = syncSess.Stop(stopCtx)
 	}()
 
-	bus.Publish(events.Event{
-		Kind:      events.KindTurnStart,
-		SessionID: "sess-409-1",
-		TurnID:    "turn:1",
-		Detail:    "hello",
-		Timestamp: time.Now(),
+	publishTurnStart(bus, "sess-poison-1", "turn:1", "hello")
+	waitUntil(t, "the poison 400 to latch", syncSess.Stopped)
+
+	if got := ps.creates.Load(); got != 1 {
+		t.Errorf("CreateSession calls = %d, want 1 (a poison 400 must not fork)", got)
+	}
+	if got := syncSess.SessionID(); got != "sess-poison-1" {
+		t.Errorf("SessionID() = %q, want %q (session must not be replaced)", got, "sess-poison-1")
+	}
+	hbBefore := ps.heartbeats.Load()
+	pollBefore := ps.polls.Load()
+	time.Sleep(300 * time.Millisecond)
+	if got := ps.heartbeats.Load(); got != hbBefore {
+		t.Errorf("heartbeats kept running after the stop: %d -> %d", hbBefore, got)
+	}
+	if got := ps.polls.Load(); got != pollBefore {
+		t.Errorf("poller kept running after the stop: %d -> %d", pollBefore, got)
+	}
+}
+
+// TestSyncSession_ConflictRecoversOntoANewSession inverts the former
+// "409 stops sync without forking" test, per the user's decision that a
+// session ended or deleted from the web must never stop a live CLI. The
+// backlog moves to a fresh session; heartbeat and poller follow it and keep
+// running; the new stream opens with a sync.forked naming both sessions.
+func TestSyncSession_ConflictRecoversOntoANewSession(t *testing.T) {
+	f := newFakeAPI(t)
+	a := f.NewSession("conflict-recover")
+	bus, s := openAgainstFake(t, f, a, t.TempDir())
+
+	f.EndSession(a)
+	publishTurnStart(bus, a, "turn:1", "hello after the end")
+
+	waitUntil(t, "the backlog to land in a new session", func() bool {
+		ids := f.SessionIDs()
+		return len(ids) == 2 && f.LastSeq(ids[1]) >= 2
 	})
+	ids := f.SessionIDs()
+	b := ids[1]
+	if got := s.SessionID(); got != b {
+		t.Fatalf("SessionID() = %q, want the replacement %q", got, b)
+	}
+	if s.Stopped() {
+		t.Fatalf("sync stopped (%q); a 409 must recover, not latch", s.StopReason())
+	}
+	evs := f.Events(b)
+	if evs[0].Type != TypeTurnStarted || evs[0].Seq != 1 {
+		t.Fatalf("first event in %s = %s seq %d, want the backlog renumbered from 1", b, evs[0].Type, evs[0].Seq)
+	}
+	marker := forkMarkerIn(t, evs)
+	if marker.NewSessionID != b || marker.ForkedFrom != a {
+		t.Errorf("marker = %+v, want new_session_id=%s forked_from=%s", marker, b, a)
+	}
+}
 
-	// Let the flush run and take the 409.
-	time.Sleep(300 * time.Millisecond)
-
-	if got := cs.creates.Load(); got != 1 {
-		t.Errorf("CreateSession calls = %d, want 1 (a flush 409 must not fork)", got)
+// forkMarkerIn returns the sync.forked marker in a stream, failing the test
+// when there is none. The marker follows the renumbered backlog.
+func forkMarkerIn(t *testing.T, evs []StoredEvent) SyncForkedPayload {
+	t.Helper()
+	for _, ev := range evs {
+		if ev.Type != TypeSyncForked {
+			continue
+		}
+		var marker SyncForkedPayload
+		if err := json.Unmarshal(ev.Payload, &marker); err != nil {
+			t.Fatal(err)
+		}
+		return marker
 	}
-	if got := syncSess.SessionID(); got != "sess-409-1" {
-		t.Errorf("SessionID() = %q, want %q (session must not be replaced)", got, "sess-409-1")
-	}
-
-	// After the 409, heartbeat and poller must be stopped.
-	hbBefore := cs.heartbeats.Load()
-	pollBefore := cs.polls.Load()
-	time.Sleep(300 * time.Millisecond)
-	if got := cs.heartbeats.Load(); got != hbBefore {
-		t.Errorf("heartbeats kept running after 409: %d -> %d", hbBefore, got)
-	}
-	if got := cs.polls.Load(); got != pollBefore {
-		t.Errorf("poller kept running after 409: %d -> %d", pollBefore, got)
-	}
+	t.Fatalf("no sync.forked marker in a stream of %d events", len(evs))
+	return SyncForkedPayload{}
 }

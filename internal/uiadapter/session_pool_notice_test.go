@@ -100,11 +100,13 @@ func TestSessionPoolNoticesSyncStop(t *testing.T) {
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
+		// A non-sequence 400 is the outcome that still latches: a 409
+		// now recovers onto a new session instead of stopping.
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(chatsync.ErrorEnvelope{
-			StatusCode: 409,
-			Error:      "Conflict",
-			Message:    json.RawMessage(`"session already ended"`),
+			StatusCode: 400,
+			Error:      "Bad Request",
+			Message:    json.RawMessage(`"type must be at most 100 characters"`),
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -135,7 +137,7 @@ func TestSessionPoolNoticesSyncStop(t *testing.T) {
 	if !strings.Contains(strings.ToLower(text), "stopped") {
 		t.Errorf("notice = %q, want it to say sync stopped", text)
 	}
-	if !strings.Contains(text, "409") {
+	if !strings.Contains(text, "400") {
 		t.Errorf("notice = %q, want it to carry the reason", text)
 	}
 

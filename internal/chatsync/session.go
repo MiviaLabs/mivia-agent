@@ -211,6 +211,25 @@ type SyncSession struct {
 	retryBase time.Duration
 	retryAt   time.Time
 
+	// Recovery state, worker-goroutine only like the retry schedule.
+	// consecutiveNoProgressRecoveries counts recoveries with no successful
+	// push in between; lastRecoveryAt drives the interval refusal;
+	// consecutiveCreateFailures and createThrottledUntil are the create
+	// rate bound. See session_recover.go.
+	consecutiveNoProgressRecoveries int
+	lastRecoveryAt                  time.Time
+	consecutiveCreateFailures       int
+	createThrottledUntil            time.Time
+
+	// createParams is the body recovery re-posts to mint a replacement
+	// session: the same title and labels the run attached with.
+	createParams CreateSessionParams
+
+	// beforeRecoveryLock is a test seam, nil in production. It runs after
+	// recovery's CreateSession and before it takes s.mu, which is the one
+	// window a concurrent terminal stop can land in.
+	beforeRecoveryLock func()
+
 	// lastGapBase is the server mark the last sequence-gap rebase used, or
 	// noGapBase when none is outstanding. A second gap at the same mark proves
 	// the rebase moved nothing, which is the loop guard on the rebase path.
@@ -267,27 +286,15 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 		return nil, err
 	}
 
-	s := &SyncSession{
-		localSessionID: localSessionID,
-		sessionID:      activeSessionID,
-		client:         client,
-		outbox:         outbox,
-		projector:      NewProjector(localSessionID, initialSeq, opts.ProjectorOptions),
-		heartbeat:      NewHeartbeatRunner(client, activeSessionID, opts.HeartbeatPeriod),
-		opts:           opts,
-		stopCh:         make(chan struct{}),
-		doneCh:         make(chan struct{}),
-		eventCh:        make(chan events.Event, eventBufSize(opts.EventBufSize)),
-		flushCh:        make(chan struct{}, 1),
-		stopCtxCh:      make(chan context.Context, 1),
-		lastGapBase:    noGapBase,
-		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),
-	}
-	s.running.Store(true)
-	s.appender = outbox
+	s := newSyncSession(localSessionID, activeSessionID, initialSeq, client, outbox, opts, params)
 
 	if att.ForkedFrom != "" {
-		if err := s.applyForkedAttach(); err != nil {
+		// No worker exists yet, but the lock is taken anyway so one contract
+		// serves both callers of rebaseOntoSessionLocked.
+		s.mu.Lock()
+		err := s.rebaseOntoSessionLocked(att.ForkedFrom)
+		s.mu.Unlock()
+		if err != nil {
 			_ = outbox.Close()
 			return nil, fmt.Errorf("apply forked attach: %w", err)
 		}
@@ -312,6 +319,31 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 	go s.workerLoop(ctx)
 
 	return s, nil
+}
+
+// newSyncSession builds the session value with every channel, counter and
+// seam in its starting state. The worker is not started here.
+func newSyncSession(localID, remoteID string, initialSeq int64, client *Client, outbox *Outbox, opts SessionOptions, params CreateSessionParams) *SyncSession {
+	s := &SyncSession{
+		localSessionID: localID,
+		sessionID:      remoteID,
+		client:         client,
+		outbox:         outbox,
+		projector:      NewProjector(localID, initialSeq, opts.ProjectorOptions),
+		heartbeat:      NewHeartbeatRunner(client, remoteID, opts.HeartbeatPeriod),
+		opts:           opts,
+		stopCh:         make(chan struct{}),
+		doneCh:         make(chan struct{}),
+		eventCh:        make(chan events.Event, eventBufSize(opts.EventBufSize)),
+		flushCh:        make(chan struct{}, 1),
+		stopCtxCh:      make(chan context.Context, 1),
+		lastGapBase:    noGapBase,
+		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),
+		createParams:   params,
+	}
+	s.running.Store(true)
+	s.appender = outbox
+	return s
 }
 
 // openingSeq resolves the seq the projector starts numbering from.
@@ -586,11 +618,18 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 		return ctx.Err()
 	}
 
+	// This is a SECOND, independent flush, off the worker. In the ordinary
+	// case drainAndFlushFinal has already emptied the outbox and it is a
+	// no-op. Its failure is CLASSIFIED and recorded, never recovered: the
+	// worker is gone, so recovery's lock discipline has no owner. The
+	// remoteEnded guard means it fires only on non-latching outcomes - an
+	// interval or throttle defer, a transient failure - never after a poison
+	// or a no-progress stop, so a reader must not expect it there.
 	reason := "session closed"
 	if s.remoteEnded.Load() {
 		reason = s.StopReason()
 	} else if _, err := FlushOutbox(ctx, s.client, s.outbox, s.SessionID()); err != nil {
-		reason = fmt.Sprintf("session closed, final push failed: %v", err)
+		reason = fmt.Sprintf("session closed, final push failed (%s): %v", classifyFlushError(err), err)
 	}
 	// A terminal latch already recorded its own reason; noteStop keeps the
 	// first one. This call is what makes the record outlive the process.

@@ -241,22 +241,41 @@ separates a throttled-create stall from a plain push stall. The same
 transitions reach the host once each through `OnDegraded` / `OnRecovered`,
 which the CLI prints as a notice and the TUI shows in its notice rail.
 
-A 409 on append means the remote session ended. Sync stops - pusher, poller
-and heartbeat - and the local chat continues untouched. It does NOT fork: a
-409 is not a writer conflict, and treating it as one used to mint a new remote
-session and reset the sequence.
+Every failed push is classified once, in `classifyFlushError`, into three
+outcomes. **Retry** keeps the batch at the outbox head with jittered backoff:
+network errors, 5xx, 408, 429, and the sequence-gap 400 that rebases.
+**Stop** latches sync terminally: a fatal auth failure, and any 400, 413 or
+422 that does not name a sequence problem - the server refused the *body*, and
+a new session would refuse it identically. **Recover** abandons the remote
+*session* and re-attaches the backlog onto a fresh one: a 409 (ended, as a
+web viewer does), a 404 (deleted from the web), a transcript the server holds
+that this outbox can never line up with. A deleted or ended session never
+stops a live CLI; the server may hold it under a new id.
 
-Forking happens at ATTACH time only. On attach, events the server holds past
-our cursor are read back and their `writer_id` compared against ours. A
-foreign writer means another machine owns the session, so the old one is ended
-and a new one created, recording a `mivia.chat.v1.sync.forked` event. The API
-has no writer concept of its own; it accepts a second writer's append happily,
-which is why this check is done on read-back by the client.
+Recovery creates the new session, rebases the outbox onto it renumbered from
+1, records a `mivia.chat.v1.sync.forked` whose `new_session_id` and
+`forked_from` name both sessions, retargets the heartbeat and poller, rewrites
+the identity file, and pushes at once. It is bounded two ways, and only one
+bound latches: a second recovery inside 60 seconds is *deferred* to the retry
+schedule, and two consecutive recoveries with no successful push in between
+stop sync with a reason naming that. A failed `CreateSession` never latches
+(auth aside), never counts as a recovery and leaves the outbox untouched;
+after three consecutive failures further attempts are throttled to one per
+five minutes, the session stays degraded meanwhile, and `status.json` carries
+`create_failures` and `create_throttled_until` so the throttle is visible.
+
+The same marker is recorded when a fork happens at ATTACH time: events the
+server holds past our cursor are read back and their `writer_id` compared
+against ours, and a foreign writer means another machine owns the session, so
+the old one is ended and a new one created. The API has no writer concept of
+its own; it accepts a second writer's append happily, which is why this check
+is done on read-back by the client.
 
 A 400 is classified: a sequence-gap 400 re-reads the session and rebases on
 `serverLastSeq+1`, because treating a recoverable gap as fatal guarantees the
 failure it is trying to avoid. Any other 400 - and 413 or 422 - is poison a
-retry cannot fix, so sync stops and says why. 408 and 429 stay retryable with
+retry cannot fix, so sync stops and says why; a gap the rebase cannot close
+recovers onto a new session instead. 408 and 429 stay retryable with
 jittered backoff.
 
 ### Repairs made by the server
