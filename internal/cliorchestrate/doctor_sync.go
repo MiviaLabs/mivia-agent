@@ -20,7 +20,11 @@ var syncProbe = chatsync.ProbeEndpoint
 type doctorSyncReport struct {
 	Disabled bool
 	Endpoint chatsync.Endpoint
-	Probe    string
+	// LoginPresent is the exact activation predicate the hosts use
+	// (config.ResolvedSync.Active with DefaultTokenProvider): sync runs only
+	// when a token provider can be built from the saved login.
+	LoginPresent bool
+	Probe        string
 }
 
 // doctorSync resolves the sync endpoint through the same resolver OpenSession
@@ -31,8 +35,11 @@ func doctorSync(res *config.Resolved) doctorSyncReport {
 	if res.Sync.Disabled {
 		return doctorSyncReport{Disabled: true}
 	}
-	r := doctorSyncReport{Endpoint: chatsync.ResolveEndpoint(res.Sync.APIURL)}
-	if !r.Endpoint.TokenPresent {
+	r := doctorSyncReport{
+		Endpoint:     chatsync.ResolveEndpoint(res.Sync.APIURL),
+		LoginPresent: chatsync.DefaultTokenProvider() != nil,
+	}
+	if !r.LoginPresent {
 		r.Probe = "skipped (not logged in)"
 		return r
 	}
@@ -41,7 +48,7 @@ func doctorSync(res *config.Resolved) doctorSyncReport {
 }
 
 func (r doctorSyncReport) login() string {
-	if r.Endpoint.TokenPresent {
+	if r.LoginPresent {
 		return "present"
 	}
 	return "absent (run mivia login)"
