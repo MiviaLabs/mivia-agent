@@ -17,7 +17,7 @@ import (
 // polls SyncSession, so without it the reason can only be found by asking a
 // question nobody knows to ask.
 func TestSyncSession_OnStopReportsTheReason(t *testing.T) {
-	_, srv := newConflictServer(t)
+	_, srv := newPoisonServer(t)
 
 	var mu sync.Mutex
 	var reasons []string
@@ -38,7 +38,7 @@ func TestSyncSession_OnStopReportsTheReason(t *testing.T) {
 	}
 
 	bus := events.New()
-	syncSess, err := OpenSession(context.Background(), bus, "sess-409-1", opts)
+	syncSess, err := OpenSession(context.Background(), bus, "sess-poison-1", opts)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestSyncSession_OnStopReportsTheReason(t *testing.T) {
 
 	bus.Publish(events.Event{
 		Kind:      events.KindTurnStart,
-		SessionID: "sess-409-1",
+		SessionID: "sess-poison-1",
 		TurnID:    "turn:1",
 		Detail:    "hello",
 		Timestamp: time.Now(),
@@ -62,8 +62,8 @@ func TestSyncSession_OnStopReportsTheReason(t *testing.T) {
 	if len(reasons) != 1 {
 		t.Fatalf("OnStop calls = %d (%q), want exactly 1; the stop latches once", len(reasons), reasons)
 	}
-	if !strings.Contains(reasons[0], "409") {
-		t.Errorf("OnStop reason = %q, want it to name the 409 that ended the session", reasons[0])
+	if !strings.Contains(reasons[0], "400") {
+		t.Errorf("OnStop reason = %q, want it to name the 400 that poisoned the stream", reasons[0])
 	}
 	if got := syncSess.StopReason(); got != reasons[0] {
 		t.Errorf("OnStop reason = %q, StopReason() = %q; they must be the same string", reasons[0], got)

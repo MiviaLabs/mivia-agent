@@ -48,7 +48,10 @@ type fakeAPI struct {
 	appendBatches [][]EventItem
 
 	rejectAppend     *fakeRejection
+	rejectCreate     *fakeRejection
 	failSessionReads bool
+	createdIDs       []string
+	createAttempts   int
 
 	// requests records every request the fake received, target and body, so a
 	// test can assert that a value NEVER crossed the wire.
@@ -109,6 +112,7 @@ func (f *fakeAPI) newSessionLocked(title string) *fakeSession {
 		status: "running",
 	}
 	f.sessions[s.id] = s
+	f.createdIDs = append(f.createdIDs, s.id)
 	return s
 }
 
@@ -280,6 +284,12 @@ func (f *fakeAPI) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	f.createAttempts++
+	if rej := f.rejectCreate; rej != nil {
+		f.mu.Unlock()
+		writeAPIError(w, rej.status, rej.code, rej.msg)
+		return
+	}
 	s := f.newSessionLocked(params.Title)
 	out := s.wire()
 	f.mu.Unlock()
@@ -561,6 +571,53 @@ func writeAPIError(w http.ResponseWriter, status int, code, msg string) {
 // an unreachable session record) declares it explicitly, and every other rule
 // still applies.
 // ---------------------------------------------------------------------------
+
+// EndSession ends a session server-side, as a web viewer would: later
+// appends answer 409.
+func (f *fakeAPI) EndSession(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s := f.sessions[id]; s != nil {
+		s.status = "ended"
+	}
+}
+
+// DeleteSession removes the row, as a web delete does: later appends and
+// reads answer 404.
+func (f *fakeAPI) DeleteSession(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.sessions, id)
+}
+
+// SessionIDs returns every session ever created, in creation order,
+// deleted ones included.
+func (f *fakeAPI) SessionIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.createdIDs...)
+}
+
+// RejectCreatesWith makes every later POST /v1/chat-sessions fail with a
+// fixed response; ClearCreateRejection lifts it.
+func (f *fakeAPI) RejectCreatesWith(status int, code, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rejectCreate = &fakeRejection{status: status, code: code, msg: msg}
+}
+
+func (f *fakeAPI) ClearCreateRejection() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rejectCreate = nil
+}
+
+// CreateAttempts counts every POST /v1/chat-sessions, rejected ones included.
+func (f *fakeAPI) CreateAttempts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.createAttempts
+}
 
 // RejectAppendsWith makes every later append fail with a fixed response.
 func (f *fakeAPI) RejectAppendsWith(status int, code, msg string) {

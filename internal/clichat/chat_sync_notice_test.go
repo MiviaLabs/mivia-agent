@@ -71,7 +71,7 @@ func TestAttachCLISyncSaysItIsRunning(t *testing.T) {
 }
 
 // TestAttachCLISyncSaysWhyItStopped is the "stop syncing and SAY SO" half.
-// A 409 ends the remote session for good; a user who is told nothing keeps
+// A poison 400 stops sync for good; a user who is told nothing keeps
 // believing their tablet is following along.
 func TestAttachCLISyncSaysWhyItStopped(t *testing.T) {
 	mux := http.NewServeMux()
@@ -86,11 +86,13 @@ func TestAttachCLISyncSaysWhyItStopped(t *testing.T) {
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
+		// A non-sequence 400 is the outcome that still latches: a 409
+		// now recovers onto a new session instead of stopping.
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(chatsync.ErrorEnvelope{
-			StatusCode: 409,
-			Error:      "Conflict",
-			Message:    json.RawMessage(`"session already ended"`),
+			StatusCode: 400,
+			Error:      "Bad Request",
+			Message:    json.RawMessage(`"type must be at most 100 characters"`),
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -116,7 +118,7 @@ func TestAttachCLISyncSaysWhyItStopped(t *testing.T) {
 	if !strings.Contains(got, "stopped") {
 		t.Errorf("notices = %q, want a line saying sync stopped", got)
 	}
-	if !strings.Contains(got, "409") {
+	if !strings.Contains(got, "400") {
 		t.Errorf("notices = %q, want the stop line to carry the reason", got)
 	}
 }

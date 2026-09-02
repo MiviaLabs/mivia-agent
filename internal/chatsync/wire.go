@@ -438,6 +438,10 @@ type SyncDroppedPayload struct {
 type SyncForkedPayload struct {
 	Envelope
 	NewSessionID string `json:"new_session_id"`
+	// ForkedFrom names the session that was abandoned, so the new session's
+	// stream self-describes its ancestor. Empty on markers older producers
+	// wrote.
+	ForkedFrom string `json:"forked_from,omitempty"`
 }
 
 // WireEvent is one projected event ready for the outbox or upload batch.

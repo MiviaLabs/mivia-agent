@@ -146,11 +146,13 @@ func TestFlush_UnclassifiedOther400StopsSync(t *testing.T) {
 	}
 }
 
-// TestFlush_SequenceGap400ThatRebaseCannotFixStopsSync is the loop guard. If
-// the server keeps reporting the same base after a rebase, the rebase is not
-// making progress and repeating it is an infinite retry against a body the
-// server will never accept.
-func TestFlush_SequenceGap400ThatRebaseCannotFixStopsSync(t *testing.T) {
+// TestFlush_SequenceGap400ThatRebaseCannotFixRecoversOntoANewSession is the
+// loop guard, inverted. If the server keeps reporting the same base after a
+// rebase, the rebase is not making progress and repeating it is an infinite
+// retry against a body the server will never accept - but the body is not
+// malformed, the SESSION is unusable, so the backlog moves to a fresh one
+// exactly once and batches resume against the new id.
+func TestFlush_SequenceGap400ThatRebaseCannotFixRecoversOntoANewSession(t *testing.T) {
 	f := newFakeAPI(t)
 	id := f.NewSession("gap-no-progress")
 	f.RejectAppendsWith(400, "Bad Request", "sequence gap: expected 1, got 9")
@@ -158,12 +160,31 @@ func TestFlush_SequenceGap400ThatRebaseCannotFixStopsSync(t *testing.T) {
 	bus, s := openAgainstFake(t, f, id, t.TempDir())
 	publishTurnStart(bus, id, "turn:1", "hello")
 
-	waitUntil(t, "sync to stop after a rebase that made no progress", func() bool { return s.Stopped() })
-
-	before := len(f.Batches())
+	waitUntil(t, "recovery after a rebase that made no progress", func() bool {
+		return len(f.SessionIDs()) == 2
+	})
+	if s.Stopped() {
+		t.Fatalf("sync stopped (%q); a gap the rebase cannot close recovers, it does not spin or stop", s.StopReason())
+	}
+	newID := f.SessionIDs()[1]
+	waitUntil(t, "a batch carrying the fork marker for the new session", func() bool {
+		for _, b := range f.Batches() {
+			for _, ev := range b {
+				if ev.Type == TypeSyncForked {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	if got := s.SessionID(); got != newID {
+		t.Errorf("SessionID() = %q, want %q", got, newID)
+	}
+	// The fake still rejects every append, so a second recovery would be
+	// forking on the ticker; the interval refusal defers it instead.
 	time.Sleep(400 * time.Millisecond)
-	if after := len(f.Batches()); after != before {
-		t.Errorf("the flusher sent %d more batches after giving up; a gap the rebase cannot close must stop, not spin", after-before)
+	if n := len(f.SessionIDs()); n != 2 {
+		t.Errorf("%d sessions created, want 2: recovery fired more than once inside the interval", n)
 	}
 }
 

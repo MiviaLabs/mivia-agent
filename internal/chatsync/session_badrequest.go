@@ -20,7 +20,9 @@ const noGapBase = int64(-1)
 // between the server's commit and the local cursor fsync, which settled
 // decision 4 knowingly accepts.
 //
-// An oversize 400 and every other 400 are poison. The body is already durable
+// A non-sequence 400 reaching here is poison; flushNow already routes it
+// through classifyFlushError's outcomeStop, so this branch is the guard
+// for a direct caller. An oversize 400 and every other 400 are poison. The body is already durable
 // in the outbox and byte-identical on every replay, so a retry resubmits a
 // request the server has already judged malformed, on the flush ticker, for as
 // long as the process lives. Sync stops and says why
@@ -44,13 +46,18 @@ func (s *SyncSession) handleBadRequest(ctx context.Context, err error) {
 	}
 
 	// A second gap at the same server mark means the previous rebase moved
-	// nothing. Repeating it is an unbounded retry against a body the server
-	// will never accept.
+	// nothing: the server holds a transcript this outbox can never line up
+	// with, which is exactly the recovery criterion. The bodies are fine,
+	// so the backlog moves to a fresh session rather than stopping.
 	if s.lastGapBase == sess.LastSeq {
-		s.poison(ctx, fmt.Errorf("rebasing on serverLastSeq=%d did not close the gap: %w", sess.LastSeq, err))
+		s.recoverRemoteSession(ctx, fmt.Errorf("rebasing on serverLastSeq=%d did not close the gap: %w", sess.LastSeq, err))
 		return
 	}
 
+	// A failed rebase stays terminal: rebaseLocked has already rewritten the
+	// cursor by the time rewriteEventsFileLocked can fail, and that failure
+	// leaves the outbox permanently unwritable (outbox.go), which recovery
+	// cannot move a backlog out of.
 	if rebaseErr := s.rebaseOn(sess.LastSeq); rebaseErr != nil {
 		s.poison(ctx, fmt.Errorf("rebase on serverLastSeq=%d failed: %w; original rejection: %v",
 			sess.LastSeq, rebaseErr, err))

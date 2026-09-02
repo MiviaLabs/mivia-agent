@@ -5,7 +5,6 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func ourEvents(seqs ...int64) []WireEvent {
@@ -169,12 +168,13 @@ func TestFlushOutbox_FullAckAdvancesToWhatWeSent(t *testing.T) {
 	}
 }
 
-// TestFlush_TranscriptConflictStopsSync wires the refusal to the settled
-// terminal path. A server holding a different transcript at our seqs is not
-// something a retry can fix.
-func TestFlush_TranscriptConflictStopsSync(t *testing.T) {
+// TestFlush_TranscriptConflictRecoversOntoANewSession: a server holding a
+// different transcript at our seqs is not something a retry can fix, and
+// not something this SESSION can ever accept - but the bodies are fine, so
+// the backlog moves to a fresh session instead of stopping.
+func TestFlush_TranscriptConflictRecoversOntoANewSession(t *testing.T) {
 	f := newFakeAPI(t)
-	id := f.NewSession("conflict-stop")
+	id := f.NewSession("conflict-recover")
 
 	bus, s := openAgainstFake(t, f, id, t.TempDir())
 	// Only after attach: a second writer takes seqs 1..3 while this client is
@@ -182,14 +182,14 @@ func TestFlush_TranscriptConflictStopsSync(t *testing.T) {
 	f.AdvanceServerSeq(id, 3)
 	publishTurnStart(bus, id, "turn:1", "ours")
 
-	waitUntil(t, "sync to stop on a transcript conflict", func() bool { return s.Stopped() })
-	if reason := s.StopReason(); reason == "" {
-		t.Error("sync stopped with no reason")
+	waitUntil(t, "the backlog to land in a new session", func() bool {
+		ids := f.SessionIDs()
+		return len(ids) == 2 && f.LastSeq(ids[1]) >= 2
+	})
+	if s.Stopped() {
+		t.Fatalf("sync stopped (%q); a transcript conflict must recover, not latch", s.StopReason())
 	}
-
-	before := len(f.Batches())
-	time.Sleep(300 * time.Millisecond)
-	if after := len(f.Batches()); after != before {
-		t.Errorf("the flusher sent %d more batches after the conflict stop", after-before)
+	if got := f.LastSeq(id); got != 3 {
+		t.Errorf("the old session moved to %d; nothing may be pushed over a foreign transcript", got)
 	}
 }
