@@ -17,14 +17,31 @@ import (
 
 // RunHandle is a handle to an active orchestration run.
 type RunHandle struct {
-	mu                 sync.RWMutex
-	runID              string
-	done               chan struct{}
-	cancel             context.CancelFunc
-	poolCtx            context.Context
-	result             *RunResult
-	attempts           map[string]string
-	attemptsMu         sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
+	mu         sync.RWMutex
+	runID      string
+	done       chan struct{}
+	cancel     context.CancelFunc
+	poolCtx    context.Context
+	result     *RunResult
+	attempts   map[string]string
+	attemptsMu sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
+	// taskCancels holds each dispatched task's own CancelFunc, keyed by task
+	// ID: onTaskStart (task_start.go) populates it from the per-task
+	// cancelable context executeOne already derives for timeout enforcement
+	// (subagents.Pool.executeOne). A task with no entry has not yet been
+	// dispatched to the pool (still queued) — CancelTask (cancel_task.go)
+	// cancels such a task through the ledger alone.
+	taskCancels map[string]context.CancelFunc
+	// taskDoneCh mirrors taskCancels: a fresh channel per dispatch attempt,
+	// closed by onTaskDone (task_done.go) when that attempt's executeOne
+	// call returns, so CancelTask can wait for that ONE task's own execution
+	// to unwind after canceling its context, instead of waiting on h.done
+	// (the WHOLE run's completion signal).
+	taskDoneCh map[string]chan struct{}
+	// taskCancelMu guards taskCancels and taskDoneCh: written from pool
+	// worker goroutines (one per dispatched task, so concurrent across
+	// siblings), read from CancelTask's caller goroutine.
+	taskCancelMu       sync.RWMutex
 	recovered          bool
 	localActor         bool
 	requestFingerprint string
@@ -140,6 +157,64 @@ func (h *RunHandle) getAttempt(taskID string) string {
 	return v
 }
 
+// registerTaskCancel installs the CancelFunc for a task's own dispatch-scoped
+// execution context (called from onTaskStart on the pool worker goroutine,
+// once per dispatch attempt) and returns a fresh completion channel that
+// signalTaskDone closes when that same attempt's executeOne call returns.
+// Safe for concurrent registration across sibling tasks.
+//
+// Retry caveat: each dispatch attempt overwrites the prior entry. A
+// CancelTask call that reads (taskCancelFunc) an attempt's CancelFunc/done
+// channel just before a concurrent RETRY re-registers a fresh attempt would
+// cancel/wait-on the now-stale attempt, then finalize the task as canceled
+// even though a new attempt has since started running. Not reachable on the
+// shipped path (production runs with NoRetry - see this package's
+// RetryPolicy), so this is a latent gap for a retry-enabled configuration,
+// not a shipped-path bug; close it before enabling retries alongside
+// per-task cancel if that combination is ever needed.
+func (h *RunHandle) registerTaskCancel(taskID string, cancel context.CancelFunc) chan struct{} {
+	done := make(chan struct{})
+	h.taskCancelMu.Lock()
+	if h.taskCancels == nil {
+		h.taskCancels = map[string]context.CancelFunc{}
+	}
+	if h.taskDoneCh == nil {
+		h.taskDoneCh = map[string]chan struct{}{}
+	}
+	h.taskCancels[taskID] = cancel
+	h.taskDoneCh[taskID] = done
+	h.taskCancelMu.Unlock()
+	return done
+}
+
+// taskCancelFunc returns the current CancelFunc and completion channel for a
+// dispatched task, if any is registered. ok is false when the task has never
+// been dispatched to the pool (e.g. it is still queued): CancelTask cancels
+// such a task through the ledger CAS alone, with nothing to invoke here.
+func (h *RunHandle) taskCancelFunc(taskID string) (cancel context.CancelFunc, done chan struct{}, ok bool) {
+	h.taskCancelMu.RLock()
+	cancel, ok = h.taskCancels[taskID]
+	done = h.taskDoneCh[taskID]
+	h.taskCancelMu.RUnlock()
+	return cancel, done, ok
+}
+
+// signalTaskDone closes the current dispatch attempt's completion channel for
+// a task, if one is registered. Each registerTaskCancel call installs a fresh
+// channel, so this only ever closes the channel belonging to the attempt that
+// just finished; a task never dispatched (no registration) is a no-op.
+func (h *RunHandle) signalTaskDone(taskID string) {
+	h.taskCancelMu.Lock()
+	if done, ok := h.taskDoneCh[taskID]; ok {
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}
+	h.taskCancelMu.Unlock()
+}
+
 type RunResult struct {
 	Snapshot ledger.RunSnapshot
 	Results  []subagents.Result
@@ -168,6 +243,13 @@ type Coordinator interface {
 	Inspect(context.Context, *RunHandle) (ledger.RunSnapshot, error)
 	Join(context.Context, *RunHandle) (*RunResult, error)
 	Cancel(context.Context, *RunHandle) error
+	// CancelTask cancels exactly ONE task within a run, without canceling the
+	// run's other in-flight tasks or the run itself: it invokes only that
+	// task's own execution context CancelFunc (never h.cancel, the run-wide
+	// one Cancel uses) and waits only for that task's own completion signal
+	// (never h.done, the whole run's). A recovered handle refuses: see
+	// cancel_task.go.
+	CancelTask(ctx context.Context, h *RunHandle, taskID string) error
 	SetTimeSource(func() time.Time)
 	WithRetryPolicy(RetryPolicy) Coordinator
 	ResumeInterruptedRun(context.Context, string) (*RunHandle, error)
@@ -302,6 +384,14 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 		// idempotent; recordRunResults still owns output/attempt persistence
 		// and the single terminal event.
 		pool.OnTaskDone = c.onTaskDone
+		// Install the per-task start hook so a task's own cancelable
+		// execution context (the pool's per-task WithTimeout/WithCancel
+		// derivation in executeOne, already used for timeout enforcement) is
+		// registered on the run handle the moment it is dispatched. This is
+		// what makes single-task cancellation (CancelTask, cancel_task.go)
+		// structurally possible: without it, there is no per-task CancelFunc
+		// to invoke, only the run-wide one.
+		pool.OnTaskStart = c.onTaskStart
 	}
 	return c
 }

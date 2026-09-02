@@ -42,6 +42,13 @@ func (c *coordinator) onTaskDone(ctx context.Context, t subagents.Task, r subage
 	if h == nil {
 		return
 	}
+	// Signal this dispatch attempt's own completion unconditionally, before
+	// any of the early-CAS guards below (which may legitimately bail without
+	// touching the ledger, e.g. the cancel/retry guards). CancelTask
+	// (cancel_task.go) waits on this instead of h.done (the whole run's
+	// completion signal) so it can return as soon as ITS task unwinds,
+	// while sibling tasks keep executing.
+	h.signalTaskDone(id.TaskID)
 	// Compare on the MAPPED status (ledger vocabulary), never raw r.Status.
 	status := mapStatus(r)
 	if !IsTaskTerminal(status) {

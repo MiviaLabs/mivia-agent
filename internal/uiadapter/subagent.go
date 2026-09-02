@@ -9,16 +9,35 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
+
+// subagentTaskRoute is the coordinator identity backing one registered
+// callID: the run it belongs to and its own task ID within that run, the
+// pair CancelSubagentTask needs to reach coordinator.Coordinator.CancelTask.
+type subagentTaskRoute struct {
+	runID  string
+	taskID string
+}
 
 // SubagentThreads implements ports.SubagentThreads by dynamically resolving
 // threads registered during runtime subagent executions.
 type SubagentThreads struct {
 	mu      sync.Mutex
 	threads map[string]ports.Conversation
+	// routes maps a registered callID to the coordinator run/task identity
+	// backing it (see RegisterTaskRoute), so CancelSubagentTask can resolve
+	// a UI-facing callID down to what coordinator.Coordinator.CancelTask
+	// needs. A callID with no route (never registered by a caller that knew
+	// the coordinator identity) cannot be canceled through this path.
+	routes map[string]subagentTaskRoute
+	// coord is the coordinator this registry cancels tasks through, wired
+	// by SetCoordinator. Nil until set - CancelSubagentTask then reports a
+	// clear error instead of silently no-oping.
+	coord coordinator.Coordinator
 }
 
 // Compile-time check that SubagentThreads satisfies ports.SubagentThreads.
@@ -36,6 +55,63 @@ func (s *SubagentThreads) RegisterThread(callID string, conv ports.Conversation)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.threads[callID] = conv
+}
+
+// SetCoordinator wires the coordinator.Coordinator instance
+// CancelSubagentTask cancels tasks through. Safe to call once at
+// construction; a nil coordinator is the zero value's behavior (every
+// CancelSubagentTask call then errors clearly instead of silently no-oping).
+func (s *SubagentThreads) SetCoordinator(c coordinator.Coordinator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.coord = c
+}
+
+// RegisterTaskRoute records the coordinator run/task identity backing a
+// registered callID, so a later CancelSubagentTask(callID) call can reach
+// coordinator.Coordinator.CancelTask. A caller that dispatches a coordinator
+// task and knows its own callID, runID, and taskID together calls this at
+// dispatch time; a callID with no route was never wired this way (e.g. a
+// reconstruction from persisted history, which carries no live coordinator
+// identity) and CancelSubagentTask reports ok=false for it.
+func (s *SubagentThreads) RegisterTaskRoute(callID, runID, taskID string) {
+	if callID == "" || runID == "" || taskID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routes == nil {
+		s.routes = map[string]subagentTaskRoute{}
+	}
+	s.routes[callID] = subagentTaskRoute{runID: runID, taskID: taskID}
+}
+
+// CancelSubagentTask stops the coordinator's execution of the ONE dispatched
+// task backing callID, leaving its sibling tasks and the parent run
+// untouched. See ports.SubagentThreads.CancelSubagentTask's doc comment for
+// how this differs from TurnHandle.Cancel()/ActiveTurn().Cancel() (which
+// only detach a UI listener from the live event stream).
+func (s *SubagentThreads) CancelSubagentTask(callID string) (bool, error) {
+	s.mu.Lock()
+	route, ok := s.routes[callID]
+	coord := s.coord
+	s.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	if coord == nil {
+		return false, fmt.Errorf("uiadapter: no coordinator wired to cancel subagent task %q", callID)
+	}
+	h := coord.HandleForRun(route.runID)
+	if h == nil {
+		return false, fmt.Errorf("uiadapter: run %q for subagent task %q is no longer active", route.runID, callID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := coord.CancelTask(ctx, h, route.taskID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // registerReconstructed registers a reconstruction under key, but never at

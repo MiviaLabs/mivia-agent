@@ -55,6 +55,10 @@ func (t stubThreads) Thread(callID string) (ports.Conversation, bool) {
 	return c, ok
 }
 
+// CancelSubagentTask is not exercised by these tests (they cover thread
+// rendering, not cancellation); it reports a clean miss.
+func (t stubThreads) CancelSubagentTask(string) (bool, error) { return false, nil }
+
 // agentEvent is one subagent progress observation.
 func agentEvent(id, status string, step, total int, log ...string) uievent.EventMsg {
 	return uievent.EventMsg{Event: uievent.Event{
