@@ -100,6 +100,72 @@ func TestRunOnceSDKStepCapIsError(t *testing.T) {
 	}
 }
 
+// TestRunOnceSDKStepCapResetsThePublishedMessage is the discriminator for
+// the max_steps-exhaustion wire-consistency bug: finalizeSDKTurn publishes
+// the turn's last assistant text to the wire as a settled "completed"
+// assistant.message BEFORE runOnceSDK inspects res.Stop and discards that
+// same text on StopMaxIterations. The discard must retract what the wire
+// already published, via the same EventAssistantReset mechanism the
+// prompt-too-long and empty-response retries already use.
+func TestRunOnceSDKStepCapResetsThePublishedMessage(t *testing.T) {
+	// The first step announces work AND calls a tool: its Content is
+	// "revoked as optimistic content" from res.Final once tool calls start,
+	// but stays recoverable in history - the exact StopMaxIterations shape
+	// TestFinalizeSDKTurnUsesTurnWideLastText pins as legitimate,
+	// publishable content.
+	announced := provider.Response{
+		Content:      "let me check that...",
+		FinishReason: "tool_calls",
+		ToolCalls:    []provider.ToolCall{tc("1", "noop_tool", `{}`)},
+	}
+	// Every later step calls a tool with no text, grinding into the cap.
+	textless := provider.Response{
+		FinishReason: "tool_calls",
+		ToolCalls:    []provider.ToolCall{tc("2", "noop_tool", `{}`)},
+	}
+	comp := &scriptedTurnCompleter{steps: []provider.Response{announced, textless, textless}}
+	reg := tools.NewRegistry()
+	reg.Register(noopTool{})
+	loop := &Loop{Completer: comp, Tools: reg}
+
+	var events []Event
+	_, err := loop.Run(context.Background(), "work", Options{
+		Model: "m", MaxSteps: 2,
+		OnEvent: func(e Event) { events = append(events, e) },
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeded max_steps") {
+		t.Fatalf("err = %v, want max_steps error, unchanged", err)
+	}
+
+	var assistantIdx, resetIdx = -1, -1
+	for i, e := range events {
+		switch e.Kind {
+		case EventAssistant:
+			if assistantIdx != -1 {
+				t.Fatalf("EventAssistant fired more than once: %+v", events)
+			}
+			assistantIdx = i
+			if e.Content != "let me check that..." {
+				t.Errorf("EventAssistant content = %q, want the announced text", e.Content)
+			}
+		case EventAssistantReset:
+			if resetIdx != -1 {
+				t.Fatalf("EventAssistantReset fired more than once: %+v", events)
+			}
+			resetIdx = i
+		}
+	}
+	if assistantIdx == -1 {
+		t.Fatalf("no EventAssistant fired - the wire-publish precondition for this bug never happened: %+v", events)
+	}
+	if resetIdx == -1 {
+		t.Fatalf("no EventAssistantReset fired after the wire published \"completed\": %+v", events)
+	}
+	if resetIdx < assistantIdx {
+		t.Fatalf("EventAssistantReset (index %d) fired before EventAssistant (index %d), want after", resetIdx, assistantIdx)
+	}
+}
+
 // TestRunOnceSDKKeepsPartialHistoryOnError pins the history-durability
 // contract: when the completer fails mid-turn, the loop's Messages
 // still carry this turn's user message and the completed step's tool
