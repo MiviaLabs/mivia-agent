@@ -505,7 +505,6 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 	publishTurnStart(bus, a, "turn:1", "stranded")
 
 	waitUntil(t, "the throttle to engage", func() bool { return f.CreateAttempts() >= createFailuresBeforeThrottle })
-	engagedAt := time.Now() // kept for the (ii) sleep below
 	if n := f.CreateAttempts(); n != createFailuresBeforeThrottle {
 		t.Fatalf("(i) %d attempts, want exactly %d before the throttle", n, createFailuresBeforeThrottle)
 	}
@@ -531,7 +530,6 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 	if at := f.CreateTimes()[createFailuresBeforeThrottle]; at.Before(*st.CreateThrottledUntil) {
 		t.Fatalf("the throttled attempt fired at %v, before create_throttled_until %v", at, *st.CreateThrottledUntil)
 	}
-	_ = engagedAt
 	b := waitForSecondSession(t, f)
 	if got, _ := s.throttleCountersForTest(); got != 0 {
 		t.Errorf("(iv) create failure counter = %d after a successful create, want 0", got)
