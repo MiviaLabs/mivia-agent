@@ -27,6 +27,25 @@ var CompiledMandatoryDenylist = []string{
 	"cancel_run",
 }
 
+// operatorDenialSet is the operator's additions ALONE, without the compiled
+// baseline.
+//
+// The two are kept apart because they mean different things at root: the
+// compiled list bounds what a spawned agent may reach and the root agent
+// keeps those tools, while an operator addition bounds what the installation
+// may run at all. Merging them made an operator's guardrail inherit the
+// compiled list's root exemption, so it did nothing whenever no agent was
+// selected.
+func operatorDenialSet(extra []string) map[string]bool {
+	out := make(map[string]bool, len(extra))
+	for _, n := range extra {
+		if n = strings.TrimSpace(n); n != "" {
+			out[n] = true
+		}
+	}
+	return out
+}
+
 // ScopeOptions configures ScopedRegistry.
 type ScopeOptions struct {
 	// Mode selects root vs spawned policy.
@@ -69,8 +88,9 @@ func ScopedRegistry(src *Registry, opts ScopeOptions) *Registry {
 		return out
 	}
 	denied := MandatoryDenylistSet(opts.ExtraDenylist...)
+	operatorDenied := operatorDenialSet(opts.ExtraDenylist)
 	for _, t := range src.List() {
-		if scopeAdmits(t, opts.Mode, denied, opts.Allowlist) {
+		if scopeAdmits(t, opts.Mode, denied, operatorDenied, opts.Allowlist) {
 			out.Register(t)
 		}
 	}
@@ -105,6 +125,7 @@ func ScopedRegistryWithTail(src *Registry, opts ScopeOptions, tail []string) *Re
 		return out
 	}
 	denied := MandatoryDenylistSet(opts.ExtraDenylist...)
+	operatorDenied := operatorDenialSet(opts.ExtraDenylist)
 	for _, name := range tail {
 		if _, already := out.Get(name); already {
 			continue
@@ -123,7 +144,7 @@ func ScopedRegistryWithTail(src *Registry, opts ScopeOptions, tail []string) *Re
 		// mode and the privileged marker alone; it is written this way so the
 		// tail keeps sharing one filter with ScopedRegistry rather than
 		// re-deriving the rules.
-		if scopeAdmits(t, opts.Mode, denied, map[string]struct{}{name: {}}) {
+		if scopeAdmits(t, opts.Mode, denied, operatorDenied, map[string]struct{}{name: {}}) {
 			out.Register(t)
 		}
 	}
@@ -132,7 +153,7 @@ func ScopedRegistryWithTail(src *Registry, opts ScopeOptions, tail []string) *Re
 
 // scopeAdmits is the single filter decision shared by ScopedRegistry and
 // ScopedRegistryWithTail. A nil allowlist means "no allowlist filter".
-func scopeAdmits(t Tool, mode ScopeMode, denied map[string]bool, allowlist map[string]struct{}) bool {
+func scopeAdmits(t Tool, mode ScopeMode, denied, operatorDenied map[string]bool, allowlist map[string]struct{}) bool {
 	name := t.Name()
 	_, privileged := t.(PrivilegedTool)
 	if mode == ScopeRoot {
@@ -140,13 +161,27 @@ func scopeAdmits(t Tool, mode ScopeMode, denied map[string]bool, allowlist map[s
 			// Root retains privileged/delegation tools unconditionally.
 			return true
 		}
+		if operatorDenied[name] {
+			// An operator's mandatory_tool_denylist addition is absolute at
+			// root. It is a rule about what THIS INSTALLATION may run, and
+			// the root agent is precisely who it is aimed at - unlike the
+			// compiled list below, which bounds what a SPAWNED agent may
+			// reach and which the root agent is meant to keep.
+			//
+			// This used to share the compiled branch, so an operator denial
+			// was kept whenever no allowlist was set. With no agent selected
+			// ScopedRootRegistry builds no allowlist at all, which is the
+			// default session - so the guardrail did nothing in the very
+			// configuration most installations run.
+			return false
+		}
 		if denied[name] {
-			// Non-privileged tools that share a denylist name are kept at
-			// root only when no allowlist is set, or when the name is
-			// allowlisted. An operator guardrail denial (ExtraDenylist)
-			// must not be re-admitted past the agent allowlist
-			// (INV-AG-29 execution denial); the agent's effective set
-			// already excludes these names at resolve time.
+			// A COMPILED denylist name is kept at root when no allowlist is
+			// set, or when the name is allowlisted: delegation stays
+			// available to the root agent. It must still not be re-admitted
+			// past an agent's own allowlist (INV-AG-29 execution denial),
+			// which the agent's effective set already excludes at resolve
+			// time.
 			if allowlist == nil {
 				return true
 			}
