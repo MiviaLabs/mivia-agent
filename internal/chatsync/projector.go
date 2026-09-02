@@ -374,6 +374,9 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		p.closeStepOnToolStart(ev, turnID)
 		return p.projectSubagent(env, ev)
 
+	case events.KindHook:
+		return p.projectHook(env, ev)
+
 	case events.KindCompaction:
 		return p.projectCompaction(env, ev)
 

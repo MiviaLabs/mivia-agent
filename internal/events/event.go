@@ -39,7 +39,12 @@ const (
 	// because the turn is being re-driven from the beginning.
 	KindAssistantReset Kind = "assistant_reset"
 	KindThinking       Kind = "thinking"
-	KindCompaction     Kind = "compaction"
+	// KindHook mirrors agent.EventHook: one lifecycle hook ran on the
+	// operator's machine. The structured facts - which script, for which
+	// tool, and whether it BLOCKED the call - travel in HookEvent, because
+	// the bus's generic string conversion carries none of them.
+	KindHook       Kind = "hook"
+	KindCompaction Kind = "compaction"
 	// KindCacheUsage reports provider-supplied prompt-cache accounting for
 	// one completion turn. See CacheUsageEvent.
 	KindCacheUsage Kind = "cache_usage"
@@ -134,6 +139,31 @@ type Event struct {
 	// --json sidecar - get the real before/after numbers instead of parsing
 	// Detail. Nil on every other kind.
 	Compaction *CompactionEvent
+	// Hook is present only for KindHook. It carries the structured facts a
+	// generic content/input/output envelope cannot: WHICH script ran, for
+	// which tool, and above all whether it BLOCKED the call.
+	//
+	// Those three lived on agent.Event and stopped at the bus boundary, which
+	// converts only the generic string fields. A consumer past that boundary -
+	// the chat-sync projector, the cross-process relay - therefore could not
+	// tell a hook that merely reported from one that refused a tool call, and
+	// a refusal is the whole reason the row exists.
+	Hook *HookEvent
+}
+
+// HookEvent is the structured payload for one lifecycle hook run.
+type HookEvent struct {
+	// Phase is PreToolUse, PostToolUse or Stop.
+	Phase string `json:"phase"`
+	// Program is the script's name, never its path: a path is machine
+	// topology, and this payload crosses to other processes and machines.
+	Program string `json:"program"`
+	// Tool is the call the hook ran for. Empty for a Stop hook, which runs
+	// for the turn rather than for one call.
+	Tool string `json:"tool"`
+	// Denied is true for the run that BLOCKED the call. A blocked call emits
+	// no tool_end, so this flag is the only account of why it never ran.
+	Denied bool `json:"denied"`
 }
 
 // CompactionEvent is the sealed, content-free progress payload for context
