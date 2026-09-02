@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -156,6 +157,40 @@ func TestAttachSessionNew(t *testing.T) {
 	}
 	if att.SessionID != "sess-new-456" || att.ServerSeq != 0 {
 		t.Errorf("att = %+v, want SessionID=sess-new-456, ServerSeq=0", att)
+	}
+}
+
+// TestAttachSessionNewOmitsForkedFrom pins the omitempty half of the S4.1
+// compatibility argument: an attach-time create is not a recovery, so it must
+// not carry forkedFromSessionId at all - not even as an empty string, which
+// the real API's @IsUUID() would reject on a field the whitelist otherwise
+// accepts. recoverRemoteSession is the only site allowed to set it.
+func TestAttachSessionNewOmitsForkedFrom(t *testing.T) {
+	var body []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-new-789", LastSeq: 0, Status: "running"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	outboxDir := filepath.Join(t.TempDir(), "outbox")
+	ob, _ := OpenOutbox(outboxDir, 100)
+	defer ob.Close()
+
+	if _, err := AttachSession(context.Background(), client, ob, CreateSessionParams{Title: "Fresh"}, "", ""); err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode create body: %v", err)
+	}
+	if _, present := decoded["forkedFromSessionId"]; present {
+		t.Fatalf("attach-time create body = %s, forkedFromSessionId must be absent, not merely empty", body)
 	}
 }
 

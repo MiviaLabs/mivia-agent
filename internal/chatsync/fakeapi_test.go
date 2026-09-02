@@ -276,7 +276,13 @@ func (f *fakeAPI) Requests() []recordedRequest {
 
 func (f *fakeAPI) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var params CreateSessionParams
-	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+	// DisallowUnknownFields models the real API's forbidNonWhitelisted pipe: a
+	// field this client sends that the DTO does not declare is a 400, not a
+	// silently dropped key. Without this the fake could never catch a struct
+	// field added to CreateSessionParams with no matching DTO change.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&params); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "Bad Request", "malformed request body")
 		return
 	}
