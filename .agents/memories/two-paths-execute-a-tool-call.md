@@ -79,10 +79,25 @@ defaults it to write-only and fails closed).
   mutation survive, and removed it. Telling the live emission from the
   synthesised one needs a timing assertion this harness cannot make cleanly.
 
-  Everything else in this group is now closed rather than open: `RefOnlyTools`
-  is wrapped for the deferred path too (`wrapRefOnly`), and turn shaping
-  (`pass1`), the ephemeral spool-nil rule and the result cap all came for free
-  when execution moved into the shim.
+  Everything else in this group is closed. `RefOnlyTools` and turn shaping are
+  wrapped for the deferred path too (`wrapRefOnly`, `wrapTurnShaping`), and the
+  ephemeral spool-nil rule, the result cap and the outcome record all came for
+  free when execution moved into the shim.
+
+## The table is the contract list - keep it that way
+
+Thirteen contracts over both routes, and every one was added because a
+mutation proved the previous set could not see it. If you add a rule to
+`dispatcherShim.Run`, add a row. Two lessons the additions paid for:
+
+- **A contract that reads the wrong artefact cannot fail.** The hook-BLOCK
+  case reads the dispatcher's blocked envelope, not `HookContext`, so
+  deleting the hook advisory entirely stayed green until a separate
+  advisory case was added. Two guards need two cases.
+- **So does a contract whose fixture disables what it tests.** The ephemeral
+  rule is enforced twice (the ref-only wrapper skips ephemeral tools, and
+  the shim nils the spool before capping); the ref-only case cannot reach
+  the second, because it never gets as far as the spool.
 
 **When you add a contract to the shim, it reaches both routes for free - but
 add a row to the table anyway.** The table is what will catch the next attempt
