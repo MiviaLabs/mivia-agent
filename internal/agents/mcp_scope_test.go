@@ -37,3 +37,48 @@ func TestResolveMCPServersWorkspaceRootCannotSelectPrivate(t *testing.T) {
 		t.Fatal("workspace root selected a non-global MCP server")
 	}
 }
+
+// Resolve must actually populate EffectiveDenylist, or every consumer of it
+// silently enforces nothing.
+//
+// The field is what carries a denial to producers that add tool names AFTER
+// applyToolPolicy has run - cliagents.AuthorizedAgentTools grants authority
+// over a selected MCP server's whole tool set - and several of those run where
+// the operator's config is not reachable. An unset field is a denylist that
+// exists in the config and nowhere else.
+func TestResolveCarriesTheOperatorDenylistOnTheAgent(t *testing.T) {
+	opts := baseOpts()
+	opts.Global.MandatoryToolDenylistAdditions = []string{"run_command"}
+	reg, _, err := ResolveAll([]ResolveInput{{
+		Name: "worker", Source: config.AgentSourceUser,
+		Spec: config.AgentFileSpec{
+			Name: strp("worker"), Description: strp("d"),
+			Tools:           slicep("read_file", "run_command"),
+			DisallowedTools: slicep("post_message"),
+		},
+	}}, opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	agent, ok := reg.Get("worker")
+	if !ok {
+		t.Fatal("worker did not resolve")
+	}
+	if !slicesContain(agent.EffectiveDenylist, "run_command") {
+		t.Errorf("EffectiveDenylist = %v, missing the operator's addition; every "+
+			"consumer of it then enforces nothing", agent.EffectiveDenylist)
+	}
+	if !slicesContain(agent.EffectiveDenylist, "post_message") {
+		t.Errorf("EffectiveDenylist = %v, missing the agent's own "+
+			"disallowed_tools", agent.EffectiveDenylist)
+	}
+}
+
+func slicesContain(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

@@ -159,6 +159,14 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	if systemPrompt == "" {
 		systemPrompt = subagents.MultiStepSystemPrompt
 	}
+	// This surface passes no ExtraDenylist, so ScopeSpawned's own denial check
+	// sees only the COMPILED list - an operator's additions are not in it. The
+	// allowlist is therefore the only place their guardrail can apply here,
+	// and AuthorizedAgentTools applies it from the agent's own
+	// EffectiveDenylist. That matters most on this path: EnsureMCPTools above
+	// has just merged THIS subagent's MCP server tools into the authority
+	// registry, after root scope already ran, so nothing upstream has seen
+	// them.
 	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
 		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(cliagents.AuthorizedAgentTools(&h.definition, h.full)),
 	})

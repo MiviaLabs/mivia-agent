@@ -43,6 +43,19 @@ type ResolvedAgent struct {
 	EffectiveMCPServers []string
 	AllowEmptyTools     bool     // explicit empty-tool contract
 	DisallowedTools     []string // effective denylist names applied before allowlist
+	// EffectiveDenylist is every name this agent may never invoke: its own
+	// disallowed_tools plus the operator's mandatory-denylist additions,
+	// frozen at resolve time.
+	//
+	// It exists because a denial has to travel WITH the agent. EffectiveTools
+	// already has these names removed, but any producer that adds names back -
+	// AuthorizedAgentTools grants authority over a selected MCP server's tools
+	// without consulting the agent file - would otherwise re-grant them, and
+	// several of the surfaces that consume the result have no access to the
+	// operator's config at all. A resolved agent is an immutable snapshot, so
+	// carrying the denial in it is what makes it unforgettable rather than
+	// merely passed.
+	EffectiveDenylist []string
 	// CoreTools is the resolved always-advertised tool tier (plan tools/05).
 	// nil = no per-agent override; the host falls back to [tools] core, and a
 	// nil global keeps every effective tool core. Non-nil (including empty)
@@ -78,6 +91,7 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 	out.EffectiveTools = slices.Clone(a.EffectiveTools)
 	out.EffectiveMCPServers = slices.Clone(a.EffectiveMCPServers)
 	out.DisallowedTools = slices.Clone(a.DisallowedTools)
+	out.EffectiveDenylist = slices.Clone(a.EffectiveDenylist)
 	out.DisabledTools = slices.Clone(a.DisabledTools)
 	if a.Skills != nil {
 		s := slices.Clone(*a.Skills)
