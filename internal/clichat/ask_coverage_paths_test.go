@@ -166,10 +166,10 @@ func TestRegisterMessagingToolsIdempotentPaths(t *testing.T) {
 	reg := tools.NewRegistry()
 	cfg := config.DefaultSubagentConfig
 	repo := ledger.NewMemoryLedgerRepository()
-	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	post, ok := reg.Get(toolPostMessage)
@@ -561,7 +561,7 @@ func TestRegisterMessagingToolsWithAgentReg(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	// Registry with a published agent so resolveTaskRoute succeeds and sets digest.
 	ar := testAgentRegistry(t, "auditor")
-	if err := registerMessagingTools(d, reg, cfg, repo, ar); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, ar, nil); err != nil {
 		t.Fatal(err)
 	}
 	post, ok := reg.Get(toolPostMessage)

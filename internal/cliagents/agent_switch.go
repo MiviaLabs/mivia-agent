@@ -574,6 +574,7 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		// so omitting it here silently un-gated delegation after the first
 		// turn - which is exactly what happened the first time round.
 		Approval:          sess.ApprovalSnapshot,
+		ToolDenylist:      state.Global.MandatoryToolDenylistAdditions,
 		Registry:          registry,
 		AuthorityRegistry: authority,
 		// The session owns the ledger store, so no rebuilt dispatcher opens one

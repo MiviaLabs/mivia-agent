@@ -62,3 +62,48 @@ func (d denyProbe) Parameters() map[string]any { return map[string]any{"type": "
 func (d denyProbe) Execute(context.Context, json.RawMessage) (string, error) {
 	return "ok", nil
 }
+
+// A session-owned tool must be refusable by the operator.
+//
+// dispatch_tasks, post_message, read_output and load_tools are registered
+// onto the live registry AFTER it has been scoped, so no earlier filter can
+// see them - and every one of them is a PrivilegedTool, which scopeAdmits
+// used to admit at root before consulting any denylist. The operator's
+// guardrail therefore could not reach a single session tool, whatever it
+// said. Registration is the only point at which they can be refused.
+func TestRegisterSessionToolRefusesAnOperatorDeniedName(t *testing.T) {
+	reg := tools.NewRegistry()
+	err := RegisterSessionTool(nil, reg, privilegedProbe{name: "read_output"},
+		[]string{"read_output"})
+
+	if err == nil {
+		t.Error("a session tool the operator denied was registered anyway; it is " +
+			"privileged and registered after scoping, so nothing else can refuse it")
+	}
+	if _, ok := reg.Get("read_output"); ok {
+		t.Error("the denied session tool is in the model-visible registry")
+	}
+}
+
+// The COMPILED denylist must NOT refuse a session tool: it names the
+// delegation tools a root session legitimately owns, and folding it in here
+// would refuse dispatch_tasks outright.
+func TestRegisterSessionToolIgnoresTheCompiledDenylist(t *testing.T) {
+	reg := tools.NewRegistry()
+	if err := RegisterSessionTool(nil, reg, privilegedProbe{name: "dispatch_tasks"}, nil); err != nil {
+		t.Fatalf("a compiled-denylist name is a legitimate session tool: %v", err)
+	}
+	if _, ok := reg.Get("dispatch_tasks"); !ok {
+		t.Error("dispatch_tasks was not registered")
+	}
+}
+
+type privilegedProbe struct{ name string }
+
+func (p privilegedProbe) Name() string               { return p.name }
+func (p privilegedProbe) Description() string        { return p.name }
+func (p privilegedProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p privilegedProbe) Execute(context.Context, json.RawMessage) (string, error) {
+	return "ok", nil
+}
+func (p privilegedProbe) Privileged() {}

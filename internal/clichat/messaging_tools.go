@@ -395,7 +395,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 // and send_to_task (session-privileged). Called from session dispatcher setup.
 // Messaging is always enabled. agentReg may be nil (tests); when set, referral
 // spawns resolve AgentDigest for production agent handlers.
-func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry) error {
+func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, denylist []string) error {
 	post := &postMessageTool{
 		dispatcher: d, cfg: cfg, repo: repo,
 		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
@@ -420,7 +420,7 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 		&runMessagesTool{dispatcher: d, cfg: cfg, repo: repo},
 		&sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo},
 	} {
-		if err := cliagents.RegisterSessionTool(d, reg, t); err != nil {
+		if err := cliagents.RegisterSessionTool(d, reg, t, denylist); err != nil {
 			if _, exists := reg.Get(t.Name()); !exists {
 				return err
 			}

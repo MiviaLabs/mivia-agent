@@ -36,6 +36,13 @@ var CompiledMandatoryDenylist = []string{
 // may run at all. Merging them made an operator's guardrail inherit the
 // compiled list's root exemption, so it did nothing whenever no agent was
 // selected.
+// OperatorDenialSet is the exported view of operatorDenialSet, for callers
+// outside this package that must apply the OPERATOR's denials without the
+// compiled baseline - session-tool registration, most importantly. The
+// compiled list names delegation tools that a root session legitimately owns,
+// so folding it in there would refuse dispatch_tasks and friends outright.
+func OperatorDenialSet(extra []string) map[string]bool { return operatorDenialSet(extra) }
+
 func operatorDenialSet(extra []string) map[string]bool {
 	out := make(map[string]bool, len(extra))
 	for _, n := range extra {
@@ -157,10 +164,17 @@ func scopeAdmits(t Tool, mode ScopeMode, denied, operatorDenied map[string]bool,
 	name := t.Name()
 	_, privileged := t.(PrivilegedTool)
 	if mode == ScopeRoot {
-		if privileged {
-			// Root retains privileged/delegation tools unconditionally.
-			return true
-		}
+		// The operator's denial is checked FIRST, ahead of the privileged
+		// marker. Every session-owned tool (dispatch_tasks, post_message,
+		// read_output, load_tools) is privileged by construction, so checking
+		// the marker first meant an operator's mandatory_tool_denylist could
+		// never reach a single one of them.
+		//
+		// The COMPILED list still yields to the marker below: it bounds what a
+		// SPAWNED agent may reach, and the root agent is meant to keep
+		// delegation. An operator addition is a rule about what this
+		// installation may run, and being session-owned is not a reason to be
+		// exempt from it.
 		if operatorDenied[name] {
 			// An operator's mandatory_tool_denylist addition is absolute at
 			// root. It is a rule about what THIS INSTALLATION may run, and
@@ -174,6 +188,10 @@ func scopeAdmits(t Tool, mode ScopeMode, denied, operatorDenied map[string]bool,
 			// default session - so the guardrail did nothing in the very
 			// configuration most installations run.
 			return false
+		}
+		if privileged {
+			// Root retains privileged/delegation tools unconditionally.
+			return true
 		}
 		if denied[name] {
 			// A COMPILED denylist name is kept at root when no allowlist is

@@ -114,8 +114,9 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		// The operator's approval wiring survives a model switch. Without it
 		// every /new and /resume session - which reach their dispatcher
 		// through here - built ungated subagents.
-		Approval: sess.ApprovalSnapshot,
-		Registry: toolGeneration,
+		Approval:     sess.ApprovalSnapshot,
+		ToolDenylist: agentCtx.Global.MandatoryToolDenylistAdditions,
+		Registry:     toolGeneration,
 		// Session-owned; see agentSessionState.LedgerRepo. Nil here is the
 		// hand-built caller with no agent state, which owns no session either.
 		Repo: repo,

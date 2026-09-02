@@ -155,13 +155,13 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return nil, err
 		}
 	}
-	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
+	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
-	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry); err != nil {
+	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
-	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool); err != nil {
+	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
 	if err := registerLoadToolsTool(d, opts); err != nil {
@@ -198,7 +198,7 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools))
+	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools), opts.ToolDenylist)
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {

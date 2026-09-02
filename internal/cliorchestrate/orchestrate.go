@@ -402,7 +402,7 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // dispatch_tasks is registered first: session_tool_catalog.go documents that
 // the resulting wire order is load-cache-stability-sensitive for
 // OpenAI-compatible providers, so this order must not change.
-func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry, providerName, model string) error {
+func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry, providerName, model string, denylist []string) error {
 	toolSet := []tools.Tool{
 		&dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg, providerName: providerName, model: model},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
@@ -410,7 +410,7 @@ func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg 
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},
 	}
 	for _, t := range toolSet {
-		if err := cliagents.RegisterSessionTool(d, reg, t); err != nil {
+		if err := cliagents.RegisterSessionTool(d, reg, t, denylist); err != nil {
 			return err
 		}
 	}
