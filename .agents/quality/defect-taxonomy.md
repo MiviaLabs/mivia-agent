@@ -1319,3 +1319,50 @@ expected.
   block a catalog fetch mid-flight, perform a concurrent `Clear`/`SelectModel`,
   then release the fetch and assert the load is rejected as stale rather than
   silently overwriting the concurrent change.
+
+## DC-36 A byte offset from one language's tooling is sliced against another language's code-point-indexed string
+
+**Mechanism.** A script in language B (here, Python) consumes source positions
+produced by language A's own tooling (here, Go's `go/scanner`/`token.FileSet`,
+which reports byte offsets by definition). B then decodes the source to its
+native string type and indexes/slices it with those offsets as if they were
+that type's own indexing unit. Whenever B's string type indexes by code point
+rather than by byte (Python 3 `str`), and the source contains any character
+that encodes to more than one byte (an em-dash, a curly quote, any non-ASCII
+text), every offset reported for a position after that character is now
+wrong by the accumulated byte/code-point difference. The mismatch is silent:
+Python raises no error, the slice just returns different text.
+
+**Evidence.** `scripts/check_mutation.py`'s `run_mutant` decoded a Go file to
+`str` (`text = original.decode("utf-8")`) then sliced it with `site.start`/
+`site.end` from `mutation_tokenize.py`'s go/scanner helper (`file.Offset(pos)`,
+byte-based). A file with em-dashes before a mutation site had its mutation
+silently applied to the wrong span - sometimes producing a build failure
+(misclassified `discarded`), sometimes an edit that left the intended
+mutation site untouched (misclassified `survived`, hiding a real gap a
+correct test did in fact close). `sweep_diff`'s line-number lookup had the
+identical bug (`file_text.count("\n", 0, site.start)` on a decoded `str`),
+which could drop a real mutation site from a diff sweep entirely by
+computing the wrong line number for it. Found via `internal/coordinator/cancel_task.go`
+(2026-09-03): a test provably killed the real mutant (confirmed by hand-
+applying the correct byte-precise mutation and observing the test fail), yet
+the gate kept reporting it `survived`.
+
+**Probes.**
+- Any script that consumes byte/rune/codepoint positions from a DIFFERENT
+  tool or language than the one doing the slicing: name the unit each side
+  uses, and confirm they match. Go, Rust, and most compiler tooling report
+  byte offsets; Python `str` indexes by code point; JavaScript strings index
+  by UTF-16 code unit. All three disagree the moment non-ASCII text appears
+  earlier in the same buffer.
+- Slice/index the RAW BYTES the position came from, not a decoded string -
+  or re-derive the offsets in the consuming language's own native unit
+  before using them (e.g. `len(text[:byte_offset].encode())` round-trips are
+  a code smell, not a fix - they still require re-decoding for every use).
+- Test with a fixture containing at least one multi-byte character BEFORE
+  the position under test, not after - a bug in this class is invisible in
+  any fixture that only ever has ASCII before the site.
+- Gate: `test_tokenizer_offsets_survive_multibyte_utf8_before_site`
+  (`scripts/test_check_mutation.py`) tokenizes a fixture with em-dashes
+  before a `continue` site and asserts byte-slicing lands on it while
+  str-slicing the same offsets (the pre-fix behavior) does not.
