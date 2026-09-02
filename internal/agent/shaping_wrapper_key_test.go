@@ -61,6 +61,7 @@ func TestSDKTurnShaping_VetoPathCleanRecord(t *testing.T) {
 		MaxSteps:               5,
 		MaxConcurrentTools:     2,
 		BatchResultBudgetBytes: 1024,
+		Dispatcher:             governedDispatcher(t, reg),
 	}
 
 	sdkOpts, turn, err := buildAgentLoopOptions(loop, opts, "hi")

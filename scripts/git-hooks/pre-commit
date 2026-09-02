@@ -262,6 +262,7 @@ if command -v go >/dev/null 2>&1; then
   if echo "$STAGED" | grep -qE '^(internal/(chat|agent|clichat)/|\.mivia/policy/tool-execution-conformance\.json$)'; then
     echo " → Running tool-execution conformance tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestNoToolReachesTheModelUngoverned' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The wire-field source check: every string leaving this machine must pass
   # through applyTruncation. Two fields have skipped it, each rejecting a

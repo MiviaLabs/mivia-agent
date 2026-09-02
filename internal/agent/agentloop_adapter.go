@@ -236,7 +236,9 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 	if err != nil {
 		return nil, err
 	}
-	applyDispatcherShim(sdkReg, cliReg, opts, turn)
+	if err := applyDispatcherShim(sdkReg, cliReg, opts, turn); err != nil {
+		return nil, err
+	}
 	// toolCallID is the in-flight call id from the SDK's toolcallctx. It must
 	// reach EventToolPending.ToolCallID so the UI's approval resolver can
 	// match a user decision back to this specific gate; without it, every

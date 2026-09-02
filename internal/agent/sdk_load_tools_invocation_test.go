@@ -112,6 +112,7 @@ func TestSDKBuildToolRegistryDoesNotConsultPredicatesForInRegistryTools(t *testi
 		Model:                 "test-model",
 		StagedToolMessage:     staged,
 		UnadmittedToolHandler: unadmitted,
+		Dispatcher:            governedDispatcher(t, reg),
 	}
 	loop := &Loop{Completer: &scriptedTurnCompleter{steps: []provider.Response{{Content: "noop", FinishReason: "stop"}}}, Tools: reg}
 	turn := newSDKTurnState()
