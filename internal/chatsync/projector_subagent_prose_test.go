@@ -680,6 +680,64 @@ func TestThinkingWithholdsTextUnderAPolicyOnTheRootPath(t *testing.T) {
 	}
 }
 
+// TestProjector_SchemaExhaustion_ResetPrecedesSubagentEnded is the chatsync
+// leg of the fix in internal/subagents/multi_step_schema.go: when a
+// subagent's schema-repair retry gives up (no progress, or the retry budget
+// exhausted), runValidatedReply now emits an assistant.reset for the same
+// stream right after the rejected attempt's settled message, ahead of the
+// run's own terminal subagent.ended(status: error). This proves the
+// projector - already correct for the mid-retry reset - behaves identically
+// for this new call order: a viewer sees the rejected bubble retracted
+// before it also learns the run failed, never a lingering "completed"
+// bubble next to an unrelated failure line.
+func TestProjector_SchemaExhaustion_ResetPrecedesSubagentEnded(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// The last rejected attempt's settled reply, already on the wire as
+	// "completed" - exactly what finalizeSDKTurn ships before validation
+	// ever runs.
+	msg := p.Project(subagentEvent(events.KindAssistant, "task-1", `{"not":"valid"}`, ""))
+	reset := p.Project(subagentEvent(events.KindAssistantReset, "task-1", "",
+		"schema retry budget exhausted: the reply was never accepted"))
+	done := p.Project(subagentEvent(events.KindSubagentDone, "task-1", "", "error"))
+
+	got := append(append(msg, reset...), done...)
+	wantTypes := []string{TypeSubagentAssistantMessage, TypeAssistantReset, TypeSubagentEnded}
+	if len(got) != len(wantTypes) {
+		t.Fatalf("wire sequence = %v, want %v", got, wantTypes)
+	}
+	for i, w := range wantTypes {
+		if got[i].Type != w {
+			t.Fatalf("event[%d].Type = %s, want %s", i, got[i].Type, w)
+		}
+	}
+
+	msgPayload, ok := got[0].Payload.(*SubagentAssistantMessagePayload)
+	if !ok {
+		t.Fatalf("message payload is %T, want *SubagentAssistantMessagePayload", got[0].Payload)
+	}
+	resetPayload, ok := got[1].Payload.(*AssistantResetPayload)
+	if !ok {
+		t.Fatalf("reset payload is %T, want *AssistantResetPayload", got[1].Payload)
+	}
+	// The reset names the STREAM (no segment suffix); the message's own block
+	// extends that stream with a segment id. The reset must be a prefix of
+	// the message's block, or it clears a different lane's segments.
+	if !strings.HasPrefix(msgPayload.Block, resetPayload.Block) {
+		t.Errorf("reset block = %q is not a prefix of message block = %q; the reset must target "+
+			"the same stream the rejected message was published on, or a viewer clears the wrong "+
+			"lane's segments", resetPayload.Block, msgPayload.Block)
+	}
+
+	endedPayload, ok := got[2].Payload.(*SubagentEndedPayload)
+	if !ok {
+		t.Fatalf("ended payload is %T, want *SubagentEndedPayload", got[2].Payload)
+	}
+	if endedPayload.Status != "error" {
+		t.Errorf("ended status = %q, want error", endedPayload.Status)
+	}
+}
+
 // TestAggregateFollowsWhatWasSentNotTheGates is the mid-turn policy change.
 //
 // A workflow tool can install a redaction policy while a turn is running, so

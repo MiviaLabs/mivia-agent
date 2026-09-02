@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 
@@ -69,12 +70,16 @@ func newOrderedRetryHandler(replies []string, retryMax int, mu *sync.Mutex, log 
 		SchemaRetryMax: retryMax,
 		OutputSchema:   schemaObject(),
 		OnEvent: func(e agent.Event) {
-			if e.Kind != agent.EventSchemaRetry {
-				return
+			switch e.Kind {
+			case agent.EventSchemaRetry:
+				mu.Lock()
+				*log = append(*log, "retry:"+e.Detail)
+				mu.Unlock()
+			case agent.EventAssistantReset:
+				mu.Lock()
+				*log = append(*log, "reset:"+e.Detail)
+				mu.Unlock()
 			}
-			mu.Lock()
-			*log = append(*log, "retry:"+e.Detail)
-			mu.Unlock()
 		},
 	}
 }
@@ -113,7 +118,7 @@ func TestSchemaRetryVisibility_FiresBeforeRetryCall(t *testing.T) {
 	got := append([]string(nil), log...)
 	mu.Unlock()
 
-	wantSeq := []string{"call:1", "retry:schema validation failed on attempt 1/3, retrying...", "call:2"}
+	wantSeq := []string{"call:1", "retry:schema validation failed on attempt 1/3, retrying...", "reset:", "call:2"}
 	if len(got) != len(wantSeq) {
 		t.Fatalf("log = %#v, want %#v", got, wantSeq)
 	}
@@ -160,7 +165,16 @@ func TestSchemaRetryVisibility_FiresOncePerAttemptOnExhaustion(t *testing.T) {
 	if retryCount != 2 {
 		t.Fatalf("retry event count = %d, want exactly 2 (log=%#v)", retryCount, got)
 	}
-	wantSeq := []string{"call:1", "retry:schema validation failed on attempt 1/3, retrying...", "call:2", "retry:schema validation failed on attempt 2/3, retrying...", "call:3"}
+	wantSeq := []string{
+		"call:1",
+		"retry:schema validation failed on attempt 1/3, retrying...",
+		"reset:",
+		"call:2",
+		"retry:schema validation failed on attempt 2/3, retrying...",
+		"reset:",
+		"call:3",
+		"reset:schema retry budget exhausted: the reply was never accepted",
+	}
 	if len(got) != len(wantSeq) {
 		t.Fatalf("log = %#v, want %#v", got, wantSeq)
 	}
@@ -168,6 +182,113 @@ func TestSchemaRetryVisibility_FiresOncePerAttemptOnExhaustion(t *testing.T) {
 		if got[i] != w {
 			t.Fatalf("log[%d] = %q, want %q (full log %#v)", i, got[i], w, got)
 		}
+	}
+}
+
+// D: every attempt fails validation. This is the discriminator for the
+// exhaustion-path reset gap: the two mid-retry resets already fired before
+// this fix; the fix adds exactly one more, for the FINAL rejected attempt,
+// so the "completed" bubble that attempt's finalizeSDKTurn already
+// published on the wire gets retracted instead of lingering mislabeled.
+func TestSchemaRetryVisibility_ExhaustionEmitsAssistantResetForFinalAttempt(t *testing.T) {
+	var mu sync.Mutex
+	var log []string
+	distinctInvalid := []string{`nope`, `still nope`, `and again`}
+	h := newOrderedRetryHandler(distinctInvalid, 2, &mu, &log)
+
+	_, err := invokeOrderedRetry(t, h)
+	if !errors.Is(err, subagents.ErrSchemaViolation) {
+		t.Fatalf("err = %v, want ErrSchemaViolation", err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), log...)
+	mu.Unlock()
+
+	resetCount := 0
+	var lastReset string
+	for _, l := range got {
+		if len(l) >= 6 && l[:6] == "reset:" {
+			resetCount++
+			lastReset = l
+		}
+	}
+	if resetCount != 3 {
+		t.Fatalf("reset event count = %d, want exactly 3 (2 mid-retry + 1 for the final exhausted attempt); log=%#v", resetCount, got)
+	}
+	wantLast := "reset:schema retry budget exhausted: the reply was never accepted"
+	if lastReset != wantLast {
+		t.Fatalf("final reset = %q, want %q (log=%#v)", lastReset, wantLast, got)
+	}
+}
+
+// E: the "no progress" early exit (a retry produced the identical invalid
+// output as the previous attempt) must also retract its wire-published
+// "completed" bubble, and must not be confused with budget exhaustion - the
+// error text and reset Detail are distinct.
+func TestSchemaRetryVisibility_NoProgressEmitsAssistantReset(t *testing.T) {
+	var mu sync.Mutex
+	var log []string
+	// Every call returns the SAME invalid text: attempt 0 sets lastInvalid,
+	// attempt 1's candidate equals it, so the no-progress branch exits at
+	// attempt 1 - before the retry budget (2) would otherwise be exhausted.
+	h := newOrderedRetryHandler([]string{`nope`, `nope`, `nope`}, 2, &mu, &log)
+
+	_, err := invokeOrderedRetry(t, h)
+	if !errors.Is(err, subagents.ErrSchemaViolation) {
+		t.Fatalf("err = %v, want ErrSchemaViolation", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "no progress on schema repair") {
+		t.Fatalf("err = %v, want the unchanged 'no progress on schema repair' message", err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), log...)
+	mu.Unlock()
+
+	resetCount := 0
+	var lastReset string
+	for _, l := range got {
+		if len(l) >= 6 && l[:6] == "reset:" {
+			resetCount++
+			lastReset = l
+		}
+	}
+	if resetCount != 2 {
+		t.Fatalf("reset event count = %d, want exactly 2 (1 mid-retry + 1 for the no-progress exit); log=%#v", resetCount, got)
+	}
+	wantLast := "reset:schema repair made no progress: the reply was never accepted"
+	if lastReset != wantLast {
+		t.Fatalf("final reset = %q, want %q (log=%#v)", lastReset, wantLast, got)
+	}
+}
+
+// F: regression guard - the success-after-one-retry path (test A above)
+// must keep emitting exactly the one mid-retry reset it emitted before this
+// fix, never an extra one, proving the new terminal-failure resets cannot
+// accidentally fire on a path that ends in success.
+func TestSchemaRetryVisibility_SuccessAfterRetryStillEmitsExactlyOneReset(t *testing.T) {
+	var mu sync.Mutex
+	var log []string
+	h := newOrderedRetryHandler([]string{`not json`, `{"ok":true}`}, 2, &mu, &log)
+
+	_, err := invokeOrderedRetry(t, h)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), log...)
+	mu.Unlock()
+
+	resetCount := 0
+	for _, l := range got {
+		if len(l) >= 6 && l[:6] == "reset:" {
+			resetCount++
+		}
+	}
+	if resetCount != 1 {
+		t.Fatalf("reset event count = %d, want exactly 1 (log=%#v)", resetCount, got)
 	}
 }
 
