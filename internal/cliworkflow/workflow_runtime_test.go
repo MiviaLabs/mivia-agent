@@ -2,13 +2,17 @@ package cliworkflow
 
 import (
 	"errors"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -424,4 +428,75 @@ func newPanelAuthorizationFixture(t *testing.T) *panelAuthorizationFixture {
 			return &bindingProbeCompleter{name: providerName}, nil
 		},
 	}}
+}
+
+// Every workflow-agent tool surface must be built by panelAgentSurface.
+//
+// The panel GATE and the write-authority scan each constructed the surface
+// themselves, and only the runtime passed the operator's ExtraDenylist - so
+// the gate could approve a panel against a tool set that was not the one it
+// would run with.
+//
+// This is a SOURCE check, not a behavioural one, and deliberately so. The
+// behavioural version I wrote first drove panelAgentSurface directly, which
+// only ever proved the helper agrees with itself: re-breaking the gate's own
+// call site left it green. The defect is an OMISSION at a construction site,
+// and no runtime path exercises every site, so the check has to read the
+// source. Same reasoning as the sibling gate in internal/cliagents.
+func TestEveryWorkflowAgentSurfaceGoesThroughOneConstructor(t *testing.T) {
+	const file = "workflow_authority.go"
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+
+	var offenders []string
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "ScopedRegistry" {
+			return true
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		if !ok || pkg.Name != "tools" {
+			return true
+		}
+		// The one inside panelAgentSurface is the constructor itself.
+		if fn := enclosingFunc(parsed, call.Pos()); fn == "panelAgentSurface" {
+			return true
+		}
+		offenders = append(offenders, fmt.Sprintf("%s:%d (%s)",
+			file, fset.Position(call.Pos()).Line, enclosingFunc(parsed, call.Pos())))
+		return true
+	})
+
+	if len(offenders) > 0 {
+		t.Errorf("these build a workflow-agent tool surface themselves instead of "+
+			"through panelAgentSurface: %v\nTwo constructions of the same surface "+
+			"is how the panel gate came to validate a tool set the runtime would "+
+			"not actually grant. Call panelAgentSurface.", offenders)
+	}
+}
+
+// enclosingFunc names the function declaration containing pos.
+func enclosingFunc(file *ast.File, pos token.Pos) string {
+	name := ""
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		if fn.Pos() <= pos && pos <= fn.End() {
+			name = fn.Name.Name
+		}
+	}
+	return name
 }

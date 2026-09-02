@@ -72,14 +72,34 @@ func effectiveWorkflowPanelLimits(res *config.Resolved) controller.PanelLimits {
 
 var panelReviewerTools = []string{"find_references", "glob", "grep", "list_dir", "read_file"}
 
+// panelAgentSurface is the tool surface a workflow agent actually runs with.
+//
+// It exists so the panel GATE and the write-authority scan cannot disagree.
+// They built it separately, with one passing the operator's ExtraDenylist and
+// the other not, which meant the gate validated a surface the operator's
+// guardrail had never been applied to. Two constructions of the same surface
+// is the shape this repository keeps paying for; one function is the fix.
+//
+// The denylist is variadic because the gate has no operator config in scope.
+// That is safe now and was not before: the agent's own EffectiveDenylist
+// already excludes operator-denied names from AuthorizedAgentTools, so the
+// allowlist carries the denial even when ExtraDenylist is absent. Passing it
+// as well is defence in depth for the compiled-vs-operator split in
+// scopeAdmits.
+func panelAgentSurface(authority *tools.Registry, agent agents.ResolvedAgent, extraDenylist ...string) *tools.Registry {
+	return tools.ScopedRegistry(authority, tools.ScopeOptions{
+		Mode:          tools.ScopeSpawned,
+		Allowlist:     agents.AllowlistSet(cliagents.AuthorizedAgentTools(&agent, authority)),
+		ExtraDenylist: extraDenylist,
+	})
+}
+
 func ValidatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts cliagents.SessionDispatcherOpts, synthesizer bool) error {
 	authority := opts.Authority()
 	if authority == nil {
 		return fmt.Errorf("panel agent %q has no runtime tool registry", agent.Name)
 	}
-	surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(cliagents.AuthorizedAgentTools(&agent, authority)),
-	})
+	surface := panelAgentSurface(authority, agent)
 	if !slices.Contains(agent.DisallowedTools, toolPostMessage) {
 		return fmt.Errorf("panel agent %q must disallow post_message", agent.Name)
 	}
@@ -201,10 +221,7 @@ func workflowWriteAuthority(wf *definition.CompiledWorkflow, registry *agents.Ag
 		if !ok {
 			return false, fmt.Errorf("workflow step %q references unknown agent %q", step.ID, step.Agent)
 		}
-		surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(cliagents.AuthorizedAgentTools(&agent, authority)),
-			ExtraDenylist: extraDenylist,
-		})
+		surface := panelAgentSurface(authority, agent, extraDenylist...)
 		for _, tool := range surface.List() {
 			// run_command is not ExecutionWrite-class (a bare argv is an
 			// external program), but a shell program can write anywhere, so a
