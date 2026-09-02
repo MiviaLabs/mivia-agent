@@ -85,6 +85,16 @@ type AdmissionPredicates struct {
 	// and the gate's blocking select never fires - the tool hangs
 	// silently after the user approves.
 	EmitPending func(toolCallID, name, detail, input string)
+
+	// RecordDenied reports that a call was REFUSED and never ran.
+	//
+	// It is the symmetric partner of EmitPending, and it exists because a
+	// denial returns from this wrapper without ever entering the dispatcher
+	// shim - so nothing records an outcome for the call, and the agent loop's
+	// no-outcome fallback then emits a tool_end reading "completed
+	// (duplicate)". Both status mappings classify that as success, so every
+	// viewer showed a refused tool call as one that ran and succeeded.
+	RecordDenied func(toolCallID, name, reason string)
 }
 
 // admissionCheckedToolAdapter wraps a CLI tool plus the admission
@@ -156,6 +166,7 @@ func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred Admissi
 			standing:        pred.ApprovalStanding,
 			policy:          pred.ApprovalPolicy,
 			emitPending:     pred.EmitPending,
+			recordDenied:    pred.RecordDenied,
 			getCapabilities: capabilitiesFor(cliTool),
 		}
 	}
