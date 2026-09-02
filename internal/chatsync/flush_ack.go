@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // resolveAck decides how far the local cursor may move after an append.
@@ -59,7 +60,7 @@ func verifyStoredMatchesSent(sent, stored []StoredEvent) error {
 		if got.Type != want.Type {
 			return fmt.Errorf("seq %d holds type %q, this client sent %q", want.Seq, got.Type, want.Type)
 		}
-		same, err := samePayload(want.Payload, got.Payload)
+		same, err := payloadMatches(want.Payload, got.Payload)
 		if err != nil {
 			return fmt.Errorf("seq %d: %w", want.Seq, err)
 		}
@@ -70,13 +71,103 @@ func verifyStoredMatchesSent(sent, stored []StoredEvent) error {
 	return nil
 }
 
-func samePayload(a, b json.RawMessage) (bool, error) {
+// RepairedAtIngestKey marks a payload the SERVER rewrote on the way in, so
+// this client can recognise its own body in a form it did not send.
+//
+// The server repairs a payload it cannot otherwise store at all: a NUL is
+// rejected by Postgres outright, and the rejection takes the whole batch with
+// it. Repairing is better than losing a hundred events - but it makes stored
+// and sent differ, and this file exists to treat that difference as
+// corruption.
+//
+// Without the flag the two rules collide and the strict one wins: a repaired
+// batch that is later re-sent (an ambiguous ack, where insertedCount comes
+// back short because ON CONFLICT skipped rows already stored) reads back a
+// body this client did not send, raises ErrTranscriptConflict, and stops the
+// session's sync permanently. The repair turned a batch-sized loss into a
+// session-sized one.
+const RepairedAtIngestKey = "repaired_at_ingest"
+
+// payloadMatches reports whether the stored body is this client's own.
+//
+// Equality is semantic, not byte-for-byte: the payload round-trips through
+// jsonb, which preserves neither key order nor insignificant whitespace.
+// A body the server flagged as repaired is compared under the narrower rule
+// in repairedValueMatches instead.
+func payloadMatches(sent, stored json.RawMessage) (bool, error) {
+	sentVal, storedVal, err := decodePair(sent, stored)
+	if err != nil {
+		return false, err
+	}
+
+	storedObj, ok := storedVal.(map[string]any)
+	if !ok || storedObj[RepairedAtIngestKey] != true {
+		return reflect.DeepEqual(sentVal, storedVal), nil
+	}
+
+	// The marker is the server's, not ours: remove it before comparing, or
+	// every repaired body differs by the very field that explains why.
+	pruned := make(map[string]any, len(storedObj))
+	for k, v := range storedObj {
+		if k != RepairedAtIngestKey {
+			pruned[k] = v
+		}
+	}
+	return repairedValueMatches(sentVal, pruned), nil
+}
+
+// repairedValueMatches is the tolerance, and it is deliberately narrow.
+//
+// A repair may only SHRINK a string: remove the code points the store cannot
+// hold, and cut what does not fit. So a stored string must be the sent string
+// with its NULs removed, or a prefix of that. Anything else - a different key,
+// a changed number, a longer string - is another writer's body, which is
+// exactly what this verification exists to catch. Accepting "it was repaired,
+// so anything goes" would reopen the corruption hole rather than close it.
+func repairedValueMatches(sent, stored any) bool {
+	switch want := sent.(type) {
+	case string:
+		got, ok := stored.(string)
+		if !ok {
+			return false
+		}
+		shrunk := strings.ReplaceAll(want, "\x00", "")
+		return got == shrunk || strings.HasPrefix(shrunk, got)
+	case map[string]any:
+		got, ok := stored.(map[string]any)
+		if !ok || len(got) != len(want) {
+			return false
+		}
+		for k, v := range want {
+			other, present := got[k]
+			if !present || !repairedValueMatches(v, other) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		got, ok := stored.([]any)
+		if !ok || len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if !repairedValueMatches(want[i], got[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(sent, stored)
+	}
+}
+
+func decodePair(a, b json.RawMessage) (any, any, error) {
 	var av, bv any
 	if err := json.Unmarshal(a, &av); err != nil {
-		return false, fmt.Errorf("decode the local payload: %w", err)
+		return nil, nil, fmt.Errorf("decode the local payload: %w", err)
 	}
 	if err := json.Unmarshal(b, &bv); err != nil {
-		return false, fmt.Errorf("decode the stored payload: %w", err)
+		return nil, nil, fmt.Errorf("decode the stored payload: %w", err)
 	}
-	return reflect.DeepEqual(av, bv), nil
+	return av, bv, nil
 }
