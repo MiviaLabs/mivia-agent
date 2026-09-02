@@ -34,13 +34,26 @@ func (p *Projector) closeStepOnToolStart(ev events.Event, turnID string) {
 // block exactly where it always did.
 func (ts *turnState) blockSegment(isDelta bool) int {
 	if isDelta {
-		ts.streamSegment = ts.segment
 		return ts.segment
 	}
 	if ts.streamed {
 		return ts.streamSegment
 	}
 	return ts.segment
+}
+
+// recordDeltaSegment notes, once a delta has actually shipped, the segment
+// it shipped into. The settled aggregate names the segment its SURVIVING
+// deltas used, so the recording has to follow the gate that decides what
+// shipped. Recording when the block id was merely picked let a delta that was
+// suppressed (a mid-turn redaction policy) or lost (a failed append, repaired
+// by rollbackOneDelta) drag the settle onto a segment that holds nothing.
+func (ts *turnState) recordDeltaSegment(segment int) {
+	if ts.streamSegment == segment {
+		return
+	}
+	ts.prevStreamSegment = ts.streamSegment
+	ts.streamSegment = segment
 }
 
 // advanceStep closes the open segment of a stream, so the next prose opens a
@@ -210,7 +223,8 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	// Block is lane-scoped so a viewer groups each subagent's prose on its
 	// own; the root's key is turnID+":assistant" and would merge them all.
 	ls := p.laneState(turnID, ev.AgentTask)
-	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", ls.blockSegment(ev.Detail == "delta"))
+	seg := ls.blockSegment(ev.Detail == "delta")
+	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", seg)
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
@@ -218,11 +232,12 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 			return nil
 		}
 		// Recorded only once the delta is actually going out - see
-		// projectAssistant for why the order matters. The step counter follows
-		// the same rule.
+		// projectAssistant for why the order matters. The step counter and
+		// the settle block follow the same rule.
 		ls.streamed = true
 		ls.fragments++
 		ls.segmentAssistant++
+		ls.recordDeltaSegment(seg)
 		content = applyTruncation(&env, "text", content, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
 			Envelope: env,
@@ -338,10 +353,11 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 
 // projectHook projects one lifecycle hook run.
 //
-// The case that justifies the event is a hook that BLOCKED a tool call: a
-// blocked call emits no tool.ended, so without this a remote reader watches a
-// tool.started that never finishes and is never told a local policy stopped
-// it.
+// A hook row is the operator's audit record of a policy program's verdict:
+// which program ran, in which phase, against which call, and whether it
+// refused. A blocked call still reports its own failed tool.ended, so this
+// row is not what repairs a dangling tool row - it is what says WHY the call
+// was stopped, which no other event carries.
 //
 // The typed payload is required. Phase, Program, Tool and Denied live on
 // agent.Event and are not carried by the bus's generic string conversion, so
