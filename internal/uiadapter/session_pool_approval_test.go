@@ -8,7 +8,10 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -18,6 +21,41 @@ import (
 // with a live approver produced, after /new, policy="" and gate=nil. The
 // operator's most restrictive setting evaporated on a keystroke that looks
 // like housekeeping.
+
+// contextBoundSession mirrors the helper in the external test package, which
+// this file cannot reach: these tests need the unexported session behind a
+// Conversation, so they live in the internal package.
+func contextBoundSession(t *testing.T, res *config.Resolved, store *storage.SQLite, sessionID string) *chat.Session {
+	t.Helper()
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = sessionID
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	return sess
+}
+
+func approvalTestStore(t *testing.T) *storage.SQLite {
+	t.Helper()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
 
 func denyingConfig() *config.Resolved {
 	return &config.Resolved{Approvals: config.ApprovalsConfig{DefaultMode: "deny"}}
@@ -58,24 +96,51 @@ func TestAFreshSessionKeepsTheApprovalPolicy(t *testing.T) {
 }
 
 // TestAResumedSessionKeepsTheApprovalPolicy is the same defect on /resume.
+//
+// This used to Skip when the pool could not Load, which meant the /resume half
+// of the fix was shipped unverified: a review deleted the inherit call from
+// GetOrCreate alone and the package stayed green. It now builds a real
+// context-backed session so the load path actually runs.
 func TestAResumedSessionKeepsTheApprovalPolicy(t *testing.T) {
-	pool, first := poolWithApprover(t, denyingConfig())
+	// A provider binding is required before a session can be saved, so this
+	// fixture carries one; the rest of the tests here never persist.
+	res := &config.Resolved{
+		ProviderName: "fake",
+		Model:        "model",
+		Approvals:    config.ApprovalsConfig{DefaultMode: "deny"},
+	}
+	store := approvalTestStore(t)
 
-	conv, err := pool.GetOrCreate("some-other-session")
+	first := contextBoundSession(t, res, store, "first-session")
+	first.SetBaseApprovalPolicy(config.ApprovalPolicyDeny)
+	first.SetApprovalPolicy(config.ApprovalPolicyDeny)
+	first.ApprovalGate = func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult {
+		return sdkadapter.ApprovalResult{Approved: true}
+	}
+
+	// A saved session for the pool to resume, distinct from the pool member.
+	saved := contextBoundSession(t, res, store, "resumed-session")
+	if err := saved.Save("resumed-session"); err != nil {
+		t.Skipf("this fixture cannot save a session: %v", err)
+	}
+
+	pool := NewSessionPool(first, res, nil, false)
+	conv, err := pool.GetOrCreate("resumed-session")
 	if err != nil {
-		// Load can fail with no store; the wiring is still what this asserts.
-		t.Skipf("GetOrCreate needs a session store: %v", err)
+		t.Fatalf("GetOrCreate: %v", err)
 	}
 	resumed := conv.(*Conversation).sess
 	if resumed == first {
-		t.Skip("the pool returned the existing session; nothing new was built")
+		t.Fatal("the pool returned the existing session; the resume path never ran")
 	}
 
 	if got := resumed.ApprovalPolicyValue(); got != config.ApprovalPolicyDeny {
-		t.Errorf("policy = %q, want deny on a resumed session", got)
+		t.Errorf("policy = %q, want deny: /resume discarded the operator's "+
+			"configured approval policy", got)
 	}
 	if resumed.ApprovalGate == nil {
-		t.Error("a resumed session has no approval gate")
+		t.Error("the resumed session has no approval gate, so nothing can ask the " +
+			"operator")
 	}
 }
 
