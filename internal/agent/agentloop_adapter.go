@@ -253,11 +253,21 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 			Input:      input,
 		})
 	}
+	recordDenied := func(toolCallID, name, reason string) {
+		// Record an OUTCOME rather than emitting a tool_end directly. The
+		// loop's emitter already owns that emission, and emitting here as
+		// well would give a refused call two tool_end events. Recording is
+		// also what stops the no-outcome fallback from claiming the call
+		// "completed (duplicate)" - the reason a denial used to reach every
+		// viewer as a success.
+		turn.recordToolOutcome(toolCallID, name, "tool call denied by user: "+reason, true)
+	}
 	if err := sdkadapter.WrapRegistryWithAdmission(sdkReg, cliReg, sdkadapter.AdmissionPredicates{
 		ApprovalGate:     opts.ApprovalGate,
 		ApprovalStanding: opts.ApprovalStanding,
 		ApprovalPolicy:   opts.ApprovalPolicy,
 		EmitPending:      emitPending,
+		RecordDenied:     recordDenied,
 		// StagedMessage and UnadmittedToolHandler are NOT threaded into
 		// the SDK admission wrapper on purpose: the SDK's decodeAndRun
 		// rejects calls to tools absent from the SDK registry BEFORE

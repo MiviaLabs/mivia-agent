@@ -48,6 +48,7 @@ type approvalGatedToolAdapter struct {
 	standing        *ApprovalStanding
 	policy          string
 	emitPending     func(toolCallID, name, detail, input string)
+	recordDenied    func(toolCallID, name, reason string)
 	getCapabilities func(json.RawMessage) tools.Capability
 }
 
@@ -139,13 +140,13 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 	// Deny policy short-circuits the gate the same way auto-approval does,
 	// just in the opposite direction: no pending prompt is ever emitted.
 	if IsDenyApproval(a.policy) {
-		return sdktools.Out{Value: "tool call denied by user: auto-denied (approval policy is \"deny\")"}, nil
+		return a.denied(ctx, "auto-denied (approval policy is \"deny\")")
 	}
 	// Standing decisions short-circuit the gate.
 	if a.standing != nil {
 		if v, ok := a.standing.Lookup(a.cliName); ok {
 			if !v {
-				return sdktools.Out{Value: "tool call denied by user: standing decision"}, nil
+				return a.denied(ctx, "standing decision")
 			}
 			return a.inner.Run(ctx, in)
 		}
@@ -173,7 +174,7 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 		if errText == "" {
 			errText = "denied"
 		}
-		return sdktools.Out{Value: fmt.Sprintf("tool call denied by user: %s", errText)}, nil
+		return a.denied(ctx, errText)
 	}
 	return a.inner.Run(ctx, in)
 }
@@ -209,4 +210,23 @@ func approvalClassName(c tools.ExecutionClass) string {
 	default:
 		return "unclassified"
 	}
+}
+
+// denied returns the model-visible refusal AND reports the refusal to the
+// operator's surfaces.
+//
+// The two halves used to disagree. The model was told the call was denied,
+// while every viewer was told it completed: a denial returns here without
+// entering the dispatcher shim, so no outcome is recorded for the call, and
+// the loop's no-outcome fallback emits a tool_end reading "completed
+// (duplicate)" - which both the NDJSON status mapping and the TUI's own OK
+// computation read as success.
+//
+// That is the worst direction for this particular error to point. An operator
+// refuses a command and the transcript, local and remote, says it ran.
+func (a *approvalGatedToolAdapter) denied(ctx context.Context, reason string) (sdktools.Out, error) {
+	if a.recordDenied != nil {
+		a.recordDenied(callIDFromContext(ctx), a.cliName, reason)
+	}
+	return sdktools.Out{Value: fmt.Sprintf("tool call denied by user: %s", reason)}, nil
 }
