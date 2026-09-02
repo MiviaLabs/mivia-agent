@@ -70,6 +70,11 @@ func (s Screen) awaitRemoteInput() tea.Cmd {
 // on whatever session IS on screen, never silent.
 func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cmd) {
 	rearm := s.awaitRemoteInput()
+
+	if ev.Kind == "cancel" {
+		return s.handleRemoteCancel(ev), rearm
+	}
+
 	text := ev.Body
 	persisted := remoteInputTagPrefix + ev.Body
 
@@ -107,6 +112,33 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 	st.active = handle
 	st.statusline.Start("thinking", s.now())
 	return s, tea.Batch(rearm, s.awaitSessionEvent(ev.SessionID, handle.Events()))
+}
+
+// handleRemoteCancel stops the targeted session's active turn, mirroring
+// cancelTurn's local Ctrl+C/Esc behavior exactly (keys.go): clear any
+// pending approval, cancel the turn, stop the statusline. If the target has
+// no active turn - already finished, or never started - this is a silent
+// no-op: the turn may simply have completed before the remote cancel
+// arrived, which is not an error.
+func (s Screen) handleRemoteCancel(ev ports.RemoteInputEvent) Screen {
+	if ev.SessionID == "" || ev.SessionID == s.convID() {
+		if s.active == nil {
+			return s
+		}
+		s.approval.ClearAll()
+		s.active.Cancel()
+		s.statusline.Stop()
+		return s
+	}
+
+	st, ok := s.sessions[ev.SessionID]
+	if !ok || st.active == nil {
+		return s
+	}
+	st.approval.ClearAll()
+	st.active.Cancel()
+	st.statusline.Stop()
+	return s
 }
 
 // sendOrQueueRemote sends text as the foreground turn, or queues it behind
