@@ -22,9 +22,10 @@ type contractStruct struct {
 }
 
 type chatSessionsContract struct {
-	KnownTypes []string                  `json:"knownTypes"`
-	Structs    map[string]contractStruct `json:"structs"`
-	Events     contractEvents            `json:"events"`
+	KnownTypes   []string                  `json:"knownTypes"`
+	Structs      map[string]contractStruct `json:"structs"`
+	Events       contractEvents            `json:"events"`
+	BlockGrammar BlockGrammar              `json:"blockGrammar"`
 }
 
 func loadChatSessionsContract(t *testing.T) chatSessionsContract {
@@ -233,4 +234,19 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestBlockGrammarMatchesContractSnapshot holds the recorded block grammar
+// to the one this producer implements. The regex is anchored on the stream
+// suffix on purpose: a looser `.+:\d+` also matches a tool_call_id, and the
+// vendored copy a consumer parses ids with must not be able to drift looser
+// than what is asserted here.
+func TestBlockGrammarMatchesContractSnapshot(t *testing.T) {
+	contract := loadChatSessionsContract(t)
+	if !reflect.DeepEqual(contract.BlockGrammar, RecordedBlockGrammar()) {
+		t.Fatalf("contract blockGrammar = %+v\nproducer = %+v", contract.BlockGrammar, RecordedBlockGrammar())
+	}
+	if contract.BlockGrammar.Prose == "" || strings.HasSuffix(contract.BlockGrammar.Prose, `.+:(\d+)$`) {
+		t.Fatalf("recorded prose grammar %q is not anchored on the stream suffix", contract.BlockGrammar.Prose)
+	}
 }

@@ -671,5 +671,19 @@
         }
       }
     }
+  },
+  "blockGrammar": {
+    "description": "Grammar of the envelope's block field. A tool event's block is its tool_call_id. A prose block is a STREAM id followed by :<step>; the step is an identifier from one counter per producer session, never dense and never reused. A reset names the bare stream with no step.",
+    "prose": "^(.+:(?:assistant|thinking)):(\\d+)$",
+    "streams": [
+      "<turn>:assistant",
+      "<turn>:thinking",
+      "<turn>:<task>:assistant",
+      "<turn>:<task>:thinking"
+    ],
+    "toolBlockField": "tool_call_id",
+    "resetBlockIsStreamOnly": true,
+    "stepIsDense": false,
+    "stepReuse": "never within a producer session"
   }
 }

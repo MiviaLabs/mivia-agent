@@ -181,6 +181,12 @@ step within it:
 <turn>:<task>:thinking:<step>        one subagent run's reasoning
 ```
 
+This grammar is recorded in `api/contracts/chat-sessions.v1.json` under
+`blockGrammar` - the prose regex, anchored on the stream suffix so a
+`tool_call_id` can never parse as prose, the four stream forms, and the step
+rules below - and the producer's own tests hold the record to the code. A
+consumer parses ids with the recorded regex, never a copy of its own.
+
 A turn is a loop - the model talks, calls a tool, reads the result, talks
 again - and `<step>` is what separates one utterance from the next. It counts
 from 0 and advances when a tool call closes the prose that preceded it, so
