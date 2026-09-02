@@ -26,9 +26,16 @@ const (
 // NormalizeApprovalPolicy returns the normalized approval policy
 // ("write-only", "auto", "always", or "deny") for the legacy [approvals]
 // policy field and the --approval-policy CLI flag, both of which speak the
-// write-only/auto/always vocabulary. The default fallback for an unset
-// value is ApprovalPolicyAuto: a fresh mivia.toml with no [approvals]
-// section accepts all tools by default rather than prompting.
+// write-only/auto/always vocabulary.
+//
+// An unset value normalizes to ApprovalPolicyWriteOnly, the CONSERVATIVE
+// fallback - not to auto. This comment used to claim auto and describe the
+// fresh-mivia.toml case, which this function is not what decides: that is
+// ApprovalsConfig.ApprovalPolicy below, "the ONE place that default lives",
+// and it never calls this with an empty string. The distinction is
+// deliberate and stated there - this function also normalizes the policy of
+// an ALREADY-RUNNING session (Session.ToggleYOLO's zero-value field), where
+// "unset" must not silently mean "accept every tool".
 func NormalizeApprovalPolicy(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "auto", "never", "none", "yolo":
