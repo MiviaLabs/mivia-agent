@@ -30,8 +30,7 @@ func TestSubagentThreads_CancelSubagentToolCall_ForwardsToCoordinator(t *testing
 	})
 
 	threads := NewSubagentThreads()
-	threads.SetCoordinator(c)
-	threads.RegisterTaskRoute("call-1", h.RunID(), taskID)
+	threads.RegisterTaskRoute(c, "call-1", h.RunID(), taskID)
 
 	ok, err := threads.CancelSubagentToolCall("call-1", "tool-call-1")
 	if err != nil {
@@ -69,8 +68,7 @@ func TestSubagentThreads_CancelSubagentToolCall_UnknownCallIDIsMiss(t *testing.T
 	c.RegisterSubagentToolCanceler(h.RunID(), taskID, func(string) bool { return false })
 
 	threads := NewSubagentThreads()
-	threads.SetCoordinator(c)
-	threads.RegisterTaskRoute("call-1", h.RunID(), taskID)
+	threads.RegisterTaskRoute(c, "call-1", h.RunID(), taskID)
 
 	ok, err := threads.CancelSubagentToolCall("call-1", "never-existed")
 	if err != nil {
@@ -99,11 +97,11 @@ func TestSubagentThreads_CancelSubagentToolCall_UnregisteredCallIDIsMiss(t *test
 }
 
 // TestSubagentThreads_CancelSubagentToolCall_NoCoordinatorErrors proves a
-// registered route with no coordinator wired reports a clear error instead
+// registered route whose recorded coordinator is nil reports a clear error instead
 // of silently no-oping - the same split CancelSubagentTask uses.
 func TestSubagentThreads_CancelSubagentToolCall_NoCoordinatorErrors(t *testing.T) {
 	threads := NewSubagentThreads()
-	threads.RegisterTaskRoute("call-1", "run-x", "task-x")
+	threads.RegisterTaskRoute(nil, "call-1", "run-x", "task-x")
 	_, err := threads.CancelSubagentToolCall("call-1", "tool-call-1")
 	if err == nil {
 		t.Fatal("expected an error when no coordinator is wired")
@@ -120,8 +118,7 @@ func TestSubagentThreads_CancelSubagentToolCall_NoCancelerRegisteredIsMiss(t *te
 	<-started
 
 	threads := NewSubagentThreads()
-	threads.SetCoordinator(c)
-	threads.RegisterTaskRoute("call-1", h.RunID(), taskID)
+	threads.RegisterTaskRoute(c, "call-1", h.RunID(), taskID)
 
 	ok, err := threads.CancelSubagentToolCall("call-1", "tool-call-1")
 	if err != nil {

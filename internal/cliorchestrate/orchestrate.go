@@ -64,40 +64,49 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
 		coord: c, handle: handle, repo: repo, dispatcher: d, principal: principal, retention: orchestrationHandleRetention(cfg),
 	})
+	// Publish each task's coordinator identity to the UI's route table so
+	// the TUI's per-task cancel keys can reach this run. This is the
+	// wait="run" path, which dispatch_tasks takes by default.
+	registerSubagentTaskRoutes(c, snap.RunID, tasks)
 	result, err := c.Join(ctx, handle)
 	if err != nil {
-		// The caller's context died before the run resolved. This is the
-		// SYNCHRONOUS (wait=run) path - the caller is blocked waiting for
-		// this exact run and has no other way to reach it - so treat the
-		// caller's cancellation as an implicit request to stop the run too.
-		// wait=none dispatches never reach this function: they return
-		// immediately after Spawn and are joined later, independently, via
-		// the join_run tool, so this cannot cancel a run the model
-		// deliberately detached.
-		//
-		// isNew guards a narrower case the same reasoning misses: Spawn's
-		// idempotency-key lookup can hand a DIFFERENT concurrent caller
-		// (e.g. an async wait=none dispatch reusing the same
-		// idempotency_key) this exact same *RunHandle. Canceling it then
-		// would stop a run that caller is still relying on. Only cancel a
-		// run this call actually created. Fire-and-forget: the run's own
-		// graceful cancellation (the same path cancel_run uses) needs its
-		// own context, since ctx is already dead, and
-		// RunThroughCoordinator's caller has already given up waiting - it
-		// must not block on this.
-		if isNew {
-			go cancelOrphanedRun(c, handle)
-		}
-		// Join returns ctx.Err() and never sets a result, so reporting the
-		// error alone discards every task that had already finished - the
-		// loss INV-AG-21 forbids. The work is in the ledger, so read it
-		// back rather than throwing it away.
-		if salvaged := salvageUnjoinedRun(c, handle, err); salvaged != nil {
-			return salvaged.Snapshot, salvaged, nil
-		}
-		return ledger.RunSnapshot{}, nil, err
+		return joinFailureFallback(c, handle, isNew, err)
 	}
 	return result.Snapshot, result, nil
+}
+
+// joinFailureFallback handles RunThroughCoordinator's Join returning an
+// error: the caller's context died before the run resolved.
+//
+// This is the SYNCHRONOUS (wait=run) path - the caller is blocked waiting
+// for this exact run and has no other way to reach it - so treat the
+// caller's cancellation as an implicit request to stop the run too.
+// wait=none dispatches never reach here: they return immediately after
+// Spawn and are joined later, independently, via the join_run tool, so
+// this cannot cancel a run the model deliberately detached.
+//
+// isNew guards a narrower case the same reasoning misses: Spawn's
+// idempotency-key lookup can hand a DIFFERENT concurrent caller (e.g. an
+// async wait=none dispatch reusing the same idempotency_key) this exact
+// same *RunHandle. Canceling it then would stop a run that caller is still
+// relying on. Only cancel a run this call actually created.
+// Fire-and-forget: the run's own graceful cancellation (the same path
+// cancel_run uses) needs its own context, since ctx is already dead, and
+// RunThroughCoordinator's caller has already given up waiting - it must
+// not block on this.
+//
+// Join returns ctx.Err() and never sets a result, so reporting the error
+// alone discards every task that had already finished - the loss INV-AG-21
+// forbids. The work is in the ledger, so read it back rather than throwing
+// it away.
+func joinFailureFallback(c coordinator.Coordinator, handle *coordinator.RunHandle, isNew bool, err error) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	if isNew {
+		go cancelOrphanedRun(c, handle)
+	}
+	if salvaged := salvageUnjoinedRun(c, handle, err); salvaged != nil {
+		return salvaged.Snapshot, salvaged, nil
+	}
+	return ledger.RunSnapshot{}, nil, err
 }
 
 // cancelOrphanedRun propagates a synchronous dispatch's caller-cancellation
@@ -152,6 +161,9 @@ func spawnAndWait(ctx context.Context, d *runtime.Dispatcher, cfg config.Subagen
 	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
 		coord: c, handle: handle, repo: EffectiveOrchestrationRepo(repo), dispatcher: d, principal: principal, retention: orchestrationHandleRetention(cfg),
 	})
+	// Same publish as RunThroughCoordinator's, for spawn_agent and
+	// dispatch_tasks' async waits.
+	registerSubagentTaskRoutes(c, snap.RunID, tasks)
 	return waitForSpawnResult(ctx, c, handle, wait, waitTaskID, snap)
 }
 

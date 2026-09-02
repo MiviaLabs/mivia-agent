@@ -27,6 +27,13 @@ func registerSubagentProgress() {
 		}
 	}
 	uiadapter.SessionBusRegistrar = cli.RegisterSessionBus
+	// Closes the live half of the per-subagent cancel keys: the route table
+	// NewSubagentThreads hands over here is what every later dispatch
+	// publishes its (coordinator, runID, taskID) identities into, and what
+	// Screen.cancelSelectedSubagentTask (and the thread dialog's
+	// per-tool-call cancel) resolve the highlighted row through. Set before
+	// buildApp, which is where NewSubagentThreads actually runs.
+	uiadapter.SubagentTaskRouteRegistrar = cli.SetSubagentTaskRouteSink
 }
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.
