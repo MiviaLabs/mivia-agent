@@ -127,7 +127,10 @@ func attachCLISync(sess *chat.Session, wsRoot string, res *config.Resolved) func
 	if err != nil {
 		return func() {}
 	}
-	_, _ = fmt.Fprintln(syncNoticeWriter, "mivia: chat sync is running")
+	// Name the endpoint at the one moment a user would notice it is the
+	// wrong one. A CLI can upload to a backend nobody is watching for a
+	// whole session, and the URL is the only thing that makes that visible.
+	_, _ = fmt.Fprintf(syncNoticeWriter, "mivia: chat sync is running, uploading to %s\n", chatsync.ResolveEndpoint(res.Sync.APIURL).Describe())
 	return func() {
 		// Flush BEFORE Stop, not after: Publish() only enqueues onto this
 		// subscription's own bounded queue (internal/events.Bus, default 256)

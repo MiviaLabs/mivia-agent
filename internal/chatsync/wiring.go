@@ -2,7 +2,11 @@ package chatsync
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 )
@@ -69,8 +73,61 @@ func DefaultAuthorUserIDProvider() AuthorUserIDProvider {
 // place to change when it moves, and a second place to get a staging or local
 // override wrong.
 func DefaultBaseURL(configured string) string {
+	return ResolveEndpoint(configured).URL
+}
+
+// Endpoint is where sync would upload, why, and whether it could log in.
+type Endpoint struct {
+	URL string
+	// Source names what supplied URL: "[sync] api_url", the env var with the
+	// file or process that set it, or "default".
+	Source string
+	// TokenPresent reports whether a saved login exists. Sync activates only
+	// when it does, so a probe without one proves nothing about sync.
+	TokenPresent bool
+}
+
+// ResolveEndpoint resolves the sync API root the same way OpenSession will
+// use it, and says where the value came from. It is the ONE resolver: a
+// diagnostic that re-derived the chain would be a second place to get it
+// wrong, which is the failure the diagnostic exists to catch.
+func ResolveEndpoint(configured string) Endpoint {
+	e := Endpoint{TokenPresent: miviaauth.HasDefaultSession()}
 	if trimmed := strings.TrimSpace(configured); trimmed != "" {
-		return trimmed
+		e.URL, e.Source = trimmed, "[sync] api_url"
+		return e
 	}
-	return miviaauth.ServerURLFromEnv()
+	e.URL, e.Source = miviaauth.ResolveServerURL()
+	return e
+}
+
+// Describe renders the endpoint for a notice: the URL and, in parentheses,
+// what supplied it.
+func (e Endpoint) Describe() string {
+	return e.URL + " (" + e.Source + ")"
+}
+
+// probeTimeout bounds ProbeEndpoint. A diagnostic must return; a dead host
+// that hangs the doctor command is worse than one it reports as unreachable.
+const probeTimeout = 3 * time.Second
+
+// ProbeEndpoint makes one bounded, unauthenticated request to the API's
+// version-neutral /health route and reports what came back. Any HTTP answer
+// means the host is reachable; the status code is reported so a URL that
+// points at something other than the mivia API (a web app answering 200 to
+// everything, a proxy answering 404) can be told apart from the real one.
+func ProbeEndpoint(ctx context.Context, baseURL string) (reachable bool, detail string) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
+	if err != nil {
+		return false, "invalid url: " + err.Error()
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, "unreachable: " + err.Error()
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return true, "reachable (HTTP " + strconv.Itoa(resp.StatusCode) + ")"
 }

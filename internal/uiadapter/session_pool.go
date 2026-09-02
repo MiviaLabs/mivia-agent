@@ -488,7 +488,9 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
 	if err == nil {
 		p.syncSessions[id] = syncSess
-		p.pushNotice("chat sync is running")
+		// The endpoint is named so a misdirected upload is visible at the
+		// moment it starts, not after a session's worth of events went to it.
+		p.pushNotice("chat sync is running, uploading to " + chatsync.ResolveEndpoint(p.res.Sync.APIURL).Describe())
 		if opts.EnablePolling {
 			go p.pumpRemoteInputs(id, syncSess.Inputs())
 		}

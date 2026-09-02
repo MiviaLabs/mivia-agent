@@ -21,6 +21,9 @@ const goldenHumanOutputOK = `mivia doctor
   catalog:    deepseek/deepseek-v4-pro:128000
   base_url:   https://api.deepseek.com/v1
   api_key_env:DEEPSEEK_API_KEY
+  sync_api:   https://api.mivia.app (default)
+  sync_login: absent (run mivia login)
+  sync_probe: skipped (not logged in)
 agents:
   collection: not present
   name: general-purpose
@@ -52,6 +55,9 @@ const goldenHumanOutputMissingAPIKey = `mivia doctor
   catalog:    deepseek/deepseek-v4-pro:128000
   base_url:   https://api.deepseek.com/v1
   api_key_env:DEEPSEEK_API_KEY
+  sync_api:   https://api.mivia.app (default)
+  sync_login: absent (run mivia login)
+  sync_probe: skipped (not logged in)
 agents:
   collection: not present
   name: general-purpose
@@ -77,6 +83,7 @@ workspace prompts/project skills: enabled
 func setupDoctorJSONTest(t *testing.T) (configPath, workspace string, cleanup func()) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "SUPERSECRET_d61f8b")
 	root := t.TempDir()
 	cp := writeDoctorConfig(t, root)
@@ -108,6 +115,7 @@ func writeDoctorConfigWithEnvPath(t *testing.T, dir, envPath string) string {
 
 func TestDoctorHumanOutputUnchanged(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -171,6 +179,7 @@ func TestDoctorJSONValidWithAllFields(t *testing.T) {
 		"config", "env_file", "env_file_loaded", "provider", "model",
 		"model_catalog", "base_url", "api_key_env", "api_key_set",
 		"key_required",
+		"sync_api_url", "sync_api_source", "sync_login", "sync_probe",
 		"agent_catalog", "warnings", "status",
 	}
 	var raw map[string]json.RawMessage
@@ -262,6 +271,7 @@ func TestDoctorJSONExitCodesMatchHuman(t *testing.T) {
 	// When API key is set but agent file parse produces diagnostics,
 	// both human and JSON paths must return the same error (non-nil).
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -296,6 +306,7 @@ func TestDoctorJSONExitCodesMatchHuman(t *testing.T) {
 
 func TestDoctorJSONUnknownFlag(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -312,6 +323,7 @@ func TestDoctorJSONUnknownFlag(t *testing.T) {
 
 func TestDoctorJSONAgentCatalogEntries(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -354,6 +366,7 @@ func TestDoctorJSONAgentCatalogEntries(t *testing.T) {
 
 func TestDoctorJSONDescriptionSanitized(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -396,6 +409,7 @@ func TestDoctorJSONDescriptionSanitized(t *testing.T) {
 
 func TestDoctorJSONEmptyAgentCatalog(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -467,6 +481,7 @@ func doctorJSONString(t *testing.T, raw map[string]json.RawMessage, key string) 
 
 func TestDoctorJSONEnvFileStates(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 
 	t.Run("no_env_file", func(t *testing.T) {
@@ -507,6 +522,7 @@ func TestDoctorJSONEnvFileStates(t *testing.T) {
 
 func TestDoctorJSONNoJSONInHumanPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -537,6 +553,7 @@ func TestDoctorJSONNoJSONInHumanPath(t *testing.T) {
 func TestDoctorJSONWithJSONEqualsValue(t *testing.T) {
 	// --json=anything should be rejected by the unknown-flag catch.
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
@@ -627,6 +644,7 @@ default_model = "gpt-oss:120b"
 // "configuration diagnostics unavailable".
 func TestDoctorJSONLoadError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "") // the goldens name the default endpoint
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
 	// No config file, no --config flag. AllowMissingConfig is true inside
 	// RunDoctorWithIO, but loadFile returns (File{}, "", false, nil) when
@@ -667,6 +685,7 @@ func TestDoctorJSONLoadError(t *testing.T) {
 		"config", "env_file", "env_file_loaded", "provider", "model",
 		"model_catalog", "base_url", "api_key_env", "api_key_set",
 		"key_required",
+		"sync_api_url", "sync_api_source", "sync_login", "sync_probe",
 		"agent_catalog", "warnings", "status",
 	}
 	for _, key := range requiredKeys {

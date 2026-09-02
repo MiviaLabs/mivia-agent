@@ -70,8 +70,12 @@ func TestSessionPoolNoticesSyncIsRunning(t *testing.T) {
 	if ev.Kind != uievent.KindNotice {
 		t.Errorf("Kind = %q, want %q", ev.Kind, uievent.KindNotice)
 	}
-	if text := noticeText(t, ev); !strings.Contains(strings.ToLower(text), "sync") {
+	text := noticeText(t, ev)
+	if !strings.Contains(strings.ToLower(text), "sync") {
 		t.Errorf("notice = %q, want it to name sync", text)
+	}
+	if !strings.Contains(text, srv.URL) || !strings.Contains(text, "[sync] api_url") {
+		t.Errorf("notice = %q, want it to name the endpoint %s and its source", text, srv.URL)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

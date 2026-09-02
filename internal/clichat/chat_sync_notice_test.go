@@ -58,8 +58,15 @@ func TestAttachCLISyncSaysItIsRunning(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
-	if got := sink.String(); !strings.Contains(got, "sync") {
+	got := sink.String()
+	if !strings.Contains(got, "sync") {
 		t.Errorf("notices = %q, want a line saying sync is running", got)
+	}
+	// The endpoint is named so an upload to the wrong backend is visible at
+	// the moment it starts; the URL alone is not enough, the source says
+	// which file to fix.
+	if !strings.Contains(got, srv.URL) || !strings.Contains(got, "[sync] api_url") {
+		t.Errorf("notices = %q, want the running line to name %s and its source", got, srv.URL)
 	}
 }
 
