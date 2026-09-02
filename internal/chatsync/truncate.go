@@ -15,10 +15,47 @@ const (
 	BudgetShortField    = 200
 )
 
+// jsonEscapedLen reports how many bytes r occupies once JSON-encoded.
+//
+// This is the unit the STORE counts in. Postgres bounds the payload with
+// octet_length(payload::text), and the receiving DTO measures
+// Buffer.byteLength(JSON.stringify(...)) - both of which see the escaped form.
+// A control byte costs 6 bytes there ("\u0007") and one byte here, so a field
+// measured raw can be six times its budget by the time it is stored. That is
+// not a corner case: it is the same content class that produced the NUL
+// incident - a tool reading a binary file, where most bytes are control bytes.
+func jsonEscapedLen(r rune) int {
+	switch r {
+	case '"', '\\', '\n', '\r', '\t':
+		return 2
+	}
+	if r < 0x20 {
+		return 6 // \u00XX
+	}
+	return utf8.RuneLen(r)
+}
+
+// escapedLen reports the JSON-encoded size of s, excluding its quotes.
+func escapedLen(s string) int {
+	n := 0
+	for _, r := range s {
+		n += jsonEscapedLen(r)
+	}
+	return n
+}
+
 // truncateString cuts s to fit within maxBytes on rune boundaries.
-// It returns the kept string, kept byte count, original byte count, and whether truncation occurred.
+//
+// maxBytes is a budget in ESCAPED bytes - what the store counts - so a field
+// inside its budget here is inside it there. Measuring raw bytes let a 16 KiB
+// tool output become 96 KiB stored, over a 64 KiB column bound, and a column
+// rejection fails the whole batch it travels in rather than the one event.
+//
+// It returns the kept string, its escaped size, the original escaped size, and
+// whether anything was cut. The two counts are what the truncation record
+// reports, so they describe the same unit the budget does.
 func truncateString(s string, maxBytes int) (string, int, int, bool) {
-	totalBytes := len(s)
+	totalBytes := escapedLen(s)
 	if totalBytes <= maxBytes {
 		return s, totalBytes, totalBytes, false
 	}
@@ -26,22 +63,19 @@ func truncateString(s string, maxBytes int) (string, int, int, bool) {
 		return "", 0, totalBytes, true
 	}
 
-	// Back off across the rune at the CUT BOUNDARY only. Validating the whole
-	// prefix (utf8.ValidString) would trim all the way back to the first
-	// invalid byte anywhere in s, amputating content the budget allowed and
-	// reporting it as an ordinary budget cut. It is also O(n^2).
-	// utf8.DecodeLastRuneInString reports (RuneError, 1) for a byte that
-	// cannot start a rune or for an incomplete trailing sequence; a real
-	// U+FFFD decodes with size 3 and is kept.
-	cut := s[:maxBytes]
-	for len(cut) > 0 {
-		r, size := utf8.DecodeLastRuneInString(cut)
-		if r != utf8.RuneError || size > 1 {
-			break
+	// Cut on a rune boundary at the point the ESCAPED budget runs out. A byte
+	// index into s would be the wrong unit twice: once for multi-byte runes,
+	// and once for runes that escape to more bytes than they occupy.
+	spent := 0
+	for i, r := range s {
+		cost := jsonEscapedLen(r)
+		if spent+cost > maxBytes {
+			cut := s[:i]
+			return cut, spent, totalBytes, true
 		}
-		cut = cut[:len(cut)-1]
+		spent += cost
 	}
-	return cut, len(cut), totalBytes, true
+	return s, spent, totalBytes, false
 }
 
 func applyTruncation(env *Envelope, fieldName, value string, maxBytes int) string {
