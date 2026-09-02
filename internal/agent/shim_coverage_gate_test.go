@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -188,4 +189,59 @@ func governedByDispatcher(tool sdktools.Tool) bool {
 		}
 	}
 	return false
+}
+
+// A dedup-served duplicate must be classified from the OWNER's body.
+//
+// The shim rewrites a duplicate's model-facing body to the suppression
+// notice, which carries no status - so the recorded outcome must scan the
+// owner's PRE-REWRITE body instead, or a failed call silently downgrades to
+// "completed (duplicate)" the moment it is re-delivered. toolEndDetail's rule
+// is covered in loop_tools_test; what was not covered is the shim passing
+// originalBody at all, and a review's mutation replacing it with "" passed
+// every suite.
+func TestADuplicateIsClassifiedFromTheOwnersBody(t *testing.T) {
+	cliReg := tools.NewRegistry()
+	failing := failingRunCommand{name: tools.RunCommandToolName}
+	cliReg.Register(failing)
+
+	turn := newSDKTurnState()
+	opts := Options{Dispatcher: governedDispatcher(t, cliReg), SessionID: "sess-1"}
+
+	// Two identical calls in one turn: the second is dedup-served.
+	for _, id := range []string{"call-1", "call-2"} {
+		ctx := toolcallctx.WithToolCall(context.Background(),
+			sdkshape.ToolCall{ID: id, Name: failing.Name()})
+		if _, err := RunUnadmittedTool(ctx, opts, turn, failing, json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+
+	dup := turn.takeToolCallOutcome("call-2")
+	if dup == nil {
+		t.Fatal("the duplicate recorded no outcome")
+	}
+	if !dup.duplicate {
+		t.Skip("the second call was not dedup-served; nothing to classify here")
+	}
+	if detail := sdkToolEndDetail(*dup); !strings.HasPrefix(detail, "failed") {
+		t.Errorf("a duplicate of a FAILED call is reported as %q; the owner's "+
+			"body said exit=1 and the suppression notice carries no status, so "+
+			"dropping originalBody downgrades every re-delivered failure to a "+
+			"success", detail)
+	}
+}
+
+// failingRunCommand carries run_command's own exit-status header, which is
+// what toolResultBodyFailed reads. err is nil: the failure is IN the body.
+type failingRunCommand struct{ name string }
+
+func (f failingRunCommand) Name() string               { return f.name }
+func (f failingRunCommand) Description() string        { return "fails in its body" }
+func (f failingRunCommand) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (f failingRunCommand) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionExternal}
+}
+func (f failingRunCommand) Execute(context.Context, json.RawMessage) (string, error) {
+	return "command: false\ncwd: /tmp\nexit=1\n", nil
 }

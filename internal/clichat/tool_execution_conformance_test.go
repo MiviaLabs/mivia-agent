@@ -391,6 +391,53 @@ func advisoryHookDispatcher(t *testing.T, f *deferredFixture) *runtime.Dispatche
 	return d
 }
 
+// C14: an EPHEMERAL tool's body is never spooled durably.
+//
+// The shim nils the spool for a tool implementing EphemeralResultTool, so its
+// body cannot be minted into a durable ref the scrub exists to remove. No
+// case exercised it, so dropping that line passed - and an ephemeral body
+// would be written where it must never be.
+func TestEveryPathKeepsAnEphemeralBodyOutOfTheSpool(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &ephemeralProbe{name: "probe_tool", size: 40000}
+			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.RefOnlyTools = []string{"probe_tool"}
+			}, namedCall("c1", "probe_tool", `{}`))
+			// ref_only would normally mint a ref and point the model at
+			// read_output. An ephemeral tool must NOT be spooled, so no ref
+			// may appear however large the body is.
+			checkContract(t, "ephemeral-is-not-spooled", path.name,
+				!strings.Contains(body, "read_output"),
+				fmt.Sprintf("an ephemeral tool's body was minted into a durable "+
+					"ref by the ref-only wrapper: %.200q", body))
+		})
+	}
+}
+
+// ...and the CAPPING path must not spool it either.
+//
+// Two independent guards keep an ephemeral body out of the spool: the
+// ref-only wrapper skips ephemeral tools, and the shim nils the spool before
+// capping. The first case above cannot see the second - ref-only never
+// reaches the spool for an ephemeral tool - so removing the shim's `spool =
+// nil` left it green. This case has no ref_only_tools and a small cap, so
+// capping is what would mint the ref.
+func TestEveryPathKeepsAnEphemeralBodyOutOfTheCapSpool(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &ephemeralProbe{name: "probe_tool", size: 40000}
+			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.MaxToolResultChars = 500
+			}, namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "ephemeral-cap-mints-no-ref", path.name,
+				!strings.Contains(body, "ref:output:"),
+				fmt.Sprintf("an ephemeral tool's body was minted into a durable "+
+					"ref while capping: %.200q", body))
+		})
+	}
+}
+
 // blockingHookDispatcher is a dispatcher whose PreToolUse gate denies with a
 // recognisable reason.
 func blockingHookDispatcher(t *testing.T, f *deferredFixture) *runtime.Dispatcher {
@@ -684,5 +731,23 @@ func (p *boundedProbe) Capability(json.RawMessage) tools.Capability {
 	return tools.Capability{Class: tools.ExecutionRead, MaxResultBytes: p.max}
 }
 func (p *boundedProbe) Execute(context.Context, json.RawMessage) (string, error) {
+	return strings.Repeat("x", p.size), nil
+}
+
+// ephemeralProbe implements tools.EphemeralResultTool: its body must never be
+// spooled durably.
+type ephemeralProbe struct {
+	name string
+	size int
+}
+
+func (p *ephemeralProbe) Name() string               { return p.name }
+func (p *ephemeralProbe) Description() string        { return "ephemeral" }
+func (p *ephemeralProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p *ephemeralProbe) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead}
+}
+func (p *ephemeralProbe) EphemeralResultMarker(json.RawMessage) string { return "[ephemeral]" }
+func (p *ephemeralProbe) Execute(context.Context, json.RawMessage) (string, error) {
 	return strings.Repeat("x", p.size), nil
 }
