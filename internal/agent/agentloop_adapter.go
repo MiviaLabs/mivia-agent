@@ -54,6 +54,9 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	}
 	turn := newSDKTurnState()
 	seedSDKTurnState(turn, opts)
+	if opts.OnToolCancelReady != nil {
+		opts.OnToolCancelReady(turn.cancelCall)
+	}
 	// Item 8: WorkLimits token reservations ride the SDK's WorkBudget
 	// hook over the loop's workLimitMeter, with the legacy outputCap
 	// clamp on Options.MaxTokens.

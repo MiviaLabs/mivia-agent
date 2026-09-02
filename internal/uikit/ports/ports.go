@@ -81,6 +81,12 @@ type TurnHandle interface {
 	ID() string
 	Events() <-chan uievent.Event // closed on turn end
 	Cancel()
+	// CancelToolCall cancels ONE in-flight tool call by its call ID,
+	// leaving the rest of the turn (and any concurrent sibling tool
+	// calls) running. It returns whether a matching in-flight call
+	// was found; a miss (already finished, wrong ID, or nothing
+	// in flight) is a no-op that returns false.
+	CancelToolCall(callID string) bool
 }
 
 // SubagentThreads resolves the conversation thread of one dispatched

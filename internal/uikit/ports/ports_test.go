@@ -16,11 +16,18 @@ import (
 type fakeTurnHandle struct {
 	id     string
 	events chan uievent.Event
+	// cancelable, when set, is the callID CancelToolCall reports finding.
+	// Any other ID is a miss - this is enough for a fake standing in for
+	// "one call is in flight".
+	cancelable string
 }
 
 func (h *fakeTurnHandle) ID() string                   { return h.id }
 func (h *fakeTurnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *fakeTurnHandle) Cancel()                      { close(h.events) }
+func (h *fakeTurnHandle) CancelToolCall(callID string) bool {
+	return h.cancelable != "" && callID == h.cancelable
+}
 
 type fakeConversation struct {
 	history []Message

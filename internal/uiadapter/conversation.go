@@ -240,7 +240,18 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 			clearSubagent()
 		}
 	})
-	c.runTurnGoroutine(turnCtx, in, h, closed, turnIDPtr, &seq, cancelTurn)
+	// turnOpts carries agent.Options.OnToolCancelReady through to the SDK
+	// backend for this turn (chat.TurnOptions -> agent.Options, see
+	// buildAgentTurnOptions). The hook fires once the run's per-turn cancel
+	// registry exists and hands back a ToolCanceler the handle retains for
+	// its whole lifetime; a legacy (non-SDK) run never calls it, so
+	// h.toolCanceler stays nil and CancelToolCall is a no-op miss.
+	turnOpts := &chat.TurnOptions{
+		OnToolCancelReady: func(tc agent.ToolCanceler) {
+			h.toolCanceler.Store(&tc)
+		},
+	}
+	c.runTurnGoroutine(turnCtx, in, h, closed, turnIDPtr, &seq, cancelTurn, turnOpts)
 	return h, nil
 }
 
@@ -378,7 +389,7 @@ func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel contex
 // concurrent SetTurnWaiterForTest calls across tests (a common pattern
 // when -race runs reuse the package's shared global) do not race
 // against the goroutine's read.
-func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send, h *turnHandle, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, cancelTurn context.CancelFunc) {
+func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send, h *turnHandle, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, cancelTurn context.CancelFunc, turnOpts *chat.TurnOptions) {
 	waiter := turnWaiter
 	go func() {
 		defer h.restore()
@@ -393,7 +404,7 @@ func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send,
 		if in.PersistedText != "" {
 			persistedText = in.PersistedText
 		}
-		turnID, err := c.sess.SendUserWithEventAndPersistedText(turnCtx, in.Text, persistedText, io.Discard, nil)
+		turnID, err := c.sess.SendUserWithTurnOptions(turnCtx, in.Text, persistedText, io.Discard, nil, turnOpts)
 		h.idAtomic.Store(&turnID)
 		turnIDPtr.Store(&turnID)
 		c.emitTurnEndIfWinner(h, closed, seq, turnID, err)
@@ -607,6 +618,13 @@ type turnHandle struct {
 	cancel   context.CancelFunc
 	closed   *atomic.Bool
 	restore  func()
+	// toolCanceler is populated once (via Send's OnToolCancelReady
+	// callback, delivered on the turn goroutine, racing an early
+	// CancelToolCall from the UI goroutine) after the SDK backend's
+	// per-turn cancel registry exists. Until then - and always, on a
+	// legacy (non-SDK) run, which never calls the hook - it stays nil
+	// and CancelToolCall is a no-op miss.
+	toolCanceler atomic.Pointer[agent.ToolCanceler]
 }
 
 // ID returns the turn ID assigned by chat.Session.SendUserWithEvent.
@@ -653,6 +671,24 @@ func (h *turnHandle) Cancel() {
 			close(h.events)
 		}
 	}
+}
+
+// CancelToolCall cancels ONE in-flight tool call by its call ID, leaving
+// the rest of the turn - and any concurrent sibling tool call - running.
+// It returns whether a matching in-flight call was found. Before the SDK
+// backend's per-turn registry exists (a narrow window early in the turn,
+// before the first tool call can even be dispatched) and on a legacy
+// (non-SDK) run, no ToolCanceler has been installed and this is a no-op
+// that returns false.
+func (h *turnHandle) CancelToolCall(callID string) bool {
+	if h == nil || callID == "" {
+		return false
+	}
+	p := h.toolCanceler.Load()
+	if p == nil || *p == nil {
+		return false
+	}
+	return (*p)(callID)
 }
 
 // ActiveTurn returns the current active turn handle, if any.

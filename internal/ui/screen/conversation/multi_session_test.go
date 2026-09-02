@@ -45,6 +45,7 @@ type testTurnHandle struct {
 func (h *testTurnHandle) ID() string                   { return h.id }
 func (h *testTurnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *testTurnHandle) Cancel()                      {}
+func (h *testTurnHandle) CancelToolCall(string) bool   { return false }
 
 type testMultiSessionRunner struct {
 	convs map[string]ports.Conversation

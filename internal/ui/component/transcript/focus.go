@@ -196,6 +196,19 @@ func (m *Model) reindexFocus(n int) {
 	}
 }
 
+// FocusedBlock returns the currently focused block and true, or a zero
+// Block and false when nothing is focused (composer focus, m.focus ==
+// -1). Callers that need to act on the focused block's identity (a
+// running tool call's CallID, say) use this instead of indexing
+// m.blocks[FocusIndex()] themselves, so the -1/out-of-range case is
+// handled once here rather than at every call site.
+func (m Model) FocusedBlock() (Block, bool) {
+	if !m.Focused() {
+		return Block{}, false
+	}
+	return m.blocks[m.focus], true
+}
+
 // FocusedText is the focused block's plain text, for the clipboard. It
 // returns the body whether the block is collapsed or not: the user asked
 // for the block's content, and a collapse marker is a view state, not

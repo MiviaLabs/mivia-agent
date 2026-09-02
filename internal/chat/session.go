@@ -260,6 +260,11 @@ type TurnOptions struct {
 	Tools      *tools.Registry
 	Dispatcher *runtime.Dispatcher
 	Cleanup    func()
+	// OnToolCancelReady, when non-nil, forwards to agent.Options's hook of
+	// the same name for this turn (see its doc there). Only the agent-turn
+	// path (sendAgent) wires it through; the plain path never runs the SDK
+	// loop, so this is a no-op there.
+	OnToolCancelReady func(agent.ToolCanceler)
 }
 
 // MessagesCount returns the number of messages under the read lock.
@@ -509,6 +514,9 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 	}
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher
+	}
+	if turn != nil && turn.OnToolCancelReady != nil {
+		opts.OnToolCancelReady = turn.OnToolCancelReady
 	}
 	// Mid-turn admission publication (w2a/w2d): a tool staged by load_tools
 	// becomes callable from the next step via the loop's Surface hook, and a

@@ -294,7 +294,25 @@ type Options struct {
 	// one consistent read so the registry/dispatcher/spec agreement invariant
 	// (M3) holds for the step. Nil is a no-op.
 	Surface func() Surface
+	// OnToolCancelReady, when non-nil, is invoked exactly once per SDK-backed
+	// run - as soon as the run's per-turn cancel registry exists, before any
+	// tool call executes - with a ToolCanceler the host can retain past the
+	// call that constructed it and invoke later, from any goroutine, to
+	// cancel ONE in-flight tool call by its call ID without aborting the
+	// rest of the turn or any concurrent sibling call. The turn's internal
+	// state (sdkTurnState) is not exported; this is the minimal seam a host
+	// needs to reach it. A legacy (non-SDK) run never calls this hook, so a
+	// host relying on it alone sees no cancel capability on that backend -
+	// treat a nil ToolCanceler, or one that always returns false, as "not
+	// supported here" rather than an error.
+	OnToolCancelReady func(ToolCanceler)
 }
+
+// ToolCanceler cancels one in-flight tool call by its call ID. It returns
+// whether a matching in-flight call was found; a miss (already finished,
+// unknown ID, or nothing in flight) is a no-op that returns false. Safe to
+// call from any goroutine and more than once for the same ID.
+type ToolCanceler func(callID string) bool
 
 // Surface is one step's host-supplied tool surface: the registry the loop
 // dispatches against, the runtime dispatcher for per-turn dedup, the tool

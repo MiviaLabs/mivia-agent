@@ -578,6 +578,8 @@ func (h fakeHandle) Events() <-chan uievent.Event {
 }
 func (h fakeHandle) Cancel() {}
 
+func (h fakeHandle) CancelToolCall(string) bool { return false }
+
 // batchMsgs runs cmd, expands it if it's a tea.BatchMsg, and executes
 // every sub-Cmd, returning the resulting Msgs. Safe here because every
 // Cmd handleTurnEvent/send can batch is either a pure literal-return
