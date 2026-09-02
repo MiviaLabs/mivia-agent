@@ -29,6 +29,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
@@ -535,4 +536,38 @@ func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts
 			_ = sdkReg.Add(t)
 		}
 	}
+}
+
+// RunUnadmittedTool executes ONE tool the host authorized for this call but
+// that is absent from the SDK registry, through the SAME shim an admitted
+// call uses.
+//
+// This is the fix for DC-35. The deferred path used to invoke the runtime
+// dispatcher itself, which made it a second implementation of tool execution:
+// the timeout, the dedup declaration, the result cap, the hook plumbing, the
+// duplicate contracts and the failure outcome all had to be re-honoured by
+// hand, and five of them were not. Each omission shipped as its own bug.
+// Delegating here means those contracts hold by construction rather than by
+// anyone remembering them, and a tenth contract added to Run tomorrow reaches
+// this path for free.
+//
+// It does NOT decide approval. That decision belongs to the host, which must
+// make it before it charges an admission attempt or stages a publication for
+// the call - so it happens upstream, and this function only executes what the
+// host already approved.
+//
+// opts and turn are the loop's own, so the call lands in the same turn state,
+// dedup buckets and outcome record as every other call in the turn.
+func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cliTool tools.Tool, args json.RawMessage) (string, error) {
+	inner, err := sdkadapter.ConvertTool(cliTool)
+	if err != nil {
+		return "", err
+	}
+	shim := &dispatcherShim{inner: inner, schema: inner, cli: cliTool, opts: opts, turn: turn}
+	out, err := shim.Run(ctx, sdktools.InOut{Value: args})
+	if err != nil {
+		return "", err
+	}
+	body, _ := out.Value.(string)
+	return body, nil
 }

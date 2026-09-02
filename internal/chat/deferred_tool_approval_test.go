@@ -197,17 +197,19 @@ func TestTheDeferredHandlerRunsWhenApproved(t *testing.T) {
 	s.wireStepBoundaryAdmission(&opts, nil)
 	result := opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
 
-	if !result.Ran {
-		t.Fatal("the deferred path reported no result for an approved call")
+	// The handler ADMITS; the loop executes, through the same shim an
+	// admitted call uses. So the contract here is that an approved call comes
+	// back with the tool to run - what that execution then does is held by
+	// the two-path conformance table in internal/clichat.
+	if result.Execute == nil {
+		t.Fatal("an approved call was not handed back for execution")
 	}
-	if !tool.ran {
-		t.Error("an approved call did not run")
+	if result.Execute.Name() != "write_file" {
+		t.Errorf("handed back %q, want write_file", result.Execute.Name())
 	}
-	if !strings.Contains(result.Content, "WROTE") {
-		t.Errorf("content = %q, want the tool's own output", result.Content)
-	}
-	if result.Failed {
-		t.Error("a call that ran and succeeded is marked failed")
+	if tool.ran {
+		t.Error("the admission handler executed the tool itself; that is the " +
+			"second implementation this split exists to remove")
 	}
 }
 
@@ -365,8 +367,9 @@ func TestAnInteractiveDeferredCallRaisesAPromptTheOperatorCanAnswer(t *testing.T
 
 	select {
 	case result := <-done:
-		if !tool.ran {
-			t.Fatalf("the operator approved and the tool still did not run: %+v", result)
+		if result.Execute == nil {
+			t.Fatalf("the operator approved and the call was not handed back "+
+				"for execution: %+v", result)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the deferred call blocked with no prompt the operator could " +
@@ -469,44 +472,6 @@ func (t *slowTool) Execute(ctx context.Context, _ json.RawMessage) (string, erro
 	return "", ctx.Err()
 }
 
-// A deferred call must be bounded by the tool's declared timeout.
-//
-// The admitted path arms one (armDispatcherTimeout, then Timeout on the
-// request). The deferred path set none and never narrowed the ctx, so the
-// FIRST call to a deferred run_command ran unbounded while the identical call
-// one step later - once the tool was natively admitted - was bounded. A
-// timeout the tool declared for itself was silently dropped.
-func TestADeferredCallIsBoundedByTheToolsDeclaredTimeout(t *testing.T) {
-	tool := &slowTool{timeout: 150 * time.Millisecond, started: make(chan struct{})}
-	reg := tools.NewRegistry()
-	reg.Register(tool)
-	d := runtime.New(runtime.Policy{})
-	t.Cleanup(d.Close)
-
-	s := &Session{ApprovalPolicy: config.ApprovalPolicyAuto}
-	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
-	s.SetDispatcher(d)
-	s.ToolBaseResolver = func() *tools.Registry { return reg }
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-
-	done := make(chan agent.UnadmittedToolResult, 1)
-	go func() {
-		done <- opts.UnadmittedToolHandler(promptableCtx(), "run_command", json.RawMessage(`{}`))
-	}()
-
-	select {
-	case result := <-done:
-		if !result.Failed {
-			t.Errorf("a call that timed out is not reported as failed: %+v", result)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the deferred call ran unbounded: the tool declared a 150ms " +
-			"timeout and nothing armed it, so a hanging tool hangs the turn")
-	}
-}
-
 // ...and that timeout must NOT bound the operator's approval wait.
 //
 // This is the trap in fixing the above. On the admitted path the approval
@@ -546,10 +511,10 @@ func TestTheDeferredTimeoutDoesNotBoundTheOperatorsApprovalWait(t *testing.T) {
 	s.wireStepBoundaryAdmission(&opts, nil)
 	result := opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
 
-	if !tool.ran {
-		t.Fatalf("the operator approved and the call did not run - the tool "+
-			"timeout was armed around the human, and the prompt auto-denied "+
-			"while they were still reading it: %+v", result)
+	if result.Execute == nil {
+		t.Fatalf("the operator approved and the call was not handed back for "+
+			"execution - the tool timeout was armed around the human, and the "+
+			"prompt auto-denied while they were still reading it: %+v", result)
 	}
 }
 
@@ -691,94 +656,6 @@ func (*countingReadTool) Capability(json.RawMessage) tools.Capability {
 }
 func (t *countingReadTool) Execute(context.Context, json.RawMessage) (string, error) {
 	return fmt.Sprintf("run %d", t.runs.Add(1)), nil
-}
-
-// A read-class deferred call must not be answered from the dedup cache.
-//
-// The admitted path sends SkipDedup: !capability.Dedups(), which is TRUE for
-// ExecutionRead - "ExecutionRead calls always execute fresh; Write/External
-// tools dedup". The deferred path sent neither that nor Step, so a read-class
-// tool deduped when its own capability says it must not, and with Step 0 the
-// record sits in the step-less bucket: an identical read re-issued in a LATER
-// step of the same turn is answered from it. That is exactly the cross-step
-// staleness the Step field exists to prevent, and the model is handed an old
-// file's contents as though it had just been read.
-//
-// The Write/External direction is deliberately NOT changed: those dedup on
-// purpose, so a duplicate delivery does not repeat side effects.
-func TestAReadClassDeferredCallIsNotServedFromTheDedupCache(t *testing.T) {
-	tool := &countingReadTool{}
-	reg := tools.NewRegistry()
-	reg.Register(tool)
-	d := runtime.New(runtime.Policy{})
-	t.Cleanup(d.Close)
-
-	s := &Session{ApprovalPolicy: config.ApprovalPolicyAuto}
-	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
-	s.SetDispatcher(d)
-	s.ToolBaseResolver = func() *tools.Registry { return reg }
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-	first := opts.UnadmittedToolHandler(promptableCtx(), "read_file", json.RawMessage(`{}`))
-	second := opts.UnadmittedToolHandler(promptableCtx(), "read_file", json.RawMessage(`{}`))
-
-	if got := tool.runs.Load(); got != 2 {
-		t.Errorf("the tool executed %d time(s) for two calls; a read-class tool "+
-			"declares that it must run fresh, and the second call was answered "+
-			"from a record of the first", got)
-	}
-	if first.Content == second.Content {
-		t.Errorf("both calls returned %q, so the model was handed a stale read "+
-			"as though it had just happened", second.Content)
-	}
-}
-
-// A model-requested timeout_seconds must still raise the deferred call's
-// budget, exactly as it does on the admitted path.
-//
-// The shared resolver takes the call's args for this reason. Passing nil to it
-// - the natural shortcut once the capability is computed elsewhere - compiles,
-// keeps every other test green, and silently cuts short a long run_command on
-// this path that the admitted path legitimately extends. A reviewer flagged
-// the shortcut before I made it; I made it anyway and this test is what caught
-// it, so it stays.
-func TestAModelRequestedTimeoutStillRaisesTheDeferredBudget(t *testing.T) {
-	// Declares a 50ms budget, but blocks for longer than that.
-	tool := &slowTool{timeout: 50 * time.Millisecond, started: make(chan struct{}), done: make(chan struct{})}
-	reg := tools.NewRegistry()
-	reg.Register(tool)
-	d := runtime.New(runtime.Policy{})
-	t.Cleanup(d.Close)
-
-	s := &Session{ApprovalPolicy: config.ApprovalPolicyAuto}
-	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
-	s.SetDispatcher(d)
-	s.ToolBaseResolver = func() *tools.Registry { return reg }
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-
-	start := time.Now()
-	go opts.UnadmittedToolHandler(promptableCtx(), "run_command",
-		json.RawMessage(`{"timeout_seconds":2}`))
-
-	select {
-	case <-tool.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the tool never started")
-	}
-	// The tool blocks until its ctx is cancelled. With the request honoured
-	// that is ~2s; with it dropped it is the 50ms capability budget.
-	<-time.After(400 * time.Millisecond)
-	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
-		t.Fatalf("elapsed %v", elapsed)
-	}
-	if d := deferredCallCancelled(tool); d {
-		t.Error("the call was cancelled inside the capability's own 50ms budget, " +
-			"so the model's timeout_seconds was dropped: a long call the admitted " +
-			"path extends is cut short here")
-	}
 }
 
 // deferredCallCancelled reports whether the tool's Execute has returned, which
