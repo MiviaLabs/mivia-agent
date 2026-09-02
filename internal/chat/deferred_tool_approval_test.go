@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -430,3 +431,106 @@ func promptableCtx() context.Context {
 // non-nil for the same reason: a decision with nowhere to publish the prompt
 // is refused, not blocked on.
 func noopPending(toolCallID, name, detail, input string) {}
+
+// slowTool blocks until its ctx is cancelled, and declares its own timeout.
+type slowTool struct {
+	timeout time.Duration
+	started chan struct{}
+	once    sync.Once
+}
+
+func (*slowTool) Name() string               { return "run_command" }
+func (*slowTool) Description() string        { return "blocks" }
+func (*slowTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *slowTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionExternal, Timeout: t.timeout}
+}
+func (t *slowTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	t.once.Do(func() { close(t.started) })
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// A deferred call must be bounded by the tool's declared timeout.
+//
+// The admitted path arms one (armDispatcherTimeout, then Timeout on the
+// request). The deferred path set none and never narrowed the ctx, so the
+// FIRST call to a deferred run_command ran unbounded while the identical call
+// one step later - once the tool was natively admitted - was bounded. A
+// timeout the tool declared for itself was silently dropped.
+func TestADeferredCallIsBoundedByTheToolsDeclaredTimeout(t *testing.T) {
+	tool := &slowTool{timeout: 150 * time.Millisecond, started: make(chan struct{})}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	s := &Session{ApprovalPolicy: config.ApprovalPolicyAuto}
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	done := make(chan agent.UnadmittedToolResult, 1)
+	go func() {
+		done <- opts.UnadmittedToolHandler(promptableCtx(), "run_command", json.RawMessage(`{}`))
+	}()
+
+	select {
+	case result := <-done:
+		if !result.Failed {
+			t.Errorf("a call that timed out is not reported as failed: %+v", result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the deferred call ran unbounded: the tool declared a 150ms " +
+			"timeout and nothing armed it, so a hanging tool hangs the turn")
+	}
+}
+
+// ...and that timeout must NOT bound the operator's approval wait.
+//
+// This is the trap in fixing the above. On the admitted path the approval
+// wrapper sits OUTSIDE the dispatcher shim, so the clock starts only after the
+// operator has answered. Arming it around the inline approval here would put a
+// 60s default deadline around a human reading a prompt: uiadapter's gate
+// selects on ctx.Done() and answers "canceled", so the prompt would silently
+// auto-deny mid-read and report a refusal the operator never made. That is a
+// worse bug than the unbounded call.
+func TestTheDeferredTimeoutDoesNotBoundTheOperatorsApprovalWait(t *testing.T) {
+	tool := &writingTool{}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	s := &Session{
+		ApprovalPolicy: config.ApprovalPolicyWriteOnly,
+		// The operator "reads" for longer than any per-call tool timeout.
+		ApprovalGate: func(ctx context.Context, _ string, _ json.RawMessage) sdkadapter.ApprovalResult {
+			select {
+			case <-time.After(300 * time.Millisecond):
+				return sdkadapter.ApprovalResult{Approved: true}
+			case <-ctx.Done():
+				return sdkadapter.ApprovalResult{Err: "canceled"}
+			}
+		},
+		// Shorter than the operator's wait: if this bounds the approval, the
+		// gate is cancelled before it can answer.
+		ToolTimeout: 50 * time.Millisecond,
+	}
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
+
+	if !tool.ran {
+		t.Fatalf("the operator approved and the call did not run - the tool "+
+			"timeout was armed around the human, and the prompt auto-denied "+
+			"while they were still reading it: %+v", result)
+	}
+}

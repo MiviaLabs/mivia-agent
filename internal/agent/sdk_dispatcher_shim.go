@@ -290,14 +290,33 @@ func (d *dispatcherShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 // every tool call bounded no matter what the request or the parent
 // deadline look like.
 func armDispatcherTimeout(ctx context.Context, opts Options, args []byte, capability tools.Capability) (context.Context, context.CancelFunc, time.Duration) {
-	callTimeout := resolveToolCallTimeout(opts.ToolTimeout, capability.Timeout)
+	callTimeout := ResolveToolCallTimeout(ctx, opts.ToolTimeout, args, capability)
+	narrowed, cancel := context.WithTimeout(ctx, callTimeout)
+	return narrowed, cancel, callTimeout
+}
+
+// ResolveToolCallTimeout is the budget one tool call gets: the tool's declared
+// Capability.Timeout, else the session default, else DefaultToolTimeout - and
+// a larger model-requested timeout_seconds when the parent deadline leaves
+// room for it.
+//
+// Exported as a DURATION rather than as a narrowed context because the
+// deferred-tool path (internal/chat) needs the same number and must NOT
+// narrow its own ctx. Its approval decision is inline and happens before the
+// dispatcher call, so a narrowed ctx there would put this deadline around the
+// operator reading the prompt: uiadapter's gate selects on ctx.Done() and
+// answers "canceled", which would auto-deny a prompt mid-read and report a
+// refusal nobody made. That path passes the duration as Request.Timeout
+// instead, and the dispatcher arms it around the handler alone - which is
+// also all it covers here, since the approval wrapper sits OUTSIDE this shim.
+func ResolveToolCallTimeout(ctx context.Context, toolTimeout time.Duration, args []byte, capability tools.Capability) time.Duration {
+	callTimeout := resolveToolCallTimeout(toolTimeout, capability.Timeout)
 	if requested := requestedToolTimeout(args); requested > callTimeout {
 		if clamped := clampToDeadline(ctx, requested); clamped > 0 {
 			callTimeout = clamped
 		}
 	}
-	narrowed, cancel := context.WithTimeout(ctx, callTimeout)
-	return narrowed, cancel, callTimeout
+	return callTimeout
 }
 
 // Run executes one tool call the way the legacy loop does: through the

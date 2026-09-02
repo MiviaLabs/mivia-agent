@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -197,6 +198,7 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 		Kind:      runtime.Tool,
 		Name:      name,
 		Input:     args,
+		Timeout:   s.deferredCallTimeout(ctx, tool, args),
 	})
 	// HookContext is set unconditionally, including for a dedup-served
 	// duplicate: DC-9 (internal/runtime/dispatcher.go) answers a duplicate
@@ -267,6 +269,28 @@ func resolveDeferredTool(dispatcher *runtime.Dispatcher, resolver func() *tools.
 		return nil, false
 	}
 	return tool, true
+}
+
+// deferredCallTimeout is the budget for one deferred call's EXECUTION.
+//
+// This path armed nothing, so the first call to a deferred run_command ran
+// unbounded while the identical call one step later - once natively admitted -
+// was bounded, and a timeout the tool declared for itself was dropped.
+//
+// It is returned as a duration for Request.Timeout rather than applied by
+// narrowing the caller's ctx, and the caller resolves it AFTER approval. Both
+// follow from where the approval happens: this path prompts inline, so a
+// narrowed ctx would put the deadline around the operator READING the prompt -
+// their gate selects on ctx.Done() and answers "canceled", which would
+// auto-deny mid-read and report a refusal nobody made. Request.Timeout is
+// armed by the dispatcher around the handler alone, which is also the only
+// span the admitted path bounds: its approval wrapper sits outside the shim
+// that starts the clock.
+func (s *Session) deferredCallTimeout(ctx context.Context, tool tools.Tool, args json.RawMessage) time.Duration {
+	s.mu.RLock()
+	toolTimeout := s.ToolTimeout
+	s.mu.RUnlock()
+	return agent.ResolveToolCallTimeout(ctx, toolTimeout, args, tools.CapabilityOf(tool, args))
 }
 
 // capDeferredBody bounds a deferred call's model-facing body by the smaller of
