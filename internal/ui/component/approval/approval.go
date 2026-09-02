@@ -53,9 +53,32 @@ type Model struct {
 	width int
 }
 
-// SetWidth records the terminal width so the box renders at a fixed
-// size. Call it on WindowSizeMsg, like the composer.
-func (m *Model) SetWidth(w int) { m.width = w }
+// SetWidth records the terminal width so the box renders at a fixed size.
+// Call it on WindowSizeMsg, like the composer.
+//
+// It re-clamps the scroll offset, because the width DECIDES the line count: a
+// diff renders unified below render.MinSplitDiffWidth and split above it,
+// roughly halving the number of lines. Widening a scrolled prompt therefore
+// left the offset past the end of the new content, and View sliced backwards
+// and panicked - killing the process, and with it every queued prompt and
+// every tool-call goroutine waiting on one.
+//
+// Reached from Screen.reflow, so it fires on every terminal resize AND every
+// files-panel toggle, not only at startup.
+func (m *Model) SetWidth(w int) {
+	m.width = w
+	m.clampOffset()
+}
+
+// clampOffset holds the scroll offset inside the content the CURRENT width
+// renders.
+func (m *Model) clampOffset() {
+	max := m.diffTotal() - m.windowHeight()
+	if max < 0 {
+		max = 0
+	}
+	m.offset = clamp(m.offset, 0, max)
+}
 
 // DecisionMsg is emitted when the user resolves the active request.
 type DecisionMsg struct {
@@ -322,11 +345,21 @@ func (m Model) diffWindow() []string {
 	if len(lines) == 0 {
 		return nil
 	}
-	end := m.offset + m.windowHeight()
+	// Clamp the START too, not only the end. Clamping one side alone is what
+	// let a stale offset slice backwards; a render must never be able to panic
+	// on state a caller left behind, whatever that caller forgot.
+	start := m.offset
+	if start > len(lines) {
+		start = len(lines)
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + m.windowHeight()
 	if end > len(lines) {
 		end = len(lines)
 	}
-	window := lines[m.offset:end]
+	window := lines[start:end]
 	// Clip to the box's effective wrap width, not the inner width:
 	// lipgloss counts the border cells inside Width(), and a line it
 	// wraps would add a row Height() does not claim - the box would push

@@ -1,6 +1,8 @@
 package approval
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -255,5 +257,76 @@ func TestUpdateDoesNotReachIntoACopiedModel(t *testing.T) {
 
 	if got := idsOf(copied); len(got) != 2 || got[0] != "c1" {
 		t.Errorf("answering a prompt rewrote a copy's queue: %v", got)
+	}
+}
+
+// TestResizingAScrolledPromptDoesNotPanic is a crash, not a cosmetic bug.
+//
+// The width decides the line count: a diff renders unified below
+// render.MinSplitDiffWidth and split above it, roughly halving the lines. The
+// offset was clamped only inside ScrollBy, against the count in force at that
+// moment, so widening a scrolled prompt left it past the end and View sliced
+// backwards.
+//
+// A panic in View kills the process. Every queued prompt goes with it, and
+// every tool-call goroutine waiting on one of those gates blocks for ever - so
+// this is the most expensive way this component can fail.
+//
+// Reachable by resizing the terminal, or toggling the files panel, while a
+// prompt with a long diff is scrolled.
+func TestResizingAScrolledPromptDoesNotPanic(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(50) // below MinSplitDiffWidth: unified, one row per line
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: pairedDiff(t, 40)})
+	m = m.ScrollBy(60)
+
+	m.SetWidth(200) // above it: split, roughly half the lines
+
+	// Both must survive, and must agree: the screen reserves rows from
+	// Height() and then renders View(), so a disagreement misdraws the layout
+	// even where it does not crash.
+	got := m.View()
+	if got == "" {
+		t.Fatal("the prompt vanished after a resize")
+	}
+	if lines := strings.Count(got, "\n") + 1; lines != m.Height() {
+		t.Errorf("View rendered %d rows and Height claims %d; the screen reserves "+
+			"rows from Height and draws View into them", lines, m.Height())
+	}
+}
+
+// TestNarrowingAScrolledPromptDoesNotPanic is the other direction: fewer
+// columns means MORE lines, so the offset stays valid - but the clamp must not
+// throw the reader to the top for no reason either.
+func TestNarrowingAScrolledPromptDoesNotPanic(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(200)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: pairedDiff(t, 40)})
+	m = m.ScrollBy(5)
+
+	m.SetWidth(50)
+
+	if got := m.View(); got == "" {
+		t.Fatal("the prompt vanished after narrowing")
+	}
+}
+
+// pairedDiff builds a diff of REPLACED lines - one deletion beside one
+// addition. previewDiff builds additions only, which split rendering cannot
+// pair, so its row count is identical at every width and it can never expose a
+// width-dependent offset. Pairs halve under split, which is the whole
+// mechanism here.
+func pairedDiff(t *testing.T, pairs int) *uievent.Diff {
+	t.Helper()
+	lines := make([]uievent.DiffLine, 0, pairs*2)
+	for i := 0; i < pairs; i++ {
+		lines = append(lines,
+			uievent.DiffLine{Kind: uievent.DiffLineDel, Text: fmt.Sprintf("was %d", i)},
+			uievent.DiffLine{Kind: uievent.DiffLineAdd, Text: fmt.Sprintf("now %d", i)},
+		)
+	}
+	return &uievent.Diff{
+		Path: "internal/ui/component/approval/approval.go", Added: pairs, Removed: pairs,
+		Hunks: []uievent.DiffHunk{{Header: "@@ -1,40 +1,40 @@", Lines: lines}},
 	}
 }
