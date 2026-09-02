@@ -79,6 +79,12 @@ type turnState struct {
 	// carrying a fragment count, while the block holding the real text never
 	// completed.
 	streamSegment int
+	// prevStreamSegment is the segment streamSegment held before the most
+	// recent recording that changed it, one entry deep. A rollback only ever
+	// undoes the batch that just failed, and the only segment a lost delta
+	// can have opened is the one streamSegment named first, so one undo
+	// entry is enough to fall back to the block the surviving deltas use.
+	prevStreamSegment int
 	// streamUnrecoverable marks a block whose discard never reached the wire.
 	// The viewer therefore still holds the abandoned attempt's fragments, and
 	// this side cannot say how many - the counters were cleared before the
@@ -321,6 +327,13 @@ func (p *Projector) rollbackOneDelta(ts *turnState) {
 	// A delta that never shipped must not have spent the step either.
 	if ts.segmentAssistant > 0 {
 		ts.segmentAssistant--
+	}
+	// The lost delta may have been the one that opened the segment the
+	// settled aggregate names. When nothing else shipped in there, settling
+	// on it publishes a block that holds nothing while the surviving
+	// fragments live one segment back - fall back to them.
+	if ts.segmentAssistant == 0 && ts.streamSegment != ts.prevStreamSegment {
+		ts.streamSegment = ts.prevStreamSegment
 	}
 }
 
@@ -590,7 +603,8 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	// A delta names the segment it is streaming into NOW; the settled aggregate
 	// names the one its deltas actually used, which a tool call since then may
 	// have left behind.
-	env.Block = proseBlock(turnID+":assistant", ts.blockSegment(ev.Detail == "delta"))
+	seg := ts.blockSegment(ev.Detail == "delta")
+	env.Block = proseBlock(turnID+":assistant", seg)
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
@@ -604,8 +618,10 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 			ts.streamed = true
 			ts.fragments++
 			// Same rule for the step counter: a segment is only open if prose
-			// actually went out into it.
+			// actually went out into it. And for the settle block: a segment
+			// is only "used" once its delta shipped.
 			ts.segmentAssistant++
+			ts.recordDeltaSegment(seg)
 			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{
 				Envelope: env,

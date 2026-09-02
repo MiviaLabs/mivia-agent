@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // A wire event can be projected and then never stored: the outbox overflows on
@@ -326,5 +327,116 @@ func TestLostResetOnACleanSegmentRestoresNothing(t *testing.T) {
 	}
 	if stepOf(t, got) < 0 {
 		t.Fatalf("step under-ran: %q", got)
+	}
+}
+
+// TestALostDeltaSettlesOnTheBlockItsSurvivingDeltasUsed is the settle half of
+// the rollback contract. The settled aggregate names ts.streamSegment - the
+// segment its deltas streamed into - and a lost delta used to leave that
+// pointing at the segment it opened but never filled: the viewer got an empty
+// block carrying the fragment count, while the block holding the one stored
+// fragment never completed. The rollback must fall back to the segment the
+// surviving deltas actually used.
+func TestALostDeltaSettlesOnTheBlockItsSurvivingDeltasUsed(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// d1 ships into the turn's first segment and is stored.
+	p.Project(rootEvent(events.KindAssistant, "the first ", "delta"))
+	// A tool call closes that segment; the next prose belongs to a new one.
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+	// d2 is projected into the new segment and then lost at the append.
+	lost := p.Project(rootEvent(events.KindAssistant, "and more", "delta"))
+	p.RollbackStreaming(lost)
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:0" {
+		t.Errorf("settled block = %q, want turn:1:assistant:0 - the only segment "+
+			"holding a stored delta. The lost delta dragged the settle onto a "+
+			"block it emptied, and that block never completes", payload.Block)
+	}
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - the first delta was stored", payload.Fragments)
+	}
+}
+
+// TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock covers the no-append-loss
+// trigger of the same defect. Recording the settle segment when the delta's
+// block id was merely PICKED - before the stream/redaction gate - meant a
+// policy installed mid-turn (a workflow tool can install one) suppressed the
+// later deltas while their segment assignment still landed, and the settle
+// named a segment nothing ever shipped into.
+func TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// d1 ships before any policy exists.
+	p.Project(rootEvent(events.KindAssistant, "before the policy ", "delta"))
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+
+	pol, err := redact.Compile([]string{`SECRET_[0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	oldPol := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(oldPol) })
+
+	// Suppressed by the policy: nothing ships, so nothing is recorded.
+	if got := p.Project(rootEvent(events.KindAssistant, "SECRET_1 suppressed", "delta")); len(got) != 0 {
+		t.Fatalf("a redacted delta produced %d wire events, want 0", len(got))
+	}
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:0" {
+		t.Errorf("settled block = %q, want turn:1:assistant:0 - a suppressed delta "+
+			"must not move the block the settled aggregate names", payload.Block)
+	}
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - exactly one delta ever shipped", payload.Fragments)
+	}
+}
+
+// TestARollbackKeepsTheSegmentOtherStoredDeltasUse pins the guard's second
+// half: a lost delta whose segment still holds STORED siblings must not move
+// the settle at all. Flipping the guard's && to || restored the segment even
+// when the current one was still occupied, dragging the settle back to a
+// block the turn had left two segments ago.
+func TestARollbackKeepsTheSegmentOtherStoredDeltasUse(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "one ", "delta"))
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+	p.Project(rootEvent(events.KindAssistant, "two ", "delta"))
+	lost := p.Project(rootEvent(events.KindAssistant, "three", "delta"))
+	p.RollbackStreaming(lost)
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:1" {
+		t.Errorf("settled block = %q, want turn:1:assistant:1 - the segment still "+
+			"holds a stored delta; a lost sibling must not move the settle", payload.Block)
+	}
+	if payload.Fragments != 2 {
+		t.Errorf("Fragments = %d, want 2 - two deltas were stored", payload.Fragments)
+	}
+}
+
+// TestAStreamThatShipsStillSettlesOnItsLastSegment pins the behaviour the fix
+// must not break: when every delta ships, the settled aggregate still names
+// the segment the turn's LAST deltas used, not the first - the original
+// reason streamSegment exists.
+func TestAStreamThatShipsStillSettlesOnItsLastSegment(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "one ", "delta"))
+	p.Project(rootEvent(events.KindAssistant, "two ", "delta"))
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+	p.Project(rootEvent(events.KindAssistant, "three", "delta"))
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:1" {
+		t.Errorf("settled block = %q, want turn:1:assistant:1 - the segment the "+
+			"turn's last deltas streamed into", payload.Block)
+	}
+	if payload.Fragments != 3 {
+		t.Errorf("Fragments = %d, want 3", payload.Fragments)
 	}
 }
