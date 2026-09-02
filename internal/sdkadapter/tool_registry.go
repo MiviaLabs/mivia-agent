@@ -158,7 +158,14 @@ func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOu
 // approval and admission layers according to pred.
 func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred AdmissionPredicates) sdktools.Tool {
 	wrapped := inner
-	if pred.ApprovalGate != nil {
+	// A DENY policy answers by itself and needs no gate to ask.
+	//
+	// Requiring a gate here made "deny" fail OPEN on every surface that has no
+	// approval UI - line mode, --json, any headless run. The adapter that
+	// holds the deny short-circuit was never built, so the policy was never
+	// consulted and every write tool executed. An operator who configured the
+	// most restrictive setting got the least restrictive behaviour, silently.
+	if pred.ApprovalGate != nil || IsDenyApproval(pred.ApprovalPolicy) {
 		wrapped = &approvalGatedToolAdapter{
 			inner:           wrapped,
 			cliName:         cliTool.Name(),
@@ -184,7 +191,13 @@ func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred Admissi
 // WrapRegistryWithAdmission wraps each tool in sdkReg with the
 // admission and approval predicates corresponding to cliReg.
 func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry, pred AdmissionPredicates) error {
-	if sdkReg == nil || (pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil) {
+	if sdkReg == nil {
+		return nil
+	}
+	// Same rule as WrapToolWithAdmission: a deny policy is reason enough to
+	// wrap, because it is the layer that enforces the denial.
+	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
+		pred.ApprovalGate == nil && !IsDenyApproval(pred.ApprovalPolicy) {
 		return nil
 	}
 	for _, t := range sdkReg.Tools() {
@@ -226,7 +239,13 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 	if cliReg == nil {
 		return nil, nil
 	}
-	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil {
+	// A deny policy is reason enough to wrap even with no gate: it is the
+	// adapter that enforces the denial. This third gate check is why the
+	// fail-open survived the other two being fixed - the same predicate was
+	// spelled out in three places, so correcting two of them changed nothing
+	// on the path callers actually take.
+	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
+		pred.ApprovalGate == nil && !IsDenyApproval(pred.ApprovalPolicy) {
 		return ConvertToolRegistry(cliReg, regOpts...)
 	}
 	sdkReg := sdktools.New(regOpts...)
