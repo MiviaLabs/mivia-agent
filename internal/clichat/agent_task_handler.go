@@ -174,7 +174,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	// the agent opted out via disallowed_tools = ["post_message"] (plan 53.02).
 	// tools_remove alone does not opt out — resolve maps messaging opt-out
 	// through DisallowedTools when agents list disallowed_tools.
-	disallowed := messagingDisallowed(h.definition.DisallowedTools)
+	disallowed := messagingDisallowed(h.definition)
 	injectBaselineMessaging(h.full, registry, h.opts.Config, disallowed)
 	noop := func() {}
 	// The resolved output schema must outrank skill report-shape text: skill
@@ -236,9 +236,25 @@ func schemaSystemAppendix(schema map[string]any) string {
 	return jschema.EnvelopeAppendixBody(contract)
 }
 
-func messagingDisallowed(names []string) map[string]struct{} {
+// messagingDisallowed is the opt-out set for the baseline messaging
+// injection: names that must NOT be re-added to an already-scoped registry.
+//
+// It takes the AGENT rather than a name list on purpose. Both call sites used
+// to pass agent.DisallowedTools - the agent file's own list - so an
+// operator's mandatory_tool_denylist entry for post_message was stripped by
+// applyToolPolicy, excluded by AuthorizedAgentTools, dropped by
+// ScopedRegistry, and then put straight back by the injection. Taking the
+// agent means there is no second list a caller can reach for:
+// EffectiveDenylist carries the agent's own denials AND the operator's.
+func messagingDisallowed(agent agents.ResolvedAgent) map[string]struct{} {
 	out := map[string]struct{}{}
-	for _, name := range names {
+	for _, name := range agent.EffectiveDenylist {
+		out[name] = struct{}{}
+	}
+	// DisallowedTools is a subset of EffectiveDenylist as resolve builds it;
+	// included explicitly so a hand-built ResolvedAgent that sets only the
+	// former still opts out rather than silently gaining post_message.
+	for _, name := range agent.DisallowedTools {
 		out[name] = struct{}{}
 	}
 	return out
