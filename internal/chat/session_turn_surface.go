@@ -86,9 +86,6 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 	if turn != nil {
 		return agent.UnadmittedToolResult{Handled: true, Content: fmt.Sprintf("tool %q is authorized but not currently loaded for this scoped run; ask the root agent to load it first", name)}
 	}
-	if err := s.ChargeAdmissionAttempt(); err != nil {
-		return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
-	}
 	// TurnIDFromContext reads a dispatcher-stamped caller frame
 	// (runtime.ContextWithCaller) that only exists inside
 	// Dispatcher.Invoke - this call site is the "tool not found" branch
@@ -105,10 +102,49 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 	resolver := s.ToolBaseResolver
 	sessionID := s.SessionID
 	s.mu.RUnlock()
-	if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
+
+	// Resolve, then decide, then spend. Every step below used to run before
+	// the one above it, so a call that was about to be refused had already
+	// charged an admission attempt, staged a publication, and installed a
+	// handler on the session dispatcher.
+	base, tool, lookup := lookupDeferredTool(dispatcher, resolver, name)
+	if lookup == deferredNoSuchTool {
+		// No publication can ever resolve this name, so nothing is staged for
+		// it and the model is not told a load was queued: that message names a
+		// retry, and the retry cannot resolve either. A missing DISPATCHER is
+		// the other case and still degrades to the staged retry below, because
+		// there the tool does exist.
+		return agent.UnadmittedToolResult{
+			Handled: true,
+			Content: fmt.Sprintf("tool %q is advertised for this agent but is not present in its tool set, so it cannot be loaded or called; do not retry it", name),
+		}
+	}
+
+	// Approval BEFORE the budget, and only for a call that can actually run.
+	// A refusal is the operator's decision, not the model's request, and
+	// charging the loading budget for it lets a deny policy exhaust the
+	// session's own admission attempts. Asking on the no-wiring degrade would
+	// be worse still: it raises a prompt for a call that was never going to
+	// execute.
+	if lookup == deferredFound {
+		if decision := s.decideDeferredApproval(ctx, tool, name, args, emitPending); !decision.Approved {
+			return agent.UnadmittedToolResult{
+				Handled: true, Ran: true, Failed: true,
+				Content: "tool call denied by user: " + decision.Reason,
+			}
+		}
+	}
+
+	if err := s.spendAdmissionFor(name, turnID); err != nil {
 		return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 	}
-	content, hookContext, hookRuns, failed, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args, emitPending)
+
+	var content, hookContext string
+	var hookRuns []runtime.HookRun
+	var failed, ok bool
+	if lookup == deferredFound {
+		content, hookContext, hookRuns, failed, ok = s.runDeferredToolNow(ctx, dispatcher, base, tool, sessionID, turnID, name, args)
+	}
 	if ok {
 		// Ran means it reached the dispatcher; Failed carries whether it
 		// succeeded. The message below instructs a RETRY, so anything
@@ -171,26 +207,9 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 // differs from the shim's (ParentID/Step left zero). See
 // docs/development/lifecycle-hooks.md's "Limitation" notes for what
 // remains open and why.
-func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage, emitPending func(toolCallID, name, detail, input string)) (content string, hookContext string, hookRuns []runtime.HookRun, failed bool, ok bool) {
-	tool, found := resolveDeferredTool(dispatcher, resolver, name)
-	if !found {
+func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, base *tools.Registry, tool tools.Tool, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookContext string, hookRuns []runtime.HookRun, failed bool, ok bool) {
+	if !registerDeferredTool(dispatcher, base, tool) {
 		return "", "", nil, false, false
-	}
-	// Approval. This path invokes the runtime dispatcher DIRECTLY, underneath
-	// the SDK registry where the approval wrapper lives, so it carried no
-	// approval at all: a threat model drove a write tool through it and
-	// watched the file appear under a "deny" policy with a live approver
-	// attached. It asks the shared decision rather than restating the policy,
-	// because a second copy of that logic is how this class of hole keeps
-	// reappearing.
-	//
-	// failed=true on the refusal. It is served (ok=true) because the model
-	// gets the reason rather than the "not yet loaded" fallback - but a
-	// refusal is not a completed call, and recording it as one is how a
-	// denial reached every viewer as a success on the SDK path before
-	// recordDenied existed. This path had reintroduced it.
-	if decision := s.decideDeferredApproval(ctx, tool, name, args, emitPending); !decision.Approved {
-		return "tool call denied by user: " + decision.Reason, "", nil, true, true
 	}
 	result := dispatcher.Invoke(ctx, runtime.Request{
 		TurnID:    fmt.Sprintf("turn:%d", turnID),
@@ -245,30 +264,77 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 	return s.capDeferredBody(sessionID, tool, args, body), hookContext, hookRuns, failed, true
 }
 
-// resolveDeferredTool finds the tool in the FULL authorized set and installs
-// its handler on the dispatcher. found=false on the benign reasons the caller
-// degrades on: no dispatcher, no resolver wired, the resolver returns nil, the
-// name is absent even from the full set.
+// spendAdmissionFor charges the attempt and stages the name for publication.
+//
+// The two are one step because their ORDER is a requirement, not a style:
+// StageToolAdmission refunds the attempt the host charged when the request
+// turns out to be a no-op, so the charge must already have happened.
+//
+// The caller runs this only after the call is resolved and approved. It used
+// to run first, so a refused call spent one of MaxAdmissionAttempts and a name
+// nothing could resolve burned the publication ceiling.
+func (s *Session) spendAdmissionFor(name string, turnID uint64) error {
+	if err := s.ChargeAdmissionAttempt(); err != nil {
+		return err
+	}
+	_, err := s.StageToolAdmission([]string{name}, turnID)
+	return err
+}
+
+// lookupDeferredTool finds the tool in the FULL authorized set WITHOUT
+// installing anything. found=false on the benign reasons the caller degrades
+// on: no dispatcher, no resolver wired, the resolver returns nil, the name is
+// absent even from the full set.
+//
+// Lookup is separate from registration on purpose. Registration is a durable
+// grant on the session dispatcher - Dispatcher.register sets
+// policy.Allow[Tool][name] and there is no removal API - and it used to happen
+// before the call was approved, budgeted or staged, so a refused call left the
+// handler installed. The caller now resolves first to DECIDE, and registers
+// only once the call is actually going to run.
+func lookupDeferredTool(dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, name string) (*tools.Registry, tools.Tool, deferredLookup) {
+	if dispatcher == nil || resolver == nil {
+		return nil, nil, deferredNoWiring
+	}
+	base := resolver()
+	if base == nil {
+		return nil, nil, deferredNoWiring
+	}
+	tool, found := base.Get(name)
+	if !found {
+		return nil, nil, deferredNoSuchTool
+	}
+	return base, tool, deferredFound
+}
+
+// deferredLookup separates the two ways a lookup can fail, because the caller
+// must answer them differently and they were collapsed into one bool.
+//
+// deferredNoWiring is a degrade: no dispatcher or no resolver, so THIS call
+// cannot be served synchronously - but the tool exists and a step-boundary
+// publication can still make it callable, so staging it and telling the model
+// to retry is true. deferredNoSuchTool is not a degrade: the name is absent
+// from the full authorized set, so no publication can ever resolve it and both
+// the stage and the retry would be a lie.
+type deferredLookup int
+
+const (
+	deferredFound deferredLookup = iota
+	deferredNoWiring
+	deferredNoSuchTool
+)
+
+// registerDeferredTool installs the handler so the dispatcher can execute this
+// call. It runs only after the call is approved and budgeted.
 //
 // RegisterTool's "duplicate handler" error is treated as success (Has confirms
 // it), not failure: a sibling call for the same deferred tool in the same step
 // may have already won the race.
-func resolveDeferredTool(dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, name string) (tools.Tool, bool) {
-	if dispatcher == nil || resolver == nil {
-		return nil, false
+func registerDeferredTool(dispatcher *runtime.Dispatcher, base *tools.Registry, tool tools.Tool) bool {
+	if err := dispatcher.RegisterTool(base, tool); err != nil && !dispatcher.Has(runtime.Tool, tool.Name()) {
+		return false
 	}
-	base := resolver()
-	if base == nil {
-		return nil, false
-	}
-	tool, found := base.Get(name)
-	if !found {
-		return nil, false
-	}
-	if err := dispatcher.RegisterTool(base, tool); err != nil && !dispatcher.Has(runtime.Tool, name) {
-		return nil, false
-	}
-	return tool, true
+	return true
 }
 
 // deferredCallTimeout is the budget for one deferred call's EXECUTION.
