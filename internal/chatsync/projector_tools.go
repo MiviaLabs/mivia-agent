@@ -357,10 +357,14 @@ func (p *Projector) projectHook(env Envelope, ev events.Event) []WireEvent {
 	// A hook's output is text a local program printed, which is the same class
 	// as tool output and rides the same gate. Withholding still reports the
 	// byte count, so a reader can tell silence from suppression.
+	// ev.Hook.Output, never ev.Output: the generic field appends an operator
+	// diagnostic that names the hook's absolute path, and a filesystem path
+	// describes the operator's machine.
+	stdout := ev.Hook.Output
 	var output string
 	if shouldIncludeToolIO(p.opts) && !redactionActive() {
-		output = applyTruncation(&env, "output", redactText(ev.Output), BudgetToolOutput)
-	} else if ev.Output != "" {
+		output = applyTruncation(&env, "output", redactText(stdout), BudgetToolOutput)
+	} else if stdout != "" {
 		env.Redacted = append(env.Redacted, "output")
 	}
 
@@ -371,7 +375,7 @@ func (p *Projector) projectHook(env Envelope, ev events.Event) []WireEvent {
 		Tool:        tool,
 		ToolCallID:  callID,
 		Blocked:     ev.Hook.Denied,
-		OutputBytes: len(ev.Output),
+		OutputBytes: len(stdout),
 		Output:      output,
 	}
 	return []WireEvent{p.nextWireEvent(TypeHookRan, payload)}
