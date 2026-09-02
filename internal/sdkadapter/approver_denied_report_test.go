@@ -258,3 +258,85 @@ func (*denyingInner) Schema() map[string]any {
 func (*denyingInner) Run(context.Context, sdktools.InOut) (sdktools.Out, error) {
 	return sdktools.Out{Value: "ran"}, nil
 }
+
+// TestEveryNonAutoPolicyBuildsTheApprovalLayer generalizes the fail-open that
+// eae9dcdc fixed for "deny" alone.
+//
+// A policy that is not "auto" is the operator saying a bare execution is not
+// acceptable. With no gate to ask, the adapter must deny - but the adapter has
+// to EXIST first, and it was built only when a gate was set. So "write-only"
+// and "always" ran every write tool on every headless surface, exactly as
+// "deny" did, and the root path was affected too.
+func TestEveryNonAutoPolicyBuildsTheApprovalLayer(t *testing.T) {
+	for _, policy := range []string{"write-only", "once", "always", "deny"} {
+		t.Run(policy, func(t *testing.T) {
+			cli := &deniableTool{}
+			reg := tools.NewRegistry()
+			reg.Register(cli)
+			sdkReg, err := ConvertToolRegistryWithAdmission(reg, AdmissionPredicates{
+				ApprovalPolicy: policy,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wrapped, ok := sdkReg.Get("deny_tool")
+			if !ok {
+				t.Fatal("deny_tool not in sdk reg")
+			}
+			ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+				ID: "call-1", Name: "deny_tool", Index: 0, Arguments: []byte(`{}`),
+			})
+			if _, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			cli.mu.Lock()
+			ran := cli.ran
+			cli.mu.Unlock()
+			if ran {
+				t.Errorf("a write tool RAN under policy %q with no approver attached; "+
+					"the operator asked not to be bypassed and was", policy)
+			}
+		})
+	}
+}
+
+// TestAnAutoPolicyStillBuildsNoLayer holds the other direction. "auto" is the
+// shipped default and means run without asking, so wrapping there would add a
+// layer to every call for no decision.
+func TestAnAutoPolicyStillBuildsNoLayer(t *testing.T) {
+	if NeedsApprovalLayer(false, "auto") {
+		t.Error("an auto policy with no gate built an approval layer; every call " +
+			"would pay for a decision that is already made")
+	}
+	if !NeedsApprovalLayer(true, "auto") {
+		t.Error("a gate was attached and no layer was built; the operator's own " +
+			"approver would never be consulted")
+	}
+}
+
+// TestAnEmptyPolicyIsNotAConfiguredPolicy states a deliberate, TEMPORARY
+// carve-out so that removing it has to be a conscious act.
+//
+// An empty string normalizes to write-only, but at this layer it means "this
+// caller set no policy at all" - which today is only the nested subagent loop,
+// whose options carry no approval fields. Treating it as write-only would deny
+// every subagent write tool for every user, including the auto default: a far
+// larger change than the hole it closes.
+//
+// When the nested loop inherits a real policy this carve-out must go, or it
+// becomes the next fail-open. Deleting it should break this test and nothing
+// else.
+func TestAnEmptyPolicyIsNotAConfiguredPolicy(t *testing.T) {
+	if NeedsApprovalLayer(false, "") {
+		t.Error("an unset policy was treated as configured; every subagent write " +
+			"tool would be denied before subagents inherit a policy")
+	}
+	if NeedsApprovalLayer(false, "   ") {
+		t.Error("a blank policy was treated as configured")
+	}
+	// A gate always wins, even with no policy.
+	if !NeedsApprovalLayer(true, "") {
+		t.Error("a gate with no policy built no layer")
+	}
+}
