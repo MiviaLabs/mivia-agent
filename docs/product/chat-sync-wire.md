@@ -266,8 +266,10 @@ web viewer does), a 404 (deleted from the web), a transcript the server holds
 that this outbox can never line up with. A deleted or ended session never
 stops a live CLI; the server may hold it under a new id.
 
-Recovery creates the new session, rebases the outbox onto it renumbered from
-1, records a `mivia.chat.v1.sync.forked` whose `new_session_id` and
+Recovery creates the new session - naming the abandoned one as
+`forkedFromSessionId` on the create body, so the server records the link and
+a viewer on the old transcript can follow it - rebases the outbox onto it
+renumbered from 1, records a `mivia.chat.v1.sync.forked` whose `new_session_id` and
 `forked_from` name both sessions, retargets the heartbeat and poller, rewrites
 the identity file, and pushes at once. It is bounded two ways, and only one
 bound latches: a second recovery inside 60 seconds is *deferred* to the retry
