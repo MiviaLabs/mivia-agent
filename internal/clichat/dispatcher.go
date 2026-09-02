@@ -88,6 +88,12 @@ func newSessionDispatcherMinimal(reg *tools.Registry, comp provider.Completer, m
 		skillsReg = skillReg[0]
 	}
 	return NewSessionDispatcher(SessionDispatcherOpts{
+		// Explicitly unwired, and stated rather than omitted so the check in
+		// cliagents cannot be satisfied by forgetting. This helper has no
+		// production caller - every one of its callers is a test - so there is
+		// no operator to ask. A production caller MUST pass the session's
+		// ApprovalSnapshot, or every subagent it builds runs ungated.
+		Approval:           nil,
 		Registry:           reg,
 		Completer:          comp,
 		Model:              model,
