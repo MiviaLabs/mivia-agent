@@ -41,10 +41,12 @@ kind was never written into the list, so the test skipped it and stayed green.
 - `TestTheRelayAllowlistAndItsRendererAgree` holds the two halves of
   cross-process delivery to each other: allowlist without an arm, or an arm
   without an allowlist entry, both fail.
-- The same policy file also records two KNOWN GAPS rather than hiding them:
-  `--json` renders neither `tool_pending` nor `hook`, so a program parsing
-  that stream cannot tell that a turn is blocked on approval, or that a hook
-  blocked a tool call.
+- The same policy file records the remaining KNOWN GAPS rather than hiding
+  them. `hook` was one and is now rendered on `--json` and on the chat-sync
+  wire. `tool_pending` is still one on every surface but the TUI: no program
+  parsing `--json`, and no remote viewer, can tell that a turn is blocked
+  waiting for the operator. Closing that needs an answer path, not just a
+  row.
 
 **When you add an event kind:** expect to touch the policy file. That is the
 gate working, not noise - it is asking you to decide for each surface instead
