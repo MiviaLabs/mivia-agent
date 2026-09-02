@@ -56,6 +56,17 @@ func TestNoWireFieldCarriesANulByte(t *testing.T) {
 			Kind: events.KindToolEnd, SessionID: "sess-1", TurnID: "turn:1",
 			ToolCallID: "c1", Name: "read_file", Output: dirty,
 		}},
+		// The status is derived from the detail, and used to be built from the
+		// RAW event while the same string was sanitised into `detail` two
+		// lines away - the one free-text field that skipped the choke point.
+		{"tool end detail", toolIOOpts(), events.Event{
+			Kind: events.KindToolEnd, SessionID: "sess-1", TurnID: "turn:1",
+			ToolCallID: "c1", Name: "read_file", Detail: dirty,
+		}},
+		{"subagent tool end detail", toolIOOpts(), events.Event{
+			Kind: events.KindSubagentEnd, SessionID: "sess-1", TurnID: "turn:1",
+			ToolCallID: "c1", Name: "read_file", Detail: dirty,
+		}.WithAgentAttribution("task-1", "builder", 1)},
 		{"tool input", toolIOOpts(), events.Event{
 			Kind: events.KindToolStart, SessionID: "sess-1", TurnID: "turn:1",
 			ToolCallID: "c1", Name: "read_file", Input: dirty,

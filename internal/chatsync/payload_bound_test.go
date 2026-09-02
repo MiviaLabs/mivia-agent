@@ -60,6 +60,13 @@ func TestNoEventExceedsTheStoredPayloadBound(t *testing.T) {
 			Kind: events.KindAssistant, SessionID: "sess-1", TurnID: "turn:1",
 			Content: worstCaseText(64 * 1024),
 		}.WithAgentAttribution("task-1", "builder", 1)},
+		// The status field derives from the detail. Built from the raw event it
+		// carried no budget at all, so a long detail produced a payload six
+		// times over the column bound.
+		{"a tool end detail of control bytes", toolIOOpts(), events.Event{
+			Kind: events.KindToolEnd, SessionID: "sess-1", TurnID: "turn:1",
+			ToolCallID: "c1", Name: "read_file", Detail: worstCaseText(64 * 1024),
+		}},
 		{"a prompt of control bytes", proseOpts(), events.Event{
 			Kind: events.KindTurnStart, SessionID: "sess-1", TurnID: "turn:1",
 			Detail: worstCaseText(64 * 1024),

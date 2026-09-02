@@ -105,7 +105,7 @@ func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 		Envelope:    env,
 		ToolCallID:  callID,
 		Name:        name,
-		Status:      toolEndStatus(ev.Detail),
+		Status:      toolEndStatus(detail),
 		OutputBytes: len(toolOutputOf(ev)),
 		Detail:      detail,
 		Output:      output,
@@ -157,7 +157,7 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 			Envelope:    env,
 			ToolCallID:  callID,
 			Name:        name,
-			Status:      toolEndStatus(ev.Detail),
+			Status:      toolEndStatus(detail),
 			OutputBytes: len(toolOutputOf(ev)),
 			Detail:      detail,
 			Output:      output,
@@ -283,6 +283,14 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 	return []WireEvent{p.nextWireEvent(TypeSubagentThinkingDelta, payload)}
 }
 
+// toolEndStatus derives the wire status from a tool end's detail.
+//
+// Callers pass the SANITISED, bounded detail, never ev.Detail. This field used
+// to be built from the raw event while the identical string was sanitised and
+// truncated into `detail` two lines away, so a NUL reached the wire on
+// tool.ended and a long detail produced a payload six times over the column
+// bound - both of them through the one field that skipped the choke point
+// every other free-text field goes through.
 func toolEndStatus(detail string) string {
 	if detail == "" {
 		return "ok"
