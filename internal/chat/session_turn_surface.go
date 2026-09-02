@@ -273,12 +273,10 @@ func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, n
 		deps.Policy = config.ApprovalPolicyWriteOnly
 	}
 
-	// An unclassified tool is treated as ExecutionExternal - the most
-	// restrictive class - so it is gated rather than waved through.
-	capability := tools.Capability{Class: tools.ExecutionExternal}
-	if capable, ok := tool.(tools.CapableTool); ok {
-		capability = capable.Capability(args)
-	}
+	// The unclassified default lives in tools.CapabilityOf, which is also what
+	// the SDK approval wrapper uses. It was written out here as well, so the
+	// same rule existed twice and could drift.
+	capability := tools.CapabilityOf(tool, args)
 	return sdkadapter.DecideApproval(ctx, deps, sdkadapter.ApprovalRequest{
 		Name:        name,
 		Class:       capability.Class,
