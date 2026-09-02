@@ -617,3 +617,55 @@ func TestAnUnresolvableDeferredNameIsNotStagedOrPromisedALoad(t *testing.T) {
 			"retry: %q", result.Content)
 	}
 }
+
+// An operator's mandatory tool denylist must stop the deferred path too.
+//
+// Every other layer already stops it. With a core tier configured,
+// TieredRootRegistry passes the core names as the allowlist, so ScopedRegistry
+// drops a denied deferred name from the executable registry, and
+// ScopedRegistryWithTail refuses to admit it - "a denial outranks admission in
+// both modes". But advertisedToolSpecs applies no denylist, so the model is
+// shown the schema and calls it, and this path resolved the tool from the
+// PRE-scope base and ran it.
+//
+// scopeAttachedToolSurface's own comment claims the opposite: "a tool absent
+// from sess.Tools is also absent from the dispatcher's executable registry
+// (INV-AG-29 execution denial)".
+//
+// The check lives here, at the point of execution, rather than only in the
+// wiring that builds the resolver: a future caller that wires
+// ToolBaseResolver without the filter must not be able to reopen this.
+func TestTheDeferredPathRefusesAnOperatorDenylistedTool(t *testing.T) {
+	tool := &writingTool{}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	s := &Session{
+		ApprovalPolicy: config.ApprovalPolicyAuto, // nothing else would stop it
+		ToolDenylist:   []string{"write_file"},
+	}
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
+
+	if tool.ran {
+		t.Fatal("the deferred path EXECUTED a tool on the operator's mandatory " +
+			"denylist; every other layer refuses this name and this one reaches " +
+			"around all of them")
+	}
+	if strings.Contains(result.Content, "queued to load") {
+		t.Errorf("a denied tool is promised a load that can never happen: %q", result.Content)
+	}
+	s.mu.RLock()
+	pending := s.pendingAdmission
+	s.mu.RUnlock()
+	if pending != nil {
+		t.Errorf("a denied tool was staged for publication: %+v", pending)
+	}
+}

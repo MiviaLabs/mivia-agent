@@ -60,6 +60,18 @@ type Session struct {
 	// after it announced work and called no tool, from [chat]
 	// max_unacted_continuations. Zero leaves the mechanism off.
 	MaxUnactedContinuations int
+	// ToolDenylist is the operator's mandatory tool denylist
+	// ([tools] mandatory_tool_denylist additions), carried here so the
+	// deferred-tool path can honour it.
+	//
+	// It is enforced at the point of EXECUTION rather than only where the
+	// resolver is wired. Every other layer already refuses these names -
+	// ScopedRegistry drops them from the executable registry and
+	// ScopedRegistryWithTail refuses to admit them - but the deferred path
+	// resolves from the pre-scope base, so without this it reached around all
+	// of them and ran the tool.
+	ToolDenylist []string
+
 	// ToolBaseResolver, when non-nil, returns the full authorized tool
 	// registry - including tools tiered/deferred out of Tools - that a
 	// deferred-but-advertised tool call can be resolved and executed from
