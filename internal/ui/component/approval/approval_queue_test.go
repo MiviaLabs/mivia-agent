@@ -330,3 +330,45 @@ func pairedDiff(t *testing.T, pairs int) *uievent.Diff {
 		Hunks: []uievent.DiffHunk{{Header: "@@ -1,40 +1,40 @@", Lines: lines}},
 	}
 }
+
+// The operator must be told that answering this prompt will not unblock the
+// turn, because more calls are queued behind it.
+//
+// Waiting() was written for exactly this and had NO caller, while its doc
+// comment claimed "the statusline uses it". So a queue of five write calls
+// looked identical to one: the operator answered, the prompt reappeared, and
+// nothing had ever said how many were behind it.
+//
+// The count goes in the border badge rather than the hint row. The hint states
+// the decision keys and is clipped to the width - appending there would let a
+// narrow terminal truncate a key that still works, which is the one thing that
+// line promises never to do. The badge already survives the fold that drops
+// the action.
+func TestTheOperatorIsToldHowManyCallsAreQueuedBehindThisOne(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(120)
+	for _, id := range []string{"c1", "c2", "c3"} {
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: id, Name: "write_file"})
+	}
+
+	if got := m.Waiting(); got != 3 {
+		t.Fatalf("Waiting() = %d, want 3", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "2 more") {
+		t.Errorf("the prompt does not say two more calls are queued behind it, "+
+			"so answering this one looks like it will free the turn:\n%s", view)
+	}
+}
+
+// ...and must NOT be told so when this is the only one, or every ordinary
+// single approval grows a "0 more" that means nothing.
+func TestASoleRequestSaysNothingAboutAQueue(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(120)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "write_file"})
+
+	if got := m.View(); strings.Contains(got, "more") {
+		t.Errorf("a sole pending request mentions a queue:\n%s", got)
+	}
+}
