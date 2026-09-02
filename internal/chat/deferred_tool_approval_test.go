@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // The deferred-tool path invokes the runtime dispatcher DIRECTLY, underneath
@@ -42,7 +46,7 @@ func TestTheDeferredPathRefusesUnderADenyPolicy(t *testing.T) {
 		},
 	}
 
-	got := s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+	got := s.decideDeferredApproval(promptableCtx(), &writingTool{}, "write_file", json.RawMessage(`{}`), noopPending)
 
 	if got.Approved {
 		t.Fatal("a write tool was approved on the deferred path under a \"deny\" " +
@@ -62,7 +66,7 @@ func TestTheDeferredPathRefusesUnderADenyPolicy(t *testing.T) {
 func TestTheDeferredPathDeniesWithNoApprover(t *testing.T) {
 	s := &Session{ApprovalPolicy: "write-only"}
 
-	got := s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+	got := s.decideDeferredApproval(promptableCtx(), &writingTool{}, "write_file", json.RawMessage(`{}`), noopPending)
 
 	if got.Approved {
 		t.Error("a write tool ran on the deferred path with no approver attached; " +
@@ -82,7 +86,7 @@ func TestTheDeferredPathAsksTheGate(t *testing.T) {
 		},
 	}
 
-	got := s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+	got := s.decideDeferredApproval(promptableCtx(), &writingTool{}, "write_file", json.RawMessage(`{}`), noopPending)
 
 	if !got.Approved {
 		t.Errorf("an approved call was refused: %q", got.Reason)
@@ -105,7 +109,7 @@ func TestTheDeferredPathRunsUnderAutoWithoutAsking(t *testing.T) {
 		},
 	}
 
-	got := s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+	got := s.decideDeferredApproval(promptableCtx(), &writingTool{}, "write_file", json.RawMessage(`{}`), noopPending)
 
 	if !got.Approved {
 		t.Error("the auto policy refused a call; the shipped default must be unchanged")
@@ -121,7 +125,7 @@ func TestTheDeferredPathRunsUnderAutoWithoutAsking(t *testing.T) {
 func TestAnUnsetPolicyOnTheDeferredPathStillDecides(t *testing.T) {
 	s := &Session{}
 
-	got := s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+	got := s.decideDeferredApproval(promptableCtx(), &writingTool{}, "write_file", json.RawMessage(`{}`), noopPending)
 
 	if got.Approved {
 		t.Error("a session with no approval policy ran a write tool on the deferred " +
@@ -146,7 +150,7 @@ func TestRunDeferredToolNowItselfRefuses(t *testing.T) {
 	s := &Session{ApprovalPolicy: "deny"}
 	content, _, _, failed, ok := s.runDeferredToolNow(
 		context.Background(), d, func() *tools.Registry { return reg },
-		"sess-1", 1, "write_file", json.RawMessage(`{}`),
+		"sess-1", 1, "write_file", json.RawMessage(`{}`), noopPending,
 	)
 
 	if tool.ran {
@@ -178,7 +182,7 @@ func TestRunDeferredToolNowRunsWhenApproved(t *testing.T) {
 	s := &Session{ApprovalPolicy: "auto"}
 	content, _, _, failed, ok := s.runDeferredToolNow(
 		context.Background(), d, func() *tools.Registry { return reg },
-		"sess-1", 1, "write_file", json.RawMessage(`{}`),
+		"sess-1", 1, "write_file", json.RawMessage(`{}`), noopPending,
 	)
 
 	if !ok {
@@ -235,8 +239,8 @@ func TestAnUnclassifiedToolIsGatedAtTheMostRestrictiveClass(t *testing.T) {
 		},
 	}
 
-	got := s.decideDeferredApproval(context.Background(), &unclassifiedTool{},
-		"workflow_deliver", json.RawMessage(`{}`))
+	got := s.decideDeferredApproval(promptableCtx(), &unclassifiedTool{},
+		"workflow_deliver", json.RawMessage(`{}`), noopPending)
 
 	if got.Approved {
 		t.Error("an unclassified tool was approved past a standing denial recorded " +
@@ -271,7 +275,7 @@ func TestTheDeferredPathStampsThePolicyOnTheContext(t *testing.T) {
 		},
 	}
 
-	s.decideDeferredApproval(context.Background(), &writingTool{}, "write_file", json.RawMessage(`{}`))
+	s.decideDeferredApproval(promptableCtx(), &writingTool{}, "write_file", json.RawMessage(`{}`), noopPending)
 
 	if !found {
 		t.Fatal("the deciding policy was not stamped on the context, so a gate " +
@@ -282,3 +286,147 @@ func TestTheDeferredPathStampsThePolicyOnTheContext(t *testing.T) {
 			"real one before it travels", stamped)
 	}
 }
+
+// Under an INTERACTIVE policy the deferred path must raise a prompt the
+// operator can actually answer.
+//
+// It did not. decideDeferredApproval passed no EmitPending, and the shipped
+// TUI arms its approval prompt exclusively from the tool.pending event that
+// EmitPending produces (nothing drains Approver.Pending() in live mode - its
+// own comment says so). So DecideApproval called the gate, uiadapter's gate
+// registered a waiter and blocked on its channel, and no prompt was ever
+// drawn: the turn hung until the operator cancelled it, with nothing on
+// screen explaining why. The doc comment on decideDeferredApproval asserted
+// the opposite - "makes an interactive policy deny rather than hang".
+//
+// Its stated premise, "this path has no in-flight SDK call id", was also
+// wrong: the SDK stamps one into the ctx it hands this handler, and
+// uiadapter's gate already keys its waiter off that same id.
+func TestAnInteractiveDeferredCallRaisesAPromptTheOperatorCanAnswer(t *testing.T) {
+	tool := &writingTool{}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	approve := make(chan struct{})
+	var pending []agent.Event
+	s := &Session{
+		ApprovalPolicy: config.ApprovalPolicyWriteOnly,
+		// The gate blocks exactly as uiadapter's does: it answers only when
+		// something resolves the prompt. A synchronous fake gate is what let
+		// every existing test on this path miss the hang.
+		ApprovalGate: func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
+			select {
+			case <-approve:
+				return sdkadapter.ApprovalResult{Approved: true}
+			case <-ctx.Done():
+				return sdkadapter.ApprovalResult{Err: "canceled"}
+			}
+		},
+		OnAgentEvent: func(e agent.Event) {
+			if e.Kind != agent.EventToolPending {
+				return
+			}
+			pending = append(pending, e)
+			// The operator answering. Resolving is keyed by ToolCallID, so a
+			// prompt carrying the wrong id could never unblock the gate.
+			if e.ToolCallID == "call-42" {
+				close(approve)
+			}
+		},
+	}
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	opts.OnEvent = s.OnAgentEvent
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = toolcallctx.WithToolCall(ctx, sdkshape.ToolCall{ID: "call-42", Name: "write_file"})
+
+	done := make(chan agent.UnadmittedToolResult, 1)
+	go func() { done <- opts.UnadmittedToolHandler(ctx, "write_file", json.RawMessage(`{}`)) }()
+
+	select {
+	case result := <-done:
+		if !tool.ran {
+			t.Fatalf("the operator approved and the tool still did not run: %+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the deferred call blocked with no prompt the operator could " +
+			"answer - the turn hangs until it is cancelled, showing nothing")
+	}
+
+	if len(pending) != 1 {
+		t.Fatalf("want exactly one pending prompt, got %d", len(pending))
+	}
+	if pending[0].ToolCallID != "call-42" {
+		t.Errorf("the prompt carries ToolCallID %q, not the in-flight call id; "+
+			"the UI resolves by that id, so every answer would be a silent no-op",
+			pending[0].ToolCallID)
+	}
+	if pending[0].Name != "write_file" {
+		t.Errorf("the prompt does not name the tool: %+v", pending[0])
+	}
+}
+
+// When there is genuinely no call id to key a prompt to - a direct caller, a
+// legacy backend - the call must be REFUSED with a reason, never left blocked
+// on a prompt that cannot be raised or answered.
+func TestADeferredCallWithNoCallIDRefusesInsteadOfBlocking(t *testing.T) {
+	tool := &writingTool{}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	s := &Session{
+		ApprovalPolicy: config.ApprovalPolicyWriteOnly,
+		ApprovalGate: func(ctx context.Context, _ string, _ json.RawMessage) sdkadapter.ApprovalResult {
+			<-ctx.Done() // never answered, exactly like a prompt nobody sees
+			return sdkadapter.ApprovalResult{Err: "canceled"}
+		},
+	}
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	done := make(chan agent.UnadmittedToolResult, 1)
+	go func() {
+		// No toolcallctx on this ctx.
+		done <- opts.UnadmittedToolHandler(context.Background(), "write_file", json.RawMessage(`{}`))
+	}()
+
+	select {
+	case result := <-done:
+		if tool.ran {
+			t.Fatal("the tool ran without an approval anybody gave")
+		}
+		if !strings.Contains(result.Content, "cannot be raised") {
+			t.Errorf("the refusal does not say why it could not ask: %q", result.Content)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call blocked on a prompt that can never be raised or answered")
+	}
+}
+
+// promptableCtx is the ctx the SDK really hands the unadmitted-tool handler:
+// one carrying the in-flight tool call. decideDeferredApproval refuses rather
+// than consults a gate without it, because a prompt keyed to nothing can never
+// be answered - so a test that means to exercise the GATE must supply one.
+func promptableCtx() context.Context {
+	return toolcallctx.WithToolCall(context.Background(),
+		sdkshape.ToolCall{ID: "call-1", Name: "write_file"})
+}
+
+// noopPending stands in for the UI that would draw the prompt. It must be
+// non-nil for the same reason: a decision with nowhere to publish the prompt
+// is refused, not blocked on.
+func noopPending(toolCallID, name, detail, input string) {}

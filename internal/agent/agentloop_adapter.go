@@ -237,22 +237,14 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 		return nil, err
 	}
 	applyDispatcherShim(sdkReg, cliReg, opts, turn)
-	emitPending := func(toolCallID, name, detail, input string) {
-		// toolCallID is the in-flight call id from the SDK's
-		// toolcallctx. It must reach EventToolPending.ToolCallID so the
-		// UI's approval resolver can match a user decision back to this
-		// specific gate; without it, every Resolve is a silent no-op and
-		// the gate blocks forever after approval. The legacy path stamps
-		// the same field from task.call.ID at loop_tool_exec.go:70; this
-		// closure is its SDK-path equivalent.
-		emit(opts, Event{
-			Kind:       EventToolPending,
-			ToolCallID: toolCallID,
-			Name:       name,
-			Detail:     detail,
-			Input:      input,
-		})
-	}
+	// toolCallID is the in-flight call id from the SDK's toolcallctx. It must
+	// reach EventToolPending.ToolCallID so the UI's approval resolver can
+	// match a user decision back to this specific gate; without it, every
+	// Resolve is a silent no-op and the gate blocks forever after approval.
+	// The legacy path stamps the same field from task.call.ID at
+	// loop_tool_exec.go:70. Shared with the deferred-tool path in
+	// internal/chat, which needs an identical prompt.
+	emitPending := ToolPendingEmitter(opts)
 	recordDenied := func(toolCallID, name, reason string) {
 		// Record an OUTCOME rather than emitting a tool_end directly. The
 		// loop's emitter already owns that emission, and emitting here as

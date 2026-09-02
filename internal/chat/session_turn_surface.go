@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // wireStepBoundaryAdmission installs the mid-turn admission publication hook
@@ -48,8 +49,13 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 	// Root turns only (turn == nil): a scoped skill turn does not own the
 	// session's admission state, matching the Surface hook's own turn == nil
 	// gate; it still gets a denial, never a synchronous execution.
+	// The prompt emitter is captured HERE because opts carries the session's
+	// event sinks (OnEvent/EventBus), which is what the TUI's approval prompt
+	// is drawn from. The deferred path had none, so an interactive policy
+	// blocked on a gate whose prompt was never rendered.
+	emitPending := agent.ToolPendingEmitter(*opts)
 	opts.UnadmittedToolHandler = func(ctx context.Context, name string, args json.RawMessage) agent.UnadmittedToolResult {
-		return s.serveUnadmittedTool(ctx, turn, name, args)
+		return s.serveUnadmittedTool(ctx, turn, name, args, emitPending)
 	}
 	opts.Surface = func() agent.Surface {
 		if turn == nil {
@@ -72,7 +78,7 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 // serveUnadmittedTool answers ONE call to a tool that is advertised but not
 // yet admitted. It is the body of opts.UnadmittedToolHandler, lifted out so
 // the wiring above stays readable.
-func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, name string, args json.RawMessage) agent.UnadmittedToolResult {
+func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, name string, args json.RawMessage, emitPending func(toolCallID, name, detail, input string)) agent.UnadmittedToolResult {
 	if !s.isAdvertisedToolName(name) {
 		return agent.UnadmittedToolResult{}
 	}
@@ -101,7 +107,7 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 	if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
 		return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 	}
-	content, hookContext, hookRuns, failed, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args)
+	content, hookContext, hookRuns, failed, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args, emitPending)
 	if ok {
 		// Ran means it reached the dispatcher; Failed carries whether it
 		// succeeded. The message below instructs a RETRY, so anything
@@ -164,7 +170,7 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 // differs from the shim's (ParentID/Step left zero). See
 // docs/development/lifecycle-hooks.md's "Limitation" notes for what
 // remains open and why.
-func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookContext string, hookRuns []runtime.HookRun, failed bool, ok bool) {
+func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage, emitPending func(toolCallID, name, detail, input string)) (content string, hookContext string, hookRuns []runtime.HookRun, failed bool, ok bool) {
 	tool, found := resolveDeferredTool(dispatcher, resolver, name)
 	if !found {
 		return "", "", nil, false, false
@@ -182,7 +188,7 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 	// refusal is not a completed call, and recording it as one is how a
 	// denial reached every viewer as a success on the SDK path before
 	// recordDenied existed. This path had reintroduced it.
-	if decision := s.decideDeferredApproval(ctx, tool, name, args); !decision.Approved {
+	if decision := s.decideDeferredApproval(ctx, tool, name, args, emitPending); !decision.Approved {
 		return "tool call denied by user: " + decision.Reason, "", nil, true, true
 	}
 	result := dispatcher.Invoke(ctx, runtime.Request{
@@ -315,15 +321,23 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 }
 
 // decideDeferredApproval asks the one approval decision on behalf of the
-// deferred-tool path.
+// deferred-tool path, and raises a prompt the operator can answer.
 //
 // It reads the session's approval state under the same lock the rest of the
-// session uses, and passes no EmitPending: this path has no in-flight SDK call
-// id to match a prompt back to, so a prompt raised here could never be
-// resolved. That makes an interactive policy deny rather than hang, which is
-// the safe direction and is stated here so the limitation is visible rather
-// than discovered.
-func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, name string, args json.RawMessage) sdkadapter.ApprovalDecision {
+// session uses. It used to pass no EmitPending, on the stated grounds that
+// "this path has no in-flight SDK call id to match a prompt back to" and that
+// the result was a deny "rather than hang". BOTH claims were false. The SDK
+// stamps the call id into the ctx it hands this handler
+// (toolcallctx.WithToolCall), and uiadapter's gate already keys its waiter off
+// exactly that id - while the missing prompt meant an interactive policy
+// called the gate, blocked on a channel nobody could resolve, and drew
+// nothing until the operator cancelled the turn.
+//
+// When the ctx genuinely carries no call id - a direct caller, a legacy
+// backend - the call is REFUSED with a reason rather than left waiting on a
+// prompt that cannot be raised. A refusal an operator can read beats a hang
+// they cannot.
+func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, name string, args json.RawMessage, emitPending func(toolCallID, name, detail, input string)) sdkadapter.ApprovalDecision {
 	s.mu.Lock()
 	deps := sdkadapter.ApprovalDeps{
 		Policy:   s.ApprovalPolicy,
@@ -331,6 +345,22 @@ func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, n
 		Gate:     s.ApprovalGate,
 	}
 	s.mu.Unlock()
+
+	toolCallID := ""
+	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+		toolCallID = tc.ID
+	}
+	if toolCallID == "" || emitPending == nil {
+		// Nothing can draw this prompt, or nothing can resolve it. Replace the
+		// gate rather than dropping it: auto, read-class and standing
+		// decisions are all settled BEFORE the gate is consulted, so they keep
+		// working, and only the case that would have hung is refused.
+		deps.Gate = func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult {
+			return sdkadapter.ApprovalResult{Err: "an approval prompt cannot be raised for a deferred tool call on this path; load the tool first, or set an approval policy that does not prompt"}
+		}
+	} else {
+		deps.EmitPending = emitPending
+	}
 	if deps.Policy == "" {
 		deps.Policy = config.ApprovalPolicyWriteOnly
 	}
@@ -340,6 +370,7 @@ func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, n
 	// same rule existed twice and could drift.
 	capability := tools.CapabilityOf(tool, args)
 	return sdkadapter.DecideApproval(ctx, deps, sdkadapter.ApprovalRequest{
+		ToolCallID:  toolCallID,
 		Name:        name,
 		Class:       capability.Class,
 		ResourceKey: capability.ResourceKey,
