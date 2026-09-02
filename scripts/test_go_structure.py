@@ -61,11 +61,12 @@ def test_policy_exists_and_thresholds() -> None:
     assert p["funcLines"]["hard"] == 120
     assert p["commentBlockLines"]["soft"] == 25
     assert p["commentBlockLines"]["hard"] == 30
-    # Baselines are pinned to current file locations after the cli split;
-    # chat_json_writer moved from internal/cli to internal/clichat, and the
-    # TUI god-file moved from internal/cli/tui.go to internal/legacytui/tui.go.
+    # Baselines are pinned to current file locations after the cli split:
+    # chat_json_writer moved from internal/cli to internal/clichat. The
+    # legacytui god-file that used to be pinned here was deleted with the
+    # package, so its baseline entry is gone and must stay gone.
     assert "internal/clichat/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
-    assert "internal/legacytui/tui.go" in p["baseline"]["files"]
+    assert not any(f.startswith("internal/legacytui/") for f in p["baseline"]["files"])
 
 
 def test_small_file_ok() -> None:
