@@ -522,6 +522,15 @@ var _ runtime.Handler = (*agentTaskHandler)(nil)
 // unaffected either way: it travels on e.Identity.
 func stampRoutedOrigin(identity *events.Identity, instanceID string, sink func(agent.Event)) func(agent.Event) {
 	return func(e agent.Event) {
+		// The ONE zero-origin event this chain can legitimately carry is the
+		// approval prompt: the multi-step wrapper strips its origin on
+		// purpose, because its destination is the ROOT approval queue and
+		// re-stamping would route it into the subagent dialog that cannot
+		// answer it. Everything else keeps the fallback below.
+		if e.Kind == agent.EventToolPending && e.Origin.IsZero() {
+			sink(e)
+			return
+		}
 		e.Identity = identity
 		if e.Origin.TaskID == "" {
 			e.Origin.TaskID = instanceID
