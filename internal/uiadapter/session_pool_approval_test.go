@@ -180,10 +180,23 @@ func TestAFreshSessionDoesNotInheritStandingDecisions(t *testing.T) {
 	}
 	fresh := conv.(*Conversation).sess
 
-	if fresh.ApprovalStanding != nil {
-		if _, ok := fresh.ApprovalStanding.Lookup(sdkadapter.StandingKey{Name: "run_command"}); ok {
-			t.Error("a standing \"always allow\" crossed into a new conversation")
-		}
+	// The cache must EXIST. A nil one made this test pass for the wrong
+	// reason, and made the affordance dead rather than fresh: DecideApproval
+	// guards every standing read and write on a non-nil cache, so "a always"
+	// would be accepted by the prompt and silently forgotten.
+	if fresh.ApprovalStanding == nil {
+		t.Fatal("the fresh session has no standing cache, so \"always allow\" is " +
+			"discarded in every conversation after the first")
+	}
+	if _, ok := fresh.ApprovalStanding.Lookup(sdkadapter.StandingKey{Name: "run_command"}); ok {
+		t.Error("a standing \"always allow\" crossed into a new conversation")
+	}
+
+	// And it must be usable: a decision recorded here is remembered here.
+	own := sdkadapter.StandingKey{Name: "edit_file", Class: tools.ExecutionWrite, ResourceKey: "/repo/a.txt"}
+	fresh.ApprovalStanding.Allow(own)
+	if approved, ok := fresh.ApprovalStanding.Lookup(own); !ok || !approved {
+		t.Error("a standing decision made in the fresh session was not remembered")
 	}
 }
 
