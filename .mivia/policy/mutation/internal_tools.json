@@ -1,0 +1,15 @@
+{
+  "floor": 0.75,
+  "denylist": [
+    {
+      "file": "capped_buffer.go",
+      "snippet": "if max <= 0 {\n\t\treturn 0, 0\n\t}",
+      "reason": "audited equivalent mutant (<= -> <): exhaustively checked splitCaptureBudget(max) for max in [-100, 100000] against the mutated `max < 0` guard - identical (headQuota, tailQuota) for every value, including max==0, because the code below the guard independently computes (0, 0) when max==0 falls through (0/3=0, and the tiny-budget lift requires max>=2). No test of return values can ever distinguish them. See TestSplitCaptureBudgetBoundaries."
+    },
+    {
+      "file": "capped_buffer.go",
+      "snippet": "if headQuota < 1 && max >= 2 {\n\t\theadQuota = 1\n\t}",
+      "reason": "audited equivalent mutant (< -> <=): exhaustively checked splitCaptureBudget(max) for max in [-100, 100000] against the mutated `headQuota <= 1` guard - identical output for every value, because the branch always assigns headQuota = 1, and the only additional case `<=1` catches (headQuota already == 1) assigns the value it already holds. No test of return values can ever distinguish them. See TestSplitCaptureBudgetBoundaries."
+    }
+  ]
+}
