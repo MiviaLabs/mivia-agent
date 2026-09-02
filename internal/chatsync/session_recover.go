@@ -63,6 +63,7 @@ func (s *SyncSession) recoverRemoteSession(ctx context.Context, cause error) {
 		return
 	}
 	if now.Before(s.createThrottledUntil) {
+		s.createRefusals.Add(1)
 		s.scheduleRetry()
 		return
 	}
@@ -73,7 +74,7 @@ func (s *SyncSession) recoverRemoteSession(ctx context.Context, cause error) {
 		s.handleCreateFailure(ctx, err)
 		return
 	}
-	s.consecutiveCreateFailures = 0
+	s.consecutiveCreateFailures.Store(0)
 	s.createThrottledUntil = time.Time{}
 	if s.beforeRecoveryLock != nil {
 		s.beforeRecoveryLock()
@@ -127,12 +128,12 @@ func (s *SyncSession) handleCreateFailure(ctx context.Context, err error) {
 		s.handleRemoteEnd(ctx, fmt.Sprintf("sync stopped: %v", err))
 		return
 	}
-	s.consecutiveCreateFailures++
-	if s.consecutiveCreateFailures >= createFailuresBeforeThrottle {
+	failures := int(s.consecutiveCreateFailures.Add(1))
+	if failures >= createFailuresBeforeThrottle {
 		s.createThrottledUntil = time.Now().Add(createThrottlePeriod)
 	}
 	s.scheduleRetry()
-	s.reportHealth(s.health.noteCreateFailure(err, s.outbox.UnflushedCount(), s.consecutiveCreateFailures, s.createThrottledUntil), err.Error())
+	s.reportHealth(s.health.noteCreateFailure(err, s.outbox.UnflushedCount(), failures, s.createThrottledUntil), err.Error())
 }
 
 // rebaseOntoSessionLocked re-bases the outbox onto s.sessionID, which the

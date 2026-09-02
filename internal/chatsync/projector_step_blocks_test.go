@@ -63,6 +63,21 @@ func blockOf(t *testing.T, we WireEvent) string {
 	}
 }
 
+// parseProseBlock splits a prose block id into its stream and step with the
+// recorded grammar, the way a consumer does. ok is false for a tool id, a
+// reset's bare stream id, or a legacy stepless id.
+func parseProseBlock(block string) (stream string, step int, ok bool) {
+	m := ProseBlockPattern.FindStringSubmatch(block)
+	if m == nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", 0, false
+	}
+	return m[1], n, true
+}
+
 // stepOf parses the trailing step off a prose block id with the recorded
 // grammar. Tests compare steps and ids rather than asserting literals: ids
 // come from one projector-wide counter, so a literal would pin allocation
@@ -347,7 +362,7 @@ func TestEvictedLaneNeverReusesAStepID(t *testing.T) {
 		p := NewProjector("sess-1", 0, proseOpts())
 		seen := map[string]bool{}
 		for i := 0; i <= maxTrackedLanes; i++ {
-			task := "task-" + itoa(i)
+			task := "task-" + strconv.Itoa(i)
 			seen[blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, task, "hi", "delta"))))] = true
 		}
 		// task-0 is evicted by now; its next prose re-creates the lane.
@@ -363,7 +378,7 @@ func TestEvictedLaneNeverReusesAStepID(t *testing.T) {
 			return events.Event{Kind: events.KindAssistant, SessionID: "sess-1", TurnID: turn, Timestamp: time.Now(), Content: "hi", Detail: "delta"}
 		}
 		for i := 0; i <= maxTrackedTurns; i++ {
-			seen[blockOf(t, onlyEvent(t, p.Project(turnEvent("turn:"+itoa(i)))))] = true
+			seen[blockOf(t, onlyEvent(t, p.Project(turnEvent("turn:"+strconv.Itoa(i)))))] = true
 		}
 		got := blockOf(t, onlyEvent(t, p.Project(turnEvent("turn:0"))))
 		if seen[got] {
@@ -371,8 +386,6 @@ func TestEvictedLaneNeverReusesAStepID(t *testing.T) {
 		}
 	})
 }
-
-func itoa(i int) string { return strconv.Itoa(i) }
 
 // TestProseBlockMatchesTheRecordedGrammar holds proseBlock and
 // ProseBlockPattern together: an id built for each of the four stream forms

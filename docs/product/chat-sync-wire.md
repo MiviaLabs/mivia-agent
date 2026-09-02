@@ -188,21 +188,23 @@ rules below - and the producer's own tests hold the record to the code. A
 consumer parses ids with the recorded regex, never a copy of its own.
 
 A turn is a loop - the model talks, calls a tool, reads the result, talks
-again - and `<step>` is what separates one utterance from the next. It counts
-from 0 and advances when a tool call closes the prose that preceded it, so
+again - and `<step>` is what separates one utterance from the next. It
+advances when a tool call closes the prose that preceded it, so
 **a consumer must render one message per block, in arrival order, rather than
 concatenating a turn's prose into one.** Doing the latter loses the order the
 narration interleaved with the tool calls. A step that calls several tools at
 once advances once, and a tool call that follows no prose advances not at all.
 
 `<step>` is an identifier, NOT a dense counter, and a consumer must not treat it
-as one. Ids come from one counter per producer session, shared by every turn
-and every subagent run, so a stream's ids skip freely: the assistant and
+as one. Ids come from one counter per producer RUN, shared by every turn and
+every subagent run in it, so a stream's ids skip freely: the assistant and
 thinking streams of a turn share a step, a second turn opens wherever the
-counter stands, and two runs streaming at once interleave their ids. What the
-wire guarantees is narrower and sufficient - a step id is never REUSED, by any
-stream of the session, and a consumer is never handed a block with nothing in
-it: a delta that failed to persist spends no step, and a reset that failed to
+counter stands, two runs streaming at once interleave their ids, and only the
+first stream of a run counts from 0. A later run re-attaching to the same
+remote session starts its counter over, but its turn ids are fresh, so what
+the wire guarantees is narrower and sufficient - a `(stream, step)` pair is
+never REUSED - and a consumer is never handed a block with nothing in it: a
+delta that failed to persist spends no step, and a reset that failed to
 persist leaves the step it would have advanced.
 
 The part before the final `:<step>` is the STREAM id, and it is a stable name

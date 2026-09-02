@@ -220,8 +220,14 @@ type SyncSession struct {
 	// rate bound. See session_recover.go.
 	consecutiveNoProgressRecoveries int
 	lastRecoveryAt                  time.Time
-	consecutiveCreateFailures       int
 	createThrottledUntil            time.Time
+	// consecutiveCreateFailures and createRefusals are the create throttle's
+	// counters: failed attempts, and recovery entries the throttle turned
+	// away without a request. Written by the worker only; atomic so a test
+	// can read them while the worker is parked on the retry schedule and
+	// prove a refusal moved the second but not the first.
+	consecutiveCreateFailures atomic.Int32
+	createRefusals            atomic.Int32
 
 	// createParams is the body recovery re-posts to mint a replacement
 	// session: the same title and labels the run attached with.

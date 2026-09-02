@@ -299,9 +299,9 @@ func (p *Projector) restoreClearedStream(payload *AssistantResetPayload) {
 	ts.streamUnrecoverable = true
 	// The step it advanced is recoverable, and must be: the replay is stamped
 	// with a segment the abandoned text never used otherwise, and a consumer
-	// cannot match the repair to the block it repairs. Conditional, because
-	// advanceStep is a no-op on a clean segment and an unconditional undo
-	// would under-run.
+	// cannot match the repair to the block it repairs. The undo is a snapshot
+	// the reset took only when it advanced; a reset on a clean segment
+	// advanced nothing and must restore nothing.
 	if u := ts.resetUndo; u != nil {
 		ts.segment, ts.segmentAssistant, ts.segmentThinking = u.segment, u.segmentAssistant, u.segmentThinking
 		ts.resetUndo = nil

@@ -2,6 +2,7 @@ package chatsync
 
 import (
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
@@ -227,5 +228,56 @@ func TestLostResetDoesNotAdvanceTheStep(t *testing.T) {
 	replay := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "replayed", "delta"))))
 	if replay != used {
 		t.Fatalf("replay after a LOST reset landed in %q, want %q: the viewer never heard the reset, so the repair must name the block it holds", replay, used)
+	}
+}
+
+// TestLostThinkingDeltaDoesNotSpendAStep is the thinking mirror of
+// TestLostDeltaDoesNotSpendAStep, for the root stream and for a lane: a
+// thinking delta whose append fails, then a tool start, then thinking. The
+// step must not have moved - nothing shipped. Without the thinking cases in
+// RollbackStreaming the lost delta stays counted and the tool call advances.
+func TestLostThinkingDeltaDoesNotSpendAStep(t *testing.T) {
+	t.Run("root", func(t *testing.T) {
+		p := NewProjector("sess-1", 0, proseOpts())
+		lost := p.Project(rootEvent(events.KindThinking, "never stored", ""))
+		wanted := blockOf(t, onlyEvent(t, lost))
+		p.RollbackStreaming(lost)
+		p.Project(toolEvent(events.KindToolStart, "call-1"))
+		got := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "stored", ""))))
+		if got != wanted {
+			t.Fatalf("after a lost thinking delta and a tool start the next one landed in %q, want %q", got, wanted)
+		}
+	})
+	t.Run("lane", func(t *testing.T) {
+		p := NewProjector("sess-1", 0, proseOpts())
+		lost := p.Project(subagentEvent(events.KindThinking, "task-a", "never stored", ""))
+		wanted := blockOf(t, onlyEvent(t, lost))
+		p.RollbackStreaming(lost)
+		laneTool := events.Event{Kind: events.KindSubagentStart, SessionID: "sess-1", TurnID: "turn:1", Timestamp: time.Now(), ToolCallID: "lane-call", Name: "Read"}
+		p.Project(laneTool.WithAgentAttribution("task-a", "builder", 1))
+		got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "stored", ""))))
+		if got != wanted {
+			t.Fatalf("after a lost lane thinking delta and the lane's tool start the next one landed in %q, want %q", got, wanted)
+		}
+	})
+}
+
+// TestLostResetOnACleanSegmentRestoresNothing pins the conditionality of
+// the reset undo. A reset before anything shipped advances nothing, so its
+// lost append must restore nothing either: the next prose lands exactly
+// where a control that never saw the reset puts it.
+func TestLostResetOnACleanSegmentRestoresNothing(t *testing.T) {
+	subject := NewProjector("sess-1", 0, proseOpts())
+	reset := subject.Project(rootEvent(events.KindAssistantReset, "", "retrying"))
+	subject.RollbackStreaming(reset)
+	got := blockOf(t, onlyEvent(t, subject.Project(rootEvent(events.KindAssistant, "answer", "delta"))))
+
+	control := NewProjector("sess-1", 0, proseOpts())
+	want := blockOf(t, onlyEvent(t, control.Project(rootEvent(events.KindAssistant, "answer", "delta"))))
+	if got != want {
+		t.Fatalf("after a lost reset on a clean segment the delta landed in %q, want %q: the undo restored a step it never replaced", got, want)
+	}
+	if stepOf(t, got) < 0 {
+		t.Fatalf("step under-ran: %q", got)
 	}
 }
