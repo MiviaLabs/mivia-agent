@@ -62,6 +62,15 @@ type ndjsonEvent struct {
 	// bundled CLI that predates this field", which a consumer should read
 	// as ok (the prior behavior), not as failure.
 	Status string `json:"status,omitempty"`
+	// HookEvent, Program and Tool describe one lifecycle hook run: which
+	// phase fired (PreToolUse, PostToolUse, Stop), which script ran, and which
+	// tool it ran for. They are separate from Name deliberately - on every
+	// other line type Name is the TOOL's name, and overloading it here would
+	// make a consumer's "which tool" lookup wrong exactly when a hook blocked
+	// the call.
+	HookEvent string `json:"hook_event,omitempty"`
+	Program   string `json:"program,omitempty"`
+	Tool      string `json:"tool,omitempty"`
 	// OriginTaskID/OriginAgent/OriginDepth attribute an event to the
 	// delegated subagent that produced it - see agent.EventOrigin.
 	//
@@ -337,6 +346,27 @@ func writeJSONSubagentLine(w io.Writer, e agent.Event) bool {
 			OriginAgent:  e.Origin.Agent,
 			OriginDepth:  e.Origin.Depth,
 		})
+	case agent.EventHook:
+		// A hook is a program the runtime runs on the operator's machine for
+		// every matching call, and one of them can BLOCK the call. Without
+		// this line a --json consumer saw the tool never run and was told
+		// nothing about why - the single most important thing a hook has to
+		// say. Every run produces a line, including a silent one: a mis-typed
+		// matcher that selects nothing is indistinguishable from a working
+		// hook until the silent runs are visible too.
+		writeNDJSONEvent(w, ndjsonEvent{
+			Type:       "hook",
+			HookEvent:  e.Name,
+			Program:    e.Program,
+			Tool:       e.Tool,
+			ToolCallID: e.ToolCallID,
+			Message:    e.Detail,
+			// Input is redacted at the producer (emitHookRuns), so this is the
+			// same bounded text the operator's own TUI row shows.
+			Input:  e.Input,
+			Output: e.Output,
+			Status: hookStatus(e.Denied),
+		})
 	case agent.EventSubagentBegin:
 		// The run's opening signal. Without it a --json consumer first hears
 		// of a subagent when it calls a tool, and a run that only thinks and
@@ -484,4 +514,15 @@ func splitTrailingIncompleteRune(b []byte) (complete, incomplete []byte) {
 // concern, and so the two boundaries cannot drift apart.
 func jsonTurnErrorMessage(err error) string {
 	return chat.TurnErrorMessage(err)
+}
+
+// hookStatus names the one thing a consumer must not have to infer: whether
+// this hook run stopped the tool call. "ok" for a hook that merely reported,
+// and a distinct word for one that refused - not the tool vocabulary's
+// "failed", because the hook did not fail. It did its job.
+func hookStatus(denied bool) string {
+	if denied {
+		return "blocked"
+	}
+	return "ok"
 }
