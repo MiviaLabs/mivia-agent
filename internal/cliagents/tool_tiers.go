@@ -68,14 +68,21 @@ func PlanToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *co
 // authorized MCP-discovered tool, so an operator's [tools] core (or an
 // agent's tools_core) can never silently defer one.
 //
-// That list is hand-authored and names static, compiled-in tool names; it
-// cannot name an MCP tool, whose "mcp__<server>__x<hex>" name is a runtime
-// hash of whatever the remote server reports (internal/mcp.EncodeToolName) -
-// unknowable when the list is written, and liable to change the moment the
-// server's own tool set does. Without this, naming ANY core tier at all
-// (this repo's own .mivia/mivia.toml does, to control prompt cost) silently
-// and permanently moves every MCP tool into the deferred tier, with no way
-// to opt back in short of predicting the hash. isMCPServerTool already
+// That list is hand-authored and names static, compiled-in tool names. An
+// MCP tool's "mcp__<server>__x<hex>" name is derived at runtime from what the
+// remote server reports, and changes the moment that server's tool set does,
+// so a list written ahead of time cannot track it. Without this, naming ANY
+// core tier at all (this repo's own .mivia/mivia.toml does, to control prompt
+// cost) silently and permanently moves every MCP tool into the deferred tier,
+// with no practical way to opt back in.
+//
+// The name is NOT unguessable, and this comment used to say it was - "a
+// runtime hash ... no way to opt back in short of predicting the hash".
+// EncodeToolName writes a plain reversible hex encoding, so a name IS
+// derivable; what defeats a hand-authored list is that it moves, not that it
+// cannot be spelled. The distinction matters because the same false claim was
+// the stated reason AuthorizedAgentTools granted these tools authority
+// without checking any denylist. isMCPServerTool already
 // treats server selection as authority over an MCP tool's AUTHORIZATION
 // (authorizedAgentTools, mcp_scope.go); this applies the same rule to core-
 // tier placement, since a tool the agent cannot even see advertised is a

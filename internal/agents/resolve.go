@@ -181,6 +181,18 @@ type inheritedFields struct {
 	inputSchema    map[string]any
 }
 
+// effectiveDenylistFor is the set applyToolPolicy denies with, kept on the
+// resolved agent for producers that add tool names AFTER it has run.
+//
+// cliagents.AuthorizedAgentTools is the one that matters: it grants authority
+// over every tool of a selected MCP server, which by definition is not in the
+// agent file, and several of the surfaces it feeds cannot reach the operator's
+// config to re-check. Carrying the denial in the immutable resolved snapshot
+// is what makes it apply everywhere the agent goes.
+func effectiveDenylistFor(disallowed []string, opts ResolveOptions) []string {
+	return append(slices.Clone(disallowed), opts.Global.MandatoryToolDenylistAdditions...)
+}
+
 func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts ResolveOptions) (ResolvedAgent, []string, error) {
 	var warn []string
 	fields := inheritFields(in.Spec, parent, opts)
@@ -250,6 +262,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		EffectiveMCPServers: mcpServers,
 		AllowEmptyTools:     allowEmptyTools,
 		DisallowedTools:     dis,
+		EffectiveDenylist:   effectiveDenylistFor(dis, opts),
 		CoreTools:           fields.coreTools,
 		Skills:              skills,
 		SkillOrigins:        origins,
