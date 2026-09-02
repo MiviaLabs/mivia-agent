@@ -273,6 +273,24 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 			})
 		case agent.EventSubagentBegin, agent.EventAssistantReset:
 			parentOnEvent(e)
+		case agent.EventToolPending:
+			// A delegated write tool's gate can be answered from exactly one
+			// place: the root approval queue, armed by a tool_pending event on
+			// the root turn stream and resolved by ToolCallID. The subagent
+			// dialog has no prompt surface, so the origin-stamped event this
+			// wrapper receives would be diverted there and dropped - the gate
+			// then blocked until the task deadline and denied "canceled" with
+			// nothing ever on screen. Strip the origin so the root stream
+			// treats it as its own pending call; the id does the matching, and
+			// the tool start/end that follow stay in the subagent's lane.
+			parentOnEvent(agent.Event{
+				Kind:       agent.EventToolPending,
+				ToolCallID: e.ToolCallID,
+				Name:       e.Name,
+				Detail:     e.Detail,
+				Input:      e.Input,
+				InputBody:  e.InputBody,
+			})
 		case agent.EventSubagentHeartbeat:
 			// Feed the workflow join liveness watchdog.
 			controller.NoteStepHeartbeat(e.Origin.TaskID)
