@@ -162,3 +162,98 @@ func TestDecisionsStillCarryTheirKeys(t *testing.T) {
 		}
 	}
 }
+
+// Model is passed BY VALUE between the foreground screen and its per-session
+// states (internal/ui/screen/conversation/session.go copies it in both
+// directions). A method that mutates the queue in place therefore writes
+// through an array a second live Model still holds, and the two disagree about
+// what is pending.
+//
+// Nothing reads the stale copy today - every router guards on session id, and
+// the map entry is rewritten on every switch-away - so this is latent. It is
+// also one refactor from resurrecting a resolved prompt or dropping a queued
+// one, and a dropped prompt is a tool-call gate that never returns.
+
+func idsOf(m Model) []string {
+	out := make([]string, 0, len(m.pending))
+	for _, req := range m.pending {
+		out = append(out, req.ToolCallID)
+	}
+	return out
+}
+
+// TestResolveDoesNotReachIntoACopiedModel: an in-place removal reslices the
+// shared array, so the copy sees a duplicated tail.
+func TestResolveDoesNotReachIntoACopiedModel(t *testing.T) {
+	m := newModel()
+	m.SetRequest(pending("c1", "edit_file"))
+	m.SetRequest(pending("c2", "run_command"))
+	m.SetRequest(pending("c3", "delete_file"))
+
+	copied := m
+	m.Resolve("c2")
+
+	if got := idsOf(copied); len(got) != 3 || got[1] != "c2" {
+		t.Errorf("the copy's queue was rewritten by a Resolve on the original: %v", got)
+	}
+}
+
+// TestSetRequestDoesNotReachIntoACopiedModel: appending into a shared array
+// overwrites whatever the other header queued at that index.
+func TestSetRequestDoesNotReachIntoACopiedModel(t *testing.T) {
+	m := newModel()
+	// Three first, deliberately: a plain append only writes through a SHARED
+	// array when there is spare capacity, and Go's growth leaves spare
+	// capacity at three. With one element the bug hides behind a
+	// reallocation, and a test that queues one proves nothing.
+	m.SetRequest(pending("c1", "edit_file"))
+	m.SetRequest(pending("c2", "run_command"))
+	m.SetRequest(pending("c3", "delete_file"))
+
+	copied := m
+	copied.SetRequest(pending("c9", "run_command"))
+	m.SetRequest(pending("c4", "delete_file"))
+
+	if got := idsOf(copied); len(got) != 4 || got[3] != "c9" {
+		t.Errorf("the copy's own queued call was overwritten by the original: %v", got)
+	}
+	if got := idsOf(m); len(got) != 4 || got[3] != "c4" {
+		t.Errorf("the original's queued call was overwritten by the copy: %v", got)
+	}
+}
+
+// TestHeadDoesNotHandOutAPointerIntoTheQueue closes the fourth route. head()
+// returned &m.pending[0] from a VALUE receiver - a pointer into an array every
+// copy shares.
+func TestHeadDoesNotHandOutAPointerIntoTheQueue(t *testing.T) {
+	m := newModel()
+	m.SetRequest(pending("c1", "edit_file"))
+
+	copied := m
+	if h := m.head(); h != nil {
+		h.ToolCallID = "MUTATED"
+	}
+
+	if got := idsOf(copied); got[0] != "c1" {
+		t.Errorf("a write through head() reached a copy's queue: %v", got)
+	}
+	if got := idsOf(m); got[0] != "c1" {
+		t.Errorf("a write through head() reached this Model's own queue: %v", got)
+	}
+}
+
+// TestUpdateDoesNotReachIntoACopiedModel guards the one mutator that was
+// already safe, so a later simplification cannot quietly undo it.
+func TestUpdateDoesNotReachIntoACopiedModel(t *testing.T) {
+	m := newModel()
+	m.SetRequest(pending("c1", "edit_file"))
+	m.SetRequest(pending("c2", "run_command"))
+
+	copied := m
+	m, _ = press(t, m, "o")
+	_ = m
+
+	if got := idsOf(copied); len(got) != 2 || got[0] != "c1" {
+		t.Errorf("answering a prompt rewrote a copy's queue: %v", got)
+	}
+}

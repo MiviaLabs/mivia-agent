@@ -81,7 +81,15 @@ func (m *Model) SetRequest(b uievent.ToolPendingBody) {
 			return
 		}
 	}
-	m.pending = append(m.pending, b)
+	// A fresh slice, never an append into the shared array. Model is passed
+	// BY VALUE between the foreground screen and its per-session states
+	// (internal/ui/screen/conversation/session.go), so two live headers can
+	// share one backing array: appending through one then overwrites a queued
+	// prompt held by the other. A lost prompt is a tool-call gate that never
+	// returns.
+	next := make([]uievent.ToolPendingBody, 0, len(m.pending)+1)
+	next = append(next, m.pending...)
+	m.pending = append(next, b)
 	if len(m.pending) == 1 {
 		m.offset = 0
 	}
@@ -99,7 +107,13 @@ func (m *Model) Resolve(toolCallID string) {
 		if req.ToolCallID != toolCallID {
 			continue
 		}
-		m.pending = append(m.pending[:i], m.pending[i+1:]...)
+		// Copy rather than reslice in place: an in-place removal writes through
+		// the shared array and corrupts a copy of this Model, which can
+		// resurrect a resolved prompt or drop a queued one.
+		next := make([]uievent.ToolPendingBody, 0, len(m.pending)-1)
+		next = append(next, m.pending[:i]...)
+		next = append(next, m.pending[i+1:]...)
+		m.pending = next
 		if i == 0 {
 			// The head changed, so the diff behind it did too.
 			m.offset = 0
@@ -125,11 +139,17 @@ func (m Model) Active() bool { return len(m.pending) > 0 }
 func (m Model) Waiting() int { return len(m.pending) }
 
 // head returns the request being rendered, or nil when the queue is empty.
+//
+// It returns a COPY. A pointer into m.pending would be a pointer into an array
+// shared with every value copy of this Model, so a write through it would
+// reach queues this Model does not own. Nothing writes through it today; the
+// copy is what keeps that true without depending on nobody ever trying.
 func (m Model) head() *uievent.ToolPendingBody {
 	if len(m.pending) == 0 {
 		return nil
 	}
-	return &m.pending[0]
+	req := m.pending[0]
+	return &req
 }
 
 // Update ignores every Msg except a key press while a request is active.
