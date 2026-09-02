@@ -1,8 +1,10 @@
 package cliagents
 
 import (
+	"context"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -167,6 +169,17 @@ type SessionDispatcherOpts struct {
 	// runs on the invoking goroutine, so it must be cheap and safe for
 	// concurrent calls.
 	Sink func(runtime.Event)
+
+	// OnToolCancelReady, when set, is forwarded onto every MultiStepHandler
+	// this dispatcher registers as that task's
+	// subagents.MultiStepHandler.OnToolCancelReady: the per-task sink for
+	// the ability to cancel ONE in-flight tool call within ONE running
+	// subagent task. Nil (the default for every caller that predates this
+	// field) leaves nested loops exactly as before - no cancel-by-ID
+	// capability offered for their tool calls. Production callers set this
+	// from cliorchestrate.ToolCancelReadyHook(d) for the SAME dispatcher d
+	// this Opts value builds handlers on.
+	OnToolCancelReady func(ctx context.Context, canceler agent.ToolCanceler)
 }
 
 // Authority resolves the full authorized set nested principals are scoped from.

@@ -338,6 +338,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,
 		OnEvent:                   OnEventForMultiStep(stampRoutedOrigin(identity, instanceID, emitSubagentProgress)),
+		OnToolCancelReady:         h.opts.OnToolCancelReady,
 	}
 }
 

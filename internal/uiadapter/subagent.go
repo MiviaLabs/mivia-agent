@@ -92,26 +92,69 @@ func (s *SubagentThreads) RegisterTaskRoute(callID, runID, taskID string) {
 // how this differs from TurnHandle.Cancel()/ActiveTurn().Cancel() (which
 // only detach a UI listener from the live event stream).
 func (s *SubagentThreads) CancelSubagentTask(callID string) (bool, error) {
+	h, taskID, err := s.resolveTaskRoute(callID)
+	if err != nil {
+		return false, err
+	}
+	if h == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.coordinator().CancelTask(ctx, h, taskID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CancelSubagentToolCall cancels ONE in-flight tool call within the ONE
+// dispatched task backing callID, leaving the task itself, its siblings,
+// and the parent run untouched. See ports.SubagentThreads.CancelSubagentToolCall's
+// doc comment for the ok/error split; the route resolution here is
+// identical to CancelSubagentTask's, deliberately not duplicated into a
+// third copy - see resolveTaskRoute.
+func (s *SubagentThreads) CancelSubagentToolCall(callID, toolCallID string) (bool, error) {
+	h, taskID, err := s.resolveTaskRoute(callID)
+	if err != nil {
+		return false, err
+	}
+	if h == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return s.coordinator().CancelSubagentToolCall(ctx, h, taskID, toolCallID)
+}
+
+// coordinator returns the wired coordinator.Coordinator under lock.
+func (s *SubagentThreads) coordinator() coordinator.Coordinator {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.coord
+}
+
+// resolveTaskRoute resolves callID down to its coordinator RunHandle and
+// task ID, the shared first half of both CancelSubagentTask and
+// CancelSubagentToolCall. A nil handle with a nil error means "no route
+// registered for this callID" (a safe no-op for the caller); a non-nil
+// error means a route WAS found but the coordinator itself could not
+// serve it.
+func (s *SubagentThreads) resolveTaskRoute(callID string) (*coordinator.RunHandle, string, error) {
 	s.mu.Lock()
 	route, ok := s.routes[callID]
 	coord := s.coord
 	s.mu.Unlock()
 	if !ok {
-		return false, nil
+		return nil, "", nil
 	}
 	if coord == nil {
-		return false, fmt.Errorf("uiadapter: no coordinator wired to cancel subagent task %q", callID)
+		return nil, "", fmt.Errorf("uiadapter: no coordinator wired to reach subagent task %q", callID)
 	}
 	h := coord.HandleForRun(route.runID)
 	if h == nil {
-		return false, fmt.Errorf("uiadapter: run %q for subagent task %q is no longer active", route.runID, callID)
+		return nil, "", fmt.Errorf("uiadapter: run %q for subagent task %q is no longer active", route.runID, callID)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := coord.CancelTask(ctx, h, route.taskID); err != nil {
-		return false, err
-	}
-	return true, nil
+	return h, route.taskID, nil
 }
 
 // registerReconstructed registers a reconstruction under key, but never at
