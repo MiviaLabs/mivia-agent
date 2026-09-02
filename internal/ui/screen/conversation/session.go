@@ -42,7 +42,8 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
 		st.panel.dialog, st.panel.dialogAgent = false, ""
 	case uievent.ToolStartBody:
-		st.approval.Clear()
+		// This call's own prompt only - see the same rule in events.go.
+		st.approval.Resolve(b.ToolCallID)
 		st.statusline.SetLabel("running")
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
 		if isSubagentTool(b.Name) || (st.threads != nil && isThreadRegistered(st.threads, b.ToolCallID)) {
@@ -53,7 +54,7 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 			st.panel.observeAgent(b.ToolCallID, b.Progress)
 		}
 	case uievent.ToolEndBody:
-		st.approval.Clear()
+		st.approval.Resolve(b.ToolCallID)
 		st.statusline.SetLabel("thinking")
 		st.panel.observeAgentEnd(b.ToolCallID, b.OK)
 		if b.Diff != nil {
@@ -62,7 +63,7 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 	case uievent.UsageBody:
 		st.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
-		st.approval.Clear()
+		st.approval.ClearAll()
 		st.panel.reconcileTerminal(b.Reason)
 	}
 }
@@ -166,7 +167,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 	if msg.sessionID != "" && s.convID() != msg.sessionID {
 		if st, ok := s.sessions[msg.sessionID]; ok {
 			st.statusline.Stop()
-			st.approval.Clear()
+			st.approval.ClearAll()
 			st.panel.reconcileTerminal("interrupted")
 			st.active = nil
 			if st.pendingForce != nil {
@@ -201,7 +202,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 		return s, nil
 	}
 	s.statusline.Stop()
-	s.approval.Clear()
+	s.approval.ClearAll()
 	s.panel.reconcileTerminal("interrupted")
 	s.active = nil
 	s.refreshTopbar()

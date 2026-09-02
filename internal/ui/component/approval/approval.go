@@ -17,16 +17,28 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// Model holds at most one pending request: a new SetRequest replaces
-// whatever was pending. This is the inline prompt the build spec calls
-// for (uikit/config.ApprovalDefaultInline), not a queue-visualising
-// dialog - promotion to a full alt-screen dialog is a later screen, not
-// this component's job.
+// Model holds every pending request and shows the OLDEST.
+//
+// It used to hold exactly one, replaced on arrival. The agent runs tool calls
+// in parallel and each gated call blocks its own goroutine until answered, so
+// a second prompt discarded the first and the gate behind it waited for a
+// decision that could no longer be made. A session then looked idle while
+// being blocked for ever.
+//
+// Showing the oldest rather than the newest is deliberate: the operator
+// answers the prompt they have been reading, and a call that arrives while
+// they decide must not move the target under their fingers.
+//
+// This is still the inline prompt the build spec calls for
+// (uikit/config.ApprovalDefaultInline), not a queue-visualising dialog. The
+// queue is depth, not chrome: only the head is rendered.
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
 
-	active *uievent.ToolPendingBody
+	// pending is the queue, oldest first. The head is what View renders and
+	// what a key press answers.
+	pending []uievent.ToolPendingBody
 
 	// offset is the first rendered diff line the preview window shows.
 	// It is only meaningful while active carries a diff, and it never
@@ -56,27 +68,74 @@ func New(t theme.Theme, tier theme.Tier) Model {
 	return Model{Theme: t, Tier: tier}
 }
 
-// SetRequest arms the prompt for a new pending tool call. The scroll
-// offset restarts at the top: a new request is a new diff, and a stale
+// SetRequest queues a pending tool call. The scroll offset restarts at the
+// top when this becomes the head: a new request is a new diff, and a stale
 // offset could land the first view halfway through it.
+//
+// A call already queued is ignored rather than queued twice - one gate cannot
+// be answered two times, and a duplicate would leave a prompt the operator
+// answers into nothing.
 func (m *Model) SetRequest(b uievent.ToolPendingBody) {
-	m.active = &b
-	m.offset = 0
+	for _, existing := range m.pending {
+		if existing.ToolCallID == b.ToolCallID {
+			return
+		}
+	}
+	m.pending = append(m.pending, b)
+	if len(m.pending) == 1 {
+		m.offset = 0
+	}
 }
 
-// Clear dismisses the prompt without emitting a decision (e.g. tool started out-of-band or turn ended).
-func (m *Model) Clear() {
-	m.active = nil
+// Resolve drops the request for one tool call, wherever it sits in the queue,
+// without emitting a decision. It is what a tool starting or ending reports:
+// that call is no longer waiting on the operator.
+//
+// It is per-call ON PURPOSE. This used to be a blanket Clear, so a parallel
+// call reaching tool.start dismissed the prompt for a DIFFERENT call that was
+// still waiting - and that gate then blocked with nothing on screen to answer.
+func (m *Model) Resolve(toolCallID string) {
+	for i, req := range m.pending {
+		if req.ToolCallID != toolCallID {
+			continue
+		}
+		m.pending = append(m.pending[:i], m.pending[i+1:]...)
+		if i == 0 {
+			// The head changed, so the diff behind it did too.
+			m.offset = 0
+		}
+		return
+	}
+}
+
+// ClearAll drops every pending request. The turn that produced them has
+// ended, so no decision can reach a gate any more and showing a prompt would
+// invite an answer that goes nowhere.
+func (m *Model) ClearAll() {
+	m.pending = nil
 	m.offset = 0
 }
 
 // Active reports whether a request is currently awaiting a decision.
-func (m Model) Active() bool { return m.active != nil }
+func (m Model) Active() bool { return len(m.pending) > 0 }
+
+// Waiting is how many calls are queued behind and including the head. The
+// statusline uses it to say that answering one prompt will not unblock the
+// turn on its own.
+func (m Model) Waiting() int { return len(m.pending) }
+
+// head returns the request being rendered, or nil when the queue is empty.
+func (m Model) head() *uievent.ToolPendingBody {
+	if len(m.pending) == 0 {
+		return nil
+	}
+	return &m.pending[0]
+}
 
 // Update ignores every Msg except a key press while a request is active.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyPressMsg)
-	if !ok || m.active == nil {
+	if !ok || len(m.pending) == 0 {
 		return m, nil
 	}
 	// Key set is wireframes-panes.md section 7, exactly: o once, a always,
@@ -101,8 +160,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-	id := m.active.ToolCallID
-	m.active = nil
+	id := m.pending[0].ToolCallID
+	// Copy: the receiver is a value, but the slice header is shared with the
+	// caller's Model, so reslicing in place would edit theirs too.
+	m.pending = append([]uievent.ToolPendingBody(nil), m.pending[1:]...)
+	m.offset = 0
 	return m, func() tea.Msg { return DecisionMsg{ToolCallID: id, Decision: decision} }
 }
 
@@ -115,7 +177,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // claims, or every wrapped line above it reflows on every keystroke
 // (ux-rules.md rule 2.7).
 func (m Model) View() string {
-	if m.active == nil {
+	if m.head() == nil {
 		return ""
 	}
 	// Every chrome row is clipped to the wrap width before it enters the
@@ -165,10 +227,11 @@ func (m Model) View() string {
 
 // action names what this request would do: the tool and its arguments.
 func (m Model) action() string {
-	if m.active == nil {
+	if m.head() == nil {
 		return ""
 	}
-	return strings.TrimSpace(m.active.Name + " " + render.FormatToolDetail(m.active.Name, m.active.Args))
+	h := m.head()
+	return strings.TrimSpace(h.Name + " " + render.FormatToolDetail(h.Name, h.Args))
 }
 
 // borderLabel is the text of the top border row, and whether the action
@@ -210,10 +273,10 @@ func (m Model) ScrollBy(n int) Model {
 }
 
 func (m Model) diffLines() []string {
-	if m.active == nil || m.active.Diff == nil {
+	if m.head() == nil || m.head().Diff == nil {
 		return nil
 	}
-	return render.FormatDiffLines(m.Theme, m.Tier, m.width-4, *m.active.Diff)
+	return render.FormatDiffLines(m.Theme, m.Tier, m.width-4, *m.head().Diff)
 }
 
 // diffTotal is the full rendered line count of the pending diff.
@@ -264,7 +327,7 @@ func (m Model) diffWindow() []string {
 // 0 when nothing is pending, and CONSTANT while scrolling: the window
 // never grows or shrinks with the offset.
 func (m Model) Height() int {
-	if m.active == nil {
+	if m.head() == nil {
 		return 0
 	}
 	rows := 1 // the decision-key hint

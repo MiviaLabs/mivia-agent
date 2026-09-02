@@ -371,7 +371,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case threadEndedMsg:
 		if s.embedded {
 			s.statusline.Stop()
-			s.approval.Clear()
+			s.approval.ClearAll()
 			s.panel.reconcileTerminal("interrupted")
 			s.active = nil
 			return s, nil

@@ -145,7 +145,10 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		// pre-empts, so it closes.
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 	case uievent.ToolStartBody:
-		s.approval.Clear()
+		// This call's OWN prompt, not every prompt. A blanket clear dismissed
+		// the prompt for a different call that was still waiting, and its gate
+		// then blocked with nothing on screen to answer it.
+		s.approval.Resolve(b.ToolCallID)
 		s.statusline.SetLabel("running")
 		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
 		s.observeToolStart(b)
@@ -158,7 +161,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 			s.panel.observeAgent(b.ToolCallID, b.Progress)
 		}
 	case uievent.ToolEndBody:
-		s.approval.Clear()
+		s.approval.Resolve(b.ToolCallID)
 		s.statusline.SetLabel("thinking")
 		s.observeToolEnd(b)
 	case uievent.UsageBody:
@@ -177,7 +180,8 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.topbar.SetUsage(live)
 		s.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
-		s.approval.Clear()
+		// The turn is over, so no decision can reach a gate any more.
+		s.approval.ClearAll()
 		s.panel.reconcileTerminal(b.Reason)
 		// The turn committed (and may have compacted at the boundary), so
 		// the session's own estimate is authoritative again. Dropping the
