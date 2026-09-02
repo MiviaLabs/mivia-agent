@@ -120,10 +120,12 @@ func (h *MultiStepHandler) runValidatedReply(
 			return candidate, inst, nil
 		}
 		if attempt > 0 && candidate == lastInvalid {
+			emitAssistantReset(opts, "schema repair made no progress: the reply was never accepted")
 			return "", nil, fmt.Errorf("%w: no progress on schema repair: repeated the identical invalid output", ErrSchemaViolation)
 		}
 		lastInvalid = candidate
 		if attempt >= retryMax {
+			emitAssistantReset(opts, "schema retry budget exhausted: the reply was never accepted")
 			return "", nil, schemaRepairExhaustedError(loop.LastFinishReason, vErr)
 		}
 		// A retry is about to run a full new LLM turn. Announce it through the
@@ -139,12 +141,24 @@ func (h *MultiStepHandler) runValidatedReply(
 				Kind:   agent.EventSchemaRetry,
 				Detail: fmt.Sprintf("schema validation failed on attempt %d/%d, retrying...", attempt+1, retryMax+1),
 			})
-			// The corrective turn replaces the rejected reply rather than
-			// continuing it, so a consumer must drop what it has accumulated.
-			opts.OnEvent(agent.Event{Kind: agent.EventAssistantReset})
 		}
+		// The corrective turn replaces the rejected reply rather than
+		// continuing it, so a consumer must drop what it has accumulated -
+		// whether a retry is about to run (no Detail) or the attempt was
+		// rejected for good (Detail explains why, above).
+		emitAssistantReset(opts, "")
 		userTurn = schemaRepairCorrectiveTurn(loop.LastFinishReason, vErr, compiled.Raw())
 	}
+}
+
+// emitAssistantReset tells a viewer to discard the assistant text already
+// published for this stream, whether because a retry is about to replace it
+// or because the attempt was rejected for good and nothing will replace it.
+func emitAssistantReset(opts agent.Options, detail string) {
+	if opts.OnEvent == nil {
+		return
+	}
+	opts.OnEvent(agent.Event{Kind: agent.EventAssistantReset, Detail: detail})
 }
 
 // schemaRepairStepBudget folds the per-Run MaxTurns cap into the whole
