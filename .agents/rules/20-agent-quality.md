@@ -22,7 +22,7 @@ Required for every:
 
 Procedure: apply the described code mutation → confirm the named test fails → revert → record result in the completion report. Inspection-only “mutation proof” is invalid.
 
-Package kill-rate floors and audited equivalent-mutant denylists are declared in `.mivia/policy/mutation/<pkg>.json` and verified with `make mutation-check` (`scripts/check_mutation.py --check-floors`). Diff and staged mutations are checked with `python3 scripts/check_mutation.py --staged`.
+Package kill-rate floors and audited equivalent-mutant denylists are declared in `.mivia/policy/mutation/<pkg>.json` and verified with `make mutation-check` (`scripts/check_mutation.py --check-floors`). Diff and staged mutations are checked with `python3 scripts/check_mutation.py --staged`, which also runs automatically in `scripts/git-hooks/pre-commit` (scoped to the lines actually staged, so cost stays proportional to the commit, not the repo) - it is the one check generic enough to catch a test that asserts on the wrong artifact or a fixture that disables the guard it means to test, without knowing the defect class ahead of time.
 
 ## Regression Tests
 

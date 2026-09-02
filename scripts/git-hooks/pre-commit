@@ -333,7 +333,30 @@ if command -v go >/dev/null 2>&1; then
   INVARIANT_SUMMARY="invariants ok"
 fi
 
+# Mutation sweep on the staged diff. Applies text-level operator mutations
+# ONLY to lines actually changed in this commit, runs each mutant's package
+# test target, and fails if a mutant survives with no test noticing - the one
+# check generic enough to catch "the test asserts on the wrong thing" or "the
+# fixture disables the very guard it means to test" without knowing the
+# defect class in advance. It was already wired into `make verify`
+# (scripts/check_mutation.py --staged) but nothing ran `make verify`
+# interactively, so it never fired on an ordinary commit. This is that gap
+# closed: it runs here, on every commit, scoped to what that commit actually
+# changes so cost stays proportional to diff size, not repo size.
+#
+# Runs from ROOT, not STAGED_ROOT: it drives `git diff --cached` itself and
+# transiently mutates the real working-tree file, restoring it in a `finally`
+# even on SIGTERM - it needs the real .git directory and working tree, which
+# STAGED_ROOT (a bare `git archive` extraction with no .git) does not have.
+MUTATION_SUMMARY="mutation check skipped"
+if command -v go >/dev/null 2>&1; then
+  if ! run_verify python3 "$ROOT/scripts/check_mutation.py" --staged; then
+    fail "mutation check: a staged change introduced a mutant no test kills - see output above"
+  fi
+  MUTATION_SUMMARY="mutation check ok"
+fi
+
 printf 'tree=%s\nsummary=%s\n' \
   "$TREE" \
-  "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY}; ${INVARIANT_SUMMARY})" \
+  "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY}; ${INVARIANT_SUMMARY}; ${MUTATION_SUMMARY})" \
   >"$SUMMARY_FILE"
