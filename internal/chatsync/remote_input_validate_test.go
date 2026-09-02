@@ -60,6 +60,93 @@ func TestInputPoller_RejectsSessionIDMismatch(t *testing.T) {
 	assertNeverDelivered(t, poller, rejections, "session id mismatch")
 }
 
+// TestInputPoller_AcceptsCancelKindWithEmptyBody pins the "cancel" kind's
+// whole reason for existing: it carries an instruction, not text, so an
+// empty Body must NOT be rejected the way it is for "message".
+func TestInputPoller_AcceptsCancelKindWithEmptyBody(t *testing.T) {
+	mux := http.NewServeMux()
+	served := false
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if served {
+			_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+			return
+		}
+		served = true
+		_ = json.NewEncoder(w).Encode(NextInput{Input: &SessionInput{
+			ID: "inp-cancel-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "cancel", Body: "",
+		}})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/inputs/{inputID}/consume", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		now := time.Now().Format(time.RFC3339)
+		_ = json.NewEncoder(w).Encode(SessionInput{
+			ID: "inp-cancel-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "cancel", Body: "", ConsumedAt: &now,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-1", 1, fixedAuthorUserIDProvider("user-1"), t.TempDir())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+
+	select {
+	case ri := <-poller.Inputs():
+		if ri.ID != "inp-cancel-1" || ri.Kind != "cancel" || ri.Body != "" {
+			t.Errorf("received input = %+v, want cancel kind with empty body", ri)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for cancel input delivery")
+	}
+}
+
+// TestInputPoller_CancelKindStillEnforcesSessionIDMatch proves "cancel"
+// gets no exemption from the checks that are not about body shape: session
+// ownership still applies exactly as it does for "message".
+func TestInputPoller_CancelKindStillEnforcesSessionIDMatch(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-mine", SessionInput{
+		ID: "inp-1", SessionID: "sess-other", AuthorUserID: "user-1", Kind: "cancel", Body: "",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "session id mismatch")
+}
+
+// TestInputPoller_CancelKindStillEnforcesAuthorMatch proves "cancel" gets
+// no exemption from author-identity verification either: a remote cancel
+// from anyone but the CLI's own verified principal is still refused.
+func TestInputPoller_CancelKindStillEnforcesAuthorMatch(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "attacker", Kind: "cancel", Body: "",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "does not match")
+}
+
+// TestInputPoller_RejectsUnknownKind pins the allowlist boundary itself: an
+// unrecognized kind ("bogus") - neither "message" nor the new "cancel" - is
+// still refused, same as TestInputPoller_RejectsUnsupportedKind.
+func TestInputPoller_RejectsUnknownKind(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "bogus", Body: "hi",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "unsupported kind")
+}
+
 func TestInputPoller_RejectsUnsupportedKind(t *testing.T) {
 	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
 		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "system", Body: "hi",
@@ -69,6 +156,17 @@ func TestInputPoller_RejectsUnsupportedKind(t *testing.T) {
 	poller.Start(ctx)
 	defer poller.Stop(context.Background())
 	assertNeverDelivered(t, poller, rejections, "unsupported kind")
+}
+
+func TestInputPoller_RejectsEmptyBody(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message", Body: "",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "empty body")
 }
 
 func TestInputPoller_RejectsOversizedBody(t *testing.T) {

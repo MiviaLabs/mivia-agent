@@ -14,14 +14,16 @@ import (
 // InputPoller.resolveAuthorUserID.
 type AuthorUserIDProvider func(ctx context.Context) (string, error)
 
-// allowedRemoteInputKinds is the SessionInput.Kind allowlist. "message" is
-// the only kind ever exercised in this repo's tests or fixtures and the only
-// one the recorded contract (api/contracts/chat-sessions.v1.json) implies is
-// live; a server that starts sending a new kind needs a matching addition
-// here before this client will act on it - silent pass-through would let an
-// unreviewed instruction shape start executing as a local turn.
+// allowedRemoteInputKinds is the SessionInput.Kind allowlist. "message"
+// injects text as if the user typed it; "cancel" remotely stops the
+// session's in-flight turn, mirroring local Ctrl+C/Esc. Both are the only
+// kinds this client acts on; a server that starts sending a new kind needs a
+// matching addition here before this client will act on it - silent
+// pass-through would let an unreviewed instruction shape start executing as
+// a local turn.
 var allowedRemoteInputKinds = map[string]bool{
 	"message": true,
+	"cancel":  true,
 }
 
 // maxRemoteInputBodyBytes bounds a remote instruction's length. Generous
@@ -55,7 +57,10 @@ func (p *InputPoller) validateRemoteInput(ctx context.Context, in *SessionInput)
 	if !allowedRemoteInputKinds[in.Kind] {
 		return RemoteInput{}, fmt.Sprintf("unsupported kind %q", in.Kind)
 	}
-	if in.Body == "" {
+	// A "cancel" input has no meaningful body - it carries an instruction,
+	// not text - so the empty-body rejection only applies to kinds that are
+	// supposed to carry one.
+	if in.Body == "" && in.Kind != "cancel" {
 		return RemoteInput{}, "empty body"
 	}
 	if len(in.Body) > maxRemoteInputBodyBytes {

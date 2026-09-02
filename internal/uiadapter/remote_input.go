@@ -47,6 +47,7 @@ func (p *SessionPool) pumpRemoteInputs(id string, inputs <-chan chatsync.RemoteI
 	for ri := range inputs {
 		p.remoteInputs <- ports.RemoteInputEvent{
 			ID:         ri.ID,
+			Kind:       ri.Kind,
 			SessionID:  id,
 			Body:       ri.Body,
 			ReceivedAt: ri.Received,

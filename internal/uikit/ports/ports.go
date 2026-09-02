@@ -143,6 +143,7 @@ type Notices interface {
 // port's whole contract is that a value on the channel is safe to run.
 type RemoteInputEvent struct {
 	ID         string
+	Kind       string // "message" injects Body as a turn; "cancel" stops the targeted session's active turn (Body empty)
 	SessionID  string
 	Body       string
 	ReceivedAt time.Time
