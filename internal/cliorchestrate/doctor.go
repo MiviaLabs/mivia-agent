@@ -129,6 +129,7 @@ func writeDoctorHuman(stdout, stderr io.Writer, res *config.Resolved, view cliag
 	}
 	fmt.Fprintf(stdout, "  base_url:   %s\n", safeDoctorURL(res.BaseURL))
 	fmt.Fprintf(stdout, "  api_key_env:%s\n", cliagents.SafeCatalogText(res.APIKeyEnv, 128))
+	writeDoctorSyncHuman(stdout, doctorSync(res))
 
 	if catalogErr != nil {
 		fmt.Fprintln(stdout, "agents:")

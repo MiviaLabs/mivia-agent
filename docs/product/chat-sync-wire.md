@@ -305,3 +305,15 @@ poll_wait_seconds = 25      # Remote input long-poll timeout
 heartbeat_seconds = 30      # Periodic heartbeat interval
 max_unflushed = 5000        # Outbox buffer limit
 ```
+
+`api_url` is resolved in one place, `chatsync.ResolveEndpoint`: `[sync]
+api_url` when set, else `MIVIA_API_BASE_URL` from the process environment or
+an env file, else `https://api.mivia.app`. The "chat sync is running" notice
+names the resolved URL and its source, so an upload to the wrong backend is
+visible the moment it starts. `mivia doctor` prints the same resolution as
+`sync_api`, whether a login is present as `sync_login`, and the result of one
+bounded, unauthenticated request to the API's `/health` route as `sync_probe`
+(skipped when not logged in, because sync never activates then); `--json`
+carries them as `sync_api_url`, `sync_api_source`, `sync_login` and
+`sync_probe`. Doctor never refuses to run over the probe: sync failing is
+never a reason to break the local chat.

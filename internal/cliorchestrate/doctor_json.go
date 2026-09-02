@@ -24,6 +24,10 @@ type doctorJSON struct {
 	APIKeyEnv     string           `json:"api_key_env"`
 	APIKeySet     bool             `json:"api_key_set"`
 	KeyRequired   bool             `json:"key_required"`
+	SyncAPIURL    string           `json:"sync_api_url"`
+	SyncAPISource string           `json:"sync_api_source"`
+	SyncLogin     string           `json:"sync_login"`
+	SyncProbe     string           `json:"sync_probe"`
 	AgentCatalog  []jsonAgentEntry `json:"agent_catalog"`
 	Warnings      []string         `json:"warnings"`
 	Status        string           `json:"status"`
@@ -84,6 +88,14 @@ func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view cliagents.Agen
 		KeyRequired:   !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)),
 		AgentCatalog:  []jsonAgentEntry{},
 		Warnings:      []string{},
+	}
+	if sr := doctorSync(res); sr.Disabled {
+		dj.SyncAPIURL, dj.SyncAPISource = "", "disabled"
+	} else {
+		dj.SyncAPIURL = safeDoctorURL(sr.Endpoint.URL)
+		dj.SyncAPISource = cliagents.SafeCatalogText(sr.Endpoint.Source, 240)
+		dj.SyncLogin = sr.login()
+		dj.SyncProbe = cliagents.SafeCatalogText(sr.Probe, 240)
 	}
 
 	// Build agent catalog entries.
