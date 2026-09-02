@@ -180,10 +180,23 @@ def classify(build_ok: bool, test_outcome: str) -> str:
 
 def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
     """run_mutant applies one mutation, builds, tests, and restores the
-    original bytes no matter how the run ends."""
-    text = original.decode("utf-8")
-    mutated = text[: site.start] + site.new + text[site.end :]
-    site.path.write_text(mutated)
+    original bytes no matter how the run ends.
+
+    site.start/site.end are BYTE offsets (go/scanner positions, via
+    token.FileSet.Offset - always byte-based). Slicing a decoded str with
+    them is only correct while every preceding byte is single-byte ASCII:
+    a multi-byte UTF-8 character earlier in the file (an em-dash, a curly
+    quote, any non-ASCII comment text) shifts the str's character indices
+    out from under the byte offsets, so the slice below would remove or
+    replace the wrong span - sometimes producing a build failure
+    (misclassified "discarded"), sometimes a no-op-looking edit that
+    leaves the real mutation site untouched (misclassified "survived"
+    even though a correct test kills the real mutant). Slicing the raw
+    bytes instead keeps the offsets valid regardless of file content.
+    site.new is always plain ASCII ("", "&&", "||", "==", "!=", "<",
+    "<="), so .encode("utf-8") is exact and lossless."""
+    mutated = original[: site.start] + site.new.encode("utf-8") + original[site.end :]
+    site.path.write_bytes(mutated)
     try:
         build = subprocess.run(
             ["go", "build", f"./{pkg}"], cwd=ROOT, capture_output=True, text=True
@@ -516,14 +529,20 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
         if not changed_lines:
             continue
 
-        file_text = f.read_text()
+        # site.start is a BYTE offset (go/scanner position); count newlines
+        # in the raw bytes, not a decoded str, or a multi-byte UTF-8
+        # character earlier in the file (an em-dash, a curly quote, any
+        # non-ASCII comment text) throws every subsequent line number off
+        # and a real mutation site can silently fall outside changed_lines,
+        # skipping it entirely - or a site outside the diff wrongly matches.
+        file_bytes = f.read_bytes()
         data = load_denylist(pkg, DENYLIST_DIR)
         spans = denylisted_spans(ROOT / pkg, data.get("denylist", []))
 
         for site in sites_for_file(f):
             if is_denylisted(site, spans):
                 continue
-            line_no = file_text.count("\n", 0, site.start) + 1
+            line_no = file_bytes.count(b"\n", 0, site.start) + 1
             if line_no in changed_lines:
                 pkg_sites.setdefault(pkg, []).append((site, line_no))
 

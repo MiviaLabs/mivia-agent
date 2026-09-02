@@ -78,6 +78,50 @@ def test_tokenizer_skips_comments_and_strings() -> None:
         assert len(eq_sites) == 1, f"want exactly 1 real '==' site, got {len(eq_sites)}"
 
 
+def test_tokenizer_offsets_survive_multibyte_utf8_before_site() -> None:
+    # Regression guard: site.start/site.end are BYTE offsets (go/scanner
+    # positions). An em-dash (3 bytes in UTF-8, 1 Python str character)
+    # earlier in the file used to desync run_mutant's str-based slice
+    # (text = original.decode("utf-8"); text[site.start:site.end]) from
+    # the real byte span, silently mutating the wrong text. Byte-slicing
+    # the raw bytes directly - what run_mutant and sweep_diff's line-
+    # number lookup do now - must land exactly on "continue" regardless.
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "snippet.go"
+        source = (
+            "package p\n\n"
+            "// a note with an em-dash — right here, three of them — —\n"
+            "func f() {\n"
+            "\tfor {\n"
+            "\t\tcontinue\n"
+            "\t}\n"
+            "}\n"
+        )
+        f.write_bytes(source.encode("utf-8"))
+        sites = mt.sites_for_file(f)
+        continue_sites = [s for s in sites if s.kind == "CONTINUE"]
+        assert len(continue_sites) == 1, continue_sites
+        site = continue_sites[0]
+
+        raw = f.read_bytes()
+        assert raw[site.start : site.end] == b"continue", (
+            f"byte-offset slice landed on {raw[site.start:site.end]!r}, "
+            "not b'continue' - offsets and byte slicing disagree"
+        )
+
+        # The bug this guards against: decoding to str first and slicing
+        # with the same (byte) offsets lands somewhere else entirely once
+        # multi-byte characters precede the site.
+        decoded = raw.decode("utf-8")
+        mis_sliced = decoded[site.start : site.end]
+        assert mis_sliced != "continue", (
+            "expected byte/str offset drift to be present in this fixture "
+            "(str-slicing should land on the WRONG text) - if this now "
+            "passes, the fixture no longer demonstrates the bug this test "
+            "exists to catch a regression of"
+        )
+
+
 def test_classify_matrix() -> None:
     assert cm.classify(False, "pass") == cm.DISCARDED
     assert cm.classify(True, "timeout") == cm.KILLED
