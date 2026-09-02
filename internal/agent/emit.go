@@ -40,6 +40,8 @@ func emit(opts Options, e Event) {
 			e.Input,
 			e.Output,
 		)
+		ev.InputBody = e.InputBody
+		ev.OutputBody = e.OutputBody
 		if e.Kind == EventHook {
 			// The generic conversion carries only strings, so the hook's
 			// verdict would stop here - and a consumer past the bus could not

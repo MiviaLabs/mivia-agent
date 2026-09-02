@@ -112,6 +112,15 @@ type Event struct {
 	Content    string
 	Input      string
 	Output     string
+	// InputBody and OutputBody are the redacted tool arguments and result
+	// WITHOUT the operator preview cap that bounds Input and Output. They
+	// exist for a consumer that records its own truncation with a marker
+	// (chatsync), so it can report the true size and ship what its budget
+	// allows rather than a 512-byte preview cut in silence. Empty on an
+	// emitter that predates them; such a consumer falls back to the
+	// preview. They are never relayed across processes (hub/wire.go).
+	InputBody  string
+	OutputBody string
 	Metadata   map[string]string
 	Err        error
 

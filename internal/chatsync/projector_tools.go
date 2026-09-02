@@ -78,7 +78,7 @@ func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 	if ev.Kind == events.KindToolStart {
 		var input string
 		if shouldIncludeToolIO(p.opts) {
-			input = redactText(ev.Input)
+			input = redactText(toolInputOf(ev))
 			input = applyTruncation(&env, "input", input, BudgetToolInput)
 		} else {
 			env.Redacted = append(env.Redacted, "input")
@@ -87,7 +87,7 @@ func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 			Envelope:   env,
 			ToolCallID: callID,
 			Name:       name,
-			InputBytes: len(ev.Input),
+			InputBytes: len(toolInputOf(ev)),
 			Input:      input,
 		}
 		return []WireEvent{p.nextWireEvent(TypeToolStarted, payload)}
@@ -95,7 +95,7 @@ func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 
 	var output string
 	if shouldIncludeToolIO(p.opts) {
-		output = redactText(ev.Output)
+		output = redactText(toolOutputOf(ev))
 		output = applyTruncation(&env, "output", output, BudgetToolOutput)
 	} else {
 		env.Redacted = append(env.Redacted, "output")
@@ -106,7 +106,7 @@ func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 		ToolCallID:  callID,
 		Name:        name,
 		Status:      toolEndStatus(ev.Detail),
-		OutputBytes: len(ev.Output),
+		OutputBytes: len(toolOutputOf(ev)),
 		Detail:      detail,
 		Output:      output,
 	}
@@ -131,7 +131,7 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 	case events.KindSubagentStart:
 		var input string
 		if shouldIncludeToolIO(p.opts) {
-			input = redactText(ev.Input)
+			input = redactText(toolInputOf(ev))
 			input = applyTruncation(&env, "input", input, BudgetToolInput)
 		} else {
 			env.Redacted = append(env.Redacted, "input")
@@ -140,14 +140,14 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 			Envelope:   env,
 			ToolCallID: callID,
 			Name:       name,
-			InputBytes: len(ev.Input),
+			InputBytes: len(toolInputOf(ev)),
 			Input:      input,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentToolStarted, payload)}
 	case events.KindSubagentEnd:
 		var output string
 		if shouldIncludeToolIO(p.opts) {
-			output = redactText(ev.Output)
+			output = redactText(toolOutputOf(ev))
 			output = applyTruncation(&env, "output", output, BudgetToolOutput)
 		} else {
 			env.Redacted = append(env.Redacted, "output")
@@ -158,7 +158,7 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 			ToolCallID:  callID,
 			Name:        name,
 			Status:      toolEndStatus(ev.Detail),
-			OutputBytes: len(ev.Output),
+			OutputBytes: len(toolOutputOf(ev)),
 			Detail:      detail,
 			Output:      output,
 		}
@@ -373,4 +373,25 @@ func (p *Projector) projectHook(env Envelope, ev events.Event) []WireEvent {
 		Output:      output,
 	}
 	return []WireEvent{p.nextWireEvent(TypeHookRan, payload)}
+}
+
+// toolInputOf and toolOutputOf pick the unbounded body the emitter carries
+// beside the operator preview (events.Event.InputBody / OutputBody), and
+// fall back to the preview for an emitter that predates them. The projector
+// applies its own budget and records the cut in trunc.fields; reading the
+// preview here meant every read_file shipped as 512 bytes reporting
+// output_bytes 512 with no marker, and a viewer could not tell a small file
+// from a cut one.
+func toolInputOf(ev events.Event) string {
+	if ev.InputBody != "" {
+		return ev.InputBody
+	}
+	return ev.Input
+}
+
+func toolOutputOf(ev events.Event) string {
+	if ev.OutputBody != "" {
+		return ev.OutputBody
+	}
+	return ev.Output
 }

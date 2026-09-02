@@ -67,19 +67,7 @@ func bridgeAgentLoopEvents(opts Options, turn *sdkTurnState) *sdkevents.Bus {
 		}
 		switch {
 		case outcome != nil:
-			// Legacy emitToolEnd preview rule: the redacted body,
-			// unless an ephemeral tool supplied a marker override.
-			output := redactToolOutputForTool(outcome.name, outcome.body)
-			if outcome.previewOverride != "" {
-				output = outcome.previewOverride
-			}
-			emit(opts, Event{
-				Kind:       EventToolEnd,
-				ToolCallID: outcome.id,
-				Name:       outcome.name,
-				Detail:     sdkToolEndDetail(*outcome),
-				Output:     output,
-			})
+			emit(opts, toolEndEventFor(*outcome))
 		case callKey != "":
 			// No recorded outcome means the SDK's dedup short-circuited
 			// the call BEFORE the dispatcher shim could record one
