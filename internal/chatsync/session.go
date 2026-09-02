@@ -25,6 +25,13 @@ var syncKinds = []events.Kind{
 	events.KindSubagentHeartbeat,
 	events.KindSubagentDone,
 	events.KindCompaction,
+	// Hook runs are part of the transcript a remote viewer reads: the
+	// projector has a wire type, a contract row and a metrics entry for
+	// them, but without the kind here the SUBSCRIPTION - the only
+	// production feed into the projector - never delivered one, and every
+	// hook.ran row stayed dead code. A kind the wire advertises but the
+	// feed drops is exactly the gap the viewer-surfaces gate exists for.
+	events.KindHook,
 }
 
 // SessionOptions configures a SyncSession.
