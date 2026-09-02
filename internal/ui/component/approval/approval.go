@@ -156,9 +156,13 @@ func (m *Model) ClearAll() {
 // Active reports whether a request is currently awaiting a decision.
 func (m Model) Active() bool { return len(m.pending) > 0 }
 
-// Waiting is how many calls are queued behind and including the head. The
-// statusline uses it to say that answering one prompt will not unblock the
-// turn on its own.
+// Waiting is how many calls are queued behind and including the head.
+//
+// borderLabel uses it to say that answering this prompt will not unblock the
+// turn on its own. It previously said the statusline did, and nothing did:
+// the function had no caller at all, so a queue of five write calls looked
+// exactly like one and the operator learned about the rest only by answering
+// and watching the prompt come back.
 func (m Model) Waiting() int { return len(m.pending) }
 
 // head returns the request being rendered, or nil when the queue is empty.
@@ -289,6 +293,13 @@ func (m Model) borderLabel() (string, bool) {
 	badge := "⚠ Approval Required"
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
 		badge = "! Approval Required"
+	}
+	// The queue depth belongs here rather than on the hint row. The hint is
+	// clipped to the width and promises to name every key that works;
+	// appending to it would let a narrow terminal truncate a live key. The
+	// badge is already the part that survives the fold below.
+	if behind := m.Waiting() - 1; behind > 0 {
+		badge += fmt.Sprintf(" (%d more)", behind)
 	}
 	// Bracketed like the composer's own top-border hint: the two frames
 	// sit one above the other, and matching chrome is what makes the
