@@ -568,6 +568,12 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		contextWiring = ContextDispatcherForVar(sess, cfg)
 	}
 	return SessionDispatcherOpts{
+		// A rebuilt dispatcher must carry the operator's approval wiring, or
+		// every nested subagent loop it builds runs ungated. This struct is
+		// rebuilt on /agent, /model, and whenever the model calls load_tools,
+		// so omitting it here silently un-gated delegation after the first
+		// turn - which is exactly what happened the first time round.
+		Approval:          sess.ApprovalSnapshot,
 		Registry:          registry,
 		AuthorityRegistry: authority,
 		// The session owns the ledger store, so no rebuilt dispatcher opens one

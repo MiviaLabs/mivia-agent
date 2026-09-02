@@ -21,6 +21,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -183,7 +184,14 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 		return nil, cliagents.SessionDispatcherOpts{}, nil, err
 	}
 	legacy := ledger.NewStorageLedgerRepository(store)
-	opts := cliagents.SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root, ToolRunTimeout: config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec)}
+	// A workflow runs headless, so there is no operator to prompt and no gate
+	// to attach - but an explicit "deny" is an instruction, not a prompt, and
+	// a runner that ignores it is a hole. The configured policy travels; with
+	// no gate, DecideApproval denies anything that would need one.
+	approval := func() sdkadapter.ApprovalDeps {
+		return sdkadapter.ApprovalDeps{Policy: res.Approvals.ApprovalPolicy()}
+	}
+	opts := cliagents.SessionDispatcherOpts{Approval: approval, Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root, ToolRunTimeout: config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec)}
 	dispatcher, err := WorkflowBuildDispatcher(opts)
 	if err != nil {
 		return nil, cliagents.SessionDispatcherOpts{}, nil, err
