@@ -542,7 +542,12 @@ func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts
 	if sdkReg == nil || len(sdkReg.Tools()) == 0 {
 		return nil
 	}
-	if opts.Dispatcher == nil {
+	// Both the wrap-time value AND the turn's live one: Run executes against
+	// turn.currentDispatcher(), which a surface rotation can populate after
+	// this check. Testing only opts.Dispatcher would refuse a turn that is in
+	// fact governed; testing only the live one would miss a turn that never
+	// rotates. Refuse when NEITHER can govern the call.
+	if opts.Dispatcher == nil && (turn == nil || turn.currentDispatcher() == nil) {
 		return fmt.Errorf("agent: no dispatcher wired, so %d tool(s) would execute "+
 			"with no timeout, dedup, result cap, hooks or recorded outcome",
 			len(sdkReg.Tools()))
@@ -596,6 +601,15 @@ func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cl
 	if err != nil {
 		return "", err
 	}
+	// Through DecodeArguments, exactly as an admitted call is. This path used
+	// to hand the raw bytes straight to Run, so it skipped the validity check
+	// the adapter performs - and json.Marshal of a RawMessage holding only
+	// whitespace fails deep inside Run, where the error had nowhere sensible
+	// to go. Validating here rejects it with the tool's name instead.
+	in, err := inner.DecodeArguments(args)
+	if err != nil {
+		return "", err
+	}
 	shim := &dispatcherShim{inner: inner, schema: inner, cli: cliTool, opts: opts, turn: turn}
 	// Ref-only spooling is applied by wrapping registry tools, and this tool is
 	// deliberately not in the registry - so it has to be wrapped here, or an
@@ -608,10 +622,20 @@ func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cl
 	// it - ref_only_tools silently inlining a body, and a deferred result
 	// never charged against the turn's batch budget.
 	runner := wrapTurnShaping(wrapRefOnly(shim, cliTool, opts, turn), cliTool, opts, turn)
-	out, err := runner.Run(ctx, sdktools.InOut{Value: args})
+	out, err := runner.Run(ctx, in)
 	if err != nil {
 		return "", err
 	}
 	body, _ := out.Value.(string)
+	// Drain the pass-1 entry the shim stored. The shaping wrapper consumes it
+	// when a batch budget is active; with shaping off nothing does, and the
+	// entry holds this call's capped body for the life of the turn state -
+	// which pass1Map's own comment names as a leak. take deletes either way,
+	// so this is a no-op when shaping already claimed it.
+	if turn != nil {
+		if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+			turn.pass1.take(tc.ID, body)
+		}
+	}
 	return body, nil
 }
