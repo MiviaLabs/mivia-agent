@@ -200,11 +200,15 @@ func TestUnadmittedToolHandlerServesTheCallSynchronously(t *testing.T) {
 		t.Fatalf("expected grep still staged for native admission, got %+v (has=%v)", stage, has)
 	}
 
-	// A second call in the same turn dedups against the first (same turn,
-	// same tool, same input) rather than re-running the tool.
+	// A second identical call in the same turn returns the same result. This
+	// tool is READ-class and fixed-body, so it re-runs (its capability says
+	// reads always execute fresh) and the bodies match either way - the
+	// assertion cannot tell dedup from a re-run and does not need to. The
+	// comment here used to claim dedup; TestDeferredToolSuppressesHookRunsOn
+	// Duplicate is where a genuine duplicate is proven, with a counter.
 	result2 := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{"pattern":"package"}`))
 	if !result2.Ran || result2.Content != result.Content {
-		t.Fatalf("second identical call = %+v, want the same successful result via dedup", result2)
+		t.Fatalf("second identical call = %+v, want the same successful result", result2)
 	}
 }
 
@@ -216,7 +220,16 @@ func TestUnadmittedToolHandlerServesTheCallSynchronously(t *testing.T) {
 // reporting them here would show a hook firing that never fired.
 func TestDeferredToolSuppressesHookRunsOnDuplicate(t *testing.T) {
 	s := prefixResetSession(t)
-	tool := &countingTool{name: "grep"}
+	// WRITE-class on purpose. Only Write/External calls dedup - "ExecutionRead
+	// calls always execute fresh" - so a read-class fixture could not produce
+	// the duplicate this test exists to describe. It used to use one, and
+	// passed only because the deferred path dropped the tool's own dedup
+	// declaration.
+	tool := &countingWriteTool{name: "grep"}
+	// A Write-class tool also has to clear approval, which the read-class
+	// fixture never did. This test is about the duplicate contract, not the
+	// approval one, so the policy is auto.
+	s.ApprovalPolicy = config.ApprovalPolicyAuto
 	full := tools.NewRegistry()
 	full.Register(tool)
 	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
@@ -649,4 +662,23 @@ func TestADeniedDeferredCallIsNotRecordedAsASuccess(t *testing.T) {
 			"the NDJSON status mapping, the remote reader - shows the refusal as a " +
 			"completed, successful tool call")
 	}
+}
+
+// countingWriteTool is ExecutionWrite, so Capability.Dedups() is true: a
+// same-turn duplicate delivery is answered from the record rather than
+// executing the side effect twice.
+type countingWriteTool struct {
+	name string
+	runs atomic.Int32
+}
+
+func (t *countingWriteTool) Name() string               { return t.name }
+func (t *countingWriteTool) Description() string        { return "counting write tool" }
+func (t *countingWriteTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *countingWriteTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionWrite}
+}
+func (t *countingWriteTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.runs.Add(1)
+	return t.name + " ran", nil
 }
