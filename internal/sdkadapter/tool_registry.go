@@ -242,7 +242,12 @@ func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry
 		wrapped := WrapToolWithAdmission(t, cliTool, pred)
 		sdkReg.Remove(name)
 		if err := sdkReg.Add(wrapped); err != nil {
-			_ = sdkReg.Add(t)
+			// Deliberately NOT restoring t. This wrapper carries the approval
+			// and admission layers, so putting the bare tool back leaves an
+			// UNGATED tool in a registry the caller may or may not discard -
+			// a fail-open on the error path of the very layer that gates
+			// writes. The registry loses the tool instead, and the error says
+			// so.
 			return fmt.Errorf("sdkadapter: wrap tool %q in SDK registry: %w", name, err)
 		}
 	}

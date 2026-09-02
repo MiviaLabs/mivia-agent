@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -41,6 +42,15 @@ func TestNoToolReachesTheModelUngoverned(t *testing.T) {
 	}{
 		{"no dispatcher wired", Options{}},
 		{"dispatcher wired", Options{Dispatcher: runtime.New(runtime.Policy{})}},
+		// The SHIPPED shape: ref-only and turn shaping both active, so the
+		// registry entry is a wrapper and not the shim itself. The gate must
+		// still see the tool as governed.
+		{"every wrapper active", Options{
+			Dispatcher:             runtime.New(runtime.Policy{}),
+			SessionID:              "sess-1",
+			RefOnlyTools:           []string{"read_file"},
+			BatchResultBudgetBytes: 8 << 10,
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +71,7 @@ func TestNoToolReachesTheModelUngoverned(t *testing.T) {
 					"wrapping must not drop one silently either", got, want)
 			}
 			for _, tool := range sdkReg.Tools() {
-				if _, governed := tool.(*dispatcherShim); !governed {
+				if !governedByDispatcher(tool) {
 					t.Errorf("tool %q is in the registry the model calls but is "+
 						"NOT wrapped by dispatcherShim: it executes with no "+
 						"per-call timeout, no dedup, no result cap, no hooks and "+
@@ -138,4 +148,33 @@ func TestADeferredInfrastructureErrorDoesNotKillTheRun(t *testing.T) {
 	if !strings.Contains(msg.Content, "error") {
 		t.Errorf("the model was not told the call failed: %q", msg.Content)
 	}
+}
+
+// governedByDispatcher reports whether a registry entry ultimately executes
+// through the dispatcher shim, looking THROUGH the outer wrappers.
+//
+// The gate used to assert the entry IS a *dispatcherShim. That is false in
+// every shipped session: buildSDKToolRegistry wraps the shim with the
+// admission/approval adapter, then ref-only, then turn shaping, each replacing
+// the entry with its own type. The gate passed only because its Options{}
+// disabled all three - an approval layer needs a gate or policy, RefOnlyTools
+// was empty, and a zero BatchResultBudgetBytes turns shaping off. So it
+// asserted an invariant that holds only in a degenerate configuration, which a
+// review pointed out.
+//
+// Unwrapping means the realistic configuration is now the one under test.
+func governedByDispatcher(tool sdktools.Tool) bool {
+	for range 8 { // bounded: the wrapper stack is three deep
+		switch w := tool.(type) {
+		case *dispatcherShim:
+			return true
+		case *refOnlyShim:
+			tool = w.inner
+		case *turnShapeWrapper:
+			tool = w.inner
+		default:
+			return false
+		}
+	}
+	return false
 }

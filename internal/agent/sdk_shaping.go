@@ -435,7 +435,10 @@ func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Op
 		}
 		sdkReg.Remove(name)
 		if err := sdkReg.Add(wrapped); err != nil {
-			_ = sdkReg.Add(t)
+			// Not restoring t: an unwrapped tool escapes the turn's batch
+			// budget entirely, which is a bound on the context window rather
+			// than a nicety. Add only fails on a duplicate name just removed.
+			_ = t
 		}
 	}
 }
