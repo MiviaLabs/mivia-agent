@@ -86,15 +86,25 @@ func TestLiveChatSessionGuards(t *testing.T) {
 	})
 }
 
-// TestLiveChatSessionPayloadBoundIsAClientError probes the documented 64 KiB
-// per-event payload ceiling.
+// TestLiveChatSessionPayloadBoundIsRepairedNotRejected probes what a deployed
+// API does with a payload over the column's 64 KiB bound.
 //
-// The bound is enforced by a Postgres CHECK constraint. Whether anything
-// validates it BEFORE the database matters to a client: a 4xx says "your
-// payload is too big, truncate it and retry", while a 5xx says "the server is
-// broken, retry later". A CLI that streams assistant output will hit this
-// bound routinely, and it cannot recover from an answer it cannot classify.
-func TestLiveChatSessionPayloadBoundIsAClientError(t *testing.T) {
+// The contract CHANGED, and the reason is what rejecting cost. A rejection
+// fails the whole request - a batch of up to a hundred events - and this
+// client classifies a 400 that does not name a sequence gap as poison, which
+// stops the session's sync permanently (session_badrequest.go). So one
+// oversize event cost the entire remaining conversation, which is a far worse
+// answer than losing the tail of one string.
+//
+// The API now shrinks an oversize payload to fit, records the cut in the
+// payload's own trunc field, and marks it repaired_at_ingest so this client
+// still recognises the body as its own (see RepairedAtIngestKey). A body far
+// beyond any streaming agent's output is still refused outright.
+//
+// NOT RUN as part of this change: live probes need the operator to ask for
+// them, so this assertion is written against the API in this repo pair and has
+// not been executed against a deployment.
+func TestLiveChatSessionPayloadBoundIsRepairedNotRejected(t *testing.T) {
 	ctx := liveContext(t)
 	a := newAPI(t, ctx)
 	s := a.createSession(ctx, "payload-bound")
@@ -106,20 +116,15 @@ func TestLiveChatSessionPayloadBoundIsAClientError(t *testing.T) {
 		}}})
 
 	if status >= 500 {
-		t.Fatalf("a 70 KiB payload returned %d; an oversized payload is the client's fault and must be a 4xx it can act on, not a server error it can only retry. body: %s", status, truncate(raw))
+		t.Fatalf("a 70 KiB payload returned %d; the server must never answer this with an error the client can only retry. body: %s", status, truncate(raw))
 	}
-	if status == http.StatusOK {
-		t.Fatalf("a 70 KiB payload was ACCEPTED; the documented 64 KiB ceiling is not enforced on this path")
-	}
-	// ASSERT the status, do not merely log it. The client's poison
-	// classification keys on 400 exactly (client.go classify): a 413 or 422
-	// falls to the default branch, is not ErrBadRequest, and gets retried on
-	// the flush ticker for the life of the process against a body that can
-	// never be accepted. This probe is the only thing that pins which status
-	// the deployed API really answers, so logging it left that branch resting
-	// on an unverified assumption.
-	if status != http.StatusBadRequest {
-		t.Fatalf("an oversized payload returned %d, want 400; the client classifies only 400 as poison, so anything else is retried for ever. body: %s", status, truncate(raw))
+	// ASSERT the status, do not merely log it. A 400 here is the OLD contract
+	// and is now a failure: this client classifies a 400 with no sequence gap
+	// in it as poison (session_badrequest.go), so a deployment that still
+	// rejects would stop the session's sync on the first oversize event
+	// instead of shrinking one string.
+	if status != http.StatusOK {
+		t.Fatalf("a 70 KiB payload returned %d, want 200 with the payload shrunk; a rejection here poisons the session and costs the rest of the conversation. body: %s", status, truncate(raw))
 	}
 }
 
