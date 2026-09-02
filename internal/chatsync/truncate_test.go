@@ -20,11 +20,14 @@ func TestTruncateStringInvalidByteEarlyKeepsBudget(t *testing.T) {
 	if !truncated {
 		t.Fatal("truncated = false, want true")
 	}
-	if totalLen != len(s) {
-		t.Errorf("totalLen = %d, want %d", totalLen, len(s))
+	// The counts are in ESCAPED bytes - the unit the store measures in - so
+	// they are compared against escapedLen, not against len. The invalid byte
+	// at offset 10 costs 3 there, because json.Marshal writes U+FFFD for it.
+	if totalLen != escapedLen(s) {
+		t.Errorf("totalLen = %d, want %d", totalLen, escapedLen(s))
 	}
-	if keptLen != len(kept) {
-		t.Errorf("keptLen = %d, want len(kept) = %d", keptLen, len(kept))
+	if keptLen != escapedLen(kept) {
+		t.Errorf("keptLen = %d, want %d", keptLen, escapedLen(kept))
 	}
 	// The cut boundary lands inside a run of ASCII 'B', so nothing at the
 	// boundary needs trimming: the full budget must survive.
