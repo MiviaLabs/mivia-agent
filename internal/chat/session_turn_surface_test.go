@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -354,20 +355,35 @@ func TestDeferredToolReportsAPreToolUseBlock(t *testing.T) {
 	s.wireStepBoundaryAdmission(&opts, nil)
 
 	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if result.Ran {
-		t.Fatalf("a PreToolUse block must not report Ran, got %+v", result)
+	// INVERTED, deliberately. This asserted `!result.Ran` and that the content
+	// still said "next step" - the "deliberate half-fix" its own message named.
+	// The half-fix was the bug: !Ran routes the model to "authorized but was
+	// not yet loaded [...] retry the call on your next step", so a call the
+	// operator's own hook refused was reported as a loading problem, with an
+	// instruction to retry it. Ran now means "reached the dispatcher" and
+	// Failed carries the outcome, so the block can be reported as itself.
+	if !result.Ran {
+		t.Fatalf("a blocked call must report Ran (it reached the dispatcher) so "+
+			"the caller does not fall back to the retry message, got %+v", result)
+	}
+	if !result.Failed {
+		t.Fatalf("a blocked call must be marked Failed, or the operator's own "+
+			"hook refusal renders as a completed call, got %+v", result)
 	}
 	if len(result.HookRuns) != 1 || !result.HookRuns[0].Denied {
 		t.Fatalf("the blocking run must still be reported: %+v", result.HookRuns)
 	}
-	if !strings.Contains(result.Content, "next step") {
-		t.Fatalf("the model-facing text on this path is unchanged (deliberate half-fix), got %q", result.Content)
+	if strings.Contains(result.Content, "next step") {
+		t.Fatalf("the model is still told to retry a call its operator blocked: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "policy forbids this") {
+		t.Fatalf("the model is not told the hook's reason: %q", result.Content)
 	}
 }
 
 // A hook can fire successfully while the TOOL's own execution still fails -
 // a distinct case from a PreToolUse block (which never reaches the tool at
-// all). The hook run must still be reported even though ok=false. Proven by
+// all). The hook run must still be reported. Proven by
 // an execution-reached flag (not just an error path, which any
 // pre-execute dispatcher failure would also satisfy) and by asserting
 // Denied==false on the reported run (a PreToolUse block's run IS denied -
@@ -394,8 +410,17 @@ func TestDeferredToolReportsHookRunsWhenToolItselfFails(t *testing.T) {
 	s.wireStepBoundaryAdmission(&opts, nil)
 
 	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if result.Ran {
-		t.Fatalf("a failing tool execution must not report Ran, got %+v", result)
+	// INVERTED, deliberately - see TestDeferredToolReportsAPreToolUseBlock.
+	// "A failing tool execution must not report Ran" was the bug stated as a
+	// requirement: it forced a tool that HAD executed onto the "not yet
+	// loaded - retry next step" message, and the retry re-ran every side
+	// effect the first call had already landed. Covered end-to-end by
+	// TestADeferredToolThatRanAndFailedIsNotReportedAsUnloaded.
+	if !result.Ran {
+		t.Fatalf("a tool that executed must report Ran, got %+v", result)
+	}
+	if !result.Failed {
+		t.Fatalf("a tool that executed and errored must be marked Failed, got %+v", result)
 	}
 	if !tool.reached.Load() {
 		t.Fatal("the tool's own Execute was never reached - this test would also pass for a pre-execute dispatcher failure, which is not what it claims to cover")
@@ -484,5 +509,144 @@ func TestUnadmittedToolHandlerCapsTheSynchronousResult(t *testing.T) {
 	}
 	if len(result.Content) > 200 {
 		t.Fatalf("synchronous result was not capped to s.MaxToolResultChars (16): got %d bytes", len(result.Content))
+	}
+}
+
+// A deferred tool that RAN and failed must not be reported to the model as
+// never having run.
+//
+// runDeferredToolNow returned ok=false for every result.Err, and the caller
+// answers ok=false with "authorized but was not yet loaded [...] retry the
+// call on your next step". So a tool that executed and errored - an output
+// over the ceiling, a handler that failed after a partial side effect - told
+// the model the call never happened AND named the retry. The tool is admitted
+// by then, so the retry executes for real and every side effect that already
+// landed happens twice.
+//
+// internal/runtime draws this distinction itself and says why: a block "is
+// deliberately distinct from failed, which means the tool ran and broke.
+// Collapsing them would make a working gate and a broken tool
+// indistinguishable". This path collapsed them.
+func TestADeferredToolThatRanAndFailedIsNotReportedAsUnloaded(t *testing.T) {
+	s := prefixResetSession(t)
+	tool := &failingTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(tool)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	dispatcher := runtime.New(runtime.Policy{})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+
+	if !tool.reached.Load() {
+		t.Fatal("the tool's own Execute was never reached, so this test is not " +
+			"covering the ran-and-failed case it claims to")
+	}
+	if !result.Ran {
+		t.Error("a tool that executed reports Ran=false, so the caller tells the " +
+			"model it was never loaded and to retry - the retry runs it a second time")
+	}
+	if !result.Failed {
+		t.Error("a tool that executed and errored is not marked Failed, so the " +
+			"operator's transcript renders it as a successful call")
+	}
+	if strings.Contains(result.Content, "not yet loaded") {
+		t.Errorf("the model is told a call that RAN was never loaded: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "always fails") {
+		t.Errorf("the model is not told why the call failed: %q", result.Content)
+	}
+}
+
+// The same for a call a PreToolUse hook blocked. The operator's own hook
+// refused it; telling the model it was a loading problem and to retry hides
+// the operator's decision and invites the same block again.
+func TestADeferredCallBlockedByAHookIsNotReportedAsUnloaded(t *testing.T) {
+	s := prefixResetSession(t)
+	tool := &failingTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(tool)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
+		return runtime.HookVerdict{
+			Denied: true, Reason: "guard.sh refused this call",
+			Runs: []runtime.HookRun{{Event: "PreToolUse", Program: "guard.sh", Denied: true}},
+		}
+	}
+	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+
+	if tool.reached.Load() {
+		t.Fatal("the hook denied the call but the tool ran anyway")
+	}
+	if strings.Contains(result.Content, "not yet loaded") {
+		t.Errorf("a call the operator's hook blocked is reported to the model as a "+
+			"loading problem, with an instruction to retry: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "guard.sh refused this call") {
+		t.Errorf("the model is not told the hook's reason: %q", result.Content)
+	}
+	if !result.Failed {
+		t.Error("a blocked call is not marked Failed, so the operator's transcript " +
+			"renders their own hook's refusal as a successful call")
+	}
+	if len(result.HookRuns) != 1 || !result.HookRuns[0].Denied {
+		t.Errorf("the denying hook run must still reach the operator, got %+v", result.HookRuns)
+	}
+}
+
+// A DENIED deferred call must not be recorded as a successful one.
+//
+// The refusal returns ok=true, which the caller reads as Ran and records with
+// failed=false - so under a "deny" policy the operator's transcript showed a
+// green tool call whose body read "tool call denied by user". The SDK path
+// records the opposite on purpose, and its comment names this exact class:
+// "the reason a denial used to reach every viewer as a success". The deferred
+// path reintroduced it.
+func TestADeniedDeferredCallIsNotRecordedAsASuccess(t *testing.T) {
+	s := prefixResetSession(t)
+	tool := &failingTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(tool)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	dispatcher := runtime.New(runtime.Policy{})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.ApprovalPolicy = config.ApprovalPolicyDeny
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+
+	if tool.reached.Load() {
+		t.Fatal("the policy denied the call but the tool ran anyway")
+	}
+	if !result.Failed {
+		t.Error("a denied call is not marked Failed, so every viewer - the TUI, " +
+			"the NDJSON status mapping, the remote reader - shows the refusal as a " +
+			"completed, successful tool call")
 	}
 }

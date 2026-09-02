@@ -24,14 +24,27 @@ type UnadmittedToolResult struct {
 	// all (not advertised, a hallucinated name); the caller falls through to
 	// its own generic "not available" denial. True for every other case.
 	Handled bool
-	// Ran is true when the tool was actually executed synchronously and
-	// Content is its real, successful result: the caller must render it
-	// exactly like an ordinary successful tool call - no "error: " prefix,
-	// no failed tool_end, no denial framing anywhere the model or the
-	// operator can see. False means Content is a human-readable denial
-	// reason instead (e.g. staged but could not run synchronously); the
-	// caller applies its own "error: " framing as before.
+	// Ran is true when the tool call REACHED THE DISPATCHER and Content is
+	// its real result: the caller renders it exactly like an ordinary
+	// admitted tool call - no "error: " prefix and no denial framing of its
+	// own. False means Content is a human-readable denial reason instead
+	// (e.g. staged but could not run synchronously); the caller applies its
+	// own "error: " framing as before.
+	//
+	// Ran does NOT mean the call succeeded - see Failed. It used to, and
+	// that is exactly why an executed-then-errored call had to report
+	// Ran=false to avoid being rendered green, which made the caller tell
+	// the model the call never happened and to retry it. The two questions
+	// - did it run, did it succeed - are now two fields, because collapsing
+	// them left no truthful answer for a call that ran and failed.
 	Ran bool
+	// Failed marks a Ran call that did not succeed: the tool errored, or a
+	// PreToolUse hook blocked it, or approval refused it. The caller records
+	// a FAILED outcome for it, which is what stops the TUI, the NDJSON
+	// status mapping and any remote viewer from showing a refusal or a
+	// broken tool as a completed call. Meaningless when Ran is false, where
+	// the caller already records a failure.
+	Failed bool
 	// Content is the tool's real result (Ran) or the denial text (!Ran).
 	Content string
 	// HookRuns are the lifecycle hooks that executed for this call, for the
