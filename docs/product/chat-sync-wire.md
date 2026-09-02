@@ -190,12 +190,14 @@ narration interleaved with the tool calls. A step that calls several tools at
 once advances once, and a tool call that follows no prose advances not at all.
 
 `<step>` is an identifier, NOT a dense counter, and a consumer must not treat it
-as one. A stream's step ids can skip: the assistant and thinking streams of a
-turn share one counter, so a turn that reasons silently for two steps before
-speaking opens its first assistant block at `:2`. A step whose only delta failed
-to persist is spent as well. What the wire does guarantee is narrower and
-sufficient - a step id is never REUSED for a different utterance within a turn,
-and a consumer is never handed a block with nothing in it.
+as one. Ids come from one counter per producer session, shared by every turn
+and every subagent run, so a stream's ids skip freely: the assistant and
+thinking streams of a turn share a step, a second turn opens wherever the
+counter stands, and two runs streaming at once interleave their ids. What the
+wire guarantees is narrower and sufficient - a step id is never REUSED, by any
+stream of the session, and a consumer is never handed a block with nothing in
+it: a delta that failed to persist spends no step, and a reset that failed to
+persist leaves the step it would have advanced.
 
 The part before the final `:<step>` is the STREAM id, and it is a stable name
 for all of a turn's prose of one kind from one agent.
@@ -208,13 +210,7 @@ suffix: by the time a reset fires the discarded attempt may span several steps,
 and one step id cannot name them all - so the scope is every step of that
 stream. The replay that follows opens a step id the abandoned attempt never
 used, so a consumer keyed on the id alone cannot append the replay to the text
-it was just told to drop. One exception is known and unfixed: a subagent run
-evicted from the producer's bounded lane table restarts its counter, and a
-replay after that can reuse an id. A consumer that keeps per-block state for a
-run it has not heard from in a long time should not assume otherwise. A reset
-never reaches another turn or
-another subagent run. It is not an error; a turn that resets and then
-completes succeeded.
+it was just told to drop.
 
 Every session maintains a strictly monotonic sequence (`1..N`). If the system
 drops events because of local queue saturation, a `sync.dropped` event consumes
@@ -230,15 +226,16 @@ Beside them, `status.json` records push health so a stall can be diagnosed
 after the process is gone. It is written on transition only - `healthy` on
 attach, `degraded` after three consecutive failed pushes or a failure sixty
 seconds after the last success, `recovered` when a push lands again, `stopped`
-on any stop (an orderly close, or the terminal reason of a 409, auth or poison
-stop, whichever came first) - through the same temp-file-and-rename discipline
+on any stop (an orderly close, or the terminal reason of an auth stop, a
+poison 400 or a recovery bound, whichever came first) - through the same temp-file-and-rename discipline
 as the cursor, and a write failure is ignored: the file is a diagnostic, never
 a reason to break sync. Fields: `state`, `reason`, `unflushed`,
 `last_success_at`, `consecutive_failures`, `recoveries`, `create_failures`,
 `create_throttled_until`, `at`. The last three belong to session recovery and
 are zero or null until it engages; a non-null `create_throttled_until` is what
-separates a throttled-create stall from a plain push stall. The same
-transitions reach the host once each through `OnDegraded` / `OnRecovered`,
+separates a throttled-create stall from a plain push stall; a successful
+create clears both in memory, and the file shows that at its next
+transition. The same transitions reach the host once each through `OnDegraded` / `OnRecovered`,
 which the CLI prints as a notice and the TUI shows in its notice rail.
 
 Every failed push is classified once, in `classifyFlushError`, into three

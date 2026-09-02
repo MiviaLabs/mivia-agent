@@ -162,8 +162,8 @@ func (h *syncHealth) noteFailure(err error, unflushed int) string {
 }
 
 // noteStop records why sync stopped. The first reason wins: a terminal latch
-// (409, poison) is recorded by the worker, and the orderly Stop that follows
-// must not overwrite it with "session closed".
+// (poison, auth, a recovery bound) is recorded by the worker, and the orderly
+// Stop that follows must not overwrite it with "session closed".
 func (h *syncHealth) noteStop(reason string, unflushed int) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()

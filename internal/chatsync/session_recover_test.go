@@ -88,11 +88,116 @@ func assertRecoveredInto(t *testing.T, f *fakeAPI, s *SyncSession, ref IdentityR
 func TestFlushRecoversFromEndedSession(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("ended")
-	bus, s, ref := openRecoverable(t, f, a, nil)
+	bus, s, ref := openRecoverable(t, f, a, func(o *SessionOptions) {
+		o.HeartbeatPeriod = 20 * time.Millisecond
+		o.EnablePolling = true
+		o.PollWaitSeconds = 1
+	})
 	f.EndSession(a)
 	publishTurnStart(bus, a, "turn:1", "after the web ended it")
 	b := waitForSecondSession(t, f)
 	assertRecoveredInto(t, f, s, ref, a, b)
+
+	// The heartbeat and the poller follow the backlog to B. A heartbeat left
+	// on A would keep a dead session looking alive and let B go stale.
+	waitUntil(t, "a heartbeat and a poll against the new session", func() bool {
+		return countRequests(f, "POST", "/v1/chat-sessions/"+b+"/heartbeat") >= 1 &&
+			countRequests(f, "GET", "/v1/chat-sessions/"+b+"/inputs/next") >= 1
+	})
+	before := countRequests(f, "POST", "/v1/chat-sessions/"+a+"/heartbeat")
+	time.Sleep(100 * time.Millisecond)
+	if after := countRequests(f, "POST", "/v1/chat-sessions/"+a+"/heartbeat"); after != before {
+		t.Errorf("heartbeats to the abandoned session %s kept arriving after recovery: %d -> %d", a, before, after)
+	}
+}
+
+func countRequests(f *fakeAPI, method, targetPrefix string) int {
+	n := 0
+	for _, r := range f.Requests() {
+		if r.Method == method && strings.HasPrefix(r.Target, targetPrefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// armLongRetry drives the retry schedule out past the window a test needs
+// to act in, so the worker's ticker cannot flush before Stop does. Three
+// transient failures put retryAt 0.5-1s out.
+func armLongRetry(t *testing.T, f *fakeAPI, bus *events.Bus, localID, turn string) {
+	t.Helper()
+	f.RejectAppendsWith(http.StatusInternalServerError, "Internal Server Error", "away")
+	publishTurnStart(bus, localID, turn, "held back")
+	base := len(f.Batches())
+	waitUntil(t, "three transient failures", func() bool { return len(f.Batches()) >= base+3 })
+}
+
+// TestFinalFlushOn404RecoversTheBacklog: the 404 arrives on the flush issued
+// from drainAndFlushFinal during Stop. The backlog must land in a new session
+// before Stop returns - a final-flush loss is permanent, nothing re-opens a
+// one-shot run's outbox later. Fails under a running-based guard, because
+// Stop clears running before the final drain.
+func TestFinalFlushOn404RecoversTheBacklog(t *testing.T) {
+	f := newFakeAPI(t)
+	a := f.NewSession("final-404")
+	bus, s, _ := openRecoverable(t, f, a, nil)
+	armLongRetry(t, f, bus, a, "turn:1")
+	f.DeleteSession(a)
+	f.ClearAppendRejection()
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.Stop(stopCtx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	ids := f.SessionIDs()
+	if len(ids) != 2 {
+		t.Fatalf("%d sessions after Stop, want 2: the final flush's 404 did not recover", len(ids))
+	}
+	if n := f.LastSeq(ids[1]); n < 1 {
+		t.Fatalf("the backlog did not land in %s before Stop returned (lastSeq %d)", ids[1], n)
+	}
+	if s.Stopped() {
+		t.Errorf("stopped: %q", s.StopReason())
+	}
+}
+
+// TestStopsDirectFlushFailureIsRecorded pins rule 7: Stop's second,
+// off-worker flush used to discard its result. A NON-latching arrangement is
+// load-bearing - the direct flush is guarded by !remoteEnded, so any latching
+// path skips the very line under test. Here one recovery has already fired,
+// so the 404 on the final drain is DEFERRED by the interval refusal, the
+// backlog survives, remoteEnded stays false, and the direct flush fails the
+// same way. That failure must reach status.json, classified.
+func TestStopsDirectFlushFailureIsRecorded(t *testing.T) {
+	f := newFakeAPI(t)
+	a := f.NewSession("direct-flush")
+	bus, s, _ := openRecoverable(t, f, a, nil)
+	f.DeleteSession(a)
+	publishTurnStart(bus, a, "turn:1", "first recovery")
+	b := waitForSecondSession(t, f)
+
+	armLongRetry(t, f, bus, a, "turn:2")
+	f.DeleteSession(b)
+	f.ClearAppendRejection()
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.Stop(stopCtx)
+
+	if s.Stopped() {
+		t.Fatalf("stopped (%q): the arrangement must not latch, or the line under test never runs", s.StopReason())
+	}
+	if n := len(f.SessionIDs()); n != 2 {
+		t.Fatalf("%d sessions, want 2: the second recovery inside the interval must be deferred", n)
+	}
+	st := readStatusFile(t, s.opts.OutboxDir)
+	if st.State != SyncStateStopped || !strings.Contains(st.Reason, "final push failed") || !strings.Contains(st.Reason, "recover") {
+		t.Fatalf("status.json = %+v, want stopped with the direct flush's failure classified in the reason", st)
+	}
+	if st.Unflushed == 0 {
+		t.Errorf("unflushed = 0, want the backlog the deferred recovery left behind")
+	}
 }
 
 // TestFlushRecoversFromDeletedSession: the same with a 404, which today
@@ -392,13 +497,22 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 	if n := f.CreateAttempts(); n != createFailuresBeforeThrottle {
 		t.Fatalf("(i) %d attempts, want exactly %d before the throttle", n, createFailuresBeforeThrottle)
 	}
-	st := readStatusFile(t, s.opts.OutboxDir)
-	if st.State != SyncStateDegraded || st.CreateThrottledUntil == nil || st.CreateFailures != createFailuresBeforeThrottle {
-		t.Errorf("status.json = %+v, want degraded with create_throttled_until set and create_failures=%d", st, createFailuresBeforeThrottle)
+	// The fake counts the request on receipt; the record is written once the
+	// response reaches the client, so wait for the transition rather than
+	// reading the file at once.
+	st := waitForStatusState(t, s.opts.OutboxDir, SyncStateDegraded)
+	if st.CreateThrottledUntil == nil || st.CreateFailures != createFailuresBeforeThrottle {
+		t.Errorf("status.json = %+v, want create_throttled_until set and create_failures=%d", st, createFailuresBeforeThrottle)
 	}
 	time.Sleep(createThrottlePeriod / 2)
 	if n := f.CreateAttempts(); n != createFailuresBeforeThrottle {
 		t.Fatalf("(ii) %d attempts inside the throttle period, want %d", n, createFailuresBeforeThrottle)
+	}
+	// A refusal is not a failure: no request was made, so the counter must
+	// not move while the throttle holds. This is the leak that is otherwise
+	// invisible - the successful create below resets the counter anyway.
+	if got := s.throttleCountersForTest(); got != createFailuresBeforeThrottle {
+		t.Fatalf("(ii) create failure counter = %d during the throttle, want %d: a refused attempt counted as a failure", got, createFailuresBeforeThrottle)
 	}
 	f.ClearCreateRejection()
 	waitUntil(t, "(iii) exactly one attempt after the period", func() bool {
@@ -408,8 +522,8 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 		t.Fatalf("the throttled attempt fired %v after engaging, before the %v period", since, createThrottlePeriod)
 	}
 	b := waitForSecondSession(t, f)
-	if s.consecutiveCreateFailuresForTest() != 0 {
-		t.Errorf("(iv) create failure counter = %d after a successful create, want 0", s.consecutiveCreateFailuresForTest())
+	if got := s.throttleCountersForTest(); got != 0 {
+		t.Errorf("(iv) create failure counter = %d after a successful create, want 0", got)
 	}
 	if s.Stopped() || s.SessionID() != b {
 		t.Errorf("stopped=%v id=%q, want a live session on %s", s.Stopped(), s.SessionID(), b)
@@ -420,7 +534,13 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 // several recoveries without a real minute between them.
 func recoveryIntervalForTests(t *testing.T, d time.Duration) func() {
 	t.Helper()
-	prev := recoveryIntervalVar
-	recoveryIntervalVar = d
-	return func() { recoveryIntervalVar = prev }
+	prev := recoveryInterval
+	recoveryInterval = d
+	return func() { recoveryInterval = prev }
 }
+
+// throttleCountersForTest reads the worker-owned create-failure counter from
+// the test goroutine. The field is worker-only by contract, so tests read it
+// through this one seam only while the worker is provably parked on a
+// throttle refusal or a completed create.
+func (s *SyncSession) throttleCountersForTest() int { return s.consecutiveCreateFailures }

@@ -15,8 +15,8 @@ func (s *SyncSession) workerLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	for {
-		// A 409 ended the remote session. There is nothing left to push, so
-		// exit without a final flush rather than replay into a dead session.
+		// A terminal stop latched. There is nothing left to push, so exit
+		// without a final flush rather than replay into a dead session.
 		if s.remoteEnded.Load() {
 			return
 		}

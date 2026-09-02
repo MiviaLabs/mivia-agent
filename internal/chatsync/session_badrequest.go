@@ -21,9 +21,10 @@ const noGapBase = int64(-1)
 // decision 4 knowingly accepts.
 //
 // A non-sequence 400 reaching here is poison; flushNow already routes it
-// through classifyFlushError's outcomeStop, so this branch is the guard
-// for a direct caller. An oversize 400 and every other 400 are poison. The body is already durable
-// in the outbox and byte-identical on every replay, so a retry resubmits a
+// through classifyFlushError's outcomeStop, so this branch is the guard for
+// a direct caller. An oversize 400 and every other 400 are poison. The body
+// is already durable in the outbox and byte-identical on every replay, so a
+// retry resubmits a
 // request the server has already judged malformed, on the flush ticker, for as
 // long as the process lives. Sync stops and says why
 // (chat-sync-event-contract.md:285-287).
