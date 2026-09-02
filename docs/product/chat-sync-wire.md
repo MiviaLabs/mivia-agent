@@ -91,9 +91,20 @@ fields use rune-safe byte budgets:
 | Error Message | 2 KiB | UTF-8 rune-safe truncation |
 | Metadata Labels | 200 B | UTF-8 rune-safe truncation |
 
+A budget counts the **JSON-escaped** size of the field, not its raw size. That
+is the unit the receiving store measures in, and the two are far apart for
+some content: a control byte occupies one raw byte and six escaped ones. A
+budget measured raw let a 16 KiB tool output be stored as 96 KiB, over the
+receiving column's 64 KiB bound - the ordinary case for a tool that reads a
+binary file.
+
 When a field exceeds its budget, the system truncates the text cleanly at the
-last valid UTF-8 rune boundary and records the retained and total byte counts
-in the envelope `trunc.fields` map.
+last valid UTF-8 rune boundary that fits, and records the retained and total
+byte counts - in the same escaped unit - in the envelope `trunc.fields` map.
+
+Two code points never reach the wire regardless of budget: `U+0000`, which the
+receiving store cannot hold at all, is removed. See "Repairs made by the
+server" below for what happens when a payload still arrives oversize.
 
 ## Event Types and Ordering
 
@@ -225,6 +236,29 @@ A 400 is classified: a sequence-gap 400 re-reads the session and rebases on
 failure it is trying to avoid. Any other 400 - and 413 or 422 - is poison a
 retry cannot fix, so sync stops and says why. 408 and 429 stay retryable with
 jittered backoff.
+
+### Repairs made by the server
+
+The API appends a batch as one multi-row statement, so a rejection of any
+single event rejects the whole batch - up to 100 events. Combined with the
+poison rule above, one unacceptable event used to cost the rest of the
+session: the 400 stopped sync permanently.
+
+The API therefore repairs rather than rejects. It removes a `U+0000` it cannot
+store, and shrinks a payload over its column bound by cutting the longest
+string, recording the cut in that payload's own `trunc.fields`. A repaired
+payload carries `"repaired_at_ingest": true`.
+
+That marker matters to this client. On a short `insertedCount` - the ordinary
+shape of a retry, because the API skips rows it already holds - the client
+reads the range back and checks that the stored body is its own. A repaired
+body is not equal to what was sent, so without the marker it reads as a
+foreign writer and stops the session.
+
+The tolerance is deliberately narrow: a repair may only SHRINK a string, so a
+stored string must be what was sent with its NULs removed, or a prefix of
+that. Any other difference is still treated as corruption and still stops
+sync.
 
 ## Reporting
 
