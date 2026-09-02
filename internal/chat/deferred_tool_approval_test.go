@@ -134,14 +134,17 @@ func TestAnUnsetPolicyOnTheDeferredPathStillDecides(t *testing.T) {
 	}
 }
 
-// TestRunDeferredToolNowItselfRefuses drives the REAL deferred path, not the
-// decision helper.
+// TestTheDeferredHandlerItselfRefuses drives the REAL deferred path end to
+// end, not the decision helper.
 //
-// Deleting the guard from runDeferredToolNow leaves every test above green,
-// because they all call decideDeferredApproval directly. That is the shape
-// that has shipped several things dead in this repo, so the call site gets its
-// own test that executes it.
-func TestRunDeferredToolNowItselfRefuses(t *testing.T) {
+// Deleting the guard leaves every test above green, because they all call
+// decideDeferredApproval directly. That is the shape that has shipped several
+// things dead in this repo, so the call site gets its own test that executes
+// it. It now enters through UnadmittedToolHandler because approval moved out
+// of runDeferredToolNow and into the orchestration above it - which is where
+// it has to be, since a refusal must land before the admission budget is
+// charged.
+func TestTheDeferredHandlerItselfRefuses(t *testing.T) {
 	tool := &writingTool{}
 	reg := tools.NewRegistry()
 	reg.Register(tool)
@@ -149,31 +152,34 @@ func TestRunDeferredToolNowItselfRefuses(t *testing.T) {
 	t.Cleanup(d.Close)
 
 	s := &Session{ApprovalPolicy: "deny"}
-	content, _, _, failed, ok := s.runDeferredToolNow(
-		context.Background(), d, func() *tools.Registry { return reg },
-		"sess-1", 1, "write_file", json.RawMessage(`{}`), noopPending,
-	)
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
 
 	if tool.ran {
 		t.Fatal("the deferred path EXECUTED a write tool under a \"deny\" policy; " +
 			"this is the route that bypasses the approval wrapper entirely")
 	}
-	if !ok {
+	if !result.Handled {
 		t.Fatal("the refusal was not reported back to the loop, so the model gets " +
 			"no result for a call it made")
 	}
-	if !strings.Contains(content, "denied") {
-		t.Errorf("the model was told %q, want a refusal", content)
+	if !strings.Contains(result.Content, "denied") {
+		t.Errorf("the model was told %q, want a refusal", result.Content)
 	}
-	if !failed {
+	if !result.Failed {
 		t.Error("the refusal is reported as a completed call, so every viewer " +
 			"renders a denied write as a successful one")
 	}
 }
 
-// TestRunDeferredToolNowRunsWhenApproved is the other direction on the real
+// TestTheDeferredHandlerRunsWhenApproved is the other direction on the real
 // path: an approved call must still execute and return its output.
-func TestRunDeferredToolNowRunsWhenApproved(t *testing.T) {
+func TestTheDeferredHandlerRunsWhenApproved(t *testing.T) {
 	tool := &writingTool{}
 	reg := tools.NewRegistry()
 	reg.Register(tool)
@@ -181,21 +187,24 @@ func TestRunDeferredToolNowRunsWhenApproved(t *testing.T) {
 	t.Cleanup(d.Close)
 
 	s := &Session{ApprovalPolicy: "auto"}
-	content, _, _, failed, ok := s.runDeferredToolNow(
-		context.Background(), d, func() *tools.Registry { return reg },
-		"sess-1", 1, "write_file", json.RawMessage(`{}`), noopPending,
-	)
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
 
-	if !ok {
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
+
+	if !result.Ran {
 		t.Fatal("the deferred path reported no result for an approved call")
 	}
 	if !tool.ran {
 		t.Error("an approved call did not run")
 	}
-	if !strings.Contains(content, "WROTE") {
-		t.Errorf("content = %q, want the tool's own output", content)
+	if !strings.Contains(result.Content, "WROTE") {
+		t.Errorf("content = %q, want the tool's own output", result.Content)
 	}
-	if failed {
+	if result.Failed {
 		t.Error("a call that ran and succeeded is marked failed")
 	}
 }
@@ -532,5 +541,79 @@ func TestTheDeferredTimeoutDoesNotBoundTheOperatorsApprovalWait(t *testing.T) {
 		t.Fatalf("the operator approved and the call did not run - the tool "+
 			"timeout was armed around the human, and the prompt auto-denied "+
 			"while they were still reading it: %+v", result)
+	}
+}
+
+// A call the operator REFUSED must not consume the admission budget.
+//
+// ChargeAdmissionAttempt fired before anything else, so a denied, blocked or
+// unresolvable call still burned one of MaxAdmissionAttempts. The budget
+// exists to bound how often a model may ask for tools, and a refusal is the
+// operator's decision, not the model's request - charging for it lets a
+// denial policy exhaust the session's own loading budget.
+func TestADeniedDeferredCallDoesNotConsumeTheAdmissionBudget(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&writingTool{})
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	s := &Session{ApprovalPolicy: config.ApprovalPolicyDeny}
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", reg.OpenAITools())
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	opts.UnadmittedToolHandler(promptableCtx(), "write_file", json.RawMessage(`{}`))
+
+	s.mu.RLock()
+	attempts, pending := s.admissionAttempts, s.pendingAdmission
+	s.mu.RUnlock()
+	if attempts != 0 {
+		t.Errorf("a refused call consumed %d admission attempt(s); the model "+
+			"never got the tool and the budget paid for it anyway", attempts)
+	}
+	if pending != nil {
+		t.Errorf("a refused call was staged for publication: %+v", pending)
+	}
+}
+
+// A name that is advertised but absent from the full tool set must not be
+// staged, and must not be told it was queued.
+//
+// StageToolAdmission ran BEFORE the name was resolved, so a name nothing can
+// resolve was staged anyway and burned against the publication ceiling. The
+// model was then told the tool "has been queued to load automatically ...
+// retry the call on your next step" - a retry that can never resolve, on a
+// stage that can never publish.
+func TestAnUnresolvableDeferredNameIsNotStagedOrPromisedALoad(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&writingTool{})
+	d := runtime.New(runtime.Policy{})
+	t.Cleanup(d.Close)
+
+	s := &Session{ApprovalPolicy: config.ApprovalPolicyAuto}
+	// Advertise a name the base registry does not have.
+	specs := append(reg.OpenAITools(), map[string]any{
+		"type": "function", "function": map[string]any{"name": "ghost_tool"},
+	})
+	s.PublishAgentSurface("p", 0, reg, nil, nil, "", specs)
+	s.SetDispatcher(d)
+	s.ToolBaseResolver = func() *tools.Registry { return reg }
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(promptableCtx(), "ghost_tool", json.RawMessage(`{}`))
+
+	s.mu.RLock()
+	pending := s.pendingAdmission
+	s.mu.RUnlock()
+	if pending != nil {
+		t.Errorf("a name absent from the tool set was staged for publication, "+
+			"burning the ceiling on something that can never publish: %+v", pending)
+	}
+	if strings.Contains(result.Content, "queued to load") {
+		t.Errorf("the model is promised a load that cannot happen, and told to "+
+			"retry: %q", result.Content)
 	}
 }
