@@ -410,11 +410,22 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 			return c.SpawnReferralFromAsk(ctx, runID, toRole, ask, meta)
 		},
 	}
-	if _, exists := reg.Get(post.Name()); !exists {
-		if err := d.RegisterTool(reg, post); err != nil {
-			return fmt.Errorf("register post_message: %w", err)
+	// An operator's mandatory_tool_denylist must reach EVERY session-tool
+	// registrar, including the one that owns the name. run_messages and
+	// send_to_task below go through RegisterSessionTool, which refuses a
+	// denied name - but postMessageTool is deliberately not a PrivilegedTool
+	// and cannot use that gate, so the check happens here instead. Skipped,
+	// not errored: a session whose messaging is denied must still start,
+	// exactly like registerLedgerTools's denied names. Nothing re-adds it
+	// later - the scope filter has already run, and injectBaselineMessaging
+	// copies from the authority registry this skip keeps the name out of.
+	if !tools.OperatorDenialSet(denylist)[post.Name()] {
+		if _, exists := reg.Get(post.Name()); !exists {
+			if err := d.RegisterTool(reg, post); err != nil {
+				return fmt.Errorf("register post_message: %w", err)
+			}
+			reg.Register(post)
 		}
-		reg.Register(post)
 	}
 	for _, t := range []tools.Tool{
 		&runMessagesTool{dispatcher: d, cfg: cfg, repo: repo},

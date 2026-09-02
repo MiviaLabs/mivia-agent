@@ -7,6 +7,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -71,6 +73,42 @@ func TestBaselineMessagingStillInjectsWhenNothingIsDenied(t *testing.T) {
 
 	if _, ok := scoped.Get(toolPostMessage); !ok {
 		t.Error("post_message was not injected for an agent that denied nothing")
+	}
+}
+
+// TestRegisterMessagingToolsHonoursTheOperatorDenylist is the root-session
+// registrar itself. run_messages and send_to_task register through
+// RegisterSessionTool, which refuses an operator-denied name - but
+// post_message is deliberately not a PrivilegedTool, cannot use that gate,
+// and so was registered unconditionally: the operator's guardrail existed in
+// config and nowhere else, and the name rode the authority registry into
+// every plain multi_step and skill subagent, where it ran prompt-free.
+func TestRegisterMessagingToolsHonoursTheOperatorDenylist(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+
+	deniedD := runtime.New(runtime.Policy{})
+	t.Cleanup(func() { deniedD.Close() })
+	denied := tools.NewRegistry()
+	if err := registerMessagingTools(deniedD, denied, config.SubagentConfig{}, repo, nil, []string{toolPostMessage}); err != nil {
+		t.Fatalf("registerMessagingTools: %v", err)
+	}
+	if _, ok := denied.Get(toolPostMessage); ok {
+		t.Error("post_message was registered although the operator denied it - " +
+			"the guardrail must be absolute at root, including the registrar " +
+			"that owns the name")
+	}
+	if _, ok := denied.Get("run_messages"); !ok {
+		t.Error("run_messages went missing; only the denied name may be skipped")
+	}
+
+	openD := runtime.New(runtime.Policy{})
+	t.Cleanup(func() { openD.Close() })
+	open := tools.NewRegistry()
+	if err := registerMessagingTools(openD, open, config.SubagentConfig{}, repo, nil, nil); err != nil {
+		t.Fatalf("registerMessagingTools: %v", err)
+	}
+	if _, ok := open.Get(toolPostMessage); !ok {
+		t.Error("post_message was not registered for a session that denied nothing")
 	}
 }
 
