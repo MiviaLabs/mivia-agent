@@ -52,13 +52,25 @@ type turnState struct {
 	streamed          bool
 	fragments         int
 	thinkingFragments int
-	// segment counts the STEPS of a turn: talk, call a tool, read the result,
-	// talk again. It is what separates one utterance from the next on the
-	// wire; see proseBlock.
+	// segment is the id of the current STEP of a turn: talk, call a tool,
+	// read the result, talk again. It is what separates one utterance from
+	// the next on the wire; see proseBlock. Ids come from the projector's one
+	// monotonic counter (Projector.allocSegment), never from a per-state
+	// counter: a lane or turn evicted from the bounded tables and re-created
+	// must not re-mint an id it already used.
 	segment int
-	// segmentDirty records that prose has actually shipped into the current
-	// segment, so a tool call that follows silence spends no segment.
-	segmentDirty bool
+	// segmentAssistant and segmentThinking count the deltas that actually
+	// SHIPPED into the current segment, per stream. A tool call that follows
+	// silence spends no segment, and a delta whose append failed is rolled
+	// back out of its own stream's count without touching the other's - a
+	// single shared flag could not tell a thinking-dirtied segment from a
+	// clean one once the assistant delta was lost. Zeroed only by advanceStep.
+	segmentAssistant int
+	segmentThinking  int
+	// resetUndo records what a reset's advance replaced, so a reset that was
+	// never stored can put it back (restoreClearedStream). Nil when the reset
+	// advanced nothing.
+	resetUndo *segmentUndo
 	// streamSegment is the segment the most recent assistant DELTA shipped
 	// into. The settled aggregate names it rather than the current segment:
 	// the terminal EventAssistant is published from finalizeSDKTurn, AFTER the
@@ -78,6 +90,13 @@ type turnState struct {
 	streamUnrecoverable bool
 }
 
+// segmentUndo is the step state a reset replaced.
+type segmentUndo struct {
+	segment          int
+	segmentAssistant int
+	segmentThinking  int
+}
+
 // Projector performs pure synchronous projection of events.Event streams
 // into WireEvent sequences for a single chat session.
 type Projector struct {
@@ -94,6 +113,16 @@ type Projector struct {
 	laneOrder   []string
 	lastDrops   uint64
 	currentTurn string
+	// nextSegment is the one source of step ids for every turn and lane.
+	// See turnState.segment.
+	nextSegment int
+}
+
+// allocSegment mints a step id no stream of this projector has used.
+func (p *Projector) allocSegment() int {
+	id := p.nextSegment
+	p.nextSegment++
+	return id
 }
 
 // NewProjector constructs a Projector for sessionID starting at initialSeq.
@@ -118,7 +147,7 @@ func (p *Projector) laneState(turnID, task string) *turnState {
 		p.touchLane(key)
 		return ls
 	}
-	ls := &turnState{}
+	ls := &turnState{segment: p.allocSegment()}
 	p.lanes[key] = ls
 	p.laneOrder = append(p.laneOrder, key)
 	for len(p.laneOrder) > maxTrackedLanes {
@@ -227,6 +256,12 @@ func (p *Projector) RollbackStreaming(wireEvents []WireEvent) {
 			if payload.Agent != nil {
 				p.rollbackOneDelta(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
 			}
+		case *ThinkingDeltaPayload:
+			p.rollbackOneThinking(p.turns[payload.Turn])
+		case *SubagentThinkingDeltaPayload:
+			if payload.Agent != nil {
+				p.rollbackOneThinking(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
+			}
 		case *AssistantResetPayload:
 			// A reset that never reached the wire must not have cleared the
 			// producer's counters either. It did: the viewer kept every
@@ -262,6 +297,15 @@ func (p *Projector) restoreClearedStream(payload *AssistantResetPayload) {
 	// them back as zero, which this once did, is not a rollback at all: it
 	// leaves exactly the state the reset produced. Mark the block instead.
 	ts.streamUnrecoverable = true
+	// The step it advanced is recoverable, and must be: the replay is stamped
+	// with a segment the abandoned text never used otherwise, and a consumer
+	// cannot match the repair to the block it repairs. Conditional, because
+	// advanceStep is a no-op on a clean segment and an unconditional undo
+	// would under-run.
+	if u := ts.resetUndo; u != nil {
+		ts.segment, ts.segmentAssistant, ts.segmentThinking = u.segment, u.segmentAssistant, u.segmentThinking
+		ts.resetUndo = nil
+	}
 }
 
 func (p *Projector) rollbackOneDelta(ts *turnState) {
@@ -273,6 +317,20 @@ func (p *Projector) rollbackOneDelta(ts *turnState) {
 	// several deltas is still a turn that streamed.
 	if ts.fragments == 0 {
 		ts.streamed = false
+	}
+	// A delta that never shipped must not have spent the step either.
+	if ts.segmentAssistant > 0 {
+		ts.segmentAssistant--
+	}
+}
+
+func (p *Projector) rollbackOneThinking(ts *turnState) {
+	if ts == nil || ts.thinkingFragments == 0 {
+		return
+	}
+	ts.thinkingFragments--
+	if ts.segmentThinking > 0 {
+		ts.segmentThinking--
 	}
 }
 
@@ -422,7 +480,7 @@ func (p *Projector) turn(id string) *turnState {
 		p.touchTurn(id)
 		return t
 	}
-	t := &turnState{}
+	t := &turnState{segment: p.allocSegment()}
 	p.turns[id] = t
 	p.turnOrder = append(p.turnOrder, id)
 	for len(p.turnOrder) > maxTrackedTurns {
@@ -542,7 +600,7 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 			ts.fragments++
 			// Same rule for the step counter: a segment is only open if prose
 			// actually went out into it.
-			ts.segmentDirty = true
+			ts.segmentAssistant++
 			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{
 				Envelope: env,
@@ -598,7 +656,7 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 	}
 	// Reasoning opens a step as surely as narration does: a step that thought
 	// and then called a tool has closed something, even if it never spoke.
-	ts.segmentDirty = true
+	ts.segmentThinking++
 	index := ts.thinkingFragments
 	ts.thinkingFragments++
 	payload := &ThinkingDeltaPayload{

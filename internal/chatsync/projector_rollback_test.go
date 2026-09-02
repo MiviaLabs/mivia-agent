@@ -167,3 +167,65 @@ func TestALaneReplayAfterResetUsesAFreshBlock(t *testing.T) {
 		t.Fatalf("the lane's replay reused the discarded attempt's block %q", used)
 	}
 }
+
+// TestLostDeltaDoesNotSpendAStep: a single assistant delta whose append
+// fails, then a tool start, then a delta. The second delta must land in the
+// segment the first attempt would have used - nothing shipped, so the tool
+// call closed nothing.
+func TestLostDeltaDoesNotSpendAStep(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	lost := p.Project(rootEvent(events.KindAssistant, "never stored", "delta"))
+	wanted := blockOf(t, onlyEvent(t, lost))
+	p.RollbackStreaming(lost)
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	got := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "stored", "delta"))))
+	if got != wanted {
+		t.Fatalf("after a lost delta and a tool start the next delta landed in %q, want %q: the lost delta spent a step", got, wanted)
+	}
+}
+
+// TestThinkingDirtiedSegmentStillAdvancesAfterAssistantRollback: a STORED
+// thinking delta plus a LOST assistant delta, then a tool start. The segment
+// must advance - the thinking shipped. Fails if the assistant rollback clears
+// a flag the thinking stream shares.
+func TestThinkingDirtiedSegmentStillAdvancesAfterAssistantRollback(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	before := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "shipped", ""))))
+	lost := p.Project(rootEvent(events.KindAssistant, "never stored", "delta"))
+	p.RollbackStreaming(lost)
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	after := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "next step", ""))))
+	if stepOf(t, after) == stepOf(t, before) {
+		t.Fatalf("segment did not advance past a tool call although thinking had shipped into it (%q)", after)
+	}
+}
+
+// TestSecondThinkingDeltaLostStillLeavesTheSegmentDirty is the mirrored
+// discriminator: thinking delta stored, a second thinking delta lost, tool
+// start, prose. The segment DID ship reasoning, so it must advance. Fails
+// under any rollback that clears the segment unconditionally.
+func TestSecondThinkingDeltaLostStillLeavesTheSegmentDirty(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	before := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "shipped", ""))))
+	lost := p.Project(rootEvent(events.KindThinking, "never stored", ""))
+	p.RollbackStreaming(lost)
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	after := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "prose", "delta"))))
+	if stepOf(t, after) == stepOf(t, before) {
+		t.Fatalf("segment did not advance (%q): losing the SECOND thinking delta must not forget the first one shipped", after)
+	}
+}
+
+// TestLostResetDoesNotAdvanceTheStep: a reset whose append fails, then the
+// replayed prose. The replay must carry the segment the abandoned text used,
+// so a consumer can match the repair to the block it repairs.
+func TestLostResetDoesNotAdvanceTheStep(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	used := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "first try", "delta"))))
+	reset := p.Project(rootEvent(events.KindAssistantReset, "", "retrying"))
+	p.RollbackStreaming(reset)
+	replay := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "replayed", "delta"))))
+	if replay != used {
+		t.Fatalf("replay after a LOST reset landed in %q, want %q: the viewer never heard the reset, so the repair must name the block it holds", replay, used)
+	}
+}

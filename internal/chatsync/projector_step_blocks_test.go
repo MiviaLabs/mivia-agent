@@ -1,6 +1,7 @@
 package chatsync
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -62,6 +63,19 @@ func blockOf(t *testing.T, we WireEvent) string {
 	}
 }
 
+// stepOf parses the trailing step off a prose block id with the recorded
+// grammar. Tests compare steps and ids rather than asserting literals: ids
+// come from one projector-wide counter, so a literal would pin allocation
+// order rather than the invariant.
+func stepOf(t *testing.T, block string) int {
+	t.Helper()
+	_, step, ok := parseProseBlock(block)
+	if !ok {
+		t.Fatalf("block %q does not parse as a prose block", block)
+	}
+	return step
+}
+
 func onlyEvent(t *testing.T, got []WireEvent) WireEvent {
 	t.Helper()
 	if len(got) != 1 {
@@ -83,12 +97,6 @@ func TestProseBlockAdvancesPastEachToolCall(t *testing.T) {
 	if first == second {
 		t.Fatalf("prose either side of a tool call shares block %q; the two utterances are indistinguishable on the wire", first)
 	}
-	if first != "turn:1:assistant:0" {
-		t.Errorf("first block = %q, want turn:1:assistant:0", first)
-	}
-	if second != "turn:1:assistant:1" {
-		t.Errorf("second block = %q, want turn:1:assistant:1", second)
-	}
 }
 
 // Thinking advances on the same boundary and with the same counter: a step is
@@ -97,17 +105,20 @@ func TestProseBlockAdvancesPastEachToolCall(t *testing.T) {
 func TestThinkingSharesTheStepCounterWithAssistant(t *testing.T) {
 	p := NewProjector("sess-1", 0, proseOpts())
 
-	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindThinking, "read it first", "")))); got != "turn:1:thinking:0" {
-		t.Errorf("step 0 thinking block = %q, want turn:1:thinking:0", got)
-	}
-	p.Project(stepEvent(events.KindAssistant, "Let me look.", "delta"))
+	thinkingBefore := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindThinking, "read it first", ""))))
+	assistantBefore := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Let me look.", "delta"))))
 	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	thinkingAfter := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindThinking, "now patch it", ""))))
+	assistantAfter := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Found it.", "delta"))))
 
-	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindThinking, "now patch it", "")))); got != "turn:1:thinking:1" {
-		t.Errorf("step 1 thinking block = %q, want turn:1:thinking:1", got)
+	if stepOf(t, thinkingBefore) != stepOf(t, assistantBefore) {
+		t.Errorf("before the tool: thinking %q and assistant %q disagree on the step", thinkingBefore, assistantBefore)
 	}
-	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Found it.", "delta")))); got != "turn:1:assistant:1" {
-		t.Errorf("step 1 assistant block = %q, want turn:1:assistant:1", got)
+	if thinkingAfter == thinkingBefore {
+		t.Errorf("thinking block %q did not move past the tool call", thinkingAfter)
+	}
+	if stepOf(t, thinkingAfter) != stepOf(t, assistantAfter) {
+		t.Errorf("after the tool: thinking %q and assistant %q disagree on the step; the two streams share ONE counter", thinkingAfter, assistantAfter)
 	}
 }
 
@@ -115,16 +126,25 @@ func TestThinkingSharesTheStepCounterWithAssistant(t *testing.T) {
 // would leave the next utterance in segment 3 with 1 and 2 never used - not
 // wrong, but it invites a consumer to render two blank messages for the gap.
 func TestParallelToolsInOneStepAdvanceTheBlockOnce(t *testing.T) {
-	p := NewProjector("sess-1", 0, proseOpts())
+	// Differential: the control runs the same turn with ONE tool start. Both
+	// create the same turn in the same order, so they allocate identically,
+	// and any extra id the subject spent on the parallel starts shows up.
+	subject := NewProjector("sess-1", 0, proseOpts())
+	subject.Project(stepEvent(events.KindAssistant, "Checking all three.", "delta"))
+	subject.Project(toolEvent(events.KindToolStart, "call-1"))
+	subject.Project(toolEvent(events.KindToolStart, "call-2"))
+	subject.Project(toolEvent(events.KindToolStart, "call-3"))
+	subject.Project(toolEvent(events.KindToolEnd, "call-1"))
+	got := blockOf(t, onlyEvent(t, subject.Project(stepEvent(events.KindAssistant, "All read.", "delta"))))
 
-	p.Project(stepEvent(events.KindAssistant, "Checking all three.", "delta"))
-	p.Project(toolEvent(events.KindToolStart, "call-1"))
-	p.Project(toolEvent(events.KindToolStart, "call-2"))
-	p.Project(toolEvent(events.KindToolStart, "call-3"))
-	p.Project(toolEvent(events.KindToolEnd, "call-1"))
+	control := NewProjector("sess-1", 0, proseOpts())
+	control.Project(stepEvent(events.KindAssistant, "Checking all three.", "delta"))
+	control.Project(toolEvent(events.KindToolStart, "call-1"))
+	control.Project(toolEvent(events.KindToolEnd, "call-1"))
+	want := blockOf(t, onlyEvent(t, control.Project(stepEvent(events.KindAssistant, "All read.", "delta"))))
 
-	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "All read.", "delta")))); got != "turn:1:assistant:1" {
-		t.Errorf("block after a parallel step = %q, want turn:1:assistant:1", got)
+	if got != want {
+		t.Errorf("block after a parallel step = %q, want %q (the id one tool start mints): three starts advanced more than once", got, want)
 	}
 }
 
@@ -132,13 +152,18 @@ func TestParallelToolsInOneStepAdvanceTheBlockOnce(t *testing.T) {
 // spend a segment on silence and split one utterance that a tool call merely
 // interrupted without the model saying anything either side of it.
 func TestToolCallWithoutPrecedingProseDoesNotAdvanceTheBlock(t *testing.T) {
-	p := NewProjector("sess-1", 0, proseOpts())
+	// Differential: the control has the tool events removed. Both allocate
+	// one turnState for turn:1 and nothing else.
+	subject := NewProjector("sess-1", 0, proseOpts())
+	subject.Project(toolEvent(events.KindToolStart, "call-1"))
+	subject.Project(toolEvent(events.KindToolEnd, "call-1"))
+	got := blockOf(t, onlyEvent(t, subject.Project(stepEvent(events.KindAssistant, "Here.", "delta"))))
 
-	p.Project(toolEvent(events.KindToolStart, "call-1"))
-	p.Project(toolEvent(events.KindToolEnd, "call-1"))
+	control := NewProjector("sess-1", 0, proseOpts())
+	want := blockOf(t, onlyEvent(t, control.Project(stepEvent(events.KindAssistant, "Here.", "delta"))))
 
-	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Here.", "delta")))); got != "turn:1:assistant:0" {
-		t.Errorf("block = %q, want turn:1:assistant:0 - no prose preceded the tool call", got)
+	if got != want {
+		t.Errorf("block = %q, want %q - no prose preceded the tool call, so it must advance nothing", got, want)
 	}
 }
 
@@ -150,10 +175,10 @@ func TestSettledMessageCarriesItsSegmentsBlock(t *testing.T) {
 
 	p.Project(stepEvent(events.KindAssistant, "Let me look.", "delta"))
 	p.Project(toolEvent(events.KindToolStart, "call-1"))
-	p.Project(stepEvent(events.KindAssistant, "Fixed.", "delta"))
+	last := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Fixed.", "delta"))))
 
-	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Let me look.Fixed.", "")))); got != "turn:1:assistant:1" {
-		t.Errorf("settled message block = %q, want turn:1:assistant:1", got)
+	if got := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Let me look.Fixed.", "")))); got != last {
+		t.Errorf("settled message block = %q, want %q, the block its last delta streamed into", got, last)
 	}
 }
 
@@ -206,28 +231,33 @@ func TestSubagentLaneSegmentsOnItsOwnToolCalls(t *testing.T) {
 		return ev.WithAgentAttribution(task, "builder", 1)
 	}
 
+	// Three captures: (i) task-a's own start advances task-a; (ii) task-b's
+	// start leaves task-a where it is.
 	first := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, "task-a", "Looking.", "delta"))))
 	p.Project(laneTool(events.KindSubagentStart, "task-a", "call-1"))
-	// A different run's tool call must not advance task-a's counter.
+	second := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, "task-a", "Working.", "delta"))))
 	p.Project(laneTool(events.KindSubagentStart, "task-b", "call-9"))
-	second := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, "task-a", "Done.", "delta"))))
+	third := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, "task-a", "Done.", "delta"))))
 
-	if first != "turn:1:task-a:assistant:0" {
-		t.Errorf("first lane block = %q, want turn:1:task-a:assistant:0", first)
+	if first == second {
+		t.Errorf("task-a's own tool start did not advance its block: %q", first)
 	}
-	if second != "turn:1:task-a:assistant:1" {
-		t.Errorf("second lane block = %q, want turn:1:task-a:assistant:1", second)
+	if second != third {
+		t.Errorf("task-b's tool start moved task-a's block from %q to %q", second, third)
 	}
 }
 
-// Two turns are two conversations. A segment counter that survived a turn would
-// have turn 2 opening at whatever depth turn 1 happened to reach.
-func TestSegmentCounterIsPerTurn(t *testing.T) {
+// Two turns are two conversations, and a step id is never minted twice. The
+// per-turn restart at 0 this once asserted is gone on purpose: a turn evicted
+// from the bounded table and re-created restarted at 0 too, and re-minted an
+// id it had already used. One projector-wide counter is what forecloses that.
+func TestATurnNeverReusesAStepIDOfAnotherTurn(t *testing.T) {
 	p := NewProjector("sess-1", 0, proseOpts())
 
-	p.Project(stepEvent(events.KindAssistant, "Turn one.", "delta"))
+	used := map[int]bool{}
+	used[stepOf(t, blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Turn one.", "delta")))))] = true
 	p.Project(toolEvent(events.KindToolStart, "call-1"))
-	p.Project(stepEvent(events.KindAssistant, "Still turn one.", "delta"))
+	used[stepOf(t, blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "Still turn one.", "delta")))))] = true
 
 	next := events.Event{
 		Kind:      events.KindAssistant,
@@ -237,8 +267,8 @@ func TestSegmentCounterIsPerTurn(t *testing.T) {
 		Content:   "Turn two.",
 		Detail:    "delta",
 	}
-	if got := blockOf(t, onlyEvent(t, p.Project(next))); got != "turn:2:assistant:0" {
-		t.Errorf("new turn's first block = %q, want turn:2:assistant:0", got)
+	if got := stepOf(t, blockOf(t, onlyEvent(t, p.Project(next)))); used[got] {
+		t.Errorf("turn 2 opened at step %d, which turn 1 already minted", got)
 	}
 }
 
@@ -303,7 +333,62 @@ func TestLaneThinkingSegmentsOnItsOwnCounter(t *testing.T) {
 	}
 	p.Project(laneTool.WithAgentAttribution("task-a", "builder", 1))
 
-	if got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "done", "")))); got != "turn:1:task-a:thinking:1" {
-		t.Errorf("lane thinking block after the lane's OWN tool = %q, want turn:1:task-a:thinking:1", got)
+	if got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "done", "")))); got == first {
+		t.Errorf("lane thinking block after the lane's OWN tool = %q, unchanged; the lane's own tool call must advance it", got)
+	}
+}
+
+// TestEvictedLaneNeverReusesAStepID is the discriminator for the eviction
+// defects: a lane (or turn) pushed out of the bounded table and re-created
+// used to restart at 0 and re-mint an id already used in that turn, which a
+// consumer keyed on the id merges into the earlier utterance.
+func TestEvictedLaneNeverReusesAStepID(t *testing.T) {
+	t.Run("lanes", func(t *testing.T) {
+		p := NewProjector("sess-1", 0, proseOpts())
+		seen := map[string]bool{}
+		for i := 0; i <= maxTrackedLanes; i++ {
+			task := "task-" + itoa(i)
+			seen[blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, task, "hi", "delta"))))] = true
+		}
+		// task-0 is evicted by now; its next prose re-creates the lane.
+		got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistant, "task-0", "again", "delta"))))
+		if seen[got] {
+			t.Fatalf("re-created lane re-minted %q, an id already used in this turn", got)
+		}
+	})
+	t.Run("turns", func(t *testing.T) {
+		p := NewProjector("sess-1", 0, proseOpts())
+		seen := map[string]bool{}
+		turnEvent := func(turn string) events.Event {
+			return events.Event{Kind: events.KindAssistant, SessionID: "sess-1", TurnID: turn, Timestamp: time.Now(), Content: "hi", Detail: "delta"}
+		}
+		for i := 0; i <= maxTrackedTurns; i++ {
+			seen[blockOf(t, onlyEvent(t, p.Project(turnEvent("turn:"+itoa(i)))))] = true
+		}
+		got := blockOf(t, onlyEvent(t, p.Project(turnEvent("turn:0"))))
+		if seen[got] {
+			t.Fatalf("re-created turn re-minted %q", got)
+		}
+	})
+}
+
+func itoa(i int) string { return strconv.Itoa(i) }
+
+// TestProseBlockMatchesTheRecordedGrammar holds proseBlock and
+// ProseBlockPattern together: an id built for each of the four stream forms
+// parses, and a legacy stepless id, a reset's bare stream id and a real
+// tool_call_id do not.
+func TestProseBlockMatchesTheRecordedGrammar(t *testing.T) {
+	for _, stream := range []string{"turn:1:assistant", "turn:1:thinking", "turn:1:task-a:assistant", "turn:1:task-a:thinking"} {
+		id := proseBlock(stream, 7)
+		got, step, ok := parseProseBlock(id)
+		if !ok || got != stream || step != 7 {
+			t.Errorf("proseBlock(%q, 7) = %q, parsed to (%q, %d, %v)", stream, id, got, step, ok)
+		}
+	}
+	for _, bad := range []string{"turn:1:assistant", "turn:1:task-a:assistant", "grep-1788241615121594464-2846", "turn:1:assistant:", "turn:1:tool:3"} {
+		if _, _, ok := parseProseBlock(bad); ok {
+			t.Errorf("%q parsed as a prose block; it is not one", bad)
+		}
 	}
 }
