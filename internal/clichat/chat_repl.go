@@ -83,6 +83,10 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	plan, liveScope := surface.plan, surface.skillScope
 	adoptSessionLedgerRepo(sess, cfg, state, routing)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		// The operator's approval wiring, read per invocation so a nested loop
+		// sees the gate installed after this dispatcher was built and any
+		// policy change since.
+		Approval:                  sess.ApprovalSnapshot,
 		Registry:                  sess.Tools,
 		AuthorityRegistry:         surface.authority,
 		Repo:                      ledgerRepoOf(state),
