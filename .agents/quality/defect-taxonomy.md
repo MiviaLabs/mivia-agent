@@ -1362,7 +1362,17 @@ the gate kept reporting it `survived`.
 - Test with a fixture containing at least one multi-byte character BEFORE
   the position under test, not after - a bug in this class is invisible in
   any fixture that only ever has ASCII before the site.
-- Gate: `test_tokenizer_offsets_survive_multibyte_utf8_before_site`
-  (`scripts/test_check_mutation.py`) tokenizes a fixture with em-dashes
-  before a `continue` site and asserts byte-slicing lands on it while
-  str-slicing the same offsets (the pre-fix behavior) does not.
+- A gate for this class must assert on the PRODUCTION function that
+  consumes the offset, not on a reimplementation of it inside the test.
+  The first attempt here asserted only that the tokenizer emits byte
+  offsets - which was never the broken part - so reverting either fixed
+  line left the whole suite green. Extracting each consumer as a pure
+  `bytes`-in function (`apply_mutation`, `line_of_offset`) is what made a
+  real gate possible; prefer that shape over an inline slice.
+- Gate: `test_tokenizer_offsets_survive_multibyte_utf8_before_site` and
+  `test_denylist_spans_survive_multibyte_utf8_before_snippet`
+  (`scripts/test_check_mutation.py`) build fixtures with em-dashes before
+  the site and assert on `check_mutation.apply_mutation`,
+  `check_mutation.line_of_offset`, and
+  `check_mutation.denylisted_spans`/`is_denylisted` directly. Each fails
+  if its consumer is reverted to code-point slicing.

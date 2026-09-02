@@ -121,6 +121,49 @@ def test_tokenizer_offsets_survive_multibyte_utf8_before_site() -> None:
             "exists to catch a regression of"
         )
 
+        # The actual gate: assert on the PRODUCTION functions, not on a
+        # reimplementation of them here. Asserting only the tokenizer's
+        # offsets (above) tests something that was never broken - reverting
+        # either fixed line left this whole suite green until these two.
+        assert cm.apply_mutation(raw, site) == raw.replace(b"continue", b"", 1), (
+            "apply_mutation did not remove the 'continue' the site names; "
+            "it sliced the wrong span"
+        )
+        assert cm.line_of_offset(raw, site.start) == 6, (
+            "line_of_offset mis-located the site; sweep_diff matches this "
+            "number against git's changed lines, so a wrong one silently "
+            "drops the site from the sweep"
+        )
+
+
+def test_denylist_spans_survive_multibyte_utf8_before_snippet() -> None:
+    # Companion to the above for the third offset consumer: denylisted_spans
+    # resolves each entry's span, and is_denylisted compares it against
+    # go/scanner BYTE offsets. Resolving in a decoded str shifts the span
+    # left once multi-byte characters precede the snippet, so the entry
+    # stops covering its own site (an audited equivalent mutant runs anyway)
+    # or slides onto an earlier one (a real site never runs, reported clean).
+    with tempfile.TemporaryDirectory() as td:
+        pkg = Path(td)
+        f = pkg / "snippet.go"
+        source = (
+            "package p\n\n"
+            "// three em-dashes — — — before the denylisted comparison\n"
+            "func f(a, b int) bool {\n"
+            "\treturn a == b\n"
+            "}\n"
+        )
+        f.write_bytes(source.encode("utf-8"))
+
+        spans = cm.denylisted_spans(pkg, [{"file": "snippet.go", "snippet": "a == b"}])
+        eq_sites = [s for s in mt.sites_for_file(f) if s.kind == "=="]
+        assert len(eq_sites) == 1, eq_sites
+
+        assert cm.is_denylisted(eq_sites[0], spans), (
+            "the denylisted '==' was not recognised as denylisted - the span "
+            "was resolved in code points and drifted off its own site"
+        )
+
 
 def test_classify_matrix() -> None:
     assert cm.classify(False, "pass") == cm.DISCARDED
