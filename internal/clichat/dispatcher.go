@@ -125,6 +125,15 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
+	if opts.OnToolCancelReady == nil {
+		// Default wiring for every production caller: resolves the
+		// coordinator InitCoordinator installs for d (called by the
+		// caller of NewSessionDispatcher, AFTER this function returns -
+		// see cliorchestrate.ToolCancelReadyHook's own doc comment for why
+		// that ordering is safe). A caller that already set this field
+		// (tests supplying their own hook) keeps its own wiring.
+		opts.OnToolCancelReady = cliorchestrate.ToolCancelReadyHook(d)
+	}
 	maxTokens := sessionOutputCeiling(opts)
 	authority := opts.Authority()
 	// Spool is shared by read_output and every nested multi_step loop so a
@@ -144,7 +153,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget)
 		},
 		func() error {
-			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool, opts.Approval)
+			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool, opts.Approval, opts.OnToolCancelReady)
 		},
 		func() error { return registerAgentHandlers(d, opts) },
 		func() error {

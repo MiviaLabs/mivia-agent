@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -41,16 +42,28 @@ type RunHandle struct {
 	// taskCancelMu guards taskCancels and taskDoneCh: written from pool
 	// worker goroutines (one per dispatched task, so concurrent across
 	// siblings), read from CancelTask's caller goroutine.
-	taskCancelMu       sync.RWMutex
-	recovered          bool
-	localActor         bool
-	requestFingerprint string
-	retryPolicy        RetryPolicy
-	failInterrupted    bool
-	cancelOnce         sync.Once
-	cancelDone         chan struct{}
-	cancellationErr    error
-	owner              *coordinator
+	taskCancelMu sync.RWMutex
+	// subagentToolCancelers holds, per task, the agent.ToolCanceler its own
+	// nested SDK-backed loop published via agent.Options.OnToolCancelReady
+	// (subagents.MultiStepHandler.OnToolCancelReady - see tool_cancel.go).
+	// This is a SEPARATE registry from taskCancels above and deliberately
+	// not conflated with it: taskCancels stops a task's WHOLE execution
+	// context (used by CancelTask), while this registry reaches INSIDE a
+	// still-running task to cancel just one of its tool calls, leaving
+	// that task - and every sibling task, and the run itself - running.
+	// Guarded by its own mutex rather than taskCancelMu so the two
+	// registries never contend with each other.
+	subagentToolCancelers map[string]agent.ToolCanceler
+	subagentToolCancelMu  sync.RWMutex
+	recovered             bool
+	localActor            bool
+	requestFingerprint    string
+	retryPolicy           RetryPolicy
+	failInterrupted       bool
+	cancelOnce            sync.Once
+	cancelDone            chan struct{}
+	cancellationErr       error
+	owner                 *coordinator
 	// nonInteractiveParent marks a run whose parent is a non-interactive
 	// controller that can never answer child questions (set at construction;
 	// immutable thereafter). ParkQuestion declines such runs' child questions
@@ -250,6 +263,24 @@ type Coordinator interface {
 	// (never h.done, the whole run's). A recovered handle refuses: see
 	// cancel_task.go.
 	CancelTask(ctx context.Context, h *RunHandle, taskID string) error
+	// RegisterSubagentToolCanceler installs the ToolCanceler for one task's
+	// nested SDK-backed loop, keyed by (runID, taskID). It is the sink side
+	// of subagents.MultiStepHandler.OnToolCancelReady: a host wires a
+	// function of this shape into every MultiStepHandler it constructs so
+	// that hook's per-invocation callback lands here. A miss (unknown
+	// runID, blank taskID, or nil canceler) is a silent no-op - mirrors
+	// onTaskStart's own "nothing to register" tolerance.
+	RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler)
+	// CancelSubagentToolCall cancels exactly ONE tool call within ONE
+	// still-running subagent task, without canceling that task, any
+	// sibling task, or the run itself - the finest cancel granularity,
+	// analogous to CancelTask (whole task) and Cancel (whole run). It does
+	// NOT touch the task's ledger status: the task stays "running" exactly
+	// as it was before the call. Returns false, nil when no matching
+	// in-flight call is found (unknown callID, unknown taskID, or the
+	// task's ToolCanceler was never registered - e.g. a legacy, non-SDK
+	// backend, or a recovered run with no live in-process owner).
+	CancelSubagentToolCall(ctx context.Context, h *RunHandle, taskID, callID string) (bool, error)
 	SetTimeSource(func() time.Time)
 	WithRetryPolicy(RetryPolicy) Coordinator
 	ResumeInterruptedRun(context.Context, string) (*RunHandle, error)

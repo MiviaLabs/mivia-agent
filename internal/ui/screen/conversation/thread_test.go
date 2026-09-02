@@ -59,6 +59,9 @@ func (t stubThreads) Thread(callID string) (ports.Conversation, bool) {
 // rendering, not cancellation); it reports a clean miss.
 func (t stubThreads) CancelSubagentTask(string) (bool, error) { return false, nil }
 
+// CancelSubagentToolCall mirrors CancelSubagentTask's clean-miss stub.
+func (t stubThreads) CancelSubagentToolCall(string, string) (bool, error) { return false, nil }
+
 // agentEvent is one subagent progress observation.
 func agentEvent(id, status string, step, total int, log ...string) uievent.EventMsg {
 	return uievent.EventMsg{Event: uievent.Event{

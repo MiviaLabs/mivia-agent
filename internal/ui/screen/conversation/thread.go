@@ -241,61 +241,12 @@ func (s *Screen) closeThread() {
 // Everything else goes to the embedded screen's OWN Update - its composer,
 // its completion menu, its transcript - never the main chat's.
 func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+b", "ctrl+c":
+	if msg.String() == "esc" || msg.String() == "ctrl+b" || msg.String() == "ctrl+c" {
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 		return s, tea.ClearScreen
-	case "pgup":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "pgdown":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "home", "ctrl+home":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollToTop()
-			return s, nil
-		}
-	case "end", "ctrl+end":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollToBottom()
-			return s, nil
-		}
-	case "ctrl+u":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "ctrl+d":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "up":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
-			return s, nil
-		}
-	case "down":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollBy(1)
-			return s, nil
-		}
-	// Typeable keys belong to any composer that can take input; j and k scroll only hidden-composer dialogs.
-	case "k":
-		if s.thread != nil && s.thread.hideComposer {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
-			return s, nil
-		}
-	case "j":
-		if s.thread != nil && s.thread.hideComposer {
-			s.thread.transcript = s.thread.transcript.ScrollBy(1)
-			return s, nil
-		}
+	}
+	if next, cmd, handled := s.threadDialogScrollKey(msg); handled {
+		return next, cmd
 	}
 	if s.thread == nil {
 		return s, nil
@@ -314,6 +265,95 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		s.thread = &t
 	}
 	return s, cmd
+}
+
+// threadDialogScrollKey handles every named key threadDialogKey answers
+// itself rather than forwarding to the embedded screen's Update: scrolling
+// (pgup/pgdown/home/end/ctrl+u/ctrl+d/up/down/j/k, gated the same way the
+// original single switch was) plus tab/shift+tab/x, which mirror the main
+// transcript's own ContextTranscript bindings
+// (keymap.IDFocusNext/IDFocusPrev/IDCancelToolCall) at THIS dialog's own
+// transcript: the composer is always hidden here (see openThread's doc
+// comment), so there is no composer-side shift+tab to enter focus mode
+// from - these three cases are that entry point, plus navigation, plus the
+// cancel action, scoped to s.thread.transcript rather than the outer
+// s.transcript. See cancel_thread_tool_call.go's doc comment for why
+// reusing the same keys here is unambiguous. Split out of threadDialogKey
+// to keep it under the per-function line budget; reports handled=false for
+// any key not in this table so the caller falls through to its own
+// composer-Update path.
+func (s Screen) threadDialogScrollKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	composerReady := s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "")
+	hidden := s.thread != nil && s.thread.hideComposer
+	switch msg.String() {
+	case "pgup":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "pgdown":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "home", "ctrl+home":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollToTop()
+			return s, nil, true
+		}
+	case "end", "ctrl+end":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollToBottom()
+			return s, nil, true
+		}
+	case "ctrl+u":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "ctrl+d":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "up":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
+			return s, nil, true
+		}
+	case "down":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollBy(1)
+			return s, nil, true
+		}
+	// Typeable keys belong to any composer that can take input; j and k scroll only hidden-composer dialogs.
+	case "k":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
+			return s, nil, true
+		}
+	case "j":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.ScrollBy(1)
+			return s, nil, true
+		}
+	case "tab":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.FocusNext()
+			return s, nil, true
+		}
+	case "shift+tab":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.FocusPrev()
+			return s, nil, true
+		}
+	case "x":
+		if hidden {
+			next, cmd := s.cancelFocusedThreadToolCall()
+			return next, cmd, true
+		}
+	}
+	return s, nil, false
 }
 
 // routeThreadDialogArrows turns up and down over a visible, non-empty

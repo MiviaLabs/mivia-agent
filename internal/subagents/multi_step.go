@@ -150,6 +150,22 @@ type MultiStepHandler struct {
 	// A nested handler never receives a context store or checkpoint publisher.
 	ContextPreparationManager contextmgr.PreparationManager
 	ContextPreparationInput   contextmgr.PrepareInput
+	// OnToolCancelReady, when set, is forwarded as this invocation's nested
+	// agent.Options.OnToolCancelReady: the SDK backend calls it once, as
+	// soon as the run's per-turn cancel registry exists, with a
+	// ToolCanceler the host can retain and invoke later to cancel ONE
+	// in-flight tool call within THIS task without aborting the task, any
+	// sibling task, or the parent run.
+	//
+	// ctx is the same context Invoke/run received - it carries
+	// runtime.TaskIdentity when this invocation was dispatched by a
+	// coordinator-owned subagents.Pool (contextForTask stamps it before
+	// Pool.executeOne calls the dispatcher), which is how a host keys its
+	// own registry without MultiStepHandler needing to know anything
+	// coordinator-specific. A handler that never sets this field (every
+	// construction site before this one) is unaffected: the nested loop's
+	// OnToolCancelReady stays nil, exactly as before.
+	OnToolCancelReady func(ctx context.Context, canceler agent.ToolCanceler)
 }
 
 // Invoke creates a restricted agent loop and runs the assigned task.
@@ -271,6 +287,14 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskPrompt += appendix
 
 	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
+	// See OnToolCancelReady's own doc comment: ctx here (not callCtx, derived
+	// below) is the one runtime.TaskIdentity was stamped onto, and the one
+	// originForRequest already reads it from.
+	if h.OnToolCancelReady != nil {
+		opts.OnToolCancelReady = func(canceler agent.ToolCanceler) {
+			h.OnToolCancelReady(ctx, canceler)
+		}
+	}
 	// Parent→child steers (plan 54): step-boundary drain, soft interrupt of the
 	// in-flight LLM call, pending gate, watchdog, and cooldown. The mailbox
 	// bundle is optional; without one all steer machinery stays off.

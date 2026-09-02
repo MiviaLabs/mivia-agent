@@ -114,6 +114,22 @@ type SubagentThreads interface {
 	// panic. A non-nil error means a route was found but the cancel itself
 	// failed (e.g. no coordinator wired, or the run is no longer active).
 	CancelSubagentTask(callID string) (ok bool, err error)
+	// CancelSubagentToolCall cancels ONE in-flight tool call WITHIN the
+	// dispatched task backing callID, leaving that task itself, its
+	// sibling tasks, and the parent turn/run untouched - the finest
+	// cancel granularity, analogous to CancelSubagentTask (whole task).
+	// callID identifies the subagent thread exactly as CancelSubagentTask's
+	// own callID does; toolCallID identifies the specific call within it
+	// (a transcript.Block's CallID).
+	//
+	// ok is false when there is nothing to cancel: callID names no task
+	// with a live coordinator route, or toolCallID names no in-flight
+	// call within it (already finished, wrong ID, or the task's own
+	// nested loop never published a canceler - e.g. a legacy backend). A
+	// non-nil error means a route was found but the cancel attempt
+	// itself failed (no coordinator wired, or the run is no longer
+	// active) - the same split CancelSubagentTask uses.
+	CancelSubagentToolCall(callID, toolCallID string) (ok bool, err error)
 }
 
 // Decision is the user's answer to an ApprovalRequest.
