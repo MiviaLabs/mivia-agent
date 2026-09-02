@@ -14,7 +14,10 @@ type ApprovalRequest struct {
 	ToolCallID string
 	Name       string
 	Class      tools.ExecutionClass
-	Args       json.RawMessage
+	// ResourceKey is what the call acts on when the tool can name it. It is
+	// the granularity a standing "always" decision is recorded at.
+	ResourceKey string
+	Args        json.RawMessage
 }
 
 // ApprovalDecision is the answer, and the reason when it is a refusal.
@@ -65,8 +68,16 @@ func DecideApproval(ctx context.Context, deps ApprovalDeps, req ApprovalRequest)
 	if IsDenyApproval(deps.Policy) {
 		return ApprovalDecision{Reason: `auto-denied (approval policy is "deny")`}
 	}
+	// The standing key names the CALL, not the tool. Keying it by name alone
+	// let one approval authorize every other call that tool could make.
+	standingKey := StandingKey{
+		Name:        req.Name,
+		Class:       req.Class,
+		ResourceKey: req.ResourceKey,
+		Args:        req.Args,
+	}
 	if deps.Standing != nil {
-		if v, ok := deps.Standing.Lookup(req.Name); ok {
+		if v, ok := deps.Standing.Lookup(standingKey); ok {
 			if !v {
 				return ApprovalDecision{Reason: "standing decision"}
 			}
@@ -84,9 +95,9 @@ func DecideApproval(ctx context.Context, deps ApprovalDeps, req ApprovalRequest)
 	res := deps.Gate(ctx, req.Name, req.Args)
 	if res.ApprovedForClass && deps.Standing != nil {
 		if res.Approved {
-			deps.Standing.Allow(req.Name, req.Class)
+			deps.Standing.Allow(standingKey)
 		} else {
-			deps.Standing.Deny(req.Name, req.Class)
+			deps.Standing.Deny(standingKey)
 		}
 	}
 	if res.Approved {

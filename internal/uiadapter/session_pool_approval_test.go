@@ -105,7 +105,7 @@ func TestAFreshSessionDoesNotInheritATransientYolo(t *testing.T) {
 func TestAFreshSessionDoesNotInheritStandingDecisions(t *testing.T) {
 	pool, first := poolWithApprover(t, denyingConfig())
 	first.ApprovalStanding = sdkadapter.NewApprovalStanding()
-	first.ApprovalStanding.Allow("run_command", 0)
+	first.ApprovalStanding.Allow(sdkadapter.StandingKey{Name: "run_command"})
 
 	conv, err := pool.CreateFresh()
 	if err != nil {
@@ -114,7 +114,7 @@ func TestAFreshSessionDoesNotInheritStandingDecisions(t *testing.T) {
 	fresh := conv.(*Conversation).sess
 
 	if fresh.ApprovalStanding != nil {
-		if _, ok := fresh.ApprovalStanding.Lookup("run_command"); ok {
+		if _, ok := fresh.ApprovalStanding.Lookup(sdkadapter.StandingKey{Name: "run_command"}); ok {
 			t.Error("a standing \"always allow\" crossed into a new conversation")
 		}
 	}

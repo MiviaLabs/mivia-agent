@@ -273,13 +273,16 @@ func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, n
 		deps.Policy = config.ApprovalPolicyWriteOnly
 	}
 
-	class := tools.ExecutionExternal
+	// An unclassified tool is treated as ExecutionExternal - the most
+	// restrictive class - so it is gated rather than waved through.
+	capability := tools.Capability{Class: tools.ExecutionExternal}
 	if capable, ok := tool.(tools.CapableTool); ok {
-		class = capable.Capability(args).Class
+		capability = capable.Capability(args)
 	}
 	return sdkadapter.DecideApproval(ctx, deps, sdkadapter.ApprovalRequest{
-		Name:  name,
-		Class: class,
-		Args:  args,
+		Name:        name,
+		Class:       capability.Class,
+		ResourceKey: capability.ResourceKey,
+		Args:        args,
 	})
 }

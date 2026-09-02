@@ -132,6 +132,8 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 		args = b
 	}
 
+	capability := a.getCapabilities(args)
+
 	// The decision itself lives in DecideApproval, because this wrapper is not
 	// the only route to executing a tool and the routes that bypassed it had
 	// no approval at all.
@@ -141,10 +143,11 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 		Gate:        a.gate,
 		EmitPending: a.emitPending,
 	}, ApprovalRequest{
-		ToolCallID: callIDFromContext(ctx),
-		Name:       a.cliName,
-		Class:      a.getCapabilities(args).Class,
-		Args:       args,
+		ToolCallID:  callIDFromContext(ctx),
+		Name:        a.cliName,
+		Class:       capability.Class,
+		ResourceKey: capability.ResourceKey,
+		Args:        args,
 	})
 	if !decision.Approved {
 		return a.denied(ctx, decision.Reason)
