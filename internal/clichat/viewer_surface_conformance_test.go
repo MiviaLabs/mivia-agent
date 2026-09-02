@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/hub"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -105,6 +108,45 @@ func producesOnJSON(ev agent.Event) bool {
 	return buf.Len() > 0
 }
 
+// producesOnSync reports whether the chat-sync projector - the surface the web
+// app reads - emits a wire event for the equivalent bus event.
+//
+// It was missing from this table while the table's own commit message claimed
+// to close the class. The projector's projectByKind ends in a bare `default:
+// return nil`, so a kind could be minted, relayed, rendered on the three
+// surfaces below, and dropped in silence by the one a remote viewer reads,
+// with every suite green.
+func producesOnSync(ev agent.Event) bool {
+	p := chatsync.NewProjector("sess-1", 0, chatsync.ProjectorOptions{
+		StreamAssistant: true, IncludeThinking: true, IncludeToolIO: true,
+	})
+	// Open the turn: the projector drops content for a turn it has not seen,
+	// which would make every kind look unhandled.
+	p.Project(events.Event{
+		Kind: events.KindTurnStart, SessionID: "sess-1", TurnID: "turn:1",
+		Detail: "the prompt", Timestamp: time.Now(),
+	})
+
+	busEv := events.Event{
+		Kind: events.Kind(ev.Kind), SessionID: "sess-1", TurnID: "turn:1",
+		Content: ev.Content, Detail: ev.Detail, Name: ev.Name,
+		ToolCallID: ev.ToolCallID, Input: ev.Input, Output: ev.Output,
+		Timestamp: time.Now(),
+	}
+	// The typed payloads the projector requires, mirrored from the agent event.
+	busEv.Compaction = ev.Compaction
+	if ev.Kind == agent.EventHook {
+		busEv.Hook = &events.HookEvent{
+			Phase: ev.Name, Program: ev.Program, Tool: ev.Tool,
+			Denied: ev.Denied, Output: ev.Output,
+		}
+	}
+	if ev.Origin.TaskID != "" {
+		busEv = busEv.WithAgentAttribution(ev.Origin.TaskID, ev.Origin.Agent, ev.Origin.Depth)
+	}
+	return len(p.Project(busEv)) > 0
+}
+
 // producesOnRelay reports whether the cross-process NDJSON renderer writes a
 // line for the equivalent bus event. It drives the real dispatcher, so routing
 // between the root and subagent arms is exercised rather than bypassed.
@@ -136,6 +178,7 @@ func TestEveryEventKindReachesEveryViewerOrSaysWhyNot(t *testing.T) {
 		"tui":   producesOnTUI,
 		"json":  producesOnJSON,
 		"relay": producesOnRelay,
+		"sync":  producesOnSync,
 	}
 
 	for name := range surfaces {

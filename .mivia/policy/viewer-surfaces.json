@@ -40,6 +40,22 @@
         "cache_usage": "Per-process token accounting. A peer's cost is not the reader's session cost, and mixing them makes both wrong.",
         "token_usage": "Per-process token accounting, same reason as cache_usage."
       }
+    },
+    "sync": {
+      "description": "The chat-sync wire (mivia.chat.v1.*) read by the web app, projected by internal/chatsync. Its projectByKind ends in a bare default that returns nil, so a kind reaches a remote viewer only if someone wrote an arm for it.",
+      "ignores": {
+        "tool_pending": "An approval request. KNOWN GAP, and the one that matters: a remote viewer cannot see that the session is blocked waiting for the operator, so a chat-session sits silent with no stated reason. Closing it needs a wire type AND an answer path, which is the approval slice.",
+        "step": "An iteration boundary. Observability only; the wire carries the turn's real boundaries.",
+        "heartbeat": "A wall-clock tick with no content. The session's heartbeat column already tells a viewer the turn is alive.",
+        "prune": "Context pruning accounting. The compaction event carries the durable record a viewer renders.",
+        "tool_parallel": "A batching note about calls that each get their own tool.started and tool.ended on this wire.",
+        "work_limit": "The soft wrap-up notice. Observability only; the instruction itself travels inside the provider request.",
+        "schema_retry": "A subagent about to re-enter for schema repair. The assistant.reset that accompanies it IS projected, and that is what a viewer must act on.",
+        "empty_response_retry": "A bounded retry after an empty provider response, paired with the assistant.reset a viewer acts on.",
+        "unacted_continuation": "A bounded continuation after a turn announced work and called no tool. Observability only.",
+        "cache_usage": "Per-session token accounting. The wire carries no usage vocabulary; a viewer that needs cost reads it from the session record instead of reconstructing it from a stream it may have joined late.",
+        "token_usage": "Per-session token accounting, same reason as cache_usage."
+      }
     }
   }
 }
