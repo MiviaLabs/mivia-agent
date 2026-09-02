@@ -63,7 +63,11 @@ type scriptedCompleter struct {
 	toolSpecs [][]provider.ToolSpec
 	// systemPrompts is the system message of each request.
 	systemPrompts []string
-	calls         int
+	// messages is the full message list of each request, so a test can read
+	// the tool-role results the model was handed - which is where each
+	// execution path's answer about a call actually lands.
+	messages [][]provider.Message
+	calls    int
 }
 
 func (c *scriptedCompleter) Name() string { return "scripted" }
@@ -88,6 +92,7 @@ func (c *scriptedCompleter) ChatTurn(_ context.Context, req provider.Request) (*
 	c.advertised = append(c.advertised, toolSpecNames(req.Tools))
 	c.toolSpecs = append(c.toolSpecs, req.Tools)
 	c.systemPrompts = append(c.systemPrompts, systemPromptOf(req.Messages))
+	c.messages = append(c.messages, req.Messages)
 	index := c.calls
 	c.calls++
 	if index >= len(c.turns) {
@@ -161,23 +166,28 @@ type deferredFixture struct {
 	cleanup func()
 }
 
-func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string, probes ...tools.Tool) *deferredFixture {
 	t.Helper()
-	return newDeferredFixtureIn(t, t.TempDir(), completer, core, effective)
+	return newDeferredFixtureIn(t, t.TempDir(), completer, core, effective, probes...)
 }
 
 // newDeferredFixtureIn is newDeferredFixture over a caller-owned workspace, so
 // a test can seed skills or files the attach path must see.
-func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string, probes ...tools.Tool) *deferredFixture {
 	t.Helper()
 	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
-	return newDeferredFixtureWith(t, dir, res, completer, core, effective)
+	return newDeferredFixtureWith(t, dir, res, completer, core, effective, probes...)
 }
 
 // newDeferredFixtureWith is newDeferredFixtureIn over a caller-owned config, so
 // a test that drives the real /model path can supply a provider the completer
 // factory is actually able to construct.
-func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+// probes are extra tools registered into the full set before scope and the
+// tier split run, so a test can drive a tool whose behaviour it controls
+// through the REAL attach path. The tool-execution conformance suite needs
+// this: it must observe what each execution path does to an ordinary tool,
+// and the default registry has none whose timing or failure it can dictate.
+func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, completer *scriptedCompleter, core []string, effective []string, probes ...tools.Tool) *deferredFixture {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ws, err := workspace.Open(dir)
@@ -185,6 +195,9 @@ func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, comp
 		t.Fatal(err)
 	}
 	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	for _, probe := range probes {
+		full.Register(probe)
+	}
 	coreCopy := slices.Clone(core)
 	selected := &agents.ResolvedAgent{
 		Name:           "reader",

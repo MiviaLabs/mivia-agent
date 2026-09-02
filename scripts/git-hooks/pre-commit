@@ -254,6 +254,15 @@ if command -v go >/dev/null 2>&1; then
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The tool-execution conformance table. Two code paths execute a model's
+  # tool call and share no Go interface, so nothing named them siblings and
+  # nine bugs shipped from the second one honouring four of nine contracts.
+  # It runs whenever either path, the wiring that routes between them, or the
+  # policy recording their declared divergences is touched.
+  if echo "$STAGED" | grep -qE '^(internal/(chat|agent|clichat)/|\.mivia/policy/tool-execution-conformance\.json$)'; then
+    echo " → Running tool-execution conformance tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   # The wire-field source check: every string leaving this machine must pass
   # through applyTruncation. Two fields have skipped it, each rejecting a
   # hundred-event batch at the receiving column, and both regression suites

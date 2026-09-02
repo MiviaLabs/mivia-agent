@@ -814,6 +814,50 @@ in commit `ac410387` (regression test `TestClientAppendEvents_MatchesWireEnvelop
   that assert the required envelope properties, rather than decoding bare slice
   types.
 
+## DC-35 A second implementation of an existing path, sharing no interface with the first
+
+**Mechanism.** Some capability - "execute a tool call", "render an event",
+"send a request" - accumulates contracts over the project's life: a timeout, a
+dedup rule, a cap, an outcome record, an authorization check. Then a second
+call site needs the same capability under conditions the first cannot serve,
+and it is written fresh. Every contract the first honours must now be
+re-honoured by hand in the second, and each one that is not becomes its own
+bug with its own symptom.
+
+They do not look related. One surfaces as a hang, another as a duplicate side
+effect, another as a refusal rendered green, another as an unbounded call.
+They are reported, triaged and fixed separately, over weeks. It is one defect.
+
+**Why the sibling rule does not catch it.** DC-style drift is normally caught
+by a conformance suite over an interface's implementations. This class is the
+version with **no interface**: the two paths have different signatures and
+different packages, so neither the compiler nor a per-interface gate can name
+them as siblings. Nothing in the codebase records that they are the same
+capability twice.
+
+**Evidence.** 2026-09-02: nine fixes in one function pair
+(`serveUnadmittedTool`/`runDeferredToolNow`), a second implementation of
+`dispatcherShim.Run`. It honoured four of nine contracts. Missing: per-call
+timeout, dedup declaration, step bucketing, failure capping, failure recorded
+as failed, denylist. Each shipped as a separate bug. Earlier, seven bugs of
+the interface-having variant in `provider.Completer`.
+
+**Probes.**
+- For any capability with more than one call path, list the contracts the
+  OLDEST path honours. That list is the specification; nothing else is.
+- Ask what would happen if a third path were added tomorrow. If the answer is
+  "someone would have to remember all of them", the gate is missing.
+- A conformance table over PATHS, not implementations, driven through real
+  entry points. A path that may not honour a contract declares it with a
+  reason; a declared divergence that has gone away must fail, or the list
+  stops describing the code.
+- Prefer deleting the second implementation to gating it. A gate makes drift
+  visible; delegation makes it impossible.
+
+**Gate.** `internal/clichat/tool_execution_conformance_test.go` +
+`.mivia/policy/tool-execution-conformance.json`.
+
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class
