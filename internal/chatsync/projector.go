@@ -526,18 +526,23 @@ func (p *Projector) buildEnvelope(ev events.Event, turnID string) Envelope {
 		ts = time.Now()
 	}
 	env := Envelope{
-		V:            1,
-		At:           ts,
-		Turn:         turnID,
-		SourceTurnID: ev.TurnID,
-		WriterID:     p.opts.WriterID,
+		V:        1,
+		At:       ts,
+		Turn:     turnID,
+		WriterID: p.opts.WriterID,
 	}
+	// Ids and names take the same route as every other string that leaves this
+	// machine. They are short by construction today, but "by construction"
+	// means "by every producer that exists so far": an agent NAME comes from a
+	// workspace-authored definition file, and one NUL in any of these rejects
+	// the whole hundred-event batch it travels in.
+	env.SourceTurnID = applyTruncation(&env, "source_turn_id", ev.TurnID, BudgetShortField)
 	if ev.AgentTask != "" || ev.AgentName != "" || ev.AgentDepth > 0 {
 		env.Agent = &AgentOrigin{
-			Task:       ev.AgentTask,
-			Name:       ev.AgentName,
+			Task:       applyTruncation(&env, "agent_task", ev.AgentTask, BudgetShortField),
+			Name:       applyTruncation(&env, "agent_name", ev.AgentName, BudgetShortField),
 			Depth:      ev.AgentDepth,
-			ParentTask: ev.AgentParent,
+			ParentTask: applyTruncation(&env, "agent_parent_task", ev.AgentParent, BudgetShortField),
 		}
 	}
 	return env

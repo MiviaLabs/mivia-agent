@@ -1,0 +1,4 @@
+{
+  "description": "Wire payload string fields permitted to take their value straight from the bus event, bypassing applyTruncation. Enforced by TestNoWirePayloadStringComesStraightFromTheEvent in internal/chatsync, which reads the payload structs from the recorded vocabulary rather than a list written by hand - so a payload minted tomorrow is covered without anyone remembering the check exists. Every entry needs a reason; an empty one fails.",
+  "exempt": {}
+}
