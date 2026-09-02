@@ -196,9 +196,12 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names [
 			turn:      turn,
 		}
 		if err := sdkReg.Add(wrapped); err != nil {
-			// Restore the unwrapped tool so the registry stays
-			// usable; the shim is best-effort.
-			_ = sdkReg.Add(t)
+			// Restoring the unwrapped tool would hand the model the full body
+			// of a tool the OPERATOR asked to be spooled by reference - the
+			// one guarantee this wrapper exists to make. Losing the tool is
+			// the safer failure, and Add only fails on a duplicate name we
+			// just removed, so it is not a path any input reaches.
+			_ = t
 		}
 	}
 }

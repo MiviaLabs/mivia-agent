@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,8 +94,18 @@ func TestEveryPathBoundsAToolCall(t *testing.T) {
 			}
 			checkContract(t, "bounded-call", path.name, probe.hadDeadline.Load(),
 				"this path handed the tool a context with NO deadline: a tool "+
-					"that hangs hangs the turn, and the timeout the tool declared "+
-					"for itself was dropped")
+					"that hangs hangs the turn")
+			// The VALUE, not merely that some deadline exists. The dispatcher
+			// arms req.Timeout itself, so a path that dropped
+			// capability.Timeout and fell back to the 60s default still shows
+			// a deadline - which is verbatim the failure this contract claims
+			// to catch. The probe declares 30s; anything near 60 means its own
+			// declaration was discarded.
+			checkContract(t, "declared-timeout-honoured", path.name,
+				probe.budget.Load() > 0 && probe.budget.Load() < int64(45*time.Second),
+				fmt.Sprintf("the tool declared a 30s timeout and got %v; its own "+
+					"declaration was dropped in favour of the default",
+					time.Duration(probe.budget.Load())))
 		})
 	}
 }
@@ -177,7 +189,11 @@ func TestEveryPathCapsTheResult(t *testing.T) {
 			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
 				f.sess.MaxToolResultChars = cap
 			}, namedCall("c1", "probe_tool", `{}`))
-			checkContract(t, "result-capped", path.name, len(body) < 4000,
+			// Within a small multiple of the cap, not 20x. A loose bound let a
+			// mutation raise the effective cap fifteenfold and stay green. The
+			// slack covers the elision notice and any ref the spool mints.
+			checkContract(t, "result-capped", path.name,
+				len(body) > 0 && len(body) < cap*3,
 				fmt.Sprintf("the model received %d bytes for a tool whose result "+
 					"cap is %d; an uncapped body blows the context window the cap "+
 					"exists to protect", len(body), cap))
@@ -198,11 +214,19 @@ func TestEveryPathHonoursRefOnlyTools(t *testing.T) {
 			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
 				f.sess.RefOnlyTools = []string{"probe_tool"}
 			}, namedCall("c1", "probe_tool", `{}`))
+			// The BODY must be gone, not merely accompanied by a notice: a
+			// wrapper that emitted the notice and then appended the 40 000
+			// bytes would pass a contains-"elided" check. And a ref must have
+			// been minted, or the body is unrecoverable - read_output has
+			// nothing to fetch.
 			checkContract(t, "ref-only-is-not-inlined", path.name,
-				strings.Contains(body, "elided"),
+				len(body) < 4000 && !strings.Contains(body, strings.Repeat("x", 200)),
 				fmt.Sprintf("the operator named this tool in ref_only_tools and "+
-					"the model received its body inline anyway (%d bytes, no "+
-					"elision notice)", len(body)))
+					"the model received its body inline anyway (%d bytes)", len(body)))
+			checkContract(t, "ref-only-mints-a-ref", path.name,
+				strings.Contains(body, "read_output"),
+				fmt.Sprintf("the body was elided with no ref to fetch it back, so "+
+					"it is simply lost: %q", body))
 		})
 	}
 }
@@ -324,6 +348,10 @@ type deadlineProbe struct {
 	name        string
 	ran         atomic.Bool
 	hadDeadline atomic.Bool
+	// budget is the deadline's distance from now, so a contract can assert
+	// the tool's DECLARED timeout was used and not merely that some deadline
+	// exists.
+	budget atomic.Int64
 }
 
 func (p *deadlineProbe) Name() string               { return p.name }
@@ -334,8 +362,11 @@ func (p *deadlineProbe) Capability(json.RawMessage) tools.Capability {
 }
 func (p *deadlineProbe) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
 	p.ran.Store(true)
-	_, ok := ctx.Deadline()
+	deadline, ok := ctx.Deadline()
 	p.hadDeadline.Store(ok)
+	if ok {
+		p.budget.Store(int64(time.Until(deadline)))
+	}
 	return "probe ok", nil
 }
 
@@ -411,6 +442,7 @@ const conformancePolicyPath = "../../.mivia/policy/tool-execution-conformance.js
 // real divergence - the same rule the viewer-surface table uses.
 func checkContract(t *testing.T, contract, path string, holds bool, failure string) {
 	t.Helper()
+	consultedExemptions.Store(contract+"/"+path, true)
 	reason, declared := conformanceExemptions(t)[contract+"/"+path]
 	switch {
 	case holds && declared:
@@ -476,4 +508,36 @@ func (p *unclassifiedProbe) Description() string        { return "declares nothi
 func (p *unclassifiedProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
 func (p *unclassifiedProbe) Execute(context.Context, json.RawMessage) (string, error) {
 	return fmt.Sprintf("run %d", p.runs.Add(1)), nil
+}
+
+// consultedExemptions records every contract/path key a case actually checked,
+// so the orphan sweep below can tell a live exemption from dead weight.
+var consultedExemptions sync.Map
+
+// Every declared divergence must belong to a contract that still runs.
+//
+// The staleness check inside checkContract only fires for a case that
+// EXECUTES: rename a contract id or delete its test, and the exemption becomes
+// dead weight with no signal - and worse, silently pre-exempts any future
+// contract that reuses the id. A review found that hole; nothing here had ever
+// asserted the policy file describes the suite.
+//
+// It runs last (the name sorts after every TestEveryPath* case, and `go test`
+// runs a file's tests in source order within a package) and reads what those
+// cases recorded.
+func TestZZZNoDeclaredDivergenceIsOrphaned(t *testing.T) {
+	var orphans []string
+	for key, reason := range conformanceExemptions(t) {
+		if _, consulted := consultedExemptions.Load(key); !consulted {
+			orphans = append(orphans, fmt.Sprintf("%s (%.60s...)", key, reason))
+		}
+	}
+	sort.Strings(orphans)
+	if len(orphans) > 0 {
+		t.Errorf("these divergences are declared in %s but no contract checked "+
+			"them: %v\n\nA contract was renamed or deleted and its exemption "+
+			"outlived it. Delete the entry: it proves nothing now, and it will "+
+			"silently pre-exempt the next contract that reuses the id.",
+			conformancePolicyPath, orphans)
+	}
 }
