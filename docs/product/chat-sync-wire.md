@@ -226,6 +226,21 @@ The system writes and persists events locally to `chat-sync/sessions/<id>/events
 before network transmission. The local cursor `cursor.json` updates atomically
 only after the remote server acknowledges receipt (HTTP 200/201).
 
+Beside them, `status.json` records push health so a stall can be diagnosed
+after the process is gone. It is written on transition only - `healthy` on
+attach, `degraded` after three consecutive failed pushes or a failure sixty
+seconds after the last success, `recovered` when a push lands again, `stopped`
+on any stop (an orderly close, or the terminal reason of a 409, auth or poison
+stop, whichever came first) - through the same temp-file-and-rename discipline
+as the cursor, and a write failure is ignored: the file is a diagnostic, never
+a reason to break sync. Fields: `state`, `reason`, `unflushed`,
+`last_success_at`, `consecutive_failures`, `recoveries`, `create_failures`,
+`create_throttled_until`, `at`. The last three belong to session recovery and
+are zero or null until it engages; a non-null `create_throttled_until` is what
+separates a throttled-create stall from a plain push stall. The same
+transitions reach the host once each through `OnDegraded` / `OnRecovered`,
+which the CLI prints as a notice and the TUI shows in its notice rail.
+
 A 409 on append means the remote session ended. Sync stops - pusher, poller
 and heartbeat - and the local chat continues untouched. It does NOT fork: a
 409 is not a writer conflict, and treating it as one used to mint a new remote

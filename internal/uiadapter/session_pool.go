@@ -467,6 +467,15 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	opts.OnStop = func(reason string) {
 		p.pushNotice("chat sync stopped: " + reason)
 	}
+	// Degraded is not stopped: the backlog is queued locally and retried.
+	// It is surfaced because a push that never lands is otherwise invisible
+	// for the whole session. Once per transition, never per retry.
+	opts.OnDegraded = func(reason string) {
+		p.pushNotice("chat sync degraded, events are queued locally: " + reason)
+	}
+	opts.OnRecovered = func() {
+		p.pushNotice("chat sync recovered, queued events delivered")
+	}
 	// Visibility for a refusal that never reaches RemoteInputs at all - see
 	// chatsync.SessionOptions.OnInputRejected. pushNotice is lossy-by-contract
 	// (16-slot buffer), which is acceptable here: this is advisory context

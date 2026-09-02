@@ -569,6 +569,14 @@ func (f *fakeAPI) RejectAppendsWith(status int, code, msg string) {
 	f.rejectAppend = &fakeRejection{status: status, code: code, msg: msg}
 }
 
+// ClearAppendRejection lifts RejectAppendsWith, modelling a server that came
+// back.
+func (f *fakeAPI) ClearAppendRejection() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rejectAppend = nil
+}
+
 // FailSessionReads makes GET /v1/chat-sessions/{id} fail with a 500, modelling
 // a server the client cannot re-read its own state from.
 func (f *fakeAPI) FailSessionReads(on bool) {
