@@ -278,6 +278,49 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 	return pool
 }
 
+// inheritApprovalLocked carries the approval wiring onto a session the pool
+// just built.
+//
+// /new and /resume hand-copy runtime state from an existing pool member -
+// tools, event bus, context store, redaction policy - and carried none of the
+// approval state. A threat model measured the result: a session started under
+// `deny` with a live approver produced, after /new, policy="" and gate=nil.
+// The operator's most restrictive setting silently evaporated on a keystroke
+// that looks like housekeeping.
+//
+// The POLICY comes from config, not from the sibling's live value, because the
+// live value may be a transient /yolo. A deliberate, temporary loosening of
+// one conversation must not become the starting posture of the next one.
+//
+// The GATE is inherited, because it is the one the UI is actually reading
+// from: the approver is constructed once, bound to the first session, and its
+// Pending channel is what the prompt renders from. A fresh session with its
+// own unattached gate would block on an approver nobody is watching.
+//
+// The STANDING cache is deliberately NOT inherited. "Always allow this tool"
+// is a decision made about one conversation; carrying it across /new would
+// widen it to a conversation the operator has not seen yet. A fresh session
+// re-asks, which is the safe direction.
+func inheritApprovalLocked(sess, existing *chat.Session, res *config.Resolved) {
+	if sess == nil {
+		return
+	}
+	if existing != nil {
+		sess.ApprovalGate = existing.ApprovalGate
+	}
+	policy := ""
+	if res != nil {
+		policy = res.Approvals.ApprovalPolicy()
+	}
+	if policy == "" && existing != nil {
+		policy = existing.BaseApprovalPolicyValue()
+	}
+	if policy != "" {
+		sess.SetBaseApprovalPolicy(policy)
+		sess.SetApprovalPolicy(policy)
+	}
+}
+
 // CreateFresh creates a brand-new session, inheriting runtime state (tools,
 // context store, context manager, event bus) from the first existing pool
 // member. It does NOT call Load — the session starts empty.
@@ -298,6 +341,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	sess.UseTools = p.toolsOn
 
 	// Inherit runtime state from the first existing session.
+	var sibling *chat.Session
 	for _, existing := range p.sessions {
 		if existing.Tools != nil {
 			sess.Tools = existing.Tools
@@ -328,8 +372,10 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 		if store := existing.ContextStore(); store != nil {
 			_ = sess.SetContextStore(store)
 		}
+		sibling = existing
 		break
 	}
+	inheritApprovalLocked(sess, sibling, p.res)
 
 	if p.agentState != nil && p.res != nil {
 		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
@@ -366,6 +412,7 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	sess.UseTools = p.toolsOn
 
 	// Inherit tools, event bus, and context store from existing session if set
+	var sibling *chat.Session
 	for _, existing := range p.sessions {
 		if existing.Tools != nil {
 			sess.Tools = existing.Tools
@@ -390,8 +437,10 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 		if store := existing.ContextStore(); store != nil {
 			_ = sess.SetContextStore(store)
 		}
+		sibling = existing
 		break
 	}
+	inheritApprovalLocked(sess, sibling, p.res)
 
 	if p.agentState != nil && p.res != nil {
 		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
