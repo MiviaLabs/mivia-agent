@@ -2,6 +2,7 @@ package chatsync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -108,6 +109,35 @@ func TestFlushRecoversFromEndedSession(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if after := countRequests(f, "POST", "/v1/chat-sessions/"+a+"/heartbeat"); after != before {
 		t.Errorf("heartbeats to the abandoned session %s kept arriving after recovery: %d -> %d", a, before, after)
+	}
+}
+
+// TestRecoveryNamesTheAbandonedSessionOnCreate is the S4.1b discriminator:
+// the create request a recovery posts carries the id it is leaving, so the
+// server can record the link. The attach-time create does NOT carry it.
+func TestRecoveryNamesTheAbandonedSessionOnCreate(t *testing.T) {
+	f := newFakeAPI(t)
+	a := f.NewSession("named")
+	bus, _, _ := openRecoverable(t, f, a, nil)
+	f.DeleteSession(a)
+	publishTurnStart(bus, a, "turn:1", "after the delete")
+	waitForSecondSession(t, f)
+
+	var creates []map[string]any
+	for _, r := range f.Requests() {
+		if r.Method == "POST" && r.Target == "/v1/chat-sessions" {
+			var body map[string]any
+			if err := json.Unmarshal(r.Body, &body); err != nil {
+				t.Fatalf("create body: %v", err)
+			}
+			creates = append(creates, body)
+		}
+	}
+	if len(creates) != 1 {
+		t.Fatalf("%d create requests, want 1 (the recovery; the test pre-registered A)", len(creates))
+	}
+	if got := creates[0]["forkedFromSessionId"]; got != a {
+		t.Fatalf("recovery create body forkedFromSessionId = %v, want %q", got, a)
 	}
 }
 

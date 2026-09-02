@@ -69,7 +69,11 @@ func (s *SyncSession) recoverRemoteSession(ctx context.Context, cause error) {
 	}
 
 	oldID := s.SessionID()
-	created, err := s.client.CreateSession(ctx, s.createParams)
+	// The server records the relationship at create time; the sync.forked
+	// marker in the stream cannot, because payloads are stored opaquely.
+	params := s.createParams
+	params.ForkedFromSessionID = oldID
+	created, err := s.client.CreateSession(ctx, params)
 	if err != nil {
 		s.handleCreateFailure(ctx, err)
 		return

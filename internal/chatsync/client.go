@@ -143,6 +143,10 @@ type CreateSessionParams struct {
 	Title     string `json:"title"`
 	CwdLabel  string `json:"cwdLabel,omitempty"`
 	HostLabel string `json:"hostLabel,omitempty"`
+	// ForkedFromSessionID names the session this one continues, set only by
+	// recovery. omitempty: an API that predates the field runs
+	// forbidNonWhitelisted and would 400 a create that sent it empty.
+	ForkedFromSessionID string `json:"forkedFromSessionId,omitempty"`
 }
 
 // TokenProvider retrieves a bearer token for authentication.
