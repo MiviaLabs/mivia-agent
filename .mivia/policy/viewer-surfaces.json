@@ -14,7 +14,6 @@
       "ignores": {
         "assistant": "The answer DOES reach this surface, through ndjsonChunkWriter as chunk lines rather than through the event callback. It is declared here because the callback is what this table drives; the chunk path has its own tests.",
         "tool_pending": "An approval request. Line mode does not run an approval UI, so a consumer has no way to answer one. KNOWN GAP: a consumer therefore cannot tell that a turn is blocked waiting for approval.",
-        "hook": "A lifecycle hook result, including a hook that BLOCKED a call. KNOWN GAP: a --json consumer sees the tool never run and is not told why.",
         "step": "An iteration boundary, observability only.",
         "heartbeat": "A wall-clock tick with no content.",
         "prune": "Context pruning accounting. The compaction line carries the durable record.",

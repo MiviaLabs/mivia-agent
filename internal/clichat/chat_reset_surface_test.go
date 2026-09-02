@@ -139,3 +139,61 @@ func TestRelayKeepsASubagentResetOffTheRootPath(t *testing.T) {
 		}
 	}
 }
+
+// A hook is a program the runtime runs on the operator's machine for every
+// matching call, and one of them can BLOCK the call. Without a line for it a
+// --json consumer saw the tool never run and was told nothing about why.
+
+// TestJSONModeReportsABlockedToolCall is the case that matters most: the hook
+// refused, so the tool never ran, and the reason exists nowhere else.
+func TestJSONModeReportsABlockedToolCall(t *testing.T) {
+	lines := jsonLines(t, agent.Event{
+		Kind: agent.EventHook, Name: "PreToolUse", Program: "guard.py",
+		Tool: "run_command", ToolCallID: "c1",
+		Detail: "guard.py blocked run_command", Output: "policy: no network",
+		Denied: true,
+	})
+
+	for _, line := range lines {
+		if line["type"] != "hook" {
+			continue
+		}
+		if line["status"] != "blocked" {
+			t.Errorf("status = %v, want blocked: a consumer must not have to infer "+
+				"that the call was stopped", line["status"])
+		}
+		if line["hook_event"] != "PreToolUse" || line["program"] != "guard.py" {
+			t.Errorf("the hook's identity did not survive: %v", line)
+		}
+		if line["tool"] != "run_command" || line["tool_call_id"] != "c1" {
+			t.Errorf("the blocked call cannot be identified from the line: %v", line)
+		}
+		if line["output"] != "policy: no network" {
+			t.Errorf("the hook said why and the line dropped it: %v", line)
+		}
+		return
+	}
+	t.Fatalf("--json dropped the hook, so a blocked call is silent: %v", typesOf(lines))
+}
+
+// TestJSONModeReportsASilentHookRun covers the run that printed nothing. A
+// mis-typed matcher that selects nothing looks exactly like a working hook
+// until the silent runs are visible too.
+func TestJSONModeReportsASilentHookRun(t *testing.T) {
+	lines := jsonLines(t, agent.Event{
+		Kind: agent.EventHook, Name: "PostToolUse", Program: "fmt.sh",
+		Tool: "edit_file", ToolCallID: "c2", Detail: "fmt.sh ran",
+	})
+
+	for _, line := range lines {
+		if line["type"] != "hook" {
+			continue
+		}
+		if line["status"] != "ok" {
+			t.Errorf("status = %v, want ok: this hook reported, it did not refuse",
+				line["status"])
+		}
+		return
+	}
+	t.Fatalf("a silent hook run produced no line: %v", typesOf(lines))
+}
