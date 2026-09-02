@@ -69,6 +69,19 @@ func (s *Session) ToggleYOLO() (bool, string) {
 // after the dispatcher is built, and the policy changes mid-session through
 // /yolo and the settings screen, so anything captured earlier is either nil
 // or stale.
+//
+// It deliberately carries NO EmitPending, and that is safe here although the
+// same omission on the deferred-tool path caused a hang. The difference is
+// who reads it. Nothing calls DecideApproval with this value: every consumer
+// (SessionDispatcherOpts.Approval -> MultiStepHandler.Approval) copies Gate,
+// Standing and Policy onto agent.Options and drops the rest, and the nested
+// loop then builds its own prompt emitter from Options.OnEvent, which
+// multi_step sets. The deferred path DOES call DecideApproval directly, which
+// is why it has to supply one.
+//
+// So: if a future caller passes this straight to DecideApproval, it must add
+// an EmitPending first. A gate with no way to raise a prompt does not deny -
+// it blocks until the turn is cancelled, showing the operator nothing.
 func (s *Session) ApprovalSnapshot() sdkadapter.ApprovalDeps {
 	s.mu.Lock()
 	defer s.mu.Unlock()
