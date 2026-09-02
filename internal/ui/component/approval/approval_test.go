@@ -60,12 +60,14 @@ func TestClearDismissesPendingRequest(t *testing.T) {
 	if !m.Active() {
 		t.Fatal("expected Active() after SetRequest")
 	}
-	m.Clear()
+	// Resolve names the call, because Clear used to dismiss every prompt and
+	// a parallel call's start then discarded one the operator was reading.
+	m.Resolve("c1")
 	if m.Active() {
-		t.Error("expected inactive after Clear()")
+		t.Error("expected inactive after the call's own Resolve")
 	}
 	if got := m.View(); got != "" {
-		t.Errorf("got %q, want empty view after Clear()", got)
+		t.Errorf("got %q, want empty view after the request resolved", got)
 	}
 }
 
@@ -336,15 +338,29 @@ func TestScrollByIsANoOpWithoutADiff(t *testing.T) {
 	}
 }
 
-// TestSetRequestResetsTheScrollOffset: a second pending request starts
-// at the top of its own diff, not wherever the previous one was left.
-func TestSetRequestResetsTheScrollOffset(t *testing.T) {
+// TestTheNextRequestStartsAtTheTopOfItsOwnDiff: when a queued request
+// becomes the head, it starts at the top rather than wherever the previous
+// one was left.
+//
+// This used to assert that a SECOND SetRequest reset the offset, which was
+// the same statement while the model held one request and replaced it. It no
+// longer replaces: a call arriving while the operator reads must not move the
+// diff under them, so the reset happens when the head actually changes.
+func TestTheNextRequestStartsAtTheTopOfItsOwnDiff(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: previewDiff(t, 30)})
 	m = m.ScrollBy(20)
 	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c2", Diff: previewDiff(t, 30)})
+
+	// The queued arrival must NOT disturb what is on screen.
+	if !strings.Contains(m.View(), "lines 21-30 of 31") {
+		t.Errorf("a queued request moved the diff the operator was reading:\n%s", m.View())
+	}
+
+	// Answering the head promotes the next one, at the top of its own diff.
+	m, _ = m.Update(keyMsg("o"))
 	if !strings.Contains(m.View(), "lines 1-10 of 31") {
-		t.Errorf("new request kept a stale offset:\n%s", m.View())
+		t.Errorf("the promoted request kept a stale offset:\n%s", m.View())
 	}
 }
 

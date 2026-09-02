@@ -31,7 +31,7 @@ func (s *Screen) forcePush(text string) bool {
 		}
 	}
 	s.pendingForce = &text
-	s.approval.Clear()
+	s.approval.ClearAll()
 	s.active.Cancel()
 	s.statusline.Stop()
 	if displaced {

@@ -772,7 +772,7 @@ func (s Screen) cancelTurn() (app.Screen, tea.Cmd, bool) {
 	if s.active == nil {
 		return s, nil, false
 	}
-	s.approval.Clear()
+	s.approval.ClearAll()
 	s.active.Cancel()
 	s.statusline.Stop()
 	return s, nil, true
@@ -785,7 +785,7 @@ func (s Screen) quit() (app.Screen, tea.Cmd, bool) {
 	if !s.quitArmed {
 		s.quitArmed = true
 		if s.active != nil {
-			s.approval.Clear()
+			s.approval.ClearAll()
 			s.active.Cancel()
 			s.statusline.Stop()
 			s.statusline.Notice("cancelled")
