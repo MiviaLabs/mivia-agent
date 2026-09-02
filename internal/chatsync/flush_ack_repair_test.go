@@ -136,3 +136,78 @@ func TestAnIdenticalBodyStillPasses(t *testing.T) {
 		t.Errorf("an identical body failed verification: %v", err)
 	}
 }
+
+// TestASizeRepairIsRecognisedAsOurOwn is the defect a review measured: EVERY
+// size repair the server performs was rejected here.
+//
+// A size repair shrinks a string AND writes a truncation record saying what it
+// cut. That record is a key the sender never sent, so a strict comparison read
+// the body as another writer's, raised ErrTranscriptConflict, and stopped the
+// session's sync - reinstating the session-sized loss the repair exists to
+// prevent, on the very retry path that motivates it.
+func TestASizeRepairIsRecognisedAsOurOwn(t *testing.T) {
+	sent := sentEvent(t, map[string]any{
+		"turn":   "turn:1",
+		"output": strings.Repeat("x", 100),
+	})
+	stored := []StoredEvent{{
+		Seq: 1, Type: "mivia.chat.v1.tool.ended",
+		Payload: raw(t, map[string]any{
+			"turn":   "turn:1",
+			"output": strings.Repeat("x", 40),
+			// What a size repair adds, exactly as the API writes it.
+			"trunc":             map[string]any{"fields": map[string]any{"output": map[string]any{"kept": 40, "total": 100}}},
+			RepairedAtIngestKey: true,
+		}),
+	}}
+
+	if err := verifyStoredMatchesSent(sent, stored); err != nil {
+		t.Errorf("a size repair was read as corruption, which stops the session's "+
+			"sync for good: %v", err)
+	}
+}
+
+// TestARepairMayNotAddAnyOtherField holds the limit. Excluding the marker and
+// the truncation record is what makes a repair recognisable; excluding
+// anything else would let a foreign writer hide content in a new key.
+func TestARepairMayNotAddAnyOtherField(t *testing.T) {
+	sent := sentEvent(t, map[string]any{"turn": "turn:1", "output": "the output"})
+	stored := []StoredEvent{{
+		Seq: 1, Type: "mivia.chat.v1.tool.ended",
+		Payload: raw(t, map[string]any{
+			"turn": "turn:1", "output": "the output",
+			"injected":          "something the sender never wrote",
+			RepairedAtIngestKey: true,
+		}),
+	}}
+
+	if err := verifyStoredMatchesSent(sent, stored); err == nil {
+		t.Error("a stored body carrying an unknown extra key passed as this " +
+			"client's own; only the marker and the truncation record are the " +
+			"server's to add")
+	}
+}
+
+// TestTheSendersOwnTruncationRecordDoesNotHaveToSurvive: the producer writes a
+// trunc of its own when IT truncates, and a server repair may extend it. The
+// record describes the body rather than being it, so it is excluded on both
+// sides and a difference there is not corruption.
+func TestTheSendersOwnTruncationRecordDoesNotHaveToSurvive(t *testing.T) {
+	sent := sentEvent(t, map[string]any{
+		"output": strings.Repeat("y", 80),
+		"trunc":  map[string]any{"fields": map[string]any{"output": map[string]any{"kept": 80, "total": 900}}},
+	})
+	stored := []StoredEvent{{
+		Seq: 1, Type: "mivia.chat.v1.tool.ended",
+		Payload: raw(t, map[string]any{
+			"output":            strings.Repeat("y", 30),
+			"trunc":             map[string]any{"fields": map[string]any{"output": map[string]any{"kept": 30, "total": 900}}},
+			RepairedAtIngestKey: true,
+		}),
+	}}
+
+	if err := verifyStoredMatchesSent(sent, stored); err != nil {
+		t.Errorf("a repair that extended the producer's own truncation record "+
+			"was read as corruption: %v", err)
+	}
+}

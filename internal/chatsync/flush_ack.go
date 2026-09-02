@@ -88,6 +88,17 @@ func verifyStoredMatchesSent(sent, stored []StoredEvent) error {
 // session-sized one.
 const RepairedAtIngestKey = "repaired_at_ingest"
 
+// truncationKey is the record a size repair writes to say WHAT it cut. The
+// wire already defines this field and a viewer already renders a badge for it,
+// so a repair reports itself through it rather than inventing a vocabulary.
+//
+// It is listed here because a repair ADDS it: the stored body then has a key
+// the sender never sent, and a strict key-count comparison reads that as
+// another writer's body. Every size repair the server performs was rejected
+// for exactly that reason, which stopped the session's sync - reinstating the
+// loss the repair exists to prevent, on the retry path that motivated it.
+const truncationKey = "trunc"
+
 // payloadMatches reports whether the stored body is this client's own.
 //
 // Equality is semantic, not byte-for-byte: the payload round-trips through
@@ -105,15 +116,25 @@ func payloadMatches(sent, stored json.RawMessage) (bool, error) {
 		return reflect.DeepEqual(sentVal, storedVal), nil
 	}
 
-	// The marker is the server's, not ours: remove it before comparing, or
-	// every repaired body differs by the very field that explains why.
-	pruned := make(map[string]any, len(storedObj))
-	for k, v := range storedObj {
-		if k != RepairedAtIngestKey {
-			pruned[k] = v
-		}
+	// Two fields are excluded from the comparison ON BOTH SIDES: the marker
+	// that says a repair happened, and the truncation record that says what it
+	// cut. Both describe the body rather than being it.
+	//
+	// Excluding them is what makes a size repair recognisable at all. A repair
+	// ADDS the record, so the stored body has a key the sender never sent, and
+	// a strict comparison read that as another writer's body - every size
+	// repair the server performed was rejected for that reason, which stopped
+	// the session's sync and reinstated the loss the repair exists to prevent.
+	//
+	// Excluding the record is safe because it is not content: a viewer renders
+	// it as a badge of counts, never as transcript text. Everything a reader
+	// actually sees is still compared, and still under the shrink-only rule.
+	pruned := stripRepairMetadata(storedObj)
+	sentPruned := sentVal
+	if sentObj, ok := sentVal.(map[string]any); ok {
+		sentPruned = stripRepairMetadata(sentObj)
 	}
-	return repairedValueMatches(sentVal, pruned), nil
+	return repairedValueMatches(sentPruned, pruned), nil
 }
 
 // repairedValueMatches is the tolerance, and it is deliberately narrow.
@@ -170,4 +191,17 @@ func decodePair(a, b json.RawMessage) (any, any, error) {
 		return nil, nil, fmt.Errorf("decode the stored payload: %w", err)
 	}
 	return av, bv, nil
+}
+
+// stripRepairMetadata removes the two fields that describe a repair rather
+// than forming part of the body.
+func stripRepairMetadata(obj map[string]any) map[string]any {
+	out := make(map[string]any, len(obj))
+	for k, v := range obj {
+		if k == RepairedAtIngestKey || k == truncationKey {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
