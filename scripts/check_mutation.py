@@ -93,19 +93,29 @@ def denylisted_spans(pkg_dir: Path, denylist: list[dict]) -> dict:
     spans: dict[Path, list[tuple[int, int]]] = {}
     for entry in denylist:
         file_path = pkg_dir / entry["file"]
-        text = file_path.read_text()
-        snippet = entry["snippet"]
-        count = text.count(snippet)
+        # Resolve in BYTES, not in a decoded str: the spans returned here are
+        # compared against Site.start/Site.end (is_denylisted), which are
+        # go/scanner byte offsets. Indexing a decoded str would return a
+        # code-point offset, so any multi-byte character earlier in the file
+        # shifts the span left, out from under the site it is meant to cover -
+        # and the entry then either stops denylisting its own site (an audited
+        # equivalent mutant runs anyway and reports SURVIVED) or slides over a
+        # DIFFERENT, earlier site, which is then never mutated at all: a
+        # coverage hole the sweep reports as clean. This is DC-36, and its own
+        # probe says to slice the raw bytes the position came from.
+        raw = file_path.read_bytes()
+        snippet = entry["snippet"].encode("utf-8")
+        count = raw.count(snippet)
         if count == 0:
             raise MutationError(
-                f"denylist entry for {entry['file']}: snippet no longer matches: {snippet!r}"
+                f"denylist entry for {entry['file']}: snippet no longer matches: {entry['snippet']!r}"
             )
         if count > 1:
             raise MutationError(
                 f"denylist entry for {entry['file']}: snippet matches {count} sites, "
-                f"widen it to match one: {snippet!r}"
+                f"widen it to match one: {entry['snippet']!r}"
             )
-        start = text.index(snippet)
+        start = raw.index(snippet)
         spans.setdefault(file_path, []).append((start, start + len(snippet)))
     return spans
 
@@ -178,25 +188,46 @@ def classify(build_ok: bool, test_outcome: str) -> str:
     return SURVIVED
 
 
-def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
-    """run_mutant applies one mutation, builds, tests, and restores the
-    original bytes no matter how the run ends.
+def apply_mutation(original: bytes, site) -> bytes:
+    """apply_mutation returns original with site's span replaced by site.new.
 
     site.start/site.end are BYTE offsets (go/scanner positions, via
     token.FileSet.Offset - always byte-based). Slicing a decoded str with
     them is only correct while every preceding byte is single-byte ASCII:
     a multi-byte UTF-8 character earlier in the file (an em-dash, a curly
     quote, any non-ASCII comment text) shifts the str's character indices
-    out from under the byte offsets, so the slice below would remove or
-    replace the wrong span - sometimes producing a build failure
-    (misclassified "discarded"), sometimes a no-op-looking edit that
-    leaves the real mutation site untouched (misclassified "survived"
-    even though a correct test kills the real mutant). Slicing the raw
-    bytes instead keeps the offsets valid regardless of file content.
-    site.new is always plain ASCII ("", "&&", "||", "==", "!=", "<",
-    "<="), so .encode("utf-8") is exact and lossless."""
-    mutated = original[: site.start] + site.new.encode("utf-8") + original[site.end :]
-    site.path.write_bytes(mutated)
+    out from under the byte offsets, so the slice would remove or replace
+    the wrong span - sometimes producing a build failure (misclassified
+    "discarded"), sometimes a no-op-looking edit that leaves the real
+    mutation site untouched (misclassified "survived" even though a
+    correct test kills the real mutant). Slicing the raw bytes instead
+    keeps the offsets valid regardless of file content. site.new is always
+    plain ASCII ("", "&&", "||", "==", "!=", "<", "<="), so
+    .encode("utf-8") is exact and lossless.
+
+    Pure and byte-in/byte-out so a test can assert the fix directly,
+    without spawning go build/go test - see DC-36's gate."""
+    return original[: site.start] + site.new.encode("utf-8") + original[site.end :]
+
+
+def line_of_offset(data: bytes, offset: int) -> int:
+    """line_of_offset returns the 1-based line number of a BYTE offset.
+
+    Counts newlines in the raw bytes for the same reason apply_mutation
+    slices them: counting in a decoded str would mis-locate every site
+    that follows a multi-byte character, and sweep_diff matches this line
+    number against the set of lines git reports as changed - so a wrong
+    number silently drops a real mutation site from the sweep, or pulls in
+    one that is not in the diff at all.
+
+    Pure so a test can assert the fix directly - see DC-36's gate."""
+    return data.count(b"\n", 0, offset) + 1
+
+
+def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
+    """run_mutant applies one mutation, builds, tests, and restores the
+    original bytes no matter how the run ends."""
+    site.path.write_bytes(apply_mutation(original, site))
     try:
         build = subprocess.run(
             ["go", "build", f"./{pkg}"], cwd=ROOT, capture_output=True, text=True
@@ -529,12 +560,6 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
         if not changed_lines:
             continue
 
-        # site.start is a BYTE offset (go/scanner position); count newlines
-        # in the raw bytes, not a decoded str, or a multi-byte UTF-8
-        # character earlier in the file (an em-dash, a curly quote, any
-        # non-ASCII comment text) throws every subsequent line number off
-        # and a real mutation site can silently fall outside changed_lines,
-        # skipping it entirely - or a site outside the diff wrongly matches.
         file_bytes = f.read_bytes()
         data = load_denylist(pkg, DENYLIST_DIR)
         spans = denylisted_spans(ROOT / pkg, data.get("denylist", []))
@@ -542,7 +567,7 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
         for site in sites_for_file(f):
             if is_denylisted(site, spans):
                 continue
-            line_no = file_bytes.count(b"\n", 0, site.start) + 1
+            line_no = line_of_offset(file_bytes, site.start)
             if line_no in changed_lines:
                 pkg_sites.setdefault(pkg, []).append((site, line_no))
 
