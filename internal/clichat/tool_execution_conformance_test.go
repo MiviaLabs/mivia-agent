@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -286,6 +287,133 @@ func TestEveryPathChargesTheBatchBudget(t *testing.T) {
 	}
 }
 
+// C10: a Write-class tool called twice in one turn runs ONCE.
+//
+// C2 asserts the read direction (fresh every time). The direction that
+// protects side effects - a duplicate delivery answered from the record
+// instead of re-executing - was untested, so hardcoding SkipDedup: true in
+// the shim passed the whole table while every duplicate re-ran its write.
+func TestEveryPathSuppressesADuplicateWrite(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &countingProbe{name: "probe_tool", class: tools.ExecutionWrite}
+			runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.ApprovalPolicy = config.ApprovalPolicyAuto
+			},
+				namedCall("c1", "probe_tool", `{}`),
+				namedCall("c2", "probe_tool", `{}`))
+			checkContract(t, "duplicate-write-suppressed", path.name,
+				probe.runs.Load() == 1,
+				fmt.Sprintf("a WRITE tool executed %d times for two identical "+
+					"calls in one turn; a duplicate delivery must not repeat a "+
+					"side effect", probe.runs.Load()))
+		})
+	}
+}
+
+// C11: a tool's own MaxResultBytes bounds its result.
+//
+// C6 only sets the session-wide cap, so a mutation making effectiveResultCap
+// ignore capability.MaxResultBytes passed - and that is the bound a tool sets
+// for itself, which no operator setting replaces.
+func TestEveryPathHonoursTheToolsOwnResultBound(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &boundedProbe{name: "probe_tool", size: 40000, max: 300}
+			body := runProbeTurnWith(t, path, probe, nil,
+				namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "capability-bound-honoured", path.name,
+				len(body) > 0 && len(body) < 2000,
+				fmt.Sprintf("the tool declared MaxResultBytes=300 and the model "+
+					"received %d bytes; the tool's own bound was ignored", len(body)))
+		})
+	}
+}
+
+// C12: a PreToolUse hook block reaches the model with the hook's reason, and
+// the tool does not run.
+//
+// No case in this table used hooks at all, so dropping the hook gate, or the
+// advisory it hands the model, passed everything.
+func TestEveryPathReportsAHookBlock(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &countingProbe{name: "probe_tool", class: tools.ExecutionRead}
+			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.SetDispatcher(blockingHookDispatcher(t, f))
+			}, namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "hook-block-stops-the-call", path.name,
+				probe.runs.Load() == 0,
+				"a PreToolUse hook denied the call and the tool ran anyway")
+			checkContract(t, "hook-block-reason-reaches-the-model", path.name,
+				strings.Contains(body, "guard refused"),
+				fmt.Sprintf("the model was not told why its call was blocked: %q", body))
+		})
+	}
+}
+
+// C13: a hook's ADVISORY reaches the model on a call it allowed.
+//
+// The block contract above reads the blocked envelope, which comes from the
+// dispatcher rather than from HookContext - so dropping the advisory entirely
+// still passed it. This is the case that sees it: the hook allows, and the
+// text it produced for the model must arrive with the result.
+func TestEveryPathDeliversAHookAdvisory(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &countingProbe{name: "probe_tool", class: tools.ExecutionRead}
+			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.SetDispatcher(advisoryHookDispatcher(t, f))
+			}, namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "hook-advisory-reaches-the-model", path.name,
+				strings.Contains(body, "guard advises"),
+				fmt.Sprintf("a hook produced advisory text for the model and it "+
+					"never arrived: %q", body))
+			checkContract(t, "advised-call-still-runs", path.name,
+				probe.runs.Load() == 1,
+				"the hook allowed the call and it did not run")
+		})
+	}
+}
+
+// advisoryHookDispatcher allows every call and attaches advisory text.
+func advisoryHookDispatcher(t *testing.T, f *deferredFixture) *runtime.Dispatcher {
+	t.Helper()
+	d, err := runtime.NewToolDispatcher(f.state.ToolBase, runtime.Policy{
+		PreInvokeHook: func(context.Context, runtime.Request) runtime.HookVerdict {
+			return runtime.HookVerdict{Context: "guard advises caution"}
+		},
+	})
+	if err != nil {
+		t.Fatalf("build advisory dispatcher: %v", err)
+	}
+	t.Cleanup(d.Close)
+	return d
+}
+
+// blockingHookDispatcher is a dispatcher whose PreToolUse gate denies with a
+// recognisable reason.
+func blockingHookDispatcher(t *testing.T, f *deferredFixture) *runtime.Dispatcher {
+	t.Helper()
+	// Built from the FULL tool set, so the block is what stops the call rather
+	// than the dispatcher simply not knowing the tool - which is the shape my
+	// first attempt had, and it reported "unknown tool" instead of the hook's
+	// reason.
+	d, err := runtime.NewToolDispatcher(f.state.ToolBase, runtime.Policy{
+		PreInvokeHook: func(context.Context, runtime.Request) runtime.HookVerdict {
+			return runtime.HookVerdict{
+				Denied: true, Reason: "guard refused this call",
+				Runs: []runtime.HookRun{{Event: "PreToolUse", Program: "guard.sh", Denied: true}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("build hook dispatcher: %v", err)
+	}
+	t.Cleanup(d.Close)
+	return d
+}
+
 // --- the harness ---------------------------------------------------------
 
 func runProbeTurn(t *testing.T, path execPath, probe tools.Tool, args string) string {
@@ -540,4 +668,21 @@ func TestZZZNoDeclaredDivergenceIsOrphaned(t *testing.T) {
 			"silently pre-exempt the next contract that reuses the id.",
 			conformancePolicyPath, orphans)
 	}
+}
+
+// boundedProbe declares its OWN result bound via Capability.MaxResultBytes.
+type boundedProbe struct {
+	name string
+	size int
+	max  int
+}
+
+func (p *boundedProbe) Name() string               { return p.name }
+func (p *boundedProbe) Description() string        { return "declares its own bound" }
+func (p *boundedProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p *boundedProbe) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead, MaxResultBytes: p.max}
+}
+func (p *boundedProbe) Execute(context.Context, json.RawMessage) (string, error) {
+	return strings.Repeat("x", p.size), nil
 }
