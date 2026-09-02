@@ -28,7 +28,7 @@
       "description": "The cross-process NDJSON surface (external_* types) written by renderExternalEvent. A kind must ALSO be in hub.RelayedKinds to reach here at all - TestTheRelayAllowlistAndItsRendererAgree holds the two halves together.",
       "ignores": {
         "tool_pending": "Approval belongs to the process that owns the terminal. A second process cannot answer it, and showing it there invites a reader to wait for something they cannot do.",
-        "hook": "A hook result names a local script and its output. It stays in the process that ran it rather than crossing to a peer.",
+        "hook": "The hub is a ONE-WAY peer relay with no input path, and a hook row is operator-facing detail about the machine that ran it. Note the reason is no longer \"it never crosses a process boundary\": chat-sync DOES send mivia.chat.v1.hook.ran to a remote viewer, deliberately, under the include-tool-io gate and carrying the hook's stdout only. This surface stays out because a peer gains nothing from it, not because the fact is unshareable.",
         "step": "An iteration boundary, observability only.",
         "heartbeat": "A wall-clock tick with no content.",
         "prune": "Context pruning accounting; the relayed compaction event carries the durable record.",

@@ -84,7 +84,10 @@ func TestEmitCarriesTheHookVerdictAcrossTheBus(t *testing.T) {
 		Program:    "guard.py",
 		Tool:       "run_command",
 		ToolCallID: "c1",
-		Output:     "policy: no network",
+		// What a local surface is shown: stdout plus the operator diagnostic,
+		// which names the hook's absolute path.
+		Output:     "policy: no network\nhook /home/operator/.mivia/hooks/guard.py exited 2",
+		HookStdout: "policy: no network",
 		Denied:     true,
 	})
 
@@ -99,6 +102,15 @@ func TestEmitCarriesTheHookVerdictAcrossTheBus(t *testing.T) {
 		}
 		if ev.Hook.Program != "guard.py" || ev.Hook.Phase != "PreToolUse" || ev.Hook.Tool != "run_command" {
 			t.Errorf("the hook's identity did not survive: %+v", ev.Hook)
+		}
+		// The typed payload is what crosses to another machine, so it carries
+		// the hook's stdout alone - never the diagnostic that names the
+		// operator's filesystem.
+		if ev.Hook.Output != "policy: no network" {
+			t.Errorf("Hook.Output = %q, want the hook's stdout alone", ev.Hook.Output)
+		}
+		if strings.Contains(ev.Hook.Output, "/home/operator") {
+			t.Error("the operator's filesystem path crossed the bus on the typed payload")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no hook event reached the bus")

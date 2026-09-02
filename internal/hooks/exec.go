@@ -53,6 +53,10 @@ type Outcome struct {
 	// Context is hook-supplied advisory text, bounded by MaxOutputBytes.
 	Context string
 	// Warnings are operator-facing diagnostics; they never reach the model.
+	// They DO reach the operator's transcript, and a warning names this
+	// hook's absolute path on purpose. That is why agent.hookRunStdout keeps
+	// a warning-free copy for anything that leaves the machine: a path
+	// describes the operator's filesystem, not the conversation.
 	Warnings []string
 	// Runs records every handler that actually executed, in order.
 	//

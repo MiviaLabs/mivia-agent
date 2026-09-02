@@ -49,6 +49,7 @@ func emit(opts Options, e Event) {
 				Program: e.Program,
 				Tool:    e.Tool,
 				Denied:  e.Denied,
+				Output:  e.HookStdout,
 			}
 		}
 		ev.SessionID = opts.SessionID

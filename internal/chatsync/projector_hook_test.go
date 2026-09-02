@@ -1,6 +1,7 @@
 package chatsync
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -17,7 +18,7 @@ func hookEvent(phase, program, tool, callID, output string, denied bool) events.
 		ToolCallID: callID,
 		Output:     output,
 		Hook: &events.HookEvent{
-			Phase: phase, Program: program, Tool: tool, Denied: denied,
+			Phase: phase, Program: program, Tool: tool, Denied: denied, Output: output,
 		},
 	}
 }
@@ -100,5 +101,51 @@ func TestHookOutputRidesTheToolIOGate(t *testing.T) {
 	if !payload.Blocked {
 		t.Error("withholding the text also withheld the verdict; the verdict is not " +
 			"content and must always travel")
+	}
+}
+
+// TestTheOperatorDiagnosticDoesNotLeaveTheMachine is a privacy regression.
+//
+// A hook that times out, crashes, fails to start, or exits 2 on a reactive
+// event produces an operator diagnostic naming the hook's ABSOLUTE PATH - on
+// purpose, because the operator is the one who has to go find the file. The
+// generic Event.Output carries the hook's stdout and that diagnostic joined,
+// which is right for a local transcript row and wrong for a payload that
+// leaves the machine: a path describes the operator's filesystem.
+//
+// The wire therefore reads the typed payload's own Output, which is stdout
+// alone. This test drives the joined form through the projector and requires
+// the path to be absent.
+func TestTheOperatorDiagnosticDoesNotLeaveTheMachine(t *testing.T) {
+	const stdout = "policy: no network access"
+	const diagnostic = "hook /home/operator/private-projects/acme/.mivia/hooks/guard.sh exited 2"
+
+	p := NewProjector("sess-1", 0, toolIOOpts())
+	p.Project(events.Event{Kind: events.KindTurnStart, SessionID: "sess-1", TurnID: "turn:1"})
+
+	ev := events.Event{
+		Kind: events.KindHook, SessionID: "sess-1", TurnID: "turn:1", ToolCallID: "c1",
+		// What the local surfaces are given: stdout AND the diagnostic.
+		Output: stdout + "\n" + diagnostic,
+		Hook: &events.HookEvent{
+			Phase: "PreToolUse", Program: "guard.sh", Tool: "run_command",
+			Denied: true, Output: stdout,
+		},
+	}
+
+	payload := hookPayload(t, p.Project(ev))
+
+	if strings.Contains(payload.Output, "/home/operator") {
+		t.Errorf("the wire carries the operator's filesystem path: %q", payload.Output)
+	}
+	if strings.Contains(payload.Output, diagnostic) {
+		t.Errorf("the operator diagnostic reached the wire: %q", payload.Output)
+	}
+	if payload.Output != stdout {
+		t.Errorf("Output = %q, want the hook's own stdout %q", payload.Output, stdout)
+	}
+	if payload.OutputBytes != len(stdout) {
+		t.Errorf("OutputBytes = %d, want %d - the byte count must describe what "+
+			"was sent, not the longer local form", payload.OutputBytes, len(stdout))
 	}
 }

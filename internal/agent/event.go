@@ -192,6 +192,12 @@ type Event struct {
 	Identity *events.Identity
 	// Compaction is present only for the post-commit typed progress event. It
 	// is not copied into generic content/input/output envelopes.
+	// HookStdout is what a hook actually PRINTED, with no operator diagnostic
+	// appended. Event.Output carries the two joined, because a local operator
+	// wants the diagnostic next to the output; that joined form names the
+	// hook's absolute PATH, so it must not be what crosses to another machine.
+	HookStdout string
+
 	Compaction *events.CompactionEvent
 	// CacheUsage is present only for the typed prompt-cache accounting
 	// event. It is not copied into generic content/input/output envelopes.

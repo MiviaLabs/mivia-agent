@@ -164,6 +164,11 @@ type HookEvent struct {
 	// Denied is true for the run that BLOCKED the call. A blocked call emits
 	// no tool_end, so this flag is the only account of why it never ran.
 	Denied bool `json:"denied"`
+	// Output is what the hook PRINTED. It is carried here rather than read
+	// from the generic Event.Output, which appends an operator diagnostic
+	// naming the hook's absolute path - fine on the machine that ran it, not
+	// something to send to a remote viewer.
+	Output string `json:"output"`
 }
 
 // CompactionEvent is the sealed, content-free progress payload for context
