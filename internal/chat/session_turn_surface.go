@@ -7,8 +7,10 @@ import (
 	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -166,6 +168,16 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 	if err := dispatcher.RegisterTool(base, tool); err != nil && !dispatcher.Has(runtime.Tool, name) {
 		return "", "", nil, false
 	}
+	// Approval. This path invokes the runtime dispatcher DIRECTLY, underneath
+	// the SDK registry where the approval wrapper lives, so it carried no
+	// approval at all: a threat model drove a write tool through it and
+	// watched the file appear under a "deny" policy with a live approver
+	// attached. It asks the shared decision rather than restating the policy,
+	// because a second copy of that logic is how this class of hole keeps
+	// reappearing.
+	if decision := s.decideDeferredApproval(ctx, tool, name, args); !decision.Approved {
+		return "tool call denied by user: " + decision.Reason, "", nil, true
+	}
 	result := dispatcher.Invoke(ctx, runtime.Request{
 		TurnID:    fmt.Sprintf("turn:%d", turnID),
 		SessionID: sessionID,
@@ -238,4 +250,36 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 	s.mu.Lock()
 	s.RemainderSpool = spool
 	s.mu.Unlock()
+}
+
+// decideDeferredApproval asks the one approval decision on behalf of the
+// deferred-tool path.
+//
+// It reads the session's approval state under the same lock the rest of the
+// session uses, and passes no EmitPending: this path has no in-flight SDK call
+// id to match a prompt back to, so a prompt raised here could never be
+// resolved. That makes an interactive policy deny rather than hang, which is
+// the safe direction and is stated here so the limitation is visible rather
+// than discovered.
+func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, name string, args json.RawMessage) sdkadapter.ApprovalDecision {
+	s.mu.Lock()
+	deps := sdkadapter.ApprovalDeps{
+		Policy:   s.ApprovalPolicy,
+		Standing: s.ApprovalStanding,
+		Gate:     s.ApprovalGate,
+	}
+	s.mu.Unlock()
+	if deps.Policy == "" {
+		deps.Policy = config.ApprovalPolicyWriteOnly
+	}
+
+	class := tools.ExecutionExternal
+	if capable, ok := tool.(tools.CapableTool); ok {
+		class = capable.Capability(args).Class
+	}
+	return sdkadapter.DecideApproval(ctx, deps, sdkadapter.ApprovalRequest{
+		Name:  name,
+		Class: class,
+		Args:  args,
+	})
 }

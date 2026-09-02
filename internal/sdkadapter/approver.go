@@ -131,66 +131,31 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 	} else if b, err := json.Marshal(in.Value); err == nil {
 		args = b
 	}
-	// Read-class and Unclassified tools bypass the gate unless policy is "always".
-	// Mirror the legacy executeToolTask threshold.
-	cap := a.getCapabilities(args)
-	if !IsAlwaysApproval(a.policy) && !IsDenyApproval(a.policy) && cap.Class < tools.ExecutionWrite {
-		return a.inner.Run(ctx, in)
-	}
-	// Deny policy short-circuits the gate the same way auto-approval does,
-	// just in the opposite direction: no pending prompt is ever emitted.
-	if IsDenyApproval(a.policy) {
-		return a.denied(ctx, "auto-denied (approval policy is \"deny\")")
-	}
-	// Standing decisions short-circuit the gate.
-	if a.standing != nil {
-		if v, ok := a.standing.Lookup(a.cliName); ok {
-			if !v {
-				return a.denied(ctx, "standing decision")
-			}
-			return a.inner.Run(ctx, in)
-		}
-	}
-	if a.emitPending != nil {
-		// Emit the pending advisory BEFORE invoking the gate so the UI
-		// can render the prompt while the gate blocks. The bridge
-		// downstream reconstructs an agent.EventToolPending and routes it
-		// through the same emit path the legacy loop uses. toolCallID is
-		// the in-flight call id (toolcallctx.ToolCall.ID) so the UI's
-		// approval resolver can match a user decision back to this gate;
-		// without it, the gate blocks forever after approval.
-		a.emitPending(callIDFromContext(ctx), a.cliName, approvalClassName(cap.Class), string(args))
-	}
-	if a.gate == nil {
-		// A call that needs approval with nobody to ask is denied, never run.
-		// This is reachable only when a deny policy built this adapter without
-		// a gate, but the direction matters more than the reachability: the
-		// absence of an approver must never read as approval.
-		return a.denied(ctx, "no approver is attached to this session")
-	}
-	res := a.gate(ctx, a.cliName, args)
-	if res.ApprovedForClass && a.standing != nil {
-		if res.Approved {
-			a.standing.Allow(a.cliName, cap.Class)
-		} else {
-			a.standing.Deny(a.cliName, cap.Class)
-		}
-	}
-	if !res.Approved {
-		errText := res.Err
-		if errText == "" {
-			errText = "denied"
-		}
-		return a.denied(ctx, errText)
+
+	// The decision itself lives in DecideApproval, because this wrapper is not
+	// the only route to executing a tool and the routes that bypassed it had
+	// no approval at all.
+	decision := DecideApproval(ctx, ApprovalDeps{
+		Policy:      a.policy,
+		Standing:    a.standing,
+		Gate:        a.gate,
+		EmitPending: a.emitPending,
+	}, ApprovalRequest{
+		ToolCallID: callIDFromContext(ctx),
+		Name:       a.cliName,
+		Class:      a.getCapabilities(args).Class,
+		Args:       args,
+	})
+	if !decision.Approved {
+		return a.denied(ctx, decision.Reason)
 	}
 	return a.inner.Run(ctx, in)
 }
 
-// capabilitiesFor returns a closure that exposes one CLI tool's
-// Capability(args) at call time. Tools that implement CapableTool get
-// the real per-args capability; tools that do not get ExecutionExternal
-// (the conservative default the registry already applies in
-// tools.Registry.Capability).
+// capabilitiesFor returns the class lookup for one CLI tool. A tool that
+// declares no capability is treated as ExecutionExternal - the most
+// restrictive class - so an unclassified tool is gated rather than waved
+// through.
 func capabilitiesFor(t tools.Tool) func(json.RawMessage) tools.Capability {
 	if capable, ok := t.(tools.CapableTool); ok {
 		return func(args json.RawMessage) tools.Capability {
