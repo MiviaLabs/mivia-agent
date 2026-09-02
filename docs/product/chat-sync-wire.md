@@ -222,18 +222,21 @@ for all of a turn's prose of one kind from one agent.
 `assistant.reset` says a block's already-published text must be discarded,
 either because the turn producing it is being re-driven from the beginning -
 a prompt-too-long compaction, a bounded empty-response retry, or a subagent's
-schema-repair retry - or because a subagent's schema-repair gave up on that
-attempt entirely (no progress across retries, or the retry budget exhausted)
-and the attempt's text was never accepted. **A viewer that accumulates deltas
-must discard what it holds for that block.** Its `block` is the STREAM id,
-with no `<step>` suffix: by the time a reset fires the discarded attempt may
-span several steps, and one step id cannot name them all - so the scope is
-every step of that stream. When the turn is re-driven, the replay that follows
+schema-repair retry - or because the attempt was rejected for good and
+nothing will replace it: a subagent's schema-repair gave up (no progress
+across retries, or the retry budget exhausted), or the root loop's turn
+exhausted its `max_steps` budget and reports a hard failure instead of the
+text it had already streamed. **A viewer that accumulates deltas must
+discard what it holds for that block.** Its `block` is the STREAM id, with
+no `<step>` suffix: by the time a reset fires the discarded attempt may span
+several steps, and one step id cannot name them all - so the scope is every
+step of that stream. When the turn is re-driven, the replay that follows
 opens a step id the abandoned attempt never used, so a consumer keyed on the
-id alone cannot append the replay to the text it was just told to drop. When a
-subagent instead gives up, no replay follows at all: the reset simply empties
-the block, and the run's own `subagent.ended` (status `error`) carries the
-failure explanation.
+id alone cannot append the replay to the text it was just told to drop. When
+an attempt is instead rejected for good, no replay follows at all: the reset
+simply empties the block, and the run's own terminal signal -
+`subagent.ended` (status `error`) for a subagent, `turn.failed` for the root
+loop - carries the failure explanation.
 
 Every session maintains a strictly monotonic sequence (`1..N`). If the system
 drops events because of local queue saturation, a `sync.dropped` event consumes

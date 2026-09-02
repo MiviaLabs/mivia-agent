@@ -91,6 +91,12 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		return sdkSteeredStopPartial(res.History, userText)
 	}
 	if res.Stop == sdkagentloop.StopMaxIterations {
+		// finalizeSDKTurn (inside RunAgentLoopOnce, above) already published
+		// this turn's last assistant text to the wire as a settled
+		// "completed" assistant.message before this stop-reason check ran -
+		// reset it so a viewer does not keep showing an answer this turn is
+		// about to report as a hard failure with no accepted reply.
+		emit(opts, Event{Kind: EventAssistantReset, Detail: "agent exceeded max_steps: the reply was never accepted"})
 		// Legacy parity: exceeding the step cap is a hard error naming
 		// the cap, not a graceful partial answer.
 		return "", fmt.Errorf("agent exceeded max_steps (%d)", effectiveSDKMaxIterations(opts))

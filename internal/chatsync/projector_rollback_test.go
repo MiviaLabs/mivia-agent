@@ -1,6 +1,7 @@
 package chatsync
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,52 @@ func TestALostResetMakesTheSettledMessageCarryTheAnswer(t *testing.T) {
 		t.Errorf("Fragments = %d, want 0 - a non-zero count empties the text "+
 			"under INV-1 and counts only the attempt the viewer did not lose",
 			payload.Fragments)
+	}
+}
+
+// TestProjector_MaxStepsExhaustion_ResetFollowsSettledAssistantMessage is the
+// chatsync leg of the fix in internal/agent/loop_dispatch.go: when the SDK
+// root loop's turn stops on StopMaxIterations, finalizeSDKTurn has already
+// published the turn's last assistant text to the wire as a settled
+// "completed" message before runOnceSDK discards it and returns a hard
+// error. runOnceSDK now emits an assistant.reset for the same stream right
+// after that settled message, so a viewer retracts the bubble instead of
+// showing an answer the turn is about to report as a hard failure with no
+// accepted reply. This proves the projector - already correct for the
+// prompt-too-long and empty-response reset cases - behaves identically for
+// this new call site.
+func TestProjector_MaxStepsExhaustion_ResetFollowsSettledAssistantMessage(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	msg := p.Project(rootEvent(events.KindAssistant, "let me check that...", ""))
+	reset := p.Project(rootEvent(events.KindAssistantReset, "",
+		"agent exceeded max_steps: the reply was never accepted"))
+
+	got := append(msg, reset...)
+	wantTypes := []string{TypeAssistantMessage, TypeAssistantReset}
+	if len(got) != len(wantTypes) {
+		t.Fatalf("wire sequence = %v, want %v", got, wantTypes)
+	}
+	for i, w := range wantTypes {
+		if got[i].Type != w {
+			t.Fatalf("event[%d].Type = %s, want %s", i, got[i].Type, w)
+		}
+	}
+
+	msgPayload, ok := got[0].Payload.(*AssistantMessagePayload)
+	if !ok {
+		t.Fatalf("message payload is %T, want *AssistantMessagePayload", got[0].Payload)
+	}
+	resetPayload, ok := got[1].Payload.(*AssistantResetPayload)
+	if !ok {
+		t.Fatalf("reset payload is %T, want *AssistantResetPayload", got[1].Payload)
+	}
+	// The reset names the STREAM (no segment suffix); the message's own
+	// block extends that stream with a segment id.
+	if !strings.HasPrefix(msgPayload.Block, resetPayload.Block) {
+		t.Errorf("reset block = %q is not a prefix of message block = %q; the reset must target "+
+			"the same stream the settled message was published on, or a viewer clears the wrong "+
+			"stream's segments", resetPayload.Block, msgPayload.Block)
 	}
 }
 
