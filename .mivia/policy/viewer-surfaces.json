@@ -1,0 +1,46 @@
+{
+  "description": "Which event kinds each viewer surface deliberately does not render, and why. Enforced by TestEveryEventKindReachesEveryViewerOrSaysWhyNot in internal/clichat, driven by agent.AllEventKinds (itself checked against the parsed source of the constant block). An undeclared kind that produces nothing FAILS. A declared kind that DOES produce something also fails, so a stale entry cannot hide the next real gap. Adding a kind to internal/agent therefore forces a decision on every surface instead of a silence on some of them.",
+  "surfaces": {
+    "tui": {
+      "description": "internal/uiadapter translation into the uievent stream the TUI renders.",
+      "ignores": {
+        "step": "An iteration boundary. Opt-in through TranslateOptions.ShowIterationNotices, which is off by default, so the ordinary transcript is not one notice per loop step.",
+        "cache_usage": "A per-step prompt-cache hit rate. Opt-in through TranslateOptions.ShowPromptCacheNotices; the statusline carries the session total.",
+        "heartbeat": "A wall-clock tick with no content of its own. The spinner and the statusline already say the turn is alive, and a transcript row per tick would bury the turn."
+      }
+    },
+    "json": {
+      "description": "The local NDJSON stream written by --json line mode (jsonTurnEventCallback).",
+      "ignores": {
+        "assistant": "The answer DOES reach this surface, through ndjsonChunkWriter as chunk lines rather than through the event callback. It is declared here because the callback is what this table drives; the chunk path has its own tests.",
+        "tool_pending": "An approval request. Line mode does not run an approval UI, so a consumer has no way to answer one. KNOWN GAP: a consumer therefore cannot tell that a turn is blocked waiting for approval.",
+        "hook": "A lifecycle hook result, including a hook that BLOCKED a call. KNOWN GAP: a --json consumer sees the tool never run and is not told why.",
+        "step": "An iteration boundary, observability only.",
+        "heartbeat": "A wall-clock tick with no content.",
+        "prune": "Context pruning accounting. The compaction line carries the durable record.",
+        "tool_parallel": "A batching note about calls that each get their own tool_start and tool_end.",
+        "work_limit": "The soft wrap-up notice. Observability only; the instruction itself travels inside the provider request.",
+        "schema_retry": "A subagent about to re-enter for schema repair. The assistant_reset that accompanies it is what a consumer must act on, and that IS emitted.",
+        "empty_response_retry": "A bounded retry after an empty provider response, paired with an assistant_reset the consumer acts on.",
+        "unacted_continuation": "A bounded continuation after a turn announced work and called no tool. Observability only."
+      }
+    },
+    "relay": {
+      "description": "The cross-process NDJSON surface (external_* types) written by renderExternalEvent. A kind must ALSO be in hub.RelayedKinds to reach here at all - TestTheRelayAllowlistAndItsRendererAgree holds the two halves together.",
+      "ignores": {
+        "tool_pending": "Approval belongs to the process that owns the terminal. A second process cannot answer it, and showing it there invites a reader to wait for something they cannot do.",
+        "hook": "A hook result names a local script and its output. It stays in the process that ran it rather than crossing to a peer.",
+        "step": "An iteration boundary, observability only.",
+        "heartbeat": "A wall-clock tick with no content.",
+        "prune": "Context pruning accounting; the relayed compaction event carries the durable record.",
+        "tool_parallel": "A batching note about calls each relayed on their own.",
+        "work_limit": "The soft wrap-up notice, observability only.",
+        "schema_retry": "Paired with the assistant_reset that a peer acts on, which IS relayed.",
+        "empty_response_retry": "Paired with the assistant_reset that a peer acts on.",
+        "unacted_continuation": "Observability only.",
+        "cache_usage": "Per-process token accounting. A peer's cost is not the reader's session cost, and mixing them makes both wrong.",
+        "token_usage": "Per-process token accounting, same reason as cache_usage."
+      }
+    }
+  }
+}

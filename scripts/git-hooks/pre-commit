@@ -244,6 +244,16 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running hub relay ordering invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestRelayPreservesCrossKindPublishOrder|TestOwnerStopReleasesTheRelaySubscription|TestClientStopReleasesTheRelaySubscription|TestTurnTerminalsAreRelayed|TestSendStampsAMonotonicLossCount|TestRelayChargesBusLossOnlyToEventsThatPassedThroughIt' ./internal/hub/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The viewer-surface conformance table. It runs whenever a kind, a surface,
+  # or the policy that lets a surface stay silent is touched - the three ways a
+  # kind gets added on one side and forgotten on the others. It is the gate for
+  # a class that has shipped four times here (a kind reaching one viewer of
+  # four, an arm with no allowlist entry, an allowlist entry with no arm).
+  if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|uiadapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
+    echo " → Running viewer-surface conformance tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/coordinator/'; then
     echo " → Running coordinator invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestDrainSeesQueuedMessage|TestPendingInterruptPreservesQueueContents' ./internal/coordinator/ -count=1 -timeout=60s) || INV_FAIL=1
