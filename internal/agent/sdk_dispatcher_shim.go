@@ -601,7 +601,14 @@ func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cl
 	// deliberately not in the registry - so it has to be wrapped here, or an
 	// operator's ref_only_tools entry would apply to a deferred tool only
 	// after it loaded.
-	out, err := wrapRefOnly(shim, cliTool, opts, turn).Run(ctx, sdktools.InOut{Value: args})
+	// Same wrapper stack the registry builds, in the same order: the
+	// dispatcher shim innermost, then ref-only, then turn shaping. Both outer
+	// layers wrap REGISTRY tools, and this tool is deliberately not in the
+	// registry, so each has to be applied here or the deferred call escapes
+	// it - ref_only_tools silently inlining a body, and a deferred result
+	// never charged against the turn's batch budget.
+	runner := wrapTurnShaping(wrapRefOnly(shim, cliTool, opts, turn), cliTool, opts, turn)
+	out, err := runner.Run(ctx, sdktools.InOut{Value: args})
 	if err != nil {
 		return "", err
 	}

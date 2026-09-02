@@ -399,16 +399,8 @@ func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Op
 	if sdkReg == nil {
 		return
 	}
-	budget := opts.BatchResultBudgetBytes
-	switch {
-	case budget > 0:
-		// literal
-	case budget < 0:
-		budget = derivedBatchBudget(opts.MaxContextTokens)
-		if budget <= 0 {
-			return
-		}
-	default:
+	budget, active := batchShapingBudget(opts)
+	if !active {
 		return
 	}
 	// The counter lives on the turn state so a mid-run surface
@@ -456,4 +448,63 @@ func emitBatchShapingRow(opts Options, charged, budget int) {
 		Detail: fmt.Sprintf("tool batch budget: 1 of 1 results degraded · %d/%d bytes charged",
 			charged, budget),
 	})
+}
+
+// wrapTurnShaping returns inner wrapped by the turn-shaping wrapper when a
+// batch budget is active, and inner unchanged otherwise.
+//
+// It exists because turn shaping is applied by wrapping registry tools, and
+// the deferred-tool path executes a tool that is deliberately absent from the
+// registry - so a deferred result escaped the batch budget entirely while the
+// identical admitted result was charged and degraded. The budget defaults to
+// derived-positive in every shipped session, so that divergence was live.
+//
+// It mirrors applyTurnShaping's per-tool wrapping exactly; the budget
+// resolution is shared through batchShapingBudget so the two cannot disagree
+// about when shaping is active.
+func wrapTurnShaping(inner sdktools.Tool, cliTool tools.Tool, opts Options, turn *sdkTurnState) sdktools.Tool {
+	if inner == nil || turn == nil {
+		return inner
+	}
+	budget, active := batchShapingBudget(opts)
+	if !active {
+		return inner
+	}
+	var ephemeral bool
+	var cap int
+	if cliTool != nil {
+		_, ephemeral = cliTool.(tools.EphemeralResultTool)
+		if bt, ok := cliTool.(resultBudgetTool); ok {
+			cap = bt.ResultBudgetBytes()
+		}
+	}
+	return &turnShapeWrapper{
+		inner:     inner,
+		budget:    budget,
+		counter:   turn.shapeCounter(),
+		env:       newShapeEnv(turn.currentSpool(), opts.SessionID),
+		ephemeral: ephemeral,
+		toolName:  inner.Name(),
+		cap:       cap,
+		turn:      turn,
+		onDegrade: func(charged, budget int) {
+			emitBatchShapingRow(opts, charged, budget)
+		},
+	}
+}
+
+// batchShapingBudget resolves the turn's batch budget and whether shaping is
+// active at all. A positive value is a literal; a negative one asks for the
+// budget derived from the context window; zero disables shaping.
+func batchShapingBudget(opts Options) (int, bool) {
+	budget := opts.BatchResultBudgetBytes
+	switch {
+	case budget > 0:
+		return budget, true
+	case budget < 0:
+		budget = derivedBatchBudget(opts.MaxContextTokens)
+		return budget, budget > 0
+	default:
+		return 0, false
+	}
 }
