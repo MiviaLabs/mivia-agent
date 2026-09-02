@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -228,6 +229,35 @@ func TestEveryPathDedupsAnUnclassifiedTool(t *testing.T) {
 					"identical calls in one turn; a tool that declares nothing is "+
 					"assumed to have side effects, and a duplicate delivery must "+
 					"not repeat them", probe.runs.Load()))
+		})
+	}
+}
+
+// C9: a result is charged against the turn's batch budget on every path.
+//
+// Turn shaping is applied by wrapping registry tools, and a deferred tool is
+// not in the registry - so a deferred result escaped the batch budget while
+// the identical admitted one was charged and degraded. The budget defaults to
+// derived-positive in every shipped session, so the divergence was live: the
+// bound that protects the context window applied to a tool after it loaded
+// and not before.
+func TestEveryPathChargesTheBatchBudget(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			var degraded int
+			probe := &bulkyProbe{name: "probe_tool", size: 60000}
+			runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.BatchResultBudgetBytes = 4096
+				f.sess.OnAgentEvent = func(e agent.Event) {
+					if strings.Contains(e.Detail, "batch budget") {
+						degraded++
+					}
+				}
+			}, namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "batch-budget-charged", path.name, degraded > 0,
+				"a 60KB result was not charged against a 4KB batch budget, so "+
+					"nothing degraded and the bound that protects the context "+
+					"window did not apply to this path")
 		})
 	}
 }

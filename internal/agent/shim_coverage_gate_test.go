@@ -3,7 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -98,4 +101,41 @@ func governedDispatcher(t *testing.T, reg *tools.Registry) *runtime.Dispatcher {
 	}
 	t.Cleanup(d.Close)
 	return d
+}
+
+// An infrastructure error on the deferred path must reach the model as a
+// result, never fail the whole run.
+//
+// The SDK treats a non-nil error from OnToolCallError as a hard failure of
+// the run rather than a tool result, and the implementation this path
+// replaced had no error channel at all - every problem degraded to a message.
+// Whitespace-only arguments are the concrete route: json.Marshal of a
+// RawMessage containing "  " fails with "unexpected end of JSON input", and
+// the reporter's malformed-JSON guard does not catch it because
+// strings.TrimSpace(args) != "" is false.
+func TestADeferredInfrastructureErrorDoesNotKillTheRun(t *testing.T) {
+	cliReg := tools.NewRegistry()
+	probe := governedProbe{name: "read_file"}
+	cliReg.Register(probe)
+
+	turn := newSDKTurnState()
+	opts := Options{Dispatcher: governedDispatcher(t, cliReg), SessionID: "sess-1"}
+
+	// Whitespace-only arguments: not empty, not valid JSON.
+	body, err := RunUnadmittedTool(context.Background(), opts, turn, probe, json.RawMessage("  "))
+	if err == nil {
+		return // marshaling succeeded; nothing to degrade, and that is fine
+	}
+	_ = body
+	// The contract is on the CALLER: it must turn this into a message.
+	msg, rerr := hostAuthorizedToolMessage(context.Background(), opts, turn,
+		sdkshape.ToolCall{ID: "c1", Name: "read_file", Arguments: json.RawMessage("  ")}, probe)
+	if rerr != nil {
+		t.Errorf("an unmarshalable argument blob failed the whole RUN (%v); one "+
+			"bad call must not abort the turn - it has to reach the model as a "+
+			"result, which is what the path this replaced always did", rerr)
+	}
+	if !strings.Contains(msg.Content, "error") {
+		t.Errorf("the model was not told the call failed: %q", msg.Content)
+	}
 }

@@ -63,7 +63,16 @@ func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdksha
 func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnState, call sdkshape.ToolCall, tool tools.Tool) (sdkshape.Message, error) {
 	body, err := RunUnadmittedTool(ctx, opts, turn, tool, call.Arguments)
 	if err != nil {
-		return sdkshape.Message{}, err
+		// Degrade to a model-visible result, never a run failure. The SDK
+		// treats a non-nil error from OnToolCallError as a hard failure of the
+		// whole run, and the path this replaced had no error channel at all -
+		// every problem reached the model as a message. An infrastructure
+		// error here (unmarshalable arguments, a tool whose parameters will
+		// not marshal) would otherwise abort the turn over one bad call.
+		body = "error: " + err.Error()
+		if turn != nil && call.ID != "" {
+			turn.recordToolOutcome(call.ID, call.Name, body, true)
+		}
 	}
 	return sdkshape.Message{
 		Role:       provider.RoleTool,
