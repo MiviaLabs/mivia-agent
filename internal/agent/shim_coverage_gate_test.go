@@ -131,12 +131,23 @@ func TestADeferredInfrastructureErrorDoesNotKillTheRun(t *testing.T) {
 	turn := newSDKTurnState()
 	opts := Options{Dispatcher: governedDispatcher(t, cliReg), SessionID: "sess-1"}
 
-	// Whitespace-only arguments: not empty, not valid JSON.
-	body, err := RunUnadmittedTool(context.Background(), opts, turn, probe, json.RawMessage("  "))
-	if err == nil {
-		return // marshaling succeeded; nothing to degrade, and that is fine
+	// Whitespace-only arguments: not empty, not valid JSON. These must be
+	// rejected by DecodeArguments with the tool's name, the way an admitted
+	// call's are - not carried into Run to fail at the marshal step.
+	if _, err := RunUnadmittedTool(context.Background(), opts, turn, probe, json.RawMessage("  ")); err == nil {
+		t.Fatal("invalid JSON arguments were accepted; the admitted path validates " +
+			"them through DecodeArguments and this one must too")
+	} else if !strings.Contains(err.Error(), "not valid JSON") {
+		// The specific rejection matters, not merely that something failed.
+		// Handing the raw bytes to Run also errors - at the marshal step, deep
+		// inside, with a message about MarshalJSON - so an assertion that only
+		// checks "an error happened" cannot tell a validated argument from an
+		// unvalidated one. I watched that weaker assertion survive the
+		// mutation before tightening it.
+		t.Errorf("the arguments were not rejected by the validity check the "+
+			"admitted path uses; they reached Run and failed at marshal "+
+			"instead: %v", err)
 	}
-	_ = body
 	// The contract is on the CALLER: it must turn this into a message.
 	msg, rerr := hostAuthorizedToolMessage(context.Background(), opts, turn,
 		sdkshape.ToolCall{ID: "c1", Name: "read_file", Arguments: json.RawMessage("  ")}, probe)
