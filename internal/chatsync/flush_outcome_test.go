@@ -37,7 +37,7 @@ func TestClassifyFlushErrorTable(t *testing.T) {
 		{"5xx", errors.New("server error (500): boom"), outcomeRetry},
 		{"net error", fakeNetErr{}, outcomeRetry},
 		{"no token provider", ErrNoTokenProvider, outcomeRetry},
-		{"invalid path id", ErrInvalidPathID, outcomeRetry},
+		{"invalid path id", ErrInvalidPathID, outcomeRecover},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

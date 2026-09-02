@@ -50,6 +50,14 @@ func classifyFlushError(err error) flushOutcome {
 		return outcomeStop
 	case errors.Is(err, ErrConflict), errors.Is(err, ErrNotFound), errors.Is(err, ErrTranscriptConflict):
 		return outcomeRecover
+	// A session id this client refuses to put on a path (validatePathID) fails
+	// every push deterministically - retry would never converge, and the
+	// recovery machinery that exists to re-mint sessions never sees the error.
+	// Recovery is the right answer: the backlog re-attaches onto a fresh
+	// session with a fresh id, and the loop stays bounded by
+	// maxNoProgressRecoveries if the server hands out another broken one.
+	case errors.Is(err, ErrInvalidPathID):
+		return outcomeRecover
 	default:
 		return outcomeRetry
 	}
