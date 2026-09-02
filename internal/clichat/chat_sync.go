@@ -114,6 +114,15 @@ func attachCLISync(sess *chat.Session, wsRoot string, res *config.Resolved) func
 	opts.OnStop = func(reason string) {
 		_, _ = fmt.Fprintf(syncNoticeWriter, "mivia: chat sync stopped: %s\n", reason)
 	}
+	// A push that keeps failing is not a stop, and until now it was silent:
+	// the retry schedule kept trying and nothing told the user their session
+	// was no longer arriving anywhere. Once per transition, never per retry.
+	opts.OnDegraded = func(reason string) {
+		_, _ = fmt.Fprintf(syncNoticeWriter, "mivia: chat sync degraded, events are queued locally: %s\n", reason)
+	}
+	opts.OnRecovered = func() {
+		_, _ = fmt.Fprintln(syncNoticeWriter, "mivia: chat sync recovered, queued events delivered")
+	}
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, sess.SessionID, opts)
 	if err != nil {
 		return func() {}

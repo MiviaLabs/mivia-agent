@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -137,4 +138,89 @@ func TestSessionPoolNoticesSyncStop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	pool.ReleaseLeases(ctx)
+}
+
+// TestSessionPoolNoticesSyncDegradedAndRecovered pins the TUI half of the
+// degraded signal. The pool's notice rail is the only place a TUI user can
+// learn that pushes stopped landing, and a signal that reaches the CLI but
+// not the TUI is the viewer-surface drift this repo keeps re-finding.
+func TestSessionPoolNoticesSyncDegradedAndRecovered(t *testing.T) {
+	var failing atomic.Bool
+	failing.Store(true)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: "pool-degraded-1", Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if failing.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(chatsync.ErrorEnvelope{StatusCode: 500, Error: "Internal Server Error"})
+			return
+		}
+		var req struct {
+			Events []chatsync.EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last := int64(0)
+		if n := len(req.Events); n > 0 {
+			last = req.Events[n-1].Seq
+		}
+		_ = json.NewEncoder(w).Encode(chatsync.AppendResult{InsertedCount: len(req.Events), LastSeq: last})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	installTestAuthToken(t)
+	res := &config.Resolved{Model: "test-model", Sync: config.ResolvedSync{
+		APIURL: srv.URL, PollWaitSeconds: 1, HeartbeatSeconds: 1, MaxUnflushed: 100,
+	}}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "pool-degraded-1"
+	sess.EventBus = events.New()
+
+	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	ch := pool.Notices()
+	waitForNotice(t, ch, "a started sync")
+
+	sess.EventBus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: sess.SessionID,
+		TurnID:    "turn:1",
+		Detail:    "hello",
+		Timestamp: time.Now(),
+	})
+
+	text := noticeText(t, waitForNoticeLonger(t, ch, "a degraded sync"))
+	if !strings.Contains(text, "degraded") || !strings.Contains(text, "500") {
+		t.Errorf("notice = %q, want it to say degraded and carry the failure", text)
+	}
+	failing.Store(false)
+	text = noticeText(t, waitForNoticeLonger(t, ch, "a recovered sync"))
+	if !strings.Contains(text, "recovered") {
+		t.Errorf("notice = %q, want it to say recovered; a second degraded notice here means the signal fires per retry", text)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool.ReleaseLeases(ctx)
+}
+
+// waitForNoticeLonger is waitForNotice with a budget that outlasts the push
+// backoff schedule (250ms doubling), which the degraded threshold sits behind.
+func waitForNoticeLonger(t *testing.T, ch <-chan uievent.Event, what string) uievent.Event {
+	t.Helper()
+	select {
+	case ev := <-ch:
+		return ev
+	case <-time.After(5 * time.Second):
+		t.Fatalf("no notice for %s within the timeout", what)
+		return uievent.Event{}
+	}
 }

@@ -437,27 +437,17 @@ func (ob *Outbox) writeCursorLocked(cur Cursor) error {
 	if err != nil {
 		return fmt.Errorf("marshal cursor: %w", err)
 	}
-	tmpCursorPath := filepath.Join(ob.dir, cursorFileName+".tmp")
-	cf, err := os.OpenFile(tmpCursorPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("open tmp cursor: %w", err)
-	}
-	if _, err := cf.Write(cursorData); err != nil {
-		_ = cf.Close()
-		return fmt.Errorf("write tmp cursor: %w", err)
-	}
-	if err := outboxSyncFile(cf); err != nil {
-		_ = cf.Close()
-		return fmt.Errorf("sync tmp cursor: %w", err)
-	}
-	if err := cf.Close(); err != nil {
-		return fmt.Errorf("close tmp cursor: %w", err)
-	}
-	cursorPath := filepath.Join(ob.dir, cursorFileName)
-	if err := os.Rename(tmpCursorPath, cursorPath); err != nil {
-		return fmt.Errorf("rename cursor: %w", err)
+	if err := writeFileAtomic(ob.dir, cursorFileName, cursorData); err != nil {
+		return fmt.Errorf("cursor: %w", err)
 	}
 	return nil
+}
+
+// UnflushedCount reports how many appended events the server has not acked.
+func (ob *Outbox) UnflushedCount() int {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+	return ob.unflushed
 }
 
 func (ob *Outbox) unflushedEventsLocked() ([]StoredEvent, error) {

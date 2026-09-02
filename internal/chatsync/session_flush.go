@@ -71,6 +71,7 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 		s.retryBase = 0
 		s.retryAt = time.Time{}
 		s.lastGapBase = noGapBase
+		s.reportHealth(s.health.noteSuccess(s.outbox.UnflushedCount()), "")
 		return
 	}
 	switch {
@@ -91,6 +92,23 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 		s.poison(ctx, err)
 	default:
 		s.scheduleRetry()
+		s.reportHealth(s.health.noteFailure(err, s.outbox.UnflushedCount()), err.Error())
+	}
+}
+
+// reportHealth fires the host callback for a health transition, detached
+// from the worker for the same reason OnStop is: a host that blocks on a
+// terminal or a full UI channel must not hold up the drain and final flush.
+func (s *SyncSession) reportHealth(transition, reason string) {
+	switch transition {
+	case SyncStateDegraded:
+		if s.opts.OnDegraded != nil {
+			go s.opts.OnDegraded(reason)
+		}
+	case SyncStateRecovered:
+		if s.opts.OnRecovered != nil {
+			go s.opts.OnRecovered()
+		}
 	}
 }
 
@@ -130,6 +148,7 @@ func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 		return
 	}
 	s.stopReason.Store(&reason)
+	s.health.noteStop(reason, s.outbox.UnflushedCount())
 	go func() {
 		if s.heartbeat != nil {
 			s.heartbeat.Stop(ctx)

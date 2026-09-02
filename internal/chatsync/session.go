@@ -83,6 +83,17 @@ type SessionOptions struct {
 	// (writing to a terminal, or sending on a full UI channel) must not be
 	// able to hold that up.
 	OnStop func(reason string)
+
+	// OnDegraded is called once when pushes stop landing - three consecutive
+	// failures, or a failure a minute after the last success - and
+	// OnRecovered once when they land again. Neither is a stop: the outbox
+	// keeps the backlog and the retry schedule keeps trying. They exist
+	// because a transient failure that never ends is otherwise silent for the
+	// whole session (flushNow's default branch retries forever and says
+	// nothing), and the same fact is written to status.json in OutboxDir so
+	// it outlives the process. Both run on a detached goroutine, like OnStop.
+	OnDegraded  func(reason string)
+	OnRecovered func()
 }
 
 // defaultEventBufSize is the handler-to-worker channel depth.
@@ -130,6 +141,11 @@ type SyncSession struct {
 	poller         *InputPoller
 	sub            *events.Subscription
 	opts           SessionOptions
+
+	// health tracks push health for OnDegraded/OnRecovered and status.json.
+	// It has its own lock: the worker records pushes and Stop records the
+	// end, off the worker.
+	health *syncHealth
 
 	// appender is the outbox write seam. Production always holds the real
 	// *Outbox. Tests substitute a failing or stalling appender to reach states
@@ -265,6 +281,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 		flushCh:        make(chan struct{}, 1),
 		stopCtxCh:      make(chan context.Context, 1),
 		lastGapBase:    noGapBase,
+		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),
 	}
 	s.running.Store(true)
 	s.appender = outbox
@@ -275,6 +292,8 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 			return nil, fmt.Errorf("apply forked attach: %w", err)
 		}
 	}
+	// After the fork block: a refused open must not leave a healthy record.
+	s.health.noteOpen(outbox.UnflushedCount())
 
 	if opts.EnablePolling {
 		s.poller = NewInputPoller(client, activeSessionID, opts.PollWaitSeconds, opts.AuthorUserIDProvider, opts.OutboxDir)
@@ -557,14 +576,25 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 			if s.unsubscribe != nil {
 				s.unsubscribe()
 			}
+			// The worker is done, so this cannot race its own records. A
+			// drain that overran the deadline is the stuck-server case the
+			// file exists to diagnose, and it must not be left reading
+			// "healthy".
+			s.health.noteStop("session closed, final drain timed out", s.outbox.UnflushedCount())
 			_ = s.outbox.Close()
 		}()
 		return ctx.Err()
 	}
 
-	if !s.remoteEnded.Load() {
-		_, _ = FlushOutbox(ctx, s.client, s.outbox, s.SessionID())
+	reason := "session closed"
+	if s.remoteEnded.Load() {
+		reason = s.StopReason()
+	} else if _, err := FlushOutbox(ctx, s.client, s.outbox, s.SessionID()); err != nil {
+		reason = fmt.Sprintf("session closed, final push failed: %v", err)
 	}
+	// A terminal latch already recorded its own reason; noteStop keeps the
+	// first one. This call is what makes the record outlive the process.
+	s.health.noteStop(reason, s.outbox.UnflushedCount())
 	return s.outbox.Close()
 }
 
