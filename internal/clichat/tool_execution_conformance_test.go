@@ -184,6 +184,28 @@ func TestEveryPathCapsTheResult(t *testing.T) {
 	}
 }
 
+// C7: a tool named in ref_only_tools never inlines its body.
+//
+// RefOnlyTools is applied by wrapping tools IN THE SDK REGISTRY. A deferred
+// tool is deliberately absent from that registry, so the wrapper never saw it
+// and an operator who named one in ref_only_tools silently got the full body
+// inline - the setting applying to a tool after it loaded and not before.
+func TestEveryPathHonoursRefOnlyTools(t *testing.T) {
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &bulkyProbe{name: "probe_tool", size: 40000}
+			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.RefOnlyTools = []string{"probe_tool"}
+			}, namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "ref-only-is-not-inlined", path.name,
+				strings.Contains(body, "elided"),
+				fmt.Sprintf("the operator named this tool in ref_only_tools and "+
+					"the model received its body inline anyway (%d bytes, no "+
+					"elision notice)", len(body)))
+		})
+	}
+}
+
 // --- the harness ---------------------------------------------------------
 
 func runProbeTurn(t *testing.T, path execPath, probe tools.Tool, args string) string {

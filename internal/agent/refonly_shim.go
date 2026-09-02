@@ -202,3 +202,46 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names [
 		}
 	}
 }
+
+// wrapRefOnly returns inner wrapped for ref-only spooling when this tool is
+// one the operator named in ref_only_tools, and inner unchanged otherwise.
+//
+// It exists because ref-only is applied by wrapping tools in the SDK
+// REGISTRY, and the deferred-tool path executes a tool that is deliberately
+// absent from that registry. So an operator who named a deferred tool in
+// ref_only_tools got its full body inline: the setting applied to the tool
+// after it had loaded and not before. Sharing the decision here is what stops
+// the two from disagreeing again.
+//
+// The wrapper goes OUTSIDE the dispatcher shim, matching the registry's own
+// order: applyDispatcherShim wraps first, applyRefOnlyShim wraps the result.
+func wrapRefOnly(inner sdktools.Tool, cliTool tools.Tool, opts Options, turn *sdkTurnState) sdktools.Tool {
+	if inner == nil || turn == nil || len(opts.RefOnlyTools) == 0 {
+		return inner
+	}
+	if opts.SessionID == "" || BatchDegradeFloorBytes <= 0 {
+		return inner
+	}
+	spool := turn.currentSpool()
+	if spool == nil {
+		return inner
+	}
+	if !slices.Contains(opts.RefOnlyTools, inner.Name()) {
+		return inner
+	}
+	schema, ok := inner.(sdktools.SchemaTool)
+	if !ok {
+		return inner
+	}
+	_, ephemeral := cliTool.(tools.EphemeralResultTool)
+	return &refOnlyShim{
+		inner:     inner,
+		schema:    schema,
+		spool:     spool,
+		names:     opts.RefOnlyTools,
+		floor:     BatchDegradeFloorBytes,
+		principal: opts.SessionID,
+		ephemeral: ephemeral,
+		turn:      turn,
+	}
+}

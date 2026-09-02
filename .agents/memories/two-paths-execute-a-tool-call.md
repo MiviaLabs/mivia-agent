@@ -72,10 +72,17 @@ defaults it to write-only and fails closed).
   outcome - every tool in a built registry is a `*dispatcherShim`, or the
   build failed. Six tests had been relying on the degrade while testing
   something else; they now wire a real dispatcher.
-- **Contracts the table does not name.** `RefOnlyTools` is applied by a
-  registry shim, so an operator who names a DEFERRED tool in `ref_only_tools`
-  still gets its full body inline. Turn-shaping (`pass1`) and the
-  `EventToolStart` "running" row are also admitted-path only.
+- **The LIVE tool_start row.** The shim emits `EventToolStart` before it
+  dispatches, and `sdk_tool_events.go` ALSO synthesises one from the recorded
+  outcome afterwards. So an operator sees a row either way and a conformance
+  contract on "did a tool_start arrive" cannot fail - I wrote one, watched the
+  mutation survive, and removed it. Telling the live emission from the
+  synthesised one needs a timing assertion this harness cannot make cleanly.
+
+  Everything else in this group is now closed rather than open: `RefOnlyTools`
+  is wrapped for the deferred path too (`wrapRefOnly`), and turn shaping
+  (`pass1`), the ephemeral spool-nil rule and the result cap all came for free
+  when execution moved into the shim.
 
 **When you add a contract to the shim, it reaches both routes for free - but
 add a row to the table anyway.** The table is what will catch the next attempt
