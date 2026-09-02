@@ -55,8 +55,7 @@ func TestSubagentThreads_CancelSubagentTask_ForwardsToCoordinator(t *testing.T) 
 	<-started
 
 	threads := NewSubagentThreads()
-	threads.SetCoordinator(c)
-	threads.RegisterTaskRoute("call-1", h.RunID(), taskID)
+	threads.RegisterTaskRoute(c, "call-1", h.RunID(), taskID)
 
 	ok, err := threads.CancelSubagentTask("call-1")
 	if err != nil {
@@ -97,11 +96,11 @@ func TestSubagentThreads_CancelSubagentTask_UnregisteredCallIDIsMiss(t *testing.
 }
 
 // TestSubagentThreads_CancelSubagentTask_NoCoordinatorErrors proves a
-// registered route with no coordinator wired (SetCoordinator never called)
-// reports a clear error instead of silently no-oping.
+// registered route whose recorded coordinator is nil reports a clear
+// error instead of silently no-oping.
 func TestSubagentThreads_CancelSubagentTask_NoCoordinatorErrors(t *testing.T) {
 	threads := NewSubagentThreads()
-	threads.RegisterTaskRoute("call-1", "run-x", "task-x")
+	threads.RegisterTaskRoute(nil, "call-1", "run-x", "task-x")
 	_, err := threads.CancelSubagentTask("call-1")
 	if err == nil {
 		t.Fatal("expected an error when no coordinator is wired")
@@ -109,7 +108,7 @@ func TestSubagentThreads_CancelSubagentTask_NoCoordinatorErrors(t *testing.T) {
 }
 
 // TestSubagentThreads_RegisterTaskRoute_BlankFieldsAreRejected isolates each
-// of RegisterTaskRoute's three blank-field guards (subagent.go:78): a call
+// of RegisterTaskRoute's three blank-field guards: a call
 // with any one of callID/runID/taskID empty must record no route at all, so
 // a later CancelSubagentTask on that callID reports ok=false rather than
 // resolving to a partially-blank route. A coordinator is deliberately never
@@ -129,7 +128,7 @@ func TestSubagentThreads_RegisterTaskRoute_BlankFieldsAreRejected(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			threads := NewSubagentThreads()
-			threads.RegisterTaskRoute(tc.callID, tc.run, tc.tsk)
+			threads.RegisterTaskRoute(nil, tc.callID, tc.run, tc.tsk)
 
 			lookupID := tc.callID
 			if lookupID == "" {

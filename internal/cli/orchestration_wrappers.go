@@ -21,6 +21,15 @@ func ActiveCoordinator() (coordinator.Coordinator, bool) {
 	return cliorchestrate.ActiveCoordinator()
 }
 
+// SetSubagentTaskRouteSink delegates to
+// cliorchestrate.SetSubagentTaskRouteSink. Its parameter is spelled as the
+// unnamed func type on purpose: internal/newtui assigns this function
+// itself to uiadapter.SubagentTaskRouteRegistrar, which requires identical
+// function types.
+func SetSubagentTaskRouteSink(fn func(coord coordinator.Coordinator, callID, runID, taskID string)) {
+	cliorchestrate.SetSubagentTaskRouteSink(fn)
+}
+
 // SetActiveSessionCaller delegates to cliorchestrate.SetActiveSessionCaller.
 func SetActiveSessionCaller(caller runtime.Caller) {
 	cliorchestrate.SetActiveSessionCaller(caller)
