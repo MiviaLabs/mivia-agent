@@ -33,7 +33,8 @@ kind was never written into the list, so the test skipped it and stayed green.
   a test rather than being ignored by one.
 - `TestEveryEventKindReachesEveryViewerOrSaysWhyNot`
   (`internal/clichat/viewer_surface_conformance_test.go`) drives every kind
-  through every surface. A surface that renders nothing for a kind must
+  through every surface: the TUI translation, the local `--json` writer, the
+  cross-process relay, and the chat-sync wire the web app reads. A surface that renders nothing for a kind must
   declare it in `.mivia/policy/viewer-surfaces.json` **with a reason**. A
   declared kind that DOES render also fails, so a stale entry cannot hide the
   next real gap.
@@ -52,4 +53,10 @@ of deciding for one and defaulting the rest to silence.
 **What it still cannot catch.** The subagent dialog is not in the table (its
 "did anything render" signal is a history diff rather than a byte count), and
 `internal/ui/stream` is not reachable from `cmd/mivia` at all, so its arms are
-unexercised by any user path. Related: [[no-big-test-suites]].
+unexercised by any user path.
+
+**The table shipped one surface short.** The chat-sync wire - the one a REMOTE
+reader uses - was missing for two commits while the gate's own message claimed
+the class was closed. A review found it. When you add a viewer, add it to the
+table in the same change: a gate that covers three of four surfaces reads as
+covering all of them. Related: [[no-big-test-suites]].
