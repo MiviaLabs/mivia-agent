@@ -209,7 +209,12 @@ func TestSDKLoopApprovalStandingAllowShortCircuitsGate(t *testing.T) {
 	reg.Register(tool)
 
 	standing := sdkadapter.NewApprovalStanding()
-	standing.Allow("write_tool", tools.ExecutionWrite)
+	// The key names the CALL: this tool declares a resource key, so the
+	// decision generalizes across that resource's other arguments and no
+	// further. Seeding by name alone no longer matches anything.
+	standing.Allow(sdkadapter.StandingKey{
+		Name: "write_tool", Class: tools.ExecutionWrite, ResourceKey: "path:write_tool",
+	})
 
 	var gateCalls int
 	gate := func(_ context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
@@ -260,7 +265,12 @@ func TestSDKLoopApprovalStandingDenyRejectsWithoutGate(t *testing.T) {
 	reg.Register(tool)
 
 	standing := sdkadapter.NewApprovalStanding()
-	standing.Deny("write_tool", tools.ExecutionWrite)
+	// The key names the CALL: this tool declares a resource key, so the
+	// decision generalizes across that resource's other arguments and no
+	// further. Seeding by name alone no longer matches anything.
+	standing.Deny(sdkadapter.StandingKey{
+		Name: "write_tool", Class: tools.ExecutionWrite, ResourceKey: "path:write_tool",
+	})
 
 	var gateCalls int
 	gate := func(_ context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {

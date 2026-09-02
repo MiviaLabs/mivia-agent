@@ -13,25 +13,25 @@ import (
 // nil-receiver safety.
 func TestApprovalStandingAllowDenyLookupSemantics(t *testing.T) {
 	var s ApprovalStanding
-	if _, ok := s.Lookup("x"); ok {
+	if _, ok := s.Lookup(StandingKey{Name: "x", Class: tools.ExecutionWrite}); ok {
 		t.Fatal("zero-value Lookup hit on an empty cache")
 	}
-	s.Allow("x", tools.ExecutionWrite)
-	if approved, ok := s.Lookup("x"); !ok || !approved {
+	s.Allow(StandingKey{Name: "x", Class: tools.ExecutionWrite})
+	if approved, ok := s.Lookup(StandingKey{Name: "x", Class: tools.ExecutionWrite}); !ok || !approved {
 		t.Fatalf("after Allow: (%v,%v), want (true,true)", approved, ok)
 	}
-	s.Deny("x", tools.ExecutionWrite)
-	if approved, ok := s.Lookup("x"); !ok || approved {
+	s.Deny(StandingKey{Name: "x", Class: tools.ExecutionWrite})
+	if approved, ok := s.Lookup(StandingKey{Name: "x", Class: tools.ExecutionWrite}); !ok || approved {
 		t.Fatalf("after Deny: (%v,%v), want (false,true) — Deny must flip and cross-delete the allow entry", approved, ok)
 	}
-	s.Allow("x", tools.ExecutionWrite)
-	if approved, ok := s.Lookup("x"); !ok || !approved {
+	s.Allow(StandingKey{Name: "x", Class: tools.ExecutionWrite})
+	if approved, ok := s.Lookup(StandingKey{Name: "x", Class: tools.ExecutionWrite}); !ok || !approved {
 		t.Fatalf("after re-Allow: (%v,%v), want (true,true) — Allow must cross-delete the deny entry", approved, ok)
 	}
 	var nilPtr *ApprovalStanding
-	nilPtr.Allow("x", tools.ExecutionWrite)
-	nilPtr.Deny("x", tools.ExecutionWrite)
-	if _, ok := nilPtr.Lookup("x"); ok {
+	nilPtr.Allow(StandingKey{Name: "x", Class: tools.ExecutionWrite})
+	nilPtr.Deny(StandingKey{Name: "x", Class: tools.ExecutionWrite})
+	if _, ok := nilPtr.Lookup(StandingKey{Name: "x", Class: tools.ExecutionWrite}); ok {
 		t.Fatal("nil Lookup must miss, not panic")
 	}
 }
@@ -48,16 +48,16 @@ func TestApprovalStandingConcurrentAccess(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				name := "tool"
 				if (w+i)%2 == 0 {
-					s.Allow(name, tools.ExecutionWrite)
+					s.Allow(StandingKey{Name: name, Class: tools.ExecutionWrite})
 				} else {
-					s.Deny(name, tools.ExecutionExternal)
+					s.Deny(StandingKey{Name: name, Class: tools.ExecutionWrite})
 				}
-				s.Lookup(name)
+				s.Lookup(StandingKey{Name: name, Class: tools.ExecutionWrite})
 			}
 		}(w)
 	}
 	wg.Wait()
-	if _, ok := s.Lookup("tool"); !ok {
+	if _, ok := s.Lookup(StandingKey{Name: "tool", Class: tools.ExecutionWrite}); !ok {
 		t.Fatal("after concurrent writes the entry must exist")
 	}
 }
