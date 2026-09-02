@@ -134,7 +134,7 @@ func ValidatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 			}
 		}
 	}
-	InjectBaselineMessagingFunc(authority, surface, opts.Config, MessagingDisallowedFunc(agent.DisallowedTools))
+	InjectBaselineMessagingFunc(authority, surface, opts.Config, MessagingDisallowedFunc(agent))
 	names := make([]string, 0, len(surface.List()))
 	for _, tool := range surface.List() {
 		names = append(names, tool.Name())

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -167,9 +168,12 @@ func wireSessionSeams() {
 		return clone, nil
 	}
 	InjectBaselineMessagingFunc = func(full, scoped *tools.Registry, cfg config.SubagentConfig, disallowed map[string]struct{}) {}
-	MessagingDisallowedFunc = func(names []string) map[string]struct{} {
+	MessagingDisallowedFunc = func(agent agents.ResolvedAgent) map[string]struct{} {
 		out := map[string]struct{}{}
-		for _, name := range names {
+		for _, name := range agent.EffectiveDenylist {
+			out[name] = struct{}{}
+		}
+		for _, name := range agent.DisallowedTools {
 			out[name] = struct{}{}
 		}
 		return out

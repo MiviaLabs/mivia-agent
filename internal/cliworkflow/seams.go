@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -85,7 +86,7 @@ var (
 
 	// MessagingDisallowedFunc stands for cli.messagingDisallowed
 	// (agent_task_handler.go).
-	MessagingDisallowedFunc func(names []string) map[string]struct{}
+	MessagingDisallowedFunc func(agent agents.ResolvedAgent) map[string]struct{}
 
 	// SessionAutoDeliveryRepairLoopFunc stands for
 	// cli.sessionAutoDeliveryRepairLoop (session_delivery_repair.go).
