@@ -62,8 +62,20 @@ func sameConfigPath(a, b string) bool {
 // /agent entry points turn the report into a diagnostic, via
 // warnDisabledAgentTools.
 func ScopedRootRegistry(registry *tools.Registry, selected *agents.ResolvedAgent, extraDenylist []string) (*tools.Registry, []string) {
-	if registry == nil || selected == nil {
+	if registry == nil {
 		return registry, nil
+	}
+	if selected == nil {
+		// No agent selected, so there is no allowlist to apply - but the
+		// operator's denylist still must be. This used to return the registry
+		// untouched, which made mandatory_tool_denylist a no-op in the
+		// DEFAULT session (no `default` agent and no --agent, `--agent
+		// mivia`, or `/agent mivia` all land here). A nil Allowlist means "no
+		// agent filter", not "no filtering at all".
+		return tools.ScopedRegistry(registry, tools.ScopeOptions{
+			Mode:          tools.ScopeRoot,
+			ExtraDenylist: extraDenylist,
+		}), nil
 	}
 	kept, disabled := agents.IntersectWithRegistry(AuthorizedAgentTools(selected, registry), registry)
 	return tools.ScopedRegistry(registry, tools.ScopeOptions{
