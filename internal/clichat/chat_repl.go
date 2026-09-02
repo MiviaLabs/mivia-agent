@@ -238,6 +238,11 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 		// must always read the CURRENT full tool set to serve a deferred call
 		// synchronously.
 		sess.ToolBaseResolver = func() *tools.Registry { return state.ToolBase }
+		// state.ToolBase is the PRE-scope clone, so the operator's denylist
+		// has not been applied to it. The deferred path resolves from it and
+		// would otherwise execute a denied name that every other layer
+		// refuses - including this function's own contract two comments up.
+		sess.ToolDenylist = ctx.Global.MandatoryToolDenylistAdditions
 	}
 	plan := cliagents.PlanToolTiers(sess.Tools, ctx.Selected, routing.Resolved)
 	if state != nil {

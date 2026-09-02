@@ -100,6 +100,7 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 	turnID := s.turnID
 	dispatcher := s.binding.Dispatcher
 	resolver := s.ToolBaseResolver
+	denylist := s.ToolDenylist
 	sessionID := s.SessionID
 	s.mu.RUnlock()
 
@@ -107,7 +108,7 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 	// the one above it, so a call that was about to be refused had already
 	// charged an admission attempt, staged a publication, and installed a
 	// handler on the session dispatcher.
-	base, tool, lookup := lookupDeferredTool(dispatcher, resolver, name)
+	base, tool, lookup := lookupDeferredTool(dispatcher, resolver, denylist, name)
 	if lookup == deferredNoSuchTool {
 		// No publication can ever resolve this name, so nothing is staged for
 		// it and the model is not told a load was queued: that message names a
@@ -292,13 +293,20 @@ func (s *Session) spendAdmissionFor(name string, turnID uint64) error {
 // before the call was approved, budgeted or staged, so a refused call left the
 // handler installed. The caller now resolves first to DECIDE, and registers
 // only once the call is actually going to run.
-func lookupDeferredTool(dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, name string) (*tools.Registry, tools.Tool, deferredLookup) {
+func lookupDeferredTool(dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, denylist []string, name string) (*tools.Registry, tools.Tool, deferredLookup) {
 	if dispatcher == nil || resolver == nil {
 		return nil, nil, deferredNoWiring
 	}
 	base := resolver()
 	if base == nil {
 		return nil, nil, deferredNoWiring
+	}
+	// The operator's denial outranks everything below, and is checked before
+	// the name is even looked up. A denied name reports as absent, not as a
+	// degrade: no publication may ever resolve it, so nothing is staged and
+	// the model is not told to retry.
+	if tools.MandatoryDenylistSet(denylist...)[name] {
+		return nil, nil, deferredNoSuchTool
 	}
 	tool, found := base.Get(name)
 	if !found {
