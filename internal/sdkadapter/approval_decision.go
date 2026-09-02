@@ -7,6 +7,32 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+// policyContextKey carries the DECIDING policy to the gate.
+type policyContextKey struct{}
+
+// WithApprovalPolicy stamps the policy this call was decided under.
+//
+// A gate implementation may hold a reference to the session it was built
+// against, and one gate can now serve several sessions - /new inherits it, so
+// the UI has a single approver to render from. Without this the gate answers
+// from ITS session's policy while the decision above was made with the
+// CALLER's, and a transient /yolo on one conversation auto-approved write
+// tools in another whose own policy said to prompt.
+func WithApprovalPolicy(ctx context.Context, policy string) context.Context {
+	if policy == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, policyContextKey{}, policy)
+}
+
+// ApprovalPolicyFromContext returns the policy this call was decided under,
+// and false when the caller stamped none - a direct gate caller that never
+// went through DecideApproval.
+func ApprovalPolicyFromContext(ctx context.Context) (string, bool) {
+	policy, ok := ctx.Value(policyContextKey{}).(string)
+	return policy, ok && policy != ""
+}
+
 // ApprovalRequest is one call awaiting a decision.
 type ApprovalRequest struct {
 	// ToolCallID is the in-flight call id. The UI's resolver matches a
@@ -92,7 +118,9 @@ func DecideApproval(ctx context.Context, deps ApprovalDeps, req ApprovalRequest)
 	if deps.EmitPending != nil {
 		deps.EmitPending(req.ToolCallID, req.Name, approvalClassName(req.Class), string(req.Args))
 	}
-	res := deps.Gate(ctx, req.Name, req.Args)
+	// The gate is asked under the policy THIS decision used, so a gate shared
+	// across sessions cannot answer from a different one's.
+	res := deps.Gate(WithApprovalPolicy(ctx, deps.Policy), req.Name, req.Args)
 	if res.ApprovedForClass && deps.Standing != nil {
 		if res.Approved {
 			deps.Standing.Allow(standingKey)

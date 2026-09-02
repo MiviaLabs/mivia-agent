@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // /new and /resume hand-copy runtime state from an existing pool member -
@@ -137,4 +139,67 @@ func TestTheFirstSessionOfAnEmptyPoolStillGetsThePolicy(t *testing.T) {
 		t.Errorf("policy = %q, want deny: a session built with no sibling to inherit "+
 			"from still has an operator with a configured policy", got)
 	}
+}
+
+// TestAnInheritedGateAnswersUnderTheCallersPolicy is the leak that survived
+// the first fix.
+//
+// /new carries the gate over so the UI has one place to render prompts from,
+// and that gate is a method bound to the session it was CONSTRUCTED against.
+// It short-circuits on that session's live policy. So the fresh session's
+// policy decided whether to ask, and the first session's answered - a /yolo on
+// the first conversation auto-approved write tools in a fresh one whose own
+// policy said to prompt.
+//
+// The earlier test asserted only on the fresh session's policy FIELD, which
+// was already correct. This one drives a decision.
+func TestAnInheritedGateAnswersUnderTheCallersPolicy(t *testing.T) {
+	res := &config.Resolved{Approvals: config.ApprovalsConfig{DefaultMode: "once"}}
+
+	first := chat.NewSession(res, nil)
+	first.SetBaseApprovalPolicy(config.ApprovalPolicyWriteOnly)
+	first.SetApprovalPolicy(config.ApprovalPolicyWriteOnly)
+	approver := NewApprover(first)
+	pool := NewSessionPool(first, res, nil, false)
+
+	// The operator toggles yolo on the FIRST conversation only.
+	first.SetApprovalPolicy(config.ApprovalPolicyAuto)
+
+	conv, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh: %v", err)
+	}
+	fresh := conv.(*Conversation).sess
+	if fresh.ApprovalGate == nil {
+		t.Fatal("the fresh session has no gate; this test proves nothing")
+	}
+	if config.IsAutoPolicy(fresh.ApprovalPolicyValue()) {
+		t.Fatal("the fresh session inherited yolo; a different defect")
+	}
+
+	// Ask the way production does: through the one decision function, under
+	// the FRESH session's policy. Nothing will answer the prompt, so a
+	// correctly-behaving gate must block rather than return an approval.
+	done := make(chan sdkadapter.ApprovalDecision, 1)
+	go func() {
+		done <- sdkadapter.DecideApproval(context.Background(), sdkadapter.ApprovalDeps{
+			Policy: fresh.ApprovalPolicyValue(),
+			Gate:   fresh.ApprovalGate,
+		}, sdkadapter.ApprovalRequest{
+			Name: "run_command", Class: tools.ExecutionExternal,
+			Args: json.RawMessage(`{"command":"rm -rf /"}`),
+		})
+	}()
+
+	select {
+	case got := <-done:
+		if got.Approved {
+			t.Fatal("a write tool was approved with no prompt: the inherited gate " +
+				"answered from the first conversation's transient yolo, in a session " +
+				"whose own policy says to ask")
+		}
+	case <-time.After(300 * time.Millisecond):
+		// Blocked waiting for an operator, which is the correct behaviour.
+	}
+	_ = approver
 }

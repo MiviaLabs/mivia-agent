@@ -77,11 +77,19 @@ func (a *Approver) Resolve(id string, decision ports.Decision) {
 // arming a prompt. The second return is false when the policy is neither
 // (i.e. "once"/write-only), meaning gate must fall through to the
 // interactive prompt below.
-func (a *Approver) standingPolicyResult() (sdkadapter.ApprovalResult, bool) {
-	if a.sess == nil {
-		return sdkadapter.ApprovalResult{}, false
+func (a *Approver) standingPolicyResult(ctx context.Context) (sdkadapter.ApprovalResult, bool) {
+	// The CALLER's policy wins. One approver now serves several sessions -
+	// /new inherits this gate so the UI has a single place to render prompts
+	// from - and a.sess is whichever session it was constructed against. A
+	// transient /yolo on that one used to auto-approve write tools in a fresh
+	// conversation whose own policy said to prompt.
+	policy, ok := sdkadapter.ApprovalPolicyFromContext(ctx)
+	if !ok {
+		if a.sess == nil {
+			return sdkadapter.ApprovalResult{}, false
+		}
+		policy = a.sess.ApprovalPolicyValue()
 	}
-	policy := a.sess.ApprovalPolicyValue()
 	if sdkadapter.IsAutoApproval(policy) {
 		return sdkadapter.ApprovalResult{Approved: true}, true
 	}
@@ -98,7 +106,7 @@ func (a *Approver) standingPolicyResult() (sdkadapter.ApprovalResult, bool) {
 
 // gate is installed as chat.Session.ApprovalGate.
 func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
-	if res, short := a.standingPolicyResult(); short {
+	if res, short := a.standingPolicyResult(ctx); short {
 		return res
 	}
 	// The waiting map's key must be the id the UI will Resolve with.
