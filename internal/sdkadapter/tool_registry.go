@@ -34,6 +34,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
@@ -154,18 +155,47 @@ func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOu
 	return sdktools.InOut{}, nil
 }
 
+// NeedsApprovalLayer reports whether tool calls must be routed through the
+// approval adapter.
+//
+// This is the ONE place that decision is made. It used to be restated at three
+// construction sites, and that is exactly why a fail-open survived being fixed
+// at two of them: the site production callers took was the one left alone.
+//
+// A gate means someone can be asked, so the layer is always built. With no
+// gate the POLICY still decides, because a policy that is not "auto" is the
+// operator saying a bare execution is not acceptable - and with nobody to ask,
+// the adapter denies. Requiring a gate here is what made "deny" run every
+// write tool on headless surfaces, and "write-only" and "always" had the same
+// hole.
+//
+// The empty policy is deliberately NOT treated as a configured one. An empty
+// string normalizes to write-only (config.NormalizeApprovalPolicy), but at
+// this layer it means "this caller set no policy at all" - which today is only
+// the nested subagent loop, whose options carry no approval fields. Treating
+// it as write-only would deny every subagent write tool for every user,
+// including the auto-policy default, which is a far larger change than the
+// hole it closes.
+//
+// That carve-out is temporary and load-bearing: when the nested loop inherits
+// a real policy, it disappears, and leaving it behind would make it the next
+// fail-open. TestAnEmptyPolicyIsNotAConfiguredPolicy states the contract so
+// removing it is a deliberate act.
+func NeedsApprovalLayer(hasGate bool, policy string) bool {
+	if hasGate {
+		return true
+	}
+	if strings.TrimSpace(policy) == "" {
+		return false
+	}
+	return !IsAutoApproval(policy)
+}
+
 // WrapToolWithAdmission wraps one already-converted SDK tool with
 // approval and admission layers according to pred.
 func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred AdmissionPredicates) sdktools.Tool {
 	wrapped := inner
-	// A DENY policy answers by itself and needs no gate to ask.
-	//
-	// Requiring a gate here made "deny" fail OPEN on every surface that has no
-	// approval UI - line mode, --json, any headless run. The adapter that
-	// holds the deny short-circuit was never built, so the policy was never
-	// consulted and every write tool executed. An operator who configured the
-	// most restrictive setting got the least restrictive behaviour, silently.
-	if pred.ApprovalGate != nil || IsDenyApproval(pred.ApprovalPolicy) {
+	if NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
 		wrapped = &approvalGatedToolAdapter{
 			inner:           wrapped,
 			cliName:         cliTool.Name(),
@@ -194,10 +224,8 @@ func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry
 	if sdkReg == nil {
 		return nil
 	}
-	// Same rule as WrapToolWithAdmission: a deny policy is reason enough to
-	// wrap, because it is the layer that enforces the denial.
 	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
-		pred.ApprovalGate == nil && !IsDenyApproval(pred.ApprovalPolicy) {
+		!NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
 		return nil
 	}
 	for _, t := range sdkReg.Tools() {
@@ -239,13 +267,8 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 	if cliReg == nil {
 		return nil, nil
 	}
-	// A deny policy is reason enough to wrap even with no gate: it is the
-	// adapter that enforces the denial. This third gate check is why the
-	// fail-open survived the other two being fixed - the same predicate was
-	// spelled out in three places, so correcting two of them changed nothing
-	// on the path callers actually take.
 	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
-		pred.ApprovalGate == nil && !IsDenyApproval(pred.ApprovalPolicy) {
+		!NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
 		return ConvertToolRegistry(cliReg, regOpts...)
 	}
 	sdkReg := sdktools.New(regOpts...)
