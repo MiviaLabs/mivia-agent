@@ -254,6 +254,14 @@ if command -v go >/dev/null 2>&1; then
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The wire-field source check: every string leaving this machine must pass
+  # through applyTruncation. Two fields have skipped it, each rejecting a
+  # hundred-event batch at the receiving column, and both regression suites
+  # missed both because they enumerate shapes by hand.
+  if echo "$STAGED" | grep -qE '^(internal/chatsync/|\.mivia/policy/wire-field-sources\.json$)'; then
+    echo " → Running wire-field source invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestNoWirePayloadStringComesStraightFromTheEvent|TestNoWireFieldCarriesANulByte|TestNoEventExceedsTheStoredPayloadBound' ./internal/chatsync/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/coordinator/'; then
     echo " → Running coordinator invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestDrainSeesQueuedMessage|TestPendingInterruptPreservesQueueContents' ./internal/coordinator/ -count=1 -timeout=60s) || INV_FAIL=1
