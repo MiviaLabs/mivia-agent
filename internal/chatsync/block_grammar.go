@@ -23,6 +23,32 @@ func proseBlock(stream string, segment int) string {
 	return stream + ":" + strconv.Itoa(segment)
 }
 
+// BlockGrammar is the recorded grammar of the envelope's block field, the
+// values api/contracts/chat-sessions.v1.json publishes under blockGrammar.
+// TestBlockGrammarMatchesContractSnapshot holds the two together, so the
+// consumer's vendored copy cannot drift looser than what this producer
+// asserts.
+type BlockGrammar struct {
+	Prose                  string   `json:"prose"`
+	Streams                []string `json:"streams"`
+	ToolBlockField         string   `json:"toolBlockField"`
+	ResetBlockIsStreamOnly bool     `json:"resetBlockIsStreamOnly"`
+	StepIsDense            bool     `json:"stepIsDense"`
+	StepReuse              string   `json:"stepReuse"`
+}
+
+// RecordedBlockGrammar returns the grammar this producer implements.
+func RecordedBlockGrammar() BlockGrammar {
+	return BlockGrammar{
+		Prose:                  ProseBlockPattern.String(),
+		Streams:                []string{"<turn>:assistant", "<turn>:thinking", "<turn>:<task>:assistant", "<turn>:<task>:thinking"},
+		ToolBlockField:         "tool_call_id",
+		ResetBlockIsStreamOnly: true,
+		StepIsDense:            false,
+		StepReuse:              "never within a producer session",
+	}
+}
+
 // parseProseBlock splits a prose block id into its stream and step. ok is
 // false for a tool id, a reset's bare stream id, or a legacy stepless id.
 func parseProseBlock(block string) (stream string, step int, ok bool) {
