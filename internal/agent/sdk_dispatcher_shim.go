@@ -589,7 +589,11 @@ func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cl
 		return "", err
 	}
 	shim := &dispatcherShim{inner: inner, schema: inner, cli: cliTool, opts: opts, turn: turn}
-	out, err := shim.Run(ctx, sdktools.InOut{Value: args})
+	// Ref-only spooling is applied by wrapping registry tools, and this tool is
+	// deliberately not in the registry - so it has to be wrapped here, or an
+	// operator's ref_only_tools entry would apply to a deferred tool only
+	// after it loaded.
+	out, err := wrapRefOnly(shim, cliTool, opts, turn).Run(ctx, sdktools.InOut{Value: args})
 	if err != nil {
 		return "", err
 	}
