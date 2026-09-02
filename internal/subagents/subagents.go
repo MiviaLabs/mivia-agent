@@ -131,6 +131,15 @@ type Pool struct {
 	// whole pool to finish (plan R9). The result value returned to the caller
 	// is never modified by the callback; nil means no-op.
 	OnTaskDone func(ctx context.Context, t Task, r Result)
+	// OnTaskStart, when set, is invoked on the worker goroutine right after
+	// the task's own cancelable execution context is derived (the
+	// WithTimeout/WithCancel wrap below, already used for per-task timeout
+	// enforcement) and before dispatch. It receives the STAMPED per-task
+	// context (ContextForTask has already applied TaskIdentity) and that
+	// context's own CancelFunc, so a caller can cancel just this one task's
+	// execution without touching the pool's parent context or any sibling
+	// task. Nil-safe; nil means no-op.
+	OnTaskStart func(ctx context.Context, t Task, cancel context.CancelFunc)
 }
 
 // MaxFanout returns the maximum number of tasks accepted in one orchestration.
@@ -379,6 +388,9 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		taskCtx, cancel = context.WithCancel(baseCtx)
 	}
 	defer cancel()
+	if p.OnTaskStart != nil {
+		p.OnTaskStart(taskCtx, t, cancel)
+	}
 	// Task.ID is caller-facing coordination state. It must not cross the
 	// dispatch boundary: concurrent runs are allowed to reuse display IDs,
 	// while the dispatcher requires a fresh opaque invocation identity.

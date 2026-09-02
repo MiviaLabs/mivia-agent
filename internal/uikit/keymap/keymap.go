@@ -70,25 +70,32 @@ const (
 	// running - and leaves the rest of the turn (and any concurrent
 	// sibling tool call) running.
 	IDCancelToolCall ID = "cancel-tool-call"
-	IDScrollUp       ID = "scroll-up"
-	IDScrollDown     ID = "scroll-down"
-	IDScrollTop      ID = "scroll-top"
-	IDScrollBottom   ID = "scroll-bottom"
-	IDOpenPager      ID = "open-pager"
-	IDToggleReason   ID = "toggle-reasoning"
-	IDApproveOnce    ID = "approve-once"
-	IDApproveAlways  ID = "approve-always"
-	IDDenyOnce       ID = "deny-once"
-	IDDenyAlways     ID = "deny-always"
-	IDAcceptPrefix   ID = "accept-prefix"
-	IDMenuNext       ID = "menu-next"
-	IDMenuPrev       ID = "menu-prev"
-	IDMenuAccept     ID = "menu-accept"
-	IDMenuDismiss    ID = "menu-dismiss"
-	IDDialogUp       ID = "dialog-up"
-	IDDialogDown     ID = "dialog-down"
-	IDDialogAccept   ID = "dialog-accept"
-	IDDialogCancel   ID = "dialog-cancel"
+	// IDCancelSubagentTask cancels the ONE coordinator task backing the
+	// subagent row currently selected in the files panel - not the whole
+	// run it belongs to, and not its sibling tasks. Distinct from
+	// IDCancelToolCall (a transcript tool-call block) and from IDCancel
+	// (ContextFiles's own "return to the composer" / "close the dialog"):
+	// this reaches past the UI into the coordinator itself.
+	IDCancelSubagentTask ID = "cancel-subagent-task"
+	IDScrollUp           ID = "scroll-up"
+	IDScrollDown         ID = "scroll-down"
+	IDScrollTop          ID = "scroll-top"
+	IDScrollBottom       ID = "scroll-bottom"
+	IDOpenPager          ID = "open-pager"
+	IDToggleReason       ID = "toggle-reasoning"
+	IDApproveOnce        ID = "approve-once"
+	IDApproveAlways      ID = "approve-always"
+	IDDenyOnce           ID = "deny-once"
+	IDDenyAlways         ID = "deny-always"
+	IDAcceptPrefix       ID = "accept-prefix"
+	IDMenuNext           ID = "menu-next"
+	IDMenuPrev           ID = "menu-prev"
+	IDMenuAccept         ID = "menu-accept"
+	IDMenuDismiss        ID = "menu-dismiss"
+	IDDialogUp           ID = "dialog-up"
+	IDDialogDown         ID = "dialog-down"
+	IDDialogAccept       ID = "dialog-accept"
+	IDDialogCancel       ID = "dialog-cancel"
 
 	// Transcript mode (the pager). One ID per less-compatible action, so
 	// the help screen names every key the pager answers to
@@ -342,6 +349,10 @@ func filesBindings() []Binding {
 		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "scroll the content half a page down"},
 		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "scroll the content half a page up"},
 		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source (in the dialog)", Short: "diff"},
+		// "x": unbound elsewhere in ContextFiles, mirroring
+		// ContextTranscript's IDCancelToolCall mnemonic. A no-op unless the
+		// selected row is a subagent task still running.
+		{ID: IDCancelSubagentTask, Context: ContextFiles, Keys: []string{"x"}, Help: "cancel this subagent task, if it is still running"},
 		{ID: IDCancel, Context: ContextFiles, Keys: []string{"esc"}, Help: "clear the filter, then return to the composer"},
 	}
 }

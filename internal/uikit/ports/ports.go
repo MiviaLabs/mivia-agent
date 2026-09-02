@@ -97,6 +97,23 @@ type TurnHandle interface {
 // falls back to whatever summary it has.
 type SubagentThreads interface {
 	Thread(callID string) (Conversation, bool)
+	// CancelSubagentTask stops the coordinator's execution of the ONE
+	// dispatched task backing callID, without touching its sibling tasks or
+	// the parent turn/run.
+	//
+	// This is NOT TurnHandle.Cancel() / SubagentTranscriptConversation's own
+	// ActiveTurn().Cancel(): those detach a UI listener from this thread's
+	// live event stream - "stop watching" - and leave the underlying
+	// coordinator task running untouched. CancelSubagentTask reaches past
+	// the UI listener into the coordinator itself and stops the task's own
+	// execution.
+	//
+	// ok is false when callID names no task with a live coordinator route
+	// (never registered, already terminal and swept, or this dispatch path
+	// never wired routing information at all) - a safe no-op, never a
+	// panic. A non-nil error means a route was found but the cancel itself
+	// failed (e.g. no coordinator wired, or the run is no longer active).
+	CancelSubagentTask(callID string) (ok bool, err error)
 }
 
 // Decision is the user's answer to an ApprovalRequest.
