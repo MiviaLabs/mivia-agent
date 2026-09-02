@@ -120,8 +120,23 @@ func producesOnSync(ev agent.Event) bool {
 	p := chatsync.NewProjector("sess-1", 0, chatsync.ProjectorOptions{
 		StreamAssistant: true, IncludeThinking: true, IncludeToolIO: true,
 	})
-	// Open the turn: the projector drops content for a turn it has not seen,
-	// which would make every kind look unhandled.
+	// Open the turn, so the fixture is the stream a real reader sees rather
+	// than a bare event.
+	//
+	// It does NOT currently change any answer in this table, and the comment
+	// here used to claim it did ("the projector drops content for a turn it
+	// has not seen"). Measured: pointing this at a bogus turn id, and
+	// deleting it outright, both leave the table green. Only KindTurnEnd and
+	// KindError are gated on knownTurn (internal/chatsync/projector.go), and
+	// no agent.EventKind maps to either, so the gate is unreachable from
+	// here; every other arm reaches p.turn(), which creates the turn state on
+	// demand.
+	//
+	// Kept rather than deleted: a kind added tomorrow may well be gated the
+	// same way, and then an unopened turn would report it as unhandled on
+	// this surface alone - the exact false negative this table exists to
+	// prevent. A precaution with a stated reason that is false is worse than
+	// no precaution, so the reason is the part that had to change.
 	p.Project(events.Event{
 		Kind: events.KindTurnStart, SessionID: "sess-1", TurnID: "turn:1",
 		Detail: "the prompt", Timestamp: time.Now(),
