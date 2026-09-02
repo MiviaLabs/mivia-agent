@@ -45,20 +45,6 @@ func RecordedBlockGrammar() BlockGrammar {
 		ToolBlockField:         "tool_call_id",
 		ResetBlockIsStreamOnly: true,
 		StepIsDense:            false,
-		StepReuse:              "never within a producer session",
+		StepReuse:              "never for a (stream, step) pair",
 	}
-}
-
-// parseProseBlock splits a prose block id into its stream and step. ok is
-// false for a tool id, a reset's bare stream id, or a legacy stepless id.
-func parseProseBlock(block string) (stream string, step int, ok bool) {
-	m := ProseBlockPattern.FindStringSubmatch(block)
-	if m == nil {
-		return "", 0, false
-	}
-	n, err := strconv.Atoi(m[2])
-	if err != nil {
-		return "", 0, false
-	}
-	return m[1], n, true
 }

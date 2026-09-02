@@ -52,6 +52,7 @@ type fakeAPI struct {
 	failSessionReads bool
 	createdIDs       []string
 	createAttempts   int
+	createTimes      []time.Time
 
 	// requests records every request the fake received, target and body, so a
 	// test can assert that a value NEVER crossed the wire.
@@ -285,6 +286,7 @@ func (f *fakeAPI) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	f.createAttempts++
+	f.createTimes = append(f.createTimes, time.Now())
 	if rej := f.rejectCreate; rej != nil {
 		f.mu.Unlock()
 		writeAPIError(w, rej.status, rej.code, rej.msg)
@@ -610,6 +612,14 @@ func (f *fakeAPI) ClearCreateRejection() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rejectCreate = nil
+}
+
+// CreateTimes returns when each POST /v1/chat-sessions arrived, rejected
+// ones included.
+func (f *fakeAPI) CreateTimes() []time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Time(nil), f.createTimes...)
 }
 
 // CreateAttempts counts every POST /v1/chat-sessions, rejected ones included.

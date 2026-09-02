@@ -467,6 +467,18 @@ func TestCreateSessionRejectionDoesNotLatch(t *testing.T) {
 	if got := s.SessionID(); got != a {
 		t.Errorf("SessionID() = %q, want %q unchanged", got, a)
 	}
+	// With the throttle engaged at its real five-minute period, the next
+	// retry is turned away without a request. A refusal is not a failure:
+	// the counter must read exactly the three failures that engaged it. This
+	// is the leak that is otherwise invisible - a successful create resets
+	// the counter anyway.
+	waitUntil(t, "a throttle refusal", func() bool { _, refusals := s.throttleCountersForTest(); return refusals >= 1 })
+	if failures, _ := s.throttleCountersForTest(); failures != createFailuresBeforeThrottle {
+		t.Fatalf("create failure counter = %d after a throttle refusal, want %d: a refused attempt counted as a failure", failures, createFailuresBeforeThrottle)
+	}
+	if n := f.CreateAttempts(); n != createFailuresBeforeThrottle {
+		t.Fatalf("%d create attempts after the throttle engaged, want %d: a refusal must make no request", n, createFailuresBeforeThrottle)
+	}
 	done := make(chan struct{})
 	go func() { degraded.Wait(); close(done) }()
 	select {
@@ -493,7 +505,7 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 	publishTurnStart(bus, a, "turn:1", "stranded")
 
 	waitUntil(t, "the throttle to engage", func() bool { return f.CreateAttempts() >= createFailuresBeforeThrottle })
-	engagedAt := time.Now()
+	engagedAt := time.Now() // kept for the (ii) sleep below
 	if n := f.CreateAttempts(); n != createFailuresBeforeThrottle {
 		t.Fatalf("(i) %d attempts, want exactly %d before the throttle", n, createFailuresBeforeThrottle)
 	}
@@ -508,21 +520,20 @@ func TestCreateAttemptsAreBounded(t *testing.T) {
 	if n := f.CreateAttempts(); n != createFailuresBeforeThrottle {
 		t.Fatalf("(ii) %d attempts inside the throttle period, want %d", n, createFailuresBeforeThrottle)
 	}
-	// A refusal is not a failure: no request was made, so the counter must
-	// not move while the throttle holds. This is the leak that is otherwise
-	// invisible - the successful create below resets the counter anyway.
-	if got := s.throttleCountersForTest(); got != createFailuresBeforeThrottle {
-		t.Fatalf("(ii) create failure counter = %d during the throttle, want %d: a refused attempt counted as a failure", got, createFailuresBeforeThrottle)
-	}
 	f.ClearCreateRejection()
 	waitUntil(t, "(iii) exactly one attempt after the period", func() bool {
 		return f.CreateAttempts() == createFailuresBeforeThrottle+1
 	})
-	if since := time.Since(engagedAt); since < createThrottlePeriod {
-		t.Fatalf("the throttled attempt fired %v after engaging, before the %v period", since, createThrottlePeriod)
+	// Judge the timing by the client's own record, not by when this test
+	// observed the third request: the fake counts a request on receipt and
+	// the client arms the throttle after the response, so a wall-clock
+	// reference here can trail the client's by a poll interval.
+	if at := f.CreateTimes()[createFailuresBeforeThrottle]; at.Before(*st.CreateThrottledUntil) {
+		t.Fatalf("the throttled attempt fired at %v, before create_throttled_until %v", at, *st.CreateThrottledUntil)
 	}
+	_ = engagedAt
 	b := waitForSecondSession(t, f)
-	if got := s.throttleCountersForTest(); got != 0 {
+	if got, _ := s.throttleCountersForTest(); got != 0 {
 		t.Errorf("(iv) create failure counter = %d after a successful create, want 0", got)
 	}
 	if s.Stopped() || s.SessionID() != b {
@@ -539,8 +550,8 @@ func recoveryIntervalForTests(t *testing.T, d time.Duration) func() {
 	return func() { recoveryInterval = prev }
 }
 
-// throttleCountersForTest reads the worker-owned create-failure counter from
-// the test goroutine. The field is worker-only by contract, so tests read it
-// through this one seam only while the worker is provably parked on a
-// throttle refusal or a completed create.
-func (s *SyncSession) throttleCountersForTest() int { return s.consecutiveCreateFailures }
+// throttleCountersForTest reads the create throttle's counters: consecutive
+// failures and throttle refusals.
+func (s *SyncSession) throttleCountersForTest() (failures, refusals int) {
+	return int(s.consecutiveCreateFailures.Load()), int(s.createRefusals.Load())
+}
