@@ -47,8 +47,18 @@ func TestEverySessionDispatcherOptsCarriesApproval(t *testing.T) {
 				return true
 			}
 			// An empty literal is a zero value for an error return, not a
-			// dispatcher anyone runs.
+			// dispatcher anyone runs - but ONLY when nothing later assigns
+			// fields onto it. `opts := SessionDispatcherOpts{}` followed by
+			// `opts.Registry = ...` is a fully-built dispatcher that this
+			// exemption used to wave through, and the shape is already
+			// idiomatic in this tree, so it would not look wrong in review.
 			if len(lit.Elts) == 0 {
+				if assigned := fieldsAssignedOnZeroLiteral(file, lit); len(assigned) > 0 {
+					if !assigned["Approval"] {
+						missing = append(missing, fmt.Sprintf("%s:%d (zero literal then %d field assignment(s), no Approval)",
+							path, fset.Position(lit.Pos()).Line, len(assigned)))
+					}
+				}
 				return true
 			}
 			for _, elt := range lit.Elts {
@@ -107,4 +117,55 @@ func moduleRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// fieldsAssignedOnZeroLiteral returns the field names assigned onto the
+// variable a zero SessionDispatcherOpts literal was bound to.
+//
+// It exists because the empty-literal exemption above is only safe for a
+// genuine zero value. A review pointed out that `opts := SessionDispatcherOpts{}`
+// followed by per-field assignments is fully exempt, and that is a complete
+// bypass: the dispatcher is built, subagent delegation runs, and no Approval
+// is ever set.
+func fieldsAssignedOnZeroLiteral(file *ast.File, lit *ast.CompositeLit) map[string]bool {
+	// Find the identifier the literal is assigned to.
+	target := ""
+	ast.Inspect(file, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			return true
+		}
+		rhs := assign.Rhs[0]
+		if unary, ok := rhs.(*ast.UnaryExpr); ok {
+			rhs = unary.X
+		}
+		if rhs != ast.Expr(lit) {
+			return true
+		}
+		if id, ok := assign.Lhs[0].(*ast.Ident); ok {
+			target = id.Name
+		}
+		return true
+	})
+	if target == "" {
+		return nil
+	}
+	out := map[string]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, lhs := range assign.Lhs {
+			sel, ok := lhs.(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == target {
+				out[sel.Sel.Name] = true
+			}
+		}
+		return true
+	})
+	return out
 }

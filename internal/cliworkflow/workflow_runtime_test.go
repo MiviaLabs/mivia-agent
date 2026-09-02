@@ -444,39 +444,58 @@ func newPanelAuthorizationFixture(t *testing.T) *panelAuthorizationFixture {
 // and no runtime path exercises every site, so the check has to read the
 // source. Same reasoning as the sibling gate in internal/cliagents.
 func TestEveryWorkflowAgentSurfaceGoesThroughOneConstructor(t *testing.T) {
-	const file = "workflow_authority.go"
-	src, err := os.ReadFile(file)
+	// The WHOLE package, not one file: this package has ~30 non-test files
+	// and the likeliest place for the next divergence is a new one. And both
+	// constructors, not just ScopedRegistry - ScopedRegistryWithTail calls it
+	// internally, is used elsewhere in the tree, and building the second
+	// surface with it defeated the single-file, single-name check entirely.
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
+		t.Fatalf("read package dir: %v", err)
 	}
+	scopeCtors := map[string]bool{"ScopedRegistry": true, "ScopedRegistryWithTail": true}
 	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, file, src, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
-
 	var offenders []string
-	ast.Inspect(parsed, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	scanned := 0
+
+	for _, entry := range entries {
+		file := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
+			continue
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "ScopedRegistry" {
-			return true
+		parsed, perr := parser.ParseFile(fset, file, nil, 0)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", file, perr)
 		}
-		pkg, ok := sel.X.(*ast.Ident)
-		if !ok || pkg.Name != "tools" {
+		scanned++
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || !scopeCtors[sel.Sel.Name] {
+				return true
+			}
+			// Match the IMPORT, not the identifier spelling, so an alias
+			// (`t "…/internal/tools"`) cannot defeat the check.
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok || !identBindsToolsPackage(parsed, pkg.Name) {
+				return true
+			}
+			// The one inside panelAgentSurface is the constructor itself.
+			if fn := enclosingFunc(parsed, call.Pos()); fn == "panelAgentSurface" {
+				return true
+			}
+			offenders = append(offenders, fmt.Sprintf("%s:%d (%s calls tools.%s)",
+				file, fset.Position(call.Pos()).Line,
+				enclosingFunc(parsed, call.Pos()), sel.Sel.Name))
 			return true
-		}
-		// The one inside panelAgentSurface is the constructor itself.
-		if fn := enclosingFunc(parsed, call.Pos()); fn == "panelAgentSurface" {
-			return true
-		}
-		offenders = append(offenders, fmt.Sprintf("%s:%d (%s)",
-			file, fset.Position(call.Pos()).Line, enclosingFunc(parsed, call.Pos())))
-		return true
-	})
+		})
+	}
+	if scanned == 0 {
+		t.Fatal("scanned no files; the walk is broken, not the code")
+	}
 
 	if len(offenders) > 0 {
 		t.Errorf("these build a workflow-agent tool surface themselves instead of "+
@@ -499,4 +518,21 @@ func enclosingFunc(file *ast.File, pos token.Pos) string {
 		}
 	}
 	return name
+}
+
+// identBindsToolsPackage reports whether name refers to internal/tools in this
+// file, under any alias. Comparing the identifier spelling alone let
+// `t "…/internal/tools"` slip past the gate.
+func identBindsToolsPackage(file *ast.File, name string) bool {
+	const path = `"github.com/MiviaLabs/mivia-agent/internal/tools"`
+	for _, imp := range file.Imports {
+		if imp.Path == nil || imp.Path.Value != path {
+			continue
+		}
+		if imp.Name != nil {
+			return imp.Name.Name == name
+		}
+		return name == "tools"
+	}
+	return false
 }

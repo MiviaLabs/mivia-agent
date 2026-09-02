@@ -49,28 +49,46 @@ func TestWiringToolBaseResolverAlsoSetsTheDenylist(t *testing.T) {
 				return true
 			}
 			var wiresResolver, setsDenylist bool
+			var resolverRecv, denylistRecv string
 			var line int
 			ast.Inspect(fn.Body, func(inner ast.Node) bool {
 				assign, ok := inner.(*ast.AssignStmt)
 				if !ok {
 					return true
 				}
-				for _, lhs := range assign.Lhs {
+				for i, lhs := range assign.Lhs {
 					sel, ok := lhs.(*ast.SelectorExpr)
+					if !ok {
+						continue
+					}
+					// The receiver must match, or `opts.ToolDenylist = x` on
+					// some unrelated struct satisfies the check while
+					// sess.ToolDenylist is never set.
+					recv, ok := sel.X.(*ast.Ident)
 					if !ok {
 						continue
 					}
 					switch sel.Sel.Name {
 					case "ToolBaseResolver":
 						wiresResolver = true
+						resolverRecv = recv.Name
 						line = fset.Position(sel.Pos()).Line
 					case "ToolDenylist":
+						// VALUE, not presence: `sess.ToolDenylist = nil`
+						// satisfied the old check completely, and that is the
+						// whole defect - the operator's additions are dropped,
+						// the compiled list still applies, and nothing looks
+						// broken.
+						if i < len(assign.Rhs) && isNilOrEmptyLiteral(assign.Rhs[i]) {
+							continue
+						}
+						denylistRecv = recv.Name
 						setsDenylist = true
 					}
 				}
 				return true
 			})
-			if wiresResolver && !setsDenylist {
+			if wiresResolver && (!setsDenylist || resolverRecv != denylistRecv) {
 				rel, _ := filepath.Rel(root, path)
 				missing = append(missing, fmt.Sprintf("%s:%d (%s)", rel, line, fn.Name.Name))
 			}
@@ -108,4 +126,27 @@ func repoRootForGate(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// isNilOrEmptyLiteral reports whether an assignment's right-hand side is a
+// value that sets nothing: nil, []string{}, or []string(nil).
+//
+// Assigning one of those satisfied the presence check while dropping the
+// operator's additions entirely - the compiled denylist still applies, so the
+// session looks healthy and the guardrail is gone.
+func isNilOrEmptyLiteral(expr ast.Expr) bool {
+	switch v := expr.(type) {
+	case *ast.Ident:
+		return v.Name == "nil"
+	case *ast.CompositeLit:
+		return len(v.Elts) == 0
+	case *ast.CallExpr:
+		// []string(nil)
+		if len(v.Args) == 1 {
+			if id, ok := v.Args[0].(*ast.Ident); ok && id.Name == "nil" {
+				return true
+			}
+		}
+	}
+	return false
 }
