@@ -90,7 +90,7 @@ func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view cliagents.Agen
 		Warnings:      []string{},
 	}
 	if sr := doctorSync(res); sr.Disabled {
-		dj.SyncAPIURL, dj.SyncAPISource = "", "disabled"
+		dj.SyncAPISource, dj.SyncLogin, dj.SyncProbe = "disabled", "skipped (sync disabled)", "skipped (sync disabled)"
 	} else {
 		dj.SyncAPIURL = safeDoctorURL(sr.Endpoint.URL)
 		dj.SyncAPISource = cliagents.SafeCatalogText(sr.Endpoint.Source, 240)

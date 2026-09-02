@@ -25,9 +25,6 @@ func TestResolveEndpointPrefersConfigThenEnvThenDefault(t *testing.T) {
 	if e.URL != miviaauth.DefaultServerURL || e.Source != miviaauth.ServerURLSourceDefault {
 		t.Fatalf("nothing set: %+v", e)
 	}
-	if e.TokenPresent {
-		t.Fatalf("a fresh HOME reports a login present")
-	}
 	if got := e.Describe(); got != "https://api.mivia.app (default)" {
 		t.Fatalf("Describe() = %q", got)
 	}
@@ -86,5 +83,16 @@ func TestProbeEndpointReportsWhatItReached(t *testing.T) {
 	ok, _ = ProbeEndpoint(ctx, hang.URL)
 	if ok || time.Since(start) > 2*time.Second {
 		t.Fatalf("hanging server: ok=%v after %v; the probe must be bounded by the caller's context", ok, time.Since(start))
+	}
+
+	// Doctor passes a background context, so the probe's OWN bound is the
+	// only thing between a hung host and a hung doctor command.
+	prev := probeTimeout
+	probeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = prev })
+	start = time.Now()
+	ok, detail = ProbeEndpoint(context.Background(), hang.URL)
+	if ok || time.Since(start) > 2*time.Second {
+		t.Fatalf("hanging server, no caller deadline: ok=%v detail=%q after %v; the probe must bound itself", ok, detail, time.Since(start))
 	}
 }

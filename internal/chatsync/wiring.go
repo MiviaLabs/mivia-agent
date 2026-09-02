@@ -76,15 +76,12 @@ func DefaultBaseURL(configured string) string {
 	return ResolveEndpoint(configured).URL
 }
 
-// Endpoint is where sync would upload, why, and whether it could log in.
+// Endpoint is where sync would upload and what decided that.
 type Endpoint struct {
 	URL string
 	// Source names what supplied URL: "[sync] api_url", the env var with the
 	// file or process that set it, or "default".
 	Source string
-	// TokenPresent reports whether a saved login exists. Sync activates only
-	// when it does, so a probe without one proves nothing about sync.
-	TokenPresent bool
 }
 
 // ResolveEndpoint resolves the sync API root the same way OpenSession will
@@ -92,13 +89,11 @@ type Endpoint struct {
 // diagnostic that re-derived the chain would be a second place to get it
 // wrong, which is the failure the diagnostic exists to catch.
 func ResolveEndpoint(configured string) Endpoint {
-	e := Endpoint{TokenPresent: miviaauth.HasDefaultSession()}
 	if trimmed := strings.TrimSpace(configured); trimmed != "" {
-		e.URL, e.Source = trimmed, "[sync] api_url"
-		return e
+		return Endpoint{URL: trimmed, Source: "[sync] api_url"}
 	}
-	e.URL, e.Source = miviaauth.ResolveServerURL()
-	return e
+	url, source := miviaauth.ResolveServerURL()
+	return Endpoint{URL: url, Source: source}
 }
 
 // Describe renders the endpoint for a notice: the URL and, in parentheses,
@@ -107,9 +102,11 @@ func (e Endpoint) Describe() string {
 	return e.URL + " (" + e.Source + ")"
 }
 
-// probeTimeout bounds ProbeEndpoint. A diagnostic must return; a dead host
-// that hangs the doctor command is worse than one it reports as unreachable.
-const probeTimeout = 3 * time.Second
+// probeTimeout bounds ProbeEndpoint on its own, whatever context the caller
+// passes. A diagnostic must return; a dead host that hangs the doctor
+// command is worse than one it reports as unreachable. A var, not a const:
+// tests shrink it so a simulated hang does not cost real wall-clock seconds.
+var probeTimeout = 3 * time.Second
 
 // ProbeEndpoint makes one bounded, unauthenticated request to the API's
 // version-neutral /health route and reports what came back. Any HTTP answer

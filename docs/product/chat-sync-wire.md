@@ -315,5 +315,7 @@ visible the moment it starts. `mivia doctor` prints the same resolution as
 bounded, unauthenticated request to the API's `/health` route as `sync_probe`
 (skipped when not logged in, because sync never activates then); `--json`
 carries them as `sync_api_url`, `sync_api_source`, `sync_login` and
-`sync_probe`. Doctor never refuses to run over the probe: sync failing is
+`sync_probe`; with `enabled = false` the human line reads `disabled`, the
+JSON source is `disabled` and the other two fields say `skipped (sync
+disabled)`. Doctor never refuses to run over the probe: sync failing is
 never a reason to break the local chat.
