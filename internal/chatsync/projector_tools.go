@@ -1,29 +1,11 @@
 package chatsync
 
 import (
-	"strconv"
-
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // Tool and subagent projections. Split out of projector.go to keep that file
 // under the 500-line structural budget (.mivia/policy/go-structure.json).
-
-// proseBlock names one STEP's worth of prose within a stream.
-//
-// A turn is a loop - the model talks, calls a tool, reads the result, talks
-// again - and the block id is the only key the wire gives a consumer for
-// telling those utterances apart. One id per turn made them indistinguishable:
-// a viewer had to weld a whole turn's narration into a single message, in an
-// order that no longer matched the tool calls it interleaved with.
-//
-// The stream id (`<turn>:assistant`, `<turn>:<task>:thinking`) stays the
-// PREFIX of every segment it owns, so a consumer that wants the whole stream
-// still has a name for it - which is exactly what an assistant reset needs,
-// since it discards a turn's text across however many segments it reached.
-func proseBlock(stream string, segment int) string {
-	return stream + ":" + strconv.Itoa(segment)
-}
 
 // closeStepOnToolStart registers the turn and, when ev actually STARTS a tool,
 // closes the prose that preceded it: the model stopped talking and acted, so
@@ -41,7 +23,7 @@ func (p *Projector) closeStepOnToolStart(ev events.Event, turnID string) {
 	if ev.AgentTask != "" {
 		ts = p.laneState(turnID, ev.AgentTask)
 	}
-	advanceStep(ts)
+	p.advanceStep(ts)
 }
 
 // blockSegment picks the segment a prose event belongs to. A delta belongs to
@@ -68,12 +50,24 @@ func (ts *turnState) blockSegment(isDelta bool) int {
 // It is a no-op on a segment nothing shipped into. Advancing there would spend
 // ids on silence - and a consumer that renders one message per id would show
 // the gaps as blank messages.
-func advanceStep(ts *turnState) {
-	if ts == nil || !ts.segmentDirty {
+func (p *Projector) advanceStep(ts *turnState) {
+	if ts == nil || (ts.segmentAssistant == 0 && ts.segmentThinking == 0) {
 		return
 	}
-	ts.segment++
-	ts.segmentDirty = false
+	ts.segment = p.allocSegment()
+	ts.segmentAssistant, ts.segmentThinking = 0, 0
+}
+
+// advanceStepForReset is advanceStep that remembers what it replaced, for a
+// reset whose append may yet fail. It records nil when it advanced nothing,
+// so the undo is exactly as conditional as the advance.
+func (p *Projector) advanceStepForReset(ts *turnState) {
+	ts.resetUndo = nil
+	if ts.segmentAssistant == 0 && ts.segmentThinking == 0 {
+		return
+	}
+	ts.resetUndo = &segmentUndo{segment: ts.segment, segmentAssistant: ts.segmentAssistant, segmentThinking: ts.segmentThinking}
+	p.advanceStep(ts)
 }
 
 func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
@@ -228,7 +222,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 		// the same rule.
 		ls.streamed = true
 		ls.fragments++
-		ls.segmentDirty = true
+		ls.segmentAssistant++
 		content = applyTruncation(&env, "text", content, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
 			Envelope: env,
@@ -277,7 +271,7 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 		text = redactText(ev.Content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
-	ls.segmentDirty = true
+	ls.segmentThinking++
 	index := ls.thinkingFragments
 	ls.thinkingFragments++
 	payload := &SubagentThinkingDeltaPayload{
@@ -316,12 +310,12 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		env.Block = turnID + ":" + ev.AgentTask + ":assistant"
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
-		advanceStep(ls)
+		p.advanceStepForReset(ls)
 	} else {
 		env.Block = turnID + ":assistant"
 		ts := p.turn(turnID)
 		ts.streamed, ts.fragments = false, 0
-		advanceStep(ts)
+		p.advanceStepForReset(ts)
 	}
 	// Truncate BEFORE the literal. Go evaluates the fields in order, so
 	// `Envelope: env` copies env first and any trunc record applyTruncation
