@@ -320,6 +320,20 @@ func (s *sdkToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
 // error in the tool; the adapter returns it rather than dropping the
 // schema silently, because a schema-less tool would trip the SDK's
 // ErrNoSchemas at New time with a less actionable message.
+// ConvertTool adapts ONE CLI tool to the SDK interfaces.
+//
+// It exists for the deferred-tool path, which has to execute a single tool
+// that is deliberately absent from the SDK registry. Without it that path
+// invoked the runtime dispatcher itself, which made it a second
+// implementation of tool execution: nine contracts had to be re-honoured by
+// hand there and only four were. See DC-35.
+//
+// The returned value satisfies sdktools.SchemaTool too, so a caller can use
+// it for both fields of a dispatcher shim.
+func ConvertTool(t tools.Tool) (*sdkToolAdapter, error) {
+	return newSDKToolAdapter(t)
+}
+
 func newSDKToolAdapter(t tools.Tool) (*sdkToolAdapter, error) {
 	schema, err := json.Marshal(t.Parameters())
 	if err != nil {

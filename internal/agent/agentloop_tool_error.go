@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
@@ -48,6 +49,28 @@ func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdksha
 		Name:       call.Name,
 		Content:    body,
 	}
+}
+
+// hostAuthorizedToolMessage runs a tool the HOST authorized for this call but
+// which the SDK registry does not have - the deferred-tool case - through the
+// SAME shim an admitted call uses.
+//
+// The host decides and the loop executes. That is what stops the deferred
+// path being a second implementation of tool execution, where the timeout,
+// the dedup declaration, the result cap, the hook plumbing and the failure
+// outcome all had to be re-honoured by hand and five of them were not. See
+// DC-35 and RunUnadmittedTool.
+func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnState, call sdkshape.ToolCall, tool tools.Tool) (sdkshape.Message, error) {
+	body, err := RunUnadmittedTool(ctx, opts, turn, tool, call.Arguments)
+	if err != nil {
+		return sdkshape.Message{}, err
+	}
+	return sdkshape.Message{
+		Role:       provider.RoleTool,
+		ToolCallID: call.ID,
+		Name:       call.Name,
+		Content:    body,
+	}, nil
 }
 
 // sdkToolCallErrorReporter returns the Options.OnToolCallError hook
@@ -104,6 +127,9 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 			// already nil for a dedup-served duplicate (runDeferredToolNow).
 			if callKey != "" {
 				emitHookRuns(opts, callKey, result.HookRuns)
+			}
+			if result.Handled && result.Execute != nil {
+				return hostAuthorizedToolMessage(ctx, opts, turn, call, result.Execute)
 			}
 			if result.Handled && result.Ran {
 				return servedUnadmittedToolMessage(turn, callKey, call, result), nil

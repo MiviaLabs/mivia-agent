@@ -163,6 +163,27 @@ func TestEveryPathRefusesUnderADenyPolicy(t *testing.T) {
 	}
 }
 
+// C6: the model-facing result is capped on every path.
+//
+// The deferred path capped its success bodies and, for a while, not its
+// failures - a caller-authored reason with no bound of its own. Capping now
+// belongs to the shim both paths share, and this holds that true.
+func TestEveryPathCapsTheResult(t *testing.T) {
+	const cap = 200
+	for _, path := range execPaths {
+		t.Run(path.name, func(t *testing.T) {
+			probe := &bulkyProbe{name: "probe_tool", size: 8000}
+			body := runProbeTurnWith(t, path, probe, func(f *deferredFixture) {
+				f.sess.MaxToolResultChars = cap
+			}, namedCall("c1", "probe_tool", `{}`))
+			checkContract(t, "result-capped", path.name, len(body) < 4000,
+				fmt.Sprintf("the model received %d bytes for a tool whose result "+
+					"cap is %d; an uncapped body blows the context window the cap "+
+					"exists to protect", len(body), cap))
+		})
+	}
+}
+
 // --- the harness ---------------------------------------------------------
 
 func runProbeTurn(t *testing.T, path execPath, probe tools.Tool, args string) string {
@@ -348,4 +369,19 @@ func conformanceExemptions(t *testing.T) map[string]string {
 		}
 	}
 	return policy.Exempt
+}
+
+type bulkyProbe struct {
+	name string
+	size int
+}
+
+func (p *bulkyProbe) Name() string               { return p.name }
+func (p *bulkyProbe) Description() string        { return "returns a lot" }
+func (p *bulkyProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p *bulkyProbe) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead}
+}
+func (p *bulkyProbe) Execute(context.Context, json.RawMessage) (string, error) {
+	return strings.Repeat("x", p.size), nil
 }

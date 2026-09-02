@@ -24,6 +24,19 @@ type UnadmittedToolResult struct {
 	// all (not advertised, a hallucinated name); the caller falls through to
 	// its own generic "not available" denial. True for every other case.
 	Handled bool
+	// Execute, when non-nil, is a tool the host has AUTHORIZED for this call
+	// but which is absent from the SDK registry - the deferred-tool case. The
+	// loop runs it through the same shim an admitted call uses
+	// (RunUnadmittedTool), so every execution contract holds by construction.
+	//
+	// The host decides; the loop executes. That split is deliberate: approval
+	// has to happen before the host charges an admission attempt or stages a
+	// publication, so it cannot be deferred to here - and execution has to
+	// happen through the shim, so it cannot be done there. Returning the tool
+	// is what lets each side own its half.
+	//
+	// When set, Ran/Failed/Content are ignored: the shim produces them.
+	Execute tools.Tool
 	// Ran is true when the tool call REACHED THE DISPATCHER and Content is
 	// its real result: the caller renders it exactly like an ordinary
 	// admitted tool call - no "error: " prefix and no denial framing of its

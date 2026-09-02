@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -101,7 +99,6 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 	dispatcher := s.binding.Dispatcher
 	resolver := s.ToolBaseResolver
 	denylist := s.ToolDenylist
-	sessionID := s.SessionID
 	s.mu.RUnlock()
 
 	// Resolve, then decide, then spend. Every step below used to run before
@@ -140,22 +137,34 @@ func (s *Session) serveUnadmittedTool(ctx context.Context, turn *TurnOptions, na
 		return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 	}
 
-	var content, hookContext string
-	var hookRuns []runtime.HookRun
-	var failed, ok bool
 	if lookup == deferredFound {
-		content, hookContext, hookRuns, failed, ok = s.runDeferredToolNow(ctx, dispatcher, base, tool, sessionID, turnID, name, args)
+		return admitForExecution(dispatcher, base, tool, name)
 	}
-	if ok {
-		// Ran means it reached the dispatcher; Failed carries whether it
-		// succeeded. The message below instructs a RETRY, so anything
-		// that ran, was blocked, or was refused must never reach it.
-		return agent.UnadmittedToolResult{Handled: true, Ran: true, Failed: failed, Content: content, HookContext: hookContext, HookRuns: hookRuns}
-	}
+	// Only the no-wiring degrade reaches here, and it dispatched nothing - so
+	// there are no hook runs or hook context to report, which is what the
+	// existing degrade tests already assert.
 	return agent.UnadmittedToolResult{
-		Handled: true, HookContext: hookContext, HookRuns: hookRuns,
+		Handled: true,
 		Content: fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name),
 	}
+}
+
+// admitForExecution installs the handler and hands the tool to the loop.
+//
+// The loop runs it through the same shim an admitted call uses, which is what
+// stops this path being a second implementation of tool execution - the
+// defect that produced nine separate bugs here (DC-35). Registration stays on
+// this side because the dispatcher must know the handler before the shim
+// invokes it, and it happens only now: after the call was approved and paid
+// for, so a refused call leaves nothing behind.
+func admitForExecution(dispatcher *runtime.Dispatcher, base *tools.Registry, tool tools.Tool, name string) agent.UnadmittedToolResult {
+	if !registerDeferredTool(dispatcher, base, tool) {
+		return agent.UnadmittedToolResult{
+			Handled: true,
+			Content: fmt.Sprintf("tool %q could not be installed for this call; retry it on your next step", name),
+		}
+	}
+	return agent.UnadmittedToolResult{Handled: true, Execute: tool}
 }
 
 // isAdvertisedToolName reports whether name appears in the pinned advertised
@@ -178,106 +187,6 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 		}
 	}
 	return false
-}
-
-// runDeferredToolNow serves ONE deferred-but-authorized tool call synchronously
-// against the full authorized tool set, so the model gets the real result
-// instead of a denial telling it to retry next turn. ok=false on any of
-// several benign reasons (no dispatcher, no resolver wired, the resolver
-// returns nil, the name is absent even from the full set) - the caller
-// falls back to the staged-only denial message exactly as before this
-// existed; it is not an error path.
-//
-// The tool is registered into dispatcher against base (the FULL registry,
-// not s.Tools): the installed handler executes via base.Execute, so the
-// call succeeds even though s.Tools itself is not widened until the
-// step-boundary publish runs - no live-surface mutation is needed just to
-// serve this one call. RegisterTool's "duplicate handler" error is treated
-// as success (dispatcher.Has confirms it), not failure: a sibling call for
-// the same deferred tool in the same step may have already won the race.
-//
-// This is deliberately NOT full parity with an already-admitted call's
-// dispatcherShim.Run path (internal/agent/sdk_dispatcher_shim.go): no
-// per-call timeout re-arming, no pass1/turn-shaping bookkeeping. Hook-run
-// VISIBILITY (the operator's transcript row) and hook CONTEXT (the
-// advisory text a PostToolUse hook hands the MODEL) are both threaded
-// below, on the Ran path. A PreToolUse block (ok=false) still returns
-// hookRuns and hookContext, but the caller does not append hookContext to
-// the model-facing denial text this wave - only the Ran path's caller
-// (agentloop_tool_error.go) appends it. This path's dedup bucket also
-// differs from the shim's (ParentID/Step left zero). See
-// docs/development/lifecycle-hooks.md's "Limitation" notes for what
-// remains open and why.
-func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, base *tools.Registry, tool tools.Tool, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookContext string, hookRuns []runtime.HookRun, failed bool, ok bool) {
-	if !registerDeferredTool(dispatcher, base, tool) {
-		return "", "", nil, false, false
-	}
-	capability := tools.CapabilityOf(tool, args)
-	result := dispatcher.Invoke(ctx, runtime.Request{
-		TurnID:    fmt.Sprintf("turn:%d", turnID),
-		SessionID: sessionID,
-		Kind:      runtime.Tool,
-		Name:      name,
-		Input:     args,
-		Timeout:   s.deferredCallTimeout(ctx, args, capability),
-		// The tool's own dedup declaration, which this path dropped.
-		// ExecutionRead calls must always execute fresh; Write/External tools
-		// dedup so a duplicate delivery does not repeat side effects. Without
-		// this a read-class deferred call was answered from a record of the
-		// first one - and with Step unset that record sits in the step-less
-		// bucket, so an identical read in a LATER step of the same turn got
-		// the older file back as though it had just been read.
-		//
-		// Step stays unset on purpose. This path has no step number of its
-		// own, and inventing one would file the call in a bucket no other
-		// caller shares; SkipDedup is what carries the tool's declaration,
-		// and for the Write/External calls that keep deduping, a same-turn
-		// repeat is intercepted by StagedToolMessage before it reaches here.
-		SkipDedup: !capability.Dedups(),
-	})
-	// HookContext is set unconditionally, including for a dedup-served
-	// duplicate: DC-9 (internal/runtime/dispatcher.go) answers a duplicate
-	// with the OWNER's post-hook Result, and the owner's HookContext is
-	// exactly what dispatcherShim.Run appends for its own duplicates too.
-	hookContext = result.HookContext
-	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
-	// fidelity), which did not run for THIS call - reporting them would
-	// show a hook firing that never fired here. Mirrors dispatcherShim.Run's
-	// !r.IsDuplicate() guard. HookRuns (the operator's transcript row) and
-	// HookContext (the model's advisory text) have different duplicate
-	// contracts on purpose: a duplicate call's hook did not run, but the
-	// owner's post-hook advisory text is still valid content to hand the
-	// model again, same as the owner's tool Output is.
-	if !result.IsDuplicate() {
-		hookRuns = result.HookRuns
-	}
-	// A failure is SERVED, not degraded to the "not yet loaded" fallback.
-	//
-	// Every result.Err used to return ok=false, and the caller answers that
-	// with "authorized but was not yet loaded [...] retry the call on your
-	// next step". For a call that RAN and errored - an output over the
-	// ceiling, a handler that failed after a partial side effect - that told
-	// the model the call never happened and named the retry; the tool is
-	// admitted by then, so the retry executed for real and every side effect
-	// that had already landed happened twice.
-	//
-	// A PreToolUse block goes the same way. The operator's own hook refused
-	// the call, and reporting that as a loading problem hides their decision
-	// and invites the identical block again. runtime already distinguishes
-	// the two for the audit sink ("a block and a broken tool must not be
-	// indistinguishable"); what the MODEL needs from both is the truth that
-	// the call will not be served, and why.
-	//
-	// The body is result.Output either way, which deliverTerminal always
-	// fills with {"status":..., "error":...} - the same bytes
-	// dispatcherShim.Run hands the model for an admitted failure, down to
-	// the blank-output fallback below.
-	failed = result.Err != nil
-	body := string(result.Output)
-	if failed && strings.TrimSpace(body) == "" {
-		body = fmt.Sprintf("error: %v", result.Err)
-	}
-	return s.capDeferredBody(sessionID, tool, args, body), hookContext, hookRuns, failed, true
 }
 
 // spendAdmissionFor charges the attempt and stages the name for publication.
@@ -358,54 +267,6 @@ func registerDeferredTool(dispatcher *runtime.Dispatcher, base *tools.Registry, 
 		return false
 	}
 	return true
-}
-
-// deferredCallTimeout is the budget for one deferred call's EXECUTION.
-//
-// This path armed nothing, so the first call to a deferred run_command ran
-// unbounded while the identical call one step later - once natively admitted -
-// was bounded, and a timeout the tool declared for itself was dropped.
-//
-// It is returned as a duration for Request.Timeout rather than applied by
-// narrowing the caller's ctx, and the caller resolves it AFTER approval. Both
-// follow from where the approval happens: this path prompts inline, so a
-// narrowed ctx would put the deadline around the operator READING the prompt -
-// their gate selects on ctx.Done() and answers "canceled", which would
-// auto-deny mid-read and report a refusal nobody made. Request.Timeout is
-// armed by the dispatcher around the handler alone, which is also the only
-// span the admitted path bounds: its approval wrapper sits outside the shim
-// that starts the clock.
-func (s *Session) deferredCallTimeout(ctx context.Context, args json.RawMessage, capability tools.Capability) time.Duration {
-	s.mu.RLock()
-	toolTimeout := s.ToolTimeout
-	s.mu.RUnlock()
-	// args is passed, not dropped: it carries the model's own timeout_seconds,
-	// which the shared resolver honours when it is larger and the parent
-	// deadline leaves room. Passing nil here would silently cut short a long
-	// run_command on this path that the admitted path legitimately extends.
-	return agent.ResolveToolCallTimeout(ctx, toolTimeout, args, capability)
-}
-
-// capDeferredBody bounds a deferred call's model-facing body by the smaller of
-// the session ceiling and the tool's own declared cap.
-//
-// It runs for a FAILURE as well as a success. A failure body carries a
-// caller-authored reason - a hook's text, a tool's error - with no bound of
-// its own, and only the success path was ever capped.
-func (s *Session) capDeferredBody(sessionID string, tool tools.Tool, args json.RawMessage, body string) string {
-	s.mu.RLock()
-	maxChars, spool := s.MaxToolResultChars, s.RemainderSpool
-	s.mu.RUnlock()
-	capabilityMaxBytes := 0
-	if capable, ok := tool.(tools.CapableTool); ok {
-		capabilityMaxBytes = capable.Capability(args).MaxResultBytes
-	}
-	maxResult := maxChars
-	if capabilityMaxBytes > 0 && (maxResult <= 0 || capabilityMaxBytes < maxResult) {
-		maxResult = capabilityMaxBytes
-	}
-	capped, _, _ := remainder.CapWithSpoolRef(spool, sessionID, body, maxResult)
-	return capped
 }
 
 // commitTurnToken returns the token a step-boundary publication re-captured
