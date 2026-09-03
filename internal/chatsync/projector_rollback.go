@@ -130,6 +130,18 @@ func (p *Projector) rollbackOneThinking(ts *turnState) {
 	if ts.segmentThinking > 0 {
 		ts.segmentThinking--
 	}
+	// A delta that never shipped must not count towards the settled
+	// aggregate's INV-1 branch. Leaving it counted made the aggregate claim
+	// fragments the viewer never got and then empty its own text under INV-1 -
+	// losing the one copy of the reasoning that was still recoverable. The
+	// accumulated TEXT is deliberately kept: a lost delta is precisely the
+	// case where the aggregate has to carry it.
+	if ts.thinkingBlockFragments > 0 {
+		ts.thinkingBlockFragments--
+	}
+	if ts.thinkingBlockFragments == 0 {
+		ts.thinkingStreamed = false
+	}
 }
 
 // ResetSeq resets the sequence counter to a specified sequence (e.g. on fork).

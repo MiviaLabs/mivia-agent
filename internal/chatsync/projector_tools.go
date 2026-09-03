@@ -286,6 +286,11 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 		text = redactText(ev.Content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
+	// The lane accumulates for its own settled aggregate exactly as the root
+	// does; see projector_thinking.go. Symmetry is not decoration here - a
+	// redaction policy is session-wide, so a lane's reasoning is withheld
+	// under precisely the conditions the root's is.
+	ls.recordThinking(ev.Content, ls.segment, text != "")
 	ls.segmentThinking++
 	index := ls.thinkingFragments
 	ls.thinkingFragments++

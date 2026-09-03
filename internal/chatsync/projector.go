@@ -125,7 +125,10 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 			return nil
 		}
 		ts.done = true
-		return p.projectTurnEnd(env, ev.Detail)
+		// A turn's end closes its open thinking block. Without this the last
+		// step's reasoning - the step that thought and then finished, calling
+		// no tool - never settled and was dropped with the state.
+		return append(p.settleThinkingFor(env, turnID, ev), p.projectTurnEnd(env, ev.Detail)...)
 
 	case events.KindError:
 		if !p.knownTurn(turnID) {
@@ -136,7 +139,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 			return nil
 		}
 		ts.done = true
-		return p.projectTurnError(env, ev)
+		return append(p.settleThinkingFor(env, turnID, ev), p.projectTurnError(env, ev)...)
 
 	case events.KindAssistant:
 		// The attribution check MUST come before p.turn(turnID). A subagent's
@@ -162,13 +165,15 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectThinking(env, turnID, ev.Content)
 
 	case events.KindToolStart, events.KindToolEnd:
+		settled := p.settleThinkingOnStepClose(env, turnID, ev)
 		p.closeStepOnToolStart(ev, turnID)
-		return p.projectTool(env, ev)
+		return append(settled, p.projectTool(env, ev)...)
 
 	case events.KindSubagentBegin, events.KindSubagentStart, events.KindSubagentEnd,
 		events.KindSubagentHeartbeat, events.KindSubagentDone:
+		settled := p.settleThinkingOnStepClose(env, turnID, ev)
 		p.closeStepOnToolStart(ev, turnID)
-		return p.projectSubagent(env, ev)
+		return append(settled, p.projectSubagent(env, ev)...)
 
 	case events.KindHook:
 		return p.projectHook(env, ev)
@@ -403,6 +408,11 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 		text = redactText(content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
+	// Accumulate for the settled aggregate regardless of the gate above. That
+	// is the whole repair: when the gate withheld the fragment, this is the
+	// only copy of the reasoning left, and it gets redacted as one string at
+	// settle time rather than per fragment.
+	ts.recordThinking(content, ts.segment, text != "")
 	// Reasoning opens a step as surely as narration does: a step that thought
 	// and then called a tool has closed something, even if it never spoke.
 	ts.segmentThinking++

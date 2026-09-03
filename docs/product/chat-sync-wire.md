@@ -117,7 +117,7 @@ server" below for what happens when a payload still arrives oversize.
 
 ## Event Types and Ordering
 
-The sync stream uses 20 structured `mivia.chat.v1.*` event types. The list
+The sync stream uses 23 structured `mivia.chat.v1.*` event types. The list
 below is a copy for reading; the authoritative set is `KnownWireTypes` in
 `internal/chatsync/wire.go`, mirrored in `api/contracts/chat-sessions.v1.json`:
 
@@ -128,6 +128,13 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.assistant.message`
 - `mivia.chat.v1.assistant.reset`
 - `mivia.chat.v1.thinking.delta`
+- `mivia.chat.v1.thinking.message` - one thinking block, settled when the block
+  closes (the turn's next tool call, or its end). It carries the same INV-1
+  rule as `assistant.message`: `text` is empty exactly when `fragments` is
+  non-zero. It exists so reasoning survives a redaction policy. A policy
+  withholds the per-fragment text - a secret split across two deltas matches
+  neither pattern - and with no whole-block form the reasoning reached no
+  viewer at all. This event carries it, redacted as ONE string.
 - `mivia.chat.v1.tool.started`
 - `mivia.chat.v1.tool.ended`
 - `mivia.chat.v1.hook.ran` - one lifecycle hook run on the operator's machine.
@@ -145,6 +152,7 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.subagent.assistant.delta`
 - `mivia.chat.v1.subagent.assistant.message`
 - `mivia.chat.v1.subagent.thinking.delta`
+- `mivia.chat.v1.subagent.thinking.message`
 - `mivia.chat.v1.context.compacted`
 - `mivia.chat.v1.sync.dropped`
 - `mivia.chat.v1.sync.forked`
