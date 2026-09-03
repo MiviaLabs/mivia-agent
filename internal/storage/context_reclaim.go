@@ -29,35 +29,20 @@ var (
 const sessionLeaseTTL = 2 * time.Minute
 
 // ReclaimSession transfers write ownership of an existing, non-tombstoned
-// live context session to principal's own freshly minted capability, then
-// returns its current snapshot. It exists because Principal.capability is
-// minted fresh and random per process and never persisted anywhere it could
-// be recovered - a later process resuming a session by id (an id it learned
-// through LoadSession/ListSessions, both scoped only to workspace+subject
-// with no capability check) has no way to reconstruct the capability the
-// original process held, so authorizing every other durable-write path on an
-// exact capability match would make cross-process resume impossible by
-// construction. Reclaiming is scoped the same way those reads already are:
-// knowing the session's id, workspace and subject is what LoadSession and
-// DeleteSessionSnapshot already treat as sufficient authority for the same
-// session, so extending that authority to "take over its capability" adds no
-// new trust boundary.
+// live context session to principal's fresh capability, then returns its snapshot.
 //
-// A managed worktree session is rejected: those are addressed by name
-// through the chat_sessions catalog (worktree_catalog_keys), never through
-// this capability-gated context_sessions row, so reclaiming one here would
-// be meaningless.
+// Principal.capability is random per process and never persisted. Resuming
+// processes find sessions by id through LoadSession or ListSessions (scoped to
+// workspace and subject). Requiring the original capability would prevent
+// cross-process resume. Authorization matches LoadSession and DeleteSessionSnapshot:
+// workspace, subject, and session id grant authority to take over the capability.
+// Managed worktree sessions are rejected because they use worktree_catalog_keys.
 //
-// The takeover deliberately does NOT stamp a fresh lease_at - only a real
-// heartbeat tick (RenewLease) may mark a lease fresh. Stamping here (an
-// earlier version did) meant every successful reclaim, even a totally
-// uncontested one, poisoned the row against any other reclaim for the next
-// sessionLeaseTTL - breaking one-shot commands (mivia compact, a quick chat
-// -p turn) that never renew a lease at all. Tradeoff accepted instead: a
-// THIRD process reclaiming within the sub-heartbeat-interval window right
-// after this takeover can still succeed (benign churn, loud
-// ErrPrincipalMismatch on the loser's next write) rather than the silent
-// eviction this feature exists to prevent.
+// Takeover does not update lease_at; only RenewLease marks leases fresh. Stamping
+// lease_at on reclaim would block subsequent reclaims for sessionLeaseTTL, breaking
+// one-shot commands (such as compact or single-turn chat) that never renew leases.
+// A third process reclaiming within the sub-heartbeat window can still succeed,
+// returning ErrPrincipalMismatch on the loser's next write instead of silent eviction.
 func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Principal, sessionID string) (contextstate.Snapshot, error) {
 	if err := principal.Validate(); err != nil {
 		return contextstate.Snapshot{}, err

@@ -65,32 +65,20 @@ func PlanToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *co
 }
 
 // withMCPServerToolsAlwaysCore extends a configured core-tier list with every
-// authorized MCP-discovered tool, so an operator's [tools] core (or an
-// agent's tools_core) can never silently defer one.
+// authorized MCP-discovered tool so [tools] core or tools_core cannot silently
+// defer them.
 //
-// That list is hand-authored and names static, compiled-in tool names. An
-// MCP tool's "mcp__<server>__x<hex>" name is derived at runtime from what the
-// remote server reports, and changes the moment that server's tool set does,
-// so a list written ahead of time cannot track it. Without this, naming ANY
-// core tier at all (this repo's own .mivia/mivia.toml does, to control prompt
-// cost) silently and permanently moves every MCP tool into the deferred tier,
-// with no practical way to opt back in.
+// Configured core lists name static tools. An MCP tool name ("mcp__<server>__x<hex>")
+// is derived at runtime from remote server reports and changes dynamically. Setting
+// any core tier would otherwise move all MCP tools into the deferred tier.
 //
-// The name is NOT unguessable, and this comment used to say it was - "a
-// runtime hash ... no way to opt back in short of predicting the hash".
-// EncodeToolName writes a plain reversible hex encoding, so a name IS
-// derivable; what defeats a hand-authored list is that it moves, not that it
-// cannot be spelled. The distinction matters because the same false claim was
-// the stated reason AuthorizedAgentTools granted these tools authority
-// without checking any denylist. isMCPServerTool already
-// treats server selection as authority over an MCP tool's AUTHORIZATION
-// (authorizedAgentTools, mcp_scope.go); this applies the same rule to core-
-// tier placement, since a tool the agent cannot even see advertised is a
-// stronger deferral than a tool it can no longer call.
+// Names are derivable via reversible hex encoding (EncodeToolName), but static
+// configuration cannot track dynamic server changes. isMCPServerTool treats server
+// selection as authority (mcp_scope.go); this function applies the same rule to
+// core-tier placement.
 //
-// Copies core rather than appending in place: core aliases the config
-// layer's *[]string, and append can silently write through spare capacity
-// into memory another binding still reads.
+// Copies core rather than appending in place because core aliases config memory
+// (*[]string); appending could mutate capacity read by another binding.
 func withMCPServerToolsAlwaysCore(core, authorized []string, selected *agents.ResolvedAgent) []string {
 	if selected == nil || len(selected.EffectiveMCPServers) == 0 {
 		return core

@@ -291,7 +291,7 @@
           },
           "depth": {
             "kind": "number",
-            "optional": true
+            "optional": false
           },
           "parent_task": {
             "kind": "string",

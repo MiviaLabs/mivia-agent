@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 from mutation_tokenize import MutationError, sites_for_file, sites_from_tokens
@@ -540,6 +541,52 @@ def _probe_floor(tmp_path: Path) -> list[str]:
     return problems
 
 
+def _probe_moved_lines() -> list[str]:
+    """Check: take_moved consumes the deletion multiset exactly, never
+    matches blank or case-altered text, and reports False when nothing
+    matches."""
+    problems = []
+    counter = Counter({"x := 1": 1, "if err != nil {": 2})
+    if not take_moved(counter, "\tx := 1"):
+        problems.append("moved lines: an exact deleted match was not treated as a move")
+    if take_moved(counter, "x := 1"):
+        problems.append("moved lines: one deleted copy licensed two skips")
+    if not take_moved(counter, "if err != nil {"):
+        problems.append("moved lines: a second distinct deleted text did not match")
+    if counter != Counter({"x := 1": 0, "if err != nil {": 1}):
+        problems.append("moved lines: the deletion counter was not consumed exactly")
+    if take_moved(counter, "   ") or take_moved(counter, ""):
+        problems.append("moved lines: a blank line must never count as a move")
+    if take_moved(counter, "X := 1"):
+        problems.append("moved lines: matching must be exact, not case-folded")
+    return problems
+
+
+def _probe_parse_deleted_lines() -> list[str]:
+    """Check: the -U0 deletion parser skips file headers (including
+    /dev/null) and hunk headers, counts deleted lines stripped of git's
+    single '-' prefix, and ignores blank deletions."""
+    problems = []
+    fixture = (
+        "diff --git a/internal/x/x.go b/internal/x/x.go\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/internal/x/x.go\n"
+        "+++ b/internal/x/x.go\n"
+        "@@ -1,4 +0,0 @@\n"
+        "-package x\n"
+        "-\n"
+        "-- indented content\n"
+    )
+    got = parse_deleted_lines(fixture)
+    if got != Counter({"package x": 1, "- indented content": 1}):
+        problems.append(
+            f"deleted lines: parsed {dict(got)!r}, want exactly the two non-blank deletions"
+        )
+    if parse_deleted_lines("--- /dev/null\n+++ b/internal/x/x.go\n") != Counter():
+        problems.append("deleted lines: file headers must not count as deletions")
+    return problems
+
+
 def run_probe() -> bool:
     """run_probe exercises the kit's own invariants against planted
     fixtures: no fixture is a checked-in .go file. Returns True on
@@ -556,6 +603,8 @@ def run_probe() -> bool:
         problems += _probe_classify()
         problems += _probe_test_target(tmp_path)
         problems += _probe_floor(tmp_path)
+        problems += _probe_moved_lines()
+        problems += _probe_parse_deleted_lines()
 
     if problems:
         print("\n".join(problems))
@@ -595,11 +644,87 @@ def changed_lines_for_file(diff_args: list[str], path: Path) -> set[int]:
     return lines
 
 
+def take_moved(counter: Counter, line_text: str) -> bool:
+    """take_moved reports whether line_text is a VERBATIM MOVE in the diff
+    being swept, consuming one occurrence if so.
+
+    A refactor commit moves existing code between files: git reports the old
+    location as deletions and the new location as additions, so every operator
+    in the moved body sits on a "changed line" and the sweep re-mutates code
+    that the commit which first added it already swept - against the same
+    package tests, for the same answer. Matching a site's line text against
+    the diff's deletions (a multiset, so N deleted copies license exactly N
+    skips) skips that redundant work while every genuinely new or edited line
+    stays swept.
+
+    Matching is stripped and exact: indentation may differ when code moves
+    between scopes, but any other difference means the line was edited, and
+    edited lines must be swept. Pure so a test can assert the contract."""
+    text = line_text.strip()
+    if not text:
+        return False
+    if counter.get(text, 0) > 0:
+        counter[text] -= 1
+        return True
+    return False
+
+
+def parse_deleted_lines(diff_text: str) -> Counter:
+    """parse_deleted_lines counts, by stripped text, every non-blank deleted
+    line in `git diff -U0` output.
+
+    File headers (`--- a/path`, `--- /dev/null`) and hunk headers are skipped;
+    any other '-' line is one deleted source line with git's single '-' prefix
+    stripped, so a deleted line whose own text starts with '-' renders with two
+    dashes and is still counted. Pure so a test can assert the parsing."""
+    counter: Counter = Counter()
+    for line in diff_text.splitlines():
+        if line.startswith(("diff --git ", "index ", "@@")):
+            continue
+        if line.startswith(("--- a/", "--- b/", "--- /dev/null")):
+            continue
+        if line.startswith("-"):
+            text = line[1:].strip()
+            if text:
+                counter[text] += 1
+    return counter
+
+
+def deleted_lines_counter(diff_args: list[str], rel_paths: list[str]) -> Counter:
+    """deleted_lines_counter returns parse_deleted_lines over one git call
+    covering every changed file in the sweep scope. A failed git call yields
+    an empty counter: the sweep then treats no line as moved and mutates
+    every changed-line site, which is the pre-move-aware behavior - never
+    a silent pass."""
+    if not rel_paths:
+        return Counter()
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "-U0", "--", *rel_paths],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return Counter()
+    return parse_deleted_lines(r.stdout)
+
+
 def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
+    """sweep_diff runs mutants on every changed line of the diff, per package,
+    and returns (stats, failed). Sites on verbatim-moved lines - the same
+    stripped bytes deleted elsewhere in this diff - are skipped: a refactor
+    commit moving existing code between files would otherwise re-mutate the
+    whole moved body against the same package tests the origin commit already
+    swept, making commit cost proportional to text churn instead of semantic
+    change. See take_moved."""
     files = changed_go_files(diff_args)
     if not files:
         print("mutation diff sweep: no changed non-test .go files in scope")
         return {"killed": 0, "survived": 0, "discarded": 0, "rate": 100.0}, False
+
+    skipped = 0
+    deleted = deleted_lines_counter(
+        diff_args, [str(f.relative_to(ROOT)) for f in files]
+    )
+    file_lines: dict[Path, list[str]] = {}
 
     pkg_sites: dict[str, list] = {}
     for f in files:
@@ -623,8 +748,22 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
             if is_denylisted(site, spans):
                 continue
             line_no = line_of_offset(file_bytes, site.start)
-            if line_no in changed_lines:
-                pkg_sites.setdefault(pkg, []).append((site, line_no))
+            if line_no not in changed_lines:
+                continue
+            if f not in file_lines:
+                file_lines[f] = file_bytes.decode("utf-8", errors="replace").split("\n")
+            idx = line_no - 1
+            if idx < len(file_lines[f]) and take_moved(deleted, file_lines[f][idx]):
+                skipped += 1
+                continue
+            pkg_sites.setdefault(pkg, []).append((site, line_no))
+
+    if skipped:
+        print(
+            f"mutation diff sweep: skipped {skipped} mutation site(s) on verbatim-moved "
+            "lines (the same bytes are deleted elsewhere in this diff; they were "
+            "already swept where they were first written)"
+        )
 
     total_killed = total_survived = total_discarded = 0
     failed = False

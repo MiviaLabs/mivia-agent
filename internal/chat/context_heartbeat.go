@@ -21,36 +21,19 @@ const defaultContextHeartbeatInterval = 40 * time.Second
 // store cannot block shutdown (stop() joins the ticking goroutine via done).
 const contextHeartbeatTickTimeout = 10 * time.Second
 
-// contextHeartbeat owns a single ticking goroutine that periodically renews
-// the lease for one (store, principal) pair, proving to a rival process's
-// ReclaimSession that this process is still actively working the session
-// (internal/storage.ReclaimSession's TOCTOU-safe conditional takeover). It is
-// store-binding, not principal-binding: arm() dedupes on the store alone, and
-// the ticking goroutine reads the CURRENT principal on every tick through
-// principalFn (bound once at construction, always Session.ContextPrincipal),
-// never the principal value arm() was called with. That is what lets
-// RotateSessionID/reclaimContextSession's 4 contextPrincipal mutation sites
-// change the session's principal without any coordination with this type:
-// the very next tick after a rotation renews under the new principal with no
-// restart needed.
+// contextHeartbeat owns a ticking goroutine that periodically renews the lease
+// for a (store, principal) pair against rival ReclaimSession conditional takeovers.
+// It is store-binding: arm() dedupes by store alone, and the ticker reads the
+// current principal each tick via principalFn (Session.ContextPrincipal).
+// RotateSessionID and reclaimContextSession update the principal without
+// restarting the heartbeat; the next tick uses the new principal directly.
 //
-// Production lifetime note: Session.ReleaseContextLease (wired at
-// dispatchChatSurface, the one choke point every chat surface - one-shot,
-// REPL, TUI - returns through) is the production caller of release(), added
-// after a real incident: without it, a session that ran long enough for even
-// one heartbeat tick (40s) left its lease looking "live" to a rival
-// ReclaimSession for the rest of sessionLeaseTTL (2 minutes) after the
-// process that renewed it had already quit cleanly - so an ordinary "quit,
-// then resume" within that window was refused as ErrSessionLiveElsewhere
-// even though nothing was still using the session. release() is best-effort
-// (a failed/timed-out release just means the next resume waits out the TTL
-// as before, not a regression) and never blocks shutdown past
-// contextHeartbeatTickTimeout. This does not cover every pooled session in
-// the TUI's SessionPool (internal/uiadapter/session_pool.go has no
-// eviction/close path of its own - a pre-existing, separately tracked gap),
-// only the primary session dispatchChatSurface holds - so a session opened
-// via the TUI's own /new or session-switcher, then abandoned without ever
-// becoming the primary session again, still only releases at process exit.
+// Production lifetime: Session.ReleaseContextLease (in dispatchChatSurface exit)
+// invokes release() so clean exits do not leave leases live for sessionLeaseTTL
+// (2 minutes), preventing ErrSessionLiveElsewhere on quick resumes. release() is
+// best-effort, never blocks shutdown beyond contextHeartbeatTickTimeout, and only
+// covers primary sessions held by dispatchChatSurface (TUI SessionPool sessions
+// without active focus release on process exit).
 type contextHeartbeat struct {
 	mu sync.Mutex
 	// principalFn is the live-principal accessor, bound once at construction

@@ -1,32 +1,23 @@
-// Package sdkadapter - CLI-to-SDK tool-registry converter.
+// Package sdkadapter converts CLI tool registries to SDK tool registries.
 //
-// The CLI's internal/tools.Registry and the SDK's tools.Registry are
-// distinct types in distinct modules. The SDK loop consumes only the
-// SDK shape, so the bridge converts the CLI registry: every CLI tool
-// wraps as an SDK tool plus tools.SchemaTool.
+// The CLI internal/tools.Registry and SDK tools.Registry are distinct types.
+// The SDK loop consumes the SDK shape, so the bridge wraps every CLI tool
+// as an SDK tool and tools.SchemaTool.
 //
-// SchemaTool is required, not optional: the SDK's Definitions helper
-// fails closed with ErrNoSchemas when a non-empty registry holds no
-// schema-publishing tool. The schema is the json.Marshal of the CLI
-// tool's Parameters() map - the same OpenAI-parameters object the
-// CLI's OpenAITools() publishes today.
+// SchemaTool is mandatory: the SDK Definitions helper fails closed with
+// ErrNoSchemas when a non-empty registry has no schema-publishing tool.
+// The schema is the json.Marshal of the CLI tool Parameters() map.
 //
-// ConvertToolRegistryWithAdmission adds the legacy CLI's per-call
-// staged/unadmitted predicates (see internal/agent/loop_tool_exec.go:13-27)
-// on top of the standard wrapper: a predicate answering true
-// returns a denial string wrapped in tools.Out, which the SDK
-// renders as a RoleTool message so the model retries on the next
-// iteration. Per-call evaluation keeps the UnadmittedHandler
-// auto-stage side effect (see internal/agent/options.go:108-117)
-// firing only when the model actually invokes the unadmitted tool.
+// ConvertToolRegistryWithAdmission adds per-call staged/unadmitted predicates
+// (internal/agent/loop_tool_exec.go:13-27). A true predicate returns a denial
+// string in tools.Out, rendered as RoleTool for next-iteration retry. Per-call
+// evaluation ensures the UnadmittedHandler auto-stage side effect
+// (internal/agent/options.go:108-117) fires only when invoked.
 //
-// The ref-only shim lives in the agent package
-// (internal/agent/refonly_shim.go) and is applied after this
-// converter. It cannot live here because *remainder.Spool already
-// imports sdkadapter for sdkadapter.Mint; placing the shim in
-// sdkadapter would create an import cycle. See
-// docs/development/sdk-backend-field-mapping.md for the wider
-// rationale.
+// The ref-only shim lives in internal/agent/refonly_shim.go and is applied
+// after this converter. It cannot live here because *remainder.Spool imports
+// sdkadapter for sdkadapter.Mint (preventing an import cycle).
+// See docs/development/sdk-backend-field-mapping.md.
 package sdkadapter
 
 import (
@@ -158,29 +149,22 @@ func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOu
 // NeedsApprovalLayer reports whether tool calls must be routed through the
 // approval adapter.
 //
-// This is the ONE place that decision is made. It used to be restated at three
-// construction sites, and that is exactly why a fail-open survived being fixed
-// at two of them: the site production callers took was the one left alone.
+// This is the single location for this decision, preventing fail-open bugs
+// caused by duplicate construction logic.
 //
-// A gate means someone can be asked, so the layer is always built. With no
-// gate the POLICY still decides, because a policy that is not "auto" is the
-// operator saying a bare execution is not acceptable - and with nobody to ask,
-// the adapter denies. Requiring a gate here is what made "deny" run every
-// write tool on headless surfaces, and "write-only" and "always" had the same
-// hole.
+// When hasGate is true, an approver is present, so the layer is always built.
+// Without a gate, policy decides: any policy other than "auto" requires approval,
+// and because no gate exists to ask, the adapter denies execution. (Previously,
+// requiring a gate caused "deny", "write-only", and "always" to execute write
+// tools without checks on headless surfaces).
 //
-// The empty policy is deliberately NOT treated as a configured one. An empty
-// string normalizes to write-only (config.NormalizeApprovalPolicy), but at
-// this layer it means "this caller set no policy at all" - which today is only
-// the nested subagent loop, whose options carry no approval fields. Treating
-// it as write-only would deny every subagent write tool for every user,
-// including the auto-policy default, which is a far larger change than the
-// hole it closes.
+// An empty policy string is not treated as configured. While it normalizes to
+// write-only in config.NormalizeApprovalPolicy, here it indicates that the caller
+// set no policy (for example, nested subagent loops). Treating empty policy as
+// write-only would incorrectly deny subagent write tools under auto defaults.
 //
-// That carve-out is temporary and load-bearing: when the nested loop inherits
-// a real policy, it disappears, and leaving it behind would make it the next
-// fail-open. TestAnEmptyPolicyIsNotAConfiguredPolicy states the contract so
-// removing it is a deliberate act.
+// This temporary carve-out will be removed when nested loops inherit policy.
+// TestAnEmptyPolicyIsNotAConfiguredPolicy enforces this contract.
 func NeedsApprovalLayer(hasGate bool, policy string) bool {
 	if hasGate {
 		return true

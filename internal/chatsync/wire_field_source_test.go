@@ -16,31 +16,19 @@ import (
 
 // A string that leaves this machine must pass through applyTruncation.
 //
-// truncate.go states that as an invariant - "Every free-text field on this
-// wire is routed through applyTruncation, which is why this is applied there
-// and not at each of its twenty-six call sites" - and the invariant has been
-// false twice. Both times the shape was identical: a payload field assigned
-// DIRECTLY from the raw bus event, while the same string was sanitised and
-// bounded into a local variable a couple of lines away.
+// truncate.go defines this invariant. Direct assignments from raw bus events
+// violated it twice:
+//   - tool.ended Status used ev.Detail. A NUL reached the wire, causing the
+//     receiving column to reject the 100-event batch; a long detail also created
+//     a 393 KB payload exceeding the 64 KiB bound.
+//   - hook Output used ev.Output, leaking the hook absolute path diagnostic.
 //
-//   - tool.ended's Status was built from ev.Detail. A NUL reached the wire,
-//     where the receiving column rejects it and takes the whole hundred-event
-//     batch with it, and a long detail produced a 393 KB payload against a
-//     64 KiB bound.
-//   - before that, the hook row's Output was ev.Output, which carries an
-//     operator diagnostic naming the hook's absolute path.
+// Example-based tests (TestNoWireFieldCarriesANulByte and
+// TestNoEventExceedsTheStoredPayloadBound) only verify listed shapes and missed
+// both regressions.
 //
-// Both regression suites missed both, for the same reason: each enumerates the
-// shapes its author was thinking about. TestNoWireFieldCarriesANulByte lists
-// event shapes; TestNoEventExceedsTheStoredPayloadBound lists them again. A
-// field nobody listed is invisible to both.
-//
-// So this gate does not enumerate. It reads the payload structs from the
-// recorded vocabulary, asks reflection which of their fields are strings, and
-// then reads this package's own source to find any of those fields assigned
-// from the event. It is an authoring-time check on the mechanism rather than
-// another behavioural test over remembered examples, and it is the layer that
-// can see the defect: no test can drive a field it does not know exists.
+// This gate uses AST analysis and reflection over payload struct string fields
+// to ensure no wire string field is assigned directly from bus event variables.
 
 // eventParamNames are the conventional names for the bus event in this
 // package's projector functions. A field assigned from one of these is coming

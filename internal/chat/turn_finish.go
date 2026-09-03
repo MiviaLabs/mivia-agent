@@ -169,32 +169,18 @@ func (s *Session) finishErroredContextTurn(ctx context.Context, loop *agent.Loop
 	return nil
 }
 
-// adoptFailedTurnSnapshot adopts loop.Messages into the live session state,
-// token-fenced exactly like commitPreparedTurn's legacy adoption, then saves
-// the rolling snapshot so a later resume can see it even with no checkpoint
-// commit to back it.
+// adoptFailedTurnSnapshot adopts loop.Messages into live session state with token
+// fencing like commitPreparedTurn, then saves the rolling snapshot for resumes.
 //
-// This is the one place in the errored-turn path that writes durably without
-// going through commitContextTurn's own validateMessageShape/ValidateToolPairing
-// gate (buildContextTurnResult -> the commit-request build), so it must run
-// the same check itself: a preparation can fail validation because its
-// input history is already shape-invalid, and adopting that candidate
-// unchecked would durably persist the corruption - poisoning every later
-// turn's Prepare() call on this session, since Prepare validates the same
-// way. On a failed validation this behaves like commitContextTurn's own
-// "discard" branch: the turn is dropped, s.Messages and the durable snapshot
-// are left untouched.
+// This is the sole errored-turn durable write bypassing commitContextTurn's
+// validateMessageShape/ValidateToolPairing gate. It validates candidate messages
+// directly so invalid history does not persist and poison future Prepare() calls.
+// On validation failure, it acts like commitContextTurn discard: the turn drops,
+// and s.Messages and durable snapshots remain unchanged.
 //
-// The trailing-empty-assistant-message shape this guard was originally
-// written against (a provider's empty response) is no longer reachable via
-// the real call path: finishAgentTurn now strips it unconditionally, on
-// every turn, via provider.DropEmptyAssistantTurns, before either branch of
-// finishErroredContextTurn ever sees loop.Messages. This guard's remaining
-// value is defense-in-depth against every OTHER shape ValidateToolPairing
-// rejects (a dangling tool_use, an orphan tool result, a duplicate call
-// ID) - none of which DropEmptyAssistantTurns touches - plus protection for
-// any future caller that reaches this function without going through
-// finishAgentTurn's repair first.
+// DropEmptyAssistantTurns already strips trailing empty assistant messages, but
+// ValidateToolPairing still guards against dangling tool_use, orphan tool results,
+// duplicate call IDs, and unmediated future call paths.
 func (s *Session) adoptFailedTurnSnapshot(loop *agent.Loop, token OperationToken) {
 	candidate := cloneContextMessages(loop.Messages)
 	if err := validateRestoredMessages(candidate); err != nil {

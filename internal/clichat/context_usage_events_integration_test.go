@@ -113,31 +113,25 @@ func queryUsageEventRows(t *testing.T, db *sql.DB, sessionID string) []usageEven
 }
 
 // TestSessionUsageEventsReachRealSQLiteStoreAcrossAllThreeKinds drives a real
-// chat.Session, wired the same way `mivia chat` wires it
-// (configureSessionContext -> enableSessionContext ->
-// storage.NewUsageWriter(store, ...) -> contextmgr.ContextManager.UsageWriter
-// -> agent.Options.UsageWriter -> internal/agent/loop.go's emitTurnUsage /
-// internal/chat's emitContextCompaction), through two real turns: a plain
-// completion (token_usage + cache_usage) and a forced compaction
-// (compaction). It then reads the SAME on-disk token_usage_events table back
-// through an independent connection.
+// chat.Session wired like `mivia chat`: configureSessionContext ->
+// enableSessionContext -> storage.NewUsageWriter(store, ...) ->
+// contextmgr.ContextManager.UsageWriter -> agent.Options.UsageWriter ->
+// internal/agent/loop.go emitTurnUsage / internal/chat emitContextCompaction.
 //
-// Before this test, internal/storage's tests only ever drove
-// RecordUsageEvent directly with a synthetic record (no session, no Emit*
-// involvement), and internal/agent's Emit* tests only ever used
-// fakeUsageWriter (no real SQLite). Nothing proved the wiring itself - the
-// five-hop chain from a real session down to a real INSERT - actually works
-// end to end. A regression anywhere in that chain (e.g. enableSessionContext
-// forgetting to set ContextManager.UsageWriter, or session.go's turn-options
-// builder dropping the opts.UsageWriter assignment) would have passed every
-// existing test in this slice while writing nothing to disk.
+// The test executes two real turns: a plain completion (token_usage and
+// cache_usage) and a forced compaction (compaction). It then queries the
+// token_usage_events table through an independent connection.
 //
-// This also closes the "three kinds, one session" gap: usage_events_test.go
-// exercises each kind in isolation across separate temp DBs, so nothing
-// proved the kind-specific columns don't cross-contaminate when multiple
-// kinds land in the same session's rows (e.g. a token_usage row picking up a
-// stray before_tokens value, or a compaction row picking up a provider
-// name).
+// Previously, internal/storage tests called RecordUsageEvent directly with
+// synthetic records (no session, no Emit*), and internal/agent Emit* tests used
+// fakeUsageWriter (no SQLite). This test validates the five-hop chain from session
+// to INSERT against regressions (e.g. enableSessionContext omitting
+// ContextManager.UsageWriter or session.go dropping opts.UsageWriter).
+//
+// This test also closes the multi-kind session gap. Previous tests checked each
+// kind in separate temporary databases. This test proves kind-specific columns do
+// not cross-contaminate when all three kinds share session rows (e.g. token_usage
+// receiving before_tokens, or compaction receiving provider).
 func TestSessionUsageEventsReachRealSQLiteStoreAcrossAllThreeKinds(t *testing.T) {
 	dbPath, store, session := newUsageEventsSession(t)
 	defer store.Close()

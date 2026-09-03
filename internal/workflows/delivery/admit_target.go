@@ -10,25 +10,21 @@ import (
 // branch admits, and pins the value delivery-time rewrite detection must
 // compare against later.
 //
-// The repository must have an origin remote, and the delivery target
-// (base) must exist on that remote and CONTAIN (as an ancestor) the commit
-// the run's worktree started from - the worktree's own source branch does
-// NOT need to equal the target by name. This replaces an older check that
-// required the target to sit at the EXACT SAME commit as the worktree
-// base, which only ever admitted a run started at the target's then-tip.
+// The repository must have an origin remote. The delivery target (base)
+// must exist on that remote and CONTAIN (as an ancestor) the commit the
+// run's worktree started from; the worktree source branch does NOT need
+// to match the target name. This replaces an older check requiring the
+// target to sit at the EXACT SAME commit as the worktree base.
 //
 // The containment test fetches the target from the ADMITTED origin URL
-// (never a possibly-stale local refs/heads/<base>), so a target that has
-// advanced beyond what this checkout last saw still admits. When the
-// fetched tip does NOT contain the worktree base, one fallback is tried:
-// the LOCAL refs/heads/<base>, for the ordinary case where the operator
-// committed to the target locally but not yet pushed it (see
-// TestAdmitDeliveryTargetLocalAheadOfOriginAccepted). The fallback accepts
-// only a local ref strictly AHEAD of the fetched origin tip; a DIVERGED
-// local ref (a local rebase, or a target rewritten on origin while this
-// clone was stale) is refused, because the recorded pin would then be
-// unrelated to the worktree base and delivery-time rewrite detection would
-// compare the pin against the same rewritten history it came from.
+// (never a stale local refs/heads/<base>). If the fetched tip does NOT
+// contain the worktree base, one fallback is tried: the LOCAL
+// refs/heads/<base>, for the case where the operator committed locally
+// but has not pushed yet (TestAdmitDeliveryTargetLocalAheadOfOriginAccepted).
+// The fallback accepts only a local ref strictly AHEAD of the fetched origin
+// tip; a DIVERGED local ref (local rebase, or origin target rewritten while
+// stale) is refused because the recorded pin would not relate to the
+// worktree base and rewrite detection would compare against rewritten history.
 //
 // The returned targetOriginCommit is always the FETCHED origin tip (never
 // the local fallback ref); callers record it as OriginBaseCommit, the pin

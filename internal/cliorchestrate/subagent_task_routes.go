@@ -34,32 +34,24 @@ func SetSubagentTaskRouteSink(fn func(coord coordinator.Coordinator, callID, run
 	subagentTaskRouteSink.Store(&fn)
 }
 
-// registerSubagentTaskRoutes publishes one route per spawned task - the
-// coordinator that dispatched it, the run, and the task - to the installed
-// sink. Called from BOTH dispatch paths: RunThroughCoordinator
-// (dispatch_tasks' default wait="run") and spawnAndWait (spawn_agent, and
-// dispatch_tasks' async waits). Both call it immediately after the run
-// snapshot is read, the first moment runID and every tasks[i].ID exist
-// together.
+// registerSubagentTaskRoutes publishes one route per spawned task (coordinator,
+// run ID, task ID) to the installed sink.
 //
-// The registered callID is tasks[i].ID itself: the namespaced
-// "<dispatch tool call id>:<raw model task id>" namespacedTaskID builds in
-// buildTasks. That is deliberately NOT the raw dispatch_tasks tool-call id,
-// because the namespaced form is what the UI keys a subagent row on - both
-// live (dispatchTaskIDsAndNames in
-// internal/ui/screen/conversation/events.go) and rebuilt from persisted
-// history (populateDispatchTasks in
-// internal/uiadapter/subagent_reconstruct.go). callID and taskID are
-// therefore the same string here: the coordinator's own task id IS the UI's
-// row id.
+// Invocation points:
+//   - RunThroughCoordinator (dispatch_tasks default wait="run")
+//   - spawnAndWait (spawn_agent and dispatch_tasks async waits)
 //
-// The coordinator travels with each route rather than being installed once
-// at TUI-build time. It has to: it does not exist when the TUI builds its
-// screen (InitCoordinator creates it lazily, on the first dispatch), and one
-// UI route table is shared by every pooled session while a coordinator is
-// per session. Publishing it here is both the earliest available moment and
-// necessarily early enough - a task cannot be highlighted in the panel, let
-// alone cancelled, before the dispatch that runs this.
+// Both call immediately after reading the run snapshot, when runID and
+// tasks[i].ID are available together.
+//
+// The registered callID is tasks[i].ID (the namespaced "<dispatch tool call id>:
+// <raw model task id>" built in buildTasks), not the raw tool-call ID. UI keys
+// subagent rows on this namespaced ID live (dispatchTaskIDsAndNames) and from
+// history (populateDispatchTasks); callID and taskID are identical here.
+//
+// The coordinator travels per route because it is created lazily per session on
+// first dispatch (InitCoordinator) and cannot be installed at TUI-build time,
+// while the UI route table is shared across pooled sessions.
 func registerSubagentTaskRoutes(c coordinator.Coordinator, runID string, tasks []subagents.Task) {
 	p := subagentTaskRouteSink.Load()
 	if p == nil {

@@ -9,34 +9,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// RegisterChildRunHandle registers one child run (a workflow or panel step
-// run) in the orchestration handle registry, so the standard control tools
-// (inspect_agents, join_run, cancel_run) can resolve it by run ID. Without
-// this registration those tools answer "unknown run_id" for every child run,
-// and a session can neither inspect nor cancel work it started.
+// RegisterChildRunHandle registers one child run (workflow or panel step run)
+// in the orchestration handle registry so control tools (inspect_agents,
+// join_run, cancel_run) can resolve it by run ID rather than returning
+// "unknown run_id".
 //
-// The record carries two identities on purpose:
-//   - repo is the OWNING SESSION's effective orchestration repo - the same
-//     instance the session's control tools carry, and the one the access gate
-//     compares (repositoriesMatch). It participates only in that gate.
-//   - c, h, and d stay the child run's own execution side: the coordinator
-//     that runs the child, its live handle, and the dispatcher whose close
-//     evicts the record.
+// The record carries two identities:
+//   - repo: owning session orchestration repo checked by repositoriesMatch gate.
+//   - c, h, d: child execution side (coordinator, run handle, dispatcher that
+//     evicts on close).
 //
-// The seam mirrors StoreTestRunHandle's parameter order, but it is production
-// wiring, not a test fixture:
-//   - The owner is the explicit sessionID parameter. The seam never derives
-//     the principal from ctx, and it refuses an empty owner: a zero-owner
-//     registration would stay invisible to every session forever.
-//   - Registration goes through storeOrchestrationHandle, so a repeat call for
-//     an existing run ID keeps the ORIGINAL owner (LoadOrStore), and the
-//     retention timer plus the OnClose eviction wiring come from that one
-//     code path.
-//   - The dispatcher must be non-nil. The OnClose closure would panic on a
-//     nil receiver, so the seam refuses it here at the boundary.
-//
-// The seam is additive: it changes no coordinator or pool behavior. cfg
-// supplies only the handle retention window (see orchestrationHandleRetention).
+// Seam characteristics (mirrors StoreTestRunHandle parameter order):
+//   - sessionID is the explicit non-empty owner (never derived from ctx).
+//   - Uses storeOrchestrationHandle (LoadOrStore preserves original owner;
+//     configures retention timer and OnClose eviction).
+//   - Dispatcher must be non-nil to prevent panic on close.
+//   - Additive; cfg supplies handle retention window (orchestrationHandleRetention).
 func RegisterChildRunHandle(runID string, c coordinator.Coordinator, h *coordinator.RunHandle, repo ledger.LedgerRepository, d *runtime.Dispatcher, sessionID string, cfg config.SubagentConfig) error {
 	if d == nil {
 		return errors.New("child run registration needs a dispatcher")

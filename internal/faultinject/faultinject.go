@@ -1,17 +1,14 @@
-// Package faultinject provides a deterministic, counter-based fault and
-// hang trigger for concurrency and failure-path tests.
+// Package faultinject provides a deterministic, counter-based fault and hang
+// trigger for concurrency and failure-path tests.
 //
-// A time.Sleep-based test proves nothing: the sleep finishes before the
-// racing goroutine reaches the interleaving under test (a false pass) or
-// after it (a slow, still-nondeterministic wait). This package replaces
-// that pattern with a call counter. A Gate counts every call through a
-// seam and, on the call whose ordinal matches FaultOn or HangOn, returns
-// an injected error or blocks on the caller's context; every other call
-// passes through untouched. The same FaultOn value always faults the same
-// call, on every run and every machine.
+// Sleep-based tests are nondeterministic: sleeps finish too early (false pass)
+// or too late (slow wait). Gate replaces sleeps with a call counter. Gate
+// counts every call through a seam. When the call ordinal matches FaultOn or
+// HangOn, Gate returns an injected error or blocks on the caller context.
+// All other calls pass untouched. The same FaultOn value always faults the
+// same call on every run.
 //
-// A caller holds a *Gate next to the interface it wraps and calls Check at
-// the top of each method:
+// A caller holds a *Gate and calls Check at the top of each method:
 //
 //	func (f *faultStore) Load(ctx context.Context, key string) (Value, error) {
 //		if err := f.gate.Check(ctx, "store.Load"); err != nil {
@@ -20,10 +17,8 @@
 //		return f.inner.Load(ctx, key)
 //	}
 //
-// One Gate counts calls across every method it is wired into, the same way
-// the SDK's e2e.FaultStore counts across Load, CompareAndSwap, and Range.
-// A caller that wants an independent counter per method holds a separate
-// Gate per method instead.
+// One Gate counts calls across every method wired into it. Callers that need
+// independent counters per method hold a separate Gate per method.
 package faultinject
 
 import (
