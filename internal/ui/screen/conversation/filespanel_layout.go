@@ -77,11 +77,12 @@ func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive
 }
 
 // panelGroupLens returns the line count of each group in the sidebar layout:
-// 1 line for SIDEBAR title, 1 line for files header, 1 line per file entry,
-// 1 line for subagents header, and 2 lines per agent row.
+// 1 line for the model header, 1 for the model row, 1 for the files header,
+// 1 per file entry, 1 for the subagents header, and 2 per agent row.
 func panelGroupLens(fileCount, agentCount int) []int {
-	lens := make([]int, 0, 3+fileCount+agentCount)
-	lens = append(lens, 1) // SIDEBAR title
+	lens := make([]int, 0, 4+fileCount+agentCount)
+	lens = append(lens, 1) // model header
+	lens = append(lens, 1) // model row
 	lens = append(lens, 1) // files changed header
 	for i := 0; i < fileCount; i++ {
 		lens = append(lens, 1)
@@ -93,21 +94,23 @@ func panelGroupLens(fileCount, agentCount int) []int {
 	return lens
 }
 
-// panelGroupToPickerIdx maps a group index to its corresponding picker cursor index,
-// or -1 if the group is a non-selectable header (SIDEBAR, files header, subagents header).
+// panelGroupToPickerIdx maps a group index to its corresponding picker cursor
+// index, or -1 if the group is a non-selectable header (model header, files
+// header, subagents header). Picker index 0 is the model row.
 func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
-	if gIdx < 2 {
+	switch {
+	case gIdx == 1:
+		return 0
+	case gIdx < 3:
+		return -1
+	case gIdx < 3+fileCount:
+		return 1 + (gIdx - 3)
+	case gIdx == 3+fileCount:
 		return -1
 	}
-	if gIdx < 2+fileCount {
-		return gIdx - 2
-	}
-	if gIdx == 2+fileCount {
-		return -1
-	}
-	agentIdx := gIdx - (3 + fileCount)
+	agentIdx := gIdx - (4 + fileCount)
 	if agentIdx >= 0 && agentIdx < agentCount {
-		return fileCount + agentIdx
+		return 1 + fileCount + agentIdx
 	}
 	return -1
 }
@@ -117,12 +120,16 @@ func panelSelGroup(selIdx, fileCount, agentCount int) int {
 	if selIdx < 0 {
 		return -1
 	}
+	if selIdx == 0 {
+		return 1 // the model row
+	}
+	selIdx-- // past the model row
 	if selIdx < fileCount {
-		return 2 + selIdx
+		return 3 + selIdx
 	}
 	agentIdx := selIdx - fileCount
 	if agentIdx < agentCount {
-		return 3 + fileCount + agentIdx
+		return 4 + fileCount + agentIdx
 	}
 	return -1
 }
@@ -146,6 +153,33 @@ func clipRowsToWidth(rows []string, inner int) []string {
 		}
 	}
 	return rows
+}
+
+// panelModelRow draws the sidebar's model row: the provider dimmed, the
+// model name in the foreground role, and the context share when known,
+// with the same "> " marker and selection background the file rows use.
+func (s Screen) panelModelRow(selected bool) string {
+	info := s.topbar.Info()
+	name := info.Name
+	if name == "" {
+		name = "no model"
+	}
+	prefix, style := "  ", render.Role(s.Theme, s.Tier, theme.RoleFG)
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	if selected {
+		prefix = "> "
+		style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
+		subtle = render.WithBg(subtle, s.Theme, s.Tier, theme.RoleBGSelection)
+	}
+	row := subtle.Render(prefix)
+	if info.Provider != "" {
+		row += subtle.Render(info.Provider + "/")
+	}
+	row += style.Render(name)
+	if pct, ok := s.topbar.ContextPercent(); ok {
+		row += subtle.Render("  " + strconv.Itoa(pct) + "%")
+	}
+	return row
 }
 
 func (s Screen) panelFileRow(e fileEntry, selected bool) string {
@@ -292,22 +326,27 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	var groups [][]string
 	selGroup := -1
 
-	if marked {
-		groups = append(groups, []string{render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR") + " " + subtle.Render("(focused)")})
-	} else {
-		groups = append(groups, []string{subtle.Render("  SIDEBAR")})
+	// The model section replaces the old SIDEBAR title: the sidebar's
+	// first row IS the session's model (the top bar hides its capsule
+	// while the panel is open, so it is named once). Focus is signalled
+	// by the "> " marker on the selected row, not by a header.
+	groups = append(groups, []string{subtle.Render("model")})
+	if selIdx == 0 {
+		selGroup = len(groups)
 	}
+	groups = append(groups, []string{s.panelModelRow(marked && selIdx == 0)})
 
 	groups = append(groups, []string{subtle.Render("files changed (" + strconv.Itoa(len(visible)) + ")")})
 	for i, e := range visible {
-		if i == selIdx {
+		idx := 1 + i
+		if idx == selIdx {
 			selGroup = len(groups)
 		}
-		groups = append(groups, []string{s.panelFileRow(e, marked && i == selIdx)})
+		groups = append(groups, []string{s.panelFileRow(e, marked && idx == selIdx)})
 	}
 	groups = append(groups, []string{subtle.Render("subagents (" + strconv.Itoa(len(agents)) + ")")})
 	for i, a := range agents {
-		idx := len(visible) + i
+		idx := 1 + len(visible) + i
 		if idx == selIdx {
 			selGroup = len(groups)
 		}

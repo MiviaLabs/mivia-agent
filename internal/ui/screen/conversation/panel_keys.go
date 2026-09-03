@@ -46,6 +46,12 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 	s.panel.list = next
 	s.panel.offset = 0 // a moved selection restarts the content at its top
 	if cmd != nil {
+		if _, ok := cmd().(picker.SelectMsg); ok && s.panel.modelRowSelected() {
+			// Enter on the model row opens the model picker: the same
+			// dialog "/model" opens, from the same runner.
+			scr, openCmd := s.runSlashCommand("/model")
+			return scr, openCmd, true
+		}
 		if _, ok := cmd().(picker.SelectMsg); ok && s.panelDialogFits() {
 			// Enter on a subagent row opens its thread when one
 			// resolves (openThread builds or reuses the embedded
