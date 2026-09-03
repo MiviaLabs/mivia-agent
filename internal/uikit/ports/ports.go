@@ -101,6 +101,46 @@ func (b ContextBreakdown) Conversation() int64 {
 // Total is Floor plus Conversation.
 func (b ContextBreakdown) Total() int64 { return b.Floor() + b.Conversation() }
 
+// ScaleTo rescales every bucket so they sum to exactly total, preserving the
+// composition. It exists for the one place where the total and the
+// composition come from different sources: the provider prices a live turn
+// and reports only a number, while the session knows what that number is made
+// of. Scaling keeps the parts and the whole in agreement instead of blanking
+// the parts for the length of a turn.
+//
+// ToolCount is a schema count, not a token cost, so it passes through
+// unscaled. A zero-cost breakdown scales to nothing rather than inventing a
+// composition it does not have.
+func (b ContextBreakdown) ScaleTo(total int64) ContextBreakdown {
+	raw := b.Total()
+	if raw <= 0 || total <= 0 {
+		return ContextBreakdown{ToolCount: b.ToolCount}
+	}
+	if raw == total {
+		return b
+	}
+	scaled := ContextBreakdown{ToolCount: b.ToolCount}
+	in, out := b.buckets(), scaled.buckets()
+	for i, v := range in {
+		*out[i] = *v * total / raw
+	}
+	if drift := total - scaled.Total(); drift != 0 {
+		largest := out[0]
+		for _, f := range out[1:] {
+			if *f > *largest {
+				largest = f
+			}
+		}
+		*largest += drift
+	}
+	return scaled
+}
+
+// buckets lists the token fields in a stable order for ScaleTo's arithmetic.
+func (b *ContextBreakdown) buckets() []*int64 {
+	return []*int64{&b.System, &b.ToolSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+}
+
 // Conversation is the read/write surface a UI drives. It never calls the
 // agent directly; it sends intents and reads state back.
 type Conversation interface {
