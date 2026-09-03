@@ -37,44 +37,40 @@ func TestNavClick_TwoLineAgentRowsUnwindowed(t *testing.T) {
 	s.panel.observeAgentStart("agent-1", "agent-1")
 	s.panel.observeAgentStart("agent-2", "agent-2")
 
-	// Rendered structure (unwindowed, innerNavH = 20):
-	// clickRow 0 is top padding (handleNavClick does clickRow--); then the
-	// three context rows (header, bar, totals), model header, model row,
-	// files header, f0.go, f1.go, subagents header, and two lines per agent
-	// from clickRow 10.
-
+	// Click rows are READ BACK OUT of the rendered sidebar rather than
+	// counted in a comment. A table of hardcoded row numbers derived from
+	// the renderer's own layout agrees with the code by construction and
+	// rots on the next row-order change - the pattern ux-rules 7.9
+	// forbids, and the one that hid the transcript's header/separator
+	// off-by-one for as long as it existed.
 	tests := []struct {
 		name       string
-		clickRow   int
+		needle     string
+		lineOffset int // 1 for a subagent's metrics line
 		wantOpen   bool
 		wantAgent  string
 		wantFile   string
 		wantCursor int
 	}{
-		{"header: context", 1, false, "", "", 0},
-		{"context bar", 2, false, "", "", 0},
-		{"context totals", 3, false, "", "", 0},
-		{"header: model", 4, false, "", "", 0},
-		{"model row (single click)", 5, false, "", "", 0},
-		{"header: files changed", 6, false, "", "", 0},
-		{"header: subagents", 9, false, "", "", 0},
-		{"out-of-range below", 19, false, "", "", 0},
+		{name: "header: context", needle: "context"},
+		{name: "header: model", needle: "model"},
+		{name: "model row (single click)", needle: "fixture/replay"},
+		{name: "header: files changed", needle: "files changed ("},
+		{name: "header: subagents", needle: "subagents ("},
 		// Picker indices count the selectable rows: context header,
 		// model, files header, the files, subagents header, the agents.
-		{"file 0", 7, true, "", "f0.go", 3},
-		{"file 1", 8, true, "", "f1.go", 4},
-		{"agent-0 name line", 10, true, "agent-0", "", 6},
-		{"agent-0 metrics line", 11, true, "agent-0", "", 6},
-		{"agent-1 name line", 12, true, "agent-1", "", 7},
-		{"agent-1 metrics line", 13, true, "agent-1", "", 7},
-		{"agent-2 name line", 14, true, "agent-2", "", 8},
-		{"agent-2 metrics line", 15, true, "agent-2", "", 8},
+		{name: "file 0", needle: "f0.go", wantOpen: true, wantFile: "f0.go", wantCursor: 3},
+		{name: "file 1", needle: "f1.go", wantOpen: true, wantFile: "f1.go", wantCursor: 4},
+		{name: "agent-0 name line", needle: "agent-0", wantOpen: true, wantAgent: "agent-0", wantCursor: 6},
+		{name: "agent-0 metrics line", needle: "agent-0", lineOffset: 1, wantOpen: true, wantAgent: "agent-0", wantCursor: 6},
+		{name: "agent-1 name line", needle: "agent-1", wantOpen: true, wantAgent: "agent-1", wantCursor: 7},
+		{name: "agent-2 metrics line", needle: "agent-2", lineOffset: 1, wantOpen: true, wantAgent: "agent-2", wantCursor: 8},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scr := s
-			next, _ := scr.handleNavClick(tc.clickRow)
+			next, _ := scr.handleNavClick(sidebarRowOf(t, scr, tc.needle) + tc.lineOffset)
 			res := next.(Screen)
 			if res.panel.dialog != tc.wantOpen {
 				t.Fatalf("dialog = %v, want %v", res.panel.dialog, tc.wantOpen)

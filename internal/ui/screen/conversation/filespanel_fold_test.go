@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
 // foldScreen is an open sidebar with files and subagents in it.
@@ -209,5 +210,131 @@ func TestFoldStateSurvivesLiveUpdates(t *testing.T) {
 	}
 	if g, ok := s.panel.navCursor(); !ok || g.kind != navAgentsHeader {
 		t.Errorf("a live diff moved the cursor off the folded header, onto %+v", g)
+	}
+}
+
+// TestTheWindowFitsFromEveryCursorPosition sweeps the anchor, which the
+// named regression test does not: it only ever selects the LAST row, so
+// the window's downward-growth guard is never exercised and the upward
+// one only at even limits. Removing either guard passed the whole suite.
+func TestTheWindowFitsFromEveryCursorPosition(t *testing.T) {
+	s := foldScreen(t, 8)
+	rows := len(s.panel.navSelectable())
+	for cur := 0; cur < rows; cur++ {
+		s.panel.list.MoveTo(cur)
+		for maxRows := 2; maxRows <= 40; maxRows++ {
+			if n := len(s.panelRows(60, maxRows)); n > maxRows {
+				t.Fatalf("cursor %d, maxRows %d: sidebar drew %d rows", cur, maxRows, n)
+			}
+		}
+	}
+}
+
+// TestFoldingRebindsThePickerSoEveryCursorRowSelects: folding removes
+// rows from the picker's list, and picker.Update clamps Down against its
+// own item count. Without the rebind inside setSectionCollapsed the list
+// keeps the pre-fold count, so arrowing down walks the cursor onto rows
+// that select nothing and where Enter does nothing.
+func TestFoldingRebindsThePickerSoEveryCursorRowSelects(t *testing.T) {
+	s := foldScreen(t, 2)
+	s.panel.selectNavKind(navFilesHeader, 0)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	s = next.(Screen)
+
+	for i := 0; i < 12; i++ {
+		next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+		if _, ok := s.panel.navCursor(); !ok {
+			t.Fatalf("after %d downs the cursor (row %d) selects nothing; the picker was not rebound",
+				i+1, s.panel.list.CursorRow())
+		}
+	}
+}
+
+// TestTheContextSectionDrawsExactlyTheRowsItClaims. panelRows consumes
+// the context block through a closure, so a mismatch between the claimed
+// height and the rendered rows does not shift the click map - it
+// silently DROPS the last row of the breakdown instead. Deleting the
+// capped-budget row bump passed the entire suite while losing "this
+// turn" from every capped session.
+func TestTheContextSectionDrawsExactlyTheRowsItClaims(t *testing.T) {
+	for _, capped := range []bool{false, true} {
+		for _, collapsed := range []bool{false, true} {
+			s := foldScreen(t, 1)
+			s.panel.contextCollapsed = collapsed
+			window := int64(400_000)
+			declared := window
+			if capped {
+				declared = 1_000_000
+			}
+			s.topbar.SetSession(
+				ports.ModelInfo{Name: "m", ContextWindow: window, DeclaredWindow: declared},
+				ports.Usage{InputTokens: 10_000})
+			for _, maxRows := range []int{0, 1, 4, 10, 23, 24, 40, 120} {
+				claimed := s.contextSectionRows(maxRows)
+				drawn := len(s.panelContextRows(60, maxRows))
+				if claimed != drawn {
+					t.Errorf("capped=%v collapsed=%v maxRows=%d: claims %d rows, draws %d",
+						capped, collapsed, maxRows, claimed, drawn)
+				}
+			}
+		}
+	}
+}
+
+// TestAHeldAgentRowSurvivesAFileArrivingAboveIt is the symmetric twin of
+// the bug selKey exists for, and the case the fold tests missed: the
+// cursor on a subagent row while a new FILE arrives above the whole
+// subagents section.
+func TestAHeldAgentRowSurvivesAFileArrivingAboveIt(t *testing.T) {
+	s := foldScreen(t, 3)
+	s.panel.selectNavKind(navAgent, 1)
+	want := s.panel.selectionKey()
+	if want == "" {
+		t.Fatal("precondition: an agent row is selected")
+	}
+
+	next, _ := s.Update(diffEvent("c9", "zz-new.go", 1, 0))
+	s = next.(Screen)
+	if got := s.panel.selectionKey(); got != want {
+		t.Errorf("a file arriving above moved the selection from %q to %q", want, got)
+	}
+}
+
+// TestAHeldFileRowSurvivesAFileArrivingAboveIt: the same for a file row,
+// the other half of the key map that nothing pinned.
+func TestAHeldFileRowSurvivesAFileArrivingAboveIt(t *testing.T) {
+	s := foldScreen(t, 1)
+	s.panel.selectNavKind(navFile, 1)
+	want := s.panel.selectionKey()
+
+	next, _ := s.Update(diffEvent("c9", "aaa-first.go", 1, 0))
+	s = next.(Screen)
+	if got := s.panel.selectionKey(); got != want {
+		t.Errorf("a file arriving above moved the selection from %q to %q", want, got)
+	}
+}
+
+// TestTheHintStatesWhatTheSelectedRowActuallyDoes: "enter:view" is false
+// on a section header, where Enter folds. ux-rules 1.4 requires a hint to
+// state the complete truth, and the fold keys otherwise had no
+// advertisement at all beyond the marker glyph.
+func TestTheHintStatesWhatTheSelectedRowActuallyDoes(t *testing.T) {
+	s := foldScreen(t, 2)
+
+	s.panel.selectNavKind(navFile, 0)
+	if got := ansi.Strip(s.panelFocusedHints(80)); !strings.Contains(got, "enter:view") {
+		t.Errorf("on a file row the hint is %q, want it to name enter:view", got)
+	}
+
+	s.panel.selectNavKind(navAgentsHeader, 0)
+	got := ansi.Strip(s.panelFocusedHints(80))
+	if strings.Contains(got, "enter:view") {
+		t.Errorf("on a header the hint still claims enter:view: %q", got)
+	}
+	for _, want := range []string{"←/→:fold", "enter:toggle"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("header hint %q does not name %q", got, want)
+		}
 	}
 }

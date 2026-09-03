@@ -117,6 +117,12 @@ func (s Screen) statusRight(avail int) string {
 	return s.idleHints(avail, candidateList)
 }
 
+// panelFocusedHints states what the keys do on the row the cursor is
+// ACTUALLY on. Enter opens a file's diff or a subagent's thread, but on a
+// section header it folds - so a fixed "enter:view" was untrue exactly
+// when the header was selected, and ux-rules 1.4 requires a hint to state
+// the complete truth. The fold keys were reachable with no hint at all;
+// the glyph was their only advertisement.
 func (s Screen) panelFocusedHints(avail int) string {
 	accent := render.Role(s.Theme, s.Tier, theme.RoleAccent)
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
@@ -126,6 +132,15 @@ func (s Screen) panelFocusedHints(avail int) string {
 		"enter:view  esc:back",
 		"esc:back",
 		"",
+	}
+	if s.panel.sectionHeaderSelected() {
+		candidates = []string{
+			"↑/↓:select  ←/→:fold  enter:toggle  esc:back",
+			"←/→:fold  enter:toggle  esc:back",
+			"←/→:fold  esc:back",
+			"esc:back",
+			"",
+		}
 	}
 	for _, rest := range candidates {
 		full := tab
