@@ -83,3 +83,67 @@ func TestStepOnEventNoLiveHeartbeatWithoutProgress(t *testing.T) {
 		}
 	}
 }
+
+// TestStepOnEventCountsQueuedAndRunningStartOnce pins the fix for the
+// subagent panel reporting exactly twice the tools that ran ("Tools: N" in
+// internal/ui/screen/conversation/filespanel_layout.go, fed by this
+// heartbeat's toolcalls= field), and for inspect_agents'
+// progress.tool_calls, fed by the same stream through the ToolCallSink.
+//
+// The loop emits TWO EventToolStart events for ONE tool call - Detail
+// "queued" from the PointPreTool hook, then Detail "running" from the
+// dispatcher shim, both carrying the same ToolCallID
+// (internal/agent/sdk_tool_events.go; pinned by
+// internal/agent/agentloop_maxconcurrent_test.go: 3 calls => 6 events).
+// The exact pair below is what a real one-tool run emits.
+//
+// Both legs must still reach the operator stream unchanged - that wire shape
+// is a pinned contract - so the assertions separate what is forwarded from
+// what is counted and recorded.
+func TestStepOnEventCountsQueuedAndRunningStartOnce(t *testing.T) {
+	var stepCount, toolCallCount atomic.Int64
+	var got []agent.Event
+	var steps []ToolCallStep
+	h := &MultiStepHandler{}
+	ctx := ContextWithToolCallSink(context.Background(), func(s ToolCallStep) { steps = append(steps, s) })
+	onEvent := h.stepOnEvent(ctx, func(e agent.Event) { got = append(got, e) }, &stepCount, &toolCallCount, time.Now())
+
+	onEvent(agent.Event{Kind: agent.EventToolStart, ToolCallID: "call_1", Name: "read_file", Detail: "queued", Input: `{"path":"a.go"}`})
+	onEvent(agent.Event{Kind: agent.EventToolStart, ToolCallID: "call_1", Name: "read_file", Detail: "running"})
+	onEvent(agent.Event{Kind: agent.EventToolEnd, ToolCallID: "call_1", Name: "read_file", Detail: "completed"})
+
+	if n := toolCallCount.Load(); n != 1 {
+		t.Fatalf("toolCallCount = %d, want 1 (one tool call, two tool_start legs)", n)
+	}
+	var heartbeats []agent.Event
+	var forwardedStarts int
+	for _, e := range got {
+		switch e.Kind {
+		case agent.EventSubagentHeartbeat:
+			heartbeats = append(heartbeats, e)
+		case agent.EventToolStart:
+			forwardedStarts++
+		}
+	}
+	if forwardedStarts != 2 {
+		t.Errorf("forwarded %d tool_start events, want both legs (the operator wire shape is unchanged)", forwardedStarts)
+	}
+	if len(heartbeats) != 1 {
+		t.Fatalf("got %d live heartbeats, want 1 (only the first leg is progress)", len(heartbeats))
+	}
+	if !strings.Contains(heartbeats[0].Detail, "toolcalls=1") {
+		t.Errorf("heartbeat = %q, want toolcalls=1", heartbeats[0].Detail)
+	}
+	var recordedStarts int
+	for _, s := range steps {
+		if s.Kind == "start" {
+			recordedStarts++
+		}
+	}
+	if recordedStarts != 1 {
+		t.Errorf("recorded %d start steps, want 1: %+v", recordedStarts, steps)
+	}
+	if recordedStarts == 1 && steps[0].Input == "" {
+		t.Errorf("recorded start step lost its Input; the kept leg must be the one carrying the args: %+v", steps[0])
+	}
+}
