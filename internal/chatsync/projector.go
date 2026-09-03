@@ -145,7 +145,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		// takes the streamed branch and ships an EMPTY text with a non-zero
 		// fragment count - a blank assistant message in every viewer, for a
 		// root loop that never streamed a token itself.
-		if ev.AgentTask != "" {
+		if isDispatched(ev) {
 			return p.projectSubagentAssistant(env, turnID, ev)
 		}
 		ts := p.turn(turnID)
@@ -155,7 +155,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectAssistantReset(env, turnID, ev)
 
 	case events.KindThinking:
-		if ev.AgentTask != "" {
+		if isDispatched(ev) {
 			return p.projectSubagentThinking(env, turnID, ev)
 		}
 		p.turn(turnID)
@@ -226,6 +226,30 @@ func (p *Projector) resolveTurnID(rawTurnID string, kind events.Kind) (string, b
 		p.activeSyntheticTurn = ""
 	}
 	return turnID, true
+}
+
+// isDispatched reports whether ev was produced by a DISPATCHED run rather
+// than the root loop, and is the single predicate every lane decision keys
+// on.
+//
+// It must agree with buildEnvelope, which stamps AgentOrigin only when
+// AgentDepth > 0. The four lane decisions used to ask "does it have a task
+// id?" instead, and the two answers are not the same question: a task id is
+// an attribution key that non-dispatch producers also set (the workflow
+// progress sinks in internal/cliworkflow and internal/workflows/localengine
+// publish AgentTask with no depth at all), so the type could say "subagent"
+// on an event whose envelope carried no agent origin. A consumer splitting
+// the main transcript from the subagent lanes on the type then files that
+// event under a lane it cannot key, and the prose disappears from the main
+// history with nothing to put it back.
+//
+// Depth is the honest signal: originForRequest (internal/subagents/
+// multi_step.go) stamps req.Depth+1, so every dispatched run is at 1 or
+// deeper and the root loop is at 0. The task id is still required, because
+// the lane state and the block ids are keyed by it and a depth without a key
+// is not a lane.
+func isDispatched(ev events.Event) bool {
+	return ev.AgentDepth > 0 && ev.AgentTask != ""
 }
 
 func (p *Projector) buildEnvelope(ev events.Event, turnID string) Envelope {
