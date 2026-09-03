@@ -19,6 +19,11 @@ type contractField struct {
 type contractStruct struct {
 	DTO    string                   `json:"dto"`
 	Fields map[string]contractField `json:"fields"`
+
+	// Constraints is present only where the contract records accept/refuse
+	// rules as well as a shape - today just sessionInput. See
+	// remote_input_contract_test.go.
+	Constraints *contractInputConstraints `json:"constraints"`
 }
 
 type chatSessionsContract struct {

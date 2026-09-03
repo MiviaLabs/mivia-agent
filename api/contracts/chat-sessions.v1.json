@@ -181,6 +181,25 @@
           "kind": "string",
           "nullable": true
         }
+      },
+      "constraints": {
+        "_note": "Authoritative accept/refuse rules for a SessionInput, shared by the API that stores one and the CLI that executes one. Recorded here because the two sides diverged: the API accepted kinds and body sizes the CLI then silently refused, so an input could be accepted, stored and delivered but never acted on.",
+        "kinds": [
+          "message",
+          "cancel",
+          "cancel_task",
+          "cancel_tool_call"
+        ],
+        "kindsRetiredInDB": [
+          "approval"
+        ],
+        "kindsNote": "approval is a Postgres enum value that cannot be dropped, and historical rows may carry it. No producer emits it and the CLI never acted on it, so it must be REFUSED at the API edge rather than stored as a black hole.",
+        "bodyMaxBytes": 8192,
+        "bodyLengthUnit": "utf8-bytes",
+        "bodyLengthUnitNote": "UTF-8 BYTES, not characters and not UTF-16 code units. class-validator's MaxLength counts UTF-16 units, so a cap expressed with it diverges from Go's len(string) on any non-ASCII body: 3000 emoji is 6000 UTF-16 units but 12000 bytes. Both sides must measure bytes.",
+        "bodyRequiredExceptKinds": [
+          "cancel"
+        ]
       }
     },
     "nextInput": {
