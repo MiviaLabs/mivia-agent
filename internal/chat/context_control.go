@@ -58,8 +58,10 @@ func (s *Session) ContextUsage() ContextUsage {
 		outputReserve = *r
 	}
 	var toolSpecs []map[string]any
+	var externalTools map[string]string
 	if s.Tools != nil {
 		toolSpecs = s.Tools.OpenAITools()
+		externalTools = s.Tools.ExternalOrigins()
 	}
 	profile := provider.ContextAccountingFor(s.binding.Completer)
 	calibration := s.Calibration
@@ -69,7 +71,7 @@ func (s *Session) ContextUsage() ContextUsage {
 		used = provider.MessagesTokens(messages, profile)
 	}
 	used = calibration.Apply(used)
-	parts := calibratedBreakdown(messages, toolSpecs, profile, used)
+	parts := calibratedBreakdown(messages, toolSpecs, externalTools, profile, used)
 	percent := 0
 	if budget > 0 {
 		percent = used * 100 / budget

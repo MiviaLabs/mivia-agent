@@ -37,7 +37,13 @@ func breakdownTools() []provider.ToolSpec {
 	return []provider.ToolSpec{
 		{"type": "function", "function": map[string]any{"name": "read_file", "description": strings.Repeat("d", 200)}},
 		{"type": "function", "function": map[string]any{"name": "write_file", "description": strings.Repeat("d", 200)}},
+		{"type": "function", "function": map[string]any{"name": "mcp__linear__issue", "description": strings.Repeat("d", 600)}},
 	}
+}
+
+// breakdownExternal marks the one server-supplied tool in breakdownTools.
+func breakdownExternal() map[string]string {
+	return map[string]string{"mcp__linear__issue": "linear"}
 }
 
 // TestBreakdownSeparatesEveryClass: each kind of message lands in its own
@@ -45,7 +51,7 @@ func breakdownTools() []provider.ToolSpec {
 // right total, so only per-bucket assertions catch it.
 func TestBreakdownSeparatesEveryClass(t *testing.T) {
 	profile := provider.ContextAccountingProfile{}
-	b, err := breakdown(breakdownMessages(), breakdownTools(), profile)
+	b, err := breakdown(breakdownMessages(), breakdownTools(), breakdownExternal(), profile)
 	if err != nil {
 		t.Fatalf("breakdown: %v", err)
 	}
@@ -55,6 +61,7 @@ func TestBreakdownSeparatesEveryClass(t *testing.T) {
 	}{
 		{"System", b.System},
 		{"ToolSchemas", b.ToolSchemas},
+		{"ExternalSchemas", b.ExternalSchemas},
 		{"Memory", b.Memory},
 		{"Summary", b.Summary},
 		{"Prose", b.Prose},
@@ -67,7 +74,15 @@ func TestBreakdownSeparatesEveryClass(t *testing.T) {
 		}
 	}
 	if b.ToolCount != 2 {
-		t.Errorf("ToolCount = %d, want 2", b.ToolCount)
+		t.Errorf("ToolCount = %d, want 2 compiled-in tools", b.ToolCount)
+	}
+	if b.ExternalToolCount != 1 {
+		t.Errorf("ExternalToolCount = %d, want 1 server-supplied tool", b.ExternalToolCount)
+	}
+	// The server tool carries the longest description, so a classifier that
+	// charged it as compiled-in would show up here and nowhere else.
+	if b.ExternalSchemas <= b.ToolSchemas {
+		t.Errorf("ExternalSchemas = %d, ToolSchemas = %d: the server schema is not being separated", b.ExternalSchemas, b.ToolSchemas)
 	}
 	// The tool result is the largest single message, so it must outweigh the
 	// prose it would have been merged into had the role check been dropped.
@@ -83,7 +98,7 @@ func TestBreakdownSeparatesEveryClass(t *testing.T) {
 func TestBreakdownTotalMatchesEstimatePromptCost(t *testing.T) {
 	profile := provider.ContextAccountingProfile{}
 	messages, tools := breakdownMessages(), breakdownTools()
-	b, err := breakdown(messages, tools, profile)
+	b, err := breakdown(messages, tools, breakdownExternal(), profile)
 	if err != nil {
 		t.Fatalf("breakdown: %v", err)
 	}
@@ -103,14 +118,15 @@ func TestBreakdownTotalMatchesEstimatePromptCost(t *testing.T) {
 // the number beside them. Integer division alone leaves a gap of up to one
 // token per bucket, which is exactly the visible "the parts do not sum" bug.
 func TestScaleToSumsExactlyToTheTotal(t *testing.T) {
-	raw := ContextBreakdown{System: 101, ToolSchemas: 303, Memory: 51, Summary: 27, Prose: 199, ToolResults: 777, Reasoning: 33, ToolCount: 7}
+	raw := ContextBreakdown{System: 101, ToolSchemas: 303, ExternalSchemas: 88, Memory: 51, Summary: 27, Prose: 199, ToolResults: 777, Reasoning: 33, ToolCount: 7, ExternalToolCount: 2}
 	for _, total := range []int{1, 7, 999, 1000, 1493, 4001, raw.Total()} {
 		got := raw.scaleTo(total)
 		if got.Total() != total {
 			t.Errorf("scaleTo(%d).Total() = %d, want exactly %d", total, got.Total(), total)
 		}
-		if got.ToolCount != 7 {
-			t.Errorf("scaleTo(%d) changed ToolCount to %d: a schema count is not a token cost", total, got.ToolCount)
+		if got.ToolCount != 7 || got.ExternalToolCount != 2 {
+			t.Errorf("scaleTo(%d) changed the schema counts to %d/%d: a count is not a token cost",
+				total, got.ToolCount, got.ExternalToolCount)
 		}
 	}
 }

@@ -26,6 +26,11 @@ func (t discoveredTool) Name() string               { return t.name }
 func (t discoveredTool) Description() string        { return t.description }
 func (t discoveredTool) Parameters() map[string]any { return t.schema }
 func (t discoveredTool) ResultBudgetBytes() int     { return t.maxResultBytes }
+
+// OriginServer implements tools.ExternalOrigin: this tool's schema is in the
+// prompt because a server offered it, and naming the server is what lets a
+// surface report that cost against something an operator can turn off.
+func (t discoveredTool) OriginServer() string { return t.serverID }
 func (t discoveredTool) Capability(json.RawMessage) tools.Capability {
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,

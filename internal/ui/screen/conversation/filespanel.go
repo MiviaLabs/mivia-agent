@@ -456,13 +456,13 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 
 // selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
 // It accounts for sidebar windowing (maxRows) and individual group heights (1 line per file,
-// 2 lines per subagent row).
-func (p *panel) selectNavRow(clickRow, maxRows int) bool {
+// 2 lines per subagent row). contextRows is the context section's height, passed in rather
+// than derived here because only the Screen knows whether the budget is capped.
+func (p *panel) selectNavRow(clickRow, maxRows, contextRows int) bool {
 	if clickRow < 0 {
 		return false
 	}
 	visible, agents := p.visibleRows()
-	contextRows := contextSectionRows(maxRows)
 	groupLens := panelGroupLens(contextRows, len(visible), len(agents))
 	selIdx := p.list.CursorRow()
 	selGroup := panelSelGroup(selIdx, contextRows, len(visible), len(agents))
@@ -538,7 +538,7 @@ func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	s.panel.focused = true
 	paneH := max(1, s.contentHeight())
 	innerNavH := max(1, paneH-2)
-	if !s.panel.selectNavRow(clickRow, innerNavH) {
+	if !s.panel.selectNavRow(clickRow, innerNavH, s.contextSectionRows(innerNavH)) {
 		return *s, nil
 	}
 	if s.panel.modelRowSelected() {

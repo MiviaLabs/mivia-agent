@@ -159,6 +159,30 @@ func (r *Registry) List() []Tool {
 	return append([]Tool(nil), r.order...)
 }
 
+// ExternalOrigin is implemented by a tool that a server supplied at runtime
+// rather than one compiled into the binary. It exists so a caller can tell
+// the two apart without a type switch on every provider package: what makes
+// the distinction worth drawing is that a server's tools are the ones an
+// operator can actually remove, schemas and all.
+type ExternalOrigin interface {
+	// OriginServer identifies the server that supplied the tool.
+	OriginServer() string
+}
+
+// ExternalOrigins maps the name of every registered tool that a server
+// supplied to that server's id. Compiled-in tools are absent, so an empty
+// result means every registered tool is built in.
+func (r *Registry) ExternalOrigins() map[string]string {
+	registered := r.List()
+	out := make(map[string]string, len(registered))
+	for _, t := range registered {
+		if ext, ok := t.(ExternalOrigin); ok {
+			out[t.Name()] = ext.OriginServer()
+		}
+	}
+	return out
+}
+
 // OpenAITools returns the tools array for chat completions.
 func (r *Registry) OpenAITools() []map[string]any {
 	registered := r.List()

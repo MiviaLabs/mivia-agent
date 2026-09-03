@@ -189,3 +189,71 @@ func TestSessionStoreSaveListLoad(t *testing.T) {
 		t.Error("expected error loading missing session")
 	}
 }
+
+// TestBudgetIsCappedSeparatesAConfigCapFromAModelLimit: the flag exists so a
+// surface can say a small budget is a choice. Reporting true for an ordinary
+// output reserve would put "capped" on every session; reporting false for a
+// real cap leaves a 1M-window model looking like it lost most of its capacity,
+// which is the report that prompted this field.
+func TestBudgetIsCappedSeparatesAConfigCapFromAModelLimit(t *testing.T) {
+	cases := []struct {
+		name           string
+		budget, window int64
+		want           bool
+	}{
+		{"operator cap well below the window", 400_000, 1_048_576, true},
+		{"window reduced only by an output reserve", 917_504, 1_048_576, false},
+		{"budget equals the window", 200_000, 200_000, false},
+		{"window undeclared", 400_000, 0, false},
+		{"budget unknown", 0, 1_048_576, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			info := ModelInfo{ContextWindow: tc.budget, DeclaredWindow: tc.window}
+			if got := info.BudgetIsCapped(); got != tc.want {
+				t.Errorf("BudgetIsCapped() = %v for budget %d of window %d, want %v",
+					got, tc.budget, tc.window, tc.want)
+			}
+		})
+	}
+}
+
+// TestContextBreakdownScaleToPreservesCompositionAndCounts: ScaleTo runs on
+// every live turn, where the provider supplies the total and the session the
+// composition. The parts must land on the total exactly, and the schema counts
+// must not be scaled as if they were token costs.
+func TestContextBreakdownScaleToPreservesCompositionAndCounts(t *testing.T) {
+	raw := ContextBreakdown{
+		System: 1_000, ToolSchemas: 3_000, ExternalSchemas: 5_000,
+		Memory: 500, Summary: 200, Prose: 1_200, ToolResults: 9_000, Reasoning: 100,
+		ToolCount: 19, ExternalToolCount: 12,
+	}
+	for _, total := range []int64{1, 999, 20_101, 96_000, raw.Total()} {
+		got := raw.ScaleTo(total)
+		if got.Total() != total {
+			t.Errorf("ScaleTo(%d).Total() = %d, want exactly %d", total, got.Total(), total)
+		}
+		if got.ToolCount != 19 || got.ExternalToolCount != 12 {
+			t.Errorf("ScaleTo(%d) changed the schema counts to %d/%d, want 19/12",
+				total, got.ToolCount, got.ExternalToolCount)
+		}
+	}
+	// Composition survives: tool results dominated before and must after.
+	scaled := raw.ScaleTo(96_000)
+	if scaled.ToolResults <= scaled.ExternalSchemas {
+		t.Errorf("composition lost: ToolResults = %d, ExternalSchemas = %d", scaled.ToolResults, scaled.ExternalSchemas)
+	}
+}
+
+// TestContextBreakdownScaleToOnAnEmptyComposition: a session with nothing
+// priced must not divide by zero, and must not invent a composition it does
+// not have just because a total arrived.
+func TestContextBreakdownScaleToOnAnEmptyComposition(t *testing.T) {
+	got := ContextBreakdown{ToolCount: 4, ExternalToolCount: 1}.ScaleTo(50_000)
+	if got.Total() != 0 {
+		t.Errorf("empty composition scaled to %d, want 0", got.Total())
+	}
+	if got.ToolCount != 4 || got.ExternalToolCount != 1 {
+		t.Errorf("counts = %d/%d, want 4/1", got.ToolCount, got.ExternalToolCount)
+	}
+}
