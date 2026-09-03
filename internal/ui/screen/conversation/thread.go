@@ -199,6 +199,12 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 		s.thread.SetHideComposer(true)
 		return true, nil
 	}
+	// DETACH, not abort: this drops the previous thread's UI listener. It
+	// relies on the subagent transcript handles' divergent Cancel (see
+	// ports.TurnHandle.Cancel). conv here is whatever SubagentThreads.Thread
+	// returned, and a FOREIGN ports.Conversation implementing Cancel to the
+	// port's letter would have a real turn aborted here. Only register
+	// detach-implementing conversations with SubagentThreads.
 	if s.thread != nil && s.thread.active != nil {
 		s.thread.active.Cancel()
 	}
@@ -227,6 +233,8 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 // the thread Conversation keeps the authoritative history, so a later
 // reopen rebuilds from it without losing anything.
 func (s *Screen) closeThread() {
+	// DETACH, not abort - same divergence and same foreign-conversation
+	// hazard as openThread's call above; see ports.TurnHandle.Cancel.
 	if s.thread != nil && s.thread.active != nil {
 		s.thread.active.Cancel()
 	}

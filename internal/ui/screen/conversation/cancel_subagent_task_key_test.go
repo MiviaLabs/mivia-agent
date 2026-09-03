@@ -46,9 +46,20 @@ func TestCancelSubagentTaskKey_ForwardsToSubagentThreads(t *testing.T) {
 	s := selectSubagentRow(t, "agent-0")
 	s.threads = threads
 
-	next, _ := s.handleKey(tea.KeyPressMsg{Text: "x", Code: 'x'})
+	next, cmd := s.handleKey(tea.KeyPressMsg{Text: "x", Code: 'x'})
 	if _, ok := next.(Screen); !ok {
 		t.Fatalf("handleKey returned a non-Screen app.Screen: %T", next)
+	}
+	// The cancel runs in the returned Cmd, off the update goroutine
+	// (cancel_subagent_task.go), so nothing has been called yet.
+	if len(threads.canceled) != 0 {
+		t.Fatalf("CancelSubagentTask ran inline on the update goroutine: %v", threads.canceled)
+	}
+	if cmd == nil {
+		t.Fatal("handleKey returned no Cmd; the cancel would never run")
+	}
+	if _, ok := cmd().(subagentTaskCancelResultMsg); !ok {
+		t.Fatal("the Cmd did not report a subagentTaskCancelResultMsg")
 	}
 	if len(threads.canceled) != 1 || threads.canceled[0] != "agent-0" {
 		t.Fatalf("CancelSubagentTask calls = %v, want exactly [\"agent-0\"]", threads.canceled)

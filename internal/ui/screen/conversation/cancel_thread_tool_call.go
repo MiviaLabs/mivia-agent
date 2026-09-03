@@ -33,13 +33,38 @@ func (s Screen) cancelFocusedThreadToolCall() (app.Screen, tea.Cmd) {
 	if !ok || block.Kind != uievent.KindToolStart || block.Header.State != "running" || block.CallID == "" {
 		return s, nil
 	}
-	ok, err := s.threads.CancelSubagentToolCall(s.threadID, block.CallID)
-	if err != nil {
-		s.statusline.Notice("cancel tool call failed: " + err.Error())
+	threads, threadID, callID, label := s.threads, s.threadID, block.CallID, block.Header.Label
+	return s, func() tea.Msg {
+		ok, err := threads.CancelSubagentToolCall(threadID, callID)
+		return threadToolCallCancelResultMsg{label: label, ok: ok, err: err}
+	}
+}
+
+// threadToolCallCancelResultMsg carries one CancelSubagentToolCall outcome
+// back to the update loop. The call runs in a tea.Cmd rather than inline
+// for the same reason cancelSelectedSubagentTask's does: this handler is
+// reached from Update, which bubbletea runs on its single event loop, and
+// the seam behind it crosses into the coordinator. It is fast today (it
+// only invokes a registered function), but nothing on the far side of that
+// seam is contractually bound to stay fast, and a stall there would freeze
+// rendering and every key, ctrl+c included.
+type threadToolCallCancelResultMsg struct {
+	label string
+	ok    bool
+	err   error
+}
+
+// handleThreadToolCallCancelResult emits the statusline notice for one
+// finished tool-call cancel attempt: the error text on failure,
+// "cancelling <label>" on success, and nothing on a miss (the call
+// already finished, or the task registered no canceler).
+func (s Screen) handleThreadToolCallCancelResult(msg threadToolCallCancelResultMsg) (app.Screen, tea.Cmd) {
+	if msg.err != nil {
+		s.statusline.Notice("cancel tool call failed: " + msg.err.Error())
 		return s, nil
 	}
-	if ok {
-		s.statusline.Notice("cancelling " + block.Header.Label)
+	if msg.ok {
+		s.statusline.Notice("cancelling " + msg.label)
 	}
 	return s, nil
 }

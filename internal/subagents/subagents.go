@@ -140,6 +140,19 @@ type Pool struct {
 	// execution without touching the pool's parent context or any sibling
 	// task. Nil-safe; nil means no-op.
 	OnTaskStart func(ctx context.Context, t Task, cancel context.CancelFunc)
+	// ShouldSkipTask, when set, is consulted on the worker goroutine after
+	// OnTaskStart and immediately BEFORE the handler is invoked. It receives
+	// the STAMPED per-task context (ContextForTask has already applied
+	// TaskIdentity). Reporting true settles the task as canceled without
+	// ever invoking its handler, so the task performs no side effects.
+	//
+	// This closes the dispatch window a per-task cancel would otherwise fall
+	// through: the executeOne ctx.Err() check above only sees the RUN-WIDE
+	// pool context, which a single-task cancel deliberately never touches,
+	// and a task can be canceled after the scheduler put it in a batch but
+	// before a worker reached it (the spawn stagger, or a busy worker pool).
+	// Nil-safe; nil means no-op.
+	ShouldSkipTask func(ctx context.Context, t Task) bool
 }
 
 // MaxFanout returns the maximum number of tasks accepted in one orchestration.
@@ -391,6 +404,9 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if p.OnTaskStart != nil {
 		p.OnTaskStart(taskCtx, t, cancel)
 	}
+	if skipped, skip := p.skipCanceledTask(taskCtx, t); skip {
+		return skipped
+	}
 	// Task.ID is caller-facing coordination state. It must not cross the
 	// dispatch boundary: concurrent runs are allowed to reuse display IDs,
 	// while the dispatcher requires a fresh opaque invocation identity.
@@ -423,6 +439,30 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		callOnTaskDoneSafely(p.OnTaskDone, taskCtx, t, result)
 	}
 	return result
+}
+
+// skipCanceledTask consults ShouldSkipTask and, when it reports the task has
+// already been claimed for cancellation, builds that task's canceled result
+// and runs the OnTaskDone finalize hook for it - WITHOUT ever invoking the
+// handler, so a canceled task performs no side effects (file edits, shell
+// commands, provider calls).
+//
+// Running OnTaskDone on this path is load-bearing: that hook is what signals
+// this dispatch attempt's completion, and a caller waiting for the task to
+// unwind after a per-task cancel blocks on that signal.
+//
+// The result deliberately mirrors the owner's own canceled result exactly
+// (status "canceled" carrying context.Canceled), so downstream bookkeeping is
+// identical to the path where the run-wide context was canceled.
+func (p *Pool) skipCanceledTask(taskCtx context.Context, t Task) (Result, bool) {
+	if p.ShouldSkipTask == nil || !p.ShouldSkipTask(taskCtx, t) {
+		return Result{}, false
+	}
+	result := Result{TaskID: t.ID, Err: context.Canceled, Status: "canceled"}
+	if p.OnTaskDone != nil {
+		callOnTaskDoneSafely(p.OnTaskDone, taskCtx, t, result)
+	}
+	return result, true
 }
 
 // callOnTaskDoneSafely invokes fn and recovers a panic without letting it

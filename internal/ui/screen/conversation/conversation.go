@@ -385,6 +385,10 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.handleTurnEndedMsg(msg)
 	case remoteInputMsg:
 		return s.handleRemoteInput(msg.event)
+	case subagentTaskCancelResultMsg:
+		return s.handleSubagentTaskCancelResult(msg)
+	case threadToolCallCancelResultMsg:
+		return s.handleThreadToolCallCancelResult(msg)
 	case approval.DecisionMsg:
 		if s.approver != nil {
 			s.approver.Resolve(msg.ToolCallID, msg.Decision)
