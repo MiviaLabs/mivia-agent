@@ -71,7 +71,8 @@ enable sync on sensitive work:
   fragment, a lifecycle hook run, or the loop's message-complete signal (the
   SDK loop reports each completed assistant message before any tool of that
   iteration runs; the bridge forwards it as a content-free `assistant` event
-  with detail `complete`, which never reaches the wire itself). Nothing is
+  with detail `complete`, which never reaches the wire itself - it releases
+  the tail and settles the block, see `assistant.message` below). Nothing is
   delayed past the utterance and nothing is lost.
 
   **The limit, stated plainly.** The window is 256 bytes because Go regexps are
@@ -163,12 +164,31 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.turn.ended`
 - `mivia.chat.v1.turn.failed`
 - `mivia.chat.v1.assistant.delta`
-- `mivia.chat.v1.assistant.message` - the turn's settled prose. `fragments`
+- `mivia.chat.v1.assistant.message` - one prose block, settled. `fragments`
   counts the deltas of the BLOCK the event names (the block its surviving
   deltas shipped into), not the turn: a turn with two prose blocks around a
   tool call reports for the last block only that block's deltas. The `index`
   on `assistant.delta` stays per turn (per run for a lane), exactly as
   `thinking.delta`'s does next to a per-block `thinking.message.fragments`.
+  It is emitted at two moments, and a consumer must treat it as idempotent
+  per block (mark the block complete; take `text` only when `fragments` is 0
+  or nothing accumulated):
+  - **at the loop's message-complete flag**, for the block whose deltas
+    shipped - `fragments` > 0, `text` empty, `bytes` the size the deltas
+    shipped. This is what lets a viewer stop showing a finished message as
+    streaming while the reasoning pass or tool call after it is still
+    running; before it, a block completed only at the turn's end. It is NOT
+    emitted when no delta shipped (`stream_assistant` off, a message held
+    whole by the redaction window), so the turn-end aggregate stays the sole
+    carrier of the text in exactly the cases it always was. A flag for a
+    message that produced no new deltas (a tool-only iteration) settles
+    nothing.
+  - **at the turn's end**, from the terminal `EventAssistant`, carrying the
+    FINAL message: `text` in full when nothing streamed, empty with the
+    block's count when deltas did. For a block already settled at its flag
+    this is a duplicate with an empty `text`; it is kept, not suppressed,
+    because it is the one copy that does not depend on the settle having
+    been stored, and the one that carries the full text and true byte size.
 - `mivia.chat.v1.assistant.reset`
 - `mivia.chat.v1.thinking.delta`
 - `mivia.chat.v1.thinking.message` - one thinking block, settled when the block

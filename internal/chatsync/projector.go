@@ -146,7 +146,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		// fragment count - a blank assistant message in every viewer, for a
 		// root loop that never streamed a token itself.
 		if ev.Detail == events.DetailAssistantComplete {
-			return p.flushHeldAssistantOnProseEnd(env, turnID, ev)
+			return p.settleAssistantOnComplete(env, turnID, ev)
 		}
 		if isDispatched(ev) {
 			return p.projectSubagentAssistant(env, turnID, ev)
@@ -386,7 +386,7 @@ func (p *Projector) projectAssistantDelta(env Envelope, ts *turnState, ev events
 		// actually went out into it. And for the settle block: a segment
 		// is only "used" once its delta shipped.
 		ts.segmentAssistant++
-		ts.recordDeltaSegment(seg)
+		ts.recordDeltaSegment(seg, len(shipped))
 		shipped = applyTruncation(&env, "text", shipped, BudgetDeltaText)
 		payload := &AssistantDeltaPayload{
 			Envelope: env,

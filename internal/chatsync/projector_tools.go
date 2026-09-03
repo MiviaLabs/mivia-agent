@@ -53,14 +53,21 @@ func (ts *turnState) blockSegment(isDelta bool) int {
 // that decides what shipped, so the per-block count follows exactly the rule
 // the segment does. A change of segment retires the previous block's count
 // into prevBlockFragments, one entry deep like prevStreamSegment.
-func (ts *turnState) recordDeltaSegment(segment int) {
+//
+// shipped is the delta's text size, accumulated per block for the settle's
+// `bytes`. A shipped delta also re-opens the block for settling: the block's
+// aggregate, if one already went out, no longer describes it.
+func (ts *turnState) recordDeltaSegment(segment int, shipped int) {
 	if ts.streamSegment != segment {
 		ts.prevStreamSegment = ts.streamSegment
 		ts.prevBlockFragments = ts.blockFragments
 		ts.streamSegment = segment
 		ts.blockFragments = 0
+		ts.blockBytes = 0
 	}
 	ts.blockFragments++
+	ts.blockBytes += shipped
+	ts.assistantSettled = false
 }
 
 // advanceStep closes the open segment of a stream, so the next prose opens a
@@ -255,7 +262,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 		ls.streamed = true
 		ls.fragments++
 		ls.segmentAssistant++
-		ls.recordDeltaSegment(seg)
+		ls.recordDeltaSegment(seg, len(shipped))
 		shipped = applyTruncation(&env, "text", shipped, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
 			Envelope: env,
@@ -365,6 +372,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
 		ls.blockFragments, ls.prevBlockFragments = 0, 0
+		ls.blockBytes, ls.assistantSettled = 0, false
 		// DISCARD, not flush: the consumer is being told to throw this
 		// block's text away, so shipping the held tail would deliver words
 		// into a block that is about to be emptied. This is the one place a
@@ -376,6 +384,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		ts := p.turn(turnID)
 		ts.streamed, ts.fragments = false, 0
 		ts.blockFragments, ts.prevBlockFragments = 0, 0
+		ts.blockBytes, ts.assistantSettled = 0, false
 		ts.assistantStream.Discard()
 		p.advanceStepForReset(ts)
 	}

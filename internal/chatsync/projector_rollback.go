@@ -47,6 +47,16 @@ func (p *Projector) RollbackStreaming(wireEvents []WireEvent) {
 			if payload.Agent != nil {
 				p.rollbackOneThinking(p.lanes[payload.Turn+"\x00"+payload.Agent.Task], payload.Text != "")
 			}
+		case *AssistantMessagePayload:
+			// A per-block settle that never stored must not leave the block
+			// marked settled, or no later flag would retry it and the block
+			// would wait for the turn's end again. The turn-end aggregate
+			// takes this arm too, harmlessly: its turn is over.
+			p.reopenAssistantSettle(p.turns[payload.Turn])
+		case *SubagentAssistantMessagePayload:
+			if payload.Agent != nil {
+				p.reopenAssistantSettle(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
+			}
 		case *AssistantResetPayload:
 			// A reset that never reached the wire must not have cleared the
 			// producer's counters either. It did: the viewer kept every
@@ -91,6 +101,13 @@ func (p *Projector) restoreClearedStream(payload *AssistantResetPayload) {
 		ts.segment, ts.segmentAssistant, ts.segmentThinking = u.segment, u.segmentAssistant, u.segmentThinking
 		ts.resetUndo = nil
 	}
+}
+
+func (p *Projector) reopenAssistantSettle(ts *turnState) {
+	if ts == nil {
+		return
+	}
+	ts.assistantSettled = false
 }
 
 func (p *Projector) rollbackOneDelta(ts *turnState) {

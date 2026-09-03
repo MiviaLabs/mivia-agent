@@ -381,11 +381,11 @@ func TestACompletedMessageIsWholeBeforeTheTurnEnds(t *testing.T) {
 			"reported it complete; the reader sees it cut off until the turn ends.\n"+
 			"got  %q\nwant %q", len(whole)-len(got), got, whole)
 	}
+	// The flag releases the tail and settles THIS block (see
+	// projector_assistant_settle.go); it ends nothing.
 	for _, we := range out {
-		switch we.Payload.(type) {
-		case *TurnEndedPayload, *AssistantMessagePayload:
-			t.Fatalf("the completion flag produced a %T; it must release the tail "+
-				"only, not settle or end anything", we.Payload)
+		if _, ok := we.Payload.(*TurnEndedPayload); ok {
+			t.Fatalf("the completion flag produced a %T; it must not end the turn", we.Payload)
 		}
 	}
 
@@ -424,8 +424,10 @@ func TestALaneMessageIsWholeBeforeItsRunEnds(t *testing.T) {
 		t.Fatalf("a completed lane message is still %d bytes short after the loop "+
 			"reported it complete.\ngot  %q\nwant %q", len(whole)-len(got), got, whole)
 	}
-	if len(released) != 1 {
-		t.Fatalf("the flag released %d events, want 1 (the tail delta)", len(released))
+	// The tail delta first, then the lane's own settle - the aggregate is
+	// about to empty its text under INV-1, so the words must already be out.
+	if len(released) == 0 {
+		t.Fatal("the flag released nothing")
 	}
 	tail, ok := released[0].Payload.(*SubagentAssistantDeltaPayload)
 	if !ok {
