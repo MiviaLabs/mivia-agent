@@ -11,7 +11,9 @@ import (
 // row is reserved for it, so opening the menu never reflows the transcript
 // or moves the bar (ux-rules.md rules 2.7, 2.8). The popup's item rows come
 // first and its footer sits against the bar; when the rows above the bar
-// are fewer than the popup's, the popup is clipped from the top.
+// are fewer than the popup's, the popup is clipped from the top. The top
+// bar's rows are never covered: they are session identity, and a menu
+// that paints over them on a short terminal reads as a broken frame.
 //
 // lines is the frame before the gutter is applied: the composer block is
 // the last rows above the status row, so its first row is found from the
@@ -27,9 +29,13 @@ func (s Screen) overlayComposerPopup(lines []string) []string {
 	}
 	top := len(lines) - 1 - s.composer.Height() // the bar's first row
 	x := s.composer.PopupOffset()
+	minY := 0
+	if !s.embedded {
+		minY = s.topbar.Height() // the popup may reach the margin row, not the bar
+	}
 	for i := len(pop) - 1; i >= 0; i-- {
 		y := top - (len(pop) - i)
-		if y < 0 {
+		if y < minY {
 			break
 		}
 		lines[y] = spliceRow(lines[y], x, pop[i])
