@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
 // TestSummaryMessageNameMatchesAgent pins the duplicated sentinel: this
@@ -172,5 +173,58 @@ func TestContextUsageBreakdownSumsToUsedTokens(t *testing.T) {
 				t.Errorf("breakdown total = %d, UsedTokens = %d: the rows contradict the header", got, usage.UsedTokens)
 			}
 		})
+	}
+}
+
+// TestSkillInvocationsAreChargedApartFromProse: a skill's instruction
+// body arrives as an ordinary-looking user message, so nothing but the
+// frame distinguishes it. Merged into Prose it is invisible, and the
+// commonest cause of a window filling in three turns - one large skill -
+// reads as "you talked a lot".
+func TestSkillInvocationsAreChargedApartFromProse(t *testing.T) {
+	skillBody := skills.RenderNamedSkillSlashPrompt(
+		"deep-review", strings.Repeat("review instruction line\n", 40), "the diff")
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: strings.Repeat("s", 400)},
+		{Role: provider.RoleUser, Content: skillBody},
+		{Role: provider.RoleUser, Content: strings.Repeat("u", 800)},
+	}
+	b, err := breakdown(messages, nil, nil, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatalf("breakdown: %v", err)
+	}
+	if b.SkillCount != 1 {
+		t.Errorf("SkillCount = %d, want 1", b.SkillCount)
+	}
+	if b.Skills <= 0 {
+		t.Fatal("the skill invocation was charged nothing; it fell into another bucket")
+	}
+	if b.Skills <= b.Prose {
+		t.Errorf("Skills = %d, Prose = %d: the skill body is the larger message, so it is not being separated", b.Skills, b.Prose)
+	}
+	// The split must not change the total, or the rows stop summing to
+	// the number in the header.
+	want, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatalf("EstimatePromptCost: %v", err)
+	}
+	if b.Total() != want {
+		t.Errorf("total = %d, EstimatePromptCost = %d: the skills bucket changed the sum", b.Total(), want)
+	}
+}
+
+// TestAnOrdinaryUserMessageIsNotASkill guards the other half: the frame
+// is what marks a skill, and a user who pastes the words must not have
+// their message reclassified.
+func TestAnOrdinaryUserMessageIsNotASkill(t *testing.T) {
+	messages := []provider.Message{
+		{Role: provider.RoleUser, Content: "please run the skill-instructions for me"},
+	}
+	b, err := breakdown(messages, nil, nil, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatalf("breakdown: %v", err)
+	}
+	if b.SkillCount != 0 || b.Skills != 0 {
+		t.Errorf("an ordinary message was charged as a skill: count=%d tokens=%d", b.SkillCount, b.Skills)
 	}
 }

@@ -569,6 +569,8 @@ func (c *Conversation) ContextUsage() ports.Usage {
 			ExternalToolCount: u.Breakdown.ExternalToolCount,
 			Memory:            int64(u.Breakdown.Memory),
 			Summary:           int64(u.Breakdown.Summary),
+			Skills:            int64(u.Breakdown.Skills),
+			SkillCount:        u.Breakdown.SkillCount,
 			Prose:             int64(u.Breakdown.Prose),
 			ToolResults:       int64(u.Breakdown.ToolResults),
 			Reasoning:         int64(u.Breakdown.Reasoning),

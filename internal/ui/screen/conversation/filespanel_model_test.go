@@ -360,7 +360,7 @@ func TestServerToolsGetTheirOwnRow(t *testing.T) {
 		}})
 	rows := s.panelContextRows(s.panelInnerWidth(), contextDetailMinRows)
 	joined := ansi.Strip(strings.Join(rows, "\n"))
-	for _, want := range []string{"tools (19)", "servers (12)"} {
+	for _, want := range []string{"tools (19)", "mcp (12)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("detail block missing %q:\n%s", want, joined)
 		}
@@ -371,7 +371,7 @@ func TestServerToolsGetTheirOwnRow(t *testing.T) {
 		if strings.Contains(plain, "tools (19)") {
 			toolsRow = plain
 		}
-		if strings.Contains(plain, "servers (12)") {
+		if strings.Contains(plain, "mcp (12)") {
 			serversRow = plain
 		}
 	}
@@ -379,6 +379,39 @@ func TestServerToolsGetTheirOwnRow(t *testing.T) {
 		t.Errorf("tools row = %q, want the compiled-in schema cost alone", toolsRow)
 	}
 	if !strings.Contains(serversRow, "5k") {
-		t.Errorf("servers row = %q, want the server schema cost alone", serversRow)
+		t.Errorf("servers row = %q, want the MCP schema cost alone", serversRow)
+	}
+}
+
+// TestSkillsGetTheirOwnRow: a skill's instruction body arrives as a user
+// message, so without its own bucket it lands in "messages" and a reader
+// staring at a window that filled in three turns has no way to see that
+// one invoked skill is most of it.
+func TestSkillsGetTheirOwnRow(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 40, sampleDiffs()...))
+	s.topbar.SetSession(
+		ports.ModelInfo{Name: "m", ContextWindow: 400_000, DeclaredWindow: 400_000},
+		ports.Usage{InputTokens: 10_000, Breakdown: ports.ContextBreakdown{
+			System: 1_000, Skills: 6_000, SkillCount: 2, Prose: 3_000,
+		}})
+	rows := s.panelContextRows(s.panelInnerWidth(), contextDetailMinRows)
+	var skillsRow, messagesRow string
+	for _, r := range rows {
+		plain := ansi.Strip(r)
+		if strings.Contains(plain, "skills (2)") {
+			skillsRow = plain
+		}
+		if strings.Contains(plain, "messages") {
+			messagesRow = plain
+		}
+	}
+	if skillsRow == "" {
+		t.Fatalf("no skills row in the detail block:\n%s", ansi.Strip(strings.Join(rows, "\n")))
+	}
+	if !strings.Contains(skillsRow, "6k") {
+		t.Errorf("skills row = %q, want the invoked skills' cost", skillsRow)
+	}
+	if !strings.Contains(messagesRow, "3k") {
+		t.Errorf("messages row = %q, want the prose alone: the skill bodies must not be counted twice", messagesRow)
 	}
 }

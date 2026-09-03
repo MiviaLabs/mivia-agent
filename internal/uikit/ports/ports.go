@@ -112,9 +112,16 @@ type ContextBreakdown struct {
 	ExternalToolCount int
 	Memory            int64
 	Summary           int64
-	Prose             int64
-	ToolResults       int64
-	Reasoning         int64
+	// Skills is what invoked skills are costing, and SkillCount how many
+	// invocations are carrying it. A skill's instruction body arrives as a
+	// framed user message, so it is conversation compaction can reclaim -
+	// but it is not ordinary prose, and a reader looking at a full window
+	// needs to see that one skill is the reason.
+	Skills      int64
+	SkillCount  int
+	Prose       int64
+	ToolResults int64
+	Reasoning   int64
 	// Pending is live prompt cost the composition does not yet explain. The
 	// session adopts a turn's messages only when the turn finishes, so while
 	// one is running its composition describes the PREVIOUS turn, and on the
@@ -134,7 +141,7 @@ func (b ContextBreakdown) Floor() int64 {
 // Conversation is the part compaction reclaims, including the pending cost of
 // a turn in flight: unadopted history is still history.
 func (b ContextBreakdown) Conversation() int64 {
-	return b.Prose + b.ToolResults + b.Reasoning + b.Pending
+	return b.Skills + b.Prose + b.ToolResults + b.Reasoning + b.Pending
 }
 
 // Total is Floor plus Conversation.
@@ -212,20 +219,20 @@ func scaleFields(fields []*int64, target int64) {
 
 // buckets lists every token field in a stable order.
 func (b *ContextBreakdown) buckets() []*int64 {
-	return []*int64{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning, &b.Pending}
+	return []*int64{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Skills, &b.Prose, &b.ToolResults, &b.Reasoning, &b.Pending}
 }
 
 // conversationBuckets lists the reclaimable fields, Pending last so an empty
 // conversation absorbs an unattributable remainder there rather than inventing
 // a split across rows that would each be a guess.
 func (b *ContextBreakdown) conversationBuckets() []*int64 {
-	return []*int64{&b.Prose, &b.ToolResults, &b.Reasoning, &b.Pending}
+	return []*int64{&b.Skills, &b.Prose, &b.ToolResults, &b.Reasoning, &b.Pending}
 }
 
 // countsOnly is an empty breakdown that keeps the schema counts, which are not
 // token costs and so survive any rescaling of the costs.
 func (b ContextBreakdown) countsOnly() ContextBreakdown {
-	return ContextBreakdown{ToolCount: b.ToolCount, ExternalToolCount: b.ExternalToolCount}
+	return ContextBreakdown{ToolCount: b.ToolCount, ExternalToolCount: b.ExternalToolCount, SkillCount: b.SkillCount}
 }
 
 // Conversation is the read/write surface a UI drives. It never calls the
