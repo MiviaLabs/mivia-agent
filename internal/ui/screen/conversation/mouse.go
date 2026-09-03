@@ -44,7 +44,7 @@ func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
 // the completion popup overlaid on the rows just above it), and finally
 // the status row at the bottom.
 //
-// Left button only. A click on a collapsed block header expands it; a
+// Left button only. A click on a block header opens or closes it; a
 // click on a completion row accepts it; a click on the input line
 // places the cursor. With the panel open wide the chat column keeps
 // its normal geometry (the split draws no frame around it), and the
@@ -107,8 +107,8 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 			s.composer = comp
 		}
 	case y-transcriptTop < transcriptRows && s.transcriptShown():
-		next, expanded := s.transcript.ExpandBlockAtScreenRow(y - transcriptTop)
-		if expanded {
+		next, toggled := s.transcript.ToggleBlockAtScreenRow(y - transcriptTop)
+		if toggled {
 			s.transcript = next
 		}
 	case y == inputRow:

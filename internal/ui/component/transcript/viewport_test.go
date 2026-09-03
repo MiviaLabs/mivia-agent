@@ -743,9 +743,9 @@ func TestMarkerOnlyWhereABodyExists(t *testing.T) {
 	}
 }
 
-// TestExpandBlockAtScreenRow pins the click contract: the header row of
+// TestToggleBlockAtScreenRow pins the click contract: the header row of
 // a collapsed block expands it; other rows and off-screen rows do not.
-func TestExpandBlockAtScreenRow(t *testing.T) {
+func TestToggleBlockAtScreenRow(t *testing.T) {
 	// One header-only notice plus one tool call with a body. Under R3
 	// only the block WITH a body is collapsible, so it is the click
 	// target; the header-only block stays a fall-through.
@@ -774,7 +774,7 @@ func TestExpandBlockAtScreenRow(t *testing.T) {
 
 	// A header-only block carries no expansion, so the click falls
 	// through to the caller.
-	if _, ok := m.ExpandBlockAtScreenRow(0); ok {
+	if _, ok := m.ToggleBlockAtScreenRow(0); ok {
 		t.Error("clicking a header-only block must report nothing to expand")
 	}
 
@@ -793,7 +793,7 @@ func TestExpandBlockAtScreenRow(t *testing.T) {
 	}
 	click := first - m.Offset()
 
-	next, ok := m.ExpandBlockAtScreenRow(click)
+	next, ok := m.ToggleBlockAtScreenRow(click)
 	if !ok {
 		t.Fatal("click on the tool block header must expand it")
 	}
@@ -802,15 +802,15 @@ func TestExpandBlockAtScreenRow(t *testing.T) {
 	}
 
 	// A body row of the now-expanded block must not report anything.
-	if _, ok := next.ExpandBlockAtScreenRow(click + 1); ok {
+	if _, ok := next.ToggleBlockAtScreenRow(click + 1); ok {
 		t.Error("a body row must not report an expansion")
 	}
 
 	// Off-screen rows are refused.
-	if _, ok := next.ExpandBlockAtScreenRow(99); ok {
+	if _, ok := next.ToggleBlockAtScreenRow(99); ok {
 		t.Error("a row outside the viewport must be refused")
 	}
-	if _, ok := next.ExpandBlockAtScreenRow(-1); ok {
+	if _, ok := next.ToggleBlockAtScreenRow(-1); ok {
 		t.Error("a negative row must be refused")
 	}
 }

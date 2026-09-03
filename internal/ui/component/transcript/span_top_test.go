@@ -79,10 +79,10 @@ func TestClickLandsOnTheHeaderTheUserSees(t *testing.T) {
 	if header == 0 {
 		t.Fatal("precondition: a separator row must sit above the header")
 	}
-	if _, ok := m.ExpandBlockAtScreenRow(header); !ok {
+	if _, ok := m.ToggleBlockAtScreenRow(header); !ok {
 		t.Errorf("clicking the header row (%d) the user can see did not expand the block", header)
 	}
-	if _, ok := m.ExpandBlockAtScreenRow(header - 1); ok {
+	if _, ok := m.ToggleBlockAtScreenRow(header - 1); ok {
 		t.Errorf("clicking the blank separator row (%d) expanded a block", header-1)
 	}
 }
@@ -127,5 +127,48 @@ func TestScrollToFocusShowsTheWholeFocusedBlock(t *testing.T) {
 	if s.top+s.height > m.Offset()+m.Height() {
 		t.Errorf("focused block ends at row %d, below the viewport bottom %d",
 			s.top+s.height, m.Offset()+m.Height())
+	}
+}
+
+// TestClickingAHeaderTwiceReturnsItToCollapsed is the discriminator for
+// the click being a TOGGLE rather than a one-way open. An expand-only
+// click leaves the reader with a marker that says ">" or "v" but only
+// ever moves one way, so a mis-click on a 400-line tool result cannot be
+// undone with the mouse at all.
+func TestClickingAHeaderTwiceReturnsItToCollapsed(t *testing.T) {
+	m := proseThenTool(t)
+	tool := len(m.blocks) - 1
+	if !m.blocks[tool].Collapsed {
+		t.Fatal("precondition: the tool block starts collapsed")
+	}
+
+	header := drawnRowOf(t, m, "run_command")
+	m, ok := m.ToggleBlockAtScreenRow(header)
+	if !ok || m.blocks[tool].Collapsed {
+		t.Fatalf("first click did not open the block (ok=%v, collapsed=%v)", ok, m.blocks[tool].Collapsed)
+	}
+
+	// The header may have moved: opening the block above it changes
+	// nothing here, but reading the row back from the screen is what
+	// keeps this test honest about where the user would click.
+	header = drawnRowOf(t, m, "run_command")
+	m, ok = m.ToggleBlockAtScreenRow(header)
+	if !ok {
+		t.Fatal("second click on the same header reported nothing")
+	}
+	if !m.blocks[tool].Collapsed {
+		t.Error("a second click on the header did not close the block")
+	}
+}
+
+// TestClickingABodyRowStillFallsThrough: the toggle is the header's
+// affordance alone. A click inside expanded content must not fold it
+// away under the reader.
+func TestClickingABodyRowStillFallsThrough(t *testing.T) {
+	m := proseThenTool(t)
+	header := drawnRowOf(t, m, "run_command")
+	m, _ = m.ToggleBlockAtScreenRow(header)
+	if _, ok := m.ToggleBlockAtScreenRow(header + 1); ok {
+		t.Error("a click on a body row toggled the block")
 	}
 }

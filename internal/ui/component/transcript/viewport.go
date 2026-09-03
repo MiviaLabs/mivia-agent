@@ -224,17 +224,23 @@ func (m Model) Rows() []string {
 // View is the visible rows joined, which is what the screen draws.
 func (m Model) View() string { return strings.Join(m.Rows(), "\n") }
 
-// ExpandBlockAtScreenRow expands the collapsed block that draws on the
-// given viewport row, if any. y is relative to the transcript's own
-// top row, the way a mouse event reports it. It reports false when the
-// row holds no collapsed block header, so a click can fall through.
+// ToggleBlockAtScreenRow opens or closes the block whose HEADER draws on
+// the given viewport row. y is relative to the transcript's own top row,
+// the way a mouse event reports it. It reports false when the row holds
+// no collapsible header, so a click can fall through.
+//
+// Only the header row acts. A click on a body row falls through, so
+// expanded content is never collapsed by surprise - but the header is
+// the affordance itself: it draws the "v"/">" marker, and a marker that
+// only ever opens is a control the user cannot use to put the screen
+// back the way it was. The keyboard toggle (space/enter on the focused
+// block) is the same operation from the other input.
 //
 // Clicking a coalesced leader row (R2) opens the whole run: the row the
 // user sees stands in for every member, so the click means "show me
-// these". Only header rows are clickable - clicking expanded content
-// must never collapse it by surprise; the keyboard toggle stays the
-// only way back.
-func (m Model) ExpandBlockAtScreenRow(y int) (Model, bool) {
+// these". Closing that run again is per-member - collapse them and the
+// layout re-coalesces them on its own.
+func (m Model) ToggleBlockAtScreenRow(y int) (Model, bool) {
 	if y < 0 || !m.FocusedRowVisible(y) {
 		return m, false
 	}
@@ -249,13 +255,13 @@ func (m Model) ExpandBlockAtScreenRow(y int) (Model, bool) {
 			m.expandRun(i)
 			return m, true
 		}
-		if m.blocks[i].Collapsible && m.blocks[i].Collapsed {
-			m.blocks = slices.Clone(m.blocks)
-			m.blocks[i].Collapsed = false
-			m.clampOffset()
-			return m, true
+		if !m.blocks[i].Collapsible {
+			return m, false
 		}
-		return m, false
+		m.blocks = slices.Clone(m.blocks)
+		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
+		m.clampOffset()
+		return m, true
 	}
 	return m, false
 }
