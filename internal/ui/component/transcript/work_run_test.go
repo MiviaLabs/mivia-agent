@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -389,5 +390,50 @@ func TestADirectlyPushedDiffCollapsesLikeAMergedOne(t *testing.T) {
 	}
 	if !d.Collapsed {
 		t.Error("a finished successful diff did not collapse by default")
+	}
+}
+
+// TestTrimKeepsTheReaderOnTheSameContent: eviction used to subtract the
+// departing row count from the offset, which assumes the survivors lay
+// out unchanged. A coalesced work run cut below minWorkRun stops
+// coalescing - one leader row becomes several headers - so everything
+// under it moved and the reader drifted by a row for free.
+func TestTrimKeepsTheReaderOnTheSameContent(t *testing.T) {
+	build := func(extra int) Model {
+		m := New(loadTheme(t), theme.TierASCII)
+		m.SetSize(80, 10)
+		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+			Body: uievent.TextEndBody{Text: "anchor prose"}})
+		// A run long enough to coalesce, so trimming into it can drop it
+		// below the fold threshold.
+		for i, name := range []string{"read_file", "read_file", "edit", "run_command"} {
+			m = endedCall(m, string(rune('a'+i)), name, "r", "out", 5, true)
+		}
+		for i := 0; i < extra; i++ {
+			m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+				Body: uievent.TextEndBody{Text: "filler " + itoa(i)}})
+		}
+		return m
+	}
+
+	for split := 1; split <= 5; split++ {
+		// Exactly at the bound, with the run still at the front, so the
+		// pushes below evict INTO it. Overshooting here trimmed the run
+		// away before the measurement and the case never arose.
+		m := build(uikitconfig.MaxTranscriptLines - 5)
+		// Pause follow well BELOW the prefix eviction will drop: a
+		// reader parked on content that is itself evicted has nothing to
+		// be held on, which is not what this pins.
+		m = m.ScrollBy(-8)
+		before := ansi.Strip(m.Rows()[0])
+
+		// Push enough blocks to evict `split` from the front.
+		for i := 0; i < split; i++ {
+			m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+				Body: uievent.TextEndBody{Text: "new " + itoa(i)}})
+		}
+		if after := ansi.Strip(m.Rows()[0]); after != before {
+			t.Errorf("split %d: the reader's top row moved from %q to %q", split, before, after)
+		}
 	}
 }

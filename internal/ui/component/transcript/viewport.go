@@ -133,15 +133,30 @@ func (m *Model) trim() {
 	if over <= 0 {
 		return
 	}
-	// The rows that leave are exactly the survivor's new top: every row
-	// above it, separators included.
-	rows := m.layout()[over].top
+	// Keep the reader on the same CONTENT, not on an arithmetic guess.
+	//
+	// Subtracting the departing row count assumes the survivors lay out
+	// unchanged, and they need not: a coalesced work run cut below
+	// minWorkRun stops coalescing, so one leader row becomes several
+	// headers and everything under it moves. The reader drifted by a row
+	// for free. Instead, note which block sits at the top of the viewport
+	// and how far into it, then put the viewport back on that block after
+	// the survivors have been laid out again.
+	anchor, into := over, 0
+	if !m.follow {
+		spans := m.layout()
+		for i := over; i < len(m.blocks); i++ {
+			if spans[i].height > 0 && spans[i].top <= m.offset {
+				anchor, into = i, m.offset-spans[i].top
+			}
+		}
+	}
 	m.dropped += over
 	m.blocks = append([]Block(nil), m.blocks[over:]...)
 	if !m.follow {
-		// Keep the reader where they were reading: the rows above them
-		// went away, so their offset must shrink by the same amount.
-		m.offset -= rows
+		if idx := anchor - over; idx >= 0 && idx < len(m.blocks) {
+			m.offset = m.layout()[idx].top + into
+		}
 	}
 	m.reindexFocus(over)
 	m.clampOffset()

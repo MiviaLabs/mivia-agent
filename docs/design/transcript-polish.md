@@ -148,10 +148,13 @@ R2. **Coalesce repeated read-only tool calls, display-only.** Consecutive
 line with a count and the file list (`Read a.rs, b.rs`; drop to
 `Read 4 files` when the list does not fit). Hard constraint: coalescing
 must change only rendering. Children stay real blocks in `Model.blocks`,
-so focus, click-to-expand (`ExpandBlockAtScreenRow`,
-`viewport.go:199-227`), the `FocusedText` copy contract
+so focus, click-to-toggle (`ToggleBlockAtScreenRow`,
+`viewport.go`), the `FocusedText` copy contract
 (`focus.go:184-201`), and `Dump()` keep per-child identity and full
-content. State-changing tools (edits, commands) never coalesce.
+content. State-changing tools (edits, commands) never coalesce **into a
+read row** - R2a supersedes the stronger form of this sentence: they do
+join the generic work run, which is the point of it. A FAILURE still
+never coalesces, in either kind.
 
 R3. **Show the marker only where a body exists, and say what expanding
 costs.** Stop forcing `Collapsible` in `push()` (`viewport.go:103-111`).
@@ -335,7 +338,7 @@ duration follows R5 (`23.5s`).
    (`output_formatter_test.go`, `defaults_test.go`).
 3. **R1, R2, R9, R10** are structural. Affected surfaces: eviction and
    `trim`/`missed` accounting, focus walk and `FocusedText`/`y` copy,
-   `ExpandBlockAtScreenRow` and mouse routing, the ctrl+o pager screen
+   `ToggleBlockAtScreenRow` and mouse routing, the ctrl+o pager screen
    (`internal/ui/screen/transcript`), the `[` scrollback dump, and the
    repaint budget (rule 2.5). R2 must be display-only (see its clause)
    or copy and audit regress silently.

@@ -164,6 +164,13 @@ a click on the row, or `Space` with the focus inside the run, dissolves it back 
 the per-block headers. Coalescing is display-only: the pager, the `y` copy, and the
 scrollback dump keep every per-block header and body.
 
+Three or more consecutive FINISHED activity blocks of any kind - reads, edits,
+commands, subagents, reasoning - coalesce the same way into one work row,
+`> work read_file, edit, run_command  5 calls  4.2s` (transcript-polish.md R2a).
+Work still running never joins one, and a failure never joins one: those are the two
+blocks the reader is waiting on. Where both kinds fit the same blocks the read row
+wins, because it names its targets.
+
 Keys: `Tab` / `Shift-Tab` focus the next or previous block. `Space` or `Enter` toggles
 the focused block. `Ctrl-E` expands all, `Ctrl-W` collapses all. `y` copies the focused
 block. `Ctrl-O` opens the focused block in the pager. `Ctrl-C` cancels the turn, twice
@@ -193,6 +200,12 @@ v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
     -   return u.raw.Put(ctx, k, b)
     +   return retry.Do(ctx, retry.Policy{Max: 3})
 ```
+
+**Default collapse, amended 2026-09-04.** The 12-line threshold below still governs
+prose-shaped bodies, but a tool call that has ENDED SUCCESSFULLY now collapses
+whatever its size: its header already carries the target, the duration and the
+outcome, and consecutive collapsed calls are what fold into the work row above. A
+failed call stays open at any size.
 
 **Live-window constraint.** A block stays interactive while it is in the live window.
 The window holds the blocks that fit in the terminal height minus the reserved chrome.
