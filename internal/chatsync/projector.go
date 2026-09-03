@@ -155,11 +155,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectAssistantReset(env, turnID, ev)
 
 	case events.KindThinking:
-		if isDispatched(ev) {
-			return p.projectSubagentThinking(env, turnID, ev)
-		}
-		p.turn(turnID)
-		return p.projectThinking(env, turnID, ev.Content)
+		return p.projectThinkingFor(env, turnID, ev)
 
 	case events.KindToolStart, events.KindToolEnd:
 		settled := p.flushHeldAssistantOnStepClose(env, turnID, ev)
@@ -175,7 +171,10 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return append(settled, p.projectSubagent(env, ev)...)
 
 	case events.KindHook:
-		return p.projectHook(env, ev)
+		// Same release: a hook runs around a tool call or at the turn's stop,
+		// which is precisely the gap a finished message used to wait out.
+		flushed := p.flushHeldAssistantOnProseEnd(env, turnID, ev)
+		return append(flushed, p.projectHook(env, ev)...)
 
 	case events.KindCompaction:
 		return p.projectCompaction(env, ev)
@@ -197,7 +196,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 // existed. The flush is TERMINAL - no aggregate can follow it - so it ships
 // even a tail that nothing streamed alongside.
 func (p *Projector) closeTurn(env Envelope, turnID string, ev events.Event, terminal []WireEvent) []WireEvent {
-	out := p.flushHeldAssistantFor(env, turnID, ev, true)
+	out := p.flushHeldAssistantFor(env, turnID, ev)
 	out = append(out, p.settleThinkingFor(env, turnID, ev)...)
 	return append(out, terminal...)
 }
@@ -414,7 +413,7 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	// redactor has to go out first - as a delta, because INV-1 is about to
 	// empty this message's text. Flushing after would publish the tail below
 	// the message that claims to summarise it.
-	flushed := p.flushHeldAssistant(env, turnID+":assistant", ts, false, false)
+	flushed := p.flushHeldAssistant(env, turnID+":assistant", ts, false, true)
 	seg = ts.blockSegment(false)
 	env.Block = proseBlock(turnID+":assistant", seg)
 	content := redactText(ev.Content)

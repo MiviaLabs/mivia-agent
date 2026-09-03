@@ -37,10 +37,12 @@ sensitive inside a synced session is withheld unless you ask for it:
 
 1. **Authentication required**: an upload without a resolvable token is
    refused before it is attempted, rather than sent anonymously.
-2. **Tool I/O withheld**: By default, the system omits tool inputs and outputs
-   from the wire payload and records them in the envelope `redacted` array. When
-   enabled via `sync.include_tool_io = true`, payloads still pass through the
-   workspace redaction policy.
+2. **Tool I/O redacted**: Tool inputs and outputs are on the wire by default
+   (`sync.include_tool_io`, default `true` since 0282fac4) and pass through the
+   workspace redaction policy. Set it to `false`, or set `redact_tool_args`, to
+   omit them entirely; the envelope's `redacted` array then records the
+   omission. A hook's captured stdout is withheld outright whenever a redaction
+   policy is active, and reports only its byte count.
 3. **Thinking withheld**: The system withholds model reasoning text by default
    (`sync.include_thinking = false`).
 
@@ -62,18 +64,38 @@ enable sync on sensitive work:
   The producer therefore holds back the last 256 bytes of an open prose block
   (`redact.StreamHoldBack`), redacts the held tail joined to each new fragment,
   and ships only the part no future byte can still complete into a match. The
-  held tail is flushed as one final delta when the block closes - the next tool
-  call, the turn's end, the turn's failure, a subagent's terminal - so nothing
-  is delayed past the block and nothing is lost.
+  held tail is flushed as one final delta at the block's close - the next tool
+  call, the turn's end, the turn's failure, a subagent's terminal - and, since
+  the tail is a delay rather than a discard, also at the first event that
+  PROVES the model stopped talking without closing the block: a reasoning
+  fragment, or a lifecycle hook run. Nothing is delayed past the utterance and
+  nothing is lost.
 
   **The limit, stated plainly.** The window is 256 bytes because Go regexps are
-  unbounded and no finite window is sound for every expression. A pattern that
-  can match MORE than 256 bytes (`(?s)BEGIN KEY.*END KEY`, a greedy run over a
-  whole base64 blob) may begin further back than the window reaches, and its
-  opening bytes ship before the closing bytes prove it was a secret. An operator
-  whose secrets exceed 256 bytes must set `stream_assistant = false` rather than
-  rely on streamed deltas. Every credential shape in the recommended policy
-  below is far shorter than the window.
+  unbounded and no finite window is sound for every expression. Two behaviours
+  follow, depending on the pattern:
+
+  - **An open-ended pattern pins the stream.** The recommended PEM rule below is
+    written `BEGIN ... (?:END|$)`, and the `$` alternative matches from the
+    header to the end of the buffer on EVERY push. `safeCut` refuses to cut
+    inside a live match, so once the header is in the held tail the cut is
+    pinned at it and **nothing further ships until the block closes** - 10 KB
+    of prose after a PEM header shipped zero bytes. This is the SAFE direction:
+    no key body escapes. It is also a live stall for prose that merely mentions
+    the header, and when the block finally settles `redactText` rewrites the
+    whole remainder from the header onward, so the surrounding narration is
+    replaced too. Do not "fix" this by capping the hold: shipping a redacted
+    prefix drops the header out of the buffer, and the key body then streams
+    raw.
+  - **A closed pattern longer than the window can leak its opening bytes.** A
+    pattern that can match MORE than 256 bytes without an end-anchored
+    alternative (`(?s)BEGIN KEY.*END KEY`) may begin further back than the
+    window reaches, and its opening bytes ship before the closing bytes prove
+    it was a secret.
+
+  An operator whose secrets exceed 256 bytes must set `stream_assistant = false`
+  rather than rely on streamed deltas. Every credential shape in the recommended
+  policy below is far shorter than the window.
 - `stream_assistant` is **on by default** and selects HOW answer text is sent,
   not WHETHER it is sent. On, a turn sends deltas and then a settled message
   with empty text; off, it sends one settled message carrying the same text.

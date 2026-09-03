@@ -42,10 +42,10 @@ func (p *Projector) RollbackStreaming(wireEvents []WireEvent) {
 				p.rollbackOneDelta(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
 			}
 		case *ThinkingDeltaPayload:
-			p.rollbackOneThinking(p.turns[payload.Turn])
+			p.rollbackOneThinking(p.turns[payload.Turn], payload.Text != "")
 		case *SubagentThinkingDeltaPayload:
 			if payload.Agent != nil {
-				p.rollbackOneThinking(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
+				p.rollbackOneThinking(p.lanes[payload.Turn+"\x00"+payload.Agent.Task], payload.Text != "")
 			}
 		case *AssistantResetPayload:
 			// A reset that never reached the wire must not have cleared the
@@ -122,13 +122,33 @@ func (p *Projector) rollbackOneDelta(ts *turnState) {
 	}
 }
 
-func (p *Projector) rollbackOneThinking(ts *turnState) {
+// carriedText says whether the lost delta actually had TEXT in it. The
+// per-block counters must be undone by exactly the rule recordThinking used to
+// set them, and that rule is "did this fragment's text reach the wire", not
+// "did a fragment exist".
+func (p *Projector) rollbackOneThinking(ts *turnState, carriedText bool) {
 	if ts == nil || ts.thinkingFragments == 0 {
 		return
 	}
 	ts.thinkingFragments--
 	if ts.segmentThinking > 0 {
 		ts.segmentThinking--
+	}
+	// The turn-wide index and the step counter above move for EVERY delta -
+	// projectThinking increments them whether or not the fragment carried text
+	// - so they are undone unconditionally.
+	//
+	// The per-block pair below does not. Since the cross-fragment redactor
+	// landed, a fragment held whole inside the hold-back window ships an empty
+	// text, and recordThinking refuses to count it. Undoing it here anyway
+	// un-counted a fragment that DID ship: with one such fragment on the wire
+	// the count fell to zero, thinkingStreamed flipped false, and the settled
+	// aggregate re-carried reasoning the viewer already held - the same words
+	// twice, which is what INV-1 exists to prevent. (Open-ended operator
+	// patterns like a PEM `BEGIN...(?:END|$)` pin the cut at their header, so
+	// empty-text fragments are the ordinary case there, not a corner.)
+	if !carriedText {
+		return
 	}
 	// A delta that never shipped must not count towards the settled
 	// aggregate's INV-1 branch. Leaving it counted made the aggregate claim
