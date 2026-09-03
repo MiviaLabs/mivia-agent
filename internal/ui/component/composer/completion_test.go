@@ -237,7 +237,7 @@ func TestViewPutsTheMenuAboveTheInput(t *testing.T) {
 func TestHeightWithNoMenu(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 40)
 	if got := m.Height(); got != 3 {
-		t.Errorf("got height %d, want 3 with no menu showing (1 input row + 2 frame rows)", got)
+		t.Errorf("got height %d, want 3 with no menu showing (1 input row + 2 padding rows)", got)
 	}
 	narrow := New(loadTheme(t), theme.TierASCII, 4)
 	if got := narrow.Height(); got != 1 {

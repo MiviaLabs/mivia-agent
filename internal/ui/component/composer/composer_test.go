@@ -177,6 +177,8 @@ func TestInputOffsets(t *testing.T) {
 	if got := m.InputRowFromBottom(); got != 2 {
 		t.Errorf("InputRowFromBottom() = %d, want 2", got)
 	}
+	// The bar's two padding columns sit before the prompt (the cells the
+	// old border used to occupy), so clicks subtract 2.
 	if got := m.InputColumnOffset(); got != 2 {
 		t.Errorf("InputColumnOffset() = %d, want 2", got)
 	}
@@ -602,22 +604,20 @@ func TestMenuClickRow(t *testing.T) {
 	}
 }
 
-func TestComposerHintHidesAtFiles(t *testing.T) {
-	m := New(loadTheme(t), theme.TierASCII, 80)
-	view := m.View()
-	if strings.Contains(view, "@ Files") {
-		t.Errorf("expected view not to contain '@ Files', got:\n%s", view)
-	}
-	if !strings.Contains(view, "/ Commands") {
-		t.Errorf("expected view to contain '/ Commands', got:\n%s", view)
-	}
-
-	mUnicode := New(loadTheme(t), theme.TierTrueColor, 80)
-	viewUnicode := mUnicode.View()
-	if strings.Contains(viewUnicode, "@ Files") {
-		t.Errorf("expected truecolor view not to contain '@ Files', got:\n%s", viewUnicode)
-	}
-	if !strings.Contains(viewUnicode, "/ Commands") {
-		t.Errorf("expected truecolor view to contain '/ Commands', got:\n%s", viewUnicode)
+// TestComposerIdleBarCarriesNoHint: the idle bar is prompt, text, and
+// padding only. The placeholder already names "/" for commands, so no
+// hint row is drawn until a menu opens (menuHint), on any tier.
+func TestComposerIdleBarCarriesNoHint(t *testing.T) {
+	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierTrueColor} {
+		m := New(loadTheme(t), tier, 80)
+		view := ansi.Strip(m.View())
+		for _, stale := range []string{"@ Files", "/ Commands", "Send", "["} {
+			if strings.Contains(view, stale) {
+				t.Errorf("tier %v: idle bar must carry no hint, found %q in:\n%s", tier, stale, view)
+			}
+		}
+		if !strings.Contains(view, "type / for commands") {
+			t.Errorf("tier %v: placeholder must still name / for commands:\n%s", tier, view)
+		}
 	}
 }
