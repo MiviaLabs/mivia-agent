@@ -598,8 +598,12 @@ func TestMenuClickRow(t *testing.T) {
 	if m.MenuClickRow(10) {
 		t.Error("expected false for out-of-range row")
 	}
-	// Valid row
-	if !m.MenuClickRow(0) {
+	// Row 0 is the popup's blank top padding: no item there.
+	if m.MenuClickRow(0) {
+		t.Error("expected false when clicking the popup's padding row")
+	}
+	// Valid row: the first item sits on popup row 1.
+	if !m.MenuClickRow(1) {
 		t.Error("expected true when clicking valid menu row")
 	}
 }
