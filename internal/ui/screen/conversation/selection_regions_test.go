@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 )
@@ -42,9 +43,9 @@ func TestSelectionRegionsComposerSitsAboveStatus(t *testing.T) {
 	if !ok {
 		t.Fatal("a composer-bearing screen must offer a composer region")
 	}
-	// The status row is the last frame row; the composer body ends one
-	// above it (framed: bottom border between).
-	lastInputRow := s.height - 1 - s.composer.InputRowFromBottom()
+	// The status row is the last content row, above the bottom gutter
+	// row; the composer body ends above it (bottom padding row between).
+	lastInputRow := s.height - 2 - s.composer.InputRowFromBottom()
 	if cr.MaxY-1 != lastInputRow {
 		t.Fatalf("composer bottom drift: rect=%+v lastInputRow=%d", cr, lastInputRow)
 	}
@@ -115,14 +116,19 @@ func TestCopyToastNoticesCharCount(t *testing.T) {
 
 // Boundary kills for the region geometry.
 
-func TestSelectionRegionsTinySurfaceNoComposer(t *testing.T) {
+func TestSelectionRegionsTinySurfaceStaysInside(t *testing.T) {
 	s := sized(t, 0)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 2, Height: 2})
 	s = next.(Screen)
-	// A two-column surface cannot hold the composer's body: the region
-	// collapses to zero width and SelectionRegions must drop it.
-	if cr, ok := findRegion(t, s, sel.RegionComposer); ok && cr.Width() > 0 {
-		t.Fatalf("a two-column surface must report no usable composer region: %+v", cr)
+	// A two-by-two surface has no gutter and a bare bar: the body (just
+	// the prompt) is drawn on the top row across both columns, and the
+	// region must describe exactly that - never a cell past the surface.
+	cr, ok := findRegion(t, s, sel.RegionComposer)
+	if !ok {
+		t.Fatal("the bare bar still draws a body on a tiny surface")
+	}
+	if cr.MinX != 0 || cr.MaxX != 2 || cr.MinY != 0 || cr.MaxY != 1 {
+		t.Fatalf("composer region must be the drawn top row of a 2x2 surface: %+v", cr)
 	}
 }
 
@@ -235,8 +241,10 @@ func TestComposerRegionSingleColumnStillReports(t *testing.T) {
 	// w == 1 is one drawable column, not the "cannot draw a single
 	// cell" case the early-return guards against (w < 1): a <=
 	// mutant on that guard would collapse this to an empty rect.
+	// Width 3 is one content column inside the gutter; the bare bar
+	// (no padding below minPaddedWidth) draws its body across it.
 	s := sized(t, 0)
-	next, _ := s.Update(tea.WindowSizeMsg{Width: 6, Height: 24})
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 3, Height: 24})
 	s = next.(Screen)
 	cr := s.composerRegion()
 	if cr.Width() != 1 {
@@ -291,5 +299,50 @@ func TestTranscriptRegionHiddenWhenPanelNarrowCoversIt(t *testing.T) {
 	s.panel.open = true // narrow (below breakpoint): the list covers the transcript
 	if _, ok := findRegion(t, s, sel.RegionTranscript); !ok {
 		t.Fatal("a narrow, unsplit panel must not hide the transcript region here")
+	}
+}
+
+// TestComposerRegionCoversTheDrawnBody: the region must sit on the very
+// cells View draws the body in - the row that carries the prompt and the
+// column the prompt glyph starts at - so a drag over the typed text
+// selects that text. An off-by-one row put the region on the bottom
+// padding row (a press on the input row started no selection at all),
+// and an off-by-one column copied " hell" for a drag over "hello".
+func TestComposerRegionCoversTheDrawnBody(t *testing.T) {
+	s := sized(t, 0)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	next, _ = s.Update(keyMsg("hello"))
+	s = next.(Screen)
+	rows := strings.Split(s.View(), "\n")
+	s.syncSelectionRects()
+	cr := s.composer.SelectionRect()
+
+	promptRow, promptCol := -1, -1
+	for y, row := range rows {
+		if col := strings.Index(ansi.Strip(row), "> hello"); col >= 0 {
+			promptRow, promptCol = y, col
+			break
+		}
+	}
+	if promptRow < 0 {
+		t.Fatalf("precondition: the input row is drawn somewhere:\n%s", ansi.Strip(s.View()))
+	}
+	if cr.MinY != promptRow || cr.MaxY != promptRow+1 {
+		t.Errorf("region rows %d..%d, want exactly the drawn input row %d", cr.MinY, cr.MaxY, promptRow)
+	}
+	if cr.MinX != promptCol {
+		t.Errorf("region starts at column %d, want the prompt glyph's column %d", cr.MinX, promptCol)
+	}
+	if cr.MaxX != promptCol+s.chatWidth()-2*s.composer.InputColumnOffset() {
+		t.Errorf("region ends at column %d, want the bar's inner right edge", cr.MaxX)
+	}
+
+	textCol := promptCol + 2 // after "> "
+	from := sel.FromScreen(cr, textCol, promptRow)
+	to := sel.FromScreen(cr, textCol+4, promptRow)
+	s.composer.SetSelection(sel.Selection{Active: true, Anchor: from, Focus: to})
+	if got := s.composer.SelectedText(); got != "hello" {
+		t.Errorf("drag across the typed word selected %q, want hello", got)
 	}
 }

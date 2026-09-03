@@ -85,11 +85,12 @@ func (s Screen) transcriptRegion() sel.Rect {
 }
 
 // composerRegion is the absolute rect of the composer's text body only:
-// padding rows are excluded, and the columns run across the inner width
-// where the textarea actually draws. The composer draws no border (see
-// composer.Model.View); its padding rows and columns occupy exactly the
-// cells the border used to, so the geometry is the same. The completion
-// popup is an overlay above the bar and is not part of the bar's rows.
+// padding rows are excluded, and the columns run across the bar's inner
+// width - prompt cells included, since the composer's own selection rows
+// start at the prompt glyph (composer.selectionRows). The composer draws
+// no border (see composer.Model.View); its padding rows and columns
+// occupy exactly the cells the border used to. The completion popup is
+// an overlay above the bar and is not part of the bar's rows.
 func (s Screen) composerRegion() sel.Rect {
 	x0, tg := s.contentOrigin()
 	padRows := 0
@@ -101,14 +102,20 @@ func (s Screen) composerRegion() sel.Rect {
 	// so this always reduces to the textarea's own row count, which
 	// composer.Height() clamps to at least 1.
 	bodyRows := s.composer.Height() - padRows
-	// The status row sits at the screen bottom; the composer block ends
-	// just above it. InputRowFromBottom counts from the status row up to
-	// the LAST input row, so the first body row sits height-1 above it.
-	lastInputRow := s.height - tg - s.composer.InputRowFromBottom()
+	// The status row is the last content row: the screen's last row less
+	// the bottom gutter row, which gutter() draws exactly when it draws
+	// the top one (tg). InputRowFromBottom counts from the status row up
+	// to the LAST input row, so the first body row sits bodyRows-1 above
+	// it. mouse.go's handleClick derives inputRow the same way.
+	statusRow := s.height - 1 - tg
+	lastInputRow := statusRow - s.composer.InputRowFromBottom()
 	firstBodyRow := lastInputRow - (bodyRows - 1)
-	colOffset := 1 + s.composer.InputColumnOffset() // gutter, then the bar's left padding
-	x1 := x0 + colOffset
-	w := s.chatWidth() - colOffset - 2 // right border + padding inset
+	// x0 is already the first content column inside the gutter; the bar's
+	// left padding comes next, then the prompt glyph - the body's first
+	// cell. The right padding mirrors the left.
+	inset := s.composer.InputColumnOffset()
+	x1 := x0 + inset
+	w := s.chatWidth() - 2*inset
 	if w < 1 {
 		return sel.Rect{} // the body cannot draw a single cell: no region
 	}
