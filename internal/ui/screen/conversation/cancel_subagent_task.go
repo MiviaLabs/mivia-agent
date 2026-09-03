@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 )
 
 // cancelSelectedSubagentTask cancels the ONE coordinator task backing the
@@ -56,6 +57,29 @@ type subagentTaskCancelResultMsg struct {
 	name string
 	ok   bool
 	err  error
+
+	// on is the statusline the notice belongs on. The local key path leaves
+	// it nil, because the session it cancels is by definition the one on
+	// screen. A REMOTE cancel can name a backgrounded session, and its
+	// notice - above all the error text - has to appear against the session
+	// the instruction targeted, not against whichever one happens to be
+	// foreground when the coordinator finally answers.
+	on *statusline.Model
+}
+
+// noticeOn writes to the targeted statusline when the sender named one, and
+// to the foreground otherwise.
+//
+// The receiver is a POINTER on purpose. s.statusline is a value field, so a
+// value receiver would take the address of a COPY's field and the notice
+// would be written to a Screen that is immediately discarded - the callers
+// here persist their mutation only by returning s.
+func (s *Screen) noticeOn(on *statusline.Model, text string) {
+	if on != nil {
+		on.Notice(text)
+		return
+	}
+	s.statusline.Notice(text)
 }
 
 // handleSubagentTaskCancelResult emits the statusline notice for one
@@ -64,11 +88,11 @@ type subagentTaskCancelResultMsg struct {
 // there is nothing to report).
 func (s Screen) handleSubagentTaskCancelResult(msg subagentTaskCancelResultMsg) (app.Screen, tea.Cmd) {
 	if msg.err != nil {
-		s.statusline.Notice("cancel subagent task failed: " + msg.err.Error())
+		s.noticeOn(msg.on, "cancel subagent task failed: "+msg.err.Error())
 		return s, nil
 	}
 	if msg.ok {
-		s.statusline.Notice("cancelling " + msg.name)
+		s.noticeOn(msg.on, "cancelling "+msg.name)
 	}
 	return s, nil
 }

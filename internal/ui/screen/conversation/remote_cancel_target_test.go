@@ -4,6 +4,7 @@
 package conversation
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -79,6 +80,15 @@ func remoteCancelScreen(t *testing.T, id string, threads ports.SubagentThreads) 
 
 // runCmd runs a tea.Cmd off the update goroutine and returns its message,
 // failing if it does not produce one within the budget.
+//
+// It unwraps tea.BatchMsg deliberately. handleRemoteInput returns
+// tea.Batch(rearm, cmd), and tea.Batch DROPS nil entries and returns a lone
+// survivor directly - so with a fixture that never wires remoteInputs,
+// rearm is nil and the batch collapses to the cancel Cmd. Asserting on that
+// collapsed shape would bind these tests to an accident: wire a real
+// remote-input channel, as production does, and every one of them would
+// fail on a tea.BatchMsg for reasons unrelated to the behaviour under test.
+// Unwrapping here keeps them true in both wirings.
 func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
 	if cmd == nil {
@@ -88,11 +98,49 @@ func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	go func() { out <- cmd() }()
 	select {
 	case msg := <-out:
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			return firstBatchMsg(t, batch)
+		}
 		return msg
 	case <-time.After(2 * time.Second):
 		t.Fatal("the Cmd never produced a message")
 		return nil
 	}
+}
+
+// firstBatchMsg runs a batch's commands CONCURRENTLY and returns the first
+// non-nil message, so a caller sees the same thing whether or not the batch
+// collapsed.
+//
+// Concurrently, not in sequence, because one of the two commands in the
+// production batch is awaitRemoteInput - which blocks on the remote-input
+// channel until the next event arrives, i.e. forever in a test. Running the
+// batch in order deadlocks on it before ever reaching the cancel result.
+// bubbletea itself runs a batch's commands in parallel goroutines, so this
+// also matches how the batch is actually executed.
+func firstBatchMsg(t *testing.T, batch tea.BatchMsg) tea.Msg {
+	t.Helper()
+	out := make(chan tea.Msg, len(batch))
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		go func(c tea.Cmd) { out <- c() }(c)
+	}
+	deadline := time.After(2 * time.Second)
+	for range batch {
+		select {
+		case msg := <-out:
+			if msg != nil {
+				return msg
+			}
+		case <-deadline:
+			t.Fatal("the batch produced no message")
+			return nil
+		}
+	}
+	t.Fatal("the batch produced no message")
+	return nil
 }
 
 // --- body parser -----------------------------------------------------
@@ -362,6 +410,16 @@ func TestRemoteTargetedCancelMatchingSessionIDTargetsForeground(t *testing.T) {
 // TestRemoteTargetedCancelTargetsBackgroundSession proves a targeted cancel
 // aimed at a tracked BACKGROUND session reaches that session's own seam,
 // not the foreground one - the same fork handleRemoteCancel applies.
+//
+// Read this as a unit pin on resolveRemoteCancelSeams taking st.threads
+// rather than s.threads, which is the branch a "simplification" would
+// break. It is NOT evidence of session isolation in production: the pool
+// wires ONE ports.SubagentThreads (uiadapter.SessionPool.Threads) into
+// every sessionState, so fg and bg are distinguishable only in test
+// wiring. Isolation there comes from the route key instead - a
+// provider-generated tool call id, unique across sessions in the process -
+// and each route carries its own coordinator, so a cancel always lands on
+// the task its id names.
 func TestRemoteTargetedCancelTargetsBackgroundSession(t *testing.T) {
 	fg := &recordingThreads{stubThreads: stubThreads{}, ok: true}
 	bg := &recordingThreads{stubThreads: stubThreads{}, ok: true}
@@ -462,5 +520,81 @@ func TestHandleRemoteInputMessageKindStillSends(t *testing.T) {
 	}
 	if len(threads.tasks()) != 0 || len(threads.tools()) != 0 {
 		t.Error("a message input reached a cancel seam")
+	}
+}
+
+// --- notice routing --------------------------------------------------
+
+// TestRemoteCancelNoticeLandsOnTargetedSession pins the half of the
+// remoteCancelSeams contract the async legs used to break: the seam call
+// already reached the right task, but the NOTICE was emitted bare and the
+// handler wrote it to s.statusline - always the foreground. A cancel aimed
+// at a backgrounded session therefore reported its outcome, error text
+// included, against whichever session happened to be on screen.
+//
+// The assertion is on the background session's own statusline, and the
+// foreground's silence is asserted too: writing to both would satisfy a
+// one-sided check while still misleading the operator.
+func TestRemoteCancelNoticeLandsOnTargetedSession(t *testing.T) {
+	fg := &recordingThreads{stubThreads: stubThreads{}, ok: true}
+	bg := &recordingThreads{stubThreads: stubThreads{}, ok: true}
+	s := remoteCancelScreen(t, "sess-fg", fg)
+	s.sessions["sess-bg"] = &sessionState{threads: bg}
+
+	_, cmd := s.handleRemoteTargetedCancel(ports.RemoteInputEvent{
+		SessionID: "sess-bg", Kind: "cancel_task", Body: "call-1:task-a",
+	})
+	msg, ok := runCmd(t, cmd).(subagentTaskCancelResultMsg)
+	if !ok {
+		t.Fatalf("the Cmd produced %T, want subagentTaskCancelResultMsg", msg)
+	}
+	if msg.on == nil {
+		t.Fatal("the result carries no statusline, so the notice can only reach the foreground")
+	}
+	if msg.on != &s.sessions["sess-bg"].statusline {
+		t.Fatal("the result carries a statusline that is not the targeted session's")
+	}
+
+	next, _ := s.handleSubagentTaskCancelResult(msg)
+	scr, isScreen := next.(Screen)
+	if !isScreen {
+		t.Fatalf("expected a conversation Screen, got %T", next)
+	}
+	bgLine := &scr.sessions["sess-bg"].statusline
+	if !bgLine.Active() {
+		t.Fatal("the targeted session's statusline shows nothing; want the cancel notice")
+	}
+	if got := bgLine.View(time.Now()); !strings.Contains(got, "cancelling call-1:task-a") {
+		t.Fatalf("targeted statusline = %q, want it to contain %q", got, "cancelling call-1:task-a")
+	}
+	if scr.statusline.Active() {
+		t.Fatalf("the foreground statusline was written too: %q", scr.statusline.View(time.Now()))
+	}
+}
+
+// TestRemoteCancelWithRemoteInputsWiredStillCancels runs the targeted-cancel
+// path in the PRODUCTION wiring, with a remote-input channel set. That makes
+// handleRemoteInput's tea.Batch(rearm, cmd) carry two live commands instead
+// of collapsing to one, which is the shape every other test here would have
+// silently missed. The cancel must still reach the seam and still report
+// against the targeted session.
+func TestRemoteCancelWithRemoteInputsWiredStillCancels(t *testing.T) {
+	bg := &recordingThreads{stubThreads: stubThreads{}, ok: true}
+	s := remoteCancelScreen(t, "sess-fg", &recordingThreads{stubThreads: stubThreads{}, ok: true})
+	s.sessions["sess-bg"] = &sessionState{threads: bg}
+	s.SetRemoteInputs(make(chan ports.RemoteInputEvent))
+
+	_, cmd := s.handleRemoteInput(ports.RemoteInputEvent{
+		SessionID: "sess-bg", Kind: "cancel_task", Body: "call-1:task-a",
+	})
+	msg, ok := runCmd(t, cmd).(subagentTaskCancelResultMsg)
+	if !ok {
+		t.Fatalf("the Cmd produced %T, want subagentTaskCancelResultMsg", msg)
+	}
+	if got := bg.tasks(); len(got) != 1 || got[0] != "call-1:task-a" {
+		t.Fatalf("the seam was called with %v, want [call-1:task-a]", got)
+	}
+	if msg.on != &s.sessions["sess-bg"].statusline {
+		t.Fatal("the notice would not land on the targeted session")
 	}
 }
