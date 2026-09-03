@@ -9,6 +9,13 @@ import (
 // Kind is the type for event kinds.
 type Kind string
 
+// DetailAssistantComplete is the Detail of a content-free KindAssistant that
+// says the loop recorded one complete assistant message; every consumer must
+// ignore it unless it releases held text. It is a signal, not an aggregate:
+// the turn's terminal KindAssistant (empty Detail, full Content) stays the
+// one settled message per turn.
+const DetailAssistantComplete = "complete"
+
 const (
 	// Agent loop events (mirror agent.EventKind values).
 	KindAssistant Kind = "assistant"

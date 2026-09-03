@@ -42,7 +42,10 @@ import (
 //
 // An empty Content on either mode is dropped: deltas with no payload, and
 // interim/final events that arrived before any text was produced, are not
-// representable in the current uievent body set. Unknown Detail values
+// representable in the current uievent body set. That guard - not the
+// unknown-Detail fallback below - is what keeps the loop's content-free
+// "complete" flag (events.DetailAssistantComplete) off the TUI; carrying
+// text on it would render a text.end per iteration. Unknown Detail values
 // fall back to text.end so a future agent addition that introduces a new
 // mode still emits something visible rather than vanishing: only an
 // unrecognized EventKind (caught at the switch in TranslateEvent) is fatal.

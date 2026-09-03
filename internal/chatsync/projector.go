@@ -145,6 +145,9 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		// takes the streamed branch and ships an EMPTY text with a non-zero
 		// fragment count - a blank assistant message in every viewer, for a
 		// root loop that never streamed a token itself.
+		if ev.Detail == events.DetailAssistantComplete {
+			return p.flushHeldAssistantOnProseEnd(env, turnID, ev)
+		}
 		if isDispatched(ev) {
 			return p.projectSubagentAssistant(env, turnID, ev)
 		}

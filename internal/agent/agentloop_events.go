@@ -8,10 +8,14 @@
 // agent attribution behave exactly as the legacy path's do.
 //
 // Dropped by design, mirroring the legacy surface's droppedKinds
-// precedent: iteration-end (the CLI has no per-iteration-end kind)
-// and both heartbeat kinds (progress ticks have no CLI
-// representation, and the SDK path leaves HeartbeatInterval at zero
-// so they never fire anyway).
+// precedent: iteration-end (the CLI has no per-iteration-end kind),
+// both heartbeat kinds (progress ticks have no CLI representation,
+// and the SDK path leaves HeartbeatInterval at zero so they never
+// fire anyway), the thinking bracket (the adapter's onUsage already
+// publishes EventThinking from the same response, agentloop_adapter.go),
+// and cache usage, calibration deltas and tool_parallel, which nothing
+// on the CLI surface consumes from this bridge. EventAssistant is
+// bridged as a content-free completion flag; see the subscription below.
 package agent
 
 import (
@@ -20,6 +24,8 @@ import (
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkevents "github.com/MiviaLabs/mivia-ai-sdk/events"
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // bridgeAgentLoopEvents builds the SDK-side bus whose emissions are
@@ -45,6 +51,24 @@ func bridgeAgentLoopEvents(opts Options, turn *sdkTurnState) *sdkevents.Bus {
 		turn.resetStreamRevoke()
 		turn.resetIterationShaping()
 		emit(opts, Event{Kind: EventStep, Detail: e.Data})
+		return nil
+	})
+	// The loop recorded one complete assistant message: afterChat emits this
+	// after the completer returned - every delta of that message has already
+	// been written, synchronously, in the calling goroutine - and BEFORE any
+	// tool of the same iteration runs. It is the one same-stream, per-message
+	// proof that the model stopped talking, which is what the chat-sync
+	// projector needs to release its held tail without waiting for the next
+	// block close. The content is deliberately NOT carried: a non-delta
+	// KindAssistant with text is a settled aggregate to every other consumer,
+	// and the turn keeps exactly one of those (finalizeSDKTurn).
+	//
+	// The SDK event is ABSENT, not empty, for a message with no content: the
+	// bus's Event.Validate rejects empty Data, so a tool-call-only response
+	// emits nothing here. Nothing is pending for such a response, so nothing
+	// is lost.
+	_ = bus.Subscribe(sdkagentloop.EventAssistant, func(_ context.Context, _ sdkevents.Event) error {
+		emit(opts, Event{Kind: EventAssistant, Detail: events.DetailAssistantComplete})
 		return nil
 	})
 	_ = bus.Subscribe(sdkagentloop.EventToolCallEnd, func(ctx context.Context, _ sdkevents.Event) error {

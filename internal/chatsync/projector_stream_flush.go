@@ -119,13 +119,19 @@ func (p *Projector) flushHeldAssistantOnStepClose(env Envelope, turnID string, e
 // still streaming, while the local TUI - which streams the same deltas with no
 // hold-back at all - already showed it whole.
 //
-// Two events prove it, both on the same stream, so nothing here narrows the
+// Three events prove it, all on the same stream, so nothing here narrows the
 // cross-fragment guarantee WITHIN a content block:
 //
 //   - a thinking fragment: the provider switched content block, so no further
-//     byte of the prose block can arrive before it switches back; and
+//     byte of the prose block can arrive before it switches back;
 //   - a hook run: hooks fire around tool calls and at the turn's stop, never
-//     while the model is mid-utterance.
+//     while the model is mid-utterance; and
+//   - the loop's message-complete flag (KindAssistant with
+//     events.DetailAssistantComplete and no content): the SDK loop emits it
+//     once the completer has returned the whole message and before any tool
+//     of that iteration runs. Without it a final message with no reasoning,
+//     no hook and no further tool call sat redact.StreamHoldBack bytes short
+//     until the turn's end.
 //
 // The block stays OPEN. Prose that resumes in the same segment keeps appending
 // to the same block id with the next fragment index, exactly as it does after
@@ -133,6 +139,10 @@ func (p *Projector) flushHeldAssistantOnStepClose(env Envelope, turnID string, e
 func (p *Projector) flushHeldAssistantOnProseEnd(env Envelope, turnID string, ev events.Event) []WireEvent {
 	switch ev.Kind {
 	case events.KindThinking, events.KindHook:
+	case events.KindAssistant:
+		if ev.Detail != events.DetailAssistantComplete {
+			return nil
+		}
 	default:
 		return nil
 	}

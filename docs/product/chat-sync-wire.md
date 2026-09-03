@@ -68,8 +68,11 @@ enable sync on sensitive work:
   call, the turn's end, the turn's failure, a subagent's terminal - and, since
   the tail is a delay rather than a discard, also at the first event that
   PROVES the model stopped talking without closing the block: a reasoning
-  fragment, or a lifecycle hook run. Nothing is delayed past the utterance and
-  nothing is lost.
+  fragment, a lifecycle hook run, or the loop's message-complete signal (the
+  SDK loop reports each completed assistant message before any tool of that
+  iteration runs; the bridge forwards it as a content-free `assistant` event
+  with detail `complete`, which never reaches the wire itself). Nothing is
+  delayed past the utterance and nothing is lost.
 
   **The limit, stated plainly.** The window is 256 bytes because Go regexps are
   unbounded and no finite window is sound for every expression. Two behaviours
