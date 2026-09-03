@@ -649,3 +649,26 @@ func TestMenuClickRowAcceptsMention(t *testing.T) {
 		t.Error("accepting a mention by click must close the picker")
 	}
 }
+
+// TestMentionMenuOpensOnLaterLines: the mention trigger is found from
+// the cursor's offset into the whole value, so an "@" typed on the
+// second line opens the picker and accepting it edits that line, not
+// the first. Column() alone (a rune index within the current line)
+// pointed into line one and never saw the "@".
+func TestMentionMenuOpensOnLaterLines(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetMentions([]Mention{{Path: "a.go"}})
+	m.SetValue("first line\n@")
+	if !m.MentionMenuActive() {
+		t.Fatal("an @ at the start of the second line must open the picker")
+	}
+	m = m.AcceptMention()
+	if got := m.Value(); got != "first line\n@a.go" {
+		t.Errorf("accepted %q, want the mention on the second line", got)
+	}
+	// A multibyte first line must not skew the byte offset either.
+	m.SetValue("héllo wörld\n@a")
+	if !m.MentionMenuActive() {
+		t.Fatal("an @ after a multibyte first line must open the picker")
+	}
+}

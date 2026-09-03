@@ -182,7 +182,7 @@ func (m Model) Commands() []Command {
 // composer holds no filesystem access.
 func (m *Model) SetMentions(mentions []Mention) {
 	m.mmenu.all = slices.Clone(mentions)
-	m.mmenu.refresh(m.input.Value(), m.input.Column())
+	m.mmenu.refresh(m.input.Value(), m.cursorOffset())
 }
 
 // Mentions returns the active @-mention candidate list.
@@ -234,7 +234,7 @@ func (m Model) AcceptMention() Model {
 	if !m.MentionMenuActive() {
 		return m
 	}
-	cur := m.input.Column()
+	cur := m.cursorOffset()
 	text := m.input.Value()
 	newText, newCursor := m.mmenu.replaceInText(text, cur)
 	m.input.SetValue(newText)
@@ -305,11 +305,31 @@ func (m *Model) SetValue(s string) {
 	m.input.SetValue(s)
 	m.input.CursorEnd()
 	m.menu.refresh(s)
-	m.mmenu.refresh(s, m.input.Column())
+	m.mmenu.refresh(s, m.cursorOffset())
 }
 
 // CursorLine returns the current line index (0-based) of the cursor.
 func (m Model) CursorLine() int { return m.input.Line() }
+
+// cursorOffset is the cursor's byte offset into Value(). The textarea
+// reports the cursor as a logical line plus a rune column within it;
+// the mention trigger slices the whole value, so the lines before the
+// cursor's count too - Column() alone points into the FIRST line and
+// hides an "@" typed on any later one.
+func (m Model) cursorOffset() int {
+	lines := strings.Split(m.input.Value(), "\n")
+	row, col := m.input.Line(), m.input.Column()
+	off := 0
+	for i := 0; i < row && i < len(lines); i++ {
+		off += len(lines[i]) + 1 // the line and its newline
+	}
+	if row >= 0 && row < len(lines) {
+		r := []rune(lines[row])
+		col = min(max(col, 0), len(r))
+		off += len(string(r[:col]))
+	}
+	return off
+}
 
 // IsEmpty reports whether the input has no text or only whitespace.
 func (m Model) IsEmpty() bool { return len(strings.TrimSpace(m.input.Value())) == 0 }
@@ -379,7 +399,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.invalidateSelection()
 	}
 	m.menu.refresh(m.input.Value())
-	m.mmenu.refresh(m.input.Value(), m.input.Column())
+	m.mmenu.refresh(m.input.Value(), m.cursorOffset())
 	return m, cmd
 }
 
