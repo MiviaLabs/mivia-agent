@@ -21,35 +21,75 @@ require_cmd() {
 run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }
 
 require_cmd python3
+
+# Secret scan: merge-base range when available, else all tracked files.
+# Git hands the refs being pushed on stdin, one
+# `<local ref> <local sha> <remote ref> <remote sha>` line per ref. Read them
+# HERE, before any child process runs: a child that reads stdin would consume
+# the lines and this hook would silently fall back to sweeping HEAD. The
+# supervisor (run_with_timeout) forwards its stdin to the job for the same
+# reason.
+# A delete (local sha all zeros) has nothing to scan and builds no range.
+# "A ref line was read" below means "a non-delete line was read", so a
+# delete-only push takes the HEAD fallback.
+# A Mivia-managed worktree must not use HEAD^ as a base. That base can
+# hide files from earlier commits on a new branch. Use the remote's sha
+# when it exists locally, else the pushed ref's upstream, else an origin
+# base, anchored on the PUSHED sha rather than HEAD. A pushed ref with no
+# base at all is scanned --tracked rather than dropped.
+# MIVIA_PUSH_VERIFY_BASE/TIP override all automatic detection.
+ZERO_SHA='0000000000000000000000000000000000000000'
+PUSH_BASES=()
+PUSH_TIPS=()
+if [[ ! -t 0 ]]; then
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    [[ -n "$local_sha" && "$local_sha" != "$ZERO_SHA" ]] || continue
+    if [[ -n "$remote_sha" && "$remote_sha" != "$ZERO_SHA" ]] \
+        && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+      push_base="$(git merge-base "$local_sha" "$remote_sha" 2>/dev/null || true)"
+    else
+      push_base="$(
+        git merge-base "$local_sha" "${local_ref#refs/heads/}@{upstream}" 2>/dev/null \
+        || git merge-base "$local_sha" origin/main 2>/dev/null \
+        || git merge-base "$local_sha" origin/master 2>/dev/null \
+        || true
+      )"
+    fi
+    PUSH_BASES+=("$push_base")
+    PUSH_TIPS+=("$local_sha")
+  done
+fi
+if [[ -n "${MIVIA_PUSH_VERIFY_BASE:-}" && -n "${MIVIA_PUSH_VERIFY_TIP:-}" ]]; then
+  PUSH_BASES=("$MIVIA_PUSH_VERIFY_BASE")
+  PUSH_TIPS=("$MIVIA_PUSH_VERIFY_TIP")
+elif ((${#PUSH_TIPS[@]} == 0)); then
+  if [[ ! -t 0 ]]; then
+    printf 'pre-push: no ref lines on stdin; sweeping HEAD\n' >&2
+  fi
+  PUSH_BASES=("$(
+    git merge-base HEAD '@{upstream}' 2>/dev/null \
+    || git merge-base HEAD origin/main 2>/dev/null \
+    || git merge-base HEAD origin/master 2>/dev/null \
+    || true
+  )")
+  PUSH_TIPS=("HEAD")
+fi
+
+TRACKED_SCANNED=0
+for i in "${!PUSH_TIPS[@]}"; do
+  if [[ -n "${PUSH_BASES[$i]}" ]]; then
+    run_verify python3 scripts/secret_scan.py --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+  elif ((TRACKED_SCANNED == 0)); then
+    run_verify python3 scripts/secret_scan.py --tracked
+    TRACKED_SCANNED=1
+  fi
+done
+
 run_verify python3 scripts/verify_agent_config.py
 run_verify python3 scripts/git-hooks/file-size-check --tracked
 run_verify python3 scripts/check_go_structure.py --strict --all
 
 git diff --check
-
-# Secret scan: merge-base range when available, else all tracked files.
-# A Mivia-managed worktree must not use HEAD^ as a base. That base can
-# hide files from earlier commits on a new branch. Use an upstream or
-# an origin base. If neither exists, scan all tracked files.
-# MIVIA_PUSH_VERIFY_BASE/TIP override all automatic detection.
-if [[ -n "${MIVIA_PUSH_VERIFY_BASE:-}" && -n "${MIVIA_PUSH_VERIFY_TIP:-}" ]]; then
-  BASE_REF="$MIVIA_PUSH_VERIFY_BASE"
-  TIP_REF="$MIVIA_PUSH_VERIFY_TIP"
-else
-  BASE_REF="$(
-    git merge-base HEAD '@{upstream}' 2>/dev/null \
-    || git merge-base HEAD origin/main 2>/dev/null \
-    || git merge-base HEAD origin/master 2>/dev/null \
-    || true
-  )"
-  TIP_REF="HEAD"
-fi
-
-if [[ -n "${BASE_REF:-}" ]]; then
-  run_verify python3 scripts/secret_scan.py --base "$BASE_REF" --tip "$TIP_REF"
-else
-  run_verify python3 scripts/secret_scan.py --tracked
-fi
 
 run_verify python3 scripts/check_docs_ownership.py
 
@@ -138,27 +178,18 @@ run_go_gates() {
   # `--staged` reads `git diff --cached`, which is empty here - so it covers
   # every commit being pushed, not just the last one.
   if command -v go >/dev/null 2>&1; then
-    # The SAME fallback chain the secret scan above uses, and for the same
-    # reason. `git merge-base @{upstream} HEAD` fails outright when no upstream
-    # is set - which is exactly `git push -u origin <new-branch>`, the first
-    # push of every new branch - and the else-branch then skipped the sweep
-    # while its own comment claimed it diffed against the default branch. The
-    # gate that exists so nothing reaches a remote unswept was silently off for
-    # precisely the pushes that introduce new code.
-    local range_base
-    range_base="$(
-      git merge-base HEAD '@{upstream}' 2>/dev/null \
-      || git merge-base HEAD origin/main 2>/dev/null \
-      || git merge-base HEAD origin/master 2>/dev/null \
-      || true
-    )"
-    if [[ -n "$range_base" ]]; then
-      run_verify python3 "$ROOT/scripts/check_mutation.py" --base "$range_base" --tip HEAD
-    else
-      # Nothing to diff against at all - no upstream and no default branch in
-      # this checkout. Skip rather than sweep the entire repository.
-      printf 'pre-push: no base for a mutation range; skipping sweep\n' >&2
-    fi
+    # The same ranges the secret scan built from git's stdin ref lines (or
+    # the HEAD fallback / env override). The arrays are shell globals filled
+    # before any child ran; a pair with no base keeps the skip notice, since
+    # there is nothing to diff that range against.
+    local i
+    for i in "${!PUSH_TIPS[@]}"; do
+      if [[ -n "${PUSH_BASES[$i]}" ]]; then
+        run_verify python3 "$ROOT/scripts/check_mutation.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+      else
+        printf 'pre-push: no base for a mutation range; skipping sweep\n' >&2
+      fi
+    done
   fi
 }
 

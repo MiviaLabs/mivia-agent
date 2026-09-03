@@ -43,7 +43,12 @@ This sets `core.hooksPath=.githooks`.
 
 - Full config + **`file-size-check --tracked`** (all tracked files ≤ 500 KiB)
 - **`check_go_structure.py --all`** (full tree; hard failures block push)
-- Secret scan (tracked / range) + docs ownership + **provider-docs↔registry** (`check_provider_docs.py`)
+- Secret scan (tracked / range) + docs ownership + **provider-docs↔registry** (`check_provider_docs.py`).
+  The range is per pushed ref, from the `<local ref> <local sha> <remote ref> <remote sha>`
+  lines git hands the hook on stdin (read before any child process runs; the
+  `run_with_timeout` supervisor forwards its stdin to the hook). With no ref lines the hook
+  prints `pre-push: no ref lines on stdin; sweeping HEAD` and falls back to HEAD.
+  The mutation sweep uses the same ranges.
 - Full Semgrep
 - `gofmt -l`, `go test`, `go vet`, `go build -o mivia ./cmd/mivia`
 

@@ -14,7 +14,12 @@ if [[ ! "$seconds" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 if command -v setsid >/dev/null 2>&1; then
-  setsid --wait "$@" &
+  # Hand the supervisor's stdin to the job explicitly. With job control off,
+  # bash gives a `&` background job /dev/null as stdin, and git's pre-push
+  # hands the refs being pushed on stdin - so without `<&0` the hook reads
+  # EOF and never sees them. The `timeout` branch below execs and needs no
+  # redirect.
+  setsid --wait "$@" <&0 &
   process_group=1
 elif command -v timeout >/dev/null 2>&1; then
   exec timeout --signal=TERM --kill-after=5s "${seconds}s" "$@"
