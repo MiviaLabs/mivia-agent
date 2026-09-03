@@ -63,3 +63,39 @@ func TestSlashMenuIsAnOverlayNotReflow(t *testing.T) {
 		t.Errorf("expected the hint footer right above the bar, got %q", footer)
 	}
 }
+
+// TestComposerPopupNeverCoversTheTopbar: on a terminal too short to hold
+// the whole popup above the bar, the popup is clipped at the top bar's
+// edge - the transcript rows and the margin are its ceiling - rather than
+// painted over the bar's own row.
+func TestComposerPopupNeverCoversTheTopbar(t *testing.T) {
+	s := sized(t, 0)
+	var cmds []composer.Command
+	for _, n := range []string{"agent", "agents", "approve", "attach", "audit", "auto", "away"} {
+		cmds = append(cmds, composer.Command{Name: n, Desc: "does " + n})
+	}
+	s.SetCommands(cmds)
+	// Height 13: gutter 0, topbar 1, margin 2, transcript 3-7 (5 rows),
+	// bar 8-10, status 11, gutter 12. The popup wants 9 rows (padding,
+	// six items, count, footer) and only 6 rows sit above the bar.
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 13})
+	s = next.(Screen)
+	closed := strings.Split(s.View(), "\n")
+	s.composer.SetValue("/a")
+	if !s.composer.MenuActive() || len(s.composer.Popup()) <= s.transcriptHeight()+1 {
+		t.Fatalf("precondition: menu open with a popup taller than the %d rows above the bar", s.transcriptHeight()+1)
+	}
+	open := strings.Split(s.View(), "\n")
+	if len(open) != len(closed) {
+		t.Fatalf("frame grew from %d to %d rows", len(closed), len(open))
+	}
+	if ansi.Strip(open[1]) != ansi.Strip(closed[1]) {
+		t.Errorf("the top bar row must not be painted over:\nclosed %q\nopen   %q", ansi.Strip(closed[1]), ansi.Strip(open[1]))
+	}
+	if !strings.Contains(ansi.Strip(open[2]), "/a") {
+		t.Errorf("the popup should still reach the margin row under the top bar, got %q", ansi.Strip(open[2]))
+	}
+	if !strings.Contains(ansi.Strip(open[7]), "navigate") && !strings.Contains(ansi.Strip(open[7]), "Commands") {
+		t.Errorf("the popup footer should sit right above the bar, got %q", ansi.Strip(open[7]))
+	}
+}
