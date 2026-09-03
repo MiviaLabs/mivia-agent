@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
@@ -210,5 +211,26 @@ func TestWelcomeBannerOmitsWorkspaceLineWhenNoRepo(t *testing.T) {
 		if strings.Contains(plain, "·") && !strings.Contains(plain, "ctrl+b") && plain != "│·  ·  ·│" && !strings.HasPrefix(strings.Trim(plain, "│ "), "·  ·  ·") {
 			t.Errorf("bannerLines() with no repo must not contain a workspace line, got line %q in %v", line, lines)
 		}
+	}
+}
+
+// TestWelcomeBrandMarkWearsAccentNotWarning: the banner's brand glyph is
+// chrome and wears the accent role, like the compact identity line and
+// the top bar's mark. RoleWarning is a status ("needs a human") and must
+// not be spent on a decoration.
+func TestWelcomeBrandMarkWearsAccentNotWarning(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	accent := render.Role(th, theme.TierTrueColor, theme.RoleAccent).Render(m.mark())
+	warning := render.Role(th, theme.TierTrueColor, theme.RoleWarning).Render(m.mark())
+	if accent == warning {
+		t.Skip("theme resolves accent and warning to the same colour; nothing to tell apart")
+	}
+	line := m.brandLine()
+	if !strings.Contains(line, accent) {
+		t.Errorf("brand mark must be rendered in the accent role, got %q", line)
+	}
+	if strings.Contains(line, warning) {
+		t.Errorf("brand mark must not wear the warning role, got %q", line)
 	}
 }
