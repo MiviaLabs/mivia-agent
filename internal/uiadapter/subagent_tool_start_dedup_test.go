@@ -127,3 +127,44 @@ func TestASecondLegCarryingArgumentsFillsTheRow(t *testing.T) {
 		t.Errorf("Arguments = %q, want the second leg's args merged onto the row", args)
 	}
 }
+
+// TestASecondCallDoesNotMergeIntoTheFirst: the merge scans the row list
+// for a matching id, so it has to SKIP the rows that do not match. With
+// one call in flight that skip never runs; with two, a loop that failed
+// to skip would fold the second call's legs onto the first row and the
+// thread would list one call where two ran.
+func TestASecondCallDoesNotMergeIntoTheFirst(t *testing.T) {
+	threads := NewSubagentThreads()
+	origin := agent.EventOrigin{TaskID: "task-3", Agent: "general-purpose"}
+
+	for _, c := range []struct{ id, name, path string }{
+		{"call_a", "read_file", "a.go"},
+		{"call_b", "read_file", "b.go"},
+	} {
+		threads.HandleEvent(agent.Event{
+			Kind: agent.EventSubagentStart, Origin: origin, ToolCallID: c.id,
+			Name: c.name, Detail: "queued", Input: `{"path":"` + c.path + `"}`,
+		}, TranslateOptions{})
+		threads.HandleEvent(agent.Event{
+			Kind: agent.EventSubagentStart, Origin: origin, ToolCallID: c.id,
+			Name: c.name, Detail: "running",
+		}, TranslateOptions{})
+	}
+
+	conv, ok := threads.Thread("task-3")
+	if !ok {
+		t.Fatal("no thread registered for task-3")
+	}
+	seen := map[string]string{}
+	for _, m := range conv.History() {
+		for _, tc := range m.ToolCalls {
+			seen[tc.ID] = tc.Arguments
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("thread lists %d distinct calls, want 2: %v", len(seen), seen)
+	}
+	if seen["call_a"] != `{"path":"a.go"}` || seen["call_b"] != `{"path":"b.go"}` {
+		t.Errorf("the two calls' arguments crossed over: %v", seen)
+	}
+}
