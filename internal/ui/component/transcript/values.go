@@ -177,16 +177,19 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 	// FormatElapsed a later status-line call uses, so "4.1s" never
 	// appears beside "4100ms" on one screen.
 	duration := render.FormatElapsed(int(b.DurationMS))
-	// R2: a finished read-only lookup collapses by default whatever its
-	// body size, so consecutive lookups coalesce into one leader row.
-	// Failed calls keep the failure visible.
-	if !coll && len(body) > 0 && role != theme.RoleDanger && render.ReadOnlyToolClass(b.Name) != "" {
+	// A finished call collapses by default whatever its body size, so
+	// consecutive calls coalesce into one summary row. Failed calls keep
+	// the failure visible. This mirrors the same rule in updateLive,
+	// which is the path a call takes when it had a live block to merge
+	// into; this one is the direct push.
+	if !coll && len(body) > 0 && role != theme.RoleDanger {
 		coll = true
 	}
 	blk := Block{
-		Kind:   uievent.KindToolEnd,
-		Args:   args,
-		CallID: b.ToolCallID,
+		Kind:      uievent.KindToolEnd,
+		Args:      args,
+		CallID:    b.ToolCallID,
+		ElapsedMS: int(b.DurationMS),
 		Header: Header{
 			Label: b.Name, Detail: detail,
 			Meta: duration, State: status, Role: role,
