@@ -85,30 +85,28 @@ func (s Screen) transcriptRegion() sel.Rect {
 }
 
 // composerRegion is the absolute rect of the composer's text body only:
-// framed border rows and completion-menu rows are excluded, and the
-// columns run across the inner width where the textarea actually draws.
+// padding rows and completion-menu rows are excluded, and the columns run
+// across the inner width where the textarea actually draws. The composer
+// draws no border (see composer.Model.View); its padding rows and columns
+// occupy exactly the cells the border used to, so the geometry is the same.
 func (s Screen) composerRegion() sel.Rect {
 	x0, tg := s.contentOrigin()
 	menuRows := s.composer.MenuRows()
-	framed := 0
-	if s.composer.Framed() {
-		framed = 2 // top + bottom border
+	padRows := 0
+	if s.composer.Padded() {
+		padRows = 2 // top + bottom padding row
 	}
 	// bodyRows is never below 1: composer.Height() already adds the same
-	// framed/menu terms subtracted here (menuRows mirrors MenuRows(),
-	// framed mirrors composer.Framed()'s own frame constant), so this
-	// always reduces to the textarea's own row count, which composer.
-	// Height() clamps to at least 1.
-	bodyRows := s.composer.Height() - menuRows - framed
+	// pad/menu terms subtracted here (menuRows mirrors MenuRows(), padRows
+	// mirrors Padded()'s own two rows), so this always reduces to the
+	// textarea's own row count, which composer.Height() clamps to at least 1.
+	bodyRows := s.composer.Height() - menuRows - padRows
 	// The status row sits at the screen bottom; the composer block ends
 	// just above it. InputRowFromBottom counts from the status row up to
 	// the LAST input row, so the first body row sits height-1 above it.
 	lastInputRow := s.height - tg - s.composer.InputRowFromBottom()
 	firstBodyRow := lastInputRow - (bodyRows - 1)
-	colOffset := 1
-	if s.composer.Framed() {
-		colOffset += s.composer.InputColumnOffset()
-	}
+	colOffset := 1 + s.composer.InputColumnOffset() // gutter, then the bar's left padding
 	x1 := x0 + colOffset
 	w := s.chatWidth() - colOffset - 2 // right border + padding inset
 	if w < 1 {

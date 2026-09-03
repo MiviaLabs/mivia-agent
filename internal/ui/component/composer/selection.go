@@ -99,7 +99,7 @@ func (m Model) selectionRows() []string {
 	var out []string
 	for _, logical := range strings.Split(m.Value(), "\n") {
 		for wi, row := range wrapLikeTextarea(logical, inner) {
-			out = append(out, promptCells(promptWidth, wi == 0)+strings.TrimRight(row, " "))
+			out = append(out, promptCells(promptGlyph(m.Tier), promptWidth, wi == 0)+strings.TrimRight(row, " "))
 		}
 	}
 	if len(out) > h {
@@ -115,12 +115,12 @@ func (m *Model) invalidateSelection() {
 	m.selValue = ""
 }
 
-// promptCells is the prompt area as plain cells: the "> " glyph on the
+// promptCells is the prompt area as plain cells: the prompt glyph on the
 // first logical row, two spaces of continuation indent after - matching
 // SetPromptFunc. Display width decides how many cells it occupies,
 // which is what the selection coordinates count.
-func promptCells(w int, first bool) string {
-	prompt := "> "
+func promptCells(glyph string, w int, first bool) string {
+	prompt := glyph
 	if !first {
 		prompt = ""
 	}

@@ -304,9 +304,9 @@ func TestPanelEscReturnsFocusToComposerPanelStaysOpen(t *testing.T) {
 }
 
 // TestPanelWideSplitFrameContract: at and above the wide breakpoint the
-// cockpit splits - the chat column left, the file list right, separated
-// by ONE vertical rule on the sidebar's edge and nothing else framed
-// but the composer's own box - and the whole frame keeps its exact
+// cockpit splits - the chat column left, the file list right - with
+// nothing framed at all: no vertical rule between the panes, and the
+// composer is a filled bar, not a box. The whole frame keeps its exact
 // size and gutter.
 func TestPanelWideSplitFrameContract(t *testing.T) {
 	for _, w := range []int{uikitconfig.BreakpointWide, 200} {
@@ -319,13 +319,14 @@ func TestPanelWideSplitFrameContract(t *testing.T) {
 				t.Errorf("width %d: split view missing %q:\n%s", w, want, plain)
 			}
 		}
-		// The split frames nothing extra: only the framed composer box border is drawn (no vertical rule separating panes).
+		// The split frames nothing: no vertical rule separating panes, and
+		// no box anywhere (the composer draws a filled bar, not a border).
 		first := ansi.Strip(strings.Split(view, "\n")[3])
 		if strings.Contains(first, "│") {
 			t.Errorf("width %d: split drawn with unexpected vertical rule on content row: %q", w, first)
 		}
-		if got := strings.Count(view, "╭"); got != 1 {
-			t.Errorf("width %d: framed %d boxes, want 1 (framed composer)", w, got)
+		if got := strings.Count(view, "╭"); got != 0 {
+			t.Errorf("width %d: framed %d boxes, want 0 (the composer is a filled bar)", w, got)
 		}
 		// The top bar names the product, not a tab strip that no longer
 		// exists.

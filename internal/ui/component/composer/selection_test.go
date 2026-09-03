@@ -195,11 +195,11 @@ func TestRepeatSpacesBoundary(t *testing.T) {
 func TestPromptCellsWidePromptTruncates(t *testing.T) {
 	// A prompt wider than the cell budget truncates rather than
 	// overflowing (pw >= w arm).
-	got := promptCells(1, true)
+	got := promptCells("> ", 1, true)
 	if ansi.StringWidth(got) != 1 {
 		t.Fatalf("prompt cells must fit the budget: %q", got)
 	}
-	if promptCells(2, false) != "  " {
+	if promptCells("> ", 2, false) != "  " {
 		t.Fatal("continuation indent is two blank cells")
 	}
 }

@@ -133,11 +133,11 @@ func TestSelectingThemeChangesRenderedColourAndPreservesState(t *testing.T) {
 
 	// The composer's accent prompt must render in the newly-adopted
 	// theme's accent colour, not the original mivia-dark's.
-	wantAccent := render.Role(f.light, theme.TierTrueColor, theme.RoleAccent).Render("> ")
+	wantAccent := render.Role(f.light, theme.TierTrueColor, theme.RoleAccent).Render("› ")
 	if !strings.Contains(view.Content, wantAccent) {
 		t.Errorf("expected the composer prompt styled with %s's accent colour, got:\n%q", f.light.Name, view.Content)
 	}
-	darkAccent := render.Role(f.dark, theme.TierTrueColor, theme.RoleAccent).Render("> ")
+	darkAccent := render.Role(f.dark, theme.TierTrueColor, theme.RoleAccent).Render("› ")
 	if darkAccent != wantAccent && strings.Contains(view.Content, darkAccent) {
 		t.Errorf("expected the original mivia-dark accent colour gone after switching to %s, got:\n%q", f.light.Name, view.Content)
 	}
