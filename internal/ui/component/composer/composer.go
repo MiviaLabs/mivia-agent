@@ -473,6 +473,11 @@ func (m Model) activeMenuView() string {
 // (ux-rules.md rules 2.7, 2.8).
 func (m Model) View() string {
 	body := m.input.View()
+	// The command mark goes on before the selection highlight so a dragged
+	// selection still reads as selected over it.
+	if w := m.menu.matchedCommandWidth(m.Value()); w > 0 {
+		body = m.markCommandToken(body, w)
+	}
 	if m.selState.Active {
 		body = m.highlightBodyLines(body)
 	}
@@ -507,6 +512,32 @@ func (m Model) View() string {
 		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(lines, "\n"))
 	}
 	return body
+}
+
+// markCommandToken restyles the leading "/name" on the first drawn row, w
+// columns wide, so an input the composer recognises as a command looks
+// different from one it does not.
+//
+// Accent AND bold, not one of them: accent is this theme's role for something
+// that will act, which is exactly what a recognised command is, and bold is
+// what survives on a tier with no colour to spend. The token sits after the
+// prompt, which owns the first promptWidth columns.
+func (m Model) markCommandToken(body string, w int) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 {
+		return body
+	}
+	total := ansi.StringWidth(lines[0])
+	left := promptWidth
+	right := min(total, left+w)
+	if right <= left {
+		return body
+	}
+	style := render.Role(m.Theme, m.Tier, theme.RoleAccent).Bold(true)
+	lines[0] = ansi.Cut(lines[0], 0, left) +
+		style.Render(ansi.Cut(lines[0], left, right)) +
+		ansi.Cut(lines[0], right, total)
+	return strings.Join(lines, "\n")
 }
 
 // Popup is the completion or mention menu as an overlay: nil when no menu
