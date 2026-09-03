@@ -1,6 +1,19 @@
 package chat
 
-import "github.com/MiviaLabs/mivia-agent/internal/provider"
+import (
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
+)
+
+// isSkillInvocation reports a user message that carries a skill's
+// instruction body. It defers to the skills package's own parser rather
+// than matching the tag here: the frame's shape is that package's
+// contract, and a second copy of it would drift the moment the frame
+// gains a field.
+func isSkillInvocation(content string) bool {
+	_, _, ok := skills.ParseSkillInvocation(content)
+	return ok
+}
 
 // observeRequestHistory records the message list the loop just prepared for a
 // provider call. It runs on the loop goroutine at every step, so it clones and
@@ -63,9 +76,17 @@ type ContextBreakdown struct {
 	ExternalToolCount int
 	Memory            int
 	Summary           int
-	Prose             int
-	ToolResults       int
-	Reasoning         int
+	// Skills is what invoked skills are costing. A skill's instruction
+	// body enters the context as a framed USER message, not as part of
+	// the system prompt, so it is conversation - compaction reclaims it -
+	// and it belongs in its own bucket rather than swelling Prose: a
+	// reader who sees "messages 40k" cannot tell that 30k of it is one
+	// skill they invoked and could stop invoking.
+	Skills      int
+	SkillCount  int
+	Prose       int
+	ToolResults int
+	Reasoning   int
 }
 
 // Floor is the part of the estimate compaction cannot reclaim.
@@ -75,7 +96,7 @@ func (b ContextBreakdown) Floor() int {
 
 // Conversation is the part compaction reclaims.
 func (b ContextBreakdown) Conversation() int {
-	return b.Prose + b.ToolResults + b.Reasoning
+	return b.Skills + b.Prose + b.ToolResults + b.Reasoning
 }
 
 // Total is the whole estimate: Floor plus Conversation.
@@ -122,6 +143,12 @@ func breakdown(
 			b.Summary += cost
 		case msg.Role == provider.RoleTool:
 			b.ToolResults += cost
+		// A skill's instruction body is a user message with the skills
+		// package's own frame around it. Charged apart from prose, so a
+		// window that filled because of one large skill says so.
+		case msg.Role == provider.RoleUser && isSkillInvocation(msg.Content):
+			b.Skills += cost
+			b.SkillCount++
 		default:
 			reasoning := provider.EstimateReasoningTokensAt(messages, index, profile)
 			b.Reasoning += reasoning
@@ -182,13 +209,13 @@ func (b ContextBreakdown) scaleTo(total int) ContextBreakdown {
 // scaleTo. ToolCount is deliberately absent: it is a count of schemas, not a
 // token cost, and scaling it would corrupt it.
 func (b *ContextBreakdown) fields() []*int {
-	return []*int{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+	return []*int{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Skills, &b.Prose, &b.ToolResults, &b.Reasoning}
 }
 
 // countsOnly is an empty breakdown that keeps the schema counts, which are
 // not token costs and so survive any rescaling of the costs.
 func (b ContextBreakdown) countsOnly() ContextBreakdown {
-	return ContextBreakdown{ToolCount: b.ToolCount, ExternalToolCount: b.ExternalToolCount}
+	return ContextBreakdown{ToolCount: b.ToolCount, ExternalToolCount: b.ExternalToolCount, SkillCount: b.SkillCount}
 }
 
 // calibratedBreakdown is breakdown followed by scaleTo(used): the buckets a

@@ -211,7 +211,7 @@ const contextDetailMinRows = 24
 // adds one more row in either mode to say so.
 const (
 	contextSummaryRows = 3
-	contextDetailRows  = contextSummaryRows + 8
+	contextDetailRows  = contextSummaryRows + 9
 )
 
 // contextSectionRows is how many rows the context section draws in a sidebar
@@ -340,12 +340,19 @@ func (s Screen) panelContextRows(inner, maxRows int) []string {
 	}{
 		{"system", b.System},
 		{"tools (" + strconv.Itoa(b.ToolCount) + ")", b.ToolSchemas},
-		// Server-supplied schemas get their own row because they are the part
-		// of the floor an operator can actually remove, by turning a server
-		// off. Drawn at zero when no server is connected, so the block keeps
-		// its height.
-		{"servers (" + strconv.Itoa(b.ExternalToolCount) + ")", b.ExternalSchemas},
+		// MCP schemas get their own row because they are the part of the
+		// floor an operator can actually remove, by turning a server off.
+		// Named for what supplies them rather than the generic "servers":
+		// the reader is looking for the cost of their MCP setup, and a row
+		// that does not say "mcp" is a row they scan past. Drawn at zero
+		// when no server is connected, so the block keeps its height.
+		{"mcp (" + strconv.Itoa(b.ExternalToolCount) + ")", b.ExternalSchemas},
 		{"memory", b.Memory + b.Summary},
+		// Invoked skills carry their instruction bodies as user messages.
+		// Folding them into "messages" hid the commonest reason a window
+		// fills early: one skill whose body is larger than the whole
+		// conversation around it.
+		{"skills (" + strconv.Itoa(b.SkillCount) + ")", b.Skills},
 		{"messages", b.Prose},
 		{"results", b.ToolResults},
 		{"thinking", b.Reasoning},
