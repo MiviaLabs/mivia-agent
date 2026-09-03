@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
 // panelWindowGroups clips row-groups to a window around the selected group,
@@ -77,13 +79,17 @@ func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive
 }
 
 // panelGroupLens returns the line count of each group in the sidebar layout:
-// 1 line for the context header, 1 for the context bar, 1 for the model
-// header, 1 for the model row, 1 for the files header, 1 per file entry,
-// 1 for the subagents header, and 2 per agent row.
-func panelGroupLens(fileCount, agentCount int) []int {
-	lens := make([]int, 0, 6+fileCount+agentCount)
-	lens = append(lens, 1) // context header
-	lens = append(lens, 1) // context bar
+// contextRows single-line groups for the context section, then 1 for the model
+// header, 1 for the model row, 1 for the files header, 1 per file entry, 1 for
+// the subagents header, and 2 per agent row. The context section's height is a
+// parameter because it grows a detail block on a tall terminal
+// (contextSectionRows); hard-coding it here would put the click map and the
+// drawn rows one section out of step.
+func panelGroupLens(contextRows, fileCount, agentCount int) []int {
+	lens := make([]int, 0, contextRows+4+fileCount+agentCount)
+	for i := 0; i < contextRows; i++ {
+		lens = append(lens, 1) // one context row
+	}
 	lens = append(lens, 1) // model header
 	lens = append(lens, 1) // model row
 	lens = append(lens, 1) // files changed header
@@ -98,21 +104,21 @@ func panelGroupLens(fileCount, agentCount int) []int {
 }
 
 // panelGroupToPickerIdx maps a group index to its corresponding picker cursor
-// index, or -1 if the group is not selectable (the context header and bar,
-// the model header, the files header, the subagents header). Picker index 0
-// is the model row, group 3.
-func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
+// index, or -1 if the group is not selectable (every context row, the model
+// header, the files header, the subagents header). Picker index 0 is the model
+// row, the group right after the context section and its header.
+func panelGroupToPickerIdx(gIdx, contextRows, fileCount, agentCount int) int {
 	switch {
-	case gIdx == 3:
+	case gIdx == contextRows+1:
 		return 0
-	case gIdx < 5:
+	case gIdx < contextRows+3:
 		return -1
-	case gIdx < 5+fileCount:
-		return 1 + (gIdx - 5)
-	case gIdx == 5+fileCount:
+	case gIdx < contextRows+3+fileCount:
+		return 1 + (gIdx - (contextRows + 3))
+	case gIdx == contextRows+3+fileCount:
 		return -1
 	}
-	agentIdx := gIdx - (6 + fileCount)
+	agentIdx := gIdx - (contextRows + 4 + fileCount)
 	if agentIdx >= 0 && agentIdx < agentCount {
 		return 1 + fileCount + agentIdx
 	}
@@ -120,20 +126,20 @@ func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
 }
 
 // panelSelGroup computes the group index for the currently selected picker item.
-func panelSelGroup(selIdx, fileCount, agentCount int) int {
+func panelSelGroup(selIdx, contextRows, fileCount, agentCount int) int {
 	if selIdx < 0 {
 		return -1
 	}
 	if selIdx == 0 {
-		return 3 // the model row
+		return contextRows + 1 // the model row
 	}
 	selIdx-- // past the model row
 	if selIdx < fileCount {
-		return 5 + selIdx
+		return contextRows + 3 + selIdx
 	}
 	agentIdx := selIdx - fileCount
 	if agentIdx < agentCount {
-		return 6 + fileCount + agentIdx
+		return contextRows + 4 + fileCount + agentIdx
 	}
 	return -1
 }
@@ -184,28 +190,144 @@ func (s Screen) panelModelRow(selected bool) string {
 	return row
 }
 
-// panelContextRows draws the sidebar's first section: a "context" header
-// with the share of the window in use right-aligned on the same line,
-// and a bar the full inner width below it. Both take the share's role
-// (render.ContextRole) so amber still means "getting close" and red
-// "nearly out". When the window size is unknown the header says so and
-// the bar draws empty: the section keeps its two rows either way so the
-// groups below never shift (ux-rules 2.7).
-func (s Screen) panelContextRows(inner int) []string {
+// contextDetailMinRows is the sidebar body height at which the context
+// section earns its detail block. Below it the section stays at its three
+// summary rows so files and subagents - the live things - keep the column.
+const contextDetailMinRows = 24
+
+// contextSummaryRows and contextDetailRows are the section's two heights:
+// header + bar + totals, and those plus one row per bucket.
+const (
+	contextSummaryRows = 3
+	contextDetailRows  = contextSummaryRows + 6
+)
+
+// contextSectionRows is how many rows the context section draws in a sidebar
+// body of maxRows. Every consumer of the sidebar's group map calls it, so the
+// click map and the drawn rows cannot disagree about the section's height.
+func contextSectionRows(maxRows int) int {
+	if maxRows >= contextDetailMinRows {
+		return contextDetailRows
+	}
+	return contextSummaryRows
+}
+
+// tokensShort renders a token count the way the sidebar's narrow column can
+// carry it: "940", "21k", "1.2M". It matches chat.FormatTokenK's k convention
+// rather than inventing a second one, and adds the M step because a 1M-window
+// model would otherwise print a four-digit k.
+func tokensShort(n int64) string {
+	switch {
+	case n < 0:
+		return "0"
+	case n < 1000:
+		return strconv.FormatInt(n, 10)
+	case n < 1_000_000:
+		return strconv.FormatInt(n/1000, 10) + "k"
+	default:
+		return strconv.FormatFloat(float64(n)/1_000_000, 'f', 1, 64) + "M"
+	}
+}
+
+// panelSpreadRow lays a label against a value across the sidebar's full inner
+// width, the label left and the value right. When the two cannot both fit the
+// value wins: it is the number the row exists to report, and a clipped label
+// is still readable from its first letters.
+func panelSpreadRow(inner int, label, value string, labelStyle, valueStyle lipgloss.Style) string {
+	if inner <= 0 {
+		return ""
+	}
+	valueW := ansi.StringWidth(value)
+	if valueW >= inner {
+		return valueStyle.Render(ansi.Truncate(value, inner, ""))
+	}
+	label = ansi.Truncate(label, max(0, inner-valueW-1), "")
+	gap := inner - ansi.StringWidth(label) - valueW
+	return labelStyle.Render(label) + strings.Repeat(" ", gap) + valueStyle.Render(value)
+}
+
+// panelContextBar draws the fill as two runs rather than one: the floor - the
+// system prompt, tool schemas and carried memory that are on every request
+// whatever was said - in the dimmest role, and the conversation on top of it
+// in the share's own role. The split is the actionable one, because only the
+// second run is what compaction can give back. Empty cells keep the hollow
+// glyph, so the floor run stays distinguishable from open space even in a
+// theme where the two roles are close.
+func (s Screen) panelContextBar(inner, pct, floorPct int) string {
+	if inner <= 0 {
+		return ""
+	}
+	full, empty := render.ContextGlyphs(s.Tier)
+	fill := render.ContextCells(pct, inner)
+	floor := min(fill, render.ContextCells(floorPct, inner))
+	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	share := render.Role(s.Theme, s.Tier, render.ContextRole(pct))
+	return border.Render(strings.Repeat(full, floor)) +
+		share.Render(strings.Repeat(full, fill-floor)) +
+		border.Render(strings.Repeat(empty, inner-fill))
+}
+
+// panelContextRows draws the sidebar's first section. Three rows always: a
+// "context" header with the share of the budget in use, the two-tone bar, and
+// what that share is in tokens. On a tall enough body (contextDetailMinRows) a
+// bucket block follows, one row each, answering the question the bar raises -
+// which of these can I actually get back. The rows sum to the header's own
+// number because the accounting scales them to it (chat.ContextBreakdown).
+//
+// The row count depends only on maxRows, never on what the session holds, so
+// nothing below the section moves as tokens accumulate (ux-rules 2.7).
+func (s Screen) panelContextRows(inner, maxRows int) []string {
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	label := "context"
-	pct, ok := s.topbar.ContextPercent()
-	share, style := "unknown", subtle
-	if ok {
-		share = strconv.Itoa(pct) + "%"
-		style = render.Role(s.Theme, s.Tier, render.ContextRole(pct))
+	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	pct, known := s.topbar.ContextPercent()
+	usage := s.topbar.Usage()
+	budget := s.topbar.Info().ContextWindow
+
+	share, shareStyle := "unknown", subtle
+	if known {
+		share, shareStyle = strconv.Itoa(pct)+"%", render.Role(s.Theme, s.Tier, render.ContextRole(pct))
 	}
-	gap := max(1, inner-ansi.StringWidth(label)-ansi.StringWidth(share))
-	header := subtle.Render(label) + strings.Repeat(" ", gap) + style.Render(share)
-	return []string{
-		ansi.Truncate(header, max(0, inner), ""),
-		style.Render(render.ContextBar(pct, inner, s.Tier)),
+	rows := []string{
+		panelSpreadRow(inner, "context", share, subtle, shareStyle),
+		s.panelContextBar(inner, pct, floorPercent(usage, budget)),
 	}
+
+	totals := ""
+	if known {
+		totals = panelSpreadRow(inner,
+			tokensShort(usage.InputTokens)+" of "+tokensShort(budget),
+			tokensShort(max(0, budget-usage.InputTokens))+" free", border, border)
+	}
+	rows = append(rows, totals)
+
+	if contextSectionRows(maxRows) == contextSummaryRows {
+		return rows
+	}
+	b := usage.Breakdown
+	for _, bucket := range []struct {
+		label  string
+		tokens int64
+	}{
+		{"system", b.System},
+		{"tools (" + strconv.Itoa(b.ToolCount) + ")", b.ToolSchemas},
+		{"memory", b.Memory + b.Summary},
+		{"messages", b.Prose},
+		{"results", b.ToolResults},
+		{"thinking", b.Reasoning},
+	} {
+		rows = append(rows, panelSpreadRow(inner, bucket.label, tokensShort(bucket.tokens), border, subtle))
+	}
+	return rows
+}
+
+// floorPercent is the share of the budget taken by the parts compaction
+// cannot reclaim. It returns 0 when the budget is unknown, so an unbound
+// session draws no floor rather than a bar computed against nothing.
+func floorPercent(usage ports.Usage, budget int64) int {
+	if budget <= 0 {
+		return 0
+	}
+	return int(usage.Breakdown.Floor() * 100 / budget)
 }
 
 func (s Screen) panelFileRow(e fileEntry, selected bool) string {
@@ -357,7 +479,7 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	// each is named once. Focus is signalled by the "> " marker on the
 	// selected row, not by a header. The context section is two fixed
 	// rows (header, bar) and never selectable.
-	for _, row := range s.panelContextRows(inner) {
+	for _, row := range s.panelContextRows(inner, maxRows) {
 		groups = append(groups, []string{row})
 	}
 	groups = append(groups, []string{subtle.Render("model")})

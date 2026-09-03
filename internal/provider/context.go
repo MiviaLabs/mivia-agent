@@ -84,6 +84,12 @@ func billsReasoningAt(profile ContextAccountingProfile, msgs []Message, index in
 	}
 }
 
+// RequestFrameTokens is the fixed per-request overhead EstimateRequestCost
+// charges before any message or schema. Exported so a caller that splits the
+// same estimate into buckets can account for it and have the parts sum to the
+// whole, rather than silently losing it.
+const RequestFrameTokens = requestFrameTokens
+
 const (
 	requestFrameTokens = 3
 	messageFrameTokens = 4
@@ -190,6 +196,17 @@ func EstimateToolSchemaCost(tools []ToolSpec) (int, error) {
 		total += schemaFrameTokens + estimateTokens(string(encoded))
 	}
 	return total, nil
+}
+
+// EstimateReasoningTokensAt returns the ReasoningContent charge included in
+// EstimateMessageTokensAt for msgs[index] under profile, and 0 when that
+// position is not billed for it. Callers subtract it to separate a message's
+// prose cost from its reasoning cost without duplicating the billing rule.
+func EstimateReasoningTokensAt(msgs []Message, index int, profile ContextAccountingProfile) int {
+	if !billsReasoningAt(profile, msgs, index) {
+		return 0
+	}
+	return estimateTokens(msgs[index].ReasoningContent)
 }
 
 // EstimateMessagesPromptCost is EstimatePromptCost with the tool-schema charge

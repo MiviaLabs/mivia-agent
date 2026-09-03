@@ -28,20 +28,37 @@ func ContextRole(pct int) theme.Role {
 	}
 }
 
+// ContextCells is how many of `blocks` cells a fill percentage claims,
+// rounded to the nearest cell and clamped to the bar. It is the single
+// place a share becomes a cell count, so a bar drawn in one run and a
+// bar drawn in two (see the sidebar's floor/conversation split) cannot
+// disagree about where the fill ends.
+func ContextCells(pct, blocks int) int {
+	if blocks <= 0 {
+		return 0
+	}
+	return min(blocks, max(0, (pct*blocks+50)/100))
+}
+
+// ContextGlyphs returns the filled and empty bar cell for a tier.
+// Unicode tiers use ▰/▱; ASCII and no-TTY tiers use =/- so the same
+// share still reads on a plain terminal.
+func ContextGlyphs(tier theme.Tier) (full, empty string) {
+	if tier == theme.TierASCII || tier == theme.TierNoTTY {
+		return "=", "-"
+	}
+	return "▰", "▱"
+}
+
 // ContextBar draws a context-fill bar of `blocks` cells: filled cells
-// on the left, empty on the right, the fill rounded to the nearest
-// cell so 4 blocks at 60% show 2 and a full sidebar width at 60% shows
-// three fifths. Unicode tiers use ▰/▱; ASCII and no-TTY tiers use =/-
-// so the same share reads on a plain terminal. Zero or negative widths
-// draw nothing.
+// on the left, empty on the right. Zero or negative widths draw
+// nothing. Callers that need the fill split into differently styled
+// runs compose it from ContextCells and ContextGlyphs instead.
 func ContextBar(pct, blocks int, tier theme.Tier) string {
 	if blocks <= 0 {
 		return ""
 	}
-	filled := min(blocks, max(0, (pct*blocks+50)/100))
-	full, empty := "▰", "▱"
-	if tier == theme.TierASCII || tier == theme.TierNoTTY {
-		full, empty = "=", "-"
-	}
+	filled := ContextCells(pct, blocks)
+	full, empty := ContextGlyphs(tier)
 	return strings.Repeat(full, filled) + strings.Repeat(empty, blocks-filled)
 }

@@ -7,6 +7,8 @@ import "testing"
 // to no picker item, same as the header rows.
 func TestPanelGroupToPickerIdxOutOfRange(t *testing.T) {
 	const files, agents = 2, 3
+	// The summary-height context section: header, bar, totals.
+	const ctx = contextSummaryRows
 	cases := []struct {
 		name string
 		gIdx int
@@ -14,21 +16,22 @@ func TestPanelGroupToPickerIdxOutOfRange(t *testing.T) {
 	}{
 		{name: "context header", gIdx: 0, want: -1},
 		{name: "context bar", gIdx: 1, want: -1},
-		{name: "model header", gIdx: 2, want: -1},
-		{name: "model row", gIdx: 3, want: 0},
-		{name: "files header", gIdx: 4, want: -1},
-		{name: "first file", gIdx: 5, want: 1},
-		{name: "last file", gIdx: 5 + files - 1, want: files},
-		{name: "subagents header", gIdx: 5 + files, want: -1},
-		{name: "first agent", gIdx: 6 + files, want: 1 + files},
-		{name: "last agent", gIdx: 5 + files + agents, want: files + agents},
-		{name: "past the last agent", gIdx: 6 + files + agents, want: -1},
+		{name: "context totals", gIdx: 2, want: -1},
+		{name: "model header", gIdx: ctx, want: -1},
+		{name: "model row", gIdx: ctx + 1, want: 0},
+		{name: "files header", gIdx: ctx + 2, want: -1},
+		{name: "first file", gIdx: ctx + 3, want: 1},
+		{name: "last file", gIdx: ctx + 3 + files - 1, want: files},
+		{name: "subagents header", gIdx: ctx + 3 + files, want: -1},
+		{name: "first agent", gIdx: ctx + 4 + files, want: 1 + files},
+		{name: "last agent", gIdx: ctx + 3 + files + agents, want: files + agents},
+		{name: "past the last agent", gIdx: ctx + 4 + files + agents, want: -1},
 		{name: "far past the list", gIdx: 100, want: -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := panelGroupToPickerIdx(tc.gIdx, files, agents); got != tc.want {
-				t.Errorf("panelGroupToPickerIdx(%d, %d, %d) = %d, want %d", tc.gIdx, files, agents, got, tc.want)
+			if got := panelGroupToPickerIdx(tc.gIdx, ctx, files, agents); got != tc.want {
+				t.Errorf("panelGroupToPickerIdx(%d, %d, %d, %d) = %d, want %d", tc.gIdx, ctx, files, agents, got, tc.want)
 			}
 		})
 	}
@@ -39,23 +42,25 @@ func TestPanelGroupToPickerIdxOutOfRange(t *testing.T) {
 // no group.
 func TestPanelSelGroupBounds(t *testing.T) {
 	const files, agents = 2, 3
+	// The summary-height context section: header, bar, totals.
+	const ctx = contextSummaryRows
 	cases := []struct {
 		name   string
 		selIdx int
 		want   int
 	}{
 		{name: "negative selection", selIdx: -1, want: -1},
-		{name: "model row", selIdx: 0, want: 3},
-		{name: "first file", selIdx: 1, want: 5},
-		{name: "last file", selIdx: files, want: 5 + files - 1},
-		{name: "first agent", selIdx: 1 + files, want: 6 + files},
-		{name: "last agent", selIdx: files + agents, want: 5 + files + agents},
+		{name: "model row", selIdx: 0, want: ctx + 1},
+		{name: "first file", selIdx: 1, want: ctx + 3},
+		{name: "last file", selIdx: files, want: ctx + 3 + files - 1},
+		{name: "first agent", selIdx: 1 + files, want: ctx + 4 + files},
+		{name: "last agent", selIdx: files + agents, want: ctx + 3 + files + agents},
 		{name: "past the last agent", selIdx: 1 + files + agents, want: -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := panelSelGroup(tc.selIdx, files, agents); got != tc.want {
-				t.Errorf("panelSelGroup(%d, %d, %d) = %d, want %d", tc.selIdx, files, agents, got, tc.want)
+			if got := panelSelGroup(tc.selIdx, ctx, files, agents); got != tc.want {
+				t.Errorf("panelSelGroup(%d, %d, %d, %d) = %d, want %d", tc.selIdx, ctx, files, agents, got, tc.want)
 			}
 		})
 	}
