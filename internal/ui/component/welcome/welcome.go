@@ -68,13 +68,14 @@ func (m Model) identityLine() string {
 	return accent.Render(m.mark() + " mivia")
 }
 
-// brandLine is the full banner's identity row: the glyph in the warning
-// role - the product's one accent, worn here as a fixed brand mark rather
-// than a status - and the wordmark letter-spaced in the foreground role.
+// brandLine is the full banner's identity row: the glyph in the accent
+// role - chrome, the same role identityLine and the top bar's mark wear;
+// never a status role, since RoleWarning reads as "needs a human" - and
+// the wordmark letter-spaced in the foreground role.
 func (m Model) brandLine() string {
-	warn := render.Role(m.Theme, m.Tier, theme.RoleWarning)
+	accent := render.Role(m.Theme, m.Tier, theme.RoleAccent)
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG).Bold(true)
-	return warn.Render(m.mark()) + "  " + fg.Render("m i v i a")
+	return accent.Render(m.mark()) + "  " + fg.Render("m i v i a")
 }
 
 // tagline is the product's one-line thesis, quiet and italic, shared
