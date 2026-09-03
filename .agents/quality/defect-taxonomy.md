@@ -1376,3 +1376,50 @@ the gate kept reporting it `survived`.
   `check_mutation.line_of_offset`, and
   `check_mutation.denylisted_spans`/`is_denylisted` directly. Each fails
   if its consumer is reverted to code-point slicing.
+
+## DC-37 A verification tool mutates the tree in place and reports success after restoring
+
+**Mechanism.** A gate proves something by CHANGING the working tree - applying a
+mutant, rewriting a file, formatting in place - then restores and reports on
+what it measured. Two properties combine badly. The restore is best-effort, so
+"we called write" is not evidence the bytes are back. And the report is
+produced AFTER the restore, so the run looks clean whether or not the restore
+landed. Anything else running against the same tree in that window - most
+sharply, a hook step that stages working-tree files - captures the tool's
+transient edit as if it were the author's work. The tool's own summary then
+corroborates the result, because from its perspective nothing is wrong.
+
+**Evidence.** `scripts/check_mutation.py` mutates each site in the real file and
+restores it in a `finally`; `scripts/git-hooks/pre-commit` separately runs
+`gofmt -w <file>; git add -- <file>` for every fully-staged Go file. A commit
+shipped `internal/coordinator/shouldSkipCanceledTask` with its nil guard
+inverted (`c != nil` where `c == nil` was meant), which short-circuits for
+every real coordinator and turned the dispatch-window fix that same commit was
+making into dead code. Every gate passed, including a `killed=10 survived=0
+rate=100.00%` line from the sweep that had introduced it. It surfaced only
+because a routine `git status` afterwards showed one stray modified file; the
+test that commit added then failed against its own committed code. Most likely
+with several sweeps against one checkout, where another run's mutated file is
+not the committing process's to restore.
+
+**Probes.**
+- For any tool that edits files it does not own: does it VERIFY restoration, or
+  only attempt it? A restore path that swallows write errors - correct, so one
+  unwritable file cannot mask a run's results - is exactly why the attempt
+  proves nothing.
+- Does the tool report before or after restoring? A summary computed after the
+  restore cannot distinguish "restored" from "left behind", so it is not
+  evidence and should not be read as any.
+- Ask what else touches the tree while it runs. A single-writer assumption is
+  usually undocumented and usually false: hooks, formatters, editors,
+  file-watchers and concurrent runs of the same tool all write.
+- Guard at the boundary that matters, not only inside the tool. The tool's own
+  check cannot fire when it is SIGKILLed, and has no standing over a file
+  another process mutated. Comparing the artefact about to be committed
+  (`git write-tree`) across the gate covers both.
+- Gate: `test_assert_staged_tree_unchanged_refuses_a_restaged_mutant`
+  (`scripts/test_git_hooks.py`) stages a change across the guard's before-hash
+  and asserts `scripts/git-hooks/assert_staged_tree_unchanged` exits 1 naming
+  the expected tree; neutering its comparison to `if true` makes it fail.
+  `test_restore_and_verify_raises_when_a_mutant_is_left_behind`
+  (`scripts/test_check_mutation.py`) covers the tool-side half.

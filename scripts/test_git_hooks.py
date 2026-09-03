@@ -133,6 +133,7 @@ def test_hooks_executable_and_present() -> None:
         "scripts/git-hooks/post-commit",
         "scripts/git-hooks/run_with_timeout",
         "scripts/git-hooks/run_without_git_env",
+        "scripts/git-hooks/assert_staged_tree_unchanged",
         ".githooks/pre-commit",
         ".githooks/pre-push",
         ".githooks/commit-msg",
@@ -147,6 +148,45 @@ def test_hooks_executable_and_present() -> None:
         # and direct execution tests below provide the equivalent contract.
         if os.name != "nt":
             assert path.stat().st_mode & 0o111, f"{rel} not executable"
+
+
+ASSERT_TREE = ROOT / "scripts" / "git-hooks" / "assert_staged_tree_unchanged"
+
+
+def test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched(root: Path) -> None:
+    init_repo(root)
+    before = run(["git", "write-tree"], root).stdout.strip()
+
+    proc = run([str(ASSERT_TREE), before, "mutation check"], root, check=False)
+
+    assert proc.returncode == 0, proc.stderr
+
+    # Same repo, same gate: with no before-hash it must refuse on usage rather
+    # than silently pass, so a caller that forgets the argument cannot turn the
+    # gate into a no-op.
+    usage = run([str(ASSERT_TREE)], root, check=False)
+    assert usage.returncode != 0
+    assert "usage:" in usage.stderr
+
+
+def test_assert_staged_tree_unchanged_refuses_a_restaged_mutant(root: Path) -> None:
+    # The class this gate exists for: a gate that mutates real working-tree
+    # files runs from a hook that also re-stages them (gofmt -w + git add), so
+    # a mutant present at that instant is staged and committed while the
+    # mutating gate still reports success - it restores before it reports.
+    # Simulated here by staging a change after the "before" hash is taken,
+    # which is exactly the shape that reaches the index.
+    init_repo(root)
+    before = run(["git", "write-tree"], root).stdout.strip()
+
+    (root / "file.txt").write_text("mutated content\n", encoding="utf-8")
+    run(["git", "add", "file.txt"], root)
+
+    proc = run([str(ASSERT_TREE), before, "mutation check"], root, check=False)
+
+    assert proc.returncode == 1, proc.stdout
+    assert "staged tree changed while this gate ran" in proc.stderr
+    assert before in proc.stderr, "the refusal must name the tree it expected"
 
 
 def test_commit_msg_accepts_valid() -> None:
@@ -849,6 +889,8 @@ def main() -> None:
         (test_install_sets_first_push_upstream_in_linked_worktree, "first-push"),
         (test_pre_commit_does_not_overstage_partially_staged_go_file, "partial-staging"),
         (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-worktree"),
+        (test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched, "tree-guard-clean"),
+        (test_assert_staged_tree_unchanged_refuses_a_restaged_mutant, "tree-guard-mutated"),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)

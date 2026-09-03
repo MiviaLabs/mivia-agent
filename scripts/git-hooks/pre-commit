@@ -359,17 +359,12 @@ if command -v go >/dev/null 2>&1; then
   # restoration, but a sweep killed hard enough to skip its `finally` (SIGKILL,
   # OOM) would not get that far, and a concurrent sweep in the same checkout is
   # not this process's to restore at all - so the index is re-checked here too.
-  STAGED_GO_BEFORE="$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' | sort)"
   STAGED_TREE_BEFORE="$(git write-tree)"
   if ! run_verify python3 "$ROOT/scripts/check_mutation.py" --staged; then
     fail "mutation check: a staged change introduced a mutant no test kills - see output above"
   fi
-  if [ "$(git write-tree)" != "$STAGED_TREE_BEFORE" ]; then
-    fail "mutation check: the staged tree changed while the sweep ran - a mutated
-working-tree file was re-staged and would have been committed. Nothing was
-committed. Restore the affected files (git checkout -- <file>) and re-run.
-Staged Go files at the time:
-$STAGED_GO_BEFORE"
+  if ! "$ROOT/scripts/git-hooks/assert_staged_tree_unchanged" "$STAGED_TREE_BEFORE" "mutation check"; then
+    fail "mutation check: staged tree changed while the sweep ran - see above"
   fi
   MUTATION_SUMMARY="mutation check ok"
 fi
