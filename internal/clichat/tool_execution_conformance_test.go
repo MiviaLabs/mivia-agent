@@ -20,35 +20,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Two paths execute a model's tool call, and they must agree.
+// Two execution paths run model tool calls and must stay aligned:
+// - `dispatcherShim.Run` (internal/agent) runs admitted tools.
+// - `serveUnadmittedTool` -> `runDeferredToolNow` (internal/chat) runs unadmitted tools.
 //
-// `dispatcherShim.Run` (internal/agent) serves a tool the model may already
-// call. `serveUnadmittedTool` -> `runDeferredToolNow` (internal/chat) serves
-// one that is advertised but not yet admitted. They share no Go interface -
-// one is an sdktools.Tool method, the other an eight-parameter Session method
-// - so nothing named them siblings, and no compiler or existing gate could
-// see them drift.
+// The paths share no Go interface (one is an sdktools.Tool method; the other is an
+// eight-parameter Session method). Without a shared interface, tools drifted: the deferred
+// path initially implemented only four of nine contracts. Missing contracts caused hung
+// turns, duplicate side effects from false unrun reports, green-rendered refusals,
+// unbounded calls, self-capability deduplication bugs, and denylisted tool executions.
 //
-// They drifted badly. The deferred path was written as a second
-// implementation and honoured FOUR of the nine contracts the admitted path
-// had accumulated. Each missing one shipped as its own bug with its own
-// symptom: a turn that hung with no prompt, a call that ran and was reported
-// as never having run (so the model retried it and the side effect happened
-// twice), a refusal rendered as a green success, an unbounded call, a tool
-// deduped against its own capability, a denylisted tool executing.
+// Per `.agents/memories/sibling-implementations-drift.md`, sibling implementations
+// require a conformance suite rather than separate tests.
 //
-// Nine fixes, one defect. `.agents/memories/sibling-implementations-drift.md`
-// already names this as the repository's most expensive recurring class, and
-// the gate-authoring skill already prescribes the cure - "when an interface
-// has more than one implementation, the gate is a conformance suite, not
-// another per-implementation test". The rule did not fire here only because
-// the two paths are not an interface with two implementations; they are two
-// functions nobody had written down as related.
-//
-// This is that table. It drives both paths through the REAL attach path and
-// a real session turn, and asserts on what an operator or the model can
-// actually observe, never on internals. A third path must join it or its
-// absence is visible.
+// This suite tests both paths through the real session attach path and real turns.
+// Tests assert observable behavior (operator and model outputs) rather than internals.
+// Any new execution path must satisfy these conformance tests.
 
 // execPath selects which of the two implementations a case exercises.
 //

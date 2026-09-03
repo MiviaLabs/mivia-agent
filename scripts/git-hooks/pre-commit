@@ -334,8 +334,10 @@ if command -v go >/dev/null 2>&1; then
 fi
 
 # Mutation sweep on the staged diff. Applies text-level operator mutations
-# ONLY to lines actually changed in this commit, runs each mutant's package
-# test target, and fails if a mutant survives with no test noticing - the one
+# ONLY to lines this commit adds or edits - verbatim-moved lines (the same
+# bytes deleted elsewhere in the diff) are skipped, so a refactor commit's
+# sweep cost tracks semantic change, not text churn - runs each mutant's
+# package test target, and fails if a mutant survives with no test noticing - the one
 # check generic enough to catch "the test asserts on the wrong thing" or "the
 # fixture disables the very guard it means to test" without knowing the
 # defect class in advance. It was already wired into `make verify`
@@ -348,26 +350,18 @@ fi
 # transiently mutates the real working-tree file, restoring it in a `finally`
 # even on SIGTERM - it needs the real .git directory and working tree, which
 # STAGED_ROOT (a bare `git archive` extraction with no .git) does not have.
-MUTATION_SUMMARY="mutation check skipped"
-if command -v go >/dev/null 2>&1; then
-  # Record what is staged BEFORE the sweep. The sweep mutates real
-  # working-tree files, and this hook's own gofmt step re-stages fully-staged
-  # Go files with `git add -- <file>` - so a mutant present in the working
-  # tree when that runs is staged and committed, silently, while the sweep
-  # still reports 100% because it restores before it reports. That shipped an
-  # inverted nil guard once already. check_mutation.py now verifies its own
-  # restoration, but a sweep killed hard enough to skip its `finally` (SIGKILL,
-  # OOM) would not get that far, and a concurrent sweep in the same checkout is
-  # not this process's to restore at all - so the index is re-checked here too.
-  STAGED_TREE_BEFORE="$(git write-tree)"
-  if ! run_verify python3 "$ROOT/scripts/check_mutation.py" --staged; then
-    fail "mutation check: a staged change introduced a mutant no test kills - see output above"
-  fi
-  if ! "$ROOT/scripts/git-hooks/assert_staged_tree_unchanged" "$STAGED_TREE_BEFORE" "mutation check"; then
-    fail "mutation check: staged tree changed while the sweep ran - see above"
-  fi
-  MUTATION_SUMMARY="mutation check ok"
-fi
+# MOVED TO pre-push. The sweep runs one `go test` per mutation site, so its
+# cost scales with the diff, and a broad commit (a multi-package change, or a
+# backlog landed in one go) ran it past ten minutes - long enough that the
+# supervisor killed it and the commit failed with a timeout traceback instead
+# of a verdict. A gate that cannot finish is not enforcing anything, and one
+# that makes every commit unaffordable gets bypassed, which is worse than
+# moving it.
+#
+# It is NOT weakened: pre-push runs the same sweep over the full push range
+# before any code leaves this machine, which is the boundary that matters.
+# Commits stay local and cheap; nothing reaches a remote unswept.
+MUTATION_SUMMARY="mutation check deferred to pre-push"
 
 printf 'tree=%s\nsummary=%s\n' \
   "$TREE" \

@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import check_mutation as cm
@@ -293,6 +294,41 @@ def test_policy_mutation_discovery_and_floor() -> None:
         assert cm.resolve_floor("pkg/a", 90.0, pdir) == 90.0
         assert cm.resolve_floor("pkg/a", 0.70, pdir) == 70.0
         assert cm.load_denylist("pkg/a", pdir)["floor"] == 0.85
+
+
+def test_take_moved_consumes_the_deletion_multiset() -> None:
+    counter = Counter({"x := 1": 1, "if err != nil {": 2})
+    assert cm.take_moved(counter, "\tx := 1") is True
+    assert cm.take_moved(counter, "x := 1") is False, (
+        "one deleted copy licenses exactly one skip"
+    )
+    assert cm.take_moved(counter, "if err != nil {") is True
+    assert counter == Counter({"x := 1": 0, "if err != nil {": 1})
+
+
+def test_take_moved_never_matches_blank_or_edited_text() -> None:
+    counter = Counter({"return nil": 3})
+    assert cm.take_moved(counter, "") is False
+    assert cm.take_moved(counter, "   ") is False
+    assert cm.take_moved(counter, "Return nil") is False
+    assert cm.take_moved(counter, "return  nil") is False
+    assert counter == Counter({"return nil": 3}), "no skip must consume the counter"
+
+
+def test_parse_deleted_lines_skips_headers_and_blank_deletions() -> None:
+    fixture = (
+        "diff --git a/internal/x/x.go b/internal/x/x.go\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/internal/x/x.go\n"
+        "+++ b/internal/x/x.go\n"
+        "@@ -1,4 +0,0 @@\n"
+        "-package x\n"
+        "-\n"
+        "-- indented content\n"
+    )
+    got = cm.parse_deleted_lines(fixture)
+    assert got == Counter({"package x": 1, "- indented content": 1}), got
+    assert cm.parse_deleted_lines("--- /dev/null\n+++ b/internal/x/x.go\n") == Counter()
 
 
 def main() -> int:

@@ -17,32 +17,20 @@ func seedSDKTurnState(turn *sdkTurnState, opts Options) {
 	turn.setAdvertised(opts.AdvertisedToolSpecs)
 }
 
-// applyAdvertisedTools REPLACES the converted request's
-// registry-derived tool array with the run's pinned advertised
-// snapshot when one exists (the legacy initialToolSpecs contract:
-// request 0 carries the host-pinned union, deferred tools like a
-// not-yet-registered "grep" included, and each surface rotation's
-// non-nil ToolSpecs replace it). Replace, not append: the SDK request
-// already carries the registry definitions, so appending would
-// double-advertise every registered tool. A nil snapshot (no seed, no
-// rotation) leaves the request's registry-derived tools untouched -
-// the subagent and workflow-engine paths.
+// applyAdvertisedTools replaces the request's registry-derived tool array with
+// the run's pinned advertised snapshot when non-nil (legacy initialToolSpecs
+// contract: request 0 carries pinned union including deferred tools; surface
+// rotations replace it). Replace, not append: appending would double-advertise
+// registered tools. Nil snapshot leaves registry tools untouched (subagent and
+// workflow paths).
 //
-// Recovery-request safety (reviewer amendment B): the SDK's
-// prompt-too-long recovery (agentloop/compaction.go
-// recoverPromptTooLong) re-sends its retry through the same Completer
-// Chat with Tools: l.defs, so a recovery request is NOT distinguishable
-// from a run request by request shape - both carry the loop's defs.
-// The gate is structural instead: recoverPromptTooLong runs only when
-// Options.Window is non-nil (agentloop/run.go runChat), and the host
-// NEVER wires a Window (sdk-backend-field-mapping.md; pinned by
-// TestBuildAgentLoopOptions_NeverWiresWindow), so no recovery request
-// can reach this completer on the SDK path. The host's own
-// prompt-too-long retry (runSDKPromptTooLongRecoverable) rebuilds a
-// fresh loop whose iteration-1 request is a normal run request that
-// legitimately carries the union - the same shape the legacy retry's
-// requests carry, because the legacy loop also advertises the pinned
-// union on every step's request.
+// Recovery-request safety: SDK prompt-too-long recovery (recoverPromptTooLong)
+// re-sends via Completer Chat with Tools: l.defs, making it indistinguishable
+// from a run request by shape. The gate is structural: recoverPromptTooLong runs
+// only when Options.Window != nil (runChat), and the host never wires a Window
+// (pinned by TestBuildAgentLoopOptions_NeverWiresWindow). The host's own retry
+// (runSDKPromptTooLongRecoverable) rebuilds a fresh loop whose normal run request
+// carries the union, matching legacy loop behavior.
 func applyAdvertisedTools(req provider.Request, advertised func() []provider.ToolSpec) provider.Request {
 	if advertised == nil {
 		return req

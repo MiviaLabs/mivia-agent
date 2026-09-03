@@ -193,9 +193,17 @@ type Envelope struct {
 
 // AgentOrigin identifies a subagent when an event was emitted by one.
 type AgentOrigin struct {
-	Task  string `json:"task,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Depth int    `json:"depth,omitempty"`
+	Task string `json:"task,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Depth carries NO omitempty, deliberately. omitempty omits the zero
+	// value, so a depth of 0 - the root agent - vanished from the wire and an
+	// attributed root event became indistinguishable from a subagent event
+	// whose depth simply had not been stamped. Consumers split the main
+	// transcript from the subagent lanes on exactly this field, so the web
+	// viewer filed the root agent's own prose and reasoning under a lane and
+	// showed a transcript of tool cards with nothing between them. When an
+	// origin is present at all, its depth is now always stated.
+	Depth int `json:"depth"`
 	// ParentTask is the Task of the subagent that dispatched this one, empty
 	// when the root loop did. Depth reports how deep a run sits; this reports
 	// under WHICH run, which two runs at the same depth do not share.

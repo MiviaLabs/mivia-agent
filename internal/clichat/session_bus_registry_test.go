@@ -314,35 +314,24 @@ func TestSessionBusRegistry_LookupMiss(t *testing.T) {
 	}
 }
 
-// TestSessionBusRegistry_TeardownOrderProtectsALaterRebind is the ORDERING
-// test the plan requires. It reproduces the exact defer-unwind order the
-// production wiring produces:
+// TestSessionBusRegistry_TeardownOrderProtectsALaterRebind verifies defer-unwind
+// order during session teardown:
 //
-//  1. dispatchChatSurface (internal/clichat/chat_command.go) registers the
-//     session's bus and pushes `defer RegisterSessionBus(...)()` BEFORE
-//     calling TUILauncherFunc.
-//  2. Inside TUILauncherFunc (RunTUI), buildApp constructs the SessionPool,
-//     whose attachSyncLocked re-registers the SAME session id through
-//     SessionBusRegistrar.
-//  3. Go's defer stack unwinds LIFO: RunTUI's own
-//     `defer runner.Pool().ReleaseLeases(ctx)` is nested INSIDE
-//     TUILauncherFunc and therefore fires and completes BEFORE control
-//     ever returns to dispatchChatSurface's own defer, one call frame
-//     further out. The pool's release (step 2's registration) therefore
-//     ALWAYS fires before dispatchChatSurface's own release (step 1's).
+// 1. dispatchChatSurface (chat_command.go) registers the bus and pushes
+// `defer RegisterSessionBus(...)()` before calling TUILauncherFunc.
+// 2. In TUILauncherFunc (RunTUI), buildApp builds SessionPool; attachSyncLocked
+// re-registers the same session ID via SessionBusRegistrar.
+// 3. Go unwinds defers LIFO. RunTUI's `defer runner.Pool().ReleaseLeases(ctx)`
+// runs inside TUILauncherFunc and completes before dispatchChatSurface's outer defer.
+// The pool release (step 2) always runs before the dispatchChatSurface release (step 1).
 //
-// match-before-delete is what makes that safe in general, not merely in
-// the common case: it protects against a STALE release (dispatchChatSurface's,
-// for a binding the pool's own release already tore down) destroying a
-// LATER, unrelated rebind of the same session id - e.g. a fast
-// ReattachSyncAfterLogin call racing shutdown. Without match-before-delete
-// (an unconditional delete), the stale release would blow away whatever is
-// CURRENTLY bound regardless of whether it is the one it registered.
+// Match-before-delete prevents a stale release (step 1) from destroying a later
+// rebind of the same ID (e.g. ReattachSyncAfterLogin racing shutdown). Without this
+// check, an unconditional delete destroys the active binding.
 //
-// Mutation proof: replacing the `if sessionBuses.m[sessionID] == bus`
-// guard in RegisterSessionBus's release closure with an unconditional
-// delete makes this test fail (the replacement binding is destroyed by
-// the stale release).
+// Mutation proof: removing the `sessionBuses.m[sessionID] == bus` guard in
+// RegisterSessionBus's release closure breaks this test when the replacement binding
+// is destroyed by the stale release.
 func TestSessionBusRegistry_TeardownOrderProtectsALaterRebind(t *testing.T) {
 	id := "sess-teardown-order"
 

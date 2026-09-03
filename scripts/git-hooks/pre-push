@@ -125,6 +125,30 @@ run_go_gates() {
   if [[ -d cmd/mivia ]]; then
     run_verify go build -o /dev/null ./cmd/mivia
   fi
+
+  # Mutation sweep, moved here from pre-commit. It runs one `go test` per
+  # mutation site, so its cost scales with the diff; on a broad change that ran
+  # past ten minutes on EVERY commit, until the supervisor killed it and the
+  # commit failed with a timeout traceback rather than a verdict. A gate that
+  # cannot finish enforces nothing, and one that makes committing unaffordable
+  # gets bypassed.
+  #
+  # This is the same sweep, at the boundary that actually matters: nothing
+  # reaches a remote unswept. It sweeps the PUSH RANGE rather than the index -
+  # `--staged` reads `git diff --cached`, which is empty here - so it covers
+  # every commit being pushed, not just the last one.
+  if command -v go >/dev/null 2>&1; then
+    local range_base
+    range_base="$(git merge-base @{upstream} HEAD 2>/dev/null || true)"
+    if [[ -n "$range_base" ]]; then
+      run_verify python3 "$ROOT/scripts/check_mutation.py" --base "$range_base" --tip HEAD
+    else
+      # No upstream to diff against (a brand-new branch): sweep the working
+      # tree's own diff against the default branch, and fall back to skipping
+      # rather than sweeping the entire repository.
+      printf 'pre-push: no upstream for a mutation range; skipping sweep\n' >&2
+    fi
+  fi
 }
 
 case "$ROOT" in

@@ -97,36 +97,21 @@ func newLoopbackDialContext(providerName, baseURL string) (func(ctx context.Cont
 	}, nil
 }
 
-// compatBaseRoundTripper returns the base transport a client wraps with retry
-// logic. It always returns a FRESH clone of http.DefaultTransport. It never
-// returns the global by identity and never mutates it, so one client's
-// transport settings can never leak into another client or into the
-// process-wide default.
+// compatBaseRoundTripper returns the base transport a client wraps with retry logic.
+// It returns a fresh clone of http.DefaultTransport without mutating the global default.
 //
-// The dial wiring is the loopback security gate, and it is per-client:
+// Dial wiring enforces loopback security per client:
+//   - nil dialContext: cloud client, unpinned, keeps default dialer and proxy behavior.
+//   - non-nil dialContext: verified loopback client, pinned to loopback addresses.
 //
-//   - A nil dialContext means a cloud client. A cloud client is NEVER
-//     pinned: its clone keeps the DEFAULT dialer, so normal resolution and
-//     proxy behavior are unchanged.
-//   - A non-nil dialContext means a verified loopback client. Its clone
-//     carries the pinned dial, so every connection lands on the loopback
-//     address set verified at construction, whatever a resolver says later.
+// The returned modalHeaderTransport holds two clones differing only in header bounds:
+//   - Streaming clone: uses DefaultResponseHeaderTimeout to fail fast on quiet peers.
+//   - Non-streaming clone: has no header bound because generation delays headers (see header_bound.go).
 //
-// The result is a modalHeaderTransport carrying TWO such clones, identical
-// except for their header bound. DefaultResponseHeaderTimeout bounds the
-// accept-to-headers wait for a request that answers immediately - a streaming
-// one - so a peer that connects and goes quiet fails fast. A non-stream
-// completion sends nothing until the generation is done, so the same bound
-// there is a ceiling on thinking time rather than a stall detector, and its
-// clone carries none; see header_bound.go. Both clones get the dial wiring, so
-// the loopback pin is not weakened by the split. Body phases are covered by
-// the stream watchdogs (idle_watchdog.go), and both sit under the absolute
-// client wall (http_wall.go).
+// Both clones share the dial wiring. Stream watchdogs cover body phases (idle_watchdog.go)
+// under the client wall (http_wall.go).
 //
-// Always-clone consequence: each client owns its connection pools instead of
-// sharing http.DefaultTransport's. Per-client pool isolation is the point -
-// one client's idle-connection state or pinned-dial setting cannot touch
-// another's - at the cost of one pool per phase per client.
+// Cloning gives each client isolated connection pools rather than sharing http.DefaultTransport.
 func compatBaseRoundTripper(dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) http.RoundTripper {
 	clone := func(headerTimeout time.Duration) *http.Transport {
 		tr := http.DefaultTransport.(*http.Transport).Clone()

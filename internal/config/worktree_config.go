@@ -10,6 +10,12 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+// WorktreeConfig controls worktree branch settings.
+type WorktreeConfig struct {
+	// BranchPrefix is the prefix for branches that mivia creates for worktrees.
+	BranchPrefix string `toml:"branch_prefix"`
+}
+
 // DefaultWorktreeBranchPrefix is the prefix for branches that mivia creates
 // when the project config does not set [worktrees].branch_prefix.
 const DefaultWorktreeBranchPrefix = "mivia/"
