@@ -309,11 +309,11 @@ func (s *Screen) resize() {
 // renders into it. Toggling the panel and resizing the terminal both
 // change that width; Update's reservedRows comparison cannot see a
 // width-only change, so the explicit call is the only reliable trigger.
-// syncTopbarModel hides the top bar's model capsule while the sidebar
-// is open: the sidebar's model row says it instead, so the model is
-// named once on screen. Called from every path that opens or closes the
-// panel.
-func (s *Screen) syncTopbarModel() { s.topbar.SetModelHidden(s.panel.open) }
+// syncTopbarModel hides the top bar's model capsule and context badge
+// while the sidebar is open: the sidebar's context and model sections
+// say them instead, so each is named once on screen. Called from every
+// path that opens or closes the panel.
+func (s *Screen) syncTopbarModel() { s.topbar.SetSessionHidden(s.panel.open) }
 
 func (s *Screen) reflow() {
 	w := s.chatWidth()

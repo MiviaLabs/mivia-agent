@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -59,12 +60,12 @@ func TestDoubleClickOnModelRowOpensTheModelPicker(t *testing.T) {
 	s := openPanel(t, modelPanelScreen(t))
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	next, _ := s.handleNavClick(2) // row 2 is the model row
+	next, _ := s.handleNavClick(4) // row 4 is the model row (after the context section)
 	s = next.(Screen)
 	if s.modelPicker != nil || s.panel.dialog {
 		t.Fatal("a single click on the model row must only select it")
 	}
-	next, _ = s.handleNavClick(2)
+	next, _ = s.handleNavClick(4)
 	s = next.(Screen)
 	if s.modelPicker == nil {
 		t.Fatal("a double-click on the model row must open the model picker")
@@ -85,5 +86,44 @@ func TestTopBarHidesTheModelCapsuleWhileTheSidebarIsOpen(t *testing.T) {
 	top := ansi.Strip(strings.Split(s.View(), "\n")[1])
 	if strings.Contains(top, "claude-fable-5-1") {
 		t.Errorf("top bar still names the model while the sidebar shows it:\n%s", top)
+	}
+}
+
+// TestSidebarContextSectionOwnsTheShareWhileOpen: the context share
+// moves out of the top bar and off the model row into its own section,
+// a header with the share right-aligned and a bar the full inner width.
+func TestSidebarContextSectionOwnsTheShareWhileOpen(t *testing.T) {
+	half := func(s Screen) Screen {
+		s.topbar.SetSession(
+			ports.ModelInfo{Name: "claude-fable-5-1", Provider: "anthropic", ContextWindow: 100_000},
+			ports.Usage{InputTokens: 50_000},
+		)
+		return s
+	}
+	s := half(modelPanelScreen(t))
+	if !strings.Contains(ansi.Strip(strings.Split(s.View(), "\n")[1]), "50%") {
+		t.Fatal("precondition: the top bar shows the context share while the sidebar is closed")
+	}
+	s = half(openPanel(t, s)) // opening replays the fixture session; re-seed the share
+	lines := strings.Split(ansi.Strip(s.View()), "\n")
+	if strings.Contains(lines[1], "50%") {
+		t.Errorf("top bar still shows the context share while the sidebar owns it:\n%s", lines[1])
+	}
+	var header, bar, model string
+	for i, l := range lines {
+		if strings.Contains(l, "context") && strings.Contains(l, "50%") && i+3 < len(lines) {
+			header, bar, model = l, lines[i+1], lines[i+3]
+			break
+		}
+	}
+	if header == "" {
+		t.Fatalf("no 'context ... 50%%' header in the sidebar:\n%s", strings.Join(lines, "\n"))
+	}
+	want := render.ContextBar(50, s.panelInnerWidth(), s.Tier)
+	if !strings.Contains(bar, want) {
+		t.Errorf("bar row %q lacks the half-filled full-width bar %q", bar, want)
+	}
+	if strings.Contains(model, "%") {
+		t.Errorf("model row still carries the context share: %q", model)
 	}
 }

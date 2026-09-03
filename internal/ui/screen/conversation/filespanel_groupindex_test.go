@@ -12,15 +12,17 @@ func TestPanelGroupToPickerIdxOutOfRange(t *testing.T) {
 		gIdx int
 		want int
 	}{
-		{name: "model header", gIdx: 0, want: -1},
-		{name: "model row", gIdx: 1, want: 0},
-		{name: "files header", gIdx: 2, want: -1},
-		{name: "first file", gIdx: 3, want: 1},
-		{name: "last file", gIdx: 3 + files - 1, want: files},
-		{name: "subagents header", gIdx: 3 + files, want: -1},
-		{name: "first agent", gIdx: 4 + files, want: 1 + files},
-		{name: "last agent", gIdx: 3 + files + agents, want: files + agents},
-		{name: "past the last agent", gIdx: 4 + files + agents, want: -1},
+		{name: "context header", gIdx: 0, want: -1},
+		{name: "context bar", gIdx: 1, want: -1},
+		{name: "model header", gIdx: 2, want: -1},
+		{name: "model row", gIdx: 3, want: 0},
+		{name: "files header", gIdx: 4, want: -1},
+		{name: "first file", gIdx: 5, want: 1},
+		{name: "last file", gIdx: 5 + files - 1, want: files},
+		{name: "subagents header", gIdx: 5 + files, want: -1},
+		{name: "first agent", gIdx: 6 + files, want: 1 + files},
+		{name: "last agent", gIdx: 5 + files + agents, want: files + agents},
+		{name: "past the last agent", gIdx: 6 + files + agents, want: -1},
 		{name: "far past the list", gIdx: 100, want: -1},
 	}
 	for _, tc := range cases {
@@ -43,11 +45,11 @@ func TestPanelSelGroupBounds(t *testing.T) {
 		want   int
 	}{
 		{name: "negative selection", selIdx: -1, want: -1},
-		{name: "model row", selIdx: 0, want: 1},
-		{name: "first file", selIdx: 1, want: 3},
-		{name: "last file", selIdx: files, want: 3 + files - 1},
-		{name: "first agent", selIdx: 1 + files, want: 4 + files},
-		{name: "last agent", selIdx: files + agents, want: 3 + files + agents},
+		{name: "model row", selIdx: 0, want: 3},
+		{name: "first file", selIdx: 1, want: 5},
+		{name: "last file", selIdx: files, want: 5 + files - 1},
+		{name: "first agent", selIdx: 1 + files, want: 6 + files},
+		{name: "last agent", selIdx: files + agents, want: 5 + files + agents},
 		{name: "past the last agent", selIdx: 1 + files + agents, want: -1},
 	}
 	for _, tc := range cases {

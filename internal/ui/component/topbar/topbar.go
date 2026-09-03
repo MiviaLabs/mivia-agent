@@ -36,10 +36,11 @@ type Model struct {
 	width       int
 	filesCount  int
 	agentsCount int
-	// modelHidden drops the model capsule from the right side. The
-	// activity sidebar shows the model in its own section while it is
-	// open, so the bar does not say it twice (SetModelHidden).
-	modelHidden bool
+	// sessionHidden drops the model capsule and the context badge from
+	// the right side. The activity sidebar shows both in its own
+	// sections while it is open, so the bar does not say them twice
+	// (SetSessionHidden).
+	sessionHidden bool
 }
 
 // New returns a top bar showing the given session values. width is the
@@ -82,11 +83,11 @@ func (m Model) Usage() ports.Usage {
 // Info returns the session's model identity (provider and name).
 func (m Model) Info() ports.ModelInfo { return m.info }
 
-// SetModelHidden hides or shows the model capsule. While hidden, the
-// context badge still draws and ModelBounds reports ok = false, so a
+// SetSessionHidden hides or shows the model capsule and the context
+// badge together. While hidden ModelBounds reports ok = false, so a
 // double-click on the bar can no longer open the model picker from
 // here - the sidebar's model row owns that while it is open.
-func (m *Model) SetModelHidden(hidden bool) { m.modelHidden = hidden }
+func (m *Model) SetSessionHidden(hidden bool) { m.sessionHidden = hidden }
 
 // SetBreadcrumb records the ordered breadcrumb segments (e.g. [sessionTitle]
 // or [sessionTitle, agentName, taskDesc]).
@@ -157,9 +158,7 @@ func (m Model) contextBadge(pct int, withBar bool) string {
 		return border.Render("[ ") + style.Render(fmt.Sprintf("%d%%", pct)) + border.Render(" ]")
 	}
 
-	totalBlocks := 4
-	filled := min(totalBlocks, max(0, (pct*totalBlocks+50)/100))
-	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", totalBlocks-filled)
+	bar := render.ContextBar(pct, 4, m.Tier)
 
 	return border.Render("[ ") + style.Render(fmt.Sprintf("%d%% ", pct)+bar) + border.Render(" ]")
 }
@@ -227,15 +226,12 @@ func (m Model) View() string {
 	}
 
 	buildRight := func(prov, bar bool) string {
-		var r string
-		if !m.modelHidden {
-			r = m.modelCapsule(prov)
+		if m.sessionHidden {
+			return ""
 		}
+		r := m.modelCapsule(prov)
 		if hasPct {
-			if r != "" {
-				r += " "
-			}
-			r += m.contextBadge(pct, bar)
+			r += " " + m.contextBadge(pct, bar)
 		}
 		return r
 	}
@@ -285,7 +281,7 @@ func (m Model) View() string {
 // model capsule in the first row of the top bar within the content width.
 // Returns ok = false if no model info is displayed.
 func (m Model) ModelBounds() (startCol, endCol int, ok bool) {
-	if m.info.Name == "" || m.modelHidden {
+	if m.info.Name == "" || m.sessionHidden {
 		return 0, 0, false
 	}
 	pct, hasPct := m.ContextPercent()

@@ -625,3 +625,27 @@ func TestComposerIdleBarCarriesNoHint(t *testing.T) {
 		}
 	}
 }
+
+// TestMenuClickRowAcceptsMention: the mention popup shares the overlay
+// with the slash menu, so a click on one of its item rows must accept
+// that mention, not fall through as if no menu were open.
+func TestMenuClickRowAcceptsMention(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetMentions([]Mention{{Path: "a.go"}, {Path: "b.go"}})
+	m.SetValue("@")
+	if !m.MentionMenuActive() {
+		t.Fatal("precondition: mention menu open")
+	}
+	if m.MenuClickRow(0) {
+		t.Error("the popup's padding row holds no mention")
+	}
+	if !m.MenuClickRow(2) {
+		t.Fatal("expected the second item row to accept a mention")
+	}
+	if got := m.Value(); got != "@b.go" {
+		t.Errorf("accepted %q, want @b.go", got)
+	}
+	if m.MentionMenuActive() {
+		t.Error("accepting a mention by click must close the picker")
+	}
+}
