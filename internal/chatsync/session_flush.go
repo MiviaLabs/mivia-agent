@@ -8,16 +8,26 @@ import (
 	"time"
 )
 
+// workerLoop is the projection goroutine. It projects bus events and appends
+// them to the outbox, and it does NOTHING else: no network call runs here.
+//
+// It used to also own the push. One select served the event channel, the
+// per-event flush signal and the ticker, so under a streaming model the loop
+// alternated one projection (~0.4ms, an fsync) with one FlushOutbox (one HTTP
+// round trip, ~280ms measured) and throughput collapsed to one delta per
+// round trip: appends landed at an exact RTT cadence, one 1-12 byte delta
+// each, and the remote viewer fell further behind for as long as the model
+// streamed (1.4s -> 6.6s over 7s, measured live). The push now runs on
+// uploaderLoop, and the outbox is the durable handoff between the two.
 func (s *SyncSession) workerLoop(ctx context.Context) {
 	defer close(s.doneCh)
 
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
 	for {
 		// A terminal stop latched. There is nothing left to push, so exit
-		// without a final flush rather than replay into a dead session.
+		// without a final flush rather than replay into a dead session. The
+		// uploader still has to be released: it may be parked on its select.
 		if s.remoteEnded.Load() {
+			s.releaseUploader(ctx)
 			return
 		}
 		select {
@@ -29,12 +39,62 @@ func (s *SyncSession) workerLoop(ctx context.Context) {
 			return
 		case ev := <-s.eventCh:
 			s.processEvent(ctx, ev)
+		}
+	}
+}
+
+// uploaderLoop is the push goroutine. It owns FlushOutbox, the retry
+// schedule, the recovery and rebase paths and push health - everything that
+// used to run on the worker after an append. It is woken by the per-event
+// signal on flushCh (buffered 1, so a storm of signals coalesces into one
+// wake) and by the ticker, and each wake drains the outbox to empty in
+// batches of up to maxAppendBatch, so under a streaming storm one POST
+// carries what arrived during the previous round trip rather than one delta.
+//
+// It returns on a terminal stop, or after the final flush the worker hands it
+// on finalCh with the shutdown deadline. It never returns on ctx alone: the
+// worker owns the shutdown order (drain, final append, then final flush),
+// and an uploader that left first would strand the drained tail.
+func (s *SyncSession) uploaderLoop(ctx context.Context) {
+	defer close(s.uploaderDone)
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if s.remoteEnded.Load() {
+			return
+		}
+		// The final pass wins over a pending wake: it carries the shutdown
+		// deadline and covers everything the wake would have pushed.
+		select {
+		case finalCtx := <-s.finalCh:
+			s.flushNow(finalCtx)
+			return
+		default:
+		}
+		select {
+		case finalCtx := <-s.finalCh:
+			s.flushNow(finalCtx)
+			return
 		case <-s.flushCh:
 			s.flush(ctx)
 		case <-ticker.C:
 			s.flush(ctx)
 		}
 	}
+}
+
+// releaseUploader wakes the uploader for its final pass and waits for it to
+// finish. finalCh is buffered and sent on exactly once, so the send cannot
+// block; the wait is what makes doneCh mean "nothing touches the outbox any
+// more", which Stop's timed-out path relies on before closing it.
+func (s *SyncSession) releaseUploader(ctx context.Context) {
+	select {
+	case s.finalCh <- ctx:
+	default:
+	}
+	<-s.uploaderDone
 }
 
 const (
@@ -60,6 +120,10 @@ func (s *SyncSession) flush(ctx context.Context) {
 
 // flushNow pushes the outbox regardless of the retry schedule. Shutdown uses
 // it: a pending backoff must not silently discard the final flush.
+//
+// It runs on the uploader goroutine. Every failure branch below mutates
+// uploader-only state (the retry schedule, the recovery counters) or takes
+// s.mu for a network-free projector mutation; none of it runs on the worker.
 func (s *SyncSession) flushNow(ctx context.Context) {
 	if s.remoteEnded.Load() {
 		return
@@ -135,7 +199,7 @@ func jitterBackoff(d time.Duration) time.Duration {
 // outcomeStop, the recovery bounds, or a dead outbox; a 409 or 404 on its own
 // recovers instead (recoverRemoteSession). The local chat is untouched.
 //
-// It is called from the worker goroutine, so the (blocking) runner stops are
+// It is called from the uploader goroutine, so the (blocking) runner stops are
 // detached. Both runner Stop methods are idempotent, so a later Stop(ctx) that
 // races this one is safe.
 func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
@@ -153,8 +217,8 @@ func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 		}
 		// The "say so" half of the contract's poison rule. The
 		// CompareAndSwap above makes this exactly-once, and running it here
-		// - already off the worker - keeps a host callback that blocks on a
-		// terminal or a full UI channel away from the drain and final flush.
+		// - already off the uploader - keeps a host callback that blocks on
+		// a terminal or a full UI channel away from the final flush.
 		if s.opts.OnStop != nil {
 			s.opts.OnStop(reason)
 		}
@@ -162,8 +226,8 @@ func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 }
 
 // reportHealth fires the host callback for a health transition, detached
-// from the worker for the same reason OnStop is: a host that blocks on a
-// terminal or a full UI channel must not hold up the drain and final flush.
+// from the uploader for the same reason OnStop is: a host that blocks on a
+// terminal or a full UI channel must not hold up the next push.
 func (s *SyncSession) reportHealth(transition, reason string) {
 	switch transition {
 	case SyncStateDegraded:
@@ -177,6 +241,11 @@ func (s *SyncSession) reportHealth(transition, reason string) {
 	}
 }
 
+// drainAndFlushFinal is the worker's shutdown: project everything still
+// queued, append the final drop marker, then hand the uploader the shutdown
+// deadline for its final flush and wait for it. The order is load-bearing -
+// the final flush must see the drained tail in the outbox, so the append
+// happens before the release.
 func (s *SyncSession) drainAndFlushFinal(ctx context.Context) {
 	for {
 		select {
@@ -200,5 +269,5 @@ drained:
 	}
 	s.mu.Unlock()
 
-	s.flushNow(ctx)
+	s.releaseUploader(ctx)
 }

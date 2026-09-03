@@ -29,7 +29,7 @@ const noGapBase = int64(-1)
 // long as the process lives. Sync stops and says why
 // (chat-sync-event-contract.md:285-287).
 //
-// It runs on the worker goroutine, like the rest of the retry schedule.
+// It runs on the uploader goroutine, like the rest of the retry schedule.
 func (s *SyncSession) handleBadRequest(ctx context.Context, err error) {
 	var bad *BadRequestError
 	if !errors.As(err, &bad) || !bad.IsSequenceComplaint() {
@@ -83,6 +83,13 @@ func (s *SyncSession) handleBadRequest(ctx context.Context, err error) {
 //     between are gone and no resend can produce them, so the events are
 //     renumbered onto serverLastSeq+1. The loss itself is what the sync.dropped
 //     marker path records; this only restores contiguity.
+//
+// It runs on the uploader and takes s.mu for the whole realignment, so the
+// worker cannot project a seq between the outbox renumbering and ResetSeq.
+// Upload is asynchronous, so the rejected batch may be several appends old
+// and the outbox may hold more than it did when the batch was sent; both
+// shapes above are cursor-relative and renumber whatever is unflushed NOW,
+// which is exactly what makes them independent of that timing.
 func (s *SyncSession) rebaseOn(serverLastSeq int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
