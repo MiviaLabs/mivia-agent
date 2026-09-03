@@ -214,11 +214,22 @@ func TestSkillInvocationsAreChargedApartFromProse(t *testing.T) {
 }
 
 // TestAnOrdinaryUserMessageIsNotASkill guards the other half: the frame
-// is what marks a skill, and a user who pastes the words must not have
-// their message reclassified.
+// is what marks a skill, so merely naming it must not reclassify a
+// message.
+//
+// The guard is narrower than it looks, and that is recorded here rather
+// than left to be rediscovered. skills.ParseSkillInvocation accepts on
+// "contains both tags AND (contains the preamble OR starts with the open
+// tag)", so a user who PASTES a real frame - debugging their own skill,
+// say - is charged to Skills rather than Prose. The consequence is
+// attribution only: the total is unchanged, nothing is double counted,
+// and SkillCount over-reads by one. Tightening it means anchoring the
+// parser, which is skills' contract to change, not this package's.
 func TestAnOrdinaryUserMessageIsNotASkill(t *testing.T) {
 	messages := []provider.Message{
 		{Role: provider.RoleUser, Content: "please run the skill-instructions for me"},
+		{Role: provider.RoleUser, Content: skills.SkillTurnPreamble},
+		{Role: provider.RoleUser, Content: "look: <skill-instructions>x</skill-instructions>"},
 	}
 	b, err := breakdown(messages, nil, nil, provider.ContextAccountingProfile{})
 	if err != nil {
@@ -226,5 +237,44 @@ func TestAnOrdinaryUserMessageIsNotASkill(t *testing.T) {
 	}
 	if b.SkillCount != 0 || b.Skills != 0 {
 		t.Errorf("an ordinary message was charged as a skill: count=%d tokens=%d", b.SkillCount, b.Skills)
+	}
+}
+
+// TestScaleToKeepsEachBucketsShare: summing to the total is necessary
+// but not sufficient. A bucket dropped from fields() still leaves the
+// rows adding up - the drift lands on the largest bucket - so the only
+// thing that catches it is the SHARE each bucket keeps.
+func TestScaleToKeepsEachBucketsShare(t *testing.T) {
+	raw := ContextBreakdown{
+		System: 1000, ToolSchemas: 500, ExternalSchemas: 250,
+		Memory: 100, Summary: 50, Skills: 4000,
+		Prose: 800, ToolResults: 600, Reasoning: 200,
+		ToolCount: 7, ExternalToolCount: 2, SkillCount: 3,
+	}
+	const total = 749 // deliberately awkward: integer division bites
+	got := raw.scaleTo(total)
+	if got.Total() != total {
+		t.Fatalf("scaleTo(%d).Total() = %d", total, got.Total())
+	}
+	if got.SkillCount != 3 {
+		t.Errorf("SkillCount = %d, want 3 preserved", got.SkillCount)
+	}
+	// Skills is 4000/7500 of the raw estimate, so it must stay the
+	// largest bucket and hold roughly that share. A Skills dropped from
+	// fields() scales to 0 and the total still matches.
+	if got.Skills == 0 {
+		t.Fatal("Skills scaled to zero: it is missing from the scaled field set")
+	}
+	share := float64(got.Skills) / float64(total)
+	if share < 0.45 || share > 0.60 {
+		t.Errorf("Skills holds %.2f of the scaled total, want ~0.53 (its raw share)", share)
+	}
+	for _, b := range []struct {
+		name string
+		got  int
+	}{{"System", got.System}, {"Prose", got.Prose}, {"ToolResults", got.ToolResults}} {
+		if b.got == 0 {
+			t.Errorf("%s scaled to zero; it is missing from the scaled field set", b.name)
+		}
 	}
 }

@@ -76,12 +76,23 @@ type ContextBreakdown struct {
 	ExternalToolCount int
 	Memory            int
 	Summary           int
-	// Skills is what invoked skills are costing. A skill's instruction
-	// body enters the context as a framed USER message, not as part of
-	// the system prompt, so it is conversation - compaction reclaims it -
-	// and it belongs in its own bucket rather than swelling Prose: a
-	// reader who sees "messages 40k" cannot tell that 30k of it is one
-	// skill they invoked and could stop invoking.
+	// Skills is what an invoked skill's instruction body is costing in
+	// the request that carries it. The body enters as a framed USER
+	// message, not as part of the system prompt, so it is conversation
+	// and compaction reclaims it.
+	//
+	// It is mostly an IN-FLIGHT figure, and deliberately so. The session
+	// persists "/skill args" in place of the expanded body at commit
+	// (uiadapter.runner's SubmitPersistedText, chat.replaceNewestUserText),
+	// so a skill costs thousands of tokens in the one request that needs
+	// it and nothing afterwards. The row therefore reads non-zero while
+	// that turn is in flight - which is exactly when a large skill is
+	// what fills the window - and returns to zero once it commits. It
+	// stays non-zero afterwards only for an invocation queued while busy,
+	// which has no persisted-text channel and so is stored in full.
+	//
+	// Do not read it as "what skills have cost this session"; the history
+	// bloat that would have measured was removed rather than reported.
 	Skills      int
 	SkillCount  int
 	Prose       int

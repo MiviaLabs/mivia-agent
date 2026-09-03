@@ -313,3 +313,54 @@ func TestWithLiveTotalBelowTheFloorStaysConsistent(t *testing.T) {
 		}
 	}
 }
+
+// TestWithLiveTotalCarriesEverySkillBucket: the five existing
+// WithLiveTotal fixtures all leave Skills at zero, so the field was
+// threaded through Conversation, buckets and conversationBuckets without
+// a single case exercising it - and dropping it from any of the three
+// broke the sum invariant with nothing failing.
+func TestWithLiveTotalCarriesEverySkillBucket(t *testing.T) {
+	base := ContextBreakdown{
+		System: 1_000, ToolSchemas: 500, ExternalSchemas: 250,
+		Memory: 100, Summary: 50,
+		Skills: 4_000, SkillCount: 2,
+		Prose: 800, ToolResults: 600, Reasoning: 200,
+	}
+	// Above the composition, at it, between floor and it, and below the
+	// floor: every branch of WithLiveTotal.
+	for _, total := range []int64{20_000, base.Total(), 3_000, 1_500, 900, 1} {
+		got := base.WithLiveTotal(total)
+		if got.Total() != total {
+			t.Errorf("WithLiveTotal(%d).Total() = %d, want exactly %d", total, got.Total(), total)
+		}
+		if got.SkillCount != base.SkillCount {
+			t.Errorf("WithLiveTotal(%d) changed SkillCount to %d: a count is not a token cost",
+				total, got.SkillCount)
+		}
+		if got.Skills < 0 {
+			t.Errorf("WithLiveTotal(%d) drove Skills negative: %d", total, got.Skills)
+		}
+	}
+
+	// A total above the composition leaves the priced buckets alone and
+	// puts the remainder on Pending - Skills included, or the skill cost
+	// would be double counted against the same tokens.
+	got := base.WithLiveTotal(20_000)
+	if got.Skills != base.Skills {
+		t.Errorf("an above-composition total rescaled Skills to %d, want %d", got.Skills, base.Skills)
+	}
+	if got.Pending != 20_000-base.Total() {
+		t.Errorf("Pending = %d, want %d", got.Pending, 20_000-base.Total())
+	}
+
+	// Between floor and composition, compaction dropped history: the
+	// floor stays whole and Skills scales with the rest of the
+	// conversation rather than being spared or zeroed.
+	shrunk := base.WithLiveTotal(base.Floor() + 100)
+	if shrunk.Floor() != base.Floor() {
+		t.Errorf("a shrinking total rescaled the floor: %d, want %d", shrunk.Floor(), base.Floor())
+	}
+	if shrunk.Skills == 0 || shrunk.Skills >= base.Skills {
+		t.Errorf("Skills = %d, want it scaled down but not erased (was %d)", shrunk.Skills, base.Skills)
+	}
+}
