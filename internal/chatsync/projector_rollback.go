@@ -103,6 +103,11 @@ func (p *Projector) rollbackOneDelta(ts *turnState) {
 	if ts.fragments == 0 {
 		ts.streamed = false
 	}
+	// The named block's own count comes down with it: recordDeltaSegment
+	// counted this delta into streamSegment when it shipped.
+	if ts.blockFragments > 0 {
+		ts.blockFragments--
+	}
 	// A delta that never shipped must not have spent the step either.
 	if ts.segmentAssistant > 0 {
 		ts.segmentAssistant--
@@ -112,13 +117,19 @@ func (p *Projector) rollbackOneDelta(ts *turnState) {
 	// on it publishes a block that holds nothing while the surviving
 	// fragments live one segment back - fall back to them.
 	//
-	// The guard is `!=`, not `==`. Requiring the two to be EQUAL and then
-	// assigning one to the other is a no-op: it fired only in the case where
-	// there was nothing to undo, and never in the case it was written for. A
-	// fall-back is possible exactly when streamSegment has moved AHEAD of the
-	// segment before it, which is what `!=` says.
-	if ts.segmentAssistant == 0 && ts.streamSegment != ts.prevStreamSegment {
+	// The first guard is the per-block count, which is precisely "does the
+	// named block still hold a stored delta" - segmentAssistant is the STEP
+	// counter and keeps its own decrement above. The second is `!=`, not
+	// `==`. Requiring the two to be EQUAL and then assigning one to the other
+	// is a no-op: it fired only in the case where there was nothing to undo,
+	// and never in the case it was written for. A fall-back is possible
+	// exactly when streamSegment has moved AHEAD of the segment before it,
+	// which is what `!=` says. The fall-back restores that block's count too:
+	// zeroing it would make the aggregate re-ship text the viewer already
+	// holds (an INV-1 double).
+	if ts.blockFragments == 0 && ts.streamSegment != ts.prevStreamSegment {
 		ts.streamSegment = ts.prevStreamSegment
+		ts.blockFragments, ts.prevBlockFragments = ts.prevBlockFragments, 0
 	}
 }
 

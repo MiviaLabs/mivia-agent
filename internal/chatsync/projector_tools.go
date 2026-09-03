@@ -48,12 +48,19 @@ func (ts *turnState) blockSegment(isDelta bool) int {
 // shipped. Recording when the block id was merely picked let a delta that was
 // suppressed (a mid-turn redaction policy) or lost (a failed append, repaired
 // by rollbackOneDelta) drag the settle onto a segment that holds nothing.
+//
+// It also counts the delta for the block: every caller sits after the gate
+// that decides what shipped, so the per-block count follows exactly the rule
+// the segment does. A change of segment retires the previous block's count
+// into prevBlockFragments, one entry deep like prevStreamSegment.
 func (ts *turnState) recordDeltaSegment(segment int) {
-	if ts.streamSegment == segment {
-		return
+	if ts.streamSegment != segment {
+		ts.prevStreamSegment = ts.streamSegment
+		ts.prevBlockFragments = ts.blockFragments
+		ts.streamSegment = segment
+		ts.blockFragments = 0
 	}
-	ts.prevStreamSegment = ts.streamSegment
-	ts.streamSegment = segment
+	ts.blockFragments++
 }
 
 // advanceStep closes the open segment of a stream, so the next prose opens a
@@ -269,8 +276,9 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	// streamUnrecoverable: a discard this lane never got onto the wire. The
 	// viewer still holds the abandoned attempt, so the full text has to travel
 	// for it to replace. Same rule as the root path.
-	if ls.streamed && !ls.streamUnrecoverable {
-		fragments = ls.fragments
+	// Per block, as the root path counts - see projectAssistant.
+	if ls.streamed && !ls.streamUnrecoverable && ls.blockFragments > 0 {
+		fragments = ls.blockFragments
 		text = "" // INV-1: text empty iff fragments > 0.
 	} else {
 		text = applyTruncation(&env, "text", text, BudgetAssistantText)
@@ -356,6 +364,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		env.Block = turnID + ":" + ev.AgentTask + ":assistant"
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
+		ls.blockFragments, ls.prevBlockFragments = 0, 0
 		// DISCARD, not flush: the consumer is being told to throw this
 		// block's text away, so shipping the held tail would deliver words
 		// into a block that is about to be emptied. This is the one place a
@@ -366,6 +375,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		env.Block = turnID + ":assistant"
 		ts := p.turn(turnID)
 		ts.streamed, ts.fragments = false, 0
+		ts.blockFragments, ts.prevBlockFragments = 0, 0
 		ts.assistantStream.Discard()
 		p.advanceStepForReset(ts)
 	}

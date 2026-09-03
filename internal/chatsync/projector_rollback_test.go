@@ -416,8 +416,9 @@ func TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock(t *testing.T) {
 		t.Errorf("settled block = %q, want turn:1:assistant:1 - the block the "+
 			"last surviving delta shipped into", payload.Block)
 	}
-	if payload.Fragments != 2 {
-		t.Errorf("Fragments = %d, want 2 - the first delta and the flushed tail", payload.Fragments)
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - block :1 holds only the flushed tail; the "+
+			"first delta lives in block :0 and is not this block's", payload.Fragments)
 	}
 	if payload.Text != "" {
 		t.Errorf("Text = %q, want empty - INV-1, fragments shipped", payload.Text)
@@ -443,8 +444,9 @@ func TestARollbackKeepsTheSegmentOtherStoredDeltasUse(t *testing.T) {
 		t.Errorf("settled block = %q, want turn:1:assistant:1 - the segment still "+
 			"holds a stored delta; a lost sibling must not move the settle", payload.Block)
 	}
-	if payload.Fragments != 2 {
-		t.Errorf("Fragments = %d, want 2 - two deltas were stored", payload.Fragments)
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - block :1 holds one stored delta (\"two \"); "+
+			"\"one \" is block :0's", payload.Fragments)
 	}
 }
 
@@ -465,7 +467,8 @@ func TestAStreamThatShipsStillSettlesOnItsLastSegment(t *testing.T) {
 		t.Errorf("settled block = %q, want turn:1:assistant:1 - the segment the "+
 			"turn's last deltas streamed into", payload.Block)
 	}
-	if payload.Fragments != 3 {
-		t.Errorf("Fragments = %d, want 3", payload.Fragments)
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - block :1 holds \"three\" only; the two "+
+			"earlier deltas are block :0's", payload.Fragments)
 	}
 }
