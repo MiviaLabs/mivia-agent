@@ -20,7 +20,7 @@ func (p *Projector) closeStepOnToolStart(ev events.Event, turnID string) {
 	if ev.Kind != events.KindToolStart && ev.Kind != events.KindSubagentStart {
 		return
 	}
-	if ev.AgentTask != "" {
+	if isDispatched(ev) {
 		ts = p.laneState(turnID, ev.AgentTask)
 	}
 	p.advanceStep(ts)
@@ -329,7 +329,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 	// Advancing the segment is what keeps the replay honest: reusing the
 	// abandoned attempt's id would let a consumer keyed on the id append the
 	// replay to the text it was just told to discard.
-	if ev.AgentTask != "" {
+	if isDispatched(ev) {
 		env.Block = turnID + ":" + ev.AgentTask + ":assistant"
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
