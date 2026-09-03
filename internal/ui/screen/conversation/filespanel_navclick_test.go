@@ -14,9 +14,9 @@ import (
 
 func TestNavClickSelectsRow(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	// Row 0 is top padding, 1 the model header, 2 the model row, 3 the
-	// files header, 4 is file 0.
-	next, _ := s.handleNavClick(4)
+	// Row 0 is top padding, 1-2 the context section, 3 the model header,
+	// 4 the model row, 5 the files header, 6 is file 0.
+	next, _ := s.handleNavClick(6)
 	s = next.(Screen)
 	if !s.panel.dialog {
 		t.Error("clicking file row 0 should open content dialog")
@@ -38,19 +38,9 @@ func TestNavClick_TwoLineAgentRowsUnwindowed(t *testing.T) {
 	s.panel.observeAgentStart("agent-2", "agent-2")
 
 	// Rendered structure (unwindowed, innerNavH = 20):
-	// clickRow 0: top padding (handled by handleNavClick clickRow--)
-	// clickRow 1: model (header)
-	// clickRow 2: model row (selectable; a single click opens nothing)
-	// clickRow 3: files changed (2) (header)
-	// clickRow 4: f0.go (file 0)
-	// clickRow 5: f1.go (file 1)
-	// clickRow 6: subagents (3) (header)
-	// clickRow 7: agent-0 name line
-	// clickRow 8: agent-0 metrics line
-	// clickRow 9: agent-1 name line
-	// clickRow 10: agent-1 metrics line
-	// clickRow 11: agent-2 name line
-	// clickRow 12: agent-2 metrics line
+	// clickRow 0 is top padding (handleNavClick does clickRow--); then
+	// context header, context bar, model header, model row, files header,
+	// f0.go, f1.go, subagents header, and two lines per agent from row 9.
 
 	tests := []struct {
 		name       string
@@ -60,19 +50,21 @@ func TestNavClick_TwoLineAgentRowsUnwindowed(t *testing.T) {
 		wantFile   string
 		wantCursor int
 	}{
-		{"header: model", 1, false, "", "", 0},
-		{"model row (single click)", 2, false, "", "", 0},
-		{"header: files changed", 3, false, "", "", 0},
-		{"header: subagents", 6, false, "", "", 0},
-		{"out-of-range below", 16, false, "", "", 0},
-		{"file 0", 4, true, "", "f0.go", 1},
-		{"file 1", 5, true, "", "f1.go", 2},
-		{"agent-0 name line", 7, true, "agent-0", "", 3},
-		{"agent-0 metrics line", 8, true, "agent-0", "", 3},
-		{"agent-1 name line", 9, true, "agent-1", "", 4},
-		{"agent-1 metrics line", 10, true, "agent-1", "", 4},
-		{"agent-2 name line", 11, true, "agent-2", "", 5},
-		{"agent-2 metrics line", 12, true, "agent-2", "", 5},
+		{"header: context", 1, false, "", "", 0},
+		{"context bar", 2, false, "", "", 0},
+		{"header: model", 3, false, "", "", 0},
+		{"model row (single click)", 4, false, "", "", 0},
+		{"header: files changed", 5, false, "", "", 0},
+		{"header: subagents", 8, false, "", "", 0},
+		{"out-of-range below", 18, false, "", "", 0},
+		{"file 0", 6, true, "", "f0.go", 1},
+		{"file 1", 7, true, "", "f1.go", 2},
+		{"agent-0 name line", 9, true, "agent-0", "", 3},
+		{"agent-0 metrics line", 10, true, "agent-0", "", 3},
+		{"agent-1 name line", 11, true, "agent-1", "", 4},
+		{"agent-1 metrics line", 12, true, "agent-1", "", 4},
+		{"agent-2 name line", 13, true, "agent-2", "", 5},
+		{"agent-2 metrics line", 14, true, "agent-2", "", 5},
 	}
 
 	for _, tc := range tests {
@@ -103,8 +95,8 @@ func TestNavClick_TwoLineAgentRowsUnwindowed(t *testing.T) {
 
 func TestNavClick_ScrolledWindow(t *testing.T) {
 	// 10 files and 5 agents in a 24-row terminal (content height 22, innerNavH = 20)
-	// Groups: model header (1), model row (1), files header (1), 10 files (10),
-	// subagents header (1), 5 agents (10). Total = 24 lines > 20 maxRows.
+	// Groups: context header (1), context bar (1), model header (1), model row (1), files header (1), 10 files (10),
+	// subagents header (1), 5 agents (10). Total = 26 lines > 20 maxRows.
 	var diffs []uievent.EventMsg
 	for i := 0; i < 10; i++ {
 		diffs = append(diffs, uievent.EventMsg{Event: uievent.Event{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{
@@ -122,10 +114,10 @@ func TestNavClick_ScrolledWindow(t *testing.T) {
 	}
 
 	// In this scrolled state:
-	// Total groups: group 0..18
-	// selGroup = 18 (agent-4). selRow = offsets[18] = 22.
-	// maxRows = 20. limit = 20. start = selRow - limit + 1 = 3.
-	// startGroup = 3 (first 3 groups dropped: model header, model row, files header).
+	// Total groups: group 0..20
+	// selGroup = 20 (agent-4). selRow = offsets[20] = 24.
+	// maxRows = 20. limit = 20. start = selRow - limit + 1 = 5.
+	// startGroup = 5 (first 5 groups dropped: context header, context bar, model header, model row, files header).
 	// Groups visible in window: group 3 (f00.go) to group 18 (agent-4).
 	// Line 0 of window (clickRow 1): f00.go
 	// Line 1 of window (clickRow 2): f01.go

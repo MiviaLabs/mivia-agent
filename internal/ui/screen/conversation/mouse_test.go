@@ -396,3 +396,30 @@ func TestMouseWheel_ScrollsFileDiffWhenThreadWasCached(t *testing.T) {
 		t.Errorf("mouse wheel down on file diff should increment panel offset, got %d", s.panel.offset)
 	}
 }
+
+// TestClickMentionRowAcceptsIt: the mention popup is the same overlay the
+// slash menu uses, drawn over the transcript above the bar. A click on one
+// of its rows must accept that mention; it must not fall through to the
+// transcript rows underneath.
+func TestClickMentionRowAcceptsIt(t *testing.T) {
+	s := sized(t, 0)
+	s.SetMentions([]composer.Mention{{Path: "alpha.go"}, {Path: "beta.go"}})
+	next, _ := s.Update(keyMsg("@"))
+	s = next.(Screen)
+	next, _ = s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	if !s.composer.MentionMenuActive() {
+		t.Fatal("precondition: the mention picker is open")
+	}
+
+	// Same rows as the slash popup: bar top padding 19, popup footer 18,
+	// item rows 16-17, popup padding 15.
+	next, _ = s.Update(leftClick(4, 17)) // second item row: beta.go
+	s = next.(Screen)
+	if s.composer.MentionMenuActive() {
+		t.Error("clicking a mention row must accept it and close the picker")
+	}
+	if got := s.composer.Value(); got != "@beta.go" {
+		t.Errorf("accepted %q, want @beta.go", got)
+	}
+}

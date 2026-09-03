@@ -77,10 +77,13 @@ func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive
 }
 
 // panelGroupLens returns the line count of each group in the sidebar layout:
-// 1 line for the model header, 1 for the model row, 1 for the files header,
-// 1 per file entry, 1 for the subagents header, and 2 per agent row.
+// 1 line for the context header, 1 for the context bar, 1 for the model
+// header, 1 for the model row, 1 for the files header, 1 per file entry,
+// 1 for the subagents header, and 2 per agent row.
 func panelGroupLens(fileCount, agentCount int) []int {
-	lens := make([]int, 0, 4+fileCount+agentCount)
+	lens := make([]int, 0, 6+fileCount+agentCount)
+	lens = append(lens, 1) // context header
+	lens = append(lens, 1) // context bar
 	lens = append(lens, 1) // model header
 	lens = append(lens, 1) // model row
 	lens = append(lens, 1) // files changed header
@@ -95,20 +98,21 @@ func panelGroupLens(fileCount, agentCount int) []int {
 }
 
 // panelGroupToPickerIdx maps a group index to its corresponding picker cursor
-// index, or -1 if the group is a non-selectable header (model header, files
-// header, subagents header). Picker index 0 is the model row.
+// index, or -1 if the group is not selectable (the context header and bar,
+// the model header, the files header, the subagents header). Picker index 0
+// is the model row, group 3.
 func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
 	switch {
-	case gIdx == 1:
+	case gIdx == 3:
 		return 0
-	case gIdx < 3:
+	case gIdx < 5:
 		return -1
-	case gIdx < 3+fileCount:
-		return 1 + (gIdx - 3)
-	case gIdx == 3+fileCount:
+	case gIdx < 5+fileCount:
+		return 1 + (gIdx - 5)
+	case gIdx == 5+fileCount:
 		return -1
 	}
-	agentIdx := gIdx - (4 + fileCount)
+	agentIdx := gIdx - (6 + fileCount)
 	if agentIdx >= 0 && agentIdx < agentCount {
 		return 1 + fileCount + agentIdx
 	}
@@ -121,15 +125,15 @@ func panelSelGroup(selIdx, fileCount, agentCount int) int {
 		return -1
 	}
 	if selIdx == 0 {
-		return 1 // the model row
+		return 3 // the model row
 	}
 	selIdx-- // past the model row
 	if selIdx < fileCount {
-		return 3 + selIdx
+		return 5 + selIdx
 	}
 	agentIdx := selIdx - fileCount
 	if agentIdx < agentCount {
-		return 4 + fileCount + agentIdx
+		return 6 + fileCount + agentIdx
 	}
 	return -1
 }
@@ -155,9 +159,10 @@ func clipRowsToWidth(rows []string, inner int) []string {
 	return rows
 }
 
-// panelModelRow draws the sidebar's model row: the provider dimmed, the
-// model name in the foreground role, and the context share when known,
-// with the same "> " marker and selection background the file rows use.
+// panelModelRow draws the sidebar's model row: the provider dimmed and
+// the model name in the foreground role, with the same "> " marker and
+// selection background the file rows use. The context share is its own
+// section (panelContextRows), not a suffix here.
 func (s Screen) panelModelRow(selected bool) string {
 	info := s.topbar.Info()
 	name := info.Name
@@ -176,10 +181,31 @@ func (s Screen) panelModelRow(selected bool) string {
 		row += subtle.Render(info.Provider + "/")
 	}
 	row += style.Render(name)
-	if pct, ok := s.topbar.ContextPercent(); ok {
-		row += subtle.Render("  " + strconv.Itoa(pct) + "%")
-	}
 	return row
+}
+
+// panelContextRows draws the sidebar's first section: a "context" header
+// with the share of the window in use right-aligned on the same line,
+// and a bar the full inner width below it. Both take the share's role
+// (render.ContextRole) so amber still means "getting close" and red
+// "nearly out". When the window size is unknown the header says so and
+// the bar draws empty: the section keeps its two rows either way so the
+// groups below never shift (ux-rules 2.7).
+func (s Screen) panelContextRows(inner int) []string {
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	label := "context"
+	pct, ok := s.topbar.ContextPercent()
+	share, style := "unknown", subtle
+	if ok {
+		share = strconv.Itoa(pct) + "%"
+		style = render.Role(s.Theme, s.Tier, render.ContextRole(pct))
+	}
+	gap := max(1, inner-ansi.StringWidth(label)-ansi.StringWidth(share))
+	header := subtle.Render(label) + strings.Repeat(" ", gap) + style.Render(share)
+	return []string{
+		ansi.Truncate(header, max(0, inner), ""),
+		style.Render(render.ContextBar(pct, inner, s.Tier)),
+	}
 }
 
 func (s Screen) panelFileRow(e fileEntry, selected bool) string {
@@ -326,10 +352,14 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	var groups [][]string
 	selGroup := -1
 
-	// The model section replaces the old SIDEBAR title: the sidebar's
-	// first row IS the session's model (the top bar hides its capsule
-	// while the panel is open, so it is named once). Focus is signalled
-	// by the "> " marker on the selected row, not by a header.
+	// The context and model sections replace the old SIDEBAR title: the
+	// top bar hides its capsule and badge while the panel is open, so
+	// each is named once. Focus is signalled by the "> " marker on the
+	// selected row, not by a header. The context section is two fixed
+	// rows (header, bar) and never selectable.
+	for _, row := range s.panelContextRows(inner) {
+		groups = append(groups, []string{row})
+	}
 	groups = append(groups, []string{subtle.Render("model")})
 	if selIdx == 0 {
 		selGroup = len(groups)
@@ -396,6 +426,13 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	return title, strings.Join(rows[start:end], "\n"), "d diff/source  any key closes"
 }
 
+// panelInnerWidth is the sidebar's usable column count in the wide
+// layout: the nav pane minus its gutter. The context bar fills it.
+func (s Screen) panelInnerWidth() int {
+	_, navW := render.SplitWidths(contentWidth(s.width))
+	return max(1, navW-3)
+}
+
 // panelFrameRows draws the wide layout's panes and returns exactly
 // paneH rows: the chat column in the left reading pane (or the content
 // dialog over that pane, with the list still visible beside it) and the
@@ -403,9 +440,9 @@ func (s Screen) dialogParts() (title, body, hint string) {
 func (s Screen) panelFrameRows() []string {
 	w := contentWidth(s.width)
 	paneH := max(1, s.contentHeight())
-	readingW, navW := render.SplitWidths(w)
+	readingW, _ := render.SplitWidths(w)
 
-	innerNavW := max(1, navW-3)
+	innerNavW := s.panelInnerWidth()
 	innerNavH := max(1, paneH-2)
 
 	s.topbar.SetWidth(readingW)

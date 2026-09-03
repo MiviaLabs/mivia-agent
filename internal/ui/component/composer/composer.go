@@ -337,21 +337,33 @@ func (m *Model) ClickToColumn(x int) {
 	m.input.SetCursorColumn(pos)
 }
 
-// MenuClickRow accepts the completion item under popup row `row` (0 = the
-// popup's top row, which is its blank padding; item i sits on row i+1).
-// Returns false when the menu is closed or the row holds no item.
+// MenuClickRow accepts the completion or mention item under popup row
+// `row` (0 = the popup's top row, which is its blank padding; item i sits
+// on row i+1). Both menus share the popup, so a click routes to whichever
+// is open. Returns false when no menu is open or the row holds no item
+// (the padding row, the "n of m" count, the footer).
 func (m *Model) MenuClickRow(row int) bool {
 	// row is relative to the popup's first row, and the popup's first row
 	// is its blank top padding: item i sits on popup row i+1.
 	row--
-	if !m.MenuActive() || row < 0 {
+	if row < 0 {
 		return false
 	}
-	end := min(m.menu.offset+uikitconfig.MaxCompletionRows, len(m.menu.matches))
-	if idx := m.menu.offset + row; idx < end {
-		m.menu.cursor = idx
-		*m = m.AcceptSelected()
-		return true
+	switch {
+	case m.MenuActive():
+		end := min(m.menu.offset+uikitconfig.MaxCompletionRows, len(m.menu.matches))
+		if idx := m.menu.offset + row; idx < end {
+			m.menu.cursor = idx
+			*m = m.AcceptSelected()
+			return true
+		}
+	case m.MentionMenuActive():
+		end := min(m.mmenu.offset+uikitconfig.MaxCompletionRows, len(m.mmenu.matches))
+		if idx := m.mmenu.offset + row; idx < end {
+			m.mmenu.cursor = idx
+			*m = m.AcceptMention()
+			return true
+		}
 	}
 	return false
 }
