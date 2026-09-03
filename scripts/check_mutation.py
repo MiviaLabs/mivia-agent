@@ -252,6 +252,57 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
         site.path.write_bytes(original)
 
 
+def verify_restored(originals: dict[Path, bytes]) -> list[str]:
+    """verify_restored returns a message per file whose bytes on disk are
+    not the pre-sweep snapshot, after restoration was supposed to have run.
+
+    This exists because a mutant left on disk is not merely a stale file: a
+    mutating sweep runs inside the pre-commit hook, and that hook's gofmt
+    step does `gofmt -w <file>; git add -- <file>` for any fully-staged Go
+    file. That re-stages whatever is in the WORKING TREE at that instant, so
+    a mutant present then is staged and committed - silently, because the
+    sweep restores before it reports and therefore still prints 100%.
+
+    That is not hypothetical. A commit shipped shouldSkipCanceledTask with
+    its nil guard inverted this way; the fix became dead code, every gate
+    passed, and it was caught only because `git status` happened to show one
+    stray modified file afterwards. The risk is highest with several sweeps
+    running against one checkout at once, where another run can have a file
+    mutated exactly when this one's hook stages it.
+
+    Restoration is best-effort by design (the restore path swallows write
+    errors so one unwritable file cannot mask a whole run's results), so
+    "we called write_bytes" is not evidence the bytes are back. This checks."""
+    drifted = []
+    for path, original in sorted(originals.items()):
+        try:
+            if path.read_bytes() != original:
+                drifted.append(f"{path}: on-disk bytes are not the pre-sweep original")
+        except OSError as err:
+            drifted.append(f"{path}: could not be read back to verify restoration: {err}")
+    return drifted
+
+
+def restore_and_verify(originals: dict[Path, bytes]) -> None:
+    """restore_and_verify rewrites every snapshot and then proves it landed,
+    raising MutationError naming the files if any did not. Callers run this
+    on the way out of a sweep so a leftover mutant fails the run loudly
+    instead of being left for a commit to pick up - see verify_restored."""
+    for path, original in originals.items():
+        try:
+            path.write_bytes(original)
+        except OSError:
+            pass
+    drifted = verify_restored(originals)
+    if drifted:
+        raise MutationError(
+            "mutation sweep did not restore every file it mutated; a leftover "
+            "mutant can be staged by the pre-commit hook's gofmt re-add and "
+            "committed silently. Restore these from git before committing:\n  "
+            + "\n  ".join(drifted)
+        )
+
+
 def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> dict:
     """sweep runs every mutant (or the first sample) for pkg and
     returns the kill counts and rate. Every mutated file's original
@@ -290,11 +341,15 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
             else:
                 discarded += 1
     finally:
-        restore_all()
+        # Restore AND prove it landed: an unrestored mutant here is a commit
+        # hazard, not just a dirty file. See verify_restored.
         try:
-            atexit.unregister(restore_all)
-        except Exception:
-            pass
+            restore_and_verify(originals)
+        finally:
+            try:
+                atexit.unregister(restore_all)
+            except Exception:
+                pass
     total = killed + survived
     rate = 100.0 * killed / total if total else 100.0
     return {"killed": killed, "survived": survived, "discarded": discarded, "rate": rate}
@@ -594,8 +649,9 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
                 else:
                     total_discarded += 1
         finally:
-            for path, original in originals.items():
-                path.write_bytes(original)
+            # This is the path the pre-commit hook runs, so it is the one
+            # that can hand a mutant to `git add`. See verify_restored.
+            restore_and_verify(originals)
 
     total = total_killed + total_survived
     rate = 100.0 * total_killed / total if total else 100.0

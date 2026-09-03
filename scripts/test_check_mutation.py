@@ -165,6 +165,50 @@ def test_denylist_spans_survive_multibyte_utf8_before_snippet() -> None:
         )
 
 
+def test_restore_and_verify_raises_when_a_mutant_is_left_behind() -> None:
+    # A mutant left on disk is a commit hazard, not a dirty file: the
+    # pre-commit hook's gofmt step re-stages fully-staged Go files from the
+    # WORKING TREE, so a mutant present then is committed silently while the
+    # sweep still reports 100% (it restores before it reports). One shipped
+    # that way. restore_and_verify must fail loudly rather than trust that
+    # calling write_bytes worked - the restore path swallows write errors.
+    with tempfile.TemporaryDirectory() as td:
+        good = Path(td) / "good.go"
+        good.write_bytes(b"package p\n\nfunc f(a, b int) bool { return a == b }\n")
+        originals = {good: good.read_bytes()}
+
+        # A file mutated after the snapshot is put back, and reports clean.
+        good.write_bytes(b"package p\n\nfunc f(a, b int) bool { return a != b }\n")
+        cm.restore_and_verify(originals)
+        assert good.read_bytes() == originals[good]
+
+        # A file that cannot be restored must raise, naming the file, rather
+        # than returning as though the restore had worked.
+        unwritable = Path(td) / "gone" / "missing.go"
+        try:
+            cm.restore_and_verify({unwritable: b"package p\n"})
+        except cm.MutationError as err:
+            assert "missing.go" in str(err), err
+        else:
+            raise AssertionError("restore_and_verify accepted a file it could not restore")
+
+
+def test_verify_restored_reports_only_drifted_files() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        clean = Path(td) / "clean.go"
+        drifted = Path(td) / "drifted.go"
+        clean.write_bytes(b"package p\n")
+        drifted.write_bytes(b"package p\n")
+        originals = {clean: clean.read_bytes(), drifted: drifted.read_bytes()}
+
+        assert cm.verify_restored(originals) == []
+
+        drifted.write_bytes(b"package q\n")
+        messages = cm.verify_restored(originals)
+        assert len(messages) == 1, messages
+        assert "drifted.go" in messages[0]
+
+
 def test_classify_matrix() -> None:
     assert cm.classify(False, "pass") == cm.DISCARDED
     assert cm.classify(True, "timeout") == cm.KILLED

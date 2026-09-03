@@ -350,8 +350,26 @@ fi
 # STAGED_ROOT (a bare `git archive` extraction with no .git) does not have.
 MUTATION_SUMMARY="mutation check skipped"
 if command -v go >/dev/null 2>&1; then
+  # Record what is staged BEFORE the sweep. The sweep mutates real
+  # working-tree files, and this hook's own gofmt step re-stages fully-staged
+  # Go files with `git add -- <file>` - so a mutant present in the working
+  # tree when that runs is staged and committed, silently, while the sweep
+  # still reports 100% because it restores before it reports. That shipped an
+  # inverted nil guard once already. check_mutation.py now verifies its own
+  # restoration, but a sweep killed hard enough to skip its `finally` (SIGKILL,
+  # OOM) would not get that far, and a concurrent sweep in the same checkout is
+  # not this process's to restore at all - so the index is re-checked here too.
+  STAGED_GO_BEFORE="$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' | sort)"
+  STAGED_TREE_BEFORE="$(git write-tree)"
   if ! run_verify python3 "$ROOT/scripts/check_mutation.py" --staged; then
     fail "mutation check: a staged change introduced a mutant no test kills - see output above"
+  fi
+  if [ "$(git write-tree)" != "$STAGED_TREE_BEFORE" ]; then
+    fail "mutation check: the staged tree changed while the sweep ran - a mutated
+working-tree file was re-staged and would have been committed. Nothing was
+committed. Restore the affected files (git checkout -- <file>) and re-run.
+Staged Go files at the time:
+$STAGED_GO_BEFORE"
   fi
   MUTATION_SUMMARY="mutation check ok"
 fi
