@@ -229,10 +229,10 @@ func TestElapsedForFreezesOnTerminal(t *testing.T) {
 	}
 }
 
-// TestPanelAgentRowRendersElapsedToolsStep pins the two-line row shape: the
-// agent's name/status/badge on line 1, an indented "Elapsed: .. , Tools:
-// N, Step: N" metrics line on line 2 - moved out of the chat transcript
-// and into the sidebar, per the UX request this replaces.
+// TestPanelAgentRowRendersElapsedToolsStep pins the two-line row shape:
+// the agent's name/status/badge on line 1, an indented elapsed/tools/step
+// metrics line on line 2 - moved out of the chat transcript and into the
+// sidebar, per the UX request this replaces.
 func TestPanelAgentRowRendersElapsedToolsStep(t *testing.T) {
 	s := New(loadTheme(t), theme.TierASCII, nil, nil, nil, 40, fixedNow)
 	row := subagentRow{
@@ -243,14 +243,48 @@ func TestPanelAgentRowRendersElapsedToolsStep(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("panelAgentRow returned %d lines, want 2: %v", len(lines), lines)
 	}
-	plain := ansi.Strip(lines[1])
-	for _, want := range []string{"Elapsed: 10m 40s", "Tools: 142", "Step: 29"} {
-		if !strings.Contains(plain, want) {
-			t.Errorf("metrics line %q missing %q", plain, want)
-		}
+	// The elapsed time survives at every sidebar width; how many of the
+	// other facts fit beside it is agentMetrics's business, pinned by
+	// TestAgentMetricsDropsWholeFactsInsteadOfClipping.
+	if plain := ansi.Strip(lines[1]); !strings.Contains(plain, "10m 40s") {
+		t.Errorf("metrics line %q does not carry the elapsed time", plain)
 	}
 	if strings.Contains(ansi.Strip(lines[0]), "29/") {
 		t.Errorf("name line %q still carries the old inline step badge", ansi.Strip(lines[0]))
+	}
+}
+
+// TestAgentMetricsDropsWholeFactsInsteadOfClipping is the discriminator
+// for the metrics line fitting the sidebar. The line used to be one fixed
+// string handed to the width clipper, which on a narrow sidebar produced
+// "Elapsed: 0s, Tools:" - a label with its number sliced off, so the row
+// showed a fact's name and not the fact. Every surviving part must now be
+// whole, and elapsed - what a reader watching a long run is actually
+// watching - must be the last to go.
+func TestAgentMetricsDropsWholeFactsInsteadOfClipping(t *testing.T) {
+	row := subagentRow{Status: "running", Step: 29, ToolCalls: 142}
+	elapsed := 10*time.Minute + 40*time.Second
+	for _, inner := range []int{6, 10, 14, 20, 24, 30, 40, 60} {
+		got := ansi.Strip(agentMetrics(row, elapsed, inner))
+		if inner >= len(agentMetricsIndent)+len("10m 40s") && ansi.StringWidth(got) > inner {
+			t.Errorf("inner=%d: metrics line %q is %d columns wide", inner, got, ansi.StringWidth(got))
+		}
+		if !strings.Contains(got, "10m 40s") {
+			t.Errorf("inner=%d: elapsed was dropped before the other facts: %q", inner, got)
+		}
+		// No fact may appear half-written: every part the line kept must
+		// carry its number.
+		for _, half := range []string{"tool", "step"} {
+			if strings.HasSuffix(strings.TrimSpace(got), half) {
+				t.Errorf("inner=%d: metrics line ends mid-fact: %q", inner, got)
+			}
+		}
+	}
+	wide := ansi.Strip(agentMetrics(row, elapsed, 60))
+	for _, want := range []string{"10m 40s", "142 tools", "step 29"} {
+		if !strings.Contains(wide, want) {
+			t.Errorf("a wide sidebar dropped %q: %q", want, wide)
+		}
 	}
 }
 

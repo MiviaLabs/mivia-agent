@@ -35,8 +35,28 @@ func panelWindowRange(groups [][]string, selGroup, maxRows int, filterActive boo
 	return panelWindowGroupBounds(groupLens, selGroup, maxRows, filterActive)
 }
 
-// panelWindowGroupBounds computes the [startGroup, endGroup) slice bounds for row-groups
-// given their individual line heights.
+// panelWindowGroupBounds computes the [startGroup, endGroup) slice bounds
+// for row-groups given their individual line heights.
+//
+// The window is built out of WHOLE groups and never exceeds limit lines.
+// Both halves of that matter, and the previous version had only the
+// first: it picked a line range and then widened it outwards to whole
+// groups at each end, so a two-line agent group straddling either
+// boundary pushed the window over the limit. The caller draws into a
+// fixed pane and clips the overflow off the BOTTOM, so the rows lost
+// were the selected agent's - the row the window exists to show. With
+// twenty agents the selection fell off the pane entirely.
+//
+// The anchor group is always whole and always inside: it is the row the
+// next key acts on, and a window that clips it is a window that hides
+// the selection. Growth goes upward first, so a selection deep in a long
+// list settles at the BOTTOM of the pane - where the newest subagent is,
+// and where the eye already is on a list that has been growing.
+//
+// A single group taller than the whole limit still overflows; there is
+// no window that both holds it whole and fits. It is returned alone, so
+// what survives the caller's clip is its first line rather than someone
+// else's.
 func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive bool) (int, int) {
 	limit := maxRows
 	if filterActive && limit > 1 {
@@ -45,37 +65,28 @@ func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive
 	if limit <= 0 || len(groupLens) == 0 {
 		return 0, len(groupLens)
 	}
-	offsets := make([]int, len(groupLens)+1)
 	total := 0
-	for i, l := range groupLens {
-		offsets[i] = total
+	for _, l := range groupLens {
 		total += l
 	}
-	offsets[len(groupLens)] = total
 	if total <= limit {
 		return 0, len(groupLens)
 	}
-	selRow := 0
-	if selGroup >= 0 && selGroup < len(groupLens) {
-		selRow = offsets[selGroup]
+	anchor := selGroup
+	if anchor < 0 || anchor >= len(groupLens) {
+		anchor = 0
 	}
-	start := 0
-	if selRow >= limit {
-		start = selRow - limit + 1
+	lo, hi := anchor, anchor+1
+	used := groupLens[anchor]
+	for lo > 0 && used+groupLens[lo-1] <= limit {
+		lo--
+		used += groupLens[lo]
 	}
-	if start > total-limit {
-		start = total - limit
+	for hi < len(groupLens) && used+groupLens[hi] <= limit {
+		used += groupLens[hi]
+		hi++
 	}
-	end := start + limit
-	startGroup := 0
-	for startGroup < len(groupLens) && offsets[startGroup+1] <= start {
-		startGroup++
-	}
-	endGroup := len(groupLens)
-	for endGroup > 0 && offsets[endGroup-1] >= end {
-		endGroup--
-	}
-	return startGroup, endGroup
+	return lo, hi
 }
 
 // panelGroupLens returns the line count of each group in the sidebar layout:
@@ -479,10 +490,40 @@ func (s Screen) panelAgentRow(a subagentRow, selected bool) []string {
 		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
 	nameLine := subtle.Render(prefix) + fg.Render(a.displayName()) + statusBadge
-	metrics := fmt.Sprintf("Elapsed: %s, Tools: %d, Step: %d",
-		formatElapsed(elapsedFor(a, s.now())), a.ToolCalls, a.Step)
-	metricsLine := subtle.Render("      " + metrics)
+	metricsLine := subtle.Render(agentMetrics(a, elapsedFor(a, s.now()), s.panelInnerWidth()))
 	return []string{nameLine, metricsLine}
+}
+
+// agentMetricsIndent aligns the metrics line under the name text, past
+// the "  · " prefix the name line draws.
+const agentMetricsIndent = "      "
+
+// agentMetrics is a subagent row's second line, fitted to the sidebar.
+//
+// It DEGRADES rather than clips. The line was one fixed string cut to
+// width by clipRowsToWidth, which on a narrow sidebar produced
+// "Elapsed: 0s, Tools:" - a label with its number sliced off, the one
+// part of the line that carries information. Dropping whole facts from
+// the right instead means every fact still on the line is complete, and
+// the elapsed time - the fact a reader watching a long run actually
+// wants - is the last one to go.
+//
+// The " · " join is the compact meta grammar the transcript's own header
+// meta uses, so the two surfaces read alike.
+func agentMetrics(a subagentRow, elapsed time.Duration, inner int) string {
+	parts := []string{
+		formatElapsed(elapsed),
+		strconv.Itoa(a.ToolCalls) + " tools",
+		"step " + strconv.Itoa(a.Step),
+	}
+	budget := inner - len(agentMetricsIndent)
+	for n := len(parts); n > 1; n-- {
+		line := strings.Join(parts[:n], " · ")
+		if ansi.StringWidth(line) <= budget {
+			return agentMetricsIndent + line
+		}
+	}
+	return agentMetricsIndent + parts[0]
 }
 
 func (s Screen) panelRows(inner, maxRows int) []string {

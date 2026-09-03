@@ -270,12 +270,12 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
-	// The metrics line ("Elapsed: .., Tools: N, Step: N") can clip on a
+	// The metrics line (elapsed, tools, step) can clip on a
 	// narrow sidebar pane (clipRowsToWidth never re-wraps), so this checks
 	// only its always-first, never-clipped label - the exact content is
 	// pinned unclipped by TestPanelAgentRowRendersElapsedToolsStep.
 	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") ||
-		!strings.Contains(plain, "running") || !strings.Contains(plain, "Elapsed:") {
+		!strings.Contains(plain, "running") || !strings.Contains(plain, "tools") {
 		t.Errorf("subagent progress did not reach the section live:\n%s", plain)
 	}
 	// A later update folds in place rather than appending a row. (The
