@@ -540,6 +540,8 @@ func (c *Conversation) Model() ports.ModelInfo {
 
 // ContextUsage reports the session's live prompt-cost estimate. Field
 // mapping: InputTokens <- chat.ContextUsage.UsedTokens,
+// Breakdown <- chat.ContextUsage.Breakdown (already calibrated, and summing to
+// UsedTokens, so the sidebar's rows and its header never disagree),
 // OutputTokens = 0 (chat.ContextUsage.OutputReserveTokens is max output capacity, not consumed tokens),
 // CachedTokens = 0 (chat has no cache field; honest zero),
 // CostUSD = 0 (chat has no cost field; honest zero).
@@ -554,6 +556,16 @@ func (c *Conversation) ContextUsage() ports.Usage {
 		OutputTokens: 0,
 		CachedTokens: 0,
 		CostUSD:      0,
+		Breakdown: ports.ContextBreakdown{
+			System:      int64(u.Breakdown.System),
+			ToolSchemas: int64(u.Breakdown.ToolSchemas),
+			ToolCount:   u.Breakdown.ToolCount,
+			Memory:      int64(u.Breakdown.Memory),
+			Summary:     int64(u.Breakdown.Summary),
+			Prose:       int64(u.Breakdown.Prose),
+			ToolResults: int64(u.Breakdown.ToolResults),
+			Reasoning:   int64(u.Breakdown.Reasoning),
+		},
 	}
 }
 

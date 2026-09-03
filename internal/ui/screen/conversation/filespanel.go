@@ -462,16 +462,17 @@ func (p *panel) selectNavRow(clickRow, maxRows int) bool {
 		return false
 	}
 	visible, agents := p.visibleRows()
-	groupLens := panelGroupLens(len(visible), len(agents))
+	contextRows := contextSectionRows(maxRows)
+	groupLens := panelGroupLens(contextRows, len(visible), len(agents))
 	selIdx := p.list.CursorRow()
-	selGroup := panelSelGroup(selIdx, len(visible), len(agents))
+	selGroup := panelSelGroup(selIdx, contextRows, len(visible), len(agents))
 	startGroup, endGroup := panelWindowGroupBounds(groupLens, selGroup, maxRows, false)
 
 	curLine := 0
 	for gIdx := startGroup; gIdx < endGroup; gIdx++ {
 		gLen := groupLens[gIdx]
 		if clickRow >= curLine && clickRow < curLine+gLen {
-			pickerIdx := panelGroupToPickerIdx(gIdx, len(visible), len(agents))
+			pickerIdx := panelGroupToPickerIdx(gIdx, contextRows, len(visible), len(agents))
 			if pickerIdx >= 0 {
 				p.list.MoveTo(pickerIdx)
 				return true
@@ -520,9 +521,11 @@ func (s *Screen) openPanelDialogForSelected() tea.Cmd {
 
 // handleNavClick routes mouse clicks within the nav sidebar. Callers pass
 // the screen row minus the top gutter (mouse.go's handleClick and
-// handleModalClick): 0 is the pane's top padding row, 1 is the model
-// header, 2 the model row, 3 the files header, 4 and up are content rows
-// - the same row numbers the rendered View uses below the frame. A click
+// handleModalClick): 0 is the pane's top padding row and the sidebar's own
+// rows follow, the same row numbers the rendered View uses below the frame.
+// The rows are not enumerated here because the context section's height
+// varies with the body (contextSectionRows); selectNavRow derives the map
+// from the same function the renderer uses, so the two cannot drift. A click
 // on a file or subagent row opens its dialog; a click on the model row
 // selects it, and a second click within the double-click window opens
 // the model picker, as Enter does.

@@ -19,6 +19,10 @@ type ContextUsage struct {
 	ContextWindowTokens int // model's full context window
 	OutputReserveTokens int // output tokens reserved (max_output)
 	Percent             int
+	// Breakdown splits UsedTokens into its parts. Its fields sum to
+	// UsedTokens exactly, so a surface can show both without contradicting
+	// itself.
+	Breakdown ContextBreakdown
 }
 
 // FormatTokenK formats a token count with a "k" suffix for values >= 1000,
@@ -65,6 +69,7 @@ func (s *Session) ContextUsage() ContextUsage {
 		used = provider.MessagesTokens(messages, profile)
 	}
 	used = calibration.Apply(used)
+	parts := calibratedBreakdown(messages, toolSpecs, profile, used)
 	percent := 0
 	if budget > 0 {
 		percent = used * 100 / budget
@@ -75,6 +80,7 @@ func (s *Session) ContextUsage() ContextUsage {
 		ContextWindowTokens: window,
 		OutputReserveTokens: outputReserve,
 		Percent:             percent,
+		Breakdown:           parts,
 	}
 }
 

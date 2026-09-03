@@ -60,7 +60,46 @@ type Usage struct {
 	OutputTokens int64
 	CachedTokens int64
 	CostUSD      float64
+	// Breakdown splits InputTokens into its parts. Its token fields sum to
+	// InputTokens exactly, so a surface can draw the parts beside the total
+	// without the two disagreeing. Zero when the adapter has no breakdown.
+	Breakdown ContextBreakdown
 }
+
+// ContextBreakdown is Usage.InputTokens split into the parts a reader can act
+// on: what compaction can reclaim, and what it cannot.
+//
+// System, ToolSchemas, Memory and Summary are the floor, present on every turn
+// whatever was said. Prose, ToolResults and Reasoning are the conversation,
+// which compaction eats. The distinction is the actionable one: a session that
+// opens already a third full is carrying an expensive floor, and no amount of
+// compacting will move it.
+type ContextBreakdown struct {
+	System      int64
+	ToolSchemas int64
+	// ToolCount is a number of registered schemas, not a token cost. It is
+	// what makes the schema charge actionable, because the unit anyone can
+	// remove is a tool or a server, never a token.
+	ToolCount   int
+	Memory      int64
+	Summary     int64
+	Prose       int64
+	ToolResults int64
+	Reasoning   int64
+}
+
+// Floor is the part of the estimate compaction cannot reclaim.
+func (b ContextBreakdown) Floor() int64 {
+	return b.System + b.ToolSchemas + b.Memory + b.Summary
+}
+
+// Conversation is the part compaction reclaims.
+func (b ContextBreakdown) Conversation() int64 {
+	return b.Prose + b.ToolResults + b.Reasoning
+}
+
+// Total is Floor plus Conversation.
+func (b ContextBreakdown) Total() int64 { return b.Floor() + b.Conversation() }
 
 // Conversation is the read/write surface a UI drives. It never calls the
 // agent directly; it sends intents and reads state back.
