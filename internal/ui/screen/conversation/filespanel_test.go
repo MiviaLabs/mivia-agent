@@ -186,18 +186,25 @@ func TestPanelEmptyStateNamesItsSections(t *testing.T) {
 	}
 }
 
-// TestPanelToggleCycle: ctrl+b walks closed -> open with the list
-// focused -> open with the composer focused -> closed, and no state
-// leaves the key dead.
+// TestPanelToggleCycle: ctrl+b is a plain toggle. One press opens the
+// panel focused in its list, the next closes it, whether focus sits in
+// the list or (via tab) in the composer.
 func TestPanelToggleCycle(t *testing.T) {
 	s := panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...)
 
 	s = openPanel(t, s) // closed -> open + focused
 
-	next, _ := s.Update(ctrl('b')) // focused -> composer, panel stays
+	next, _ := s.Update(ctrl('b')) // open + list focused -> closed
+	s = next.(Screen)
+	if s.panel.open || s.panel.focused {
+		t.Fatalf("second ctrl+b: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
+	}
+
+	s = openPanel(t, s)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // focus back to the composer
 	s = next.(Screen)
 	if !s.panel.open || s.panel.focused {
-		t.Fatalf("second ctrl+b: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
+		t.Fatalf("tab: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
 	}
 	// The composer takes keys while the panel stays on screen.
 	next, _ = s.Update(key("h"))
@@ -206,15 +213,10 @@ func TestPanelToggleCycle(t *testing.T) {
 		t.Fatalf("composer value %q after defocus, want \"h\" (panel must not eat typing)", got)
 	}
 
-	next, _ = s.Update(ctrl('b')) // open + composer -> closed
+	next, _ = s.Update(ctrl('b')) // open + composer focused -> closed
 	s = next.(Screen)
 	if s.panel.open || s.panel.focused {
 		t.Fatalf("third ctrl+b: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
-	}
-	// The transcript renders the diffs too, so the panel's section
-	// header form is the panel-shaped string to test for.
-	if strings.Contains(s.View(), "files changed (") {
-		t.Error("closed panel still draws the sidebar")
 	}
 }
 

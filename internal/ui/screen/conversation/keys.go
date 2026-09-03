@@ -359,7 +359,8 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 // handlePanelKey routes a key into the open, focused panel: its content
 // dialog first (any key closes it; the view toggle, the half-page
 // scrolls, and ctrl+c survive), then the list. The list is a focusable
-// pane, not a modal: ctrl+c, ctrl+b, ctrl+t, and ctrl+o stay live over
+// pane, not a modal: ctrl+c, ctrl+b (which closes the panel outright),
+// ctrl+t, and ctrl+o stay live over
 // it (a ctrl-modified key carries no Text, so the picker would silently
 // swallow them), esc hands focus back to the composer WITHOUT closing
 // the panel, the files bindings navigate, and every other key feeds the
@@ -394,10 +395,11 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok {
 		switch id {
 		case keymap.IDPanelToggle:
-			// The middle state of ctrl+b's cycle: focus returns to the
-			// composer; the panel stays open and live beside it.
-			s.panelFocus(false)
-			return s, nil, true
+			// ctrl+b toggles the sidebar and nothing else: it closes
+			// from here rather than first handing focus back, so one
+			// press always hides an open sidebar. tab and esc are the
+			// keys that move focus without closing.
+			return s, nil, false
 		case keymap.IDThemeDialog, keymap.IDOpenPager:
 			// Still reachable: the conversation is on screen beside the
 			// panel, so its global surfaces stay one key away.
@@ -536,13 +538,11 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	}
 	switch id {
 	case keymap.IDPanelToggle:
-		// ctrl+b drives the panel's three states. This site handles the
-		// two the global context can see: closed opens the panel focused
-		// in its list, and open-with-the-composer-focused closes it (a
-		// close also drops the filter - a hidden list must not resurface
-		// later as an unexplained short list). The middle state - the
-		// list focused - claims ctrl+b earlier, in handlePanelKey, to
-		// hand focus back without closing.
+		// ctrl+b is a plain toggle: closed opens the panel focused in
+		// its list, open closes it whichever pane holds focus (a close
+		// also drops the filter - a hidden list must not resurface later
+		// as an unexplained short list). Focus moves between the list
+		// and the composer with tab and esc, never with this key.
 		if s.panel.open {
 			s.panel.open, s.panel.focused, s.panel.dialog, s.panel.dialogAgent = false, false, false, ""
 			s.panel.list.ClearFilter()

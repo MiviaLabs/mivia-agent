@@ -83,15 +83,16 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	transcriptRows := s.transcriptHeight()
 	// The status row sits at the screen bottom, so the input row sits
 	// above it. The composer owns the exact numbers (InputRowFromBottom, InputColumnOffset).
-	inputRow := s.height - bottomGutter - 1 - s.composer.InputRowFromBottom()
+	statusRow := s.height - bottomGutter - 1
+	inputRow := statusRow - s.composer.InputRowFromBottom()
 	colOffset := s.composer.InputColumnOffset()
 	menuRows := s.composer.MenuRows()
 
-	topBorder := 0
-	if colOffset > 0 {
-		topBorder = 1
-	}
-	menuStart := inputRow - topBorder - menuRows
+	// The popup ends on the row above the bar's first row, which is
+	// Height() rows above the status row - not a fixed distance above the
+	// input row, since the textarea grows to several rows and inputRow is
+	// its last one (overlayComposerPopup anchors on the same row).
+	menuStart := statusRow - s.composer.Height() - menuRows
 
 	switch {
 	// The completion popup (slash or mention: menuRows > 0 for either) is
