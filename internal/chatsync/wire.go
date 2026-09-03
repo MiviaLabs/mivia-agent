@@ -88,8 +88,15 @@ const (
 	// A turn that is being re-driven from the beginning. Everything already
 	// sent for its assistant block belongs to an attempt that no longer
 	// exists, so a viewer that accumulates deltas must drop them.
-	TypeAssistantReset      = "mivia.chat.v1.assistant.reset"
-	TypeThinkingDelta       = "mivia.chat.v1.thinking.delta"
+	TypeAssistantReset = "mivia.chat.v1.assistant.reset"
+	TypeThinkingDelta  = "mivia.chat.v1.thinking.delta"
+	// The settled form of one thinking block, emitted when the block closes.
+	// It exists so reasoning survives a redaction policy: a policy suppresses
+	// the per-fragment text (a secret split across two deltas matches
+	// neither pattern), and without a whole-block form to redact as ONE
+	// string the reasoning was lost outright. Same INV-1 shape as
+	// assistant.message - Text is empty exactly when Fragments is non-zero.
+	TypeThinkingMessage     = "mivia.chat.v1.thinking.message"
 	TypeToolStarted         = "mivia.chat.v1.tool.started"
 	TypeToolEnded           = "mivia.chat.v1.tool.ended"
 	TypeHookRan             = "mivia.chat.v1.hook.ran"
@@ -108,6 +115,7 @@ const (
 	TypeSubagentAssistantDelta   = "mivia.chat.v1.subagent.assistant.delta"
 	TypeSubagentAssistantMessage = "mivia.chat.v1.subagent.assistant.message"
 	TypeSubagentThinkingDelta    = "mivia.chat.v1.subagent.thinking.delta"
+	TypeSubagentThinkingMessage  = "mivia.chat.v1.subagent.thinking.message"
 	TypeTurnEnded                = "mivia.chat.v1.turn.ended"
 	TypeContextCompacted         = "mivia.chat.v1.context.compacted"
 	TypeTurnFailed               = "mivia.chat.v1.turn.failed"
@@ -138,6 +146,7 @@ var wireEventSpecs = []WireEventSpec{
 	{Type: TypeAssistantMessage, Payload: AssistantMessagePayload{}},
 	{Type: TypeAssistantReset, Payload: AssistantResetPayload{}},
 	{Type: TypeThinkingDelta, Payload: ThinkingDeltaPayload{}},
+	{Type: TypeThinkingMessage, Payload: ThinkingMessagePayload{}},
 	{Type: TypeToolStarted, Payload: ToolStartedPayload{}},
 	{Type: TypeToolEnded, Payload: ToolEndedPayload{}},
 	{Type: TypeHookRan, Payload: HookRanPayload{}},
@@ -149,6 +158,7 @@ var wireEventSpecs = []WireEventSpec{
 	{Type: TypeSubagentAssistantDelta, Payload: SubagentAssistantDeltaPayload{}},
 	{Type: TypeSubagentAssistantMessage, Payload: SubagentAssistantMessagePayload{}},
 	{Type: TypeSubagentThinkingDelta, Payload: SubagentThinkingDeltaPayload{}},
+	{Type: TypeSubagentThinkingMessage, Payload: SubagentThinkingMessagePayload{}},
 	{Type: TypeTurnEnded, Payload: TurnEndedPayload{}},
 	{Type: TypeContextCompacted, Payload: ContextCompactedPayload{}},
 	{Type: TypeTurnFailed, Payload: TurnFailedPayload{}},
@@ -266,6 +276,26 @@ type ThinkingDeltaPayload struct {
 	Bytes int    `json:"bytes"`
 	Index int    `json:"index"`
 	Text  string `json:"text,omitempty"`
+}
+
+// ThinkingMessagePayload is the payload of mivia.chat.v1.thinking.message:
+// one thinking block, settled at the moment the block closed.
+//
+// Fragments and Text obey INV-1 exactly as the assistant aggregate does - Text
+// is empty exactly when Fragments is non-zero - counted per BLOCK rather than
+// per turn, because a turn reasons once per step and each step is its own
+// block. When the deltas shipped their text the viewer already has it and
+// this event only completes the block; when they did not (a redaction policy
+// withheld every fragment, or thinking never streamed at all) Text carries
+// the whole reasoning, redacted as ONE string. That is the entire point: a
+// pattern spanning two fragments is invisible to a per-fragment redactor and
+// visible to this one.
+type ThinkingMessagePayload struct {
+	Envelope
+	Fragments int    `json:"fragments"`
+	Bytes     int    `json:"bytes"`
+	Status    string `json:"status"`
+	Text      string `json:"text,omitempty"`
 }
 
 // ToolStartedPayload is the payload of mivia.chat.v1.tool.started.
@@ -413,6 +443,19 @@ type SubagentThinkingDeltaPayload struct {
 	Bytes int    `json:"bytes"`
 	Index int    `json:"index"`
 	Text  string `json:"text,omitempty"`
+}
+
+// SubagentThinkingMessagePayload is the payload of
+// mivia.chat.v1.subagent.thinking.message. Same settled form and same INV-1
+// rule as the root aggregate, counted per subagent run: a lane's reasoning is
+// withheld by a redaction policy for the same reason the root's is, so it
+// needs the same whole-block form to fall back to.
+type SubagentThinkingMessagePayload struct {
+	Envelope
+	Fragments int    `json:"fragments"`
+	Bytes     int    `json:"bytes"`
+	Status    string `json:"status"`
+	Text      string `json:"text,omitempty"`
 }
 
 // TurnEndedPayload is the payload of mivia.chat.v1.turn.ended (F4: blocks dropped).

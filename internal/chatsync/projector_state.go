@@ -22,6 +22,23 @@ type turnState struct {
 	streamed          bool
 	fragments         int
 	thinkingFragments int
+	// thinkingPending is the RAW reasoning text accumulated for the thinking
+	// block that is currently open, unredacted and untruncated. It is what
+	// the settled aggregate redacts as one string, which is the only way a
+	// pattern spanning two fragments can be caught. Cleared by settleThinking.
+	thinkingPending string
+	// thinkingBlockSegment is the segment thinkingPending belongs to, taken
+	// when the block opened. The settle fires from a LATER event - a tool
+	// start, a turn end - which has already advanced the counter, so the
+	// current segment names a block that holds nothing.
+	thinkingBlockSegment int
+	// thinkingBlockFragments counts the thinking deltas that actually SHIPPED
+	// TEXT into the open block, and thinkingStreamed records whether any did.
+	// Counted per block, not per turn like thinkingFragments: a turn reasons
+	// once per step and each step is its own block, so the per-turn index is
+	// not a fragment count for any one of them.
+	thinkingBlockFragments int
+	thinkingStreamed       bool
 	// segment is the id of the current STEP of a turn: talk, call a tool,
 	// read the result, talk again. It is what separates one utterance from
 	// the next on the wire; see proseBlock. Ids come from the projector's one

@@ -24,6 +24,7 @@
     "mivia.chat.v1.assistant.message",
     "mivia.chat.v1.assistant.reset",
     "mivia.chat.v1.thinking.delta",
+    "mivia.chat.v1.thinking.message",
     "mivia.chat.v1.tool.started",
     "mivia.chat.v1.tool.ended",
     "mivia.chat.v1.subagent.tool.started",
@@ -34,6 +35,7 @@
     "mivia.chat.v1.subagent.assistant.delta",
     "mivia.chat.v1.subagent.assistant.message",
     "mivia.chat.v1.subagent.thinking.delta",
+    "mivia.chat.v1.subagent.thinking.message",
     "mivia.chat.v1.turn.ended",
     "mivia.chat.v1.context.compacted",
     "mivia.chat.v1.turn.failed",
@@ -401,6 +403,27 @@
           }
         }
       },
+      "mivia.chat.v1.thinking.message": {
+        "goType": "ThinkingMessagePayload",
+        "fields": {
+          "fragments": {
+            "kind": "number",
+            "optional": false
+          },
+          "bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "status": {
+            "kind": "string",
+            "optional": false
+          },
+          "text": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
       "mivia.chat.v1.tool.started": {
         "goType": "ToolStartedPayload",
         "fields": {
@@ -620,6 +643,27 @@
           },
           "index": {
             "kind": "number",
+            "optional": false
+          },
+          "text": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.thinking.message": {
+        "goType": "SubagentThinkingMessagePayload",
+        "fields": {
+          "fragments": {
+            "kind": "number",
+            "optional": false
+          },
+          "bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "status": {
+            "kind": "string",
             "optional": false
           },
           "text": {
