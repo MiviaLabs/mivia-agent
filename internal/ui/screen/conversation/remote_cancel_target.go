@@ -122,10 +122,10 @@ func (s Screen) remoteCancelSubagentTask(ev ports.RemoteInputEvent, target remot
 	if seams.threads == nil {
 		return s, nil
 	}
-	threads, rowID := seams.threads, target.id
+	threads, rowID, on := seams.threads, target.id, seams.statusline
 	return s, func() tea.Msg {
 		ok, err := threads.CancelSubagentTask(rowID)
-		return subagentTaskCancelResultMsg{name: rowID, ok: ok, err: err}
+		return subagentTaskCancelResultMsg{name: rowID, ok: ok, err: err, on: on}
 	}
 }
 
@@ -157,9 +157,9 @@ func (s Screen) remoteCancelToolCall(ev ports.RemoteInputEvent, target remoteCan
 	if seams.threads == nil {
 		return s, nil
 	}
-	threads, rowID, toolCallID := seams.threads, target.id, target.toolCallID
+	threads, rowID, toolCallID, on := seams.threads, target.id, target.toolCallID, seams.statusline
 	return s, func() tea.Msg {
 		ok, err := threads.CancelSubagentToolCall(rowID, toolCallID)
-		return threadToolCallCancelResultMsg{label: toolCallID, ok: ok, err: err}
+		return threadToolCallCancelResultMsg{label: toolCallID, ok: ok, err: err, on: on}
 	}
 }

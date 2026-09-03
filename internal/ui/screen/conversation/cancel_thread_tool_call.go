@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -52,6 +53,11 @@ type threadToolCallCancelResultMsg struct {
 	label string
 	ok    bool
 	err   error
+
+	// on is the statusline the notice belongs on; nil means the foreground.
+	// See subagentTaskCancelResultMsg.on for why a remote cancel must carry
+	// its target's statusline rather than borrow whichever is on screen.
+	on *statusline.Model
 }
 
 // handleThreadToolCallCancelResult emits the statusline notice for one
@@ -60,11 +66,11 @@ type threadToolCallCancelResultMsg struct {
 // already finished, or the task registered no canceler).
 func (s Screen) handleThreadToolCallCancelResult(msg threadToolCallCancelResultMsg) (app.Screen, tea.Cmd) {
 	if msg.err != nil {
-		s.statusline.Notice("cancel tool call failed: " + msg.err.Error())
+		s.noticeOn(msg.on, "cancel tool call failed: "+msg.err.Error())
 		return s, nil
 	}
 	if msg.ok {
-		s.statusline.Notice("cancelling " + msg.label)
+		s.noticeOn(msg.on, "cancelling "+msg.label)
 	}
 	return s, nil
 }
