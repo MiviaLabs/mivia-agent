@@ -337,9 +337,13 @@ func (m *Model) ClickToColumn(x int) {
 	m.input.SetCursorColumn(pos)
 }
 
-// MenuClickRow accepts the completion row at rendered index row (0 = top).
-// Returns false when the menu is closed or the row is out of range.
+// MenuClickRow accepts the completion item under popup row `row` (0 = the
+// popup's top row, which is its blank padding; item i sits on row i+1).
+// Returns false when the menu is closed or the row holds no item.
 func (m *Model) MenuClickRow(row int) bool {
+	// row is relative to the popup's first row, and the popup's first row
+	// is its blank top padding: item i sits on popup row i+1.
+	row--
 	if !m.MenuActive() || row < 0 {
 		return false
 	}
@@ -470,10 +474,11 @@ func (m Model) View() string {
 
 // Popup is the completion or mention menu as an overlay: nil when no menu
 // is open, otherwise rows of exactly PopupWidth() columns, filled with the
-// bar's own background so the popup reads as rising out of the bar. Item
-// rows come first (the highlighted one on RoleBGSelection), then the
-// "n of m" count when the list scrolls, then one footer row carrying the
-// key hint. The owning screen draws it OVER the rows directly above the
+// bar's own background so the popup reads as rising out of the bar. One
+// blank padding row comes first so the items never touch the popup's top
+// edge, then the item rows (the highlighted one on RoleBGSelection), then
+// the "n of m" count when the list scrolls, then one footer row carrying
+// the key hint. The owning screen draws it OVER the rows directly above the
 // bar (see conversation.overlayComposerPopup): View reserves no row for
 // it, so opening the menu never reflows the transcript (ux-rules.md
 // rules 2.7, 2.8, 5.7).
@@ -502,7 +507,8 @@ func (m Model) Popup() []string {
 		}
 		return ln
 	}
-	rows := make([]string, 0, len(items)+1)
+	rows := make([]string, 0, len(items)+2)
+	rows = append(rows, render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Repeat(" ", w)))
 	for i, ln := range items {
 		row := " " + fit(ln) + " "
 		if i == sel {
