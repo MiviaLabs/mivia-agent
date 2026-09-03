@@ -55,12 +55,14 @@ func (ts *turnState) blockSegment(isDelta bool) int {
 // into prevBlockFragments, one entry deep like prevStreamSegment.
 //
 // shipped is the delta's text size, accumulated per block for the settle's
-// `bytes`. A shipped delta also re-opens the block for settling: the block's
+// `bytes`, and retired into prevBlockBytes alongside the count so a fallback
+// restores both. A shipped delta also re-opens the block for settling: the block's
 // aggregate, if one already went out, no longer describes it.
 func (ts *turnState) recordDeltaSegment(segment int, shipped int) {
 	if ts.streamSegment != segment {
 		ts.prevStreamSegment = ts.streamSegment
 		ts.prevBlockFragments = ts.blockFragments
+		ts.prevBlockBytes = ts.blockBytes
 		ts.streamSegment = segment
 		ts.blockFragments = 0
 		ts.blockBytes = 0
@@ -372,7 +374,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
 		ls.blockFragments, ls.prevBlockFragments = 0, 0
-		ls.blockBytes, ls.assistantSettled = 0, false
+		ls.blockBytes, ls.prevBlockBytes, ls.assistantSettled = 0, 0, false
 		// DISCARD, not flush: the consumer is being told to throw this
 		// block's text away, so shipping the held tail would deliver words
 		// into a block that is about to be emptied. This is the one place a
@@ -384,7 +386,7 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		ts := p.turn(turnID)
 		ts.streamed, ts.fragments = false, 0
 		ts.blockFragments, ts.prevBlockFragments = 0, 0
-		ts.blockBytes, ts.assistantSettled = 0, false
+		ts.blockBytes, ts.prevBlockBytes, ts.assistantSettled = 0, 0, false
 		ts.assistantStream.Discard()
 		p.advanceStepForReset(ts)
 	}

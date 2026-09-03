@@ -147,6 +147,7 @@ func (p *Projector) rollbackOneDelta(ts *turnState) {
 	if ts.blockFragments == 0 && ts.streamSegment != ts.prevStreamSegment {
 		ts.streamSegment = ts.prevStreamSegment
 		ts.blockFragments, ts.prevBlockFragments = ts.prevBlockFragments, 0
+		ts.blockBytes, ts.prevBlockBytes = ts.prevBlockBytes, 0
 	}
 }
 

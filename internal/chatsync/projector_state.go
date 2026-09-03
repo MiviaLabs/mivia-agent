@@ -102,10 +102,16 @@ type turnState struct {
 	prevBlockFragments int
 	// blockBytes is the text the deltas of streamSegment's block SHIPPED, in
 	// bytes, for the per-block settle's `bytes` (settleStreamedAssistant). It
-	// is informational, like the turn-end aggregate's len(ev.Content), and is
-	// not undone by a rollback: the flag that settles the block never sees the
-	// raw message, so this is the only size the settle can report.
-	blockBytes int
+	// is informational and diverges from the turn-end aggregate's `bytes` by
+	// construction: that one is the raw len(ev.Content), this one is what
+	// reached the wire after redaction, because the flag that settles the
+	// block never sees the raw message. A lost delta is not subtracted (its
+	// size is not known at rollback), but a fallback to the previous block
+	// restores that block's bytes from prevBlockBytes, one entry deep like
+	// prevBlockFragments, so a re-settle after a fallback does not report 0
+	// or the abandoned block's size.
+	blockBytes     int
+	prevBlockBytes int
 	// assistantSettled records that streamSegment's block already shipped its
 	// per-block aggregate (settleStreamedAssistant). The loop flags EVERY
 	// completed message, including one that only called tools, so without it
