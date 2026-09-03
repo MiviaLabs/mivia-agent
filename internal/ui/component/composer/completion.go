@@ -48,6 +48,36 @@ func trigger(text string) (string, bool) {
 	return word, true
 }
 
+// matchedCommandWidth is the display width of the leading "/name" token when
+// name is a real command, and 0 otherwise.
+//
+// EXACT matches only, never prefixes. The value of marking a command is not
+// the mark: it is the ABSENCE of the mark on "/mdel", which says the input
+// will not run before Enter is pressed rather than after. A prefix rule would
+// light up "/m" on the way to every command and say nothing at all.
+//
+// Arguments are excluded. "/model gpt" marks "/model", because the argument is
+// free text this composer cannot vouch for.
+func (m menu) matchedCommandWidth(text string) int {
+	if !strings.HasPrefix(text, "/") {
+		return 0
+	}
+	token := text
+	if cut := strings.IndexAny(text, " \t\n"); cut >= 0 {
+		token = text[:cut]
+	}
+	name := token[1:]
+	if name == "" {
+		return 0
+	}
+	for _, candidate := range m.all {
+		if candidate.Name == name {
+			return ansi.StringWidth(token)
+		}
+	}
+	return 0
+}
+
 // refresh recomputes the match set from the current input.
 func (m *menu) refresh(text string) {
 	query, ok := trigger(text)
