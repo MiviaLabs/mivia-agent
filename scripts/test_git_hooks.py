@@ -713,7 +713,7 @@ def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
         return
     source = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
     start = source.index("# Secret scan:")
-    end = source.index("\nrun_verify python3 scripts/check_docs_ownership.py", start)
+    end = source.index("\nrun_verify python3 scripts/verify_agent_config.py", start)
     selection = source[start:end]
     with tempfile.TemporaryDirectory() as tmp:
         fake_bin = Path(tmp) / "bin"
@@ -738,6 +738,10 @@ esac
             [
                 "bash",
                 "-c",
+                # The hook reads git's ref lines from stdin. This test's inherited
+                # stdin can be a non-tty that never reaches EOF (a hook, CI, an
+                # agent session), which would park the read loop forever.
+                "exec </dev/null\n"
                 "set -euo pipefail\n"
                 "run_verify() { printf '%s\\n' \"$@\"; }\n"
                 + selection,
@@ -747,6 +751,150 @@ esac
         )
     assert proc.stdout.splitlines() == ["python3", "scripts/secret_scan.py", "--tracked"]
     assert "git rev-list --first-parent" not in selection
+
+
+ZERO_SHA = "0" * 40
+
+
+def pre_push_selection() -> str:
+    """The `# Secret scan:` slice of the shipped pre-push hook, read at test time."""
+    source = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
+    start = source.index("# Secret scan:")
+    end = source.index("\nrun_verify python3 scripts/verify_agent_config.py", start)
+    return source[start:end]
+
+
+def init_pushed_repo(root: Path) -> tuple[str, str]:
+    """A repo with `main` pushed to a bare `origin` and an unpushed `feature`.
+
+    Returns (sha_main, sha_feature). HEAD is left on `main`, so a hook that
+    sweeps HEAD sweeps the wrong ref.
+    """
+    init_repo(root)
+    run(["git", "commit", "-m", "chore(test): initial"], root)
+    run(["git", "branch", "-M", "main"], root)
+    remote = root.parent / f"{root.name}-remote.git"
+    run(["git", "init", "--bare", str(remote)], root)
+    run(["git", "remote", "add", "origin", str(remote)], root)
+    run(["git", "push", "origin", "main"], root)
+    sha_main = run(["git", "rev-parse", "main"], root).stdout.strip()
+    run(["git", "checkout", "-q", "-b", "feature"], root)
+    (root / "feature.txt").write_text("feature\n", encoding="utf-8")
+    run(["git", "add", "feature.txt"], root)
+    run(["git", "commit", "-m", "chore(test): feature"], root)
+    sha_feature = run(["git", "rev-parse", "feature"], root).stdout.strip()
+    run(["git", "checkout", "-q", "main"], root)
+    return sha_main, sha_feature
+
+
+def run_pre_push_selection(root: Path, stdin: str) -> list[str]:
+    """Run the secret-scan slice with git's ref lines piped INSIDE the command.
+
+    Piping inside `bash -c` keeps the harness's own stdin out of the picture
+    and gives the slice a real pipe that reaches EOF.
+    """
+    script = (
+        "set -euo pipefail\n"
+        "ROOT=\"$(git rev-parse --show-toplevel)\"\n"
+        "run_verify() { printf '%s\\n' \"$*\"; }\n"
+        "printf '%s' \"$1\" | {\n" + pre_push_selection() + "\n}\n"
+    )
+    proc = run(["bash", "-c", script, "bash", stdin], root)
+    return proc.stdout.splitlines()
+
+
+def test_pre_push_sweeps_the_pushed_ref_not_head(root: Path) -> None:
+    """The hook must scan the ranges git hands it on stdin, not HEAD's."""
+    if os.name == "nt":
+        return
+    sha_main, sha_feature = init_pushed_repo(root)
+    head = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+    assert head == sha_main and head != sha_feature
+
+    # New branch: no remote sha; base comes from the chain anchored on the
+    # PUSHED ref (feature has no upstream, so origin/main).
+    lines = run_pre_push_selection(
+        root, f"refs/heads/feature {sha_feature} refs/heads/feature {ZERO_SHA}\n"
+    )
+    expected_base = run(["git", "merge-base", "feature", "origin/main"], root).stdout.strip()
+    assert expected_base == sha_main
+    assert lines == [
+        f"python3 scripts/secret_scan.py --base {sha_main} --tip {sha_feature}"
+    ], lines
+    assert f"--tip {head}" not in lines[0] and "--tip HEAD" not in lines[0]
+
+    # Update of a pushed branch: the remote sha is the base.
+    run(["git", "push", "origin", "feature"], root)
+    run(["git", "checkout", "-q", "feature"], root)
+    (root / "feature.txt").write_text("feature two\n", encoding="utf-8")
+    run(["git", "commit", "-am", "chore(test): feature two"], root)
+    sha_new = run(["git", "rev-parse", "feature"], root).stdout.strip()
+    run(["git", "checkout", "-q", "main"], root)
+    lines = run_pre_push_selection(
+        root, f"refs/heads/feature {sha_new} refs/heads/feature {sha_feature}\n"
+    )
+    assert lines == [
+        f"python3 scripts/secret_scan.py --base {sha_feature} --tip {sha_new}"
+    ], lines
+
+    # A delete alone: no non-delete line was read, so the HEAD fallback runs
+    # and no range is built for the deleted ref.
+    lines = run_pre_push_selection(
+        root, f"refs/heads/feature {ZERO_SHA} refs/heads/feature {sha_new}\n"
+    )
+    assert lines == [
+        f"python3 scripts/secret_scan.py --base {sha_main} --tip HEAD"
+    ], lines
+
+    # A pushed ref whose whole chain finds no base is scanned --tracked, not
+    # dropped.
+    orphan = root.parent / f"{root.name}-orphan"
+    init_repo(orphan)
+    run(["git", "commit", "-m", "chore(test): orphan"], orphan)
+    sha_orphan = run(["git", "rev-parse", "HEAD"], orphan).stdout.strip()
+    lines = run_pre_push_selection(
+        orphan, f"refs/heads/feature {sha_orphan} refs/heads/feature {ZERO_SHA}\n"
+    )
+    assert lines == ["python3 scripts/secret_scan.py --tracked"], lines
+
+
+def test_pre_push_receives_ref_lines_through_the_supervisor(root: Path) -> None:
+    """The shipped path: git -> .githooks/pre-push -> run_with_timeout -> hook.
+
+    Depends on `setsid`: on a host that has it, run_with_timeout runs the hook
+    as a background job, and reverting the `<&0` redirect in
+    `setsid --wait "$@" <&0 &` fails this test (the job reads /dev/null and
+    the capture file is empty). Without `setsid` the supervisor execs GNU
+    `timeout`, which preserves stdin on its own, so the claim cannot be
+    exercised and the test is skipped rather than passed vacuously.
+    """
+    if os.name == "nt":
+        return
+    if shutil.which("setsid") is None:
+        print("test_pre_push_receives_ref_lines_through_the_supervisor: skipped (no setsid)")
+        return
+    _sha_main, sha_feature = init_pushed_repo(root)
+    for rel in (".githooks/pre-push", "scripts/git-hooks/run_with_timeout"):
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / rel, dst)
+        dst.chmod(0o755)
+    capture = root / ".git" / "pre-push-stdin"
+    stub = root / "scripts" / "git-hooks" / "pre-push"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"cat >'{capture}'\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    run(["git", "config", "core.hooksPath", str(root / ".githooks")], root)
+
+    run(["git", "push", "origin", "feature"], root)
+    captured = capture.read_text(encoding="utf-8") if capture.is_file() else "<missing>"
+    assert (
+        f"refs/heads/feature {sha_feature} refs/heads/feature {ZERO_SHA}" in captured
+    ), f"hook stdin through the supervisor: {captured!r}"
 
 
 def test_isolated_git_env_preserves_main_and_worktree_indexes(root: Path) -> None:
@@ -891,6 +1039,8 @@ def main() -> None:
         (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-worktree"),
         (test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched, "tree-guard-clean"),
         (test_assert_staged_tree_unchanged_refuses_a_restaged_mutant, "tree-guard-mutated"),
+        (test_pre_push_sweeps_the_pushed_ref_not_head, "push-ref"),
+        (test_pre_push_receives_ref_lines_through_the_supervisor, "push-supervisor"),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
