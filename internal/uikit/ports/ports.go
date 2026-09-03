@@ -112,11 +112,16 @@ type ContextBreakdown struct {
 	ExternalToolCount int
 	Memory            int64
 	Summary           int64
-	// Skills is what invoked skills are costing, and SkillCount how many
-	// invocations are carrying it. A skill's instruction body arrives as a
-	// framed user message, so it is conversation compaction can reclaim -
-	// but it is not ordinary prose, and a reader looking at a full window
-	// needs to see that one skill is the reason.
+	// Skills is what an invoked skill's instruction body is costing in the
+	// request carrying it, and SkillCount how many invocations carry it.
+	// The body arrives as a framed user message, so it is conversation
+	// compaction can reclaim.
+	//
+	// Mostly an in-flight figure: the session persists "/skill args" in
+	// place of the expanded body once the turn commits, so the row is
+	// non-zero while a skill-carrying request is live - exactly when a
+	// large skill is what fills the window - and returns to zero after.
+	// See chat.ContextBreakdown.Skills for the full contract.
 	Skills      int64
 	SkillCount  int
 	Prose       int64

@@ -561,20 +561,7 @@ func (c *Conversation) ContextUsage() ports.Usage {
 		OutputTokens: 0,
 		CachedTokens: 0,
 		CostUSD:      0,
-		Breakdown: ports.ContextBreakdown{
-			System:            int64(u.Breakdown.System),
-			ToolSchemas:       int64(u.Breakdown.ToolSchemas),
-			ExternalSchemas:   int64(u.Breakdown.ExternalSchemas),
-			ToolCount:         u.Breakdown.ToolCount,
-			ExternalToolCount: u.Breakdown.ExternalToolCount,
-			Memory:            int64(u.Breakdown.Memory),
-			Summary:           int64(u.Breakdown.Summary),
-			Skills:            int64(u.Breakdown.Skills),
-			SkillCount:        u.Breakdown.SkillCount,
-			Prose:             int64(u.Breakdown.Prose),
-			ToolResults:       int64(u.Breakdown.ToolResults),
-			Reasoning:         int64(u.Breakdown.Reasoning),
-		},
+		Breakdown:    toPortsBreakdown(u.Breakdown),
 	}
 }
 
@@ -722,4 +709,30 @@ func (c *Conversation) ActiveTurn() (ports.TurnHandle, bool) {
 // which background sessions are actually doing something.
 func (c *Conversation) IsActive() bool {
 	return c.active.Load()
+}
+
+// toPortsBreakdown copies chat's composition into the UI's. Field by
+// field on purpose: a struct conversion would silently accept a rename,
+// and a field added on both sides but forgotten here reads as a
+// permanent zero on screen with nothing failing. TestEveryBreakdownFieldCrossesTheBridge
+// asserts the copy by reflection so the omission fails the day a field
+// is added, not the day someone notices a row stuck at 0.
+//
+// Pending is deliberately not set: it is what the provider prices beyond
+// what this composition explains, and WithLiveTotal fills it later.
+func toPortsBreakdown(b chat.ContextBreakdown) ports.ContextBreakdown {
+	return ports.ContextBreakdown{
+		System:            int64(b.System),
+		ToolSchemas:       int64(b.ToolSchemas),
+		ExternalSchemas:   int64(b.ExternalSchemas),
+		ToolCount:         b.ToolCount,
+		ExternalToolCount: b.ExternalToolCount,
+		Memory:            int64(b.Memory),
+		Summary:           int64(b.Summary),
+		Skills:            int64(b.Skills),
+		SkillCount:        b.SkillCount,
+		Prose:             int64(b.Prose),
+		ToolResults:       int64(b.ToolResults),
+		Reasoning:         int64(b.Reasoning),
+	}
 }

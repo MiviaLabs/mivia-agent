@@ -294,10 +294,11 @@ func (s Screen) panelContextRows(inner, maxRows int) []string {
 		// when no server is connected, so the block keeps its height.
 		{"mcp (" + strconv.Itoa(b.ExternalToolCount) + ")", b.ExternalSchemas},
 		{"memory", b.Memory + b.Summary},
-		// Invoked skills carry their instruction bodies as user messages.
-		// Folding them into "messages" hid the commonest reason a window
-		// fills early: one skill whose body is larger than the whole
-		// conversation around it.
+		// An invoked skill's instruction body rides as a user message, so
+		// folding it into "messages" hid what a live turn is actually
+		// spending on it. Reads zero between turns by design: the session
+		// persists "/skill args" rather than the body (see
+		// chat.ContextBreakdown.Skills).
 		{"skills (" + strconv.Itoa(b.SkillCount) + ")", b.Skills},
 		{"messages", b.Prose},
 		{"results", b.ToolResults},
