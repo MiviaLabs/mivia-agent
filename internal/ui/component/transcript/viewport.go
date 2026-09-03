@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -192,7 +191,13 @@ func (m Model) Rows() []string {
 			continue
 		}
 		if s.runSize > 0 {
-			emit(row, m.leaderRow(s, i))
+			// The group indent is applied here for the same reason
+			// renderSpanRows applies it to an ordinary block: a run is
+			// activity, so its row hangs under the turn's prose with
+			// everything else. Emitting leaderRow unpadded drew the one
+			// row that summarises a turn's work at column 1, out of line
+			// with every block it stands for.
+			emit(row, strings.Repeat(" ", s.indent)+m.leaderRow(s, i))
 			row++
 			continue
 		}
@@ -363,12 +368,17 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	if !blk.Prose && len(blk.Body) > 0 {
 		blk.Collapsible = true
 	}
-	// R2: a finished read-only lookup collapses by default whatever its
-	// body size - the header already carries the path and the line
-	// count - and consecutive collapsed lookups coalesce into one
-	// leader row. Failed calls never coalesce.
+	// A call that has ENDED successfully collapses by default, whatever
+	// its body size: the header already carries the target, the duration
+	// and the outcome, which is what a reader scanning finished work
+	// needs. Consecutive collapsed calls then coalesce into one summary
+	// row (layout.go, runAt), which is what turns a long turn from a wall
+	// into a line.
+	//
+	// A FAILURE stays open. It is the one block worth the rows, and the
+	// reader should not have to open it to learn what went wrong.
 	if !blk.Prose && len(blk.Body) > 0 && blk.Header.Role != theme.RoleDanger &&
-		render.ReadOnlyToolClass(blk.Header.Label) != "" {
+		blk.Kind == uievent.KindToolEnd {
 		blk.Collapsible = true
 		blk.Collapsed = true
 	} else if blk.Collapsible && defaultCollapsed(blk.Body) {

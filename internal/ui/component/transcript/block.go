@@ -72,6 +72,12 @@ type Block struct {
 	// footer line for the same reason: the footer is styled at push time,
 	// and restyle rebuilds it from this copy when the theme changes.
 	Usage *uievent.UsageBody
+
+	// ElapsedMS is the call's own duration, kept as a number rather than
+	// only as the formatted Meta string, so a coalesced work run can add
+	// its members up. Parsing "4.1s" back out of the header would be
+	// reading the rendering as if it were the model.
+	ElapsedMS int
 }
 
 // renderCalls counts Block.Render invocations. It exists so tests can

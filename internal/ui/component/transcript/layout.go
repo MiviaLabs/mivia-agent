@@ -49,7 +49,8 @@ type span struct {
 	// nothing; its top points at the leader's row so focus and click
 	// routing land on the row the user can see.
 	runSize int
-	runTop  int // row of the run's leader row (== top for the head)
+	runTop  int     // row of the run's leader row (== top for the head)
+	runKind runKind // which summary row draws the run
 }
 
 // layout computes the span of every block at the current width.
@@ -69,12 +70,12 @@ func (m Model) layout() []span {
 			row++ // the separator belongs above the span, not inside it
 		}
 		sp.top = row
-		if n := m.leaderRunLen(i); n > 0 {
-			sp.height, sp.runSize, sp.runTop = 1, n, row
+		if n, kind := m.runAt(i); n > 0 {
+			sp.height, sp.runSize, sp.runTop, sp.runKind = 1, n, row, kind
 			spans[i] = sp
 			row++
 			for k := 1; k < n; k++ {
-				spans[i+k] = span{top: row - 1, height: 0, indent: ind, runSize: n, runTop: row - 1}
+				spans[i+k] = span{top: row - 1, height: 0, indent: ind, runSize: n, runTop: row - 1, runKind: kind}
 			}
 			prevActivity = act
 			i += n
@@ -106,21 +107,69 @@ func (m Model) totalLayoutRows(spans []span) int {
 	return total
 }
 
-// leaderRunLen reports the run of collapsed read-only tool-end blocks
-// starting at i, itself included. Runs need at least two members; a
-// block that is live, failed, expanded, or not read-only never leads.
+// runKind names the two ways consecutive blocks coalesce into one row.
+type runKind uint8
+
+const (
+	runNone runKind = iota
+	// runReadOnly is R2's run: two or more same-class read-only lookups,
+	// drawn as "Read 3 files: a.go, b.go, c.go".
+	runReadOnly
+	// runWork is a wall of finished mixed activity - the reasoning, tool
+	// calls and tool results between two assistant messages - drawn as
+	// one row stating what ran, how many calls it made, and how long
+	// they took.
+	runWork
+)
+
+// minWorkRun is the number of finished activity blocks that make a wall.
+// Two headers are not a wall, and folding them would cost the reader two
+// tool names to save one row.
+const minWorkRun = 3
+
+// runAt reports the coalesced run starting at block i: how many blocks
+// it holds, and which summary row draws it.
+//
+// The two kinds are measured independently and the LONGER one wins, so a
+// wall that happens to open with a pair of reads still folds as one work
+// run instead of fragmenting into a read pair plus loose headers. A tie
+// goes to the read-only row, which names its targets and so says
+// strictly more about the same blocks.
+func (m Model) runAt(i int) (int, runKind) {
+	ro := m.readOnlyRunLen(i)
+	work := m.workRunLen(i)
+	switch {
+	case work > ro && work >= minWorkRun:
+		return work, runWork
+	case ro >= 2:
+		return ro, runReadOnly
+	case work >= minWorkRun:
+		return work, runWork
+	}
+	return 0, runNone
+}
+
+// leaderRunLen is runAt's length alone, for the callers that only need
+// to know whether block i heads a run.
 func (m Model) leaderRunLen(i int) int {
+	n, _ := m.runAt(i)
+	return n
+}
+
+// readOnlyRunLen reports the run of collapsed same-class read-only
+// tool-end blocks starting at i, itself included. A block that is live,
+// failed, expanded, or not read-only never leads one.
+func (m Model) readOnlyRunLen(i int) int {
 	head := m.blocks[i]
 	class := render.ReadOnlyToolClass(head.Header.Label)
-	if class == "" || head.Kind != uievent.KindToolEnd || !head.Collapsible || !head.Collapsed || head.Header.Role == theme.RoleDanger {
+	if class == "" || !m.settledWork(head) {
 		return 0
 	}
 	n := 1
 	for j := i + 1; j < len(m.blocks); j++ {
 		b := m.blocks[j]
-		if b.Kind != uievent.KindToolEnd || !b.Collapsible || !b.Collapsed ||
-			render.ReadOnlyToolClass(b.Header.Label) != class ||
-			b.Header.Role == theme.RoleDanger {
+		if !m.settledWork(b) || b.Kind != uievent.KindToolEnd ||
+			render.ReadOnlyToolClass(b.Header.Label) != class {
 			break
 		}
 		n++
@@ -129,6 +178,37 @@ func (m Model) leaderRunLen(i int) int {
 		return 0
 	}
 	return n
+}
+
+// workRunLen reports the run of finished, folded activity blocks
+// starting at i: tool calls that have ended and reasoning that has
+// flushed, each already collapsed.
+func (m Model) workRunLen(i int) int {
+	n := 0
+	for j := i; j < len(m.blocks); j++ {
+		if !m.settledWork(m.blocks[j]) {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// settledWork reports a block that may disappear into a summary row.
+//
+// FINISHED is the load-bearing word. A live block is the one thing the
+// reader is waiting on, so it never joins a run: work still running
+// stays open and visible, and only what has already happened folds away.
+//
+// A failure never coalesces either. A run that could swallow a failed
+// call would make the one block the reader must see the one block the
+// screen hides - which is why RoleDanger is checked here rather than
+// left to the per-kind rules.
+func (m Model) settledWork(b Block) bool {
+	if !b.Collapsible || !b.Collapsed || b.Header.Role == theme.RoleDanger {
+		return false
+	}
+	return b.Kind == uievent.KindToolEnd || b.Kind == uievent.KindReasoning
 }
 
 // expandRun opens every member of the leader run that starts at i, the
@@ -162,35 +242,22 @@ func (m Model) leaderHeadOf(i int) (int, bool) {
 	return 0, false
 }
 
-// leaderRow renders one collapsed read-only run as its single row:
-// "> Read 3 files: a.go, b.go, c.go  3 files". Focus on any member
-// draws the row reverse-video, the same treatment a lone block's header
-// gets (ux-rules 6.3-6.4: shape carries the state, colour only helps).
+// leaderRow renders one coalesced run as its single row: the R2 read row
+// ("> Read 3 files: a.go, b.go, c.go  3 files") or the work row
+// ("> work  read_file, edit  5 calls  8.4s"). Focus on any member draws
+// the row reverse-video, the same treatment a lone block's header gets
+// (ux-rules 6.3-6.4: shape carries the state, colour only helps).
 func (m Model) leaderRow(s span, i int) string {
-	head := m.blocks[i]
-	n := s.runSize
-	label, noun := "Read", "files"
-	if render.ReadOnlyToolClass(head.Header.Label) == "search" {
-		label, noun = "Searched", "queries"
-	}
-	targets := make([]string, 0, n)
-	for k := i; k < i+n; k++ {
-		if target := leaderTarget(m.blocks[k].Header.Detail); target != "" {
-			targets = append(targets, target)
-		}
-	}
-	spec := render.HeaderSpec{
-		Marker: ">",
-		Label:  label,
-		Detail: strings.Join(targets, ", "),
-		Meta:   itoa(n) + " " + noun,
+	spec := m.readOnlyRunSpec(s, i)
+	if s.runKind == runWork {
+		spec = m.workRunSpec(s, i)
 	}
 	headerW := m.width - s.indent
 	if headerW > uikitconfig.ProseMeasureWide+16 {
 		headerW = uikitconfig.ProseMeasureWide + 16
 	}
 	focused := false
-	for k := i; k < i+n; k++ {
+	for k := i; k < i+s.runSize; k++ {
 		focused = focused || m.blocks[k].Focused
 	}
 	if focused {
@@ -199,6 +266,80 @@ func (m Model) leaderRow(s span, i int) string {
 	}
 	return render.Header(m.Theme, m.Tier, headerW, spec)
 }
+
+// readOnlyRunSpec is the R2 row: "Read 3 files: a.go, b.go, c.go".
+func (m Model) readOnlyRunSpec(s span, i int) render.HeaderSpec {
+	n := s.runSize
+	label, noun := "Read", "files"
+	if render.ReadOnlyToolClass(m.blocks[i].Header.Label) == "search" {
+		label, noun = "Searched", "queries"
+	}
+	targets := make([]string, 0, n)
+	for k := i; k < i+n; k++ {
+		if target := leaderTarget(m.blocks[k].Header.Detail); target != "" {
+			targets = append(targets, target)
+		}
+	}
+	return render.HeaderSpec{
+		Marker: ">",
+		Label:  label,
+		Detail: strings.Join(targets, ", "),
+		Meta:   itoa(n) + " " + noun,
+	}
+}
+
+// workRunSpec is the wall's row: "work  read_file, edit, run_command
+// 5 calls  8.4s". It answers the three questions a reader has about
+// activity they are being shown one line of - what ran, how much of it
+// there was, and what it cost - so the fold is a summary rather than a
+// hiding place.
+//
+// The duration is the SUM of the calls' own durations, which is what the
+// blocks carry; calls the loop issued in parallel therefore add up to
+// more than the wall clock. Sum is still the honest answer to "what did
+// this work cost", and it is the only one the model holds: no block
+// records when the run started.
+func (m Model) workRunSpec(s span, i int) render.HeaderSpec {
+	n := s.runSize
+	var (
+		names   []string
+		seen    = make(map[string]bool, n)
+		calls   int
+		elapsed int
+	)
+	for k := i; k < i+n; k++ {
+		b := m.blocks[k]
+		if b.Kind == uievent.KindToolEnd {
+			calls++
+		}
+		elapsed += b.ElapsedMS
+		if label := b.Header.Label; label != "" && !seen[label] {
+			seen[label] = true
+			names = append(names, label)
+		}
+	}
+	detail := strings.Join(names, ", ")
+	if len(names) > workRunNameLimit {
+		detail = strings.Join(names[:workRunNameLimit], ", ") +
+			" +" + itoa(len(names)-workRunNameLimit) + " more"
+	}
+	// A run of nothing but reasoning made no calls, so it is counted in
+	// steps. Saying "0 calls" would be true and useless.
+	meta := itoa(calls) + " calls"
+	if calls == 0 {
+		meta = itoa(n) + " steps"
+	}
+	if elapsed > 0 {
+		meta += "  " + render.FormatElapsed(elapsed)
+	}
+	return render.HeaderSpec{Marker: ">", Label: "work", Detail: detail, Meta: meta}
+}
+
+// workRunNameLimit is how many distinct tool names the work row lists
+// before it counts the rest. Past three the list stops naming the work
+// and starts clipping, and the count survives the clip where a name
+// would not.
+const workRunNameLimit = 3
 
 // leaderTarget shortens one member's header detail for the run's target
 // list: a file path collapses to its base name, a search pattern stays

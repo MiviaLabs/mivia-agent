@@ -1,0 +1,232 @@
+package transcript
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+)
+
+// endedCall drives one tool call all the way through start, output and
+// end, which is the path a real call takes. Building the finished Block
+// by hand instead would skip updateLive - the very rule that decides
+// whether the call folds - and pin nothing.
+func endedCall(m Model, id, name, result, out string, ms int, ok bool) Model {
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: id, Name: name}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: out}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: id, Name: name, OK: ok,
+			Result: result, DurationMS: int64(ms)}})
+	return m
+}
+
+// wallModel is a turn of mixed finished work: prose, then five calls of
+// three different tools. Rendered per-block it is a dozen rows.
+func wallModel(t *testing.T) Model {
+	t.Helper()
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "I will add a bounded retry."}})
+	m = endedCall(m, "1", "read_file", "s3.go", "package storage", 12, true)
+	m = endedCall(m, "2", "read_file", "s3_test.go", "package storage", 8, true)
+	m = endedCall(m, "3", "edit", "s3.go", "@@ -14 +14 @@", 30, true)
+	m = endedCall(m, "4", "run_command", "go build", "ok", 4100, true)
+	m = endedCall(m, "5", "grep", "retry.Do", "s3.go:14", 50, true)
+	return m
+}
+
+func viewRows(m Model) []string {
+	return strings.Split(ansi.Strip(m.View()), "\n")
+}
+
+func rowContaining(rows []string, needle string) (int, string, bool) {
+	for i, r := range rows {
+		if strings.Contains(r, needle) {
+			return i, r, true
+		}
+	}
+	return -1, "", false
+}
+
+// TestAWallOfFinishedWorkFoldsToOneRow is the headline contract: a turn
+// whose activity is five finished calls draws ONE row, and that row says
+// what ran, how many calls it made and what they cost. A fold that
+// stated none of those would hide the work rather than summarise it,
+// which is the difference between a summary and a lie.
+func TestAWallOfFinishedWorkFoldsToOneRow(t *testing.T) {
+	m := wallModel(t)
+	rows := viewRows(m)
+
+	_, row, ok := rowContaining(rows, "work")
+	if !ok {
+		t.Fatalf("no work row in:\n%s", strings.Join(rows, "\n"))
+	}
+	for _, want := range []string{"read_file", "edit", "run_command", "5 calls"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("work row %q does not state %q", row, want)
+		}
+	}
+	// 12+8+30+4100+50 = 4200ms, which FormatElapsed renders as 4.2s.
+	if !strings.Contains(row, "4.2s") {
+		t.Errorf("work row %q does not add up its members' durations", row)
+	}
+	// Every member header must be gone: a fold that leaves the headers
+	// behind has cost a row instead of saving eleven.
+	for _, label := range []string{"edit ", "grep "} {
+		if i, r, found := rowContaining(rows, label); found && !strings.Contains(r, "work") {
+			t.Errorf("row %d still draws a folded member's own header: %q", i, r)
+		}
+	}
+}
+
+// TestTheWorkRowHangsUnderTheTurnLikeTheBlocksItStandsFor: the run is
+// activity, so its row takes the same 2-column group indent every block
+// it replaces would have taken. Emitting it at column 1 would put the
+// summary of a turn's work out of line with the turn.
+func TestTheWorkRowHangsUnderTheTurnLikeTheBlocksItStandsFor(t *testing.T) {
+	rows := viewRows(wallModel(t))
+	_, row, ok := rowContaining(rows, "work")
+	if !ok {
+		t.Fatal("no work row")
+	}
+	if !strings.HasPrefix(row, strings.Repeat(" ", groupIndent)) {
+		t.Errorf("work row is not indented into the activity group: %q", row)
+	}
+}
+
+// TestAFailedCallNeverFolds is the rule that keeps the fold honest. The
+// failure is the one block worth its rows, so it must survive with its
+// own header, its own body, and its own place on screen.
+func TestAFailedCallNeverFolds(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "running the tests"}})
+	m = endedCall(m, "1", "read_file", "a.go", "package a", 5, true)
+	m = endedCall(m, "2", "edit", "a.go", "@@", 5, true)
+	m = endedCall(m, "3", "run_command", "go test", "--- FAIL: TestPut", 900, false)
+	m = endedCall(m, "4", "read_file", "b.go", "package b", 5, true)
+
+	rows := viewRows(m)
+	if _, _, ok := rowContaining(rows, "failed"); !ok {
+		t.Errorf("the failed call vanished from the screen:\n%s", strings.Join(rows, "\n"))
+	}
+	if _, _, ok := rowContaining(rows, "--- FAIL: TestPut"); !ok {
+		t.Error("the failed call's body was collapsed away; a failure must stay open")
+	}
+}
+
+// TestALiveCallNeverFolds: work still running is the one thing the
+// reader is waiting on. A fold that could swallow it would make the
+// screen go quiet exactly when it should not.
+func TestALiveCallNeverFolds(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "working"}})
+	m = endedCall(m, "1", "read_file", "a.go", "package a", 5, true)
+	m = endedCall(m, "2", "read_file", "b.go", "package b", 5, true)
+	m = endedCall(m, "3", "edit", "a.go", "@@", 5, true)
+	// A fourth call that has started but not ended.
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "4", Name: "run_command"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "4", Chunk: strings.Repeat("line\n", 20)}})
+
+	rows := viewRows(m)
+	if _, _, ok := rowContaining(rows, "run_command"); !ok {
+		t.Errorf("the running call is not on screen:\n%s", strings.Join(rows, "\n"))
+	}
+	last := m.blocks[len(m.blocks)-1]
+	if n, _ := m.runAt(len(m.blocks) - 1); n > 0 {
+		t.Error("a running call was made the head of a coalesced run")
+	}
+	if last.Kind == uievent.KindToolEnd {
+		t.Fatal("precondition: the fourth call has not ended")
+	}
+}
+
+// TestTwoCallsAreNotAWall: below minWorkRun the fold costs the reader
+// the tool names to save a single row, so it must not happen.
+func TestTwoCallsAreNotAWall(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "two things"}})
+	m = endedCall(m, "1", "edit", "a.go", "@@", 5, true)
+	m = endedCall(m, "2", "run_command", "go build", "ok", 5, true)
+
+	rows := viewRows(m)
+	if _, _, ok := rowContaining(rows, "work"); ok {
+		t.Errorf("two calls folded into a work row:\n%s", strings.Join(rows, "\n"))
+	}
+	for _, want := range []string{"edit", "run_command"} {
+		if _, _, ok := rowContaining(rows, want); !ok {
+			t.Errorf("%q lost its own header", want)
+		}
+	}
+}
+
+// TestASameClassReadRunKeepsItsNamedRow: the read row lists its targets,
+// so it says strictly more than the generic work row about the same
+// blocks. A tie must go to it, or the more informative rendering is lost
+// the moment the generic one exists.
+func TestASameClassReadRunKeepsItsNamedRow(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "reading"}})
+	m = endedCall(m, "1", "read_file", "a.go", "package a", 5, true)
+	m = endedCall(m, "2", "read_file", "b.go", "package b", 5, true)
+	m = endedCall(m, "3", "read_file", "c.go", "package c", 5, true)
+
+	rows := viewRows(m)
+	if _, _, ok := rowContaining(rows, "Read"); !ok {
+		t.Errorf("a pure read run lost its named row:\n%s", strings.Join(rows, "\n"))
+	}
+	if _, _, ok := rowContaining(rows, "work"); ok {
+		t.Error("the generic work row displaced the more informative read row")
+	}
+}
+
+// TestClickingTheWorkRowOpensEveryMember: the row stands in for all of
+// them, so the click means "show me these" - the same contract the read
+// run already had.
+func TestClickingTheWorkRowOpensEveryMember(t *testing.T) {
+	m := wallModel(t)
+	row, _, ok := rowContaining(viewRows(m), "work")
+	if !ok {
+		t.Fatal("no work row to click")
+	}
+	next, toggled := m.ToggleBlockAtScreenRow(row)
+	if !toggled {
+		t.Fatal("clicking the work row reported nothing")
+	}
+	rows := viewRows(next)
+	for _, want := range []string{"edit", "run_command", "grep"} {
+		if _, _, found := rowContaining(rows, want); !found {
+			t.Errorf("%q did not come back after the run was opened:\n%s", want, strings.Join(rows, "\n"))
+		}
+	}
+}
+
+// TestTheDumpNeverFoldsAWorkRun: coalescing is display-only. The dump is
+// what "[" writes to the primary screen for grep and tmux copy, so a
+// fold reaching it would delete the session's record of what ran.
+func TestTheDumpNeverFoldsAWorkRun(t *testing.T) {
+	dump := wallModel(t).Dump()
+	if strings.Contains(dump, "5 calls") {
+		t.Error("the dump coalesced a work run; coalescing must be display-only")
+	}
+	for _, want := range []string{"edit", "run_command", "grep"} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("the dump lost %q", want)
+		}
+	}
+}

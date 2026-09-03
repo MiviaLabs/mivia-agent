@@ -387,6 +387,7 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 	end := toolEndBlockValue(m.Theme, m.Tier, w, b, existingArgs)
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
+		blk.ElapsedMS = end.ElapsedMS
 		// Carry the raw diff onto the live block, not just its rendered
 		// lines: a merged block that keeps only the rendering cannot be
 		// re-rendered when the theme changes, which is the whole point of

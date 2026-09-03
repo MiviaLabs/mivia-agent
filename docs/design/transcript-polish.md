@@ -173,6 +173,42 @@ failed/error block, where rail plus `RoleDanger` earns its weight. This
 is the D4 drift correction; it supersedes the §3-tier justification in
 `block.go:168-173`'s comment, which must be rewritten.
 
+R2a. **Coalesce a wall of finished work into one row.** *(Implemented,
+amends R2.)* R2 folds consecutive same-class read-only lookups. That
+leaves the common shape untouched: a long turn whose activity is a
+dozen mixed calls — reads, edits, commands, subagents — each drawing its
+own header. Three or more CONSECUTIVE FINISHED calls now draw as one
+row instead:
+
+```
+  > work read_file, edit, run_command +1 more  5 calls  4.2s
+```
+
+Rules, all of them load-bearing:
+
+- **Finished only.** A call that has not ended keeps its own row. Work
+  still running is the one thing the reader is waiting on.
+- **Failures never fold.** A `RoleDanger` block keeps its header, its
+  body and its place. A summary row that could swallow a failure would
+  hide the one block worth the rows.
+- **Three is the floor.** Two headers are not a wall; folding them costs
+  two tool names to save one row.
+- **The read row wins a tie.** It names its targets, so it says strictly
+  more about the same blocks than the generic row does.
+- **Display-only, exactly as R2 requires.** Children stay real blocks:
+  focus, click-to-toggle, `FocusedText` copy and `Dump()` all keep
+  per-child identity and full content.
+- **The duration is the SUM of the members' own durations**, which is
+  what the blocks carry (`Block.ElapsedMS`). Calls the loop issued in
+  parallel therefore add to more than the wall clock; no block records
+  when the run started, so sum is the only honest number available.
+
+The fold is driven by each member's own collapsed state, not by a
+separate per-run flag, so collapsing the members again re-forms the run
+with no extra state to keep, migrate, or leak. That is also why the
+default changed: a call that ends successfully now collapses whatever
+its body size, the way R2's read-only lookups already did.
+
 ### P0 — deduplication and grammar
 
 R5. **One duration formatter everywhere.** Add `render.FormatElapsed(ms)`:
