@@ -243,19 +243,20 @@ func TestContextSectionSurvivesAnUnknownBudget(t *testing.T) {
 	}
 }
 
-// TestLiveUsageKeepsTheBreakdown is the discriminator for the live-turn path:
-// a provider usage event reports a total and no composition, so a screen that
-// adopted it whole would blank every bucket row for the length of a turn while
-// the header above them kept reporting a real share. The rows must follow the
-// live total, still summing to it.
-func TestLiveUsageKeepsTheBreakdown(t *testing.T) {
+// TestLiveUsageNeverGrowsTheFloor is the regression for what the sidebar
+// showed during a turn: the system prompt and tool schema rows climbing while
+// messages, results and thinking sat at zero. The session adopts a turn's
+// messages only when the turn ends, so mid-turn its composition is the
+// previous turn's, and reconciling it with the provider's growing total used
+// to stretch every row including the two that cannot grow.
+func TestLiveUsageNeverGrowsTheFloor(t *testing.T) {
 	s := contextPanelScreen(t, 40)
 	before := s.topbar.Usage().Breakdown
-	if before.Total() == 0 {
-		t.Fatal("precondition: the seeded session has a breakdown")
+	if before.System == 0 || before.Total() == 0 {
+		t.Fatal("precondition: the seeded session has a floor and a composition")
 	}
 
-	const liveTotal = 96_000
+	const liveTotal = 200_000
 	live := ports.Usage{InputTokens: liveTotal}
 	s.liveUsage = &live
 	s.refreshTopbar()
@@ -264,17 +265,41 @@ func TestLiveUsageKeepsTheBreakdown(t *testing.T) {
 	if got.InputTokens != liveTotal {
 		t.Fatalf("live reading not adopted: InputTokens = %d, want %d", got.InputTokens, liveTotal)
 	}
+	if got.Breakdown.System != before.System {
+		t.Errorf("system prompt grew from %d to %d during a turn; it cannot grow",
+			before.System, got.Breakdown.System)
+	}
+	if got.Breakdown.ToolSchemas != before.ToolSchemas {
+		t.Errorf("tool schemas grew from %d to %d during a turn; they cannot grow",
+			before.ToolSchemas, got.Breakdown.ToolSchemas)
+	}
+	if got.Breakdown.Pending == 0 {
+		t.Error("the unadopted cost of the running turn is not reported as pending")
+	}
 	if got.Breakdown.Total() != liveTotal {
-		t.Errorf("breakdown sums to %d, header reports %d: the rows contradict the header mid-turn",
+		t.Errorf("breakdown sums to %d, header reports %d: the rows contradict the header",
 			got.Breakdown.Total(), liveTotal)
 	}
-	if got.Breakdown.ToolResults <= got.Breakdown.System {
-		t.Errorf("composition lost: ToolResults = %d, System = %d, want the seeded shape preserved",
-			got.Breakdown.ToolResults, got.Breakdown.System)
-	}
 	if got.Breakdown.ToolCount != before.ToolCount {
-		t.Errorf("ToolCount scaled to %d, want %d: a schema count is not a token cost",
+		t.Errorf("ToolCount became %d, want %d: a schema count is not a token cost",
 			got.Breakdown.ToolCount, before.ToolCount)
+	}
+}
+
+// TestPendingTurnCostHasItsOwnRow: the pending cost is named on screen rather
+// than hidden, so a reader can see that the growth belongs to the turn in
+// flight and not to the floor.
+func TestPendingTurnCostHasItsOwnRow(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 40, sampleDiffs()...))
+	s.topbar.SetSession(
+		ports.ModelInfo{Name: "m", ContextWindow: 400_000, DeclaredWindow: 400_000},
+		ports.Usage{InputTokens: 90_000, Breakdown: ports.ContextBreakdown{
+			System: 6_000, ToolSchemas: 3_000, ToolCount: 19, Pending: 81_000,
+		}})
+	rows := s.panelContextRows(s.panelInnerWidth(), contextDetailMinRows)
+	joined := ansi.Strip(strings.Join(rows, "\n"))
+	if !strings.Contains(joined, "this turn") || !strings.Contains(joined, "81k") {
+		t.Errorf("detail block does not report the pending turn cost:\n%s", joined)
 	}
 }
 

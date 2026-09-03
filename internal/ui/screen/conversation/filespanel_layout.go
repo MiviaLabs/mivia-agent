@@ -200,7 +200,7 @@ const contextDetailMinRows = 24
 // adds one more row in either mode to say so.
 const (
 	contextSummaryRows = 3
-	contextDetailRows  = contextSummaryRows + 7
+	contextDetailRows  = contextSummaryRows + 8
 )
 
 // contextSectionRows is how many rows the context section draws in a sidebar
@@ -338,6 +338,9 @@ func (s Screen) panelContextRows(inner, maxRows int) []string {
 		{"messages", b.Prose},
 		{"results", b.ToolResults},
 		{"thinking", b.Reasoning},
+		// What the provider is pricing that the session has not adopted yet.
+		// It empties into the rows above when the turn finishes.
+		{"this turn", b.Pending},
 	} {
 		rows = append(rows, panelSpreadRow(inner, bucket.label, tokensShort(bucket.tokens), border, subtle))
 	}
