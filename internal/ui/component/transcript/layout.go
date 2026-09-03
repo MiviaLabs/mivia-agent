@@ -34,7 +34,12 @@ import (
 const groupIndent = 2
 
 type span struct {
-	top       int  // first terminal row of the block, separators included
+	// top is the block's FIRST CONTENT row - the header row, or the
+	// leader row when the block heads a coalesced run. A separator row
+	// sits ABOVE it, outside the span, so top is exactly the row a click
+	// on the header reports and exactly the row ScrollToFocus must
+	// bring into view.
+	top       int
 	height    int  // terminal rows the block owns (0 when hidden in a run)
 	indent    int  // columns the block is shifted by (groupIndent when activity)
 	sepBefore bool // a blank separator row sits directly above top
@@ -59,10 +64,11 @@ func (m Model) layout() []span {
 		if act {
 			ind = groupIndent
 		}
-		sp := span{top: row, indent: ind, sepBefore: i > 0 && !(prevActivity && act)}
+		sp := span{indent: ind, sepBefore: i > 0 && !(prevActivity && act)}
 		if sp.sepBefore {
-			row++
+			row++ // the separator belongs above the span, not inside it
 		}
+		sp.top = row
 		if n := m.leaderRunLen(i); n > 0 {
 			sp.height, sp.runSize, sp.runTop = 1, n, row
 			spans[i] = sp
