@@ -91,6 +91,9 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 	// becomes callable from the next step via the loop's Surface hook, and a
 	// deferred stage reports the reason instead of the unknown-tool denial.
 	s.wireStepBoundaryAdmission(&opts, turn)
+	// Report the prepared request at each step so the live context can be
+	// described while the turn runs rather than only after it commits.
+	opts.ObserveRequestHistory = s.observeRequestHistory
 	return opts
 }
 

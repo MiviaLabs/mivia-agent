@@ -26,6 +26,15 @@ import (
 
 // Session holds conversation history and a completer.
 type Session struct {
+	// liveRequest is the message list the agent loop last prepared for a
+	// provider call, captured at each step through
+	// agent.Options.ObserveRequestHistory. It exists because the loop's
+	// carried history is only written back when the turn ENDS, so between
+	// those points ContextUsage described the previous turn: on the first
+	// turn it saw the floor alone, and a reader watching the context fill
+	// saw nothing of what was filling it. Nil between turns, when Messages
+	// is itself current. Guarded by mu.
+	liveRequest        []provider.Message
 	Completer          provider.Completer
 	model              string
 	allowedModels      []string

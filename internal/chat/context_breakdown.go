@@ -2,6 +2,31 @@ package chat
 
 import "github.com/MiviaLabs/mivia-agent/internal/provider"
 
+// observeRequestHistory records the message list the loop just prepared for a
+// provider call. It runs on the loop goroutine at every step, so it clones and
+// returns: the caller reuses its slice, and holding a reference would race the
+// next step's preparation.
+//
+// This is what makes the context readable DURING a turn. The loop adopts its
+// history into the session only when the turn ends, so without this the
+// session's own view stayed at the previous turn for the whole of this one.
+func (s *Session) observeRequestHistory(messages []provider.Message) {
+	snapshot := cloneContextMessages(messages)
+	s.mu.Lock()
+	s.liveRequest = snapshot
+	s.mu.Unlock()
+}
+
+// adoptMessagesLocked installs a committed history and drops the in-flight
+// request snapshot with it: once the real history is adopted the snapshot is
+// the stale one, and the session goes back to describing Messages. Every
+// adoption path goes through here so no path can keep a stale snapshot alive.
+// The caller holds mu.
+func (s *Session) adoptMessagesLocked(messages []provider.Message) {
+	s.Messages = messages
+	s.liveRequest = nil
+}
+
 // summaryMessageName mirrors agent.SummaryMessageName, the sentinel Name the
 // compaction memo carries. It is duplicated rather than imported because
 // internal/agent builds on this package's session; TestSummaryMessageNameMatchesAgent

@@ -261,6 +261,16 @@ type Options struct {
 	// step before history pruning and request build (plan 53.03). Returned
 	// messages are appended to the loop history. Nil is a no-op.
 	BeforeStep func() []provider.Message
+	// ObserveRequestHistory, when set, is called on the loop goroutine at each
+	// step with the prepared history about to be sent, immediately after
+	// pruning and compaction. It is an OBSERVER: the slice must not be
+	// retained or mutated, and the hook must not block the step.
+	//
+	// It exists because the loop's carried history is only written back to the
+	// host when the turn ends, so a host that wants to describe the context
+	// mid-turn has nothing to describe until then. This is the one place the
+	// exact billed message list is in hand on every step. Nil is a no-op.
+	ObserveRequestHistory func([]provider.Message)
 	// InterruptCh, when non-nil, resolves the channel a parent can signal to
 	// softly interrupt the in-flight LLM call (plan 54). It is re-read once
 	// per LLM call. Nil disables the signal path. A steer never cancels a tool
