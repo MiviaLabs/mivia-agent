@@ -2,6 +2,8 @@ package chatsync
 
 import (
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // maxTrackedTurns bounds active turns remembered by the projector.
@@ -39,6 +41,21 @@ type turnState struct {
 	// not a fragment count for any one of them.
 	thinkingBlockFragments int
 	thinkingStreamed       bool
+	// assistantStream and thinkingStream are this stream's cross-fragment
+	// redactors for the open prose block. Each holds back a bounded tail
+	// (redact.StreamHoldBack) so a secret split across two deltas is still
+	// caught, which is what lets deltas ship under a policy at all. Both must
+	// be flushed at every block close - see flushHeldProse. A held tail nobody
+	// flushes is text silently lost.
+	assistantStream redact.Stream
+	thinkingStream  redact.Stream
+	// assistantHoldSegment is the segment the assistant stream's held tail
+	// arrived in, captured when the hold OPENED. The flush fires from the
+	// event that closed the block, by which time the counter has moved on,
+	// and streamSegment names the last segment a delta SHIPPED into - which
+	// is the previous one whenever a hold spans a tool call. Naming either
+	// would file the tail under a block its own text never belonged to.
+	assistantHoldSegment int
 	// segment is the id of the current STEP of a turn: talk, call a tool,
 	// read the result, talk again. It is what separates one utterance from
 	// the next on the wire; see proseBlock. Ids come from the projector's one

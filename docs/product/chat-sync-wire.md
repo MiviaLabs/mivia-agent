@@ -55,12 +55,25 @@ enable sync on sensitive work:
 
 - `include_thinking = false` withholds a subagent's reasoning text, as it
   withholds the root loop's. Only the byte count is reported.
-- A configured redaction policy **turns per-delta streaming off by itself**.
-  Redaction is a regex over one string, so it cannot match a secret split
-  across two fragments: a pattern that catches a key in a settled message
-  catches nothing when the same bytes arrive in three deltas. With a policy
-  active the turn therefore sends one settled message, redacted as a whole.
-  The reader waits for the end of the turn and receives the same words.
+- A configured redaction policy **keeps per-delta streaming, and redacts across
+  fragment boundaries**. Redaction is a regex over one string, so it cannot
+  match a secret split across two fragments: a pattern that catches a key in a
+  settled message catches nothing when the same bytes arrive in three deltas.
+  The producer therefore holds back the last 256 bytes of an open prose block
+  (`redact.StreamHoldBack`), redacts the held tail joined to each new fragment,
+  and ships only the part no future byte can still complete into a match. The
+  held tail is flushed as one final delta when the block closes - the next tool
+  call, the turn's end, the turn's failure, a subagent's terminal - so nothing
+  is delayed past the block and nothing is lost.
+
+  **The limit, stated plainly.** The window is 256 bytes because Go regexps are
+  unbounded and no finite window is sound for every expression. A pattern that
+  can match MORE than 256 bytes (`(?s)BEGIN KEY.*END KEY`, a greedy run over a
+  whole base64 blob) may begin further back than the window reaches, and its
+  opening bytes ship before the closing bytes prove it was a secret. An operator
+  whose secrets exceed 256 bytes must set `stream_assistant = false` rather than
+  rely on streamed deltas. Every credential shape in the recommended policy
+  below is far shorter than the window.
 - `stream_assistant` is **on by default** and selects HOW answer text is sent,
   not WHETHER it is sent. On, a turn sends deltas and then a settled message
   with empty text; off, it sends one settled message carrying the same text.
@@ -131,10 +144,12 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.thinking.message` - one thinking block, settled when the block
   closes (the turn's next tool call, or its end). It carries the same INV-1
   rule as `assistant.message`: `text` is empty exactly when `fragments` is
-  non-zero. It exists so reasoning survives a redaction policy. A policy
-  withholds the per-fragment text - a secret split across two deltas matches
-  neither pattern - and with no whole-block form the reasoning reached no
-  viewer at all. This event carries it, redacted as ONE string.
+  non-zero. It exists so reasoning survives a redaction policy: when nothing
+  streamed - the block is shorter than the hold-back window, or
+  `include_thinking` is off - this is the only form the reasoning takes, and it
+  is redacted as ONE string. When deltas did stream, the block's held tail
+  travels as a final `thinking.delta` immediately before this event and `text`
+  is empty, per INV-1.
 - `mivia.chat.v1.tool.started`
 - `mivia.chat.v1.tool.ended`
 - `mivia.chat.v1.hook.ran` - one lifecycle hook run on the operator's machine.
