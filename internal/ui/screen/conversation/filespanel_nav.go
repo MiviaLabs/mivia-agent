@@ -189,10 +189,19 @@ func navGroupLens(groups []navGroup) []int {
 	return lens
 }
 
-// collapsedFlag returns a pointer to the collapse state a header owns, so
-// the toggle has one place to write and the renderer one place to read.
-func (p *panel) collapsedFlag(k navKind) *bool {
-	switch k {
+// sectionFlag returns the fold state the group owns, or nil when it owns
+// none.
+//
+// This is the ONLY test for "can this row fold". It used to be two - a
+// collapsible() predicate and a separate flag lookup - which made every
+// nil check downstream unreachable, so the guards that decide a key does
+// nothing were never exercised. One lookup, one guard, and the guard is
+// on the path a file or agent row actually takes.
+// Callers reach this only through navCursor, which yields selectable
+// groups exclusively, so selectability is not re-checked here; the
+// switch's own fallthrough is what answers for a file or agent row.
+func (p *panel) sectionFlag(g navGroup) *bool {
+	switch g.kind {
 	case navContextHeader:
 		return &p.contextCollapsed
 	case navFilesHeader:
@@ -213,10 +222,10 @@ func (p *panel) collapsedFlag(k navKind) *bool {
 // selection would silently jump to whatever now sits at that index.
 func (p *panel) setSectionCollapsed(collapsed bool) bool {
 	g, ok := p.navCursor()
-	if !ok || !g.collapsible() {
+	if !ok {
 		return false
 	}
-	flag := p.collapsedFlag(g.kind)
+	flag := p.sectionFlag(g)
 	if flag == nil || *flag == collapsed {
 		return false
 	}
@@ -229,10 +238,10 @@ func (p *panel) setSectionCollapsed(collapsed bool) bool {
 // change, for Enter and for a click on the header.
 func (p *panel) toggleSection() bool {
 	g, ok := p.navCursor()
-	if !ok || !g.collapsible() {
+	if !ok {
 		return false
 	}
-	flag := p.collapsedFlag(g.kind)
+	flag := p.sectionFlag(g)
 	if flag == nil {
 		return false
 	}

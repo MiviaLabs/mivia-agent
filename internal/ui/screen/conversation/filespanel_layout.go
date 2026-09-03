@@ -507,13 +507,18 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	// passes them.
 	ctx := s.panelContextRows(inner, maxRows)
 	ctxAt := 0
+	// Written without a second return so there is no arm that never
+	// runs: the plan and the rendered block always agree on the row count
+	// (TestTheContextSectionDrawsExactlyTheRowsItClaims), and the bounds
+	// check is here only so a future disagreement draws a blank row
+	// instead of panicking in a renderer.
 	nextCtx := func() string {
+		row := ""
 		if ctxAt < len(ctx) {
-			row := ctx[ctxAt]
-			ctxAt++
-			return row
+			row = ctx[ctxAt]
 		}
-		return ""
+		ctxAt++
+		return row
 	}
 
 	groups := make([][]string, 0, len(plan))

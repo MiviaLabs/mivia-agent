@@ -83,7 +83,7 @@ func TestClickLandsOnTheHeaderTheUserSees(t *testing.T) {
 	if _, ok := m.ToggleBlockAtScreenRow(groupIndent, header); !ok {
 		t.Errorf("clicking the header row (%d) the user can see did not expand the block", header)
 	}
-	if _, ok := m.ToggleBlockAtScreenRow(groupIndent, header - 1); ok {
+	if _, ok := m.ToggleBlockAtScreenRow(groupIndent, header-1); ok {
 		t.Errorf("clicking the blank separator row (%d) expanded a block", header-1)
 	}
 }
@@ -169,7 +169,7 @@ func TestClickingABodyRowStillFallsThrough(t *testing.T) {
 	m := proseThenTool(t)
 	header := drawnRowOf(t, m, "run_command")
 	m, _ = m.ToggleBlockAtScreenRow(groupIndent, header)
-	if _, ok := m.ToggleBlockAtScreenRow(groupIndent, header + 1); ok {
+	if _, ok := m.ToggleBlockAtScreenRow(groupIndent, header+1); ok {
 		t.Error("a click on a body row toggled the block")
 	}
 }

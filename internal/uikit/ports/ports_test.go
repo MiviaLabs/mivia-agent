@@ -364,3 +364,34 @@ func TestWithLiveTotalCarriesEverySkillBucket(t *testing.T) {
 		t.Errorf("Skills = %d, want it scaled down but not erased (was %d)", shrunk.Skills, base.Skills)
 	}
 }
+
+// TestScaleFieldsPutsAnUnattributableTotalOnTheLastField pins the
+// degenerate arm: nothing priced, but a total to account for.
+//
+// It is tested directly because it is not reachable through
+// WithLiveTotal today - that function only calls scaleFields with the
+// whole bucket set when total <= floor, and a zero sum there implies
+// floor == 0, which contradicts total > 0. The arm still has to be
+// right: callers order the fields so the LAST one is the only bucket
+// that can honestly carry an amount nothing explains (Pending), and
+// spreading the remainder evenly instead would invent a composition the
+// session never had.
+func TestScaleFieldsPutsAnUnattributableTotalOnTheLastField(t *testing.T) {
+	var first, middle, last int64
+	scaleFields([]*int64{&first, &middle, &last}, 900)
+
+	if first != 0 || middle != 0 {
+		t.Errorf("the remainder was spread across buckets (%d, %d, %d); that invents a composition", first, middle, last)
+	}
+	if last != 900 {
+		t.Errorf("last field = %d, want the whole 900", last)
+	}
+
+	// A previously-scaled set is zeroed first, so a stale composition
+	// cannot survive underneath the new total.
+	stale := []int64{5, 7, 11}
+	scaleFields([]*int64{&stale[0], &stale[1], &stale[2]}, 0)
+	if stale[0] != 0 || stale[1] != 0 || stale[2] != 0 {
+		t.Errorf("scaling to zero left %v behind", stale)
+	}
+}

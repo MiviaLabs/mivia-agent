@@ -802,7 +802,7 @@ func TestToggleBlockAtScreenRow(t *testing.T) {
 	}
 
 	// A body row of the now-expanded block must not report anything.
-	if _, ok := next.ToggleBlockAtScreenRow(groupIndent, click + 1); ok {
+	if _, ok := next.ToggleBlockAtScreenRow(groupIndent, click+1); ok {
 		t.Error("a body row must not report an expansion")
 	}
 

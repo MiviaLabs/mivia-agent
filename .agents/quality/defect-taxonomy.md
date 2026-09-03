@@ -858,6 +858,66 @@ the interface-having variant in `provider.Completer`.
 `.mivia/policy/tool-execution-conformance.json`.
 
 
+## DC-39 A struct's fields are enumerated by hand in a helper, and the helper drifts from the struct
+
+**Mechanism.** A struct's own fields are walked by a hand-written list -
+a slice of pointers to scale, a copy that preserves some fields and zeroes
+others, a field-by-field conversion to a sibling type in another package.
+Adding a field to the struct is one edit; keeping every enumeration of it
+correct is several, in files the author may not open, and the compiler
+checks none of them: the list is `[]*int`, so a missing entry is a shorter
+slice, not a type error.
+
+The failure is silent in both directions and looks like arithmetic that
+merely disagrees with itself. A value left out of a scaling list keeps its
+raw magnitude while its siblings are scaled, so the parts stop summing to
+the whole displayed beside them. A value left out of a preserving copy is
+zeroed on every pass, so a surface reads `0` forever. Neither raises an
+error, and neither is visible to a test that asserts on the fields it
+happens to name - which is the trap: the test and the enumeration share
+one list, and the list is the bug.
+
+It is the structural sibling of DC-28. There the hand-maintained list is a
+`switch` over an external vocabulary; here it is a list over the program's
+own fields, which feels safer and is not, because the vocabulary grows on
+this repo's schedule and so the drift is always self-inflicted.
+
+**Why it recurs.** The enumerations are written once, when the struct is
+small enough to hold in your head, and each is locally obvious. The field
+that breaks them is added months later by someone solving a different
+problem, who reads the struct and the one call site their feature needs.
+Nothing points from the struct to its enumerations.
+
+**Evidence.** `ContextBreakdown` exists twice - `internal/chat` and
+`internal/uikit/ports` - and its fields are enumerated in five places:
+`fields()`, `buckets()`, `conversationBuckets()`, two `countsOnly()`, and
+the field-by-field bridge in `internal/uiadapter/conversation.go`. An
+adversarial review of the `Skills` field added by `818bba0a` mutated each
+of them in turn: **eight mutations passed the entire test suite**, three of
+which broke the sum invariant outright and one of which - dropping the
+field from the bridge - read as a permanent zero on screen.
+
+Gated by `TestEveryCostFieldIsRescaled`,
+`TestFloorAndConversationPartitionEveryCost`,
+`TestChatCountsOnlyKeepsEveryCount`, `TestEveryTokenFieldIsScaled`,
+`TestConversationBucketsAreExactlyTheReclaimableFields`,
+`TestCountsOnlyKeepsEveryCountAndDropsEveryCost` and
+`TestEveryBreakdownFieldCrossesTheBridge` (INV-TUI-30).
+
+**Probes.**
+- Grep the struct's package for a `[]*T` of its own fields, a `func (x T) …
+  T` that rebuilds it field by field, or a conversion to a same-shaped type
+  in another package. Each is an enumeration that can drift.
+- Ask of each: what happens if a field is missing? If the answer is a wrong
+  number rather than a compile error, it needs a reflection gate.
+- Write the gate over the STRUCT, not over the fields you know. Enumerate by
+  reflection and classify by behaviour - a field that moves `Total()` is a
+  cost - so the gate carries no copy of the list it is checking and a new
+  field joins by existing.
+- A test that names fields is not a gate for this class. It shares the
+  enumeration's blind spot by construction.
+
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class

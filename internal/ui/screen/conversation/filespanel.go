@@ -372,6 +372,8 @@ func (p *panel) openPanel() {
 	p.list.Rebind(p.rowLabels())
 	// The model row, not index 0: the context header now sits above it,
 	// and opening the sidebar is still how the model gets changed.
+	// navGroups always emits exactly one selectable navModel, so this
+	// loop always finds it; there is no fallback arm to keep alive.
 	for i, g := range p.navSelectable() {
 		if g.kind == navModel {
 			p.list.MoveTo(i)
@@ -379,8 +381,6 @@ func (p *panel) openPanel() {
 			return
 		}
 	}
-	p.list.MoveTo(0)
-	p.noteSelection()
 }
 
 // selected returns the file entry the list highlights.

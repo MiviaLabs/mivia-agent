@@ -323,6 +323,20 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running chat-sync wire vocabulary invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryWireTypeConstantIsInTheEventTable|TestKnownWireTypesIsDerivedFromTheEventTable|TestKnownWireTypesMatchContractSnapshot|TestWireEnvelopeMatchesContractSnapshot|TestWireSharedObjectsMatchContractSnapshot|TestWireEventPayloadsMatchContractSnapshot' ./internal/chatsync/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The context breakdown's fields are enumerated by hand in five places
+  # across three packages - two scaling slices, two count-preserving
+  # copies, and the chat->ports bridge - and the compiler checks none of
+  # them. A field added to the struct but missed in one enumeration is
+  # silent: it either stops the rows summing to the total printed beside
+  # them, or it reads "(0)" on screen forever. An adversarial review found
+  # eight such mutations surviving the whole suite. Keyed on all three
+  # packages, because the drift is between them.
+  if echo "$STAGED" | grep -qE '^internal/(chat/|uikit/ports/|uiadapter/)'; then
+    echo " → Running context-breakdown enumeration invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryCostFieldIsRescaled|TestChatCountsOnlyKeepsEveryCount|TestFloorAndConversationPartitionEveryCost' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/uikit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/uiadapter/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/config/'; then
     echo " → Running config invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s) || INV_FAIL=1

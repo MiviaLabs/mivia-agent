@@ -355,9 +355,10 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 			blk.Args = b.Args
 		}
 		blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
-		if blk.StartedAt.IsZero() {
-			blk.StartedAt = m.now()
-		}
+		// StartedAt is deliberately NOT touched here. The pending and
+		// push paths both stamp it, and a call announced as pending was
+		// first seen then - so overwriting it now would discard the
+		// queued wait, which is part of what the reader sat through.
 		if d := render.FormatToolDetail(b.Name, b.Args); d != "" {
 			blk.Header.Detail = d
 		}

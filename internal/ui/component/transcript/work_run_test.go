@@ -437,3 +437,85 @@ func TestTrimKeepsTheReaderOnTheSameContent(t *testing.T) {
 		}
 	}
 }
+
+// TestLeaderHeadOfRefusesAnOutOfRangeIndex: focus indices can outrun the
+// block list between an eviction and a reindex, and every caller treats
+// "no head" as "do nothing".
+func TestLeaderHeadOfRefusesAnOutOfRangeIndex(t *testing.T) {
+	m := wallModel(t)
+	for _, i := range []int{-1, len(m.blocks), len(m.blocks) + 5} {
+		if h, ok := m.leaderHeadOf(i); ok {
+			t.Errorf("leaderHeadOf(%d) = (%d, true), want no head", i, h)
+		}
+	}
+}
+
+// TestARunOfPureReasoningIsCountedInSteps: a work run made only of
+// reasoning made no tool calls, so "0 calls" would be true and useless.
+func TestARunOfPureReasoningIsCountedInSteps(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 20)
+	m.blocks = []Block{
+		{Kind: uievent.KindTextEnd, Prose: true, Body: []string{"prose"}},
+	}
+	for i := 0; i < 3; i++ {
+		m.blocks = append(m.blocks, Block{
+			Kind:        uievent.KindReasoning,
+			Header:      Header{Label: "reasoning", Meta: "9 words", State: "hidden"},
+			Body:        []string{"thinking"},
+			Collapsible: true, Collapsed: true,
+		})
+	}
+
+	spans := m.layout()
+	head := -1
+	for i := range spans {
+		if spans[i].runSize > 0 && spans[i].height > 0 {
+			head = i
+		}
+	}
+	if head < 0 {
+		t.Fatal("three folded reasoning blocks did not coalesce")
+	}
+	spec := m.workRunSpec(spans[head], head)
+	if !strings.Contains(spec.Meta, "3 steps") {
+		t.Errorf("meta = %q, want it counted in steps: no call was made", spec.Meta)
+	}
+	if strings.Contains(spec.Meta, "calls") {
+		t.Errorf("meta = %q claims calls a reasoning-only run never made", spec.Meta)
+	}
+}
+
+// TestAToolStartAfterAPendingBlockKeepsTheOriginalStartTime: a call that
+// was announced as pending and then started must time from the moment it
+// was first seen, not from the start event, or the wait the reader
+// actually sat through is understated.
+func TestAToolStartAfterAPendingBlockKeepsTheOriginalStartTime(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 20)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "1", Name: "run_command"}})
+	pendingAt := m.blocks[len(m.blocks)-1].StartedAt
+	if pendingAt.IsZero() {
+		t.Fatal("a pending block carries no start time")
+	}
+
+	clock = clock.Add(2 * time.Second) // queued for two seconds
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "1", Name: "run_command"}})
+	if got := m.blocks[len(m.blocks)-1].StartedAt; !got.Equal(pendingAt) {
+		t.Errorf("start time moved from %v to %v: the queued wait was discarded", pendingAt, got)
+	}
+
+	clock = clock.Add(1 * time.Second)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "1", Chunk: "out"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "1", Name: "run_command", OK: true}})
+	if got := m.blocks[len(m.blocks)-1].ElapsedMS; got != 3000 {
+		t.Errorf("elapsed = %dms, want 3000 (queued 2s + ran 1s)", got)
+	}
+}
