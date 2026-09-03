@@ -47,7 +47,14 @@ func FormatTokenK(n int) string {
 // gauge cannot pass 100% without the trigger having fired on that history.
 func (s *Session) ContextUsage() ContextUsage {
 	s.mu.RLock()
-	messages := cloneContextMessages(s.Messages)
+	// The in-flight request when a turn is running, the committed history
+	// otherwise. Both are the same kind of thing - the message list a
+	// provider call is priced from - and the snapshot is the current one.
+	source := s.Messages
+	if len(s.liveRequest) > 0 {
+		source = s.liveRequest
+	}
+	messages := cloneContextMessages(source)
 	budget := s.MaxContextTokens
 	if s.binding.PromptBudgetTokens > 0 {
 		budget = s.binding.PromptBudgetTokens

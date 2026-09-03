@@ -191,7 +191,7 @@ func (s *Session) adoptFailedTurnSnapshot(loop *agent.Loop, token OperationToken
 		s.mu.Unlock()
 		return
 	}
-	s.Messages = candidate
+	s.adoptMessagesLocked(candidate)
 	s.mu.Unlock()
 	s.SaveAfterTurn()
 }
@@ -251,7 +251,7 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 		_ = s.resyncContextHead()
 		return nil
 	}
-	s.Messages = cloneContextMessages(loop.Messages)
+	s.adoptMessagesLocked(cloneContextMessages(loop.Messages))
 	if haveSummary {
 		// Same message, same reason, in the live history the next turn builds
 		// its request from. Kept in step with result.Active above so the
