@@ -593,6 +593,17 @@ type subagentTurnHandle struct {
 
 func (h *subagentTurnHandle) ID() string                   { return h.id }
 func (h *subagentTurnHandle) Events() <-chan uievent.Event { return h.events }
+
+// Cancel DETACHES this listener - it removes this handle's channel from the
+// conversation's listener set and closes it. It does NOT abort anything: the
+// coordinator task behind the thread keeps running.
+//
+// That diverges from ports.TurnHandle.Cancel's authoritative meaning (abort
+// the turn); see that method's doc comment for the divergence, the
+// foreign-conversation hazard it creates at the ui/screen/conversation
+// thread.go call sites, and why a separate Detach() has not been added.
+// To actually stop a subagent task, use
+// ports.SubagentThreads.CancelSubagentTask.
 func (h *subagentTurnHandle) Cancel() {
 	h.once.Do(func() {
 		if h.cancel != nil {
@@ -601,7 +612,14 @@ func (h *subagentTurnHandle) Cancel() {
 	})
 }
 
-// CancelToolCall is not wired for subagent threads in this slice
-// (per-tool-call cancellation for subagents is a separate slice); it
-// always reports a miss.
+// CancelToolCall always reports a miss on a subagent transcript handle.
+// This handle is a UI-side listener on a replayed event stream; it holds
+// no registry of the subagent's in-flight tool calls and never could.
+//
+// Per-tool-call cancellation for subagents DOES ship - it goes through
+// ports.SubagentThreads.CancelSubagentToolCall (SubagentThreads.
+// CancelSubagentToolCall above), which resolves the task's registered
+// ToolCanceler through the coordinator. The thread dialog uses that path,
+// never this method. The method exists only because ports.TurnHandle
+// requires it.
 func (h *subagentTurnHandle) CancelToolCall(string) bool { return false }

@@ -25,19 +25,50 @@ import (
 // dispatchTaskIDsAndNames builds, which is exactly the key that path
 // registers under.
 //
+// The cancel runs in the returned tea.Cmd, never inline - see
+// subagentTaskCancelResultMsg below for why.
+//
 // Split out of keys.go: it stays under the LOC cap.
 func (s Screen) cancelSelectedSubagentTask() (app.Screen, tea.Cmd) {
 	a, isAgent := s.panel.selectedAgent()
 	if !isAgent || s.threads == nil {
 		return s, nil
 	}
-	ok, err := s.threads.CancelSubagentTask(a.ID)
-	if err != nil {
-		s.statusline.Notice("cancel subagent task failed: " + err.Error())
+	threads, callID, name := s.threads, a.ID, a.displayName()
+	return s, func() tea.Msg {
+		ok, err := threads.CancelSubagentTask(callID)
+		return subagentTaskCancelResultMsg{name: name, ok: ok, err: err}
+	}
+}
+
+// subagentTaskCancelResultMsg carries one CancelSubagentTask outcome back
+// to the update loop.
+//
+// The cancel must not run inline in the key handler: that handler is
+// reached from Update, which bubbletea runs on its single event loop, and
+// CancelSubagentTask reaches the coordinator's per-task cancel - which
+// blocks for up to its whole wait budget (seconds) waiting for the task to
+// unwind. Inline, that froze rendering AND every message, ctrl+c included.
+//
+// name is the row's display name captured at key-press time, so the notice
+// names the task the user acted on even if the selection has since moved.
+type subagentTaskCancelResultMsg struct {
+	name string
+	ok   bool
+	err  error
+}
+
+// handleSubagentTaskCancelResult emits the statusline notice for one
+// finished cancel attempt: the error text on failure, "cancelling <name>"
+// on success, and nothing at all on a miss (no live coordinator route -
+// there is nothing to report).
+func (s Screen) handleSubagentTaskCancelResult(msg subagentTaskCancelResultMsg) (app.Screen, tea.Cmd) {
+	if msg.err != nil {
+		s.statusline.Notice("cancel subagent task failed: " + msg.err.Error())
 		return s, nil
 	}
-	if ok {
-		s.statusline.Notice("cancelling " + a.displayName())
+	if msg.ok {
+		s.statusline.Notice("cancelling " + msg.name)
 	}
 	return s, nil
 }

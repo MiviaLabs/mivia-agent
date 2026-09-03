@@ -71,9 +71,20 @@ func TestCancelThreadToolCallKey_ForwardsToSubagentThreads(t *testing.T) {
 	rootHandle := &recordingHandle{id: "turn-1"}
 	s.active = rootHandle
 
-	next, _ := s.handleKey(tea.KeyPressMsg{Text: "x", Code: 'x'})
+	next, cmd := s.handleKey(tea.KeyPressMsg{Text: "x", Code: 'x'})
 	if _, ok := next.(Screen); !ok {
 		t.Fatalf("handleKey returned a non-Screen app.Screen: %T", next)
+	}
+	// The cancel runs in the returned Cmd, off the update goroutine
+	// (cancel_thread_tool_call.go), so nothing has been called yet.
+	if len(threads.callIDs) != 0 {
+		t.Fatalf("CancelSubagentToolCall ran inline on the update goroutine: %v", threads.callIDs)
+	}
+	if cmd == nil {
+		t.Fatal("handleKey returned no Cmd; the cancel would never run")
+	}
+	if _, ok := cmd().(threadToolCallCancelResultMsg); !ok {
+		t.Fatal("the Cmd did not report a threadToolCallCancelResultMsg")
 	}
 	if len(threads.callIDs) != 1 || threads.callIDs[0] != "sa-1" {
 		t.Fatalf("CancelSubagentToolCall callID calls = %v, want exactly [\"sa-1\"]", threads.callIDs)

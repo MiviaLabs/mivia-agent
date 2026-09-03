@@ -176,15 +176,23 @@ func (h *RunHandle) getAttempt(taskID string) string {
 // signalTaskDone closes when that same attempt's executeOne call returns.
 // Safe for concurrent registration across sibling tasks.
 //
-// Retry caveat: each dispatch attempt overwrites the prior entry. A
-// CancelTask call that reads (taskCancelFunc) an attempt's CancelFunc/done
-// channel just before a concurrent RETRY re-registers a fresh attempt would
-// cancel/wait-on the now-stale attempt, then finalize the task as canceled
-// even though a new attempt has since started running. Not reachable on the
-// shipped path (production runs with NoRetry - see this package's
-// RetryPolicy), so this is a latent gap for a retry-enabled configuration,
-// not a shipped-path bug; close it before enabling retries alongside
-// per-task cancel if that combination is ever needed.
+// Retry caveat: each dispatch attempt overwrites the prior entry, so in the
+// abstract a CancelTask call that reads an attempt's CancelFunc/done channel
+// just before a concurrent RETRY re-registers a fresh attempt would
+// cancel/wait-on the stale attempt and then finalize the task as canceled
+// while a new attempt ran.
+//
+// That cannot happen, and NOT because retries are off: [subagents.retry]
+// max_retries is a user-facing setting that merely DEFAULTS to 0, and
+// internal/cliorchestrate wires whatever it is set to
+// (TaskRetryPolicyFromConfig in orchestration_state.go). The real fence is
+// ORDERING plus processResults (dag.go). requestSingleTaskCancel durably
+// CASes the task to cancel_requested BEFORE CancelTask reads taskCancelFunc,
+// so attempt 1's failure reaches processResults with isCancelClaimed already
+// true: the task surfaces as canceled and no second attempt is minted.
+// flushRetries likewise drops queue entries that left retry_pending.
+// Verified with MaxRetries: 2 (attempts=1, ledger "canceled"). Keep that
+// ordering if this code is restructured.
 func (h *RunHandle) registerTaskCancel(taskID string, cancel context.CancelFunc) chan struct{} {
 	done := make(chan struct{})
 	h.taskCancelMu.Lock()
@@ -423,6 +431,12 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 		// structurally possible: without it, there is no per-task CancelFunc
 		// to invoke, only the run-wide one.
 		pool.OnTaskStart = c.onTaskStart
+		// Install the pre-dispatch cancellation fence so a task canceled
+		// after the DAG put it in a batch, but before a worker reached it,
+		// never runs its handler at all (task_start.go
+		// shouldSkipCanceledTask). Without it CancelTask reports success for
+		// such a task while the task goes on doing real work.
+		pool.ShouldSkipTask = c.shouldSkipCanceledTask
 	}
 	return c
 }

@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,17 @@ const (
 	taskCancelWaitBudget   = 5 * time.Second
 )
 
+// ErrTaskCancelNotStopped reports that a per-task cancel was requested and
+// durably recorded (the task sits at cancel_requested), the task's execution
+// context was canceled, and the task STILL had not unwound within
+// taskCancelWaitBudget. The task is very probably still running.
+//
+// It is a distinct outcome from success on purpose: CancelTask must never
+// report success, nor write a terminal canceled row, for a task it cannot
+// show has stopped. A caller should tell the user the task is still running,
+// not that it was canceled.
+var ErrTaskCancelNotStopped = errors.New("task did not stop within the cancel wait budget; it is still running")
+
 // CancelTask cancels exactly ONE task within a run, leaving the run's other
 // in-flight tasks and the run itself untouched. This is deliberately NOT
 // Cancel scoped to one task: Cancel cancels h.poolCtx (the run-wide
@@ -35,6 +47,12 @@ const (
 // process holds no CancelFunc for it at all. Silently no-oping there would
 // claim a cancellation that never happened; CancelTask reports that clearly
 // instead of weakening the whole-run recovered-cancel safety property.
+//
+// Contract: a nil error means the task is settled - it is terminal, or it
+// demonstrably stopped and this call wrote its terminal canceled row.
+// ErrTaskCancelNotStopped means the request is durably recorded but the task
+// did not stop within taskCancelWaitBudget, so nothing terminal was written.
+// Any other error is a failure of the cancel itself.
 func (c *coordinator) CancelTask(ctx context.Context, h *RunHandle, taskID string) error {
 	if err := c.validateHandle(h); err != nil {
 		return err
@@ -61,18 +79,32 @@ func (c *coordinator) CancelTask(ctx context.Context, h *RunHandle, taskID strin
 		select {
 		case <-done:
 		case <-time.After(taskCancelWaitBudget):
-			// The task's executeOne call has not unwound within budget
-			// (e.g. blocked on something that ignores ctx). Fall through to
-			// finalize the ledger anyway: cancel_requested -> canceled is a
-			// valid transition regardless, and onTaskDone's own cancel guard
-			// (task_done.go) means it will never race this finalize once
-			// the worker does eventually return.
+			// The task's executeOne call has NOT unwound within budget
+			// (e.g. a tool that ignores ctx). Report that instead of
+			// finalizing: writing a terminal canceled row here told the
+			// user - and the ledger, and the run's own result set - that a
+			// task had stopped while it demonstrably kept running, and its
+			// output was then silently discarded at run end.
+			//
+			// The task stays at cancel_requested, which is exactly right: it
+			// is a live cancellation request nothing has satisfied yet. The
+			// existing run-end paths (recordRunResults' cancel override, or
+			// reconcileCancellation) still finalize it as canceled once the
+			// task really does stop.
+			return fmt.Errorf("cancel task %q on run %q: %w", taskID, h.runID, ErrTaskCancelNotStopped)
 		}
 	}
 	// Still queued (never dispatched, no CancelFunc registered): the DAG's
 	// own startReady (dag.go) observes cancel_requested via isCancelClaimed
 	// and never dispatches it, settling it in its in-memory results map  -
 	// but that never touches the ledger row. Finalize below either way.
+	//
+	// A task already inside a dispatched batch but not yet picked up by a
+	// worker also has no CancelFunc. That one is NOT settled by this call's
+	// ledger write alone: the pool's own pre-dispatch fence
+	// (Pool.ShouldSkipTask -> shouldSkipCanceledTask, task_start.go) sees the
+	// cancel_requested row and returns a canceled result without ever running
+	// the handler.
 
 	return c.finalizeSingleTaskCancel(h, taskID)
 }
@@ -111,7 +143,14 @@ func (c *coordinator) requestSingleTaskCancel(ctx context.Context, h *RunHandle,
 			return false, nil
 		}
 		if casErr == ledger.ErrConflict {
-			continue // status moved concurrently; re-read and retry
+			// Status moved concurrently: re-read and retry. Deliberately
+			// without finalizeSingleTaskCancel's deadline. Every conflict
+			// means another writer advanced the row's version, and a task's
+			// status walk is monotone towards terminal, so this loop makes
+			// progress on each pass and exits at the first terminal or
+			// cancel_requested read. Adding a deadline here would swap a
+			// bounded retry for a new failure mode, not remove one.
+			continue
 		}
 		return false, fmt.Errorf("request cancel for task %q: %w", taskID, casErr)
 	}

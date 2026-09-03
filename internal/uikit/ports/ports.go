@@ -80,6 +80,31 @@ type Conversation interface {
 type TurnHandle interface {
 	ID() string
 	Events() <-chan uievent.Event // closed on turn end
+	// Cancel ABORTS this turn. That is the ONE authoritative meaning of
+	// this method: the work behind the turn stops, and Events() closes. A
+	// caller that only wants to stop watching a turn has no method here -
+	// dropping the handle is the way to do that.
+	//
+	// KNOWN DIVERGENCE. The subagent transcript handles internal/uiadapter
+	// hands out (SubagentTranscriptConversation.ActiveTurn / .Send, whose
+	// handles are subagentTurnHandle) implement Cancel as DETACH instead:
+	// they remove this listener's channel and close it, and the underlying
+	// coordinator task keeps running. Stopping such a task really needs
+	// SubagentThreads.CancelSubagentTask below, which reaches the
+	// coordinator; Cancel on those handles never does.
+	//
+	// The hazard: ui/screen/conversation's thread.go calls
+	// s.thread.active.Cancel() in openThread and closeThread purely to
+	// detach the dialog's listener, on a handle from whatever Conversation
+	// SubagentThreads.Thread returned - and uiadapter's
+	// registerReconstructed contemplates "any foreign ports.Conversation".
+	// A foreign Conversation honouring THIS contract would have a real
+	// turn aborted by those two sites just because a dialog opened or
+	// closed. Register only detach-implementing conversations there.
+	//
+	// The clean fix is a separate Detach() here, with thread.go pointed at
+	// it. Not done: this interface has more than ten implementations, most
+	// of them test doubles, and each would have to grow the method.
 	Cancel()
 	// CancelToolCall cancels ONE in-flight tool call by its call ID,
 	// leaving the rest of the turn (and any concurrent sibling tool
