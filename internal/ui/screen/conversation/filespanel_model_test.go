@@ -242,3 +242,38 @@ func TestContextSectionSurvivesAnUnknownBudget(t *testing.T) {
 		t.Errorf("totals row %q reports free room against an unknown budget", ansi.Strip(rows[2]))
 	}
 }
+
+// TestLiveUsageKeepsTheBreakdown is the discriminator for the live-turn path:
+// a provider usage event reports a total and no composition, so a screen that
+// adopted it whole would blank every bucket row for the length of a turn while
+// the header above them kept reporting a real share. The rows must follow the
+// live total, still summing to it.
+func TestLiveUsageKeepsTheBreakdown(t *testing.T) {
+	s := contextPanelScreen(t, 40)
+	before := s.topbar.Usage().Breakdown
+	if before.Total() == 0 {
+		t.Fatal("precondition: the seeded session has a breakdown")
+	}
+
+	const liveTotal = 96_000
+	live := ports.Usage{InputTokens: liveTotal}
+	s.liveUsage = &live
+	s.refreshTopbar()
+
+	got := s.topbar.Usage()
+	if got.InputTokens != liveTotal {
+		t.Fatalf("live reading not adopted: InputTokens = %d, want %d", got.InputTokens, liveTotal)
+	}
+	if got.Breakdown.Total() != liveTotal {
+		t.Errorf("breakdown sums to %d, header reports %d: the rows contradict the header mid-turn",
+			got.Breakdown.Total(), liveTotal)
+	}
+	if got.Breakdown.ToolResults <= got.Breakdown.System {
+		t.Errorf("composition lost: ToolResults = %d, System = %d, want the seeded shape preserved",
+			got.Breakdown.ToolResults, got.Breakdown.System)
+	}
+	if got.Breakdown.ToolCount != before.ToolCount {
+		t.Errorf("ToolCount scaled to %d, want %d: a schema count is not a token cost",
+			got.Breakdown.ToolCount, before.ToolCount)
+	}
+}
