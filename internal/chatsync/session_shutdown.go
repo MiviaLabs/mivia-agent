@@ -11,8 +11,9 @@ import (
 // parked and the final append is stalled on a dead network.
 //
 // When the deadline arrives first, Stop returns ctx.Err() and hands the outbox
-// close to a goroutine that waits for the worker, because closing the outbox
-// under a worker still writing to it would race its file handle.
+// close to a goroutine that waits for the worker - which itself waits for the
+// uploader - because closing the outbox under a goroutine still using it
+// would race its file handle.
 func (s *SyncSession) Stop(ctx context.Context) error {
 	if !s.running.CompareAndSwap(true, false) {
 		return nil
@@ -73,10 +74,10 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	// This is a SECOND, independent flush, off the worker. In the ordinary
-	// case drainAndFlushFinal has already emptied the outbox and it is a
-	// no-op. Its failure is CLASSIFIED and recorded, never recovered: the
-	// worker is gone, so recovery's lock discipline has no owner. The
+	// This is a SECOND, independent flush, off the uploader. In the ordinary
+	// case the uploader's final flush has already emptied the outbox and it
+	// is a no-op. Its failure is CLASSIFIED and recorded, never recovered:
+	// the uploader is gone, so recovery's retry schedule has no owner. The
 	// remoteEnded guard means it fires only on non-latching outcomes - an
 	// interval or throttle defer, a transient failure - never after a poison
 	// or a no-progress stop, so a reader must not expect it there.

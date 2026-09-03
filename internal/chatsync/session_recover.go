@@ -31,11 +31,11 @@ var createThrottlePeriod = 5 * time.Minute
 var recoveryInterval = 60 * time.Second
 
 // recoverRemoteSession abandons the current remote session and re-attaches
-// the unflushed backlog onto a fresh one. It runs on the worker.
+// the unflushed backlog onto a fresh one. It runs on the uploader.
 //
 // Lock discipline, which is load-bearing:
 //   - CreateSession runs OUTSIDE s.mu. An HTTP round trip must not hold a
-//     mutex the bus handler path can contend on.
+//     mutex the worker's projection path contends on.
 //   - s.mu is then taken ONCE for the whole mutation: the id swap and
 //     rebaseOntoSessionLocked. Nothing inside calls SessionID() or LastSeq().
 //   - The window between the create and the lock is unguarded, so a
@@ -143,7 +143,9 @@ func (s *SyncSession) handleCreateFailure(ctx context.Context, err error) {
 // rebaseOntoSessionLocked re-bases the outbox onto s.sessionID, which the
 // caller has just set to a freshly created remote session, and records a
 // sync.forked marker naming both sessions so a viewer can follow the move.
-// Two callers: the foreign-writer fork at attach time and recovery.
+// Two callers: the foreign-writer fork at attach time and recovery. The
+// marker's seq is assigned under the same lock projection takes, so a delta
+// the worker projects next lands after it, never on it.
 //
 // The caller must hold s.mu. This function calls only appendLocked, the
 // outbox and the projector, and reads the s.sessionID field directly; it

@@ -47,6 +47,12 @@ type fakeAPI struct {
 	// body arrive twice.
 	appendBatches [][]EventItem
 
+	// appendDelay is the round-trip cost of one POST /events, modelling a
+	// real network. It is what makes an upload serialized on the producer's
+	// goroutine measurable: 1000 appends at 200ms each is 200s single-file
+	// and ~2s batched.
+	appendDelay time.Duration
+
 	rejectAppend     *fakeRejection
 	rejectCreate     *fakeRejection
 	failSessionReads bool
@@ -335,6 +341,19 @@ func (f *fakeAPI) handleAppend(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "Bad Request", "malformed request body")
 		return
+	}
+
+	// The delay is paid OUTSIDE f.mu so a test can read the fake while a
+	// request is in flight, as it could against a real server.
+	f.mu.Lock()
+	delay := f.appendDelay
+	f.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
 	}
 
 	f.mu.Lock()
@@ -640,6 +659,14 @@ func (f *fakeAPI) RejectAppendsWith(status int, code, msg string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rejectAppend = &fakeRejection{status: status, code: code, msg: msg}
+}
+
+// SetAppendDelay makes every later POST /events take at least d before it is
+// applied, modelling one network round trip.
+func (f *fakeAPI) SetAppendDelay(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appendDelay = d
 }
 
 // ClearAppendRejection lifts RejectAppendsWith, modelling a server that came

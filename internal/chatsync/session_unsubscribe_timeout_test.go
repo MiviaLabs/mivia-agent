@@ -48,20 +48,8 @@ func (b *blockingAppender) Append(events ...WireEvent) error {
 // when the deadline expires; releasing it afterwards drives the final drop
 // read. Without the fix that read lands after Unsubscribe.
 func TestSyncSession_UnsubscribeRunsAfterTheFinalDropsReadOnTimeout(t *testing.T) {
-	srv := newStallingServer(t, 1500*time.Millisecond)
-
 	bus := events.New()
-	syncSess, err := OpenSession(context.Background(), bus, "sess-unsub-timeout", SessionOptions{
-		TokenProvider:   testTokenProvider,
-		ClientOptions:   ClientOptions{BaseURL: srv.URL},
-		OutboxDir:       t.TempDir(),
-		MaxUnflushed:    100,
-		CreateTitle:     "Unsubscribe Order On Timeout",
-		HeartbeatPeriod: 10 * time.Minute,
-	})
-	if err != nil {
-		t.Fatalf("OpenSession: %v", err)
-	}
+	syncSess := openStallingUnsubTimeoutSession(t, bus)
 
 	var mu sync.Mutex
 	var order []string
@@ -107,21 +95,54 @@ func TestSyncSession_UnsubscribeRunsAfterTheFinalDropsReadOnTimeout(t *testing.T
 	mu.Unlock()
 	close(blocker.release)
 	waitForAnotherDropRead(t, &mu, &order, readsBefore)
+	// Unsubscribe runs once the worker is done, and the worker now waits for
+	// the uploader's in-flight push before it is - a push the stalling server
+	// holds for 1.5s. The property under test is the ORDER of the two
+	// records, not how soon the second lands, so wait for it (bounded).
+	waitForUnsubscribe(t, &mu, &order)
 
+	assertUnsubscribeAfterFinalDropsRead(t, &mu, &order)
+}
+
+// openStallingUnsubTimeoutSession opens the session this test pins mid-drain
+// against a server that stalls every push for 1.5s, so Stop's short deadline
+// reliably takes the timeout path.
+func openStallingUnsubTimeoutSession(t *testing.T, bus *events.Bus) *SyncSession {
+	t.Helper()
+	srv := newStallingServer(t, 1500*time.Millisecond)
+	syncSess, err := OpenSession(context.Background(), bus, "sess-unsub-timeout", SessionOptions{
+		TokenProvider:   testTokenProvider,
+		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		OutboxDir:       t.TempDir(),
+		MaxUnflushed:    100,
+		CreateTitle:     "Unsubscribe Order On Timeout",
+		HeartbeatPeriod: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	return syncSess
+}
+
+// assertUnsubscribeAfterFinalDropsRead checks the property under test: on
+// the timeout path, Unsubscribe must run after the last recorded Drops()
+// read, never before it.
+func assertUnsubscribeAfterFinalDropsRead(t *testing.T, mu *sync.Mutex, order *[]string) {
+	t.Helper()
 	mu.Lock()
 	defer mu.Unlock()
 
-	unsubAt, lastDropsAt := shutdownOrderIndices(order)
+	unsubAt, lastDropsAt := shutdownOrderIndices(*order)
 	if unsubAt < 0 {
-		t.Fatalf("Unsubscribe never ran; order = %v", order)
+		t.Fatalf("Unsubscribe never ran; order = %v", *order)
 	}
 	if lastDropsAt < 0 {
-		t.Fatalf("the drop counter was never read; order = %v", order)
+		t.Fatalf("the drop counter was never read; order = %v", *order)
 	}
 	if unsubAt < lastDropsAt {
 		t.Errorf("on the TIMEOUT path Unsubscribe ran at index %d, before the final Drops() read at index %d; order = %v. "+
 			"Stop released the subscription while the worker could still read the counter, so shutdown can record a "+
-			"permanent sync.dropped for a hole that never existed.", unsubAt, lastDropsAt, order)
+			"permanent sync.dropped for a hole that never existed.", unsubAt, lastDropsAt, *order)
 	}
 }
 
@@ -166,4 +187,21 @@ func waitForAnotherDropRead(t *testing.T, mu *sync.Mutex, order *[]string, befor
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("the worker never recorded a drop read after being released")
+}
+
+// waitForUnsubscribe waits until the unsubscribe record appears, bounded so a
+// worker that never finishes fails the test instead of hanging it.
+func waitForUnsubscribe(t *testing.T, mu *sync.Mutex, order *[]string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		unsubAt, _ := shutdownOrderIndices(*order)
+		mu.Unlock()
+		if unsubAt >= 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("Unsubscribe never ran after the worker was released")
 }

@@ -151,8 +151,8 @@ type SyncSession struct {
 	opts           SessionOptions
 
 	// health tracks push health for OnDegraded/OnRecovered and status.json.
-	// It has its own lock: the worker records pushes and Stop records the
-	// end, off the worker.
+	// It has its own lock: the uploader records pushes and Stop records the
+	// end, off the uploader.
 	health *syncHealth
 
 	// appender is the outbox write seam. Production always holds the real
@@ -216,11 +216,11 @@ type SyncSession struct {
 	running atomic.Bool
 
 	// retryBase and retryAt hold the jittered push-retry schedule. They are
-	// touched only by the worker goroutine, so they need no lock.
+	// touched only by the uploader goroutine, so they need no lock.
 	retryBase time.Duration
 	retryAt   time.Time
 
-	// Recovery state, worker-goroutine only like the retry schedule.
+	// Recovery state, uploader-goroutine only like the retry schedule.
 	// consecutiveNoProgressRecoveries counts recoveries with no successful
 	// push in between; lastRecoveryAt drives the interval refusal;
 	// consecutiveCreateFailures and createThrottledUntil are the create
@@ -230,8 +230,8 @@ type SyncSession struct {
 	createThrottledUntil            time.Time
 	// consecutiveCreateFailures and createRefusals are the create throttle's
 	// counters: failed attempts, and recovery entries the throttle turned
-	// away without a request. Written by the worker only; atomic so a test
-	// can read them while the worker is parked on the retry schedule and
+	// away without a request. Written by the uploader only; atomic so a test
+	// can read them while the uploader is parked on the retry schedule and
 	// prove a refusal moved the second but not the first.
 	consecutiveCreateFailures atomic.Int32
 	createRefusals            atomic.Int32
@@ -248,14 +248,27 @@ type SyncSession struct {
 	// lastGapBase is the server mark the last sequence-gap rebase used, or
 	// noGapBase when none is outstanding. A second gap at the same mark proves
 	// the rebase moved nothing, which is the loop guard on the rebase path.
-	// Worker-goroutine only, like the retry schedule.
+	// Uploader-goroutine only, like the retry schedule.
 	lastGapBase int64
 
+	// mu guards the projector and the appender. Every projector mutation
+	// happens under it: projection on the worker, and the two network-free
+	// server-failure repairs on the uploader (rebaseOn's ResetSeq, recovery's
+	// id swap and fork marker). No network call ever runs under it.
 	mu      sync.Mutex
 	stopCh  chan struct{}
 	doneCh  chan struct{}
 	eventCh chan events.Event
+	// flushCh wakes the uploader. processEvent signals it after every
+	// append; buffered 1, so a storm of signals coalesces into one wake and
+	// the uploader batches whatever landed during its last round trip.
 	flushCh chan struct{}
+	// finalCh hands the uploader the shutdown deadline for its final flush,
+	// after the worker has drained and appended the tail. uploaderDone
+	// closes when the uploader has returned; the worker waits on it before
+	// closing doneCh, so doneCh still means "nothing touches the outbox".
+	finalCh      chan context.Context
+	uploaderDone chan struct{}
 }
 
 // OpenSession opens or creates a remote session and begins synchronization.
@@ -331,13 +344,15 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 		s.poller.Start(ctx)
 	}
 
+	go s.uploaderLoop(ctx)
 	go s.workerLoop(ctx)
 
 	return s, nil
 }
 
 // newSyncSession builds the session value with every channel, counter and
-// seam in its starting state. The worker is not started here.
+// seam in its starting state. Neither the worker nor the uploader is started
+// here.
 func newSyncSession(localID, remoteID string, initialSeq int64, client *Client, outbox *Outbox, opts SessionOptions, params CreateSessionParams) *SyncSession {
 	s := &SyncSession{
 		localSessionID: localID,
@@ -351,6 +366,8 @@ func newSyncSession(localID, remoteID string, initialSeq int64, client *Client, 
 		doneCh:         make(chan struct{}),
 		eventCh:        make(chan events.Event, eventBufSize(opts.EventBufSize)),
 		flushCh:        make(chan struct{}, 1),
+		finalCh:        make(chan context.Context, 1),
+		uploaderDone:   make(chan struct{}),
 		stopCtxCh:      make(chan context.Context, 1),
 		lastGapBase:    noGapBase,
 		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),

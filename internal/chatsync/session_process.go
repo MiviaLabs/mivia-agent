@@ -35,6 +35,8 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 	}
 	s.mu.Unlock()
 
+	// A wake, not a push: the uploader does the round trip on its own
+	// goroutine, so this returns in microseconds whatever the network does.
 	s.triggerFlush()
 }
 
