@@ -138,15 +138,26 @@ run_go_gates() {
   # `--staged` reads `git diff --cached`, which is empty here - so it covers
   # every commit being pushed, not just the last one.
   if command -v go >/dev/null 2>&1; then
+    # The SAME fallback chain the secret scan above uses, and for the same
+    # reason. `git merge-base @{upstream} HEAD` fails outright when no upstream
+    # is set - which is exactly `git push -u origin <new-branch>`, the first
+    # push of every new branch - and the else-branch then skipped the sweep
+    # while its own comment claimed it diffed against the default branch. The
+    # gate that exists so nothing reaches a remote unswept was silently off for
+    # precisely the pushes that introduce new code.
     local range_base
-    range_base="$(git merge-base @{upstream} HEAD 2>/dev/null || true)"
+    range_base="$(
+      git merge-base HEAD '@{upstream}' 2>/dev/null \
+      || git merge-base HEAD origin/main 2>/dev/null \
+      || git merge-base HEAD origin/master 2>/dev/null \
+      || true
+    )"
     if [[ -n "$range_base" ]]; then
       run_verify python3 "$ROOT/scripts/check_mutation.py" --base "$range_base" --tip HEAD
     else
-      # No upstream to diff against (a brand-new branch): sweep the working
-      # tree's own diff against the default branch, and fall back to skipping
-      # rather than sweeping the entire repository.
-      printf 'pre-push: no upstream for a mutation range; skipping sweep\n' >&2
+      # Nothing to diff against at all - no upstream and no default branch in
+      # this checkout. Skip rather than sweep the entire repository.
+      printf 'pre-push: no base for a mutation range; skipping sweep\n' >&2
     fi
   fi
 }

@@ -104,6 +104,23 @@ func thinkingMessagePayload(eventType string, env Envelope, fragments, bytes int
 	}
 }
 
+// projectThinkingFor routes one reasoning fragment to its own stream, root or
+// lane, and releases the assistant tail first.
+//
+// Reasoning PROVES the prose content block ended - the provider switched block,
+// and no further byte of the prose can arrive before it switches back - so the
+// held tail rides out here rather than waiting for the next tool call. Without
+// it a finished message sat redact.StreamHoldBack bytes short in the viewer for
+// the whole reasoning pass, reading as though it were still streaming.
+func (p *Projector) projectThinkingFor(env Envelope, turnID string, ev events.Event) []WireEvent {
+	flushed := p.flushHeldAssistantOnProseEnd(env, turnID, ev)
+	if isDispatched(ev) {
+		return append(flushed, p.projectSubagentThinking(env, turnID, ev)...)
+	}
+	p.turn(turnID)
+	return append(flushed, p.projectThinking(env, turnID, ev.Content)...)
+}
+
 // settleThinkingFor closes the thinking block of the stream ev belongs to. A
 // dispatched event closes its own lane's block; anything else closes the root
 // turn's. Getting that wrong would settle a subagent's reasoning into the root

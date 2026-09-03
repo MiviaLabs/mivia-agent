@@ -260,8 +260,20 @@ func TestSubagentProseIsRedacted(t *testing.T) {
 	// it has no settled aggregate to fall back to, so suppressing would hide
 	// that the agent is reasoning at all. Redacting per fragment cannot work,
 	// because a pattern spanning two fragments matches neither.
+	// Reasoning also RELEASES the prose tail held above (the block the model
+	// was speaking into has ended), so the thinking delta is picked by type
+	// rather than by position - a fixed index would silently start asserting
+	// on the flushed assistant delta.
 	think := p.Project(subagentEvent(events.KindThinking, "task-1", secret, ""))
-	thinkPayload := think[0].Payload.(*SubagentThinkingDeltaPayload)
+	var thinkPayload *SubagentThinkingDeltaPayload
+	for _, we := range think {
+		if tp, ok := we.Payload.(*SubagentThinkingDeltaPayload); ok {
+			thinkPayload = tp
+		}
+	}
+	if thinkPayload == nil {
+		t.Fatalf("no subagent thinking delta in %v", think)
+	}
 	if thinkPayload.Text != "" {
 		t.Errorf("thinking text = %q, want empty under a redaction policy", thinkPayload.Text)
 	}

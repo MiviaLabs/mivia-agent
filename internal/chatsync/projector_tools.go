@@ -260,7 +260,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 
 	// The aggregate closes the block; the held tail goes out first, as a
 	// delta, because INV-1 is about to empty this message's text.
-	flushed := p.flushHeldAssistant(env, turnID+":"+ev.AgentTask+":assistant", ls, true, false)
+	flushed := p.flushHeldAssistant(env, turnID+":"+ev.AgentTask+":assistant", ls, true, true)
 	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", ls.blockSegment(false))
 	content := redactText(ev.Content)
 
