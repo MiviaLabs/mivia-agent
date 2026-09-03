@@ -16,39 +16,50 @@ import (
 // taken at push time, and a later shrink would leave rows wider than the
 // terminal that Height could not account for.
 func proseLines(text string) []string {
-	return strings.Split(text, "\n")
+	// The renderer terminates its output with a newline, which a plain
+	// Split turns into a trailing empty line. That line is a real row: it
+	// made a turn's prose sit two blank rows above the activity that
+	// followed while activity-to-prose kept one, so the transcript's
+	// spacing was asymmetric in a way no rule asked for.
+	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 }
 
-// userLines renders the user's turn: the accent marker on the first row,
+// userLines renders the user's turn: a bold marker on the first row,
 // continuation rows indented two columns under it (wireframes-panes.md
 // section 4).
 //
-// On colour tiers every row - a blank padding row above and below
-// included - carries the RoleBGSelection background across the FULL
-// terminal width, including under the message text itself: CSS padding
-// plus a full-bleed fill, not a content-width bubble. (The old CLI's
-// full-width bar, internal/cli/msgcard.go, was walked back for a
-// different reason - it burned a whole row on a timestamp alone; this
-// fill carries the message text itself on every row, so that tradeoff
-// does not apply here.) RoleBGSelection rather than RoleBGInset: the inset
-// background already marks the approval prompt and the dialogs, and a
-// user message is a quotation, not a raised surface - the selection
-// background is this theme set's other validated low-lift fill, and no
-// selected-row chrome ever renders beside a transcript message, so the
-// double duty is never ambiguous on screen.
+// The BODY is drawn in RoleFGMuted while the marker stays at full weight,
+// which inverts the emphasis the obvious way round: the reader wrote these
+// words, so they need to FIND the turn, not read it again, and the marker
+// is what does the finding. Recessing the body leaves the agent's reply
+// the brightest prose on screen, which is what the reader is there for.
+//
+// No background fill. An earlier comment here described a full-bleed
+// RoleBGSelection wash on every row, which no code ever applied; it is
+// deleted rather than implemented, for three reasons. RoleBGSelection is
+// simultaneously the drag-select fill and the sidebar's selected-row
+// fill, so a user message wearing it would be indistinguishable from
+// selected text - the old comment's excuse, that no selected-row chrome
+// renders beside a transcript message, stopped being true when the
+// sidebar began drawing one. A full-bleed fill must also paint to the
+// terminal edge on every row, on every repaint. And NO_COLOR strips
+// backgrounds outright (ux-rules 9.4-9.5), so a background would be a
+// cue that vanishes completely for the readers who most need one, while
+// weight survives.
 func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string {
 	display := formatUserDisplay(tier, input)
 	// The marker occupies two columns, so the text measure is that much
 	// narrower and continuations align under the first character.
 	wrapped := render.Wrap(display, render.ProseMeasure(width)-2)
-	marker := render.Role(t, tier, theme.RoleAccent).Render("> ")
+	marker := render.Role(t, tier, theme.RoleAccent).Bold(true).Render("> ")
+	body := render.Role(t, tier, theme.RoleFGMuted)
 	out := make([]string, 0, len(wrapped))
 	for i, line := range wrapped {
 		if i == 0 {
-			out = append(out, marker+line)
+			out = append(out, marker+body.Render(line))
 			continue
 		}
-		out = append(out, "  "+line)
+		out = append(out, "  "+body.Render(line))
 	}
 	return out
 }

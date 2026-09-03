@@ -20,6 +20,7 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"github.com/alecthomas/chroma/v2"
 	chromastyles "github.com/alecthomas/chroma/v2/styles"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
@@ -70,7 +71,41 @@ func Markdown(t theme.Theme, tier theme.Tier, width int, in string) (out string)
 	if err != nil {
 		return in
 	}
-	return rendered
+	return trimTrailingBlanks(rendered)
+}
+
+// trimTrailingBlanks removes the padding glamour adds to the right of
+// every wrapped line.
+//
+// Glamour fills each paragraph line out to the wrap width with spaces,
+// and at the true-colour tier it styles them: one full SGR pair per
+// space, so a short line of prose ships sixty-odd escape sequences of
+// invisible trailing whitespace. That is paid on every repaint, it makes
+// every downstream width measurement walk bytes that draw nothing, and
+// the moment any surface puts a background behind prose the padding
+// would paint it past the text.
+//
+// The cut is by DISPLAY COLUMN, not by byte, because the trailing run is
+// escape sequences interleaved with spaces; a byte-wise TrimRight sees
+// the escapes, not the spaces, and trims nothing. A cut line gets an
+// explicit reset: ansi.Cut re-emits the styles active at the boundary
+// but need not close them, and an unclosed style bleeds onto the row
+// below.
+func trimTrailingBlanks(out string) string {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		plain := xansi.Strip(line)
+		trimmed := strings.TrimRight(plain, " ")
+		if len(trimmed) == len(plain) {
+			continue
+		}
+		cut := xansi.Cut(line, 0, xansi.StringWidth(trimmed))
+		if strings.Contains(cut, "\x1b") {
+			cut += "\x1b[m"
+		}
+		lines[i] = cut
+	}
+	return strings.Join(lines, "\n")
 }
 
 // chromaFormatter returns the chroma formatter name that matches the
