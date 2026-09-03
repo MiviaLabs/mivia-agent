@@ -89,9 +89,9 @@ func threadScreen(t *testing.T, threads ports.SubagentThreads, withFile bool) Sc
 	// openPanel lands on the model row; these tests act on sa-1, which
 	// sits after the model row and any file row.
 	if withFile {
-		scr.panel.list.MoveTo(2)
+		scr.panel.selectNavKind(navAgent, 1)
 	} else {
-		scr.panel.list.MoveTo(1)
+		scr.panel.selectNavKind(navAgent, 0)
 	}
 	return scr
 }
@@ -232,9 +232,15 @@ func TestSubagentThreadEscClosesWithoutLeaking(t *testing.T) {
 // TestArrowsWalkSubagentsToo: the list's cursor covers every section -
 // past the files onto the subagent rows, with the marker following.
 func TestArrowsWalkSubagentsToo(t *testing.T) {
-	s := threadScreen(t, nil, true)                         // one file, one subagent
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // file -> agent
-	s = next.(Screen)
+	s := threadScreen(t, nil, true) // one file, one subagent
+	// Walk with the arrow key rather than jumping: the point of the test
+	// is that the cursor CROSSES from the file section into the subagent
+	// section, so every stop on the way is part of the contract.
+	s.panel.selectNavKind(navFile, 0)
+	for i := 0; i < 2; i++ { // the file, then the subagents header
+		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
 	if a, ok := s.panel.selectedAgent(); !ok || a.ID != "sa-1" {
 		t.Fatalf("down did not walk onto the subagent row (selected %+v)", a)
 	}
@@ -647,7 +653,7 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	// Open sidebar panel
 	scr = openPanel(t, scr)
 
-	scr.panel.list.MoveTo(1) // model row -> the subagent
+	scr.panel.selectNavKind(navAgent, 0)
 	// Focus is on the subagent row in the panel
 	a, isAgent := scr.panel.selectedAgent()
 	if !isAgent || a.ID != "call_disp_99:task-leak-check" {
@@ -765,7 +771,7 @@ func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 
 	// 2. Open sidebar and select sa-done (history)
 	scr = openPanel(t, scr)
-	scr.panel.list.MoveTo(1) // sa-done is the first row after the model row
+	scr.panel.selectNavKind(navAgent, 0) // sa-done
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -787,7 +793,7 @@ func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 	// 3. Select sa-live (running subagent) - the composer stays hidden
 	// even though the subagent has not reached a terminal status: the
 	// operator has no real channel to it either way (see openThread).
-	scr.panel.list.MoveTo(2) // sa-live is the second row after the model row
+	scr.panel.selectNavKind(navAgent, 1) // sa-live
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -823,8 +829,8 @@ func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
 
 	// Open subagent dialog while running: still read-only.
 	scr = openPanel(t, scr)
-	scrDown, _ := scr.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // model row -> sa-task
-	scr = scrDown.(Screen)
+	// Select by what the row IS: the header rows above it move.
+	scr.panel.selectNavKind(navAgent, 0) // sa-task
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 

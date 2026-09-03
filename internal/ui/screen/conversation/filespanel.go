@@ -194,6 +194,25 @@ type panel struct {
 	open    bool
 	focused bool
 	dialog  bool
+
+	// Per-section fold state. During a long run the files and subagents
+	// lists grow without bound and push each other off the pane; folding
+	// one is how a reader keeps the other in view. The context section
+	// folds to its header for the same reason.
+	contextCollapsed bool
+	filesCollapsed   bool
+	agentsCollapsed  bool
+
+	// selKey names the row the cursor was last MOVED to, captured at the
+	// moment of the move.
+	//
+	// A rebind cannot work this out for itself. Live mutations append
+	// rows and then rebind, so by the time the rebind runs the cursor
+	// index already points into a list that changed underneath it: a file
+	// arriving above the subagents header made the header's index name a
+	// file instead, and the "restore" faithfully restored the wrong row.
+	// Capturing at the move is the only point where index and model agree.
+	selKey string
 }
 
 // newPanel builds the panel's zero state; entries arrive live from
@@ -230,20 +249,36 @@ func (p *panel) appendLive(d uievent.Diff) {
 // session's model. Enter or a double-click on it opens the model picker
 // (the same dialog "/model" opens); the row is drawn from the top bar's
 // session info, so this label is only the list's stable name for it.
-const modelRowLabel = "model"
+const (
+	modelRowLabel     = "model"
+	contextRowLabel   = "context"
+	filesHeaderLabel  = "files changed"
+	agentsHeaderLabel = "subagents"
+)
 
-// rowLabels is the selectable list in render order: the model row, then
-// files, then subagents. The picker's cursor indexes this list;
-// panelRows draws the same order, so the marked row is always the row
-// the next key acts on.
+// rowLabels is the selectable list in render order, derived from the one
+// row plan navGroups builds. Deriving it means the picker's list and the
+// drawn rows cannot disagree about what is selectable or in what order -
+// they used to be two hand-kept sequences.
 func (p panel) rowLabels() []string {
-	names := make([]string, 0, 1+len(p.entries)+len(p.agents))
-	names = append(names, modelRowLabel)
-	for _, e := range p.entries {
-		names = append(names, e.rowLabel())
-	}
-	for _, a := range p.agents {
-		names = append(names, a.rowLabel())
+	files, agents := p.visibleRows()
+	sel := p.navSelectable()
+	names := make([]string, 0, len(sel))
+	for _, g := range sel {
+		switch g.kind {
+		case navContextHeader:
+			names = append(names, contextRowLabel)
+		case navModel:
+			names = append(names, modelRowLabel)
+		case navFilesHeader:
+			names = append(names, filesHeaderLabel)
+		case navFile:
+			names = append(names, files[g.at].rowLabel())
+		case navAgentsHeader:
+			names = append(names, agentsHeaderLabel)
+		case navAgent:
+			names = append(names, agents[g.at].rowLabel())
+		}
 	}
 	return names
 }
@@ -259,88 +294,140 @@ func (p panel) visibleRows() ([]fileEntry, []subagentRow) {
 }
 
 // selectionKey names the selected row by what it IS (a file's path, a
-// subagent's id) rather than by its render label, which changes as
-// statuses tick - so a rebind can hold the same row across a label
-// change.
+// subagent's id, a section) rather than by its render label, which
+// changes as statuses tick - so a rebind can hold the same row across a
+// label change.
 func (p panel) selectionKey() string {
 	entries, agents := p.visibleRows()
-	idx := p.list.CursorRow()
-	if idx < 0 {
+	g, ok := p.navCursor()
+	if !ok {
 		return ""
 	}
-	if idx == 0 {
+	switch g.kind {
+	case navContextHeader:
+		return "s:context"
+	case navModel:
 		return "m:" + modelRowLabel
-	}
-	idx-- // the model row
-	if idx < len(entries) {
-		return "f:" + entries[idx].Path
-	}
-	idx -= len(entries)
-	if idx >= 0 && idx < len(agents) {
-		return "a:" + agents[idx].ID
+	case navFilesHeader:
+		return "s:files"
+	case navAgentsHeader:
+		return "s:agents"
+	case navFile:
+		if g.at < len(entries) {
+			return "f:" + entries[g.at].Path
+		}
+	case navAgent:
+		if g.at < len(agents) {
+			return "a:" + agents[g.at].ID
+		}
 	}
 	return ""
 }
 
 // modelRowSelected reports whether the list highlights the model row.
-func (p panel) modelRowSelected() bool { return p.list.CursorRow() == 0 }
+func (p panel) modelRowSelected() bool {
+	g, ok := p.navCursor()
+	return ok && g.kind == navModel
+}
+
+// sectionHeaderSelected reports whether the list highlights a foldable
+// section header, which is what left/right and Enter act on.
+func (p panel) sectionHeaderSelected() bool {
+	g, ok := p.navCursor()
+	return ok && g.collapsible()
+}
+
+// noteSelection records what the cursor is on, for the next rebind.
+// Every deliberate cursor move calls it; live mutations must not.
+func (p *panel) noteSelection() { p.selKey = p.selectionKey() }
 
 func (p *panel) rebindIfOpen() {
 	if !p.open {
 		return
 	}
-	keep := p.selectionKey()
+	keep := p.selKey
+	if keep == "" {
+		keep = p.selectionKey()
+	}
 	p.list.Rebind(p.rowLabels())
 	if keep == "" || p.list.Filter() != "" {
 		// A filter may exclude the held row; Rebind has already clamped
 		// the cursor to the filtered list, which is the best hold
 		// available.
+		p.noteSelection()
 		return
 	}
-	if keep == "m:"+modelRowLabel {
-		p.list.MoveTo(0)
-		return
-	}
-	for i, e := range p.entries {
-		if keep == "f:"+e.Path {
-			p.list.MoveTo(1 + i)
+	// Re-find the held row through the same plan the list was built
+	// from, so a held selection survives a fold, an unfold, and a row
+	// arriving above it without a second copy of the ordering here.
+	files, agents := p.visibleRows()
+	for i, g := range p.navSelectable() {
+		var key string
+		switch g.kind {
+		case navContextHeader:
+			key = "s:context"
+		case navModel:
+			key = "m:" + modelRowLabel
+		case navFilesHeader:
+			key = "s:files"
+		case navAgentsHeader:
+			key = "s:agents"
+		case navFile:
+			if g.at < len(files) {
+				key = "f:" + files[g.at].Path
+			}
+		case navAgent:
+			if g.at < len(agents) {
+				key = "a:" + agents[g.at].ID
+			}
+		}
+		if key == keep {
+			p.list.MoveTo(i)
+			p.selKey = keep
 			return
 		}
 	}
-	for i, a := range p.agents {
-		if keep == "a:"+a.ID {
-			p.list.MoveTo(1 + len(p.entries) + i)
-			return
-		}
-	}
+	// The held row is gone (a file dropped, an agent cleared). Whatever
+	// the clamp left under the cursor is the new selection.
+	p.noteSelection()
 }
 
-// selectedAgent returns the subagent the list highlights, if any: the
-// cursor walks files and subagents alike.
+// selectedAgent returns the subagent the list highlights, if any.
 func (p panel) selectedAgent() (subagentRow, bool) {
-	entries, agents := p.visibleRows()
-	idx := p.list.CursorRow() - 1 - len(entries) // past the model row and the files
-	if idx < 0 || idx >= len(agents) {
+	_, agents := p.visibleRows()
+	g, ok := p.navCursor()
+	if !ok || g.kind != navAgent || g.at < 0 || g.at >= len(agents) {
 		return subagentRow{}, false
 	}
-	return agents[idx], true
+	return agents[g.at], true
 }
 
 // the model row: opening the sidebar is how the model is changed.
 func (p *panel) openPanel() {
 	p.open, p.focused, p.dialog, p.dialogAgent = true, true, false, ""
 	p.rebindIfOpen()
+	p.list.Rebind(p.rowLabels())
+	// The model row, not index 0: the context header now sits above it,
+	// and opening the sidebar is still how the model gets changed.
+	for i, g := range p.navSelectable() {
+		if g.kind == navModel {
+			p.list.MoveTo(i)
+			p.noteSelection()
+			return
+		}
+	}
 	p.list.MoveTo(0)
+	p.noteSelection()
 }
 
 // selected returns the file entry the list highlights.
 func (p panel) selected() (fileEntry, bool) {
 	entries, _ := p.visibleRows()
-	idx := p.list.CursorRow() - 1 // past the model row
-	if idx < 0 || idx >= len(entries) {
+	g, ok := p.navCursor()
+	if !ok || g.kind != navFile || g.at < 0 || g.at >= len(entries) {
 		return fileEntry{}, false
 	}
-	return entries[idx], true
+	return entries[g.at], true
 }
 
 // contentRows is the selected file's content: its diff, or its
@@ -454,32 +541,35 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 	return s.panel.filterEntries(needle)
 }
 
-// selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
-// It accounts for sidebar windowing (maxRows) and individual group heights (1 line per file,
-// 2 lines per subagent row). contextRows is the context section's height, passed in rather
-// than derived here because only the Screen knows whether the budget is capped.
+// selectNavRow maps a rendered row in the nav sidebar to the picker row
+// drawn there, and moves the cursor to it. It reports false when the row
+// belongs to no selectable group, so the caller can ignore the click.
+//
+// The map comes from the same navGroups plan and the same window bounds
+// the renderer uses, so a click cannot land on a row other than the one
+// under the pointer. contextRows is passed in rather than derived here
+// because only the Screen knows how tall the context section draws.
 func (p *panel) selectNavRow(clickRow, maxRows, contextRows int) bool {
 	if clickRow < 0 {
 		return false
 	}
-	visible, agents := p.visibleRows()
-	groupLens := panelGroupLens(contextRows, len(visible), len(agents))
-	selIdx := p.list.CursorRow()
-	selGroup := panelSelGroup(selIdx, contextRows, len(visible), len(agents))
-	startGroup, endGroup := panelWindowGroupBounds(groupLens, selGroup, maxRows, false)
+	plan := p.navGroups(contextRows)
+	selGroup := navSelGroup(plan, p.list.CursorRow())
+	startGroup, endGroup := panelWindowGroupBounds(navGroupLens(plan), selGroup, maxRows, false)
 
-	curLine := 0
+	line := 0
 	for gIdx := startGroup; gIdx < endGroup; gIdx++ {
-		gLen := groupLens[gIdx]
-		if clickRow >= curLine && clickRow < curLine+gLen {
-			pickerIdx := panelGroupToPickerIdx(gIdx, contextRows, len(visible), len(agents))
-			if pickerIdx >= 0 {
-				p.list.MoveTo(pickerIdx)
-				return true
+		g := plan[gIdx]
+		if clickRow >= line && clickRow < line+g.lines {
+			pickerIdx := navPickerIndex(plan, gIdx)
+			if pickerIdx < 0 {
+				return false
 			}
-			return false
+			p.list.MoveTo(pickerIdx)
+			p.noteSelection()
+			return true
 		}
-		curLine += gLen
+		line += g.lines
 	}
 	return false
 }
@@ -539,6 +629,13 @@ func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	paneH := max(1, s.contentHeight())
 	innerNavH := max(1, paneH-2)
 	if !s.panel.selectNavRow(clickRow, innerNavH, s.contextSectionRows(innerNavH)) {
+		return *s, nil
+	}
+	// A click on a section header folds or unfolds it: the header draws
+	// the marker, so it is the affordance, and a marker the mouse cannot
+	// work is a control that lies about being one.
+	if s.panel.sectionHeaderSelected() {
+		s.panel.toggleSection()
 		return *s, nil
 	}
 	if s.panel.modelRowSelected() {

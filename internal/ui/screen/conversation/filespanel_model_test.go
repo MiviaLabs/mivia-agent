@@ -26,8 +26,11 @@ func modelPanelScreen(t *testing.T) Screen {
 // row first, and the row names the session's model.
 func TestOpenPanelLandsOnTheModelRow(t *testing.T) {
 	s := openPanel(t, modelPanelScreen(t))
-	if got := s.panel.list.CursorRow(); got != 0 {
-		t.Fatalf("cursor after open = %d, want 0 (the model row)", got)
+	// Asserted by WHAT the cursor is on, not by its index: the context
+	// header now sits above the model row, and a test that pinned the
+	// number would have to be rewritten every time a row is added above.
+	if !s.panel.modelRowSelected() {
+		t.Fatalf("cursor after open is not on the model row (index %d)", s.panel.list.CursorRow())
 	}
 	view := ansi.Strip(s.View())
 	// The screen refreshes the top bar's session from its conversation on

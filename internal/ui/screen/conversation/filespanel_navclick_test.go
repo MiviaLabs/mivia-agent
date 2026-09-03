@@ -59,14 +59,16 @@ func TestNavClick_TwoLineAgentRowsUnwindowed(t *testing.T) {
 		{"header: files changed", 6, false, "", "", 0},
 		{"header: subagents", 9, false, "", "", 0},
 		{"out-of-range below", 19, false, "", "", 0},
-		{"file 0", 7, true, "", "f0.go", 1},
-		{"file 1", 8, true, "", "f1.go", 2},
-		{"agent-0 name line", 10, true, "agent-0", "", 3},
-		{"agent-0 metrics line", 11, true, "agent-0", "", 3},
-		{"agent-1 name line", 12, true, "agent-1", "", 4},
-		{"agent-1 metrics line", 13, true, "agent-1", "", 4},
-		{"agent-2 name line", 14, true, "agent-2", "", 5},
-		{"agent-2 metrics line", 15, true, "agent-2", "", 5},
+		// Picker indices count the selectable rows: context header,
+		// model, files header, the files, subagents header, the agents.
+		{"file 0", 7, true, "", "f0.go", 3},
+		{"file 1", 8, true, "", "f1.go", 4},
+		{"agent-0 name line", 10, true, "agent-0", "", 6},
+		{"agent-0 metrics line", 11, true, "agent-0", "", 6},
+		{"agent-1 name line", 12, true, "agent-1", "", 7},
+		{"agent-1 metrics line", 13, true, "agent-1", "", 7},
+		{"agent-2 name line", 14, true, "agent-2", "", 8},
+		{"agent-2 metrics line", 15, true, "agent-2", "", 8},
 	}
 
 	for _, tc := range tests {
@@ -133,8 +135,7 @@ func TestNavClick_ScrolledWindow(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			s.panel.observeAgentStart(fmt.Sprintf("agent-%d", i), fmt.Sprintf("agent-%d", i))
 		}
-		// The cursor sits on the last agent: model row + 10 files + 4.
-		s.panel.list.MoveTo(15)
+		s.panel.selectNavKind(navAgent, 4) // the last agent
 		return s
 	}
 
@@ -145,8 +146,10 @@ func TestNavClick_ScrolledWindow(t *testing.T) {
 	if !res.panel.dialog || res.panel.dialogAgent != "agent-0" {
 		t.Errorf("dialog = %v, agent = %q; want agent-0", res.panel.dialog, res.panel.dialogAgent)
 	}
-	if cur := res.panel.list.CursorRow(); cur != 11 { // model row + 10 files + agent 0
-		t.Errorf("cursor = %d, want 11", cur)
+	// context header, model, files header, 10 files, subagents header,
+	// then agent-0.
+	if cur := res.panel.list.CursorRow(); cur != 14 {
+		t.Errorf("cursor = %d, want 14", cur)
 	}
 
 	// A file row in the same window opens its diff.
@@ -160,8 +163,8 @@ func TestNavClick_ScrolledWindow(t *testing.T) {
 	if !ok || entry.Path != "f09.go" {
 		t.Errorf("selected file = %+v, want f09.go", entry)
 	}
-	if cur := res.panel.list.CursorRow(); cur != 10 {
-		t.Errorf("cursor = %d, want 10", cur)
+	if cur := res.panel.list.CursorRow(); cur != 12 {
+		t.Errorf("cursor = %d, want 12", cur)
 	}
 
 	// A section header selects nothing and opens nothing.
@@ -244,7 +247,7 @@ func TestNavClickThroughHandleClickSelectsTheClickedRow(t *testing.T) {
 	if !s.panel.dialog {
 		t.Fatalf("click at screen row %d opened no dialog", bRow)
 	}
-	if got := s.panel.list.CursorRow(); got != 2 {
-		t.Errorf("click on the rendered b.go row left the cursor at %d, want 2 (b.go, after the model row and a.go)", got)
+	if got := s.panel.list.CursorRow(); got != 4 {
+		t.Errorf("click on the rendered b.go row left the cursor at %d, want 4 (b.go, after the context header, model row, files header and a.go)", got)
 	}
 }

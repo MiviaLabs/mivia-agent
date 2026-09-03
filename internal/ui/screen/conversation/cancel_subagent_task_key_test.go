@@ -32,7 +32,7 @@ func selectSubagentRow(t *testing.T, id string) Screen {
 	t.Helper()
 	s := openPanel(t, panelScreen(t, 100, 24))
 	s.panel.observeAgentStart(id, id)
-	s.panel.list.MoveTo(1)
+	s.panel.selectNavKind(navAgent, 0)
 	if _, isAgent := s.panel.selectedAgent(); !isAgent {
 		t.Fatal("setup: the subagent row is not selected")
 	}
@@ -73,7 +73,7 @@ func TestCancelSubagentTaskKey_NoSelectionIsNoOp(t *testing.T) {
 	threads := &recordingSubagentThreads{stubThreads: stubThreads{}, ok: true}
 	s := openPanel(t, panelScreen(t, 100, 24, sampleDiffs()...))
 	s.threads = threads
-	s.panel.list.MoveTo(1) // a file row, no subagent tracked
+	s.panel.selectNavKind(navFile, 0) // a file row, no subagent tracked
 
 	next, _ := s.handleKey(tea.KeyPressMsg{Text: "x", Code: 'x'})
 	if _, ok := next.(Screen); !ok {
