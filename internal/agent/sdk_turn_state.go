@@ -146,7 +146,7 @@ type sdkTurnState struct {
 // blank callID is a no-op (mirrors the existing callKey == ""
 // guards elsewhere in this file for ID-less test fixtures).
 func (s *sdkTurnState) registerCancel(callID string, cancel context.CancelFunc) {
-	if s == nil && callID != "" || cancel == nil {
+	if s == nil || callID == "" || cancel == nil {
 		return
 	}
 	s.cancelMu.Lock()

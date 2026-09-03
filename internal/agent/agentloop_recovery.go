@@ -35,7 +35,7 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 		return runSDKSteerable(ctx, loop, opts, msgs, turn)
 	}
 	res, err := run(preparedMsgs)
-	if err == nil && opts.DisableProviderReplay ||
+	if err == nil || opts.DisableProviderReplay ||
 		(!errors.Is(err, provider.ErrPromptTooLong) && !errors.Is(err, sdkshape.ErrPromptTooLong)) {
 		return res, err
 	}
