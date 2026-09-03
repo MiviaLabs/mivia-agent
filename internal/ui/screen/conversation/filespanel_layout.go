@@ -196,20 +196,29 @@ func (s Screen) panelModelRow(selected bool) string {
 const contextDetailMinRows = 24
 
 // contextSummaryRows and contextDetailRows are the section's two heights:
-// header + bar + totals, and those plus one row per bucket.
+// header + bar + totals, and those plus one row per bucket. A capped budget
+// adds one more row in either mode to say so.
 const (
 	contextSummaryRows = 3
-	contextDetailRows  = contextSummaryRows + 6
+	contextDetailRows  = contextSummaryRows + 7
 )
 
 // contextSectionRows is how many rows the context section draws in a sidebar
 // body of maxRows. Every consumer of the sidebar's group map calls it, so the
 // click map and the drawn rows cannot disagree about the section's height.
-func contextSectionRows(maxRows int) int {
+//
+// The height depends on the body and on whether the budget is capped, both of
+// which are fixed for a session, so nothing below the section moves as tokens
+// accumulate.
+func (s Screen) contextSectionRows(maxRows int) int {
+	rows := contextSummaryRows
 	if maxRows >= contextDetailMinRows {
-		return contextDetailRows
+		rows = contextDetailRows
 	}
-	return contextSummaryRows
+	if s.topbar.Info().BudgetIsCapped() {
+		rows++
+	}
+	return rows
 }
 
 // tokensShort renders a token count the way the sidebar's narrow column can
@@ -225,7 +234,9 @@ func tokensShort(n int64) string {
 	case n < 1_000_000:
 		return strconv.FormatInt(n/1000, 10) + "k"
 	default:
-		return strconv.FormatFloat(float64(n)/1_000_000, 'f', 1, 64) + "M"
+		// One decimal, but never a bare ".0": a 1M window is "1M", not
+		// "1.0M", and the extra glyph is a column the sidebar cannot spare.
+		return strings.TrimSuffix(strconv.FormatFloat(float64(n)/1_000_000, 'f', 1, 64), ".0") + "M"
 	}
 }
 
@@ -300,7 +311,15 @@ func (s Screen) panelContextRows(inner, maxRows int) []string {
 	}
 	rows = append(rows, totals)
 
-	if contextSectionRows(maxRows) == contextSummaryRows {
+	// A budget far below the model's own window is a choice made in config,
+	// not the model's limit. Unsaid, the gauge reads as capacity that went
+	// missing: a 400k budget on a 1M-window model looks like 600k lost.
+	if info := s.topbar.Info(); info.BudgetIsCapped() {
+		rows = append(rows, panelSpreadRow(inner,
+			"capped from "+tokensShort(info.DeclaredWindow), "", border, border))
+	}
+
+	if maxRows < contextDetailMinRows {
 		return rows
 	}
 	b := usage.Breakdown
@@ -310,6 +329,11 @@ func (s Screen) panelContextRows(inner, maxRows int) []string {
 	}{
 		{"system", b.System},
 		{"tools (" + strconv.Itoa(b.ToolCount) + ")", b.ToolSchemas},
+		// Server-supplied schemas get their own row because they are the part
+		// of the floor an operator can actually remove, by turning a server
+		// off. Drawn at zero when no server is connected, so the block keeps
+		// its height.
+		{"servers (" + strconv.Itoa(b.ExternalToolCount) + ")", b.ExternalSchemas},
 		{"memory", b.Memory + b.Summary},
 		{"messages", b.Prose},
 		{"results", b.ToolResults},

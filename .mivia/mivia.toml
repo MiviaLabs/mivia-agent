@@ -4,16 +4,16 @@ env_file = '~/.mivia/.env'
 default_mode = 'always'
 
 [chat]
-# The gauge divides by this budget, not by the model's raw window, and
-# compaction fires at 80% of it. At 200000 against a 1M-window model that made
-# the bar read ~6x high and forced a compaction every ~160k tokens - the
-# database shows two firing at before=160,176 and before=160,230.
+# max_prompt_tokens is deliberately unset: the budget is the bound model's own
+# window minus its output reserve, so a 1M-window model gets its whole window
+# rather than an operator clamp. A model's declared capacity is the capacity.
 #
-# 400000 halves that compaction churn and the summarizer calls and cache
-# invalidations it costs, while staying far below the point where removing the
-# clamp entirely would hand the summarizer ~800k tokens in one call. It also
-# keeps the working context inside the range where recall stays reliable.
-max_prompt_tokens = 400000
+# What the clamp used to buy, and what is given up by removing it: the gauge
+# divides by this budget and compaction fires at 80% of it, so glm-5.3-flash
+# now runs to a 1,015,808 budget and compacts near 810k instead of 320k. Fewer
+# summarizer calls, each far larger and invalidating more of the prefix cache.
+# If compaction latency or recall on long sessions degrades, this is the first
+# knob to reach for; set it below the window rather than raising it.
 max_steps = 0
 show_iteration_notices = false
 # On while the context-burn work is being tuned: this is the only surface that

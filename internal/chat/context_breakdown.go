@@ -24,22 +24,28 @@ const summaryMessageName = "context-summary"
 // same screen - the exact failure the gauge-versus-trigger comment on
 // ContextUsage records.
 type ContextBreakdown struct {
-	System      int
-	ToolSchemas int
-	// ToolCount is the number of registered tool schemas, not a token cost:
-	// "21k across 48 tools" is what makes the cost actionable, because the
-	// unit a user can remove is a server or a tool, never a token.
-	ToolCount   int
-	Memory      int
-	Summary     int
-	Prose       int
-	ToolResults int
-	Reasoning   int
+	System int
+	// ToolSchemas is the cost of the compiled-in tools; ExternalSchemas is
+	// the cost of the ones a server supplied. They are separate because only
+	// the second is removable by turning something off, which is the whole
+	// point of reporting a schema cost at all.
+	ToolSchemas     int
+	ExternalSchemas int
+	// ToolCount and ExternalToolCount are numbers of schemas, not token
+	// costs: "8k across 19 tools" is what makes the cost actionable, because
+	// the unit anyone can remove is a tool or a server, never a token.
+	ToolCount         int
+	ExternalToolCount int
+	Memory            int
+	Summary           int
+	Prose             int
+	ToolResults       int
+	Reasoning         int
 }
 
 // Floor is the part of the estimate compaction cannot reclaim.
 func (b ContextBreakdown) Floor() int {
-	return b.System + b.ToolSchemas + b.Memory + b.Summary
+	return b.System + b.ToolSchemas + b.ExternalSchemas + b.Memory + b.Summary
 }
 
 // Conversation is the part compaction reclaims.
@@ -55,15 +61,29 @@ func (b ContextBreakdown) Total() int { return b.Floor() + b.Conversation() }
 // Total equals that function's result for the same inputs. The request frame
 // lands on System: it is fixed per-request overhead, which is what that bucket
 // already means.
-func breakdown(messages []provider.Message, toolSpecs []provider.ToolSpec, profile provider.ContextAccountingProfile) (ContextBreakdown, error) {
-	schemaCost, err := provider.EstimateToolSchemaCost(toolSpecs)
-	if err != nil {
-		return ContextBreakdown{}, err
-	}
-	b := ContextBreakdown{
-		System:      provider.RequestFrameTokens,
-		ToolSchemas: schemaCost,
-		ToolCount:   len(toolSpecs),
+func breakdown(
+	messages []provider.Message,
+	toolSpecs []provider.ToolSpec,
+	external map[string]string,
+	profile provider.ContextAccountingProfile,
+) (ContextBreakdown, error) {
+	b := ContextBreakdown{System: provider.RequestFrameTokens}
+	for _, spec := range toolSpecs {
+		// Priced one at a time so each schema lands in the bucket for its
+		// origin. EstimateToolSchemaCost over a single-element slice is the
+		// same charge it makes inside the whole-list call, so the parts still
+		// add up to what the estimator would have reported.
+		cost, err := provider.EstimateToolSchemaCost([]provider.ToolSpec{spec})
+		if err != nil {
+			return ContextBreakdown{}, err
+		}
+		if _, fromServer := external[toolSpecName(spec)]; fromServer {
+			b.ExternalSchemas += cost
+			b.ExternalToolCount++
+			continue
+		}
+		b.ToolSchemas += cost
+		b.ToolCount++
 	}
 	for index := range messages {
 		msg := messages[index]
@@ -86,6 +106,19 @@ func breakdown(messages []provider.Message, toolSpecs []provider.ToolSpec, profi
 	return b, nil
 }
 
+// toolSpecName digs the function name out of an OpenAI tool spec. A spec
+// whose shape does not match returns "", which no server tool is keyed by, so
+// an unreadable spec is charged as compiled-in rather than misattributed to a
+// server the operator would then go looking for.
+func toolSpecName(spec provider.ToolSpec) string {
+	fn, ok := spec["function"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	name, _ := fn["name"].(string)
+	return name
+}
+
 // scaleTo rescales every bucket so the fields sum to exactly total, the
 // calibrated number the gauge reports. Integer division loses at most one
 // token per bucket, so the drift is handed to the largest bucket - the one
@@ -98,11 +131,11 @@ func (b ContextBreakdown) scaleTo(total int) ContextBreakdown {
 	raw := b.Total()
 	if raw <= 0 || total <= 0 || raw == total {
 		if raw <= 0 {
-			return ContextBreakdown{ToolCount: b.ToolCount}
+			return b.countsOnly()
 		}
 		return b
 	}
-	scaled := ContextBreakdown{ToolCount: b.ToolCount}
+	scaled := b.countsOnly()
 	fields := b.fields()
 	out := scaled.fields()
 	for i, v := range fields {
@@ -124,7 +157,13 @@ func (b ContextBreakdown) scaleTo(total int) ContextBreakdown {
 // scaleTo. ToolCount is deliberately absent: it is a count of schemas, not a
 // token cost, and scaling it would corrupt it.
 func (b *ContextBreakdown) fields() []*int {
-	return []*int{&b.System, &b.ToolSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+	return []*int{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+}
+
+// countsOnly is an empty breakdown that keeps the schema counts, which are
+// not token costs and so survive any rescaling of the costs.
+func (b ContextBreakdown) countsOnly() ContextBreakdown {
+	return ContextBreakdown{ToolCount: b.ToolCount, ExternalToolCount: b.ExternalToolCount}
 }
 
 // calibratedBreakdown is breakdown followed by scaleTo(used): the buckets a
@@ -132,15 +171,16 @@ func (b *ContextBreakdown) fields() []*int {
 func calibratedBreakdown(
 	messages []provider.Message,
 	toolSpecs []provider.ToolSpec,
+	external map[string]string,
 	profile provider.ContextAccountingProfile,
 	used int,
 ) ContextBreakdown {
-	raw, err := breakdown(messages, toolSpecs, profile)
+	raw, err := breakdown(messages, toolSpecs, external, profile)
 	if err != nil {
 		// The same schema-marshal failure EstimatePromptCost reports. The
 		// gauge still has a total to show, so the breakdown degrades to the
-		// tool count alone rather than taking the section down with it.
-		return ContextBreakdown{ToolCount: len(toolSpecs)}
+		// tool counts alone rather than taking the section down with it.
+		return ContextBreakdown{ToolCount: len(toolSpecs) - len(external), ExternalToolCount: len(external)}
 	}
 	return raw.scaleTo(used)
 }

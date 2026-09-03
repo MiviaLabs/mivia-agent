@@ -277,3 +277,83 @@ func TestLiveUsageKeepsTheBreakdown(t *testing.T) {
 			got.Breakdown.ToolCount, before.ToolCount)
 	}
 }
+
+// cappedInfo is a 1M-window model held to a 400k operator prompt cap, the
+// configuration that made the sidebar look like it had lost 600k.
+func cappedInfo() ports.ModelInfo {
+	return ports.ModelInfo{
+		Name: "glm-5.3-flash", Provider: "zai",
+		ContextWindow: 400_000, DeclaredWindow: 1_048_576,
+	}
+}
+
+// TestCappedBudgetSaysWhereTheWindowWent: a budget far below the model's own
+// window is a config choice, and unsaid it reads as capacity that vanished.
+// The section must name the window it was capped from.
+func TestCappedBudgetSaysWhereTheWindowWent(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	s.topbar.SetSession(cappedInfo(), ports.Usage{InputTokens: 10_000})
+	rows := s.panelContextRows(s.panelInnerWidth(), 20)
+	if len(rows) != contextSummaryRows+1 {
+		t.Fatalf("capped section drew %d rows, want %d", len(rows), contextSummaryRows+1)
+	}
+	if got := ansi.Strip(rows[3]); !strings.Contains(got, "capped") || !strings.Contains(got, "1M") {
+		t.Errorf("cap row = %q, want it to name the 1M window it was capped from", got)
+	}
+	if got := ansi.Strip(rows[2]); !strings.Contains(got, "10k of 400k") {
+		t.Errorf("totals row = %q, want the budget it is actually measured against", got)
+	}
+}
+
+// TestUncappedBudgetDrawsNoCapRow: with no operator cap the section must not
+// spend a row saying nothing, and must not call an ordinary output reserve a
+// cap.
+func TestUncappedBudgetDrawsNoCapRow(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	s.topbar.SetSession(
+		ports.ModelInfo{Name: "glm-5.3-flash", ContextWindow: 1_015_808, DeclaredWindow: 1_048_576},
+		ports.Usage{InputTokens: 10_000})
+	rows := s.panelContextRows(s.panelInnerWidth(), 20)
+	if len(rows) != contextSummaryRows {
+		t.Fatalf("uncapped section drew %d rows, want %d", len(rows), contextSummaryRows)
+	}
+	if got := ansi.Strip(rows[2]); !strings.Contains(got, "1M") {
+		t.Errorf("totals row = %q, want the full window as the budget", got)
+	}
+}
+
+// TestServerToolsGetTheirOwnRow: server-supplied schemas are the part of the
+// floor an operator can remove by turning a server off, so they are reported
+// apart from the compiled-in tools rather than merged into one number.
+func TestServerToolsGetTheirOwnRow(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 40, sampleDiffs()...))
+	s.topbar.SetSession(
+		ports.ModelInfo{Name: "m", ContextWindow: 400_000, DeclaredWindow: 400_000},
+		ports.Usage{InputTokens: 10_000, Breakdown: ports.ContextBreakdown{
+			ToolSchemas: 3_000, ExternalSchemas: 5_000, ToolCount: 19, ExternalToolCount: 12,
+			Prose: 2_000,
+		}})
+	rows := s.panelContextRows(s.panelInnerWidth(), contextDetailMinRows)
+	joined := ansi.Strip(strings.Join(rows, "\n"))
+	for _, want := range []string{"tools (19)", "servers (12)"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("detail block missing %q:\n%s", want, joined)
+		}
+	}
+	var toolsRow, serversRow string
+	for _, r := range rows {
+		plain := ansi.Strip(r)
+		if strings.Contains(plain, "tools (19)") {
+			toolsRow = plain
+		}
+		if strings.Contains(plain, "servers (12)") {
+			serversRow = plain
+		}
+	}
+	if !strings.Contains(toolsRow, "3k") {
+		t.Errorf("tools row = %q, want the compiled-in schema cost alone", toolsRow)
+	}
+	if !strings.Contains(serversRow, "5k") {
+		t.Errorf("servers row = %q, want the server schema cost alone", serversRow)
+	}
+}

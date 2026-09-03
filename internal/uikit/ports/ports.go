@@ -48,10 +48,33 @@ type Message struct {
 // against the raw window instead reads far below the real fill level and
 // can never reach 100%. 0 means unknown, and callers must show no context
 // percentage rather than divide by it.
+//
+// DeclaredWindow is the model's own advertised window, reported alongside so a
+// surface can say WHY the budget is what it is. The budget can sit far below
+// the window for a reason the reader owns - an operator prompt cap in config -
+// and a gauge that shows only the budget makes a 1M-window model look like it
+// lost most of its capacity. It is display-only: nothing is measured against
+// it, and 0 means undeclared.
 type ModelInfo struct {
-	Name          string
-	Provider      string
-	ContextWindow int64
+	Name           string
+	Provider       string
+	ContextWindow  int64
+	DeclaredWindow int64
+}
+
+// BudgetIsCapped reports whether the usable prompt budget sits below the
+// model's declared window by more than its output reserve could explain.
+// Surfaces use it to say the budget is a choice rather than the model's limit.
+//
+// The comparison is deliberately loose: the exact reserve is not carried here,
+// and the point is to distinguish "your config caps this" from "this is the
+// model", not to audit the arithmetic. A window that is merely reduced by an
+// output reserve stays under the threshold and reports false.
+func (m ModelInfo) BudgetIsCapped() bool {
+	if m.DeclaredWindow <= 0 || m.ContextWindow <= 0 {
+		return false
+	}
+	return m.ContextWindow*2 < m.DeclaredWindow
 }
 
 // Usage is cumulative token and cost accounting for a session.
@@ -75,22 +98,28 @@ type Usage struct {
 // opens already a third full is carrying an expensive floor, and no amount of
 // compacting will move it.
 type ContextBreakdown struct {
-	System      int64
-	ToolSchemas int64
-	// ToolCount is a number of registered schemas, not a token cost. It is
-	// what makes the schema charge actionable, because the unit anyone can
-	// remove is a tool or a server, never a token.
-	ToolCount   int
-	Memory      int64
-	Summary     int64
-	Prose       int64
-	ToolResults int64
-	Reasoning   int64
+	System int64
+	// ToolSchemas is the cost of the compiled-in tools; ExternalSchemas is the
+	// cost of the ones a server supplied. They are separate because only the
+	// second is removable by turning something off, which is the whole point
+	// of reporting a schema cost at all.
+	ToolSchemas     int64
+	ExternalSchemas int64
+	// ToolCount and ExternalToolCount are numbers of registered schemas, not
+	// token costs. They are what make the schema charge actionable, because
+	// the unit anyone can remove is a tool or a server, never a token.
+	ToolCount         int
+	ExternalToolCount int
+	Memory            int64
+	Summary           int64
+	Prose             int64
+	ToolResults       int64
+	Reasoning         int64
 }
 
 // Floor is the part of the estimate compaction cannot reclaim.
 func (b ContextBreakdown) Floor() int64 {
-	return b.System + b.ToolSchemas + b.Memory + b.Summary
+	return b.System + b.ToolSchemas + b.ExternalSchemas + b.Memory + b.Summary
 }
 
 // Conversation is the part compaction reclaims.
@@ -114,12 +143,12 @@ func (b ContextBreakdown) Total() int64 { return b.Floor() + b.Conversation() }
 func (b ContextBreakdown) ScaleTo(total int64) ContextBreakdown {
 	raw := b.Total()
 	if raw <= 0 || total <= 0 {
-		return ContextBreakdown{ToolCount: b.ToolCount}
+		return b.countsOnly()
 	}
 	if raw == total {
 		return b
 	}
-	scaled := ContextBreakdown{ToolCount: b.ToolCount}
+	scaled := b.countsOnly()
 	in, out := b.buckets(), scaled.buckets()
 	for i, v := range in {
 		*out[i] = *v * total / raw
@@ -138,7 +167,13 @@ func (b ContextBreakdown) ScaleTo(total int64) ContextBreakdown {
 
 // buckets lists the token fields in a stable order for ScaleTo's arithmetic.
 func (b *ContextBreakdown) buckets() []*int64 {
-	return []*int64{&b.System, &b.ToolSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+	return []*int64{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+}
+
+// countsOnly is an empty breakdown that keeps the schema counts, which are not
+// token costs and so survive any rescaling of the costs.
+func (b ContextBreakdown) countsOnly() ContextBreakdown {
+	return ContextBreakdown{ToolCount: b.ToolCount, ExternalToolCount: b.ExternalToolCount}
 }
 
 // Conversation is the read/write surface a UI drives. It never calls the

@@ -535,6 +535,11 @@ func (c *Conversation) Model() ports.ModelInfo {
 		Name:          selection.Model,
 		Provider:      selection.ProviderName,
 		ContextWindow: int64(budget),
+		// The model's own window, carried so a surface can explain a budget
+		// that sits well below it. An operator prompt cap (config's
+		// max_prompt_tokens) is invisible otherwise, and a capped session on a
+		// large-window model reads as capacity that went missing.
+		DeclaredWindow: int64(binding.Profile.ContextWindowTokens),
 	}
 }
 
@@ -557,14 +562,16 @@ func (c *Conversation) ContextUsage() ports.Usage {
 		CachedTokens: 0,
 		CostUSD:      0,
 		Breakdown: ports.ContextBreakdown{
-			System:      int64(u.Breakdown.System),
-			ToolSchemas: int64(u.Breakdown.ToolSchemas),
-			ToolCount:   u.Breakdown.ToolCount,
-			Memory:      int64(u.Breakdown.Memory),
-			Summary:     int64(u.Breakdown.Summary),
-			Prose:       int64(u.Breakdown.Prose),
-			ToolResults: int64(u.Breakdown.ToolResults),
-			Reasoning:   int64(u.Breakdown.Reasoning),
+			System:            int64(u.Breakdown.System),
+			ToolSchemas:       int64(u.Breakdown.ToolSchemas),
+			ExternalSchemas:   int64(u.Breakdown.ExternalSchemas),
+			ToolCount:         u.Breakdown.ToolCount,
+			ExternalToolCount: u.Breakdown.ExternalToolCount,
+			Memory:            int64(u.Breakdown.Memory),
+			Summary:           int64(u.Breakdown.Summary),
+			Prose:             int64(u.Breakdown.Prose),
+			ToolResults:       int64(u.Breakdown.ToolResults),
+			Reasoning:         int64(u.Breakdown.Reasoning),
 		},
 	}
 }
