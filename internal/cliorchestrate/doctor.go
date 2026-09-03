@@ -72,14 +72,53 @@ func doctorStatusErr(res *config.Resolved, view cliagents.AgentCatalogView, cata
 	return fmt.Errorf("missing %s", res.APIKeyEnv)
 }
 
-// PromptBudgetAdvisory reports when the session prompt budget is unbounded:
-// [chat] max_prompt_tokens unset and the active budget above the recommended
-// cap. Empty means no advisory.
+// PromptBudgetAdvisory reports the session's prompt budget and where it came
+// from. Empty only when there is no budget to report.
+//
+// It used to call an unset [chat] max_prompt_tokens "unbounded" and recommend
+// a fixed cap. Both were wrong. The budget is never unbounded: with the knob
+// unset it is the bound model's own window minus its output reserve, which is
+// a bound. And recommending one number for every model told the operator of a
+// 1M-window model to throw away most of the capacity they are paying for,
+// which is the opposite of a diagnosis.
+//
+// What is worth flagging is the reverse: a cap that holds the budget far below
+// what the model can do, since that is invisible everywhere else and reads as
+// a smaller model. The threshold matches ports.ModelInfo.BudgetIsCapped, so
+// the sidebar and the doctor call the same configuration capped.
 func PromptBudgetAdvisory(res *config.Resolved) string {
-	if res == nil || res.MaxPromptTokens != nil || res.MaxContextTokens <= config.DefaultPromptCapTokens {
+	if res == nil || res.MaxContextTokens <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("unbounded (%d tokens); set [chat] max_prompt_tokens (recommended %d)", res.MaxContextTokens, config.DefaultPromptCapTokens)
+	if res.MaxPromptTokens == nil {
+		// "from the model window" rather than "window minus output reserve":
+		// a model that declares no output cap has no reserve subtracted, and
+		// the budget is then the window itself.
+		return fmt.Sprintf("%d tokens (from the model window)", res.MaxContextTokens)
+	}
+	window := activeModelWindow(res)
+	if window > 0 && int64(res.MaxContextTokens)*2 < int64(window) {
+		return fmt.Sprintf("%d tokens (capped by [chat] max_prompt_tokens; the model window is %d)",
+			res.MaxContextTokens, window)
+	}
+	return fmt.Sprintf("%d tokens (capped by [chat] max_prompt_tokens)", res.MaxContextTokens)
+}
+
+// activeModelWindow is the declared context window of the bound model, or 0
+// when the catalog does not describe it. Read from the catalog rather than
+// carried on Resolved so it always reflects the model actually selected.
+func activeModelWindow(res *config.Resolved) int {
+	for _, group := range res.ModelCatalog() {
+		if group.Provider != res.ProviderName {
+			continue
+		}
+		for _, model := range group.Models {
+			if model.Name == res.Model {
+				return model.ContextWindowTokens
+			}
+		}
+	}
+	return 0
 }
 
 // writeDoctorHumanLoadError prints the load-failure screen (human path).

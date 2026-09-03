@@ -49,11 +49,12 @@ func ResolvedSubagentRequestTimeout(cfg SubagentConfig) time.Duration {
 // it ever reached its own documented allowance.
 const DefaultSubagentTotalTimeoutSec = 3600 // 60 minutes
 
-// DefaultPromptCapTokens is the recommended [chat] max_prompt_tokens value.
-// It bounds the per-request prompt budget for models with large context
-// windows. The planner compacts history at 80% of the budget. It is a
-// recommendation, not a compiled default: an unset knob keeps the
-// window-derived budget.
+// DefaultPromptCapTokens is a reference [chat] max_prompt_tokens value, used
+// by tests as a representative operator cap. It is NOT a default and no
+// longer a recommendation: one cap over a mixed catalogue holds every model
+// to the smallest of them, so an unset knob - each model running to its own
+// window minus its output reserve - is the normal configuration. The planner
+// compacts history at 80% of whatever the budget turns out to be.
 const DefaultPromptCapTokens = 200_000
 
 // DefaultOutputReserveTokens is the completion allowance assumed when the
