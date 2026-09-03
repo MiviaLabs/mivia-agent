@@ -95,11 +95,33 @@ func TestNavClick_TwoLineAgentRowsUnwindowed(t *testing.T) {
 	}
 }
 
+// sidebarRowOf returns the clickRow that handleNavClick must be given to
+// hit the rendered sidebar line containing needle.
+//
+// The row is READ BACK OUT of the rendered sidebar rather than computed
+// from the window arithmetic. An earlier version of this test recomputed
+// that arithmetic in a comment and asserted the numbers it derived, so it
+// agreed with the code by construction and could not see the window
+// overrunning its own line limit - which is exactly the defect it was
+// meant to cover. handleNavClick consumes one row of top padding before
+// indexing the sidebar, hence the +1.
+func sidebarRowOf(t *testing.T, s Screen, needle string) int {
+	t.Helper()
+	paneH := max(1, s.contentHeight())
+	inner := max(1, paneH-2)
+	for i, row := range s.panelRows(s.panelInnerWidth(), inner) {
+		if strings.Contains(ansi.Strip(row), needle) {
+			return i + 1
+		}
+	}
+	t.Fatalf("%q draws on no sidebar row", needle)
+	return -1
+}
+
 func TestNavClick_ScrolledWindow(t *testing.T) {
-	// 10 files and 5 agents in a 24-row terminal (content height 22, innerNavH = 20)
-	// Groups: 3 context rows, model header (1), model row (1), files header
-	// (1), 10 files (10), subagents header (1), 5 agents (10). Total = 27
-	// lines > 20 maxRows.
+	// 10 files and 5 agents in a 24-row terminal (content height 22,
+	// innerNavH = 20). The list is taller than the pane, so the window
+	// scrolls and the click map must follow it.
 	var diffs []uievent.EventMsg
 	for i := 0; i < 10; i++ {
 		diffs = append(diffs, uievent.EventMsg{Event: uievent.Event{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{
@@ -111,60 +133,83 @@ func TestNavClick_ScrolledWindow(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			s.panel.observeAgentStart(fmt.Sprintf("agent-%d", i), fmt.Sprintf("agent-%d", i))
 		}
-		// Move cursor to bottom (agent-4, picker cursor index 1 + 10 + 4 = 15)
+		// The cursor sits on the last agent: model row + 10 files + 4.
 		s.panel.list.MoveTo(15)
 		return s
 	}
 
-	// In this scrolled state:
-	// Total groups: group 0..21
-	// selGroup = 21 (agent-4). selRow = offsets[21] = 25.
-	// maxRows = 20. limit = 20. start = selRow - limit + 1 = 6.
-	// startGroup = 6 (the 3 context rows, model header, model row and files
-	// header are dropped, so the window opens on f00.go).
-	// Groups visible in window: group 3 (f00.go) to group 18 (agent-4).
-	// Line 0 of window (clickRow 1): f00.go
-	// Line 1 of window (clickRow 2): f01.go
-	// ...
-	// Line 9 of window (clickRow 10): f09.go
-	// Line 10 of window (clickRow 11): subagents (5) header
-	// Line 11 of window (clickRow 12): agent-0 name
-	// Line 12 of window (clickRow 13): agent-0 metrics
-	// ...
-	// Line 19 of window (clickRow 20): agent-4 metrics
-
-	// Click rendered row for agent-0 name (clickRow 12)
+	// A subagent row in the scrolled window opens its thread.
 	s1 := newScrolledScreen()
-	next, _ := s1.handleNavClick(12)
+	next, _ := s1.handleNavClick(sidebarRowOf(t, s1, "agent-0"))
 	res := next.(Screen)
 	if !res.panel.dialog || res.panel.dialogAgent != "agent-0" {
-		t.Errorf("clickRow 12: dialog = %v, agent = %q; want agent-0", res.panel.dialog, res.panel.dialogAgent)
+		t.Errorf("dialog = %v, agent = %q; want agent-0", res.panel.dialog, res.panel.dialogAgent)
 	}
-	if cur := res.panel.list.CursorRow(); cur != 11 { // model row + 10 files + agent 0 = cursor index 11
-		t.Errorf("clickRow 12: cursor = %d, want 11", cur)
+	if cur := res.panel.list.CursorRow(); cur != 11 { // model row + 10 files + agent 0
+		t.Errorf("cursor = %d, want 11", cur)
 	}
 
-	// Click rendered row for f09.go (clickRow 10) on the scrolled screen
+	// A file row in the same window opens its diff.
 	s2 := newScrolledScreen()
-	next, _ = s2.handleNavClick(10)
+	next, _ = s2.handleNavClick(sidebarRowOf(t, s2, "f09.go"))
 	res = next.(Screen)
 	if !res.panel.dialog {
-		t.Errorf("clickRow 10: expected dialog open")
+		t.Error("clicking a file row did not open its dialog")
 	}
 	entry, ok := res.panel.selected()
 	if !ok || entry.Path != "f09.go" {
-		t.Errorf("clickRow 10: selected file = %+v, want f09.go", entry)
+		t.Errorf("selected file = %+v, want f09.go", entry)
 	}
 	if cur := res.panel.list.CursorRow(); cur != 10 {
-		t.Errorf("clickRow 10: cursor = %d, want 10", cur)
+		t.Errorf("cursor = %d, want 10", cur)
 	}
 
-	// Click rendered row for subagents header (clickRow 11) on the scrolled screen -> should not open
+	// A section header selects nothing and opens nothing.
 	s3 := newScrolledScreen()
-	next, _ = s3.handleNavClick(11)
-	res = next.(Screen)
-	if res.panel.dialog {
-		t.Errorf("clickRow 11 (header) should not open dialog")
+	next, _ = s3.handleNavClick(sidebarRowOf(t, s3, "subagents ("))
+	if next.(Screen).panel.dialog {
+		t.Error("clicking a section header opened a dialog")
+	}
+}
+
+// TestTheSidebarWindowNeverOutgrowsItsPane is the discriminator for the
+// window's line budget. It used to pick a line range and then widen it
+// outwards to whole groups at both ends, so a two-line agent group
+// straddling a boundary pushed the window past the pane. The caller clips
+// the overflow off the BOTTOM, so what was lost was the selected agent's
+// own rows - and with twenty agents the selection left the pane entirely.
+func TestTheSidebarWindowNeverOutgrowsItsPane(t *testing.T) {
+	for _, agents := range []int{1, 2, 5, 8, 20} {
+		for _, height := range []int{12, 16, 20, 24, 30, 40} {
+			s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, height, sampleDiffs()...))
+			for i := 0; i < agents; i++ {
+				s.panel.observeAgentStart(fmt.Sprintf("task-%02d", i), fmt.Sprintf("agent-%02d", i))
+				s.panel.agents[i].ToolCalls = 7 + i
+			}
+			s.panel.rebindIfOpen()
+			s.panel.list.MoveTo(len(s.panel.rowLabels()) - 1)
+
+			paneH := max(1, s.contentHeight())
+			inner := max(1, paneH-2)
+			rows := s.panelRows(s.panelInnerWidth(), inner)
+			if len(rows) > inner {
+				t.Errorf("agents=%d height=%d: sidebar drew %d rows into a %d-row pane",
+					agents, height, len(rows), inner)
+			}
+
+			// The selected agent's name AND its metrics line must both
+			// survive the frame's clip: an elapsed time nobody can see is
+			// the same as no elapsed time.
+			frame := ansi.Strip(strings.Join(s.panelFrameRows(), "\n"))
+			name := fmt.Sprintf("agent-%02d", agents-1)
+			metrics := fmt.Sprintf("%d tools", 7+agents-1)
+			if !strings.Contains(frame, name) {
+				t.Errorf("agents=%d height=%d: the selected agent %q is off the pane", agents, height, name)
+			}
+			if !strings.Contains(frame, metrics) {
+				t.Errorf("agents=%d height=%d: the selected agent's metrics line (%q) was cut", agents, height, metrics)
+			}
+		}
 	}
 }
 
