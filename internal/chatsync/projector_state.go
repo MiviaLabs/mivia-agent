@@ -100,6 +100,18 @@ type turnState struct {
 	// falls back to the previous one and must report that block's count.
 	blockFragments     int
 	prevBlockFragments int
+	// blockBytes is the text the deltas of streamSegment's block SHIPPED, in
+	// bytes, for the per-block settle's `bytes` (settleStreamedAssistant). It
+	// is informational, like the turn-end aggregate's len(ev.Content), and is
+	// not undone by a rollback: the flag that settles the block never sees the
+	// raw message, so this is the only size the settle can report.
+	blockBytes int
+	// assistantSettled records that streamSegment's block already shipped its
+	// per-block aggregate (settleStreamedAssistant). The loop flags EVERY
+	// completed message, including one that only called tools, so without it
+	// each later flag would settle the same block again. Cleared by every
+	// shipped delta and by the rollback of an unstored settle.
+	assistantSettled bool
 	// streamUnrecoverable marks a block whose discard never reached the wire.
 	// The viewer therefore still holds the abandoned attempt's fragments, and
 	// this side cannot say how many - the counters were cleared before the

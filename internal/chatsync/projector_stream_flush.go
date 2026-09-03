@@ -70,7 +70,7 @@ func (p *Projector) flushHeldAssistant(env Envelope, blockStream string, ts *tur
 	// The aggregate names the segment its surviving deltas used, and this
 	// delta is now the last of them - so the recording has to happen here too,
 	// or the settled message would point at the block before this one.
-	ts.recordDeltaSegment(ts.assistantHoldSegment)
+	ts.recordDeltaSegment(ts.assistantHoldSegment, len(text))
 	env.Block = proseBlock(blockStream, ts.assistantHoldSegment)
 	text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	if lane {
