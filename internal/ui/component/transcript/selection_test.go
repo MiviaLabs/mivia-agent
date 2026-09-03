@@ -31,16 +31,22 @@ func TestTranscriptSelectedTextAcrossRows(t *testing.T) {
 	m = pushProse(t, m, "bravo")
 	m.SetSelectionRect(sel.Rect{MinX: 1, MinY: 2, MaxX: 41, MaxY: 7})
 
+	// Rows are "alpha", one separator blank, "bravo": one blank row
+	// between prose blocks, not two (proseLines no longer keeps the
+	// renderer's terminating newline as a row of its own).
 	from := sel.FromScreen(m.SelectionRect(), 1+0, 2+0) // row 0 ("alpha"), col 0
-	to := sel.FromScreen(m.SelectionRect(), 1+3, 2+3)   // row 3 ("bravo"), col 3
+	to := sel.FromScreen(m.SelectionRect(), 1+4, 2+2)   // row 2 ("bravo"), through col 4
 	m.SetSelection(sel.Selection{Active: true, Anchor: from, Focus: to})
 
 	rows := m.Rows()
-	if len(rows) < 4 || !strings.Contains(rows[0], "alpha") || !strings.Contains(rows[3], "brav") {
+	if len(rows) < 3 || !strings.Contains(rows[0], "alpha") || !strings.Contains(rows[2], "bravo") {
 		t.Fatalf("unexpected visible rows: %q", rows)
 	}
+	// No trailing run of spaces after "alpha": the markdown renderer's
+	// padding is trimmed, so copying prose no longer pastes the padding
+	// out to the wrap column with it.
 	got := m.SelectedText()
-	want := "alpha" + strings.Repeat(" ", 33) + "\n\n\nbrav"
+	want := "alpha\n\nbravo"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
