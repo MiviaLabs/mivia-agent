@@ -2,8 +2,9 @@ package redact
 
 import "unicode/utf8"
 
-// StreamHoldBack is the number of bytes a [Stream] withholds from the wire
-// when it cannot reason about a policy's patterns - the FALLBACK window.
+// StreamHoldBack is the size of the flat window a [Stream] used to withhold
+// from the wire. It bounds nothing any more; it is kept because fixtures size
+// a block against it to prove the hold is no longer a window.
 //
 // Redacting each streamed fragment on its own cannot see a secret that arrives
 // split - `sk-` at the end of one delta and the rest at the start of the next
@@ -12,21 +13,18 @@ import "unicode/utf8"
 // to each new fragment and ships only what no future byte can still complete
 // into a match.
 //
-// The normal hold is CONTENT-AWARE: safeCut runs each pattern's own automaton
-// over the buffer and withholds exactly the suffix that is still the possible
+// The hold is CONTENT-AWARE: safeCut runs each pattern's own automaton over
+// the buffer and withholds exactly the suffix that is still the possible
 // beginning of a match (partialMatcher). For ordinary prose that is zero to a
 // dozen bytes - the longest word the shipped rules open on - so the viewer
 // trails the model by a fraction of a delta instead of by 256 bytes, and a
-// mid-message pause no longer leaves the held text invisible. The fixed window
-// was a byte bound standing in for a time bound: at four bytes a delta it sat
-// two seconds behind at full speed and unbounded during every pause.
-//
-// The window remains as the fallback for a pattern regexp accepts but the
-// simulation cannot re-parse. None of the four shipped default patterns hit
-// it; Compile records the case in Policy.windowed. Under the window, a pattern
-// that can match MORE than this many bytes may begin further back than the
-// window reaches, and its opening bytes ship unredacted. Under the automaton,
-// an open match pins the cut at its start for as long as it stays open.
+// mid-message pause no longer leaves the held text invisible. The window was
+// a byte bound standing in for a time bound: at four bytes a delta it sat two
+// seconds behind at full speed and unbounded during every pause. It also had
+// a hole the automaton does not: a match longer than the window could begin
+// further back than the window reached and ship its opening bytes. Under the
+// automaton an open match pins the cut at its start for as long as it stays
+// open, whatever its length (TestAMatchLongerThanTheOldWindowIsHeldWhole).
 //
 // Full rationale and the operator-facing statement: docs/product/chat-sync-wire.md.
 const StreamHoldBack = 256
@@ -84,8 +82,7 @@ func (s *Stream) Discard() { s.held = "" }
 //
 //  1. Every byte from the earliest still-open partial match onward is
 //     withheld (partialMatcher.earliestOpen), so the opening bytes of a match
-//     are still in the buffer when the rest of it arrives. A policy the
-//     simulation cannot serve withholds the last StreamHoldBack bytes instead.
+//     are still in the buffer when the rest of it arrives.
 //  2. No cut is made INSIDE a match that already exists in buf; the cut moves
 //     back to that match's start so the match is redacted as one unit. Moving
 //     back can expose a further crossing match, so this iterates to a fixed
@@ -99,12 +96,15 @@ func (p *Policy) safeCut(buf string) int {
 	if p.empty() {
 		return len(buf)
 	}
-	cut := len(buf)
-	if p.windowed {
-		cut = len(buf) - StreamHoldBack
-	}
+	// A delta that ends inside a multi-byte rune must hold that rune's opening
+	// bytes AND keep them out of the simulation: decoded alone they are
+	// U+FFFD, which matches nothing, so a thread that had reached them died
+	// and the closing bytes then arrived with no context. `api_` + the first
+	// byte of KELVIN SIGN, then its last two bytes + `ey: hunter2` folds to
+	// `api_key: hunter2` under (?i) - and shipped both halves in the clear.
+	cut := incompleteRuneStart(buf)
 	for _, m := range p.partial {
-		if open := m.earliestOpen(buf); open < cut {
+		if open := m.earliestOpen(buf[:cut]); open < cut {
 			cut = open
 		}
 	}
@@ -136,4 +136,18 @@ func (p *Policy) safeCut(buf string) int {
 		cut--
 	}
 	return cut
+}
+
+// incompleteRuneStart returns the offset of a truncated multi-byte rune at
+// the end of buf, or len(buf) when the buffer ends on a rune boundary.
+func incompleteRuneStart(buf string) int {
+	for i := len(buf) - 1; i >= 0 && i >= len(buf)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(buf[i]) {
+			if !utf8.FullRuneInString(buf[i:]) {
+				return i
+			}
+			return len(buf)
+		}
+	}
+	return len(buf)
 }

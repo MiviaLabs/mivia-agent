@@ -69,10 +69,11 @@ enable sync on sensitive work:
   recommended policy that tail is zero to a dozen bytes (the longest key-name
   word, `"authorization`), so the viewer trails the model by less than one
   delta rather than by a fixed window, and a mid-message pause leaves nothing
-  invisible. A fixed window of 256 bytes (`redact.StreamHoldBack`) remains only
-  as the FALLBACK for a pattern the automaton cannot be built from; none of
-  the four recommended patterns needs it. The
-  held tail is flushed as one final delta at the block's close - the next tool
+  invisible. There is no fixed window any more: `redact.StreamHoldBack` names
+  the 256 bytes the old one held, and bounds nothing. A delta that ends inside
+  a multi-byte character holds that character's opening bytes too, so a key
+  whose case-folded letters straddle a delta cannot ship in two clean halves.
+  The held tail is flushed as one final delta at the block's close - the next tool
   call, the turn's end, the turn's failure, a subagent's terminal - and, since
   the tail is a delay rather than a discard, also at the first event that
   PROVES the model stopped talking without closing the block: a reasoning
@@ -84,7 +85,7 @@ enable sync on sensitive work:
   delayed past the utterance and nothing is lost.
 
   **The limit, stated plainly.** Go regexps are unbounded, so what the hold
-  can promise depends on the pattern. Two behaviours follow:
+  can promise depends on the pattern. Three behaviours follow:
 
   - **An open-ended pattern pins the stream.** The recommended PEM rule below is
     written `BEGIN ... (?:END|$)`, and the `$` alternative matches from the
@@ -102,11 +103,18 @@ enable sync on sensitive work:
     pattern such as `(?s)BEGIN KEY.*?END KEY` is a live partial match from its
     header onward, so the header and everything after it wait for the closing
     bytes or the block's close - the same pin as above, and the same safe
-    direction. Only under the 256-byte fallback window can such a pattern
-    begin further back than the window reaches and leak its opening bytes; an
-    operator whose policy falls back and whose secrets exceed 256 bytes must
-    set `stream_assistant = false` rather than rely on streamed deltas. Every
-    credential shape in the recommended policy below is far shorter than that.
+    direction, whatever the body's length. The old flat window could begin
+    further back than it reached and leak such a pattern's opening bytes; the
+    automaton cannot.
+  - **A rule that starts with an assertion can over-redact at a delta edge.**
+    `\b`, `^` and `$` are evaluated by the redactor at the edges of the text
+    it is given, and a shipped prefix has an artificial edge at the cut. A
+    rule such as `\bkey=\S+` therefore matches `key=abc` in a stream that
+    shipped `mon` and then held `key=abc`, where the settled text `monkey=abc`
+    has no boundary and is left alone. The hold itself treats assertions as
+    satisfied, so this is a false positive on the wire, never a leak. None of
+    the four recommended patterns starts with an assertion; the PEM rule's `$`
+    only pins.
 - `stream_assistant` is **on by default** and selects HOW answer text is sent,
   not WHETHER it is sent. On, a turn sends deltas and then a settled message
   with empty text; off, it sends one settled message carrying the same text.

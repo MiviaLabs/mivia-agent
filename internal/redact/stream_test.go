@@ -234,33 +234,58 @@ func TestWithNoPolicyEveryFragmentShipsImmediately(t *testing.T) {
 	}
 }
 
-// TestAMatchLongerThanTheWindowEscapes is the residual risk, pinned rather
-// than hidden. A pattern that can match more than StreamHoldBack bytes may
-// begin further back than the window reaches, and its opening bytes are then
-// already on the wire when the closing bytes prove it was a secret.
-//
-// This test asserts the LIMIT, not desirable behaviour. If a future change
-// makes it fail because the window grew or the algorithm improved, update the
-// constant's doc comment in the same commit - the operator-facing claim on
-// redact.StreamHoldBack is what this pins.
-func TestAMatchLongerThanTheWindowEscapes(t *testing.T) {
-	withPolicy(t, []string{`(?s)BEGIN KEY.*?END KEY`})
-
-	body := strings.Repeat("x", StreamHoldBack*2)
-	whole := "BEGIN KEY" + body + "END KEY"
-
-	if got := Text(whole); strings.Contains(got, "BEGIN KEY") {
-		t.Fatalf("the whole-text redaction failed, so this test proves nothing: %q", got)
+// TestAMatchLongerThanTheOldWindowIsHeldWhole closes the hole the flat window
+// had. A pattern matching more than StreamHoldBack bytes could begin further
+// back than the window reached, and its opening bytes were on the wire before
+// the closing bytes proved it was a secret. Under the automaton the header
+// opens a live partial match, so every byte from it onward waits for the
+// closing bytes: nothing of the body ships before END, and the wire is
+// Text(whole). Both a closed long-body pattern and the shipped PEM rule.
+func TestAMatchLongerThanTheOldWindowIsHeldWhole(t *testing.T) {
+	cases := []struct {
+		name     string
+		patterns []string
+		whole    string
+		body     string
+	}{
+		{
+			name:     "closed pattern",
+			patterns: []string{`(?s)BEGIN KEY.*?END KEY`},
+			whole:    "prose " + "BEGIN KEY" + strings.Repeat("x", 1600) + "END KEY" + " after",
+			body:     "xxxx",
+		},
+		{
+			name:     "shipped PEM rule",
+			patterns: shippedPatterns(t),
+			whole: "prose " + "-----BEGIN TEST PRIVATE KEY-----" +
+				strings.Repeat("\nMIIBogIBAAJBAK", 110) + "\n-----END TEST PRIVATE KEY-----" + " after",
+			body: "MIIB",
+		},
 	}
-	// The split has to land far enough in that the match is still INCOMPLETE
-	// when the first fragment is processed - that is precisely the hole. A
-	// split near the start is caught, because the whole match is present in
-	// the buffer by the time anything is eligible to ship.
-	cut := StreamHoldBack + 100
-	got := pushAll([]string{whole[:cut], whole[cut:]})
-	if !strings.Contains(got, "BEGIN KEY") {
-		t.Skip("the window now covers this match; update StreamHoldBack's doc comment")
+	for _, tc := range cases {
+		withPolicy(t, tc.patterns)
+		want := Text(tc.whole)
+		if strings.Contains(want, tc.body) {
+			t.Fatalf("%s: the whole-text redaction failed, so this test proves nothing: %q", tc.name, want)
+		}
+		for _, size := range []int{1, 4, 17, 300, 356, 1000} {
+			var fragments []string
+			for i := 0; i < len(tc.whole); i += size {
+				fragments = append(fragments, tc.whole[i:min(i+size, len(tc.whole))])
+			}
+			var s Stream
+			var shipped strings.Builder
+			for _, f := range fragments {
+				shipped.WriteString(s.Push(f))
+				if strings.Contains(shipped.String(), tc.body) {
+					t.Fatalf("%s, %d-byte fragments: body bytes shipped in the clear "+
+						"before the match closed: %q", tc.name, size, shipped.String())
+				}
+			}
+			shipped.WriteString(s.Flush())
+			if got := shipped.String(); got != want {
+				t.Fatalf("%s, %d-byte fragments: shipped %q, want %q", tc.name, size, got, want)
+			}
+		}
 	}
-	t.Logf("documented residual risk: a match of %d bytes exceeds the %d-byte "+
-		"hold-back window and streams unredacted", len(whole), StreamHoldBack)
 }

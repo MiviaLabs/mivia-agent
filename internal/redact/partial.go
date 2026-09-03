@@ -44,7 +44,13 @@ func compilePartial(expr string) (*partialMatcher, error) {
 // Empty-width assertions (`^`, `$`, `\b`) are treated as satisfied. The buffer
 // starts mid-block and ends mid-stream, so the real context of either edge is
 // unknown; passing them over-approximates liveness, which holds more, never
-// less.
+// less. The divergence that remains is on the OTHER side of the cut: Policy.Text
+// evaluates an assertion at the shipped prefix's artificial edges, so a rule
+// with a leading `\b` can match `key=abc` in a shipped `mon` + held `key=abc`
+// where the whole text `monkey=abc` has no boundary - an over-redaction, not a
+// leak, and one none of the shipped rules can produce. Evaluating the
+// assertion against the held context would need the bytes already shipped,
+// which the stream deliberately does not keep.
 func (m *partialMatcher) earliestOpen(text string) int {
 	n := len(m.prog.Inst)
 	cur := newThreadSet(n)
