@@ -18,7 +18,8 @@ import (
 // source, the helpers below, which mirror View's assembly row by row.
 //
 // Two regions are selectable: the transcript window and the composer
-// body (menu and border rows are not). The approval prompt, history,
+// body (its padding rows are not, and the completion popup is an
+// overlay above the bar). The approval prompt, history,
 // queue, blackboard, dialogs, and the nav pane carry no region in v1:
 // a press there falls through to handleClick exactly as before. The
 // embedded subagent-thread construction renders inside a dialog frame

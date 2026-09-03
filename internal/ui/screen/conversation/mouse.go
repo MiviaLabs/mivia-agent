@@ -40,8 +40,9 @@ func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
 }
 
 // handleClick routes one mouse click. The row layout mirrors View:
-// transcript rows, then the approval prompt, then the completion menu,
-// then the input line, and finally the status row at the bottom.
+// transcript rows, then the approval prompt, then the composer bar (with
+// the completion popup overlaid on the rows just above it), and finally
+// the status row at the bottom.
 //
 // Left button only. A click on a collapsed block header expands it; a
 // click on a completion row accepts it; a click on the input line

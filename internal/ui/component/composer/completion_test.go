@@ -217,17 +217,18 @@ func TestIsSubsequence(t *testing.T) {
 	}
 }
 
-// TestViewPutsTheMenuAboveTheInput pins rule 2.8: the composer never
-// moves while the menu grows or shrinks.
-func TestViewPutsTheMenuAboveTheInput(t *testing.T) {
+// TestViewKeepsTheInputAboveTheBottomPadding pins rule 2.8: with a menu
+// open, View still draws only the bar (the menu is an overlay), and the
+// input row sits one above the bottom padding row, exactly where it sits
+// with the menu closed.
+func TestViewKeepsTheInputAboveTheBottomPadding(t *testing.T) {
 	m := typed(t, "/c")
 	rows := strings.Split(m.View(), "\n")
 	if len(rows) < 2 {
-		t.Fatalf("got %d rows, want the menu plus the input", len(rows))
+		t.Fatalf("got %d rows, want the input plus its padding rows", len(rows))
 	}
-	// With framed composer, the input row sits inside the frame (one above bottom border).
 	if !strings.Contains(ansi.Strip(rows[len(rows)-2]), "/c") {
-		t.Errorf("the input must sit inside the frame above the bottom border, got %q", rows[len(rows)-2])
+		t.Errorf("the input must sit one row above the bottom padding, got %q", rows[len(rows)-2])
 	}
 	if got, want := m.Height(), len(rows); got != want {
 		t.Errorf("Height() = %d but View drew %d rows", got, want)
