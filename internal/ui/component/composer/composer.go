@@ -367,34 +367,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// Height is the total row count View draws. It is: padding-top(1) +
-// textarea-rows (dynamic 1-maxInputLines) + padding-bottom(1) +
-// completion-menu-rows (when open). Below minPaddedWidth the padding is
-// omitted, so height equals textarea-rows + menu-rows.
+// Height is the total row count View draws: padding-top(1) +
+// textarea-rows (dynamic 1-maxInputLines) + padding-bottom(1). Below
+// minPaddedWidth the padding is omitted, so height equals textarea-rows.
+// The completion popup is NOT counted: it is an overlay the screen draws
+// over the rows above the bar (Popup), never a row the bar claims.
 func (m Model) Height() int {
 	taRows := m.input.Height()
 	if taRows < 1 {
 		taRows = 1
 	}
-	var pad int
 	if m.width >= minPaddedWidth {
-		pad = 2 // top + bottom padding row
+		return taRows + 2 // top + bottom padding row
 	}
-	base := taRows + pad
-	// menu rows (slash or mention — only one open at a time)
-	if v := m.activeMenuView(); v != "" {
-		return base + strings.Count(v, "\n") + 1
-	}
-	return base
+	return taRows
 }
 
-// MenuRows returns the row count the active completion or mention menu occupies (0 when closed).
-func (m Model) MenuRows() int {
-	if v := m.activeMenuView(); v != "" {
-		return strings.Count(v, "\n") + 1
-	}
-	return 0
-}
+// MenuRows returns the row count the completion popup occupies when drawn
+// (items, the count row when the list scrolls, and the footer), or 0 when
+// no menu is open. Mouse routing uses it to find the popup's first row.
+func (m Model) MenuRows() int { return len(m.Popup()) }
 
 // InputRowFromBottom is how many rows above the screen's status row the top
 // input line sits (for mouse routing). When padded, the bottom padding row
@@ -431,14 +423,13 @@ func (m Model) activeMenuView() string {
 	return m.mmenu.view(m.Theme, m.Tier, m.width)
 }
 
-// View renders the active menu above the textarea, then the textarea's
-// body as a solid filled bar: one padding row above, two padding columns
-// each side, one padding row below, all in the subtle card background
-// (RoleBGSubtle) matching the web app. No border is drawn; the fill is
-// the frame. The bottom padding row doubles as the key-hint row while a
-// completion or mention menu is open, so the hint never adds a row. The
-// textarea is the last block after the menu, so it never moves as the
-// menu grows or shrinks (ux-rules.md rule 2.8).
+// View renders the textarea's body as a solid filled bar: one padding row
+// above, two padding columns each side, one padding row below, all in the
+// subtle card background (RoleBGSubtle) matching the web app. No border is
+// drawn; the fill is the frame. The completion and mention menus are not
+// part of this view: they are an overlay (Popup) the screen draws over the
+// rows above the bar, so the bar never moves when a menu opens or closes
+// (ux-rules.md rules 2.7, 2.8).
 func (m Model) View() string {
 	body := m.input.View()
 	if m.selState.Active {
@@ -459,13 +450,8 @@ func (m Model) View() string {
 			lines[i] = pad + ln + pad
 		}
 		blank := strings.Repeat(" ", m.width)
-		bottom := blank
-		if hint := m.menuHint(); hint != "" {
-			bottom = strings.Repeat(" ", m.width-ansi.StringWidth(hint)-padCols) +
-				render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(hint) + pad
-		}
 		rows := append([]string{blank}, lines...)
-		rows = append(rows, bottom)
+		rows = append(rows, blank)
 		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(rows, "\n"))
 	} else if m.width > 0 {
 		lines := strings.Split(body, "\n")
@@ -479,14 +465,81 @@ func (m Model) View() string {
 		}
 		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(lines, "\n"))
 	}
-
-	if v := m.activeMenuView(); v != "" {
-		return v + "\n" + body
-	}
 	return body
 }
 
-// menuHint is the navigation hint shown in the bottom padding row while a
+// Popup is the completion or mention menu as an overlay: nil when no menu
+// is open, otherwise rows of exactly PopupWidth() columns, filled with the
+// bar's own background so the popup reads as rising out of the bar. Item
+// rows come first (the highlighted one on RoleBGSelection), then the
+// "n of m" count when the list scrolls, then one footer row carrying the
+// key hint. The owning screen draws it OVER the rows directly above the
+// bar (see conversation.overlayComposerPopup): View reserves no row for
+// it, so opening the menu never reflows the transcript (ux-rules.md
+// rules 2.7, 2.8, 5.7).
+func (m Model) Popup() []string {
+	raw := m.activeMenuView()
+	if raw == "" {
+		return nil
+	}
+	w := m.PopupWidth()
+	inner := w - 2 // one column of padding each side
+	if inner < 1 {
+		return nil
+	}
+	items := strings.Split(raw, "\n")
+	sel := -1
+	if m.MenuActive() {
+		sel = m.menu.cursor - m.menu.offset
+	} else if m.MentionMenuActive() {
+		sel = m.mmenu.cursor - m.mmenu.offset
+	}
+	fit := func(ln string) string {
+		if lw := ansi.StringWidth(ln); lw < inner {
+			return ln + strings.Repeat(" ", inner-lw)
+		} else if lw > inner {
+			return ansi.Truncate(ln, inner, "")
+		}
+		return ln
+	}
+	rows := make([]string, 0, len(items)+1)
+	for i, ln := range items {
+		row := " " + fit(ln) + " "
+		if i == sel {
+			row = render.FillBG(m.Theme, m.Tier, theme.RoleBGSelection, row)
+		} else {
+			row = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, row)
+		}
+		rows = append(rows, row)
+	}
+	footer := strings.Repeat(" ", w)
+	if hint := m.menuHint(); hint != "" {
+		footer = strings.Repeat(" ", w-ansi.StringWidth(hint)-1) +
+			render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(hint) + " "
+	}
+	rows = append(rows, render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, footer))
+	return rows
+}
+
+// PopupWidth is the column count each Popup row occupies: the bar's
+// padded span, so the popup's edges align with the bar's own fill.
+func (m Model) PopupWidth() int {
+	if m.width >= minPaddedWidth {
+		return m.width - padInset
+	}
+	return m.width
+}
+
+// PopupOffset is the column the popup starts at, relative to the bar's
+// first column: the bar's left padding, so the two line up.
+func (m Model) PopupOffset() int {
+	if m.width >= minPaddedWidth {
+		return padCols
+	}
+	return 0
+}
+
+// menuHint is the navigation hint drawn in the popup's footer row while a
 // completion or mention menu is open, or "" otherwise. The idle bar carries
 // no hint: the placeholder already names "/" for commands, and Enter to
 // send needs no reminder. Each hint has a shorter fallback for narrow bars.
@@ -507,19 +560,19 @@ func (m Model) menuHint() string {
 	default:
 		return ""
 	}
-	if hintFits(m.width, hint) {
+	if hintFits(m.PopupWidth(), hint) {
 		return hint
 	}
-	if hintFits(m.width, short) {
+	if hintFits(m.PopupWidth(), short) {
 		return short
 	}
 	return ""
 }
 
-// hintFits reports whether hint fits the bottom padding row with the
-// bar's padding on both sides. Unlike render.HintFits (border-specific,
+// hintFits reports whether hint fits the popup's footer row with one
+// column to spare each side. Unlike render.HintFits (border-specific,
 // still used by the approval prompt's box) there are no corners or bars to
 // reserve space for.
 func hintFits(width int, hint string) bool {
-	return hint != "" && ansi.StringWidth(hint)+padInset <= width
+	return hint != "" && ansi.StringWidth(hint)+2 <= width
 }

@@ -465,7 +465,8 @@ func (s Screen) handleSessionPickerTick() (app.Screen, tea.Cmd) {
 // transcript when it changes (docs/design/ux-rules.md rule 2.7).
 func (s Screen) reservedRows() int {
 	// the top bar, a one-row margin under it so content never touches its
-	// edge, the composer and its menu, and the status row. The embedded
+	// edge, the composer (its completion popup is an overlay and claims no
+	// row), and the status row. The embedded
 	// subagent-thread construction has no top bar: the dialog frame it
 	// renders inside is the chrome above it.
 	rows := 1
@@ -529,6 +530,8 @@ func (s Screen) View() string {
 		}
 		lines = append(lines, s.chatTailRows()...)
 	}
+
+	lines = s.overlayComposerPopup(lines)
 
 	if s.height > 0 {
 		innerH := s.contentHeight()

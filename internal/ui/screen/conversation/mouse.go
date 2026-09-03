@@ -94,6 +94,15 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	menuStart := inputRow - topBorder - menuRows
 
 	switch {
+	// The completion popup is an overlay drawn over the transcript's rows
+	// directly above the bar (menuStart .. menuStart+menuRows-1), so it is
+	// tested BEFORE the transcript: a click on it is a click on the popup,
+	// whatever the transcript drew underneath.
+	case s.composer.MenuActive() && y >= menuStart && y < menuStart+menuRows:
+		comp := s.composer
+		if comp.MenuClickRow(y - menuStart) {
+			s.composer = comp
+		}
 	case y-transcriptTop < transcriptRows && s.transcriptShown():
 		next, expanded := s.transcript.ExpandBlockAtScreenRow(y - transcriptTop)
 		if expanded {
@@ -105,12 +114,6 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		comp := s.composer
 		comp.ClickToColumn(x - 1 - colOffset)
 		s.composer = comp
-	// The menu sits directly above the composer frame: menu rows run from menuStart to menuStart+menuRows-1.
-	case s.composer.MenuActive() && y >= menuStart && y < menuStart+menuRows:
-		comp := s.composer
-		if comp.MenuClickRow(y - menuStart) {
-			s.composer = comp
-		}
 	}
 	return s, nil
 }
