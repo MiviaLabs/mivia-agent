@@ -107,7 +107,10 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 			s.composer = comp
 		}
 	case y-transcriptTop < transcriptRows && s.transcriptShown():
-		next, toggled := s.transcript.ToggleBlockAtScreenRow(y - transcriptTop)
+		// x-1 drops the screen gutter, so the transcript sees its own
+		// column space and can tell a click on the collapse marker from
+		// one anywhere else on the header.
+		next, toggled := s.transcript.ToggleBlockAtScreenRow(x-1, y-transcriptTop)
 		if toggled {
 			s.transcript = next
 		}

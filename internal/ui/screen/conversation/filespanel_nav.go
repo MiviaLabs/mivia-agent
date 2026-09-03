@@ -103,6 +103,38 @@ func (p panel) navSelectable() []navGroup {
 	return out
 }
 
+// navKeyOf names a row by WHAT IT IS: a file's path, a subagent's id, a
+// section. Not by its render label, which changes as statuses tick, and
+// not by its index, which moves as rows arrive.
+//
+// One function, two callers - selectionKey and rebindIfOpen. They used
+// to hold a switch each, and rebindIfOpen's copy sat under a comment
+// claiming it avoided exactly that. Drift between them is invisible: the
+// capture would name one row and the restore would look for another, so
+// the selection would move on the next live update and nothing would
+// fail.
+func navKeyOf(g navGroup, files []fileEntry, agents []subagentRow) string {
+	switch g.kind {
+	case navContextHeader:
+		return "s:context"
+	case navModel:
+		return "m:" + modelRowLabel
+	case navFilesHeader:
+		return "s:files"
+	case navAgentsHeader:
+		return "s:agents"
+	case navFile:
+		if g.at >= 0 && g.at < len(files) {
+			return "f:" + files[g.at].Path
+		}
+	case navAgent:
+		if g.at >= 0 && g.at < len(agents) {
+			return "a:" + agents[g.at].ID
+		}
+	}
+	return ""
+}
+
 // navAt returns the group a picker index selects.
 func (p panel) navAt(pickerIdx int) (navGroup, bool) {
 	sel := p.navSelectable()

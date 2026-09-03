@@ -230,22 +230,33 @@ func (m Model) Rows() []string {
 func (m Model) View() string { return strings.Join(m.Rows(), "\n") }
 
 // ToggleBlockAtScreenRow opens or closes the block whose HEADER draws on
-// the given viewport row. y is relative to the transcript's own top row,
-// the way a mouse event reports it. It reports false when the row holds
-// no collapsible header, so a click can fall through.
+// the given viewport row. x and y are relative to the transcript's own
+// top-left, the way a mouse event reports them. It reports false when the
+// row holds no collapsible header, so a click can fall through.
 //
-// Only the header row acts. A click on a body row falls through, so
-// expanded content is never collapsed by surprise - but the header is
-// the affordance itself: it draws the "v"/">" marker, and a marker that
-// only ever opens is a control the user cannot use to put the screen
-// back the way it was. The keyboard toggle (space/enter on the focused
-// block) is the same operation from the other input.
+// Only the header row acts; a click on a body row falls through, so
+// expanded content is never folded away by a stray click.
+//
+// CLOSING additionally requires the click to land on the collapse
+// MARKER, the "v"/">" glyph in the header's first cell. Opening does not.
+// The asymmetry is about drag-select, which shares this surface: a left
+// press both arms a drag and reaches this function, so a press anywhere
+// on a header would fold the block the user was about to select text
+// from. Restricting the destructive direction to the marker is the
+// disclosure-triangle convention, and nobody begins a text selection on
+// the triangle. Opening stays available across the whole header because
+// revealing content cannot destroy what the user was reaching for.
+//
+// Either direction cancels a live selection. The rows under it just
+// moved or vanished, and a selection left anchored across them copies
+// text the user never highlighted - the same rule push, ScrollBy and
+// SetSize already follow (selection.go).
 //
 // Clicking a coalesced leader row (R2) opens the whole run: the row the
 // user sees stands in for every member, so the click means "show me
 // these". Closing that run again is per-member - collapse them and the
 // layout re-coalesces them on its own.
-func (m Model) ToggleBlockAtScreenRow(y int) (Model, bool) {
+func (m Model) ToggleBlockAtScreenRow(x, y int) (Model, bool) {
 	if y < 0 || !m.FocusedRowVisible(y) {
 		return m, false
 	}
@@ -257,18 +268,31 @@ func (m Model) ToggleBlockAtScreenRow(y int) (Model, bool) {
 			continue
 		}
 		if s.runSize > 0 {
+			m.invalidateSelection()
 			m.expandRun(i)
 			return m, true
 		}
 		if !m.blocks[i].Collapsible {
 			return m, false
 		}
+		if !m.blocks[i].Collapsed && !hitsCollapseMarker(x, s.indent) {
+			return m, false
+		}
+		m.invalidateSelection()
 		m.blocks = slices.Clone(m.blocks)
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
 		m.clampOffset()
 		return m, true
 	}
 	return m, false
+}
+
+// hitsCollapseMarker reports whether column x lands on a header's
+// collapse glyph. The marker occupies one column at the block's indent,
+// and the space after it is included so a one-column target does not
+// have to be hit exactly.
+func hitsCollapseMarker(x, indent int) bool {
+	return x >= indent && x <= indent+1
 }
 
 // FocusedRowVisible reports whether y is inside the viewport.

@@ -3,6 +3,7 @@ package transcript
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -78,6 +79,11 @@ type Block struct {
 	// its members up. Parsing "4.1s" back out of the header would be
 	// reading the rendering as if it were the model.
 	ElapsedMS int
+
+	// StartedAt is when this transcript SAW the call start, used to
+	// derive ElapsedMS when the event carries no duration of its own.
+	// Zero for anything that is not a live tool call.
+	StartedAt time.Time
 }
 
 // renderCalls counts Block.Render invocations. It exists so tests can

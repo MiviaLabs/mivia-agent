@@ -14,6 +14,30 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 )
 
+// panelFoldKey applies the section-fold keys and reports whether the key
+// was one. Left and right close and open the header the cursor sits on;
+// Enter toggles it, the same way Enter on the model row opens the picker
+// - the row's own action, whatever the row is. On any other row they do
+// nothing rather than fall through to the picker, which would treat them
+// as no-ops anyway.
+//
+// Split out of handlePanelListKey to keep that function under the
+// structure gate's 80-line function cap.
+func (s *Screen) panelFoldKey(msg tea.KeyPressMsg) bool {
+	switch {
+	case msg.Code == tea.KeyLeft, msg.String() == "h":
+		s.panel.setSectionCollapsed(true)
+		return true
+	case msg.Code == tea.KeyRight, msg.String() == "l":
+		s.panel.setSectionCollapsed(false)
+		return true
+	case msg.Code == tea.KeyEnter && s.panel.sectionHeaderSelected():
+		s.panel.toggleSection()
+		return true
+	}
+	return false
+}
+
 func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
 	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
 		switch id {
@@ -29,31 +53,7 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		}
 	}
-	// Left and right fold the section header the cursor sits on. During a
-	// long run the files and subagents lists grow without bound and push
-	// each other off the pane; folding one is how a reader keeps the
-	// other in view. On any other row they do nothing rather than fall
-	// through to the picker, which would treat them as no-ops anyway.
-	switch msg.Code {
-	case tea.KeyLeft:
-		s.panel.setSectionCollapsed(true)
-		return s, nil, true
-	case tea.KeyRight:
-		s.panel.setSectionCollapsed(false)
-		return s, nil, true
-	}
-	if msg.String() == "h" {
-		s.panel.setSectionCollapsed(true)
-		return s, nil, true
-	}
-	if msg.String() == "l" {
-		s.panel.setSectionCollapsed(false)
-		return s, nil, true
-	}
-	// Enter on a header toggles it, the same way Enter on the model row
-	// opens the picker: the row's own action, whatever the row is.
-	if msg.Code == tea.KeyEnter && s.panel.sectionHeaderSelected() {
-		s.panel.toggleSection()
+	if s.panelFoldKey(msg) {
 		return s, nil, true
 	}
 

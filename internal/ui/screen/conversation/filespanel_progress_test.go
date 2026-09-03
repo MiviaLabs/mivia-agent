@@ -239,7 +239,7 @@ func TestPanelAgentRowRendersElapsedToolsStep(t *testing.T) {
 		ID: "task-1", Status: "running", Step: 29, ToolCalls: 142,
 		StartedAt: fixedNow().Add(-(10*time.Minute + 40*time.Second)),
 	}
-	lines := s.panelAgentRow(row, false)
+	lines := s.panelAgentRow(row, 40, false)
 	if len(lines) != 2 {
 		t.Fatalf("panelAgentRow returned %d lines, want 2: %v", len(lines), lines)
 	}
