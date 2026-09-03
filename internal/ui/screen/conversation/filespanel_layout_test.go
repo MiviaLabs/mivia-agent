@@ -66,10 +66,12 @@ func TestPanelWindowGroupsKeepsWholeGroupsInsideTheBudget(t *testing.T) {
 		}
 		total += len(g)
 	}
-	// Keeping groups whole may grow the window past the budget by at
-	// most the tail of one group - never a whole extra group.
-	if total > maxRows+1 {
-		t.Errorf("window holds %d rows, want at most %d (one whole-group slack)", total, maxRows+1)
+	// The budget is EXACT. This assertion used to allow maxRows+1, the
+	// old grow-outwards contract; the window was rewritten to build from
+	// whole groups within the limit, but the tolerance stayed and let
+	// both growth guards be removed without a failure.
+	if total > maxRows {
+		t.Errorf("window holds %d rows, want at most %d", total, maxRows)
 	}
 }
 
