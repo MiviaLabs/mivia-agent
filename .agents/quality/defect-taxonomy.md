@@ -1423,3 +1423,51 @@ not the committing process's to restore.
   the expected tree; neutering its comparison to `if true` makes it fail.
   `test_restore_and_verify_raises_when_a_mutant_is_left_behind`
   (`scripts/test_check_mutation.py`) covers the tool-side half.
+
+## DC-38 One logical unit is announced by several lifecycle events, and consumers count events
+
+**Mechanism.** A producer publishes more than one event per logical unit -
+a queued/running pair, a begin/attach pair, an admitted/dispatched pair - to
+give each observer the phase it needs. The event kind is the same on every
+leg, and the unit's identity travels in a field. Every consumer written
+against "one event per unit" then reports the multiple: a counter reads N
+times the work, a list shows each item once per leg, and the extra copies
+carry only the fields their own phase populated, so they look like real but
+degraded entries rather than duplicates. Nothing errors, and the wire shape is
+usually pinned by a test that asserts the multiple deliberately, so the
+producer looks correct - because it is.
+
+**Evidence.** mivia-agent's agent loop emits two `EventToolStart` per tool
+call - `"queued"` from the PointPreTool hook, carrying the redacted arguments,
+then `"running"` from the dispatcher shim, carrying none - both under one
+`ToolCallID` (`internal/agent/sdk_tool_events.go`, pinned by
+`internal/agent/agentloop_maxconcurrent_test.go`: 3 calls, 6 events). Two
+consumers counted the events. `internal/subagents/multi_step.go`
+`stepOnEvent` incremented `toolCallCount` per event, so the subagent panel's
+`Tools: N` (`internal/ui/screen/conversation/filespanel_layout.go`, fed by the
+heartbeat's `toolcalls=`) and `inspect_agents`' `progress.tool_calls` (fed by
+the same stream through `ToolCallSink` into
+`internal/coordinator/tool_call_buffer.go`) both read exactly double.
+`internal/uiadapter/subagent.go` appended a `ports.ToolCall` per event, so a
+subagent thread listed every call twice, the second with null arguments and no
+output - and rendered both on reopen, because `LoadHistory` replays start/end
+per entry and `transcript.findLive` refuses a call id whose latest block is
+already a `tool_end`. Gated by
+`TestStepOnEventCountsQueuedAndRunningStartOnce` and
+`TestSubagentThreadListsOneToolCallPerCallID`.
+
+**Probes.**
+- For every event kind a consumer counts or appends, ask how many the producer
+  emits per unit. Read the producer, not the kind's name: `tool_start` reads
+  like one-per-call and is not.
+- Deduplicate on the unit's declared identity, not on the phase vocabulary.
+  A `Detail == "running"` filter misses a unit that never reached that phase -
+  an admission-staged call emits `"queued"` only.
+- The first leg is not always the informative one. State which leg carries
+  each field and merge, rather than keeping whichever arrives first or last.
+- A test asserting the producer's multiple is not a licence to count it. When
+  the wire shape is pinned, the fix belongs in the consumer, and both sides
+  should cite each other.
+- Sweep every consumer of the kind, not the one a bug report named: counters,
+  list appends, and cap accounting each fail differently and only one of them
+  is usually visible.

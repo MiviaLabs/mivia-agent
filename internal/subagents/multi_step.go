@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -306,6 +307,41 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
 }
 
+// toolStartDedup remembers which tool calls the loop's tool_start stream has
+// already reported, because that stream carries TWO EventToolStart events per
+// call: "queued" from the PointPreTool hook and "running" from the dispatcher
+// shim (internal/agent/sdk_tool_events.go states the pair;
+// internal/agent/agentloop_maxconcurrent_test.go pins it - 3 calls, 6 events).
+// Both legs carry the same ToolCallID, so anything that counts the raw events
+// reports exactly twice the tools that ran - which is what the sidebar's
+// "Tools: N" and inspect_agents' progress.tool_calls did.
+//
+// A start with an empty ToolCallID is never deduped: it cannot be matched to a
+// sibling leg, and collapsing those would UNDER-count.
+type toolStartDedup struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+// first reports whether id is the first tool_start seen for that call, and
+// records it. Tool calls run concurrently, so this is the synchronization
+// point for the set.
+func (d *toolStartDedup) first(id string) bool {
+	if id == "" {
+		return true
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, dup := d.seen[id]; dup {
+		return false
+	}
+	if d.seen == nil {
+		d.seen = make(map[string]struct{})
+	}
+	d.seen[id] = struct{}{}
+	return true
+}
+
 // stepOnEvent builds the nested loop's OnEvent callback: it counts steps,
 // forwards tool_start/tool_end events to a ToolCallSink installed on the
 // ORIGINAL request context (reqCtx - not the timeout-derived callCtx, which
@@ -323,8 +359,14 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 // otherwise show a stale or zero Elapsed/Tools/Step reading for most or all
 // of its life. Both paths share heartbeatDetail, so the two update sources
 // can never format the count differently.
+//
+// One tool call is counted and recorded ONCE: the loop emits two
+// EventToolStart events per call and only the first reaches the counter and
+// the sink (see toolStartDedup). The second is still forwarded to stamped -
+// the operator wire shape is a pinned contract - but it is not progress.
 func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agent.Event), stepCount, toolCallCount *atomic.Int64, taskStart time.Time) func(agent.Event) {
 	sink, hasSink := ToolCallSinkFrom(reqCtx)
+	starts := &toolStartDedup{}
 	return func(e agent.Event) {
 		progressed := false
 		if e.Kind == agent.EventStep {
@@ -332,6 +374,12 @@ func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agen
 			progressed = true
 		}
 		if e.Kind == agent.EventToolStart {
+			if !starts.first(e.ToolCallID) {
+				if stamped != nil {
+					stamped(e)
+				}
+				return
+			}
 			toolCallCount.Add(1)
 			progressed = true
 		}

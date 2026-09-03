@@ -386,6 +386,44 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	c.notifyListeners(e)
 }
 
+// recordToolStart folds one tool.start into the open assistant message.
+//
+// The loop emits TWO tool_start events per tool call - "queued" from the
+// PointPreTool hook and "running" from the dispatcher shim, both carrying the
+// same ToolCallID (internal/agent/sdk_tool_events.go; pinned by
+// internal/agent/agentloop_maxconcurrent_test.go). Appending blind listed
+// every subagent tool call twice, the second copy with null arguments and no
+// output, and a thread reopened on that history rendered both: LoadHistory
+// replays start/end per entry, and transcript.findLive refuses a call id
+// whose latest block is already a tool_end, so the duplicate pushed a second
+// row instead of merging. The second leg now updates the row the first
+// opened, and only fills a field it actually carries.
+//
+// A start with no ToolCallID cannot be matched to a sibling leg, so it always
+// appends: an unidentified call is listed once too many, never swallowed.
+func (c *SubagentTranscriptConversation) recordToolStart(idx int, body uievent.ToolStartBody, args string) {
+	calls := c.history[idx].ToolCalls
+	if body.ToolCallID != "" {
+		for i := range calls {
+			if calls[i].ID != body.ToolCallID {
+				continue
+			}
+			if body.Name != "" {
+				calls[i].Name = body.Name
+			}
+			if len(body.Args) > 0 {
+				calls[i].Arguments = args
+			}
+			return
+		}
+	}
+	c.history[idx].ToolCalls = append(calls, ports.ToolCall{
+		ID:        body.ToolCallID,
+		Name:      body.Name,
+		Arguments: args,
+	})
+}
+
 // applyEvent folds one translated uievent into message history.
 func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 	switch e.Kind {
@@ -412,11 +450,7 @@ func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 		c.ensureLastAssistantMessage(e.At)
 		lastIdx := len(c.history) - 1
 		argsBytes, _ := json.Marshal(body.Args)
-		c.history[lastIdx].ToolCalls = append(c.history[lastIdx].ToolCalls, ports.ToolCall{
-			ID:        body.ToolCallID,
-			Name:      body.Name,
-			Arguments: string(argsBytes),
-		})
+		c.recordToolStart(lastIdx, body, string(argsBytes))
 	case uievent.KindToolEnd:
 		body, _ := e.Body.(uievent.ToolEndBody)
 		c.ensureLastAssistantMessage(e.At)
