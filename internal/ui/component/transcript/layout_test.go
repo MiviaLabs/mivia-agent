@@ -67,7 +67,7 @@ func TestReadOnlyRunsCoalesceIntoOneLeaderRow(t *testing.T) {
 	if leaderRow < 0 {
 		t.Fatal("no leader run found in the layout")
 	}
-	m, ok := m.ToggleBlockAtScreenRow(groupIndent, leaderRow - m.Offset())
+	m, ok := m.ToggleBlockAtScreenRow(groupIndent, leaderRow-m.Offset())
 	if !ok {
 		t.Fatal("clicking the leader row did not register")
 	}
