@@ -37,21 +37,27 @@ func TestSyncConfigDefaultsFailClosed(t *testing.T) {
 	if cfg.Disabled {
 		t.Errorf("Disabled = true, want false (an absent key is not an opt-out)")
 	}
-	if cfg.IncludeToolIO {
-		t.Errorf("IncludeToolIO = true, want false (fail-closed)")
-	}
-	if cfg.IncludeThinking {
-		t.Errorf("IncludeThinking = true, want false (fail-closed)")
-	}
-	// StreamAssistant is ON by default, and is deliberately NOT held to the
-	// fail-closed rule the two gates above are.
+	// IncludeToolIO and IncludeThinking were held to a fail-closed rule, on
+	// the reasoning that they decide WHETHER content leaves the machine while
+	// StreamAssistant decides only HOW. That split does not survive contact
+	// with the product: sync runs only for a logged-in user who asked for the
+	// remote viewer, and a viewer that silently omits the agent's reasoning -
+	// or what its tools read and wrote - is not showing the session.
+	// Off-by-default also failed SILENTLY: the transcript simply had no
+	// reasoning in it, with nothing saying any had been withheld, which is
+	// how it was reported from production.
 	//
-	// Those two decide WHETHER content leaves the machine. This one decides
-	// only HOW the assistant's text is shaped on the way: streaming sends
-	// deltas plus an empty settled message, not streaming sends one settled
-	// message carrying the same text. The reader receives the same words
-	// either way, so there is nothing to fail closed about - and with it off,
-	// a remote viewer saw nothing at all until a turn ended.
+	// The activation gate is unchanged and still fail-closed: a logged-out
+	// CLI uploads nothing (ResolvedSync.Active), and `enabled = false` opts
+	// the whole thing out. Within an ALREADY-ACTIVE sync the session now
+	// streams in full unless the user says otherwise, and every opt-out stays
+	// one explicit `false` away - which is why these are pointers.
+	if !cfg.IncludeToolIO {
+		t.Errorf("IncludeToolIO = false, want true (absent key means on)")
+	}
+	if !cfg.IncludeThinking {
+		t.Errorf("IncludeThinking = false, want true (absent key means on)")
+	}
 	if !cfg.StreamAssistant {
 		t.Errorf("StreamAssistant = false, want true (absent key means on)")
 	}
@@ -102,8 +108,8 @@ func TestSyncEnabledIsThreeState(t *testing.T) {
 func TestSyncConfigPreservesCustomValues(t *testing.T) {
 	custom := SyncConfig{
 		Enabled:          syncEnabled(true),
-		IncludeToolIO:    true,
-		IncludeThinking:  true,
+		IncludeToolIO:    syncEnabled(true),
+		IncludeThinking:  syncEnabled(true),
 		APIURL:           "https://sync.mivia.ai",
 		PollWaitSeconds:  15,
 		HeartbeatSeconds: 45,
@@ -178,4 +184,34 @@ func TestSyncAPIURLIgnoresAllowInsecureHTTP(t *testing.T) {
 // checks, so a sync case fails on the sync rule or not at all.
 func validToolsForSyncTest() ToolsConfig {
 	return ToolsConfig{MaxInspectRepositoryBytes: 64 << 10, MaxTavilyResponseBytes: 4 << 20}
+}
+
+// TestStreamingDefaultsOnWhenSyncIsOn pins the rule that remote sync streams
+// the session IN FULL unless the user says otherwise. include_thinking and
+// include_tool_io were plain bools, so an absent key read as OFF: every user
+// who had never heard of the keys got a remote transcript with no reasoning
+// in it, and no indication any had been withheld. Fails against a plain bool,
+// where absent and "false" are the same state.
+func TestStreamingDefaultsOnWhenSyncIsOn(t *testing.T) {
+	absent := resolveSyncConfig(SyncConfig{})
+	if !absent.IncludeThinking {
+		t.Error("IncludeThinking = false for an absent key, want true: sync streams in full unless opted out")
+	}
+	if !absent.IncludeToolIO {
+		t.Error("IncludeToolIO = false for an absent key, want true")
+	}
+	if !absent.StreamAssistant {
+		t.Error("StreamAssistant = false for an absent key, want true")
+	}
+
+	// The opt-out must stay reachable, which is the whole reason these are
+	// pointers rather than bools.
+	off := resolveSyncConfig(SyncConfig{
+		IncludeThinking: syncEnabled(false),
+		IncludeToolIO:   syncEnabled(false),
+		StreamAssistant: syncEnabled(false),
+	})
+	if off.IncludeThinking || off.IncludeToolIO || off.StreamAssistant {
+		t.Errorf("an explicit false did not turn streaming off: %+v", off)
+	}
 }
