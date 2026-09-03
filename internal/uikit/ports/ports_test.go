@@ -218,42 +218,98 @@ func TestBudgetIsCappedSeparatesAConfigCapFromAModelLimit(t *testing.T) {
 	}
 }
 
-// TestContextBreakdownScaleToPreservesCompositionAndCounts: ScaleTo runs on
-// every live turn, where the provider supplies the total and the session the
-// composition. The parts must land on the total exactly, and the schema counts
-// must not be scaled as if they were token costs.
-func TestContextBreakdownScaleToPreservesCompositionAndCounts(t *testing.T) {
-	raw := ContextBreakdown{
-		System: 1_000, ToolSchemas: 3_000, ExternalSchemas: 5_000,
-		Memory: 500, Summary: 200, Prose: 1_200, ToolResults: 9_000, Reasoning: 100,
+// TestWithLiveTotalNeverGrowsTheFloor is the regression for the bug this
+// method replaced. The session adopts a turn's messages only at turn end, so
+// mid-turn its composition is the previous turn's. Scaling that composition up
+// to the provider's growing total made the system prompt and the tool schemas
+// grow on screen, which is impossible, while every conversation row sat at
+// zero. The floor must come out byte for byte unchanged and the unexplained
+// remainder must be visible as pending.
+func TestWithLiveTotalNeverGrowsTheFloor(t *testing.T) {
+	// A first turn: the session has priced the floor and nothing else.
+	floorOnly := ContextBreakdown{
+		System: 6_000, ToolSchemas: 3_000, ExternalSchemas: 5_000, Memory: 2_000,
 		ToolCount: 19, ExternalToolCount: 12,
 	}
-	for _, total := range []int64{1, 999, 20_101, 96_000, raw.Total()} {
-		got := raw.ScaleTo(total)
-		if got.Total() != total {
-			t.Errorf("ScaleTo(%d).Total() = %d, want exactly %d", total, got.Total(), total)
-		}
-		if got.ToolCount != 19 || got.ExternalToolCount != 12 {
-			t.Errorf("ScaleTo(%d) changed the schema counts to %d/%d, want 19/12",
-				total, got.ToolCount, got.ExternalToolCount)
-		}
+	got := floorOnly.WithLiveTotal(90_000)
+	if got.System != 6_000 || got.ToolSchemas != 3_000 || got.ExternalSchemas != 5_000 || got.Memory != 2_000 {
+		t.Errorf("the floor moved: system=%d tools=%d servers=%d memory=%d, want 6000/3000/5000/2000",
+			got.System, got.ToolSchemas, got.ExternalSchemas, got.Memory)
 	}
-	// Composition survives: tool results dominated before and must after.
-	scaled := raw.ScaleTo(96_000)
-	if scaled.ToolResults <= scaled.ExternalSchemas {
-		t.Errorf("composition lost: ToolResults = %d, ExternalSchemas = %d", scaled.ToolResults, scaled.ExternalSchemas)
+	if got.Pending != 74_000 {
+		t.Errorf("Pending = %d, want the 74000 the composition cannot explain", got.Pending)
+	}
+	if got.Total() != 90_000 {
+		t.Errorf("Total = %d, want the live 90000 so the rows sum to the header", got.Total())
+	}
+	if got.ToolCount != 19 || got.ExternalToolCount != 12 {
+		t.Errorf("schema counts = %d/%d, want 19/12", got.ToolCount, got.ExternalToolCount)
 	}
 }
 
-// TestContextBreakdownScaleToOnAnEmptyComposition: a session with nothing
-// priced must not divide by zero, and must not invent a composition it does
-// not have just because a total arrived.
-func TestContextBreakdownScaleToOnAnEmptyComposition(t *testing.T) {
-	got := ContextBreakdown{ToolCount: 4, ExternalToolCount: 1}.ScaleTo(50_000)
-	if got.Total() != 0 {
-		t.Errorf("empty composition scaled to %d, want 0", got.Total())
+// TestWithLiveTotalKeepsAnAdoptedComposition: once a turn is adopted the
+// session explains the whole total, so nothing is pending and no row moves.
+func TestWithLiveTotalKeepsAnAdoptedComposition(t *testing.T) {
+	full := ContextBreakdown{
+		System: 6_000, ToolSchemas: 3_000, Memory: 1_000,
+		Prose: 12_000, ToolResults: 36_000, Reasoning: 2_000,
+	}
+	got := full.WithLiveTotal(full.Total())
+	if got != full {
+		t.Errorf("an exact total changed the composition:\ngot  %+v\nwant %+v", got, full)
+	}
+	if got.Pending != 0 {
+		t.Errorf("Pending = %d, want 0 when the composition explains the total", got.Pending)
+	}
+}
+
+// TestWithLiveTotalShrinksOnlyTheConversation: a total below what is priced
+// means compaction just dropped history. Compaction removes conversation and
+// never the floor, so the floor must survive and only the conversation shrinks.
+func TestWithLiveTotalShrinksOnlyTheConversation(t *testing.T) {
+	before := ContextBreakdown{
+		System: 6_000, ToolSchemas: 3_000, Memory: 1_000,
+		Prose: 20_000, ToolResults: 60_000, Reasoning: 10_000,
+	}
+	got := before.WithLiveTotal(30_000)
+	if got.Floor() != before.Floor() {
+		t.Errorf("floor = %d after compaction, want it unchanged at %d", got.Floor(), before.Floor())
+	}
+	if got.Total() != 30_000 {
+		t.Errorf("Total = %d, want 30000", got.Total())
+	}
+	if got.ToolResults <= got.Prose {
+		t.Errorf("composition lost while shrinking: results=%d prose=%d", got.ToolResults, got.Prose)
+	}
+}
+
+// TestWithLiveTotalOnAnEmptyComposition: with nothing priced at all the whole
+// total is pending rather than invented as a split across rows that would each
+// be a guess.
+func TestWithLiveTotalOnAnEmptyComposition(t *testing.T) {
+	got := ContextBreakdown{ToolCount: 4, ExternalToolCount: 1}.WithLiveTotal(50_000)
+	if got.Pending != 50_000 || got.Total() != 50_000 {
+		t.Errorf("Pending = %d, Total = %d, want both 50000", got.Pending, got.Total())
+	}
+	if got.System != 0 || got.Prose != 0 {
+		t.Errorf("invented a composition: system=%d prose=%d", got.System, got.Prose)
 	}
 	if got.ToolCount != 4 || got.ExternalToolCount != 1 {
 		t.Errorf("counts = %d/%d, want 4/1", got.ToolCount, got.ExternalToolCount)
+	}
+}
+
+// TestWithLiveTotalBelowTheFloorStaysConsistent: a degenerate reading (a total
+// smaller than the floor itself) must still leave rows that sum to it rather
+// than a negative or a contradiction.
+func TestWithLiveTotalBelowTheFloorStaysConsistent(t *testing.T) {
+	got := ContextBreakdown{System: 6_000, ToolSchemas: 4_000, Prose: 1_000}.WithLiveTotal(2_000)
+	if got.Total() != 2_000 {
+		t.Errorf("Total = %d, want 2000", got.Total())
+	}
+	for name, v := range map[string]int64{"System": got.System, "ToolSchemas": got.ToolSchemas, "Prose": got.Prose, "Pending": got.Pending} {
+		if v < 0 {
+			t.Errorf("%s = %d, want no negative bucket", name, v)
+		}
 	}
 }

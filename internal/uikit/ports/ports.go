@@ -92,11 +92,11 @@ type Usage struct {
 // ContextBreakdown is Usage.InputTokens split into the parts a reader can act
 // on: what compaction can reclaim, and what it cannot.
 //
-// System, ToolSchemas, Memory and Summary are the floor, present on every turn
-// whatever was said. Prose, ToolResults and Reasoning are the conversation,
-// which compaction eats. The distinction is the actionable one: a session that
-// opens already a third full is carrying an expensive floor, and no amount of
-// compacting will move it.
+// System, ToolSchemas, ExternalSchemas, Memory and Summary are the floor,
+// present on every turn whatever was said. Prose, ToolResults, Reasoning and
+// Pending are the conversation, which compaction eats. The distinction is the
+// actionable one: a session that opens already a third full is carrying an
+// expensive floor, and no amount of compacting will move it.
 type ContextBreakdown struct {
 	System int64
 	// ToolSchemas is the cost of the compiled-in tools; ExternalSchemas is the
@@ -115,6 +115,15 @@ type ContextBreakdown struct {
 	Prose             int64
 	ToolResults       int64
 	Reasoning         int64
+	// Pending is live prompt cost the composition does not yet explain. The
+	// session adopts a turn's messages only when the turn finishes, so while
+	// one is running its composition describes the PREVIOUS turn, and on the
+	// first turn it is the floor alone. Everything the provider prices beyond
+	// that is this turn's conversation, and it is held here rather than spread
+	// over the other buckets: spreading it grew the system prompt and the tool
+	// schemas on screen, the two things that cannot grow, and left the
+	// conversation rows reading zero for a whole turn.
+	Pending int64
 }
 
 // Floor is the part of the estimate compaction cannot reclaim.
@@ -122,52 +131,95 @@ func (b ContextBreakdown) Floor() int64 {
 	return b.System + b.ToolSchemas + b.ExternalSchemas + b.Memory + b.Summary
 }
 
-// Conversation is the part compaction reclaims.
+// Conversation is the part compaction reclaims, including the pending cost of
+// a turn in flight: unadopted history is still history.
 func (b ContextBreakdown) Conversation() int64 {
-	return b.Prose + b.ToolResults + b.Reasoning
+	return b.Prose + b.ToolResults + b.Reasoning + b.Pending
 }
 
 // Total is Floor plus Conversation.
 func (b ContextBreakdown) Total() int64 { return b.Floor() + b.Conversation() }
 
-// ScaleTo rescales every bucket so they sum to exactly total, preserving the
-// composition. It exists for the one place where the total and the
-// composition come from different sources: the provider prices a live turn
-// and reports only a number, while the session knows what that number is made
-// of. Scaling keeps the parts and the whole in agreement instead of blanking
-// the parts for the length of a turn.
+// WithLiveTotal reconciles this composition with a total the provider
+// reported, which is authoritative for how full the window is and carries no
+// composition of its own.
 //
-// ToolCount is a schema count, not a token cost, so it passes through
-// unscaled. A zero-cost breakdown scales to nothing rather than inventing a
-// composition it does not have.
-func (b ContextBreakdown) ScaleTo(total int64) ContextBreakdown {
-	raw := b.Total()
-	if raw <= 0 || total <= 0 {
+// The floor is never rescaled. The system prompt, the tool schemas and the
+// carried memory are fixed for the session and known exactly, so stretching
+// them to absorb a growing total states something false about the two
+// quantities a reader most needs to trust. What the composition cannot
+// account for goes to Pending, which is what it actually is: the turn the
+// session has not adopted yet.
+//
+// A total BELOW what is already priced means compaction just dropped history.
+// There the conversation is scaled down to fit and the floor is still kept
+// whole, because compaction removes conversation and never the floor. Only a
+// total below even the floor rescales everything, and that is a degenerate
+// reading rather than a state the session can be in.
+func (b ContextBreakdown) WithLiveTotal(total int64) ContextBreakdown {
+	if total <= 0 {
 		return b.countsOnly()
 	}
-	if raw == total {
-		return b
+	out := b
+	out.Pending = 0
+	if base := out.Total(); total >= base {
+		out.Pending = total - base
+		return out
 	}
-	scaled := b.countsOnly()
-	in, out := b.buckets(), scaled.buckets()
-	for i, v := range in {
-		*out[i] = *v * total / raw
+	if floor := out.Floor(); total > floor {
+		scaleFields(out.conversationBuckets(), total-floor)
+		return out
 	}
-	if drift := total - scaled.Total(); drift != 0 {
-		largest := out[0]
-		for _, f := range out[1:] {
+	scaleFields(out.buckets(), total)
+	return out
+}
+
+// scaleFields scales the pointed-to values so they sum to exactly target,
+// handing the rounding drift to the largest so the parts always add up to the
+// number displayed beside them. With nothing to scale, the whole target lands
+// on the last field, which callers order to be the one that can honestly
+// carry an unattributed amount.
+func scaleFields(fields []*int64, target int64) {
+	if len(fields) == 0 || target < 0 {
+		return
+	}
+	var sum int64
+	for _, f := range fields {
+		sum += *f
+	}
+	if sum <= 0 {
+		for _, f := range fields {
+			*f = 0
+		}
+		*fields[len(fields)-1] = target
+		return
+	}
+	var got int64
+	for _, f := range fields {
+		*f = *f * target / sum
+		got += *f
+	}
+	if drift := target - got; drift != 0 {
+		largest := fields[0]
+		for _, f := range fields[1:] {
 			if *f > *largest {
 				largest = f
 			}
 		}
 		*largest += drift
 	}
-	return scaled
 }
 
-// buckets lists the token fields in a stable order for ScaleTo's arithmetic.
+// buckets lists every token field in a stable order.
 func (b *ContextBreakdown) buckets() []*int64 {
-	return []*int64{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning}
+	return []*int64{&b.System, &b.ToolSchemas, &b.ExternalSchemas, &b.Memory, &b.Summary, &b.Prose, &b.ToolResults, &b.Reasoning, &b.Pending}
+}
+
+// conversationBuckets lists the reclaimable fields, Pending last so an empty
+// conversation absorbs an unattributable remainder there rather than inventing
+// a split across rows that would each be a guess.
+func (b *ContextBreakdown) conversationBuckets() []*int64 {
+	return []*int64{&b.Prose, &b.ToolResults, &b.Reasoning, &b.Pending}
 }
 
 // countsOnly is an empty breakdown that keeps the schema counts, which are not

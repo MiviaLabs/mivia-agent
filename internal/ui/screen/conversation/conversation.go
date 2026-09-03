@@ -353,17 +353,17 @@ func (s *Screen) refreshTopbar() {
 			live := *s.liveUsage
 			// The provider reports a total and no composition. The
 			// session's estimate has the composition and is the only
-			// source for it, so it is carried over and scaled to the
-			// authoritative total. Taking the live reading whole would
-			// blank every bucket row for the length of a turn while the
-			// header above them kept reporting a real share.
+			// source for it, so it is carried over and reconciled with
+			// the authoritative total. Taking the live reading whole
+			// would blank every bucket row for the length of a turn
+			// while the header above them kept reporting a real share.
 			parts := u.Breakdown
 			if parts.Total() == 0 {
 				// The session has not priced the running turn yet, so the
 				// last composition the bar held is the best one available.
 				parts = s.topbar.Usage().Breakdown
 			}
-			live.Breakdown = parts.ScaleTo(live.InputTokens)
+			live.Breakdown = parts.WithLiveTotal(live.InputTokens)
 			u = live
 		} else if (u.InputTokens+u.OutputTokens == 0) && (s.topbar.Usage().InputTokens+s.topbar.Usage().OutputTokens > 0) {
 			u = s.topbar.Usage()
