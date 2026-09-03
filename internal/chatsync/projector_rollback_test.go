@@ -361,10 +361,15 @@ func TestALostDeltaSettlesOnTheBlockItsSurvivingDeltasUsed(t *testing.T) {
 
 // TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock covers the no-append-loss
 // trigger of the same defect. Recording the settle segment when the delta's
-// block id was merely PICKED - before the stream/redaction gate - meant a
-// policy installed mid-turn (a workflow tool can install one) suppressed the
-// later deltas while their segment assignment still landed, and the settle
-// named a segment nothing ever shipped into.
+// block id was merely PICKED - before the stream gate - meant a delta whose
+// text never reached the wire still moved the segment assignment, and the
+// settle named a segment nothing ever shipped into.
+//
+// A policy installed mid-turn is that gate: a fragment shorter than
+// redact.StreamHoldBack is withheld in full by the cross-fragment redactor, so
+// it ships nothing and must record nothing. The text is not lost - the block's
+// close flushes the held tail as one final delta into the segment it arrived
+// in, which is what the settle then names.
 func TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock(t *testing.T) {
 	p := NewProjector("sess-1", 0, proseOpts())
 
@@ -380,18 +385,42 @@ func TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock(t *testing.T) {
 	redact.SetPolicy(pol)
 	t.Cleanup(func() { redact.SetPolicy(oldPol) })
 
-	// Suppressed by the policy: nothing ships, so nothing is recorded.
-	if got := p.Project(rootEvent(events.KindAssistant, "SECRET_1 suppressed", "delta")); len(got) != 0 {
-		t.Fatalf("a redacted delta produced %d wire events, want 0", len(got))
+	// Held whole by the hold-back window: nothing ships, so nothing is
+	// recorded at the moment of the delta.
+	if got := p.Project(rootEvent(events.KindAssistant, "SECRET_1 held", "delta")); len(got) != 0 {
+		t.Fatalf("a wholly-held delta produced %d wire events, want 0", len(got))
 	}
 
-	payload := settledMessage(t, p)
-	if payload.Block != "turn:1:assistant:0" {
-		t.Errorf("settled block = %q, want turn:1:assistant:0 - a suppressed delta "+
-			"must not move the block the settled aggregate names", payload.Block)
+	out := p.Project(rootEvent(events.KindAssistant, "SECRET_1 held", ""))
+	if len(out) != 2 {
+		t.Fatalf("the settled aggregate produced %d wire events, want 2 - the "+
+			"flushed tail then the message", len(out))
 	}
-	if payload.Fragments != 1 {
-		t.Errorf("Fragments = %d, want 1 - exactly one delta ever shipped", payload.Fragments)
+	tail, ok := out[0].Payload.(*AssistantDeltaPayload)
+	if !ok {
+		t.Fatalf("first event is %T, want *AssistantDeltaPayload - the flushed tail", out[0].Payload)
+	}
+	if tail.Text != "[redacted] held" {
+		t.Errorf("flushed tail text = %q, want %q - the tail is redacted, not dropped",
+			tail.Text, "[redacted] held")
+	}
+	if tail.Block != "turn:1:assistant:1" {
+		t.Errorf("flushed tail block = %q, want turn:1:assistant:1 - the segment "+
+			"the held text actually arrived in", tail.Block)
+	}
+	payload, ok := out[1].Payload.(*AssistantMessagePayload)
+	if !ok {
+		t.Fatalf("second event is %T, want *AssistantMessagePayload", out[1].Payload)
+	}
+	if payload.Block != "turn:1:assistant:1" {
+		t.Errorf("settled block = %q, want turn:1:assistant:1 - the block the "+
+			"last surviving delta shipped into", payload.Block)
+	}
+	if payload.Fragments != 2 {
+		t.Errorf("Fragments = %d, want 2 - the first delta and the flushed tail", payload.Fragments)
+	}
+	if payload.Text != "" {
+		t.Errorf("Text = %q, want empty - INV-1, fragments shipped", payload.Text)
 	}
 }
 

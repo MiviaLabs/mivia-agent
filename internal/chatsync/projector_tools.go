@@ -225,10 +225,21 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	ls := p.laneState(turnID, ev.AgentTask)
 	seg := ls.blockSegment(ev.Detail == "delta")
 	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", seg)
-	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
-		if !p.opts.StreamAssistant || redactionActive() {
+		if !p.opts.StreamAssistant {
+			return nil
+		}
+		// The lane's own cross-fragment redactor, for the reason the root
+		// path documents: a policy is session-wide, so a subagent's prose is
+		// held to exactly the root's standard, and holding it per lane is
+		// what stops two runs streaming at once from splicing each other's
+		// tails together.
+		if !ls.assistantStream.Pending() {
+			ls.assistantHoldSegment = seg
+		}
+		shipped := ls.assistantStream.Push(ev.Content)
+		if shipped == "" {
 			return nil
 		}
 		// Recorded only once the delta is actually going out - see
@@ -238,14 +249,20 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 		ls.fragments++
 		ls.segmentAssistant++
 		ls.recordDeltaSegment(seg)
-		content = applyTruncation(&env, "text", content, BudgetDeltaText)
+		shipped = applyTruncation(&env, "text", shipped, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
 			Envelope: env,
-			Text:     content,
+			Text:     shipped,
 			Index:    ls.fragments - 1,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentAssistantDelta, payload)}
 	}
+
+	// The aggregate closes the block; the held tail goes out first, as a
+	// delta, because INV-1 is about to empty this message's text.
+	flushed := p.flushHeldAssistant(env, turnID+":"+ev.AgentTask+":assistant", ls, true, false)
+	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", ls.blockSegment(false))
+	content := redactText(ev.Content)
 
 	text := content
 	fragments := 0
@@ -265,7 +282,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 		Status:    "completed",
 		Text:      text,
 	}
-	return []WireEvent{p.nextWireEvent(TypeSubagentAssistantMessage, payload)}
+	return append(flushed, p.nextWireEvent(TypeSubagentAssistantMessage, payload))
 }
 
 // projectSubagentThinking projects one subagent's reasoning. Bytes always
@@ -279,11 +296,12 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 	env.Block = proseBlock(turnID+":"+ev.AgentTask+":thinking", ls.segment)
 
 	text := ""
-	// Withheld under a policy for the same reason as the root path: a
-	// fragment-sized redaction boundary cannot catch a secret that spans two
-	// fragments, and thinking has no whole-message form to fall back to.
-	if p.opts.IncludeThinking && !redactionActive() {
-		text = redactText(ev.Content)
+	// Streamed through the lane's cross-fragment redactor, exactly as the
+	// root path does: a fragment-sized redaction boundary cannot catch a
+	// secret that spans two fragments, so the boundary is moved rather than
+	// the stream suppressed.
+	if p.opts.IncludeThinking {
+		text = ls.thinkingStream.Push(ev.Content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
 	// The lane accumulates for its own settled aggregate exactly as the root
@@ -338,11 +356,17 @@ func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events
 		env.Block = turnID + ":" + ev.AgentTask + ":assistant"
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
+		// DISCARD, not flush: the consumer is being told to throw this
+		// block's text away, so shipping the held tail would deliver words
+		// into a block that is about to be emptied. This is the one place a
+		// held tail may be dropped without losing anything.
+		ls.assistantStream.Discard()
 		p.advanceStepForReset(ls)
 	} else {
 		env.Block = turnID + ":assistant"
 		ts := p.turn(turnID)
 		ts.streamed, ts.fragments = false, 0
+		ts.assistantStream.Discard()
 		p.advanceStepForReset(ts)
 	}
 	// Truncate BEFORE the literal. Go evaluates the fields in order, so

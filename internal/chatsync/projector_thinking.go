@@ -48,6 +48,11 @@ func (p *Projector) settleThinking(env Envelope, blockStream string, ts *turnSta
 		return nil
 	}
 	raw := ts.thinkingPending
+	// The block is closing, so the cross-fragment redactor's held tail ships
+	// now or never. It goes out BEFORE the aggregate, as a delta, because the
+	// aggregate is about to empty its own text under INV-1. See
+	// flushHeldThinking for the case where nothing streamed.
+	flushed := p.flushHeldThinking(env, blockStream, ts, eventType)
 	streamed := ts.thinkingStreamed
 	fragments := ts.thinkingBlockFragments
 	ts.thinkingPending, ts.thinkingStreamed, ts.thinkingBlockFragments = "", false, 0
@@ -73,7 +78,7 @@ func (p *Projector) settleThinking(env Envelope, blockStream string, ts *turnSta
 	}
 
 	payload := thinkingMessagePayload(eventType, env, fragments, len(raw), text)
-	return []WireEvent{p.nextWireEvent(eventType, payload)}
+	return append(flushed, p.nextWireEvent(eventType, payload))
 }
 
 // thinkingMessagePayload builds the payload struct for the lane the aggregate

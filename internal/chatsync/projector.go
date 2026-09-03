@@ -125,10 +125,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 			return nil
 		}
 		ts.done = true
-		// A turn's end closes its open thinking block. Without this the last
-		// step's reasoning - the step that thought and then finished, calling
-		// no tool - never settled and was dropped with the state.
-		return append(p.settleThinkingFor(env, turnID, ev), p.projectTurnEnd(env, ev.Detail)...)
+		return p.closeTurn(env, turnID, ev, p.projectTurnEnd(env, ev.Detail))
 
 	case events.KindError:
 		if !p.knownTurn(turnID) {
@@ -139,7 +136,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 			return nil
 		}
 		ts.done = true
-		return append(p.settleThinkingFor(env, turnID, ev), p.projectTurnError(env, ev)...)
+		return p.closeTurn(env, turnID, ev, p.projectTurnError(env, ev))
 
 	case events.KindAssistant:
 		// The attribution check MUST come before p.turn(turnID). A subagent's
@@ -165,13 +162,15 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectThinking(env, turnID, ev.Content)
 
 	case events.KindToolStart, events.KindToolEnd:
-		settled := p.settleThinkingOnStepClose(env, turnID, ev)
+		settled := p.flushHeldAssistantOnStepClose(env, turnID, ev)
+		settled = append(settled, p.settleThinkingOnStepClose(env, turnID, ev)...)
 		p.closeStepOnToolStart(ev, turnID)
 		return append(settled, p.projectTool(env, ev)...)
 
 	case events.KindSubagentBegin, events.KindSubagentStart, events.KindSubagentEnd,
 		events.KindSubagentHeartbeat, events.KindSubagentDone:
-		settled := p.settleThinkingOnStepClose(env, turnID, ev)
+		settled := p.flushHeldAssistantOnStepClose(env, turnID, ev)
+		settled = append(settled, p.settleThinkingOnStepClose(env, turnID, ev)...)
 		p.closeStepOnToolStart(ev, turnID)
 		return append(settled, p.projectSubagent(env, ev)...)
 
@@ -184,6 +183,23 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 	default:
 		return nil
 	}
+}
+
+// closeTurn emits a turn's terminal preceded by everything its open prose
+// blocks still owe the wire.
+//
+// A turn's end closes its thinking block - without this the last step's
+// reasoning, the step that thought and then finished calling no tool, was
+// dropped with the state - and its assistant block too. Both must close: a turn
+// that ended without a settled assistant aggregate (a cancel, a provider that
+// sent only deltas) would otherwise strand the held tail in this projector's
+// buffer, and the reader cannot tell withheld prose from prose that never
+// existed. The flush is TERMINAL - no aggregate can follow it - so it ships
+// even a tail that nothing streamed alongside.
+func (p *Projector) closeTurn(env Envelope, turnID string, ev events.Event, terminal []WireEvent) []WireEvent {
+	out := p.flushHeldAssistantFor(env, turnID, ev, true)
+	out = append(out, p.settleThinkingFor(env, turnID, ev)...)
+	return append(out, terminal...)
 }
 
 // Flush emits any pending sync.dropped event if drops advanced.
@@ -329,6 +345,57 @@ func (p *Projector) projectTurnError(env Envelope, ev events.Event) []WireEvent 
 	return []WireEvent{p.nextWireEvent(TypeTurnFailed, payload)}
 }
 
+// projectAssistantDelta streams one fragment of the turn's answer, or nothing.
+//
+// Returning no wire event is normal, not a loss: the fragment was held whole by
+// the cross-fragment redactor, and its text ships with a later delta or with
+// the flush at the block's close. Until then the settled aggregate is still the
+// copy that carries it.
+func (p *Projector) projectAssistantDelta(env Envelope, ts *turnState, ev events.Event, seg int) []WireEvent {
+	if p.opts.StreamAssistant {
+		// Redaction runs ACROSS the fragment boundary, not inside it. The
+		// stream concatenates its held tail with this fragment, redacts
+		// the concatenation, and returns only the part no future byte can
+		// still complete into a match - so a policy that would catch a
+		// key in the settled message catches it here too, and a live
+		// delta no longer costs the operator their policy. What it cannot
+		// catch is named on redact.StreamHoldBack.
+		if !ts.assistantStream.Pending() {
+			ts.assistantHoldSegment = seg
+		}
+		shipped := ts.assistantStream.Push(ev.Content)
+		if shipped == "" {
+			// The whole fragment is inside the hold-back window. Nothing
+			// reached the wire, so nothing is recorded as having: the
+			// text ships with a later delta or with the flush at the
+			// block's close, and until then the settled aggregate is
+			// still the copy that carries it.
+			return nil
+		}
+		// streamed and fragments record what actually REACHED the wire.
+		// Setting them before this gate made the settled message claim
+		// fragments a viewer never got: a redaction policy installed
+		// mid-turn - which a workflow tool can do - then produced an
+		// empty message with a non-zero count and the whole answer was
+		// unrecoverable.
+		ts.streamed = true
+		ts.fragments++
+		// Same rule for the step counter: a segment is only open if prose
+		// actually went out into it. And for the settle block: a segment
+		// is only "used" once its delta shipped.
+		ts.segmentAssistant++
+		ts.recordDeltaSegment(seg)
+		shipped = applyTruncation(&env, "text", shipped, BudgetDeltaText)
+		payload := &AssistantDeltaPayload{
+			Envelope: env,
+			Text:     shipped,
+			Index:    ts.fragments - 1,
+		}
+		return []WireEvent{p.nextWireEvent(TypeAssistantDelta, payload)}
+	}
+	return nil
+}
+
 func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState, ev events.Event) []WireEvent {
 	if ev.Content == "" {
 		return nil
@@ -338,33 +405,19 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	// have left behind.
 	seg := ts.blockSegment(ev.Detail == "delta")
 	env.Block = proseBlock(turnID+":assistant", seg)
-	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
-		if p.opts.StreamAssistant && !redactionActive() {
-			// streamed and fragments record what actually REACHED the wire.
-			// Setting them before this gate made the settled message claim
-			// fragments a viewer never got: a redaction policy installed
-			// mid-turn - which a workflow tool can do - then produced an
-			// empty message with a non-zero count and the whole answer was
-			// unrecoverable.
-			ts.streamed = true
-			ts.fragments++
-			// Same rule for the step counter: a segment is only open if prose
-			// actually went out into it. And for the settle block: a segment
-			// is only "used" once its delta shipped.
-			ts.segmentAssistant++
-			ts.recordDeltaSegment(seg)
-			content = applyTruncation(&env, "text", content, BudgetDeltaText)
-			payload := &AssistantDeltaPayload{
-				Envelope: env,
-				Text:     content,
-				Index:    ts.fragments - 1,
-			}
-			return []WireEvent{p.nextWireEvent(TypeAssistantDelta, payload)}
-		}
-		return nil
+		return p.projectAssistantDelta(env, ts, ev, seg)
 	}
+
+	// The aggregate closes the block, so any tail still held by the streaming
+	// redactor has to go out first - as a delta, because INV-1 is about to
+	// empty this message's text. Flushing after would publish the tail below
+	// the message that claims to summarise it.
+	flushed := p.flushHeldAssistant(env, turnID+":assistant", ts, false, false)
+	seg = ts.blockSegment(false)
+	env.Block = proseBlock(turnID+":assistant", seg)
+	content := redactText(ev.Content)
 
 	// Final aggregate.
 	//
@@ -388,7 +441,7 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 		Status:    "completed",
 		Text:      text,
 	}
-	return []WireEvent{p.nextWireEvent(TypeAssistantMessage, payload)}
+	return append(flushed, p.nextWireEvent(TypeAssistantMessage, payload))
 }
 
 func (p *Projector) projectThinking(env Envelope, turnID, content string) []WireEvent {
@@ -398,14 +451,15 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 	ts := p.turn(turnID)
 	env.Block = proseBlock(turnID+":thinking", ts.segment)
 	text := ""
-	// A redaction policy withholds the TEXT here rather than suppressing the
-	// event. Thinking has no settled aggregate to fall back to - every
-	// thinking event is a fragment - so suppressing would withhold the fact
-	// that the agent is reasoning at all. Redacting per fragment cannot work:
-	// a pattern spanning two fragments matches neither. Bytes still ship, so
-	// a viewer shows activity without the content.
-	if p.opts.IncludeThinking && !redactionActive() {
-		text = redactText(content)
+	// Reasoning text now streams under a policy, because the redactor spans
+	// fragments: the stream holds back a bounded tail and only ships what no
+	// future byte can complete into a match. A fragment held in full ships an
+	// empty text, exactly as the old blanket suppression did, and the tail
+	// still reaches the wire at the block's close (settleThinking flushes it).
+	// Bytes always report the real size, so a viewer shows activity either
+	// way.
+	if p.opts.IncludeThinking {
+		text = ts.thinkingStream.Push(content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
 	// Accumulate for the settled aggregate regardless of the gate above. That
