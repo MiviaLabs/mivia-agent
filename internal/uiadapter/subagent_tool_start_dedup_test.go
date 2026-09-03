@@ -83,3 +83,47 @@ func TestSubagentThreadKeepsUnidentifiedToolStarts(t *testing.T) {
 		t.Fatalf("thread lists %d tool calls, want 2 (no id to dedupe on)", calls)
 	}
 }
+
+// TestASecondLegCarryingArgumentsFillsTheRow pins the merge's other
+// direction. The pair usually arrives args-first ("queued" carries them,
+// "running" does not), and the merge is written to fill only fields a leg
+// actually carries - so a pair that arrives in the other order, or a
+// first leg admitted before its arguments were resolved, must still end
+// with the arguments on the row rather than an empty string.
+//
+// Without this the merge would look correct on the common ordering and
+// silently drop arguments on the other one.
+func TestASecondLegCarryingArgumentsFillsTheRow(t *testing.T) {
+	threads := NewSubagentThreads()
+	origin := agent.EventOrigin{TaskID: "task-2", Agent: "general-purpose"}
+
+	// First leg: identified, but with no arguments yet.
+	threads.HandleEvent(agent.Event{
+		Kind: agent.EventSubagentStart, Origin: origin, ToolCallID: "call_9",
+		Name: "read_file", Detail: "queued",
+	}, TranslateOptions{})
+	// Second leg carries them.
+	threads.HandleEvent(agent.Event{
+		Kind: agent.EventSubagentStart, Origin: origin, ToolCallID: "call_9",
+		Name: "read_file", Detail: "running", Input: `{"path":"b.go"}`,
+	}, TranslateOptions{})
+
+	conv, ok := threads.Thread("task-2")
+	if !ok {
+		t.Fatal("no thread registered for task-2")
+	}
+	var calls []string
+	var args string
+	for _, m := range conv.History() {
+		for _, tc := range m.ToolCalls {
+			calls = append(calls, tc.ID)
+			args = tc.Arguments
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("thread lists %d tool calls, want 1: %v", len(calls), calls)
+	}
+	if args != `{"path":"b.go"}` {
+		t.Errorf("Arguments = %q, want the second leg's args merged onto the row", args)
+	}
+}

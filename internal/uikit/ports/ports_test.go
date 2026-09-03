@@ -395,3 +395,36 @@ func TestScaleFieldsPutsAnUnattributableTotalOnTheLastField(t *testing.T) {
 		t.Errorf("scaling to zero left %v behind", stale)
 	}
 }
+
+// TestWithLiveTotalOfNothingKeepsOnlyTheCounts: a provider that reported
+// no input tokens yet - a turn that has not been priced - must not leave
+// stale magnitudes on screen. The counts stay, because "19 tools" is true
+// before a single token is spent.
+func TestWithLiveTotalOfNothingKeepsOnlyTheCounts(t *testing.T) {
+	base := ContextBreakdown{
+		System: 1_000, Skills: 400, Prose: 200,
+		ToolCount: 19, ExternalToolCount: 3, SkillCount: 2,
+	}
+	for _, total := range []int64{0, -1, -900} {
+		got := base.WithLiveTotal(total)
+		if got.Total() != 0 {
+			t.Errorf("WithLiveTotal(%d).Total() = %d, want 0", total, got.Total())
+		}
+		if got.ToolCount != 19 || got.ExternalToolCount != 3 || got.SkillCount != 2 {
+			t.Errorf("WithLiveTotal(%d) dropped the counts: %+v", total, got)
+		}
+	}
+}
+
+// TestScaleFieldsRefusesNonsense: no fields to scale, or a negative
+// target, leaves everything untouched rather than writing a negative
+// magnitude into a bucket that is displayed.
+func TestScaleFieldsRefusesNonsense(t *testing.T) {
+	scaleFields(nil, 100) // must not panic
+
+	a, b := int64(7), int64(11)
+	scaleFields([]*int64{&a, &b}, -1)
+	if a != 7 || b != 11 {
+		t.Errorf("a negative target rewrote the buckets to (%d, %d), want (7, 11)", a, b)
+	}
+}
