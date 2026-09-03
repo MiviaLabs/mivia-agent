@@ -417,13 +417,13 @@ A deadline interrupt and a `Ctrl+C` interrupt differ in one way after the turn e
 
 ## Bounded prompt budget
 
-`[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. The recommended value is `200000`.
+`[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. It has no default, and leaving it unset is the normal setting.
 
-When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`). A bounded budget makes history compaction fire earlier - at 80% of the budget, targeting 50% - and cuts token cost on long sessions.
+When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`), so each model runs to its own capacity: a 1M-window model gets a 1M budget and a 200k one gets 200k. One cap applied over a mixed catalogue instead holds every model to the smallest, which is why no value is recommended here.
 
-The recall-versus-price dial works as follows: larger values keep more history in the prompt at higher cost; smaller values compact sooner and spend fewer tokens. The escape hatch is any explicit value up to `10000000` (10M).
+Set it when you want compaction to fire earlier than the model's own window would cause. History compacts at 80% of the budget, targeting 50%, so a smaller budget means more frequent and cheaper compactions, and a larger one means fewer and larger summarizer calls that invalidate more of the prefix cache. The dial is recall versus price: larger values keep more history in the prompt at higher cost. Any explicit value up to `10000000` (10M) is accepted.
 
-When the knob is unset and the active budget exceeds `200000`, `mivia doctor` and `mivia config show` print a `prompt_budget_advisory` suggesting the recommended cap. Set `[chat] max_prompt_tokens = 200000` to suppress the advisory.
+`mivia doctor` and `mivia config show` always report the active budget as `prompt_budget`, the number the context gauge divides by and compaction measures against, which is stated nowhere else. It names where the budget came from: the model window, or an explicit cap. When a cap holds the budget below half the model's declared window, the line names the window too, because a large model held to a small budget otherwise reads as a small model in every surface that shows it.
 
 ## Tool result ceiling
 

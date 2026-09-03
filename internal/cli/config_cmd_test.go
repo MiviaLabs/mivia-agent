@@ -116,14 +116,19 @@ api_key_required=true
 	}
 }
 
-func TestConfigShowPromptBudgetAdvisoryShown(t *testing.T) {
+// TestConfigShowPromptBudgetReportsTheWindowDerivedBudget: with no cap set the
+// budget comes from the model's own window, which is a bound. config show must
+// state it as a fact rather than calling it unbounded and pushing a fixed cap.
+func TestConfigShowPromptBudgetReportsTheWindowDerivedBudget(t *testing.T) {
 	res := &config.Resolved{ProviderName: "deepseek", Model: "deepseek-v4-flash", MaxContextTokens: 616000}
 	got := formatConfigShow(res)
-	if !strings.Contains(got, "prompt_budget_advisory=unbounded (616000 tokens)") {
+	if !strings.Contains(got, "prompt_budget_advisory=616000 tokens (from the model window)") {
 		t.Fatalf("advisory output = %q", got)
 	}
-	if !strings.Contains(got, "recommended 200000") {
-		t.Fatalf("advisory missing recommendation = %q", got)
+	for _, banned := range []string{"unbounded", "recommended"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("output still says %q about an uncapped budget: %q", banned, got)
+		}
 	}
 }
 
@@ -189,10 +194,16 @@ func TestWriteConfigShowJSONOmitsSecrets(t *testing.T) {
 	}
 }
 
-func TestConfigShowPromptBudgetAdvisoryAbsentWhenCapped(t *testing.T) {
+// TestConfigShowPromptBudgetNamesAnExplicitCap: a cap is where the budget came
+// from, so config show says so. With no catalog to compare against there is no
+// window to name, and the line must not guess at one.
+func TestConfigShowPromptBudgetNamesAnExplicitCap(t *testing.T) {
 	res := &config.Resolved{ProviderName: "deepseek", Model: "deepseek-v4-flash", MaxContextTokens: 616000, MaxPromptTokens: intPtr(200000)}
 	got := formatConfigShow(res)
-	if strings.Contains(got, "prompt_budget_advisory") {
+	if !strings.Contains(got, "prompt_budget_advisory=616000 tokens (capped by [chat] max_prompt_tokens)") {
 		t.Fatalf("capped output = %q", got)
+	}
+	if strings.Contains(got, "the model window is") {
+		t.Errorf("named a window with no catalog to read it from: %q", got)
 	}
 }

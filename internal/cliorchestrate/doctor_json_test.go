@@ -19,6 +19,7 @@ const goldenHumanOutputOK = `mivia doctor
   provider:   deepseek
   model:      deepseek-v4-pro
   catalog:    deepseek/deepseek-v4-pro:128000
+  prompt_budget: 128000 tokens (from the model window)
   base_url:   https://api.deepseek.com/v1
   api_key_env:DEEPSEEK_API_KEY
   sync_api:   https://api.mivia.app (default)
@@ -53,6 +54,7 @@ const goldenHumanOutputMissingAPIKey = `mivia doctor
   provider:   deepseek
   model:      deepseek-v4-pro
   catalog:    deepseek/deepseek-v4-pro:128000
+  prompt_budget: 128000 tokens (from the model window)
   base_url:   https://api.deepseek.com/v1
   api_key_env:DEEPSEEK_API_KEY
   sync_api:   https://api.mivia.app (default)
