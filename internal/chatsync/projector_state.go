@@ -42,9 +42,10 @@ type turnState struct {
 	thinkingBlockFragments int
 	thinkingStreamed       bool
 	// assistantStream and thinkingStream are this stream's cross-fragment
-	// redactors for the open prose block. Each holds back a bounded tail
-	// (redact.StreamHoldBack) so a secret split across two deltas is still
-	// caught, which is what lets deltas ship under a policy at all. Both must
+	// redactors for the open prose block. Each holds back only the tail that
+	// could still be the start of a match (see redact.StreamHoldBack for the
+	// fallback window) so a secret split across two deltas is still caught,
+	// which is what lets deltas ship under a policy at all. Both must
 	// be flushed at every block close - see flushHeldProse. A held tail nobody
 	// flushes is text silently lost.
 	assistantStream redact.Stream

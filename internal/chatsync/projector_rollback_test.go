@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // A wire event can be projected and then never stored: the outbox overflows on
@@ -377,13 +376,7 @@ func TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock(t *testing.T) {
 	p.Project(rootEvent(events.KindAssistant, "before the policy ", "delta"))
 	p.Project(rootEvent(events.KindToolStart, "", ""))
 
-	pol, err := redact.Compile([]string{`SECRET_[0-9]+`}, nil, "[redacted]")
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	oldPol := redact.Current()
-	redact.SetPolicy(pol)
-	t.Cleanup(func() { redact.SetPolicy(oldPol) })
+	windowedPolicy(t, `SECRET_[0-9]+`)
 
 	// Held whole by the hold-back window: nothing ships, so nothing is
 	// recorded at the moment of the delta.

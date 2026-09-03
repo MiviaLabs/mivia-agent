@@ -21,9 +21,40 @@ import (
 // These tests state the property at the projector's own level, because the
 // producer is where a viewer's bytes are decided.
 
-// streamPolicy installs a policy that catches a synthetic credential shape (a real vendor prefix here would trip the repo's own secret scanner).
+// windowPattern keeps the last 256 bytes of a block open as a possible match
+// and never completes one: its partial match is alive for exactly that many
+// bytes, and the NUL-led marker occurs in no fixture. The hold-back used to be
+// a flat window of that size; it is now content-aware, so ordinary prose ships
+// at once. The flush, settle and rollback tests here were written against a
+// held tail and need one, so they install this pattern alongside their real
+// one - it models an operator rule whose partial match stays open, which is
+// the shape the hold still exists for.
+const windowPattern = "(?s).{0,256}\x00window\x00"
+
+// windowedPolicy installs the given patterns plus windowPattern for one test.
+func windowedPolicy(t *testing.T, patterns ...string) {
+	t.Helper()
+	pol, err := redact.Compile(append(patterns, windowPattern), nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	old := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+}
+
+// streamPolicy installs a windowed policy that catches a synthetic credential
+// shape (a real vendor prefix here would trip the repo's own secret scanner).
 func streamPolicy(t *testing.T) {
 	t.Helper()
+	windowedPolicy(t, `xk-tok-[A-Za-z0-9-]{8,64}`)
+}
+
+// TestOrdinaryProseShipsAtOnceUnderAPolicy pins the latency half of the trade
+// at the producer: with a real credential rule and no window, a four-byte
+// delta of prose is on the wire in the same Project call, not held until the
+// block closes.
+func TestOrdinaryProseShipsAtOnceUnderAPolicy(t *testing.T) {
 	pol, err := redact.Compile([]string{`xk-tok-[A-Za-z0-9-]{8,64}`}, nil, "[redacted]")
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -31,6 +62,12 @@ func streamPolicy(t *testing.T) {
 	old := redact.Current()
 	redact.SetPolicy(pol)
 	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+	got := p.Project(rootEvent(events.KindAssistant, "The ", "delta"))
+	if text := shippedText(got); text != "The " {
+		t.Fatalf("a prose delta shipped %q under a policy, want it whole and at once", text)
+	}
 }
 
 // shippedText concatenates the text of every delta payload of one type.

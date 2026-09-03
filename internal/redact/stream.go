@@ -2,8 +2,8 @@ package redact
 
 import "unicode/utf8"
 
-// StreamHoldBack is the maximum number of bytes a [Stream] withholds from the
-// wire so a match spanning two fragments is still caught.
+// StreamHoldBack is the number of bytes a [Stream] withholds from the wire
+// when it cannot reason about a policy's patterns - the FALLBACK window.
 //
 // Redacting each streamed fragment on its own cannot see a secret that arrives
 // split - `sk-` at the end of one delta and the rest at the start of the next
@@ -12,15 +12,21 @@ import "unicode/utf8"
 // to each new fragment and ships only what no future byte can still complete
 // into a match.
 //
-// THE LIMIT. Go regexps are unbounded, so no finite window is sound for every
-// expression. A pattern that can match MORE than this many bytes may begin
-// further back than the window reaches, and its opening bytes ship before the
-// closing bytes prove it was a secret. That text goes out UNREDACTED. Operators
-// whose secrets exceed 256 bytes must not rely on streamed deltas; the wire
-// doc tells them to set stream_assistant = false instead. 256 covers every
-// credential shape in mivia.toml.example with a wide margin and bounds the
-// added latency to one fragment, which the flush at every block close then
-// bounds in time as well.
+// The normal hold is CONTENT-AWARE: safeCut runs each pattern's own automaton
+// over the buffer and withholds exactly the suffix that is still the possible
+// beginning of a match (partialMatcher). For ordinary prose that is zero to a
+// dozen bytes - the longest word the shipped rules open on - so the viewer
+// trails the model by a fraction of a delta instead of by 256 bytes, and a
+// mid-message pause no longer leaves the held text invisible. The fixed window
+// was a byte bound standing in for a time bound: at four bytes a delta it sat
+// two seconds behind at full speed and unbounded during every pause.
+//
+// The window remains as the fallback for a pattern regexp accepts but the
+// simulation cannot re-parse. None of the four shipped default patterns hit
+// it; Compile records the case in Policy.windowed. Under the window, a pattern
+// that can match MORE than this many bytes may begin further back than the
+// window reaches, and its opening bytes ship unredacted. Under the automaton,
+// an open match pins the cut at its start for as long as it stays open.
 //
 // Full rationale and the operator-facing statement: docs/product/chat-sync-wire.md.
 const StreamHoldBack = 256
@@ -76,9 +82,10 @@ func (s *Stream) Discard() { s.held = "" }
 //
 // Two rules, both conservative:
 //
-//  1. The last StreamHoldBack bytes are always withheld, so the opening bytes
-//     of any match no longer than the window are still in the buffer when the
-//     rest of it arrives.
+//  1. Every byte from the earliest still-open partial match onward is
+//     withheld (partialMatcher.earliestOpen), so the opening bytes of a match
+//     are still in the buffer when the rest of it arrives. A policy the
+//     simulation cannot serve withholds the last StreamHoldBack bytes instead.
 //  2. No cut is made INSIDE a match that already exists in buf; the cut moves
 //     back to that match's start so the match is redacted as one unit. Moving
 //     back can expose a further crossing match, so this iterates to a fixed
@@ -92,7 +99,15 @@ func (p *Policy) safeCut(buf string) int {
 	if p.empty() {
 		return len(buf)
 	}
-	cut := len(buf) - StreamHoldBack
+	cut := len(buf)
+	if p.windowed {
+		cut = len(buf) - StreamHoldBack
+	}
+	for _, m := range p.partial {
+		if open := m.earliestOpen(buf); open < cut {
+			cut = open
+		}
+	}
 	if cut <= 0 {
 		return 0
 	}
