@@ -127,7 +127,7 @@ func TestHeightGrowsWithLines(t *testing.T) {
 }
 
 func TestHeightCappedAtMaxLines(t *testing.T) {
-	// 10 lines of text should not exceed maxInputLines + 2 (for top and bottom frame).
+	// 10 lines of text should not exceed maxInputLines + 2 (top and bottom padding rows).
 	lines := strings.Repeat("text\n", 10)
 	m := sizedComposer(t, 80, strings.TrimSuffix(lines, "\n"))
 	maxExpected := maxInputLines + 2
@@ -192,8 +192,8 @@ func TestInputOffsets(t *testing.T) {
 	}
 }
 
-func TestViewNarrowFallbackNoFrame(t *testing.T) {
-	// Below minFramedWidth, View must not panic and must stay within width.
+func TestViewNarrowFallbackNoPadding(t *testing.T) {
+	// Below minPaddedWidth, View must not panic and must stay within width.
 	m := New(loadTheme(t), theme.TierASCII, 4)
 	m.SetValue("hi")
 	got := m.View()
@@ -204,7 +204,7 @@ func TestViewNarrowFallbackNoFrame(t *testing.T) {
 	}
 }
 
-// TestComposerViewNoExcessWidth checks that framed rows never exceed terminal width.
+// TestComposerViewNoExcessWidth checks that padded rows never exceed terminal width.
 // This replaces the strict pixel-exact test from textinput days; textarea
 // internal rendering varies by cursor position, but rows must never overflow.
 func TestComposerViewNoExcessWidth(t *testing.T) {
@@ -560,10 +560,10 @@ func TestComposerView_TruncatesLongLinesWhenNarrow(t *testing.T) {
 	}
 }
 
-func TestComposerView_TruncatesLongLinesWhenFramed(t *testing.T) {
+func TestComposerView_TruncatesLongLinesWhenPadded(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 80)
-	m.SetValue("A very long input string that exceeds framed inner width")
-	// Set width directly to framed width so lines exceed inner (10 - frameInset = 6)
+	m.SetValue("A very long input string that exceeds the padded inner width")
+	// Set width directly to a padded width so lines exceed inner (10 - padInset = 6)
 	m.width = 10
 	view := m.View()
 	if view == "" {
@@ -610,7 +610,8 @@ func TestMenuClickRow(t *testing.T) {
 
 // TestComposerIdleBarCarriesNoHint: the idle bar is prompt, text, and
 // padding only. The placeholder already names "/" for commands, so no
-// hint row is drawn until a menu opens (menuHint), on any tier.
+// hint is drawn until a menu opens (menuHint, in the popup's footer), on
+// any tier.
 func TestComposerIdleBarCarriesNoHint(t *testing.T) {
 	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierTrueColor} {
 		m := New(loadTheme(t), tier, 80)

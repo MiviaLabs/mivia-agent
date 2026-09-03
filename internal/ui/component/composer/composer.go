@@ -24,9 +24,10 @@ import (
 //
 // Dynamic height: the textarea grows from 1 line to maxInputLines as the
 // user types, and shrinks when lines are removed. The body has no border,
-// only a solid fill; the key-hint row below it always occupies a fixed
-// gutter row of its own so the rest of the cockpit layout never reflows
-// (ux-rules.md rule 2.7, 2.8).
+// only a solid fill with one padding row above and below; the completion
+// and mention menus are an overlay (Popup) the owning screen draws above
+// the bar, so opening one never adds a row and the rest of the cockpit
+// layout never reflows (ux-rules.md rules 2.7, 2.8).
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
@@ -48,7 +49,7 @@ type Model struct {
 }
 
 // maxInputLines is the maximum number of visible textarea rows before it
-// scrolls internally rather than growing the frame further.
+// scrolls internally rather than growing the bar further.
 const maxInputLines = 6
 
 // promptWidth is the display width of the accent prompt rendered by this
@@ -120,9 +121,10 @@ func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	return ta
 }
 
-// noopStyles returns styles with the built-in textarea border stripped so we
-// can draw our own frame.  Prompt is set to two spaces as a placeholder; the
-// real prompt is injected via SetPromptFunc after theme is applied.
+// noopStyles returns styles with the built-in textarea border stripped so
+// the composer can fill its own bar. Prompt is set to two spaces as a
+// placeholder; the real prompt is injected via SetPromptFunc after theme
+// is applied.
 func noopStyles(s textarea.Styles) textarea.Styles {
 	blank := lipgloss.NewStyle()
 	s.Focused.Base = blank
@@ -420,14 +422,17 @@ func (m Model) Height() int {
 }
 
 // MenuRows returns the row count the completion popup occupies when drawn
-// (items, the count row when the list scrolls, and the footer), or 0 when
-// no menu is open. Mouse routing uses it to find the popup's first row.
+// (the top padding row, the items, the count row when the list scrolls,
+// and the footer), or 0 when no menu is open. Mouse routing uses it to
+// find the popup's first row.
 func (m Model) MenuRows() int { return len(m.Popup()) }
 
-// InputRowFromBottom is how many rows above the screen's status row the top
-// input line sits (for mouse routing). When padded, the bottom padding row
-// is 1 row above the status row, so the input is 2 above. When bare, the
-// input is 1 above.
+// InputRowFromBottom is how many rows above the screen's status row the
+// LAST input line sits (for mouse routing): the textarea's bottom row,
+// which is the only one when the input is a single line. When padded, the
+// bottom padding row is 1 row above the status row, so the input is 2
+// above. When bare, the input is 1 above. The bar's first row is Height()
+// rows above the status row.
 func (m Model) InputRowFromBottom() int {
 	if m.width < minPaddedWidth {
 		return 1

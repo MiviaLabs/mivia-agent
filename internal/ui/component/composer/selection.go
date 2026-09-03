@@ -12,8 +12,8 @@ import (
 
 // Mouse text selection over the input body. bubbles' textarea has no
 // mouse support at all, so the composer owns the region: the screen
-// injects the absolute rect (body rows only - menu and border rows are
-// not selectable), the composer keeps the anchor/focus pair in
+// injects the absolute rect (body rows only - the padding rows are not
+// selectable, and the completion popup is an overlay above the bar), the composer keeps the anchor/focus pair in
 // body-local cells, paints the reverse-video highlight on the padded
 // body lines inside View, and derives SelectedText from its own value
 // re-wrapped with textarea's exact word-wrap rule.
@@ -81,7 +81,7 @@ func (m Model) highlightBodyLines(body string) string {
 }
 
 // selectionRows renders the visible body as plain display rows: prompt
-// columns first (so cell coordinates match the frame exactly), then
+// columns first (so cell coordinates match the drawn bar exactly), then
 // each logical line word-wrapped at the inner width. Mirrors
 // textarea.view for the parts that matter here: this composer never
 // shows line numbers and wraps at the textarea's width. DynamicHeight
