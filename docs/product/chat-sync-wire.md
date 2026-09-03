@@ -163,7 +163,12 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.turn.ended`
 - `mivia.chat.v1.turn.failed`
 - `mivia.chat.v1.assistant.delta`
-- `mivia.chat.v1.assistant.message`
+- `mivia.chat.v1.assistant.message` - the turn's settled prose. `fragments`
+  counts the deltas of the BLOCK the event names (the block its surviving
+  deltas shipped into), not the turn: a turn with two prose blocks around a
+  tool call reports for the last block only that block's deltas. The `index`
+  on `assistant.delta` stays per turn (per run for a lane), exactly as
+  `thinking.delta`'s does next to a per-block `thinking.message.fragments`.
 - `mivia.chat.v1.assistant.reset`
 - `mivia.chat.v1.thinking.delta`
 - `mivia.chat.v1.thinking.message` - one thinking block, settled when the block

@@ -89,6 +89,17 @@ type turnState struct {
 	// can have opened is the one streamSegment named first, so one undo
 	// entry is enough to fall back to the block the surviving deltas use.
 	prevStreamSegment int
+	// blockFragments counts the assistant deltas that SHIPPED into
+	// streamSegment - the block the settled aggregate names - and is what that
+	// aggregate reports as `fragments`. It mirrors thinkingBlockFragments:
+	// fragments above is the turn-wide delta index and keeps counting across
+	// tool calls, so on a turn with two prose blocks it claimed for the last
+	// block every delta of the first. prevBlockFragments is the count
+	// blockFragments held for prevStreamSegment, one entry deep for the same
+	// reason prevStreamSegment is: a rollback that empties the named block
+	// falls back to the previous one and must report that block's count.
+	blockFragments     int
+	prevBlockFragments int
 	// streamUnrecoverable marks a block whose discard never reached the wire.
 	// The viewer therefore still holds the abandoned attempt's fragments, and
 	// this side cannot say how many - the counters were cleared before the

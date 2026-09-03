@@ -428,10 +428,16 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	// disagree with what was sent: a policy installed mid-turn emptied a
 	// message whose fragments were never sent, and a policy removed mid-turn
 	// sent the answer a second time.
+	// The count is the NAMED block's, not the turn's: blockFragments is
+	// non-zero exactly when a stored delta shipped into streamSegment. The
+	// `> 0` term is the runtime guard for the one corner the one-deep undo
+	// cannot repair (two consecutive blocks both emptied by rollback); it
+	// falls into the full-text branch, the safe direction, rather than an
+	// empty text with `fragments: 0`.
 	text := content
 	fragments := 0
-	if ts.streamed && !ts.streamUnrecoverable {
-		fragments = ts.fragments
+	if ts.streamed && !ts.streamUnrecoverable && ts.blockFragments > 0 {
+		fragments = ts.blockFragments
 		text = "" // INV-1: text empty iff fragments > 0
 	} else {
 		text = applyTruncation(&env, "text", text, BudgetAssistantText)
