@@ -153,6 +153,10 @@ type Screen struct {
 	lastClickTime time.Time
 	lastClickX    int
 	lastClickY    int
+	// lastNavClickTime/Row detect a double-click on the sidebar's model
+	// row (handleNavClick), the way lastClick* does for the top bar.
+	lastNavClickTime time.Time
+	lastNavClickRow  int
 }
 
 // New builds a Screen. themes is the candidate set offered by ctrl+t;
@@ -305,6 +309,12 @@ func (s *Screen) resize() {
 // renders into it. Toggling the panel and resizing the terminal both
 // change that width; Update's reservedRows comparison cannot see a
 // width-only change, so the explicit call is the only reliable trigger.
+// syncTopbarModel hides the top bar's model capsule while the sidebar
+// is open: the sidebar's model row says it instead, so the model is
+// named once on screen. Called from every path that opens or closes the
+// panel.
+func (s *Screen) syncTopbarModel() { s.topbar.SetModelHidden(s.panel.open) }
+
 func (s *Screen) reflow() {
 	w := s.chatWidth()
 	s.topbar.SetWidth(w)

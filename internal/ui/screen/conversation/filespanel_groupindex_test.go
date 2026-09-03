@@ -12,14 +12,15 @@ func TestPanelGroupToPickerIdxOutOfRange(t *testing.T) {
 		gIdx int
 		want int
 	}{
-		{name: "title header", gIdx: 0, want: -1},
-		{name: "files header", gIdx: 1, want: -1},
-		{name: "first file", gIdx: 2, want: 0},
-		{name: "last file", gIdx: 2 + files - 1, want: files - 1},
-		{name: "subagents header", gIdx: 2 + files, want: -1},
-		{name: "first agent", gIdx: 3 + files, want: files},
-		{name: "last agent", gIdx: 2 + files + agents, want: files + agents - 1},
-		{name: "past the last agent", gIdx: 3 + files + agents, want: -1},
+		{name: "model header", gIdx: 0, want: -1},
+		{name: "model row", gIdx: 1, want: 0},
+		{name: "files header", gIdx: 2, want: -1},
+		{name: "first file", gIdx: 3, want: 1},
+		{name: "last file", gIdx: 3 + files - 1, want: files},
+		{name: "subagents header", gIdx: 3 + files, want: -1},
+		{name: "first agent", gIdx: 4 + files, want: 1 + files},
+		{name: "last agent", gIdx: 3 + files + agents, want: files + agents},
+		{name: "past the last agent", gIdx: 4 + files + agents, want: -1},
 		{name: "far past the list", gIdx: 100, want: -1},
 	}
 	for _, tc := range cases {
@@ -42,11 +43,12 @@ func TestPanelSelGroupBounds(t *testing.T) {
 		want   int
 	}{
 		{name: "negative selection", selIdx: -1, want: -1},
-		{name: "first file", selIdx: 0, want: 2},
-		{name: "last file", selIdx: files - 1, want: 2 + files - 1},
-		{name: "first agent", selIdx: files, want: 3 + files},
-		{name: "last agent", selIdx: files + agents - 1, want: 2 + files + agents},
-		{name: "past the last agent", selIdx: files + agents, want: -1},
+		{name: "model row", selIdx: 0, want: 1},
+		{name: "first file", selIdx: 1, want: 3},
+		{name: "last file", selIdx: files, want: 3 + files - 1},
+		{name: "first agent", selIdx: 1 + files, want: 4 + files},
+		{name: "last agent", selIdx: files + agents, want: 3 + files + agents},
+		{name: "past the last agent", selIdx: 1 + files + agents, want: -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

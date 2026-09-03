@@ -551,6 +551,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 			s.panel.openPanel()
 			s.transcript = s.transcript.ClearFocus()
 		}
+		s.syncTopbarModel()
 		s.reflow()
 		// The toggle rewraps every chat row and changes the surface's
 		// shape. Terminals that coalesce positioned writes (the

@@ -86,6 +86,13 @@ func threadScreen(t *testing.T, threads ports.SubagentThreads, withFile bool) Sc
 	scr = n.(Screen)
 	scr.SetSubagentThreads(threads)
 	scr = openPanel(t, scr)
+	// openPanel lands on the model row; these tests act on sa-1, which
+	// sits after the model row and any file row.
+	if withFile {
+		scr.panel.list.MoveTo(2)
+	} else {
+		scr.panel.list.MoveTo(1)
+	}
 	return scr
 }
 
@@ -640,6 +647,7 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	// Open sidebar panel
 	scr = openPanel(t, scr)
 
+	scr.panel.list.MoveTo(1) // model row -> the subagent
 	// Focus is on the subagent row in the panel
 	a, isAgent := scr.panel.selectedAgent()
 	if !isAgent || a.ID != "call_disp_99:task-leak-check" {
@@ -757,7 +765,7 @@ func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 
 	// 2. Open sidebar and select sa-done (history)
 	scr = openPanel(t, scr)
-	scr.panel.list.MoveTo(0) // sa-done is first row
+	scr.panel.list.MoveTo(1) // sa-done is the first row after the model row
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -779,7 +787,7 @@ func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 	// 3. Select sa-live (running subagent) - the composer stays hidden
 	// even though the subagent has not reached a terminal status: the
 	// operator has no real channel to it either way (see openThread).
-	scr.panel.list.MoveTo(1) // sa-live is second row
+	scr.panel.list.MoveTo(2) // sa-live is the second row after the model row
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -815,6 +823,8 @@ func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
 
 	// Open subagent dialog while running: still read-only.
 	scr = openPanel(t, scr)
+	scrDown, _ := scr.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // model row -> sa-task
+	scr = scrDown.(Screen)
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 

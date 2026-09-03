@@ -26,12 +26,13 @@ func (r *recordingSubagentThreads) CancelSubagentTask(callID string) (bool, erro
 }
 
 // selectSubagentRow focuses the files panel with one subagent row and
-// moves the list cursor onto it (no file diffs, so the subagent is row 0).
+// moves the list cursor onto it (no file diffs, so the subagent is row 1,
+// right after the model row).
 func selectSubagentRow(t *testing.T, id string) Screen {
 	t.Helper()
 	s := openPanel(t, panelScreen(t, 100, 24))
 	s.panel.observeAgentStart(id, id)
-	s.panel.list.MoveTo(0)
+	s.panel.list.MoveTo(1)
 	if _, isAgent := s.panel.selectedAgent(); !isAgent {
 		t.Fatal("setup: the subagent row is not selected")
 	}
@@ -72,7 +73,7 @@ func TestCancelSubagentTaskKey_NoSelectionIsNoOp(t *testing.T) {
 	threads := &recordingSubagentThreads{stubThreads: stubThreads{}, ok: true}
 	s := openPanel(t, panelScreen(t, 100, 24, sampleDiffs()...))
 	s.threads = threads
-	s.panel.list.MoveTo(0) // a file row, no subagent tracked
+	s.panel.list.MoveTo(1) // a file row, no subagent tracked
 
 	next, _ := s.handleKey(tea.KeyPressMsg{Text: "x", Code: 'x'})
 	if _, ok := next.(Screen); !ok {

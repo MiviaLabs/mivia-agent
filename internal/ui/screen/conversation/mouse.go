@@ -178,6 +178,7 @@ func (s Screen) handleTopbarDoubleClick(x, y, topGutter int) (Screen, tea.Cmd, b
 			if !s.panel.open {
 				s.panel.openPanel()
 				s.transcript = s.transcript.ClearFocus()
+				s.syncTopbarModel()
 				s.reflow()
 				return s, tea.ClearScreen, true
 			}
