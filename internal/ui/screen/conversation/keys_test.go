@@ -1139,3 +1139,28 @@ func TestViewReflectsLiveSelectionRect(t *testing.T) {
 		t.Fatalf("injected rect must match geometry: %+v", tr)
 	}
 }
+
+// TestEnterOnBlankInputSendsNothing: the composer's guard must match the wire
+// shape gate, which rejects a user message whose content trims to nothing. An
+// empty-string-only check let a stray space or newline through as a turn, and
+// that turn made every later turn fail preparation.
+func TestEnterOnBlankInputSendsNothing(t *testing.T) {
+	for _, blank := range []string{" ", "   "} {
+		s := sized(t, 1)
+		next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
+		scr := next.(Screen)
+		for _, r := range blank {
+			scr, _ = press(t, scr, key(string(r)))
+		}
+		if got := scr.composer.Value(); strings.TrimSpace(got) != "" || got == "" {
+			t.Fatalf("precondition: composer holds blank input, got %q", got)
+		}
+		scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if scr.active != nil {
+			t.Errorf("Enter on %q started a turn; a blank message is not sendable", blank)
+		}
+		if got := scr.composer.Value(); got != "" {
+			t.Errorf("composer still holds %q after Enter on blank input", got)
+		}
+	}
+}

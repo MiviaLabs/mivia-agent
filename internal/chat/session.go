@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -317,6 +319,16 @@ func (s *Session) sendUser(ctx context.Context, userText, persistedText string, 
 }
 
 func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event), turn *TurnOptions) (string, error) {
+	// A blank user message is refused here rather than sent. The wire shape
+	// gate (provider.ValidateToolPairing) rejects a user message whose content
+	// trims to nothing, and it runs on every later preparation, so one blank
+	// turn does not fail by itself - it fails the NEXT turn, and the one after
+	// that, with "empty user message at index N" pointing at a message the
+	// reader never knowingly sent. Refusing at the entry keeps a history that
+	// can always be prepared.
+	if strings.TrimSpace(userText) == "" {
+		return "", fmt.Errorf("chat: a user message cannot be blank")
+	}
 	// Publish the turn's callback on the session for the whole turn.
 	// emitContextCompaction reads s.OnAgentEvent, and this callback used to
 	// reach the agent loop only, so an automatic compaction on the plain

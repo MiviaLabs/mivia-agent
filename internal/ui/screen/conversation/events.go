@@ -83,7 +83,13 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 // appends to the transcript (where the user is looking) rather than failing silently.
 func (s Screen) send() (app.Screen, tea.Cmd) {
 	text := s.composer.SubmitText()
-	if text == "" {
+	// Trimmed, not just empty: the shape gate the history is validated
+	// against rejects a user message whose content trims to nothing, so a
+	// composer holding only spaces or a stray newline must be treated as
+	// nothing to send. The composer is cleared so pressing Enter on blank
+	// input looks like what it is rather than silently doing nothing.
+	if strings.TrimSpace(text) == "" {
+		s.composer.Clear()
 		return s, nil
 	}
 	if s.active != nil {
