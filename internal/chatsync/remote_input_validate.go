@@ -16,14 +16,32 @@ type AuthorUserIDProvider func(ctx context.Context) (string, error)
 
 // allowedRemoteInputKinds is the SessionInput.Kind allowlist. "message"
 // injects text as if the user typed it; "cancel" remotely stops the
-// session's in-flight turn, mirroring local Ctrl+C/Esc. Both are the only
-// kinds this client acts on; a server that starts sending a new kind needs a
-// matching addition here before this client will act on it - silent
-// pass-through would let an unreviewed instruction shape start executing as
-// a local turn.
+// session's in-flight turn, mirroring local Ctrl+C/Esc. "cancel_task" and
+// "cancel_tool_call" are the two finer granularities, mirroring the local
+// files-panel and per-tool-call keys; both carry their target id in the
+// SAME Body field rather than a new wire field, so no other layer of the
+// transport changes. These are the only kinds this client acts on; a server
+// that starts sending a new kind needs a matching addition here before this
+// client will act on it - silent pass-through would let an unreviewed
+// instruction shape start executing as a local turn.
+//
+// Body shapes (the agreed wire contract):
+//
+//	cancel           <empty>                          whole current turn
+//	cancel_task      "<subagent row id>"              one whole subagent task
+//	cancel_tool_call "<tool call id>"                 one call in the MAIN turn
+//	cancel_tool_call "<row id> <tool call id>"        one call INSIDE a subagent
+//
+// The targeted kinds are naturally immune to the staleness hazard the
+// id-less "cancel" carries (a queued cancel delivered late can stop a LATER
+// turn, because it names no turn): a stale cancel_task/cancel_tool_call
+// names an id that has since finished, so it resolves to a harmless miss.
+// Do not add id-less variants of them.
 var allowedRemoteInputKinds = map[string]bool{
-	"message": true,
-	"cancel":  true,
+	"message":          true,
+	"cancel":           true,
+	"cancel_task":      true,
+	"cancel_tool_call": true,
 }
 
 // maxRemoteInputBodyBytes bounds a remote instruction's length. Generous
@@ -59,7 +77,9 @@ func (p *InputPoller) validateRemoteInput(ctx context.Context, in *SessionInput)
 	}
 	// A "cancel" input has no meaningful body - it carries an instruction,
 	// not text - so the empty-body rejection only applies to kinds that are
-	// supposed to carry one.
+	// supposed to carry one. "cancel" is the ONLY exemption: "cancel_task"
+	// and "cancel_tool_call" carry their target id in Body, so an empty body
+	// makes them unroutable and they must keep being rejected here.
 	if in.Body == "" && in.Kind != "cancel" {
 		return RemoteInput{}, "empty body"
 	}

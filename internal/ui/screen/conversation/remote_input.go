@@ -74,6 +74,15 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 	if ev.Kind == "cancel" {
 		return s.handleRemoteCancel(ev), rearm
 	}
+	// The targeted cancel kinds carry their target id in Body (see
+	// remote_cancel_target.go for the wire shapes). They never reach the
+	// send path below - a cancel is an instruction, not text - and they
+	// never block this goroutine: the subagent seams run in the returned
+	// Cmd.
+	if ev.Kind == "cancel_task" || ev.Kind == "cancel_tool_call" {
+		next, cmd := s.handleRemoteTargetedCancel(ev)
+		return next, tea.Batch(rearm, cmd)
+	}
 
 	text := ev.Body
 	persisted := remoteInputTagPrefix + ev.Body
