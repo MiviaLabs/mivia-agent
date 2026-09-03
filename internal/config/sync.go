@@ -16,9 +16,25 @@ type SyncConfig struct {
 	// false. "The user did not mention sync" means sync runs; "the user
 	// wrote enabled = false" means it does not, and a plain bool cannot tell
 	// those two apart, which would make the opt-out impossible to express.
-	Enabled         *bool `toml:"enabled"`
-	IncludeToolIO   bool  `toml:"include_tool_io"`
-	IncludeThinking bool  `toml:"include_thinking"`
+	Enabled *bool `toml:"enabled"`
+	// IncludeToolIO and IncludeThinking are THREE-STATE opt-out switches, for
+	// the same reason as Enabled and StreamAssistant: nil (key absent), true,
+	// or false, where absent means ON.
+	//
+	// Both were plain bools, so absent read as OFF and the only reachable
+	// state was off. That is the wrong default for the same reason
+	// StreamAssistant's was: the remote viewer is a LIVE VIEW of the session,
+	// and a viewer that silently omits what the agent reasoned - or what its
+	// tools read and wrote - is not showing the session. `include_thinking`
+	// defaulting off meant every user who had not heard of the key saw a
+	// transcript with no reasoning in it and no indication any was withheld,
+	// which is exactly how it was reported.
+	//
+	// The rule is now uniform: if remote sync is on, the session streams in
+	// full unless the user says otherwise. Opting out stays one explicit
+	// `false` away, and a plain bool could not express that at all.
+	IncludeToolIO   *bool `toml:"include_tool_io"`
+	IncludeThinking *bool `toml:"include_thinking"`
 	// StreamAssistant is a THREE-STATE opt-out switch, like Enabled: nil (key
 	// absent), true, or false. Absent means ON.
 	//
@@ -71,10 +87,10 @@ func (s ResolvedSync) Active(loggedIn bool) bool {
 
 func resolveSyncConfig(cfg SyncConfig) ResolvedSync {
 	out := ResolvedSync{
-		Disabled:        cfg.Enabled != nil && !*cfg.Enabled,
-		IncludeToolIO:   cfg.IncludeToolIO,
-		IncludeThinking: cfg.IncludeThinking,
-		// Absent means on. Only an explicit false turns it off.
+		Disabled: cfg.Enabled != nil && !*cfg.Enabled,
+		// Absent means on for all three. Only an explicit false turns one off.
+		IncludeToolIO:    cfg.IncludeToolIO == nil || *cfg.IncludeToolIO,
+		IncludeThinking:  cfg.IncludeThinking == nil || *cfg.IncludeThinking,
 		StreamAssistant:  cfg.StreamAssistant == nil || *cfg.StreamAssistant,
 		APIURL:           cfg.APIURL,
 		PollWaitSeconds:  cfg.PollWaitSeconds,
