@@ -423,3 +423,28 @@ func TestClickMentionRowAcceptsIt(t *testing.T) {
 		t.Errorf("accepted %q, want @beta.go", got)
 	}
 }
+
+// TestClickPopupRowWithMultiLineInput: the popup sits above the bar's
+// FIRST row, and the bar grows with the textarea. With three input lines
+// the popup is two rows higher than with one; a click must be mapped
+// against the bar's real top, not a fixed distance above its last row.
+func TestClickPopupRowWithMultiLineInput(t *testing.T) {
+	s := sized(t, 0)
+	s.SetMentions([]composer.Mention{{Path: "alpha.go"}, {Path: "beta.go"}})
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	s.composer.SetValue("first line\nsecond line\n@")
+	if !s.composer.MentionMenuActive() || s.composer.Height() != 5 {
+		t.Fatalf("precondition: picker open over a three-line bar, got active=%v height=%d", s.composer.MentionMenuActive(), s.composer.Height())
+	}
+	// Rows at height 24: status 22, bottom padding 21, input rows 18-20,
+	// top padding 17, popup footer 16, item rows 14-15, popup padding 13.
+	next, _ = s.Update(leftClick(4, 15)) // second item row: beta.go
+	s = next.(Screen)
+	if s.composer.MentionMenuActive() {
+		t.Error("clicking the second item row must accept it and close the picker")
+	}
+	if got := s.composer.Value(); got != "first line\nsecond line\n@beta.go" {
+		t.Errorf("accepted %q, want the mention appended on the third line", got)
+	}
+}

@@ -973,12 +973,13 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 	}
 }
 
-// TestCtrlBWhilePanelFocusedIsHandledByThePanel pins the dispatch
-// order: with the panel's list focused, ctrl+b is consumed by the panel
-// (focus returns to the composer, panel stays open) rather than
-// reaching the global cycle's close step. The full cycle, layout, and
-// live-update coverage lives in filespanel_test.go.
-func TestCtrlBWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
+// TestCtrlBWhilePanelFocusedClosesThePanel pins the dispatch order:
+// with the panel's list focused, ctrl+b is NOT consumed as a focus
+// change - it falls through to the global toggle and closes the panel,
+// so one press always hides an open sidebar. tab is the key that hands
+// focus back without closing. The full cycle, layout, and live-update
+// coverage lives in filespanel_test.go.
+func TestCtrlBWhilePanelFocusedClosesThePanel(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
 	scr := next.(Screen)
@@ -986,14 +987,14 @@ func TestCtrlBWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
 	if !scr.panel.open || !scr.panel.focused {
 		t.Fatalf("precondition: panel open and focused, got open=%v focused=%v", scr.panel.open, scr.panel.focused)
 	}
-	scr, _ = press(t, scr, ctrl('b')) // focused: hand focus back, stay open
-	if !scr.panel.open || scr.panel.focused {
-		t.Errorf("second ctrl+b: open=%v focused=%v, want open with composer focus", scr.panel.open, scr.panel.focused)
+	scr, _ = press(t, scr, ctrl('b')) // focused: close outright
+	if scr.panel.open || scr.panel.focused {
+		t.Errorf("second ctrl+b: open=%v focused=%v, want closed", scr.panel.open, scr.panel.focused)
 	}
 	// The composer takes keys again: typing lands in the input.
 	scr, _ = press(t, scr, key("h"))
 	if got := scr.composer.Value(); got != "h" {
-		t.Errorf("composer value %q after defocus, want \"h\"", got)
+		t.Errorf("composer value %q after the panel closed, want \"h\"", got)
 	}
 }
 
