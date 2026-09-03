@@ -42,8 +42,8 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	}
 
 	view := ansi.Strip(m.View(80, 20))
-	if !strings.Contains(view, "⬖ mivia") {
-		t.Errorf("missing identity line '⬖ mivia' in view:\n%s", view)
+	if !strings.Contains(view, "⬖  m i v i a") {
+		t.Errorf("missing brand line '⬖  m i v i a' in view:\n%s", view)
 	}
 	if strings.Contains(view, "Ｍ Ｉ Ｖ Ｉ Ａ") {
 		t.Errorf("fullwidth wordmark must be removed from view:\n%s", view)
@@ -56,8 +56,18 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	if !strings.Contains(view, "type a prompt, or / for commands   ·   ctrl+b sidebar") {
 		t.Errorf("missing new hint line in view:\n%s", view)
 	}
-	if strings.Contains(view, "For the work that takes longer than a chat.") {
-		t.Errorf("welcome banner should not show the tagline:\n%s", view)
+	if !strings.Contains(view, "for the work that takes longer than a chat.") {
+		t.Errorf("welcome banner should show the tagline:\n%s", view)
+	}
+	// The panel is a square-cornered box with no label on its frame.
+	if !strings.Contains(view, "┌") || !strings.Contains(view, "┘") {
+		t.Errorf("welcome banner should sit in a square-cornered box:\n%s", view)
+	}
+	if strings.Contains(view, "╭") || strings.Contains(view, "╰") {
+		t.Errorf("welcome banner box must not use rounded corners:\n%s", view)
+	}
+	if strings.Contains(view, "home") {
+		t.Errorf("welcome banner frame must carry no label:\n%s", view)
 	}
 	if strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("welcome banner should not show the author credit:\n%s", view)
@@ -86,7 +96,7 @@ func TestWelcomeCompactRendering(t *testing.T) {
 	if strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("compact view should not show the author credit:\n%s", view)
 	}
-	if strings.Contains(view, "For the work") {
+	if strings.Contains(view, "for the work") {
 		t.Errorf("compact view should not show the tagline:\n%s", view)
 	}
 }
@@ -115,8 +125,11 @@ func TestWelcomeASCIITierRendering(t *testing.T) {
 	m := New(th, theme.TierASCII)
 
 	view := ansi.Strip(m.View(80, 20))
-	if !strings.Contains(view, "<> mivia") {
-		t.Errorf("ASCII tier missing '<> mivia' identity line:\n%s", view)
+	if !strings.Contains(view, "<>  m i v i a") {
+		t.Errorf("ASCII tier missing '<>  m i v i a' brand line:\n%s", view)
+	}
+	if !strings.Contains(view, "+-") || strings.Contains(view, "┌") {
+		t.Errorf("ASCII tier must draw the box with +-| only:\n%s", view)
 	}
 	if strings.Contains(view, "Ｍ Ｉ Ｖ Ｉ Ａ") {
 		t.Errorf("ASCII tier must not show fullwidth wordmark glyphs:\n%s", view)
@@ -127,8 +140,8 @@ func TestWelcomeASCIITierRendering(t *testing.T) {
 	if strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("ASCII tier should not show the author credit:\n%s", view)
 	}
-	if strings.Contains(view, "For the work") {
-		t.Errorf("ASCII tier should not show the tagline:\n%s", view)
+	if !strings.Contains(view, "for the work") {
+		t.Errorf("ASCII tier should show the tagline:\n%s", view)
 	}
 
 	compactView := ansi.Strip(m.View(80, 6))
@@ -191,9 +204,10 @@ func TestWelcomeBannerOmitsWorkspaceLineWhenNoRepo(t *testing.T) {
 	m.workspaceRepo = ""
 	m.workspaceBranch = ""
 
-	lines := m.bannerLines()
+	lines := m.bannerLines(80)
 	for _, line := range lines {
-		if strings.Contains(ansi.Strip(line), "·") && !strings.Contains(ansi.Strip(line), "ctrl+b") {
+		plain := strings.TrimSpace(ansi.Strip(line))
+		if strings.Contains(plain, "·") && !strings.Contains(plain, "ctrl+b") && plain != "│·  ·  ·│" && !strings.HasPrefix(strings.Trim(plain, "│ "), "·  ·  ·") {
 			t.Errorf("bannerLines() with no repo must not contain a workspace line, got line %q in %v", line, lines)
 		}
 	}

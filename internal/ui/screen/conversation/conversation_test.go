@@ -819,8 +819,8 @@ func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	scr := next.(Screen)
 	view := ansi.Strip(scr.View())
-	if !strings.Contains(view, "⬖ mivia") && !strings.Contains(view, "<> mivia") {
-		t.Errorf("empty transcript view missing mivia identity line:\n%s", view)
+	if !strings.Contains(view, "⬖  m i v i a") && !strings.Contains(view, "<>  m i v i a") {
+		t.Errorf("empty transcript view missing mivia brand line:\n%s", view)
 	}
 	if !strings.Contains(view, "ctrl+b sidebar") {
 		t.Errorf("empty transcript view missing keybinding hint:\n%s", view)
