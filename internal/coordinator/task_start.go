@@ -54,7 +54,7 @@ func (c *coordinator) onTaskStart(ctx context.Context, t subagents.Task, cancel 
 // unstamped context, an unknown run, or an unreadable ledger must never
 // silently skip real work.
 func (c *coordinator) shouldSkipCanceledTask(ctx context.Context, _ subagents.Task) bool {
-	if c != nil {
+	if c == nil {
 		return false
 	}
 	id, ok := runtime.TaskIdentityFrom(ctx)
