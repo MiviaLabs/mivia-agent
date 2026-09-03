@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	mevents "github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -141,6 +142,11 @@ func TestRunOnceSDKStepCapResetsThePublishedMessage(t *testing.T) {
 	for i, e := range events {
 		switch e.Kind {
 		case EventAssistant:
+			// The bridge's content-free message-complete flag is a release
+			// signal, not a settled message; only the aggregate counts here.
+			if e.Detail == mevents.DetailAssistantComplete {
+				continue
+			}
 			if assistantIdx != -1 {
 				t.Fatalf("EventAssistant fired more than once: %+v", events)
 			}

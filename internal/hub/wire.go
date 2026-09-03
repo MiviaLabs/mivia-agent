@@ -25,7 +25,9 @@ type WireEvent struct {
 	// not only KindTurnStart. Today that is: KindTurnStart's user-submitted
 	// text, KindSubagentBegin's bounded task description, KindSubagentHeartbeat's
 	// progress line, KindToolEnd/KindSubagentEnd's status vocabulary, and
-	// KindAssistant's "delta" marker. Each is content the receiving process
+	// KindAssistant's "delta" marker and its content-free "complete" flag
+	// (events.DetailAssistantComplete; the receiver drops it on empty
+	// content, chat_hub_render.go). Each is content the receiving process
 	// renders, so widening what travels here widens what leaves the machine -
 	// check the producer before adding another.
 	Detail      string `json:"detail,omitempty"`

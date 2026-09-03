@@ -355,3 +355,109 @@ func pinningPolicy(t *testing.T) {
 	redact.SetPolicy(pol)
 	t.Cleanup(func() { redact.SetPolicy(old) })
 }
+
+// TestACompletedMessageIsWholeBeforeTheTurnEnds pins the third release. A
+// final message with no reasoning after it, no hook and no further tool call
+// has NO block close until the turn's end, which is a whole tool stage or a
+// reasoning pass away. The loop knows the message is complete the moment the
+// completer returns; the projector must release the tail on that flag.
+func TestACompletedMessageIsWholeBeforeTheTurnEnds(t *testing.T) {
+	streamPolicy(t)
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	whole := strings.Repeat("the finished answer runs on for a while. ", 10) +
+		"and this is its final clause."
+
+	var out []WireEvent
+	out = append(out, p.Project(rootEvent(events.KindAssistant, whole, "delta"))...)
+	if got := shippedText(out); got == whole {
+		t.Fatal("nothing was held back at all - this test cannot observe the defect")
+	}
+	// The loop recorded the complete message. No block closes; no turn ends.
+	out = append(out, p.Project(rootEvent(events.KindAssistant, "", events.DetailAssistantComplete))...)
+
+	if got := shippedText(out); got != whole {
+		t.Fatalf("a completed message is still %d bytes short after the loop "+
+			"reported it complete; the reader sees it cut off until the turn ends.\n"+
+			"got  %q\nwant %q", len(whole)-len(got), got, whole)
+	}
+	for _, we := range out {
+		switch we.Payload.(type) {
+		case *TurnEndedPayload, *AssistantMessagePayload:
+			t.Fatalf("the completion flag produced a %T; it must release the tail "+
+				"only, not settle or end anything", we.Payload)
+		}
+	}
+
+	// The turn's terminal aggregate and end follow as usual; INV-1 must hold.
+	out = append(out, p.Project(rootEvent(events.KindAssistant, whole, ""))...)
+	out = append(out, p.Project(rootEvent(events.KindTurnEnd, "", "completed"))...)
+	deltas, aggregates := proseByBlock(out)
+	for block, agg := range aggregates {
+		if agg != "" && deltas[block] != "" {
+			t.Fatalf("block %s ships deltas %q AND an aggregate text %q - the "+
+				"reader sees it twice", block, deltas[block], agg)
+		}
+	}
+}
+
+// TestALaneMessageIsWholeBeforeItsRunEnds is the subagent twin: the same
+// bridge fires in a lane's loop, and its flag reaches the projector with the
+// lane's attribution, so the released tail must be the LANE's delta on the
+// lane's block.
+func TestALaneMessageIsWholeBeforeItsRunEnds(t *testing.T) {
+	streamPolicy(t)
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	whole := strings.Repeat("the subagent's finished answer runs on. ", 10) +
+		"and this is its final clause."
+
+	var out []WireEvent
+	out = append(out, p.Project(subagentEvent(events.KindAssistant, "task-1", whole, "delta"))...)
+	if got := shippedText(out); got == whole {
+		t.Fatal("nothing was held back at all - this test cannot observe the defect")
+	}
+	released := p.Project(subagentEvent(events.KindAssistant, "task-1", "", events.DetailAssistantComplete))
+	out = append(out, released...)
+
+	if got := shippedText(out); got != whole {
+		t.Fatalf("a completed lane message is still %d bytes short after the loop "+
+			"reported it complete.\ngot  %q\nwant %q", len(whole)-len(got), got, whole)
+	}
+	if len(released) != 1 {
+		t.Fatalf("the flag released %d events, want 1 (the tail delta)", len(released))
+	}
+	tail, ok := released[0].Payload.(*SubagentAssistantDeltaPayload)
+	if !ok {
+		t.Fatalf("released %T, want *SubagentAssistantDeltaPayload - a lane's "+
+			"tail must not land in the root transcript", released[0].Payload)
+	}
+	if !strings.HasPrefix(tail.Block, "turn:1:task-1:assistant:") {
+		t.Errorf("released block = %q, want the lane's block turn:1:task-1:assistant:<seg>", tail.Block)
+	}
+}
+
+// TestAMessageCompleteWithNothingHeldEmitsNothing pins that the flag is a
+// release and nothing else: with no tail pending it produces no wire event and
+// changes no state, so the aggregate that follows still reports the whole
+// text with a zero count.
+func TestAMessageCompleteWithNothingHeldEmitsNothing(t *testing.T) {
+	streamPolicy(t)
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	if out := p.Project(rootEvent(events.KindAssistant, "", events.DetailAssistantComplete)); len(out) != 0 {
+		t.Fatalf("a completion flag with nothing held produced %d wire events: %+v", len(out), out)
+	}
+	out := p.Project(rootEvent(events.KindAssistant, "the whole answer", ""))
+	if len(out) != 1 {
+		t.Fatalf("aggregate produced %d events, want 1", len(out))
+	}
+	msg, ok := out[0].Payload.(*AssistantMessagePayload)
+	if !ok {
+		t.Fatalf("got %T, want *AssistantMessagePayload", out[0].Payload)
+	}
+	if msg.Fragments != 0 || msg.Text != "the whole answer" {
+		t.Fatalf("Fragments = %d Text = %q, want 0 and the whole answer - the "+
+			"flag must not count as a shipped delta", msg.Fragments, msg.Text)
+	}
+}
