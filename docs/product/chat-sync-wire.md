@@ -61,9 +61,17 @@ enable sync on sensitive work:
   fragment boundaries**. Redaction is a regex over one string, so it cannot
   match a secret split across two fragments: a pattern that catches a key in a
   settled message catches nothing when the same bytes arrive in three deltas.
-  The producer therefore holds back the last 256 bytes of an open prose block
-  (`redact.StreamHoldBack`), redacts the held tail joined to each new fragment,
-  and ships only the part no future byte can still complete into a match. The
+  The producer therefore holds back the tail of an open prose block that could
+  still be the START of a match - it runs each pattern's own automaton over the
+  buffer and withholds from the earliest still-open partial match onward -
+  redacts the held tail joined to each new fragment, and ships only the part no
+  future byte can still complete into a match. For ordinary prose under the
+  recommended policy that tail is zero to a dozen bytes (the longest key-name
+  word, `"authorization`), so the viewer trails the model by less than one
+  delta rather than by a fixed window, and a mid-message pause leaves nothing
+  invisible. A fixed window of 256 bytes (`redact.StreamHoldBack`) remains only
+  as the FALLBACK for a pattern the automaton cannot be built from; none of
+  the four recommended patterns needs it. The
   held tail is flushed as one final delta at the block's close - the next tool
   call, the turn's end, the turn's failure, a subagent's terminal - and, since
   the tail is a delay rather than a discard, also at the first event that
@@ -75,9 +83,8 @@ enable sync on sensitive work:
   the tail and settles the block, see `assistant.message` below). Nothing is
   delayed past the utterance and nothing is lost.
 
-  **The limit, stated plainly.** The window is 256 bytes because Go regexps are
-  unbounded and no finite window is sound for every expression. Two behaviours
-  follow, depending on the pattern:
+  **The limit, stated plainly.** Go regexps are unbounded, so what the hold
+  can promise depends on the pattern. Two behaviours follow:
 
   - **An open-ended pattern pins the stream.** The recommended PEM rule below is
     written `BEGIN ... (?:END|$)`, and the `$` alternative matches from the
@@ -91,15 +98,15 @@ enable sync on sensitive work:
     replaced too. Do not "fix" this by capping the hold: shipping a redacted
     prefix drops the header out of the buffer, and the key body then streams
     raw.
-  - **A closed pattern longer than the window can leak its opening bytes.** A
-    pattern that can match MORE than 256 bytes without an end-anchored
-    alternative (`(?s)BEGIN KEY.*END KEY`) may begin further back than the
-    window reaches, and its opening bytes ship before the closing bytes prove
-    it was a secret.
-
-  An operator whose secrets exceed 256 bytes must set `stream_assistant = false`
-  rather than rely on streamed deltas. Every credential shape in the recommended
-  policy below is far shorter than the window.
+  - **A closed pattern with a long body is held from its opening bytes.** A
+    pattern such as `(?s)BEGIN KEY.*?END KEY` is a live partial match from its
+    header onward, so the header and everything after it wait for the closing
+    bytes or the block's close - the same pin as above, and the same safe
+    direction. Only under the 256-byte fallback window can such a pattern
+    begin further back than the window reaches and leak its opening bytes; an
+    operator whose policy falls back and whose secrets exceed 256 bytes must
+    set `stream_assistant = false` rather than rely on streamed deltas. Every
+    credential shape in the recommended policy below is far shorter than that.
 - `stream_assistant` is **on by default** and selects HOW answer text is sent,
   not WHETHER it is sent. On, a turn sends deltas and then a settled message
   with empty text; off, it sends one settled message carrying the same text.

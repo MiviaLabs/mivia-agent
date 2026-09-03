@@ -233,13 +233,7 @@ func TestSubagentLaneStateIsBounded(t *testing.T) {
 // the redaction call could be deleted from either subagent path and every test
 // stayed green while secrets shipped.
 func TestSubagentProseIsRedacted(t *testing.T) {
-	pol, err := redact.Compile([]string{`SECRET_KEY_[0-9]+`}, nil, "[redacted]")
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	oldPol := redact.Current()
-	redact.SetPolicy(pol)
-	t.Cleanup(func() { redact.SetPolicy(oldPol) })
+	windowedPolicy(t, `SECRET_KEY_[0-9]+`)
 
 	p := NewProjector("sess-1", 0, proseOpts())
 	const secret = "token is SECRET_KEY_998877 do not leak"
@@ -590,13 +584,7 @@ func TestAssistantResetIsScopedToOneSubagentRun(t *testing.T) {
 // text that WOULD have matched is never sent at all. The only redaction left
 // was the per-fragment one that cannot work.
 func TestRedactionPolicySuppressesDeltaStreaming(t *testing.T) {
-	pol, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]{10,}`}, nil, "[redacted]")
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	old := redact.Current()
-	redact.SetPolicy(pol)
-	t.Cleanup(func() { redact.SetPolicy(old) })
+	windowedPolicy(t, `sk-live-[A-Za-z0-9]{10,}`)
 
 	p := NewProjector("sess-1", 0, proseOpts())
 
@@ -669,13 +657,7 @@ func TestStreamingStillRunsWithNoPolicy(t *testing.T) {
 // to fall back TO here. A pattern spanning two fragments matches neither, and
 // the secret reaches the wire verbatim.
 func TestThinkingWithholdsTextUnderAPolicyOnTheRootPath(t *testing.T) {
-	pol, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]{10,}`}, nil, "[redacted]")
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	old := redact.Current()
-	redact.SetPolicy(pol)
-	t.Cleanup(func() { redact.SetPolicy(old) })
+	windowedPolicy(t, `sk-live-[A-Za-z0-9]{10,}`)
 
 	p := NewProjector("sess-1", 0, proseOpts())
 

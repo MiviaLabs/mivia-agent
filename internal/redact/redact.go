@@ -32,6 +32,11 @@ type Policy struct {
 	patterns    []*regexp.Regexp
 	keyNames    []string
 	placeholder string
+	// partial holds one matcher per pattern for the streaming hold-back. It is
+	// nil - and windowed is set - when any pattern could not be re-parsed for
+	// the simulation, which keeps the fixed StreamHoldBack window instead.
+	partial  []*partialMatcher
+	windowed bool
 }
 
 // Compile builds a policy from configuration.
@@ -54,6 +59,11 @@ func Compile(patterns, keyNames []string, placeholder string) (*Policy, error) {
 			return nil, fmt.Errorf("redaction pattern %q: %w", expr, err)
 		}
 		p.patterns = append(p.patterns, compiled)
+		if pm, perr := compilePartial(expr); perr == nil && !p.windowed {
+			p.partial = append(p.partial, pm)
+		} else {
+			p.partial, p.windowed = nil, true
+		}
 	}
 	for _, name := range keyNames {
 		if name = strings.TrimSpace(strings.ToLower(name)); name != "" {

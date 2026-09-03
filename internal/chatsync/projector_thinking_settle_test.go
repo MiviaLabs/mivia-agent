@@ -11,16 +11,11 @@ import (
 // installPolicy activates a redaction policy for one test and restores the
 // previous one. Every test here needs it: the defect only exists when
 // redact.Active() is true, which is whenever the operator configured ANY
-// key name or pattern.
+// key name or pattern. The fixtures assume the block's text is held until it
+// settles, which windowPattern provides.
 func installPolicy(t *testing.T) {
 	t.Helper()
-	pol, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]{10,}`}, nil, "[redacted]")
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	old := redact.Current()
-	redact.SetPolicy(pol)
-	t.Cleanup(func() { redact.SetPolicy(old) })
+	windowedPolicy(t, `sk-live-[A-Za-z0-9]{10,}`)
 }
 
 // firstOfType returns the first wire event of the given type, or fails.

@@ -195,19 +195,21 @@ func TestNoTextIsLost(t *testing.T) {
 
 // TestATailIsHeldBackUntilItIsFlushed states the cost of the trade explicitly,
 // so a future change that "optimises" the hold away has to argue with a test.
+// The cost is now paid only by text that could still be the start of a match:
+// the fragment ends in the first bytes of the key shape, and those bytes wait
+// for the flush while the prose ahead of them ships at once.
 func TestATailIsHeldBackUntilItIsFlushed(t *testing.T) {
 	withPolicy(t, keyPattern)
 
 	var s Stream
-	if got := s.Push("short fragment"); got != "" {
-		t.Errorf("Push shipped %q, want nothing - the whole fragment is inside "+
-			"the hold-back window and a later fragment could still complete a "+
-			"match across it", got)
+	if got := s.Push("short fragment xk-t"); got != "short fragment " {
+		t.Errorf("Push shipped %q, want the prose and not the opening bytes of "+
+			"a key - a later fragment could still complete a match across them", got)
 	}
 	if !s.Pending() {
 		t.Fatal("Pending() = false while a tail is held")
 	}
-	if got := s.Flush(); got != "short fragment" {
+	if got := s.Flush(); got != "xk-t" {
 		t.Errorf("Flush shipped %q, want the held tail", got)
 	}
 	if s.Pending() {
