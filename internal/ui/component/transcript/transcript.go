@@ -78,6 +78,27 @@ type Model struct {
 	// value-copy discipline.
 	selRect  sel.Rect
 	selState sel.Selection
+
+	// Now is the clock the transcript times tool calls against. It is a
+	// field so tests can freeze it; nil means time.Now.
+	//
+	// The UI has to do this timing itself: uievent.ToolEndBody carries a
+	// DurationMS, but no producer sets it (uiadapter.translateToolEnd and
+	// thread.LoadHistory are the only two, and agent.Event has no
+	// duration to give them), so every tool header rendered "0ms" and the
+	// work row's cost was always dropped. What is measured here is the
+	// wall time between this transcript seeing the start event and seeing
+	// the end event, which is the interval the person watching the screen
+	// actually waited. A DurationMS the producer does supply still wins.
+	Now func() time.Time
+}
+
+// now reads the transcript's clock.
+func (m Model) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
 }
 
 // New returns an empty Model with no block focused, following the tail.
@@ -319,6 +340,7 @@ func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
 func (m Model) handleToolPending(b uievent.ToolPendingBody) (Model, tea.Cmd) {
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolPending, CallID: b.ToolCallID, Args: b.Args,
+		StartedAt: m.now(),
 		Header: Header{
 			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "pending", Role: theme.RoleWarning,
@@ -333,6 +355,9 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 			blk.Args = b.Args
 		}
 		blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
+		if blk.StartedAt.IsZero() {
+			blk.StartedAt = m.now()
+		}
 		if d := render.FormatToolDetail(b.Name, b.Args); d != "" {
 			blk.Header.Detail = d
 		}
@@ -341,6 +366,7 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 	}
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolStart, CallID: b.ToolCallID, Args: b.Args,
+		StartedAt: m.now(),
 		Header: Header{
 			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "running", Role: theme.RoleInfo,
@@ -387,7 +413,13 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 	end := toolEndBlockValue(m.Theme, m.Tier, w, b, existingArgs)
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
+		// The producer's duration wins; otherwise use the interval this
+		// transcript actually observed. Without the fallback every
+		// header reads "0ms", because no producer sets DurationMS.
 		blk.ElapsedMS = end.ElapsedMS
+		if blk.ElapsedMS == 0 && !blk.StartedAt.IsZero() {
+			blk.ElapsedMS = int(m.now().Sub(blk.StartedAt) / time.Millisecond)
+		}
 		// Carry the raw diff onto the live block, not just its rendered
 		// lines: a merged block that keeps only the rendering cannot be
 		// re-rendered when the theme changes, which is the whole point of
@@ -402,6 +434,12 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		blk.Header = end.Header
 		if blk.Header.Detail == "" && startDetail != "" && b.Diff == nil {
 			blk.Header.Detail = startDetail
+		}
+		// end.Header's meta was formatted from the producer's duration.
+		// When that was absent and the interval was measured here
+		// instead, the meta has to say the measured number.
+		if blk.ElapsedMS != end.ElapsedMS {
+			blk.Header.Meta = render.FormatElapsed(blk.ElapsedMS)
 		}
 		if b.Diff != nil {
 			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)

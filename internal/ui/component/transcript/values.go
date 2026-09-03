@@ -188,14 +188,6 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 	// FormatElapsed a later status-line call uses, so "4.1s" never
 	// appears beside "4100ms" on one screen.
 	duration := render.FormatElapsed(int(b.DurationMS))
-	// A finished call collapses by default whatever its body size, so
-	// consecutive calls coalesce into one summary row. Failed calls keep
-	// the failure visible. This mirrors the same rule in updateLive,
-	// which is the path a call takes when it had a live block to merge
-	// into; this one is the direct push.
-	if !coll && len(body) > 0 && role != theme.RoleDanger {
-		coll = true
-	}
 	blk := Block{
 		Kind:      uievent.KindToolEnd,
 		Args:      args,
@@ -216,6 +208,17 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		blk.Header.DiffDel = b.Diff.Removed
 		blk.Header.Meta = duration
 		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff)
+	}
+	// A finished call collapses by default whatever its body size, so
+	// consecutive calls coalesce into one summary row; failures keep the
+	// failure visible. This mirrors updateLive's rule, which is the path
+	// a call takes when it had a live block to merge into - and it is
+	// applied HERE, after the diff branch above has replaced Body,
+	// because deciding from the pre-diff body left a direct-pushed diff
+	// block expanded while the merged one collapsed. Two paths, one
+	// rule, and the comment claiming so was previously false.
+	if len(blk.Body) > 0 && role != theme.RoleDanger {
+		blk.Collapsible, blk.Collapsed = true, true
 	}
 	return blk
 }

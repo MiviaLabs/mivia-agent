@@ -425,7 +425,7 @@ func elapsedFor(a subagentRow, now time.Time) time.Duration {
 // live-rewrite a churning "elapsed=Xs steps=N" line into the middle of the
 // scrollback on every heartbeat) so this sidebar row is the one live-updating
 // surface for subagent progress.
-func (s Screen) panelAgentRow(a subagentRow, selected bool) []string {
+func (s Screen) panelAgentRow(a subagentRow, inner int, selected bool) []string {
 	prefix := "  · "
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
@@ -443,7 +443,11 @@ func (s Screen) panelAgentRow(a subagentRow, selected bool) []string {
 		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
 	nameLine := subtle.Render(prefix) + fg.Render(a.displayName()) + statusBadge
-	metricsLine := subtle.Render(agentMetrics(a, elapsedFor(a, s.now()), s.panelInnerWidth()))
+	// inner, not panelInnerWidth(): that one is the WIDE layout's nav
+	// pane, and the narrow layout draws these rows at full content
+	// width. Fitting to the wrong width dropped "step N" with most of
+	// the terminal still empty.
+	metricsLine := subtle.Render(agentMetrics(a, elapsedFor(a, s.now()), inner))
 	return []string{nameLine, metricsLine}
 }
 
@@ -480,7 +484,12 @@ func agentMetrics(a subagentRow, elapsed time.Duration, inner int) string {
 }
 
 func (s Screen) panelRows(inner, maxRows int) []string {
-	visible, agents := s.panelFilterEntries("")
+	// The SAME lists navGroups indexed. g.at indexes the filtered rows,
+	// so rendering from the unfiltered ones drew a different file than
+	// the row selects - and put the unfiltered count in the header
+	// beside it. Unreachable today (no key path sets a filter), but it
+	// is the one place that could falsify this file's whole claim.
+	visible, agents := s.panel.visibleRows()
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	marked := s.panel.focused
 
@@ -527,7 +536,7 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 			groups = append(groups, []string{s.panelSectionHeader(inner,
 				s.sectionCaption("subagents", len(agents), g.sel, s.panel.agentsCollapsed), sel)})
 		case navAgent:
-			groups = append(groups, s.panelAgentRow(agents[g.at], sel))
+			groups = append(groups, s.panelAgentRow(agents[g.at], inner, sel))
 		}
 	}
 

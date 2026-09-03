@@ -3,6 +3,7 @@ package transcript
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -204,7 +205,7 @@ func TestClickingTheWorkRowOpensEveryMember(t *testing.T) {
 	if !ok {
 		t.Fatal("no work row to click")
 	}
-	next, toggled := m.ToggleBlockAtScreenRow(row)
+	next, toggled := m.ToggleBlockAtScreenRow(groupIndent, row)
 	if !toggled {
 		t.Fatal("clicking the work row reported nothing")
 	}
@@ -228,5 +229,165 @@ func TestTheDumpNeverFoldsAWorkRun(t *testing.T) {
 		if !strings.Contains(dump, want) {
 			t.Errorf("the dump lost %q", want)
 		}
+	}
+}
+
+// TestAProductionShapedCallStillReportsItsDuration is the discriminator
+// the original work-run tests lacked. They built tool.end events with a
+// DurationMS filled in, which NO producer sets: uiadapter.translateToolEnd
+// and thread.LoadHistory are the only two, and agent.Event has no
+// duration to give them. So the suite was green while every tool header
+// on screen read "0ms" and the work row silently dropped the cost it
+// advertises. This builds the event the way production does - no
+// DurationMS - and requires a duration anyway.
+func TestAProductionShapedCallStillReportsItsDuration(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 40)
+
+	call := func(id, name string) {
+		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+			Body: uievent.ToolStartBody{ToolCallID: id, Name: name}})
+		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+			Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: "out"}})
+		clock = clock.Add(1500 * time.Millisecond)
+		// Exactly what translateToolEnd emits: no DurationMS.
+		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+			Body: uievent.ToolEndBody{ToolCallID: id, Name: name, OK: true, Result: name + " done"}})
+	}
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "starting now"}})
+	call("1", "read_file")
+
+	// A lone finished call: its own header must carry the measured time.
+	if _, row, ok := rowContaining(viewRows(m), "read_file"); !ok {
+		t.Fatal("no read_file row")
+	} else if !strings.Contains(row, "1.5s") {
+		t.Errorf("a production-shaped call renders %q; the duration was never measured", row)
+	}
+
+	call("2", "edit")
+	call("3", "run_command")
+
+	_, row, ok := rowContaining(viewRows(m), "3 calls")
+	if !ok {
+		t.Fatalf("no work row in:\n%s", strings.Join(viewRows(m), "\n"))
+	}
+	// 3 calls x 1.5s.
+	if !strings.Contains(row, "4.5s") {
+		t.Errorf("work row %q does not report the cost it advertises", row)
+	}
+}
+
+// TestAProducerSuppliedDurationStillWins: the measured fallback must not
+// override a producer that does report a duration, or a replayed history
+// would be re-timed to the moment it was replayed.
+func TestAProducerSuppliedDurationStillWins(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 40)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "1", Name: "read_file"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "1", Chunk: "out"}})
+	clock = clock.Add(90 * time.Second) // a long replay gap
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "1", Name: "read_file", OK: true, DurationMS: 250}})
+
+	_, row, ok := rowContaining(viewRows(m), "read_file")
+	if !ok {
+		t.Fatal("no read_file row")
+	}
+	if !strings.Contains(row, "250ms") {
+		t.Errorf("row %q: the measured gap overrode the duration the producer reported", row)
+	}
+}
+
+// TestEveryRunMemberRoutesToTheLayoutsHead: any SUFFIX of a run is
+// itself a run, so asking "does block i head a run" answered yes for a
+// member halfway down one. The keyboard toggle then expanded from there,
+// replacing the row the user acted on with a different summary row and
+// leaving the earlier members folded - not the dissolve into per-block
+// headers that expandRun and ToggleFocused both promise.
+func TestEveryRunMemberRoutesToTheLayoutsHead(t *testing.T) {
+	m := wallModel(t)
+	spans := m.layout()
+	head := -1
+	for i := range spans {
+		if spans[i].runSize > 0 && spans[i].height > 0 {
+			head = i
+			break
+		}
+	}
+	if head < 0 {
+		t.Fatal("precondition: the fixture coalesces a run")
+	}
+	size := spans[head].runSize
+	for i := head; i < head+size; i++ {
+		got, ok := m.leaderHeadOf(i)
+		if !ok || got != head {
+			t.Errorf("leaderHeadOf(%d) = (%d, %v), want (%d, true)", i, got, ok, head)
+		}
+	}
+}
+
+// TestFocusingAMemberAndTogglingOpensTheWholeRun is the same defect from
+// the user's side: space on any folded member must dissolve the run the
+// row stands for, not a suffix of it.
+func TestFocusingAMemberAndTogglingOpensTheWholeRun(t *testing.T) {
+	m := wallModel(t)
+	m.focus = len(m.blocks) - 1 // the last member of the run
+	m = m.syncFocus()
+
+	next, acted := m.ToggleFocused()
+	if !acted {
+		t.Fatal("toggling a folded run member did nothing")
+	}
+	rows := viewRows(next)
+	for _, want := range []string{"read_file", "edit", "run_command", "grep"} {
+		if _, _, ok := rowContaining(rows, want); !ok {
+			t.Errorf("%q is still folded after opening the run from a member:\n%s",
+				want, strings.Join(rows, "\n"))
+		}
+	}
+}
+
+// TestADirectlyPushedDiffCollapsesLikeAMergedOne: the two collapse rules
+// must agree. toolEndBlockValue decided from the body it had built, then
+// REPLACED that body with the rendered diff, so a diff arriving without a
+// live start block to merge into stayed expanded while the merged one
+// collapsed - and broke any work run it landed in.
+func TestADirectlyPushedDiffCollapsesLikeAMergedOne(t *testing.T) {
+	diff := &uievent.Diff{
+		Path: "s3.go", Added: 2, Removed: 1,
+		Hunks: []uievent.DiffHunk{{Header: "@@ -1 +1 @@",
+			Lines: []uievent.DiffLine{{Kind: uievent.DiffLineAdd, Text: "retry"}}}},
+	}
+	end := uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "1", Name: "edit", OK: true, Diff: diff}}
+
+	// Direct push: no start block to merge into.
+	direct := New(loadTheme(t), theme.TierASCII)
+	direct.SetSize(80, 20)
+	direct, _ = direct.HandleEvent(end)
+
+	// The merge path: a start block exists first.
+	merged := New(loadTheme(t), theme.TierASCII)
+	merged.SetSize(80, 20)
+	merged, _ = merged.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "1", Name: "edit"}})
+	merged, _ = merged.HandleEvent(end)
+
+	d, mg := direct.blocks[len(direct.blocks)-1], merged.blocks[len(merged.blocks)-1]
+	if d.Collapsed != mg.Collapsed || d.Collapsible != mg.Collapsible {
+		t.Errorf("direct push {collapsible:%v collapsed:%v} vs merged {collapsible:%v collapsed:%v}: the two rules disagree",
+			d.Collapsible, d.Collapsed, mg.Collapsible, mg.Collapsed)
+	}
+	if !d.Collapsed {
+		t.Error("a finished successful diff did not collapse by default")
 	}
 }

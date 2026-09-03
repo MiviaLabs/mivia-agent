@@ -239,8 +239,18 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	s = down.(Screen)
 	down, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // files header -> a.go
 	s = down.(Screen)
-	view := s.View()
-	plain := ansi.Strip(view)
+	// Asserted against the SIDEBAR's own rows, at a width where a row is
+	// not clipped. Reading the whole View() let this test pass off the
+	// transcript instead: the directory it checked for was coming from a
+	// diff block's header, so the assertion said nothing about the panel.
+	sidebarOf := func(s Screen) string {
+		rows := s.panelRows(60, max(1, max(1, s.contentHeight())-2))
+		for i := range rows {
+			rows[i] = ansi.Strip(rows[i])
+		}
+		return strings.Join(rows, "\n")
+	}
+	plain := sidebarOf(s)
 	for _, want := range []string{"model", "files changed (2)", "subagents (0)"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("section header %q missing:\n%s", want, plain)
@@ -261,7 +271,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	// A live re-edit keeps the file in place but flips its glyph.
 	next, _ := s.Update(diffEvent("c4", "cmd/b.go", 5, 5, "package b2"))
 	s = next.(Screen)
-	plain = ansi.Strip(s.View())
+	plain = sidebarOf(s)
 	if !strings.Contains(plain, "~ b.go") || strings.Contains(plain, "+ b.go") {
 		t.Errorf("live re-edit did not flip the kind glyph:\n%s", plain)
 	}

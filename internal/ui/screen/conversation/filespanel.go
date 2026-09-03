@@ -298,30 +298,12 @@ func (p panel) visibleRows() ([]fileEntry, []subagentRow) {
 // changes as statuses tick - so a rebind can hold the same row across a
 // label change.
 func (p panel) selectionKey() string {
-	entries, agents := p.visibleRows()
+	files, agents := p.visibleRows()
 	g, ok := p.navCursor()
 	if !ok {
 		return ""
 	}
-	switch g.kind {
-	case navContextHeader:
-		return "s:context"
-	case navModel:
-		return "m:" + modelRowLabel
-	case navFilesHeader:
-		return "s:files"
-	case navAgentsHeader:
-		return "s:agents"
-	case navFile:
-		if g.at < len(entries) {
-			return "f:" + entries[g.at].Path
-		}
-	case navAgent:
-		if g.at < len(agents) {
-			return "a:" + agents[g.at].ID
-		}
-	}
-	return ""
+	return navKeyOf(g, files, agents)
 }
 
 // modelRowSelected reports whether the list highlights the model row.
@@ -357,31 +339,12 @@ func (p *panel) rebindIfOpen() {
 		p.noteSelection()
 		return
 	}
-	// Re-find the held row through the same plan the list was built
-	// from, so a held selection survives a fold, an unfold, and a row
-	// arriving above it without a second copy of the ordering here.
+	// Re-find the held row through the same plan the list was built from
+	// and the same naming selectionKey used to capture it, so a held
+	// selection survives a fold, an unfold, and a row arriving above it.
 	files, agents := p.visibleRows()
 	for i, g := range p.navSelectable() {
-		var key string
-		switch g.kind {
-		case navContextHeader:
-			key = "s:context"
-		case navModel:
-			key = "m:" + modelRowLabel
-		case navFilesHeader:
-			key = "s:files"
-		case navAgentsHeader:
-			key = "s:agents"
-		case navFile:
-			if g.at < len(files) {
-				key = "f:" + files[g.at].Path
-			}
-		case navAgent:
-			if g.at < len(agents) {
-				key = "a:" + agents[g.at].ID
-			}
-		}
-		if key == keep {
+		if navKeyOf(g, files, agents) == keep {
 			p.list.MoveTo(i)
 			p.selKey = keep
 			return

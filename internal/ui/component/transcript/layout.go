@@ -135,16 +135,18 @@ const minWorkRun = 3
 // run instead of fragmenting into a read pair plus loose headers. A tie
 // goes to the read-only row, which names its targets and so says
 // strictly more about the same blocks.
+//
+// The decision is two-way, not three: every block readOnlyRunLen counts
+// also passes settledWork, contiguously from i, so workRunLen(i) is
+// always at least readOnlyRunLen(i). A "work wins while being no longer
+// than the read run" arm would be unreachable.
 func (m Model) runAt(i int) (int, runKind) {
 	ro := m.readOnlyRunLen(i)
-	work := m.workRunLen(i)
-	switch {
-	case work > ro && work >= minWorkRun:
+	if work := m.workRunLen(i); work > ro && work >= minWorkRun {
 		return work, runWork
-	case ro >= 2:
+	}
+	if ro >= 2 {
 		return ro, runReadOnly
-	case work >= minWorkRun:
-		return work, runWork
 	}
 	return 0, runNone
 }
@@ -227,17 +229,32 @@ func (m *Model) expandRun(i int) {
 	m.clampOffset()
 }
 
-// leaderHeadOf reports the head index of the leader run that block i
-// belongs to, when one is. A hidden run member has no visible row of
-// its own, so its interactions route to the run's head.
+// leaderHeadOf reports the head index of the run block i belongs to. A
+// hidden run member has no visible row of its own, so its interactions
+// route to the run's head.
+//
+// The runs are walked from the START, exactly the way layout() consumes
+// them, because ANY SUFFIX of a run is itself a run: asking runAt(i)
+// directly answered "yes, i heads a run" for a member halfway down one,
+// and the keyboard toggle then expanded only from there. The row the
+// user acted on was replaced by a different summary row with the earlier
+// members still folded - not the dissolve into per-block headers that
+// expandRun and ToggleFocused both promise. The mouse path was never
+// wrong because it takes the head from the span.
 func (m Model) leaderHeadOf(i int) (int, bool) {
-	if m.leaderRunLen(i) > 0 {
-		return i, true
+	if i < 0 || i >= len(m.blocks) {
+		return 0, false
 	}
-	for j := i - 1; j >= 0; j-- {
-		if n := m.leaderRunLen(j); n > 0 && j+n > i {
+	for j := 0; j < len(m.blocks); {
+		n, _ := m.runAt(j)
+		if n == 0 {
+			j++
+			continue
+		}
+		if i >= j && i < j+n {
 			return j, true
 		}
+		j += n
 	}
 	return 0, false
 }
