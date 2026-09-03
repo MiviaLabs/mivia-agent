@@ -260,3 +260,87 @@ func TestARolledBackSettleIsRetriedOnTheNextFlag(t *testing.T) {
 		t.Fatalf("retry = %+v, want the same block and count as %+v", retry[0], aggs[0])
 	}
 }
+
+// TestEachFlaggedBlockSettlesBeforeTheTurnEndsNotOnlyTheFirst is the
+// discriminator for the second block. TestTwoSettledBlocksThenTheTurnEnd...
+// accepts the turn-end aggregate as block :1's settle, so a projector that
+// settles only the FIRST flagged block (assistantSettled never cleared by a
+// later delta) passes it - and every block after the first regresses to
+// settling at turn end, the exact defect. This test cuts the turn-end
+// aggregate out: BOTH settles must be on the wire, naming distinct blocks
+// in delta order, before the terminal EventAssistant is projected.
+func TestEachFlaggedBlockSettlesBeforeTheTurnEndsNotOnlyTheFirst(t *testing.T) {
+	streamPolicy(t)
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	first := strings.Repeat("Let me look at the config first, carefully. ", 10)
+	second := strings.Repeat("Here is what the configuration actually says. ", 12)
+
+	var before []WireEvent
+	before = append(before, p.Project(rootEvent(events.KindAssistant, first, "delta"))...)
+	before = append(before, p.Project(rootEvent(events.KindAssistant, "", events.DetailAssistantComplete))...)
+	before = append(before, p.Project(toolEvent(events.KindToolStart, "call-1"))...)
+	before = append(before, p.Project(toolEvent(events.KindToolEnd, "call-1"))...)
+	before = append(before, p.Project(rootEvent(events.KindAssistant, second, "delta"))...)
+	before = append(before, p.Project(rootEvent(events.KindAssistant, "", events.DetailAssistantComplete))...)
+
+	deltas, _ := proseByBlock(before)
+	var firstBlock, secondBlock string
+	for block, text := range deltas {
+		switch text {
+		case first:
+			firstBlock = block
+		case second:
+			secondBlock = block
+		}
+	}
+	if firstBlock == "" || secondBlock == "" || firstBlock == secondBlock {
+		t.Fatalf("deltas did not land on two distinct blocks: %v", deltas)
+	}
+
+	aggs := assistantAggregates(before)
+	if len(aggs) != 2 {
+		t.Fatalf("before the turn-end aggregate %d settles are on the wire, want 2 "+
+			"(one per flagged block); the second block would sit streaming until turn end", len(aggs))
+	}
+	if aggs[0].Block != firstBlock || aggs[1].Block != secondBlock {
+		t.Fatalf("settles name %q then %q, want %q then %q", aggs[0].Block, aggs[1].Block, firstBlock, secondBlock)
+	}
+	counts := deltaCountByBlock(before)
+	for _, agg := range aggs {
+		if agg.Fragments != counts[agg.Block] || agg.Text != "" {
+			t.Fatalf("INV-1 on %s: Fragments = %d Text = %q, want %d and empty", agg.Block, agg.Fragments, agg.Text, counts[agg.Block])
+		}
+	}
+
+	// The turn-end aggregate still follows, as the backstop, and adds
+	// nothing new: it names the last block with an empty text.
+	after := p.Project(rootEvent(events.KindAssistant, second, ""))
+	tail := assistantAggregates(after)
+	if len(tail) != 1 || tail[0].Block != secondBlock || tail[0].Text != "" {
+		t.Fatalf("turn-end aggregate: got %d, want 1 naming %q with empty text", len(tail), secondBlock)
+	}
+}
+
+// TestASettleAfterAFallbackReportsThePreviousBlockBytes pins the byte
+// counter to the same one-deep undo the fragment counter has. When a
+// rollback empties the named block and falls back to the previous one, the
+// settle that follows must report THAT block's shipped bytes, not zero.
+func TestASettleAfterAFallbackReportsThePreviousBlockBytes(t *testing.T) {
+	ts := &turnState{}
+	ts.streamed = true
+	ts.recordDeltaSegment(1, 40)
+	ts.recordDeltaSegment(1, 25)
+	ts.fragments = 2
+	// A delta opens segment 2, then its append fails.
+	ts.recordDeltaSegment(2, 9)
+	ts.fragments = 3
+	p := &Projector{}
+	p.rollbackOneDelta(ts)
+	if ts.streamSegment != 1 || ts.blockFragments != 2 {
+		t.Fatalf("fallback: segment %d fragments %d, want 1 and 2", ts.streamSegment, ts.blockFragments)
+	}
+	if ts.blockBytes != 65 {
+		t.Fatalf("blockBytes after fallback = %d, want 65 (the previous block's shipped bytes)", ts.blockBytes)
+	}
+}

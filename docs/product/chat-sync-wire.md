@@ -178,11 +178,14 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
     shipped. This is what lets a viewer stop showing a finished message as
     streaming while the reasoning pass or tool call after it is still
     running; before it, a block completed only at the turn's end. It is NOT
-    emitted when no delta shipped (`stream_assistant` off, a message held
-    whole by the redaction window), so the turn-end aggregate stays the sole
-    carrier of the text in exactly the cases it always was. A flag for a
-    message that produced no new deltas (a tool-only iteration) settles
-    nothing.
+    emitted under `stream_assistant` off: no delta ever ships, so the
+    turn-end aggregate stays the sole carrier of the text, exactly as it
+    always was. A message held whole by the redaction window is different:
+    the flag first releases it as one `assistant.delta`, then settles the
+    block with `fragments` 1. A flag for a message that produced no new
+    deltas (a tool-only iteration) settles nothing. `bytes` here is the
+    post-redaction size the deltas shipped; the turn-end aggregate's is the
+    raw message size.
   - **at the turn's end**, from the terminal `EventAssistant`, carrying the
     FINAL message: `text` in full when nothing streamed, empty with the
     block's count when deltas did. For a block already settled at its flag
