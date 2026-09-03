@@ -81,8 +81,8 @@ func TestClickComposerPositionsCursor(t *testing.T) {
 	next, _ = s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	s = next.(Screen)
 
-	// The input sits framed above the status row and bottom gutter:
-	// inputRow is 24 - 1(bottom gutter) - 1(status) - 2(composer bottom border + input row) = 20.
+	// The input sits in its padded bar above the status row and bottom gutter:
+	// inputRow is 24 - 1(bottom gutter) - 1(status) - 2(bottom padding + input row) = 20.
 	inputRow := 24 - 1 - 1 - 2
 	next, _ = s.Update(leftClick(1+2+2+3, inputRow)) // column 8 on screen == column 5 in input == after "hel"
 	s = next.(Screen)
@@ -114,10 +114,10 @@ func TestClickCompletionRowAcceptsIt(t *testing.T) {
 		t.Fatal("precondition: the menu is open")
 	}
 
-	// Layout at height 24: bottom gutter 23, status row 22, composer bottom border 21,
-	// composer input line 20, composer top border 19,
-	// menu rows 17-18 (2 rows directly above composer frame).
-	next, _ = s.Update(leftClick(4, 18)) // second menu row: "agents"
+	// Layout at height 24: bottom gutter 23, status row 22, composer bottom
+	// padding 21, composer input line 20, composer top padding 19, then the
+	// popup overlaid above the bar: footer hint 18, item rows 16-17.
+	next, _ = s.Update(leftClick(4, 17)) // second item row: "agents"
 	s = next.(Screen)
 	if s.composer.MenuActive() {
 		t.Error("clicking a row must accept it and close the menu")

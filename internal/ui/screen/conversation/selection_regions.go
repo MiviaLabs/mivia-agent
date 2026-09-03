@@ -85,22 +85,22 @@ func (s Screen) transcriptRegion() sel.Rect {
 }
 
 // composerRegion is the absolute rect of the composer's text body only:
-// padding rows and completion-menu rows are excluded, and the columns run
-// across the inner width where the textarea actually draws. The composer
-// draws no border (see composer.Model.View); its padding rows and columns
-// occupy exactly the cells the border used to, so the geometry is the same.
+// padding rows are excluded, and the columns run across the inner width
+// where the textarea actually draws. The composer draws no border (see
+// composer.Model.View); its padding rows and columns occupy exactly the
+// cells the border used to, so the geometry is the same. The completion
+// popup is an overlay above the bar and is not part of the bar's rows.
 func (s Screen) composerRegion() sel.Rect {
 	x0, tg := s.contentOrigin()
-	menuRows := s.composer.MenuRows()
 	padRows := 0
 	if s.composer.Padded() {
 		padRows = 2 // top + bottom padding row
 	}
 	// bodyRows is never below 1: composer.Height() already adds the same
-	// pad/menu terms subtracted here (menuRows mirrors MenuRows(), padRows
-	// mirrors Padded()'s own two rows), so this always reduces to the
-	// textarea's own row count, which composer.Height() clamps to at least 1.
-	bodyRows := s.composer.Height() - menuRows - padRows
+	// pad term subtracted here (padRows mirrors Padded()'s own two rows),
+	// so this always reduces to the textarea's own row count, which
+	// composer.Height() clamps to at least 1.
+	bodyRows := s.composer.Height() - padRows
 	// The status row sits at the screen bottom; the composer block ends
 	// just above it. InputRowFromBottom counts from the status row up to
 	// the LAST input row, so the first body row sits height-1 above it.

@@ -481,9 +481,9 @@ func TestMentionMenuViewAndScrolling(t *testing.T) {
 		t.Fatal("mention menu should be active")
 	}
 
-	view := m.View()
-	if !strings.Contains(view, "@file0.go") {
-		t.Errorf("view should show first mention; got:\n%s", view)
+	popup := strings.Join(m.Popup(), "\n")
+	if !strings.Contains(popup, "@file0.go") {
+		t.Errorf("popup should show first mention; got:\n%s", popup)
 	}
 
 	// Move forward past MaxCompletionRows to test offset clamping
@@ -544,8 +544,8 @@ func TestActiveMenuView_MentionMenu(t *testing.T) {
 	if rows := m.MenuRows(); rows == 0 {
 		t.Errorf("expected non-zero MenuRows for active mention menu")
 	}
-	if view := m.View(); !strings.Contains(view, "main.go") {
-		t.Errorf("expected View to contain mention entry main.go, got:\n%s", view)
+	if popup := strings.Join(m.Popup(), "\n"); !strings.Contains(popup, "main.go") {
+		t.Errorf("expected Popup to contain mention entry main.go, got:\n%s", popup)
 	}
 }
 
