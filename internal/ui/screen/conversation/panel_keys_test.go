@@ -45,8 +45,8 @@ func keysWithoutFilesJK() *keymap.Map {
 func TestPanelListKey_JMovesSelectionDown(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
 	s.keys = keysWithoutFilesJK()
-	down, _ := s.Update(key("down")) // model row -> a.go
-	s = down.(Screen)
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "a.go") {
 		t.Fatalf("precondition: selection = %q, want a.go", sel)
 	}
@@ -62,8 +62,8 @@ func TestPanelListKey_JMovesSelectionDown(t *testing.T) {
 func TestPanelListKey_KMovesSelectionUp(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
 	s.keys = keysWithoutFilesJK()
-	down, _ := s.Update(key("down")) // model row -> a.go
-	s = down.(Screen)
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(key("j"))
 	s = next.(Screen)
 	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {

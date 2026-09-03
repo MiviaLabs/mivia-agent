@@ -124,7 +124,10 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 
 	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m, _ = m.Update(ctrl('b')) // open the activity panel, focused on its list
-	// The panel opens on its model row; the subagent is the next row.
+	// The panel opens on its model row. Below it the section headers are
+	// selectable rows of their own (they fold their sections), so the
+	// walk down to the subagent passes the "subagents" header first.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 

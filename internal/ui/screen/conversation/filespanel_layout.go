@@ -89,72 +89,6 @@ func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive
 	return lo, hi
 }
 
-// panelGroupLens returns the line count of each group in the sidebar layout:
-// contextRows single-line groups for the context section, then 1 for the model
-// header, 1 for the model row, 1 for the files header, 1 per file entry, 1 for
-// the subagents header, and 2 per agent row. The context section's height is a
-// parameter because it grows a detail block on a tall terminal
-// (contextSectionRows); hard-coding it here would put the click map and the
-// drawn rows one section out of step.
-func panelGroupLens(contextRows, fileCount, agentCount int) []int {
-	lens := make([]int, 0, contextRows+4+fileCount+agentCount)
-	for i := 0; i < contextRows; i++ {
-		lens = append(lens, 1) // one context row
-	}
-	lens = append(lens, 1) // model header
-	lens = append(lens, 1) // model row
-	lens = append(lens, 1) // files changed header
-	for i := 0; i < fileCount; i++ {
-		lens = append(lens, 1)
-	}
-	lens = append(lens, 1) // subagents header
-	for i := 0; i < agentCount; i++ {
-		lens = append(lens, 2)
-	}
-	return lens
-}
-
-// panelGroupToPickerIdx maps a group index to its corresponding picker cursor
-// index, or -1 if the group is not selectable (every context row, the model
-// header, the files header, the subagents header). Picker index 0 is the model
-// row, the group right after the context section and its header.
-func panelGroupToPickerIdx(gIdx, contextRows, fileCount, agentCount int) int {
-	switch {
-	case gIdx == contextRows+1:
-		return 0
-	case gIdx < contextRows+3:
-		return -1
-	case gIdx < contextRows+3+fileCount:
-		return 1 + (gIdx - (contextRows + 3))
-	case gIdx == contextRows+3+fileCount:
-		return -1
-	}
-	agentIdx := gIdx - (contextRows + 4 + fileCount)
-	if agentIdx >= 0 && agentIdx < agentCount {
-		return 1 + fileCount + agentIdx
-	}
-	return -1
-}
-
-// panelSelGroup computes the group index for the currently selected picker item.
-func panelSelGroup(selIdx, contextRows, fileCount, agentCount int) int {
-	if selIdx < 0 {
-		return -1
-	}
-	if selIdx == 0 {
-		return contextRows + 1 // the model row
-	}
-	selIdx-- // past the model row
-	if selIdx < fileCount {
-		return contextRows + 3 + selIdx
-	}
-	agentIdx := selIdx - fileCount
-	if agentIdx < agentCount {
-		return contextRows + 4 + fileCount + agentIdx
-	}
-	return -1
-}
-
 // flattenGroups concatenates row-groups back into a flat line list, in
 // order, for final width-clipping and rendering.
 func flattenGroups(groups [][]string) []string {
@@ -222,6 +156,9 @@ const (
 // which are fixed for a session, so nothing below the section moves as tokens
 // accumulate.
 func (s Screen) contextSectionRows(maxRows int) int {
+	if s.panel.contextCollapsed {
+		return 1 // the header alone
+	}
 	rows := contextSummaryRows
 	if maxRows >= contextDetailMinRows {
 		rows = contextDetailRows
@@ -309,8 +246,17 @@ func (s Screen) panelContextRows(inner, maxRows int) []string {
 	if known {
 		share, shareStyle = strconv.Itoa(pct)+"%", render.Role(s.Theme, s.Tier, render.ContextRole(pct))
 	}
+	header := panelSpreadRow(inner,
+		sectionMarker(s.panel.contextCollapsed)+"context", share, subtle, shareStyle)
+	if s.panel.contextCollapsed {
+		// Folded, the section keeps the one fact a folded gauge must
+		// still carry: how full the window is. Hiding that would make
+		// folding cost the reader the thing they fold everything else to
+		// keep an eye on.
+		return []string{header}
+	}
 	rows := []string{
-		panelSpreadRow(inner, "context", share, subtle, shareStyle),
+		header,
 		s.panelContextBar(inner, pct, floorPercent(usage, budget)),
 	}
 
@@ -535,53 +481,86 @@ func agentMetrics(a subagentRow, elapsed time.Duration, inner int) string {
 
 func (s Screen) panelRows(inner, maxRows int) []string {
 	visible, agents := s.panelFilterEntries("")
-
-	// selIdx is the picker's cursor row: the list is built files-then-
-	// agents in this exact order (rowLabels), so position - not the
-	// rendered label - is what identifies the highlighted row. Comparing
-	// by label instead marks every row that happens to render identically
-	// (concurrent same-named agents sharing a status, e.g. four
-	// "reviewer" rows all "running"), painting ">" on all of them.
-	selIdx := s.panel.list.CursorRow()
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	marked := s.panel.focused
 
-	var groups [][]string
-	selGroup := -1
+	// The cursor's PICKER index identifies the highlighted row, never the
+	// rendered label. Concurrent subagents commonly share a name and a
+	// status (four "reviewer" rows all "running"), so matching by label
+	// would paint the marker on every one of them.
+	contextRows := s.contextSectionRows(maxRows)
+	plan := s.panel.navGroups(contextRows)
+	selGroup := navSelGroup(plan, s.panel.list.CursorRow())
 
-	// The context and model sections replace the old SIDEBAR title: the
-	// top bar hides its capsule and badge while the panel is open, so
-	// each is named once. Focus is signalled by the "> " marker on the
-	// selected row, not by a header. The context section is two fixed
-	// rows (header, bar) and never selectable.
-	for _, row := range s.panelContextRows(inner, maxRows) {
-		groups = append(groups, []string{row})
+	// The context section renders as a block; the plan says how many of
+	// its rows are in play, and they are consumed in order as the walk
+	// passes them.
+	ctx := s.panelContextRows(inner, maxRows)
+	ctxAt := 0
+	nextCtx := func() string {
+		if ctxAt < len(ctx) {
+			row := ctx[ctxAt]
+			ctxAt++
+			return row
+		}
+		return ""
 	}
-	groups = append(groups, []string{subtle.Render("model")})
-	if selIdx == 0 {
-		selGroup = len(groups)
-	}
-	groups = append(groups, []string{s.panelModelRow(marked && selIdx == 0)})
 
-	groups = append(groups, []string{subtle.Render("files changed (" + strconv.Itoa(len(visible)) + ")")})
-	for i, e := range visible {
-		idx := 1 + i
-		if idx == selIdx {
-			selGroup = len(groups)
+	groups := make([][]string, 0, len(plan))
+	for gi, g := range plan {
+		sel := marked && gi == selGroup
+		switch g.kind {
+		case navContextHeader:
+			groups = append(groups, []string{s.panelSectionHeader(inner, nextCtx(), sel)})
+		case navContextBody:
+			groups = append(groups, []string{nextCtx()})
+		case navModelCaption:
+			groups = append(groups, []string{subtle.Render("model")})
+		case navModel:
+			groups = append(groups, []string{s.panelModelRow(sel)})
+		case navFilesHeader:
+			groups = append(groups, []string{s.panelSectionHeader(inner,
+				s.sectionCaption("files changed", len(visible), g.sel, s.panel.filesCollapsed), sel)})
+		case navFile:
+			groups = append(groups, []string{s.panelFileRow(visible[g.at], sel)})
+		case navAgentsHeader:
+			groups = append(groups, []string{s.panelSectionHeader(inner,
+				s.sectionCaption("subagents", len(agents), g.sel, s.panel.agentsCollapsed), sel)})
+		case navAgent:
+			groups = append(groups, s.panelAgentRow(agents[g.at], sel))
 		}
-		groups = append(groups, []string{s.panelFileRow(e, marked && idx == selIdx)})
-	}
-	groups = append(groups, []string{subtle.Render("subagents (" + strconv.Itoa(len(agents)) + ")")})
-	for i, a := range agents {
-		idx := 1 + len(visible) + i
-		if idx == selIdx {
-			selGroup = len(groups)
-		}
-		groups = append(groups, s.panelAgentRow(a, marked && idx == selIdx))
 	}
 
 	groups = panelWindowGroups(groups, selGroup, maxRows, false)
 	return clipRowsToWidth(flattenGroups(groups), inner)
+}
+
+// sectionCaption is a section header's text: its name, its count, and -
+// when the section has anything to fold - the fold marker that says so.
+// A header with no marker is a caption, and left/right do nothing on it,
+// which is the same rule the transcript's blocks follow.
+func (s Screen) sectionCaption(name string, count int, foldable, collapsed bool) string {
+	caption := name + " (" + strconv.Itoa(count) + ")"
+	if !foldable {
+		return caption
+	}
+	return sectionMarker(collapsed) + caption
+}
+
+// panelSectionHeader draws a header row, reverse-video when the cursor is
+// on it. Reverse rather than a coloured marker: the header is a full-width
+// label with no leading glyph column of its own to spend, and reverse
+// inherits the theme's contrast so it stays legible under any palette
+// (ux-rules 6.3-6.4).
+func (s Screen) panelSectionHeader(inner int, row string, selected bool) string {
+	if !selected {
+		return row
+	}
+	plain := ansi.Strip(row)
+	if w := ansi.StringWidth(plain); w < inner {
+		plain += strings.Repeat(" ", inner-w)
+	}
+	return render.Role(s.Theme, s.Tier, theme.RoleFG).Reverse(true).Render(plain)
 }
 
 // dialogParts is the content dialog's title, body, and hint. A

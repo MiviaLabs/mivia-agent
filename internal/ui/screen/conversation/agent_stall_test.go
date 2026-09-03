@@ -262,7 +262,7 @@ func TestPanelRowsHighlightOnlyTheCursorRow(t *testing.T) {
 	for _, id := range []string{"task-a", "task-b", "task-c", "task-d"} {
 		s.panel.observeAgentStart(id, "reviewer")
 	}
-	s.panel.list.MoveTo(3) // highlight task-c: the model row, then task-a, task-b, task-c
+	s.panel.selectNavKind(navAgent, 2) // highlight task-c, the third agent row
 
 	rows := s.panelRows(80, 24)
 	marked := 0

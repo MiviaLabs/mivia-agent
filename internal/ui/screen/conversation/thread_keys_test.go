@@ -91,8 +91,8 @@ func TestSubagentHistoryDialog_ScrollingAndKeyHandlingWhenComposerHidden(t *test
 
 	// Open dialog for history subagent
 	scr = openPanel(t, scr)
-	scrDown, _ := scr.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // model row -> sa-hist
-	scr = scrDown.(Screen)
+	// Select by what the row IS: the header rows above it move.
+	scr.panel.selectNavKind(navAgent, 0) // sa-hist
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 

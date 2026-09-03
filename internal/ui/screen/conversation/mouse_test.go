@@ -361,10 +361,9 @@ func TestMouseWheel_ScrollsFileDiffWhenThreadWasCached(t *testing.T) {
 	}
 	s := threadScreen(t, stubThreads{"sa-1": thread}, true)
 
-	// Move cursor down to subagent row and open subagent thread (caches s.thread)
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Select the subagent row and open its thread (caches s.thread)
+	s.panel.selectNavKind(navAgent, 0)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if s.thread == nil || !s.panel.dialog || s.panel.dialogAgent != "sa-1" {
 		t.Fatal("precondition: subagent thread open and cached")
@@ -374,14 +373,13 @@ func TestMouseWheel_ScrollsFileDiffWhenThreadWasCached(t *testing.T) {
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	s = next.(Screen)
 
-	// Move cursor up to file row and open file diff dialog
+	// Select the file row and open its diff dialog
 	lines := make([]uievent.DiffLine, 50)
 	for i := range lines {
 		lines[i] = uievent.DiffLine{Kind: uievent.DiffLineAdd, Text: "new content line"}
 	}
 	s.panel.entries[0].Diff.Hunks = []uievent.DiffHunk{{Header: "@@ -1,5 +1,50 @@", Lines: lines}}
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	s = next.(Screen)
+	s.panel.selectNavKind(navFile, 0)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog || s.panel.dialogAgent != "" {

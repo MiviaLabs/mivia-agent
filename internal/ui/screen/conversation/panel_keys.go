@@ -29,6 +29,34 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		}
 	}
+	// Left and right fold the section header the cursor sits on. During a
+	// long run the files and subagents lists grow without bound and push
+	// each other off the pane; folding one is how a reader keeps the
+	// other in view. On any other row they do nothing rather than fall
+	// through to the picker, which would treat them as no-ops anyway.
+	switch msg.Code {
+	case tea.KeyLeft:
+		s.panel.setSectionCollapsed(true)
+		return s, nil, true
+	case tea.KeyRight:
+		s.panel.setSectionCollapsed(false)
+		return s, nil, true
+	}
+	if msg.String() == "h" {
+		s.panel.setSectionCollapsed(true)
+		return s, nil, true
+	}
+	if msg.String() == "l" {
+		s.panel.setSectionCollapsed(false)
+		return s, nil, true
+	}
+	// Enter on a header toggles it, the same way Enter on the model row
+	// opens the picker: the row's own action, whatever the row is.
+	if msg.Code == tea.KeyEnter && s.panel.sectionHeaderSelected() {
+		s.panel.toggleSection()
+		return s, nil, true
+	}
+
 	// Sidebar navigation: only arrow/nav keys and Enter act on the list (no search filter)
 	switch msg.Code {
 	case tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown, tea.KeyEnter:
@@ -44,7 +72,8 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 	}
 	next, cmd := s.panel.list.Update(msg)
 	s.panel.list = next
-	s.panel.offset = 0 // a moved selection restarts the content at its top
+	s.panel.noteSelection() // the cursor moved deliberately; hold THIS row
+	s.panel.offset = 0      // a moved selection restarts the content at its top
 	if cmd != nil {
 		if _, ok := cmd().(picker.SelectMsg); ok && s.panel.modelRowSelected() {
 			// Enter on the model row opens the model picker: the same
