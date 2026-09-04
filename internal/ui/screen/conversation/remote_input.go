@@ -94,8 +94,19 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 
 	st, ok := s.sessions[ev.SessionID]
 	if !ok {
-		s.statusline.Notice(fmt.Sprintf("remote input for session %s ignored: session not tracked", ev.SessionID))
-		return s, rearm
+		if s.mounter == nil {
+			s.statusline.Notice(fmt.Sprintf("remote input for session %s ignored: session not tracked", ev.SessionID))
+			return s, rearm
+		}
+		if s.mounting == nil {
+			s.mounting = make(map[string][]ports.RemoteInputEvent)
+		}
+		if len(s.mounting[ev.SessionID]) > 0 {
+			s.mounting[ev.SessionID] = append(s.mounting[ev.SessionID], ev)
+			return s, rearm
+		}
+		s.mounting[ev.SessionID] = []ports.RemoteInputEvent{ev}
+		return s, tea.Batch(rearm, s.mountSessionCmd(ev.SessionID))
 	}
 
 	if st.active != nil {

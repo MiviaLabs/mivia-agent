@@ -171,6 +171,8 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	// sole thing that ever turns one into a conv.Send call (item 1 of the
 	// steering design - see poolSyncOptions' comment for the full rationale).
 	screen.SetRemoteInputs(pool.RemoteInputs())
+	screen.SetSessionMounter(runner)
+	pool.StartBackgroundWatch(context.Background())
 
 	env := os.Environ()
 	report := termprobe.Probe(env, "")
