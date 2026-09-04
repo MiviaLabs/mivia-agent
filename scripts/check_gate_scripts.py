@@ -21,6 +21,7 @@ list of a discovered set is the same defect one level up.
 
 from __future__ import annotations
 
+import ast
 import functools
 import re
 from pathlib import Path
@@ -73,18 +74,27 @@ GUARD = re.compile(r"^if __name__ == [\"']__main__[\"']:", re.M)
 IMPORTS_COMMON = re.compile(r"^(from verify_common import|import verify_common)", re.M)
 # `from verify_common import ROOT` reaches no fail(), and a module that defines
 # its own fail() borrows nothing. Match the imported NAME, not the bare word.
-FROM_IMPORT_FAIL = re.compile(r"^from verify_common import ([^\n]*)", re.M)
-MODULE_FAIL = re.compile(r"\bverify_common\.fail\b")
-
-
 def borrows_common_fail(body: str) -> bool:
-    """True when this module actually reaches verify_common.fail."""
-    if MODULE_FAIL.search(body):
-        return True
-    for match in FROM_IMPORT_FAIL.finditer(body):
-        names = match.group(1).split("#", 1)[0]
-        for part in names.split(","):
-            if part.split(" as ")[0].strip() == "fail":
+    """True when this module actually reaches verify_common.fail.
+
+    Parsed with ast, not regex. A line-anchored regex only captured the
+    opening line of a `from verify_common import (...)` block, so the
+    parenthesized multi-line form was invisible - the exact shape this
+    file's own scripts use nowhere yet, but a future gate could. The same
+    regex also matched a docstring or comment that happened to start a line
+    with "from verify_common import fail", which is not an import at all.
+    """
+    try:
+        tree = ast.parse(body)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "verify_common":
+            if any(alias.name == "fail" for alias in node.names):
+                return True
+        if isinstance(node, ast.Attribute) and node.attr == "fail":
+            target = node.value
+            if isinstance(target, ast.Name) and target.id == "verify_common":
                 return True
     return False
 DEFINES_MAIN = re.compile(r"^def main\(", re.M)

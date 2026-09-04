@@ -244,6 +244,33 @@ def test_rejects_frontmatter_opening_with_an_indented_line() -> None:
     )
 
 
+def test_rejects_a_custom_tag_scalar() -> None:
+    """A single-bang custom tag has no constructor under yaml.safe_load.
+
+    "! " (bare bang) and "!!str"/"!<uri>" (built-in and verbatim tags) are
+    legal and must not be confused with this.
+    """
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("title: Probe memory", "title: !foo bar")},
+        "opens a custom tag",
+    )
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("title: Probe memory", "title: !foo")},
+        "opens a custom tag",
+    )
+
+
+def test_accepts_the_legal_tag_forms() -> None:
+    for label, value in (
+        ("bare bang", "! foo"),
+        ("built-in tag", "!!str foo"),
+        ("verbatim tag", "!<tag:yaml.org,2002:str> foo"),
+    ):
+        body = GOOD.replace("title: Probe memory", f"title: {value}")
+        if (r := run_on({"probe-memory.md": body})) is not None:
+            raise AssertionError(f"{label} ({value!r}) rejected: {r}")
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -263,6 +290,8 @@ def main() -> None:
     test_rejects_frontmatter_no_parser_can_read()
     test_accepts_shapes_a_real_parser_accepts()
     test_rejects_frontmatter_opening_with_an_indented_line()
+    test_rejects_a_custom_tag_scalar()
+    test_accepts_the_legal_tag_forms()
     print("test_check_memories: ok")
 
 

@@ -594,6 +594,50 @@ def test_allows_dash_f_with_n_value_shell() -> None:
     assert proc.returncode == 0, proc.stderr + proc.stdout
 
 
+def test_run_command_guard_does_not_shred_a_later_segments_flags() -> None:
+    """A git-commit segment's short-option bundling must not leak into a
+    later shell segment.
+
+    _scan_segment used to run over the WHOLE argv once any segment matched
+    `git ... commit`, so `-fuzz` in a second, unrelated segment shredded into
+    -f -u -z -z and could not match resource-exhaustion.json. The command is
+    still blocked here, but by that policy's own pattern, not defeated by
+    git commit's option grammar leaking across a shell separator.
+    """
+    proc = run_command_guard(
+        ["git", "commit", "-m", "x", "&&", "go", "test", "-fuzz", "FuzzX"]
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "resource-exhaustion.json" in proc.stderr
+
+
+def test_run_command_guard_catches_dash_n_across_a_global_option() -> None:
+    """-n must be caught even when a global git option sits before commit.
+
+    The pattern-based check requires "git" and "commit" to be textually
+    adjacent; a global option between them defeated it.
+    The structural check added alongside this test does not require adjacency.
+    """
+    for argv in (
+        ["git", "-C", "/tmp", "commit", "-n", "-m", "x"],
+        ["git", "--no-pager", "commit", "-n", "-m", "x"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+        assert "agent-hook-bypass.json" in proc.stderr
+
+
+def test_run_command_guard_allows_dash_capital_c_before_commit() -> None:
+    """git's own -C <dir> (change directory) is not commit's reuse-message.
+
+    Before this fix, the char-bundling parser ran over the whole argv and had
+    no notion of where `commit` starts, so a global -C before commit could be
+    consumed as if it were commit's -C (reuse-message) option.
+    """
+    proc = run_command_guard(["git", "-C", "/some/other/repo", "status"])
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_run_command_guard_blocks_bundled_dash_n() -> None:
     proc = run_command_guard(["git", "commit", "-an", "-m", "x"])
     assert proc.returncode == 2, proc.stderr

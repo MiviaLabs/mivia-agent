@@ -271,6 +271,24 @@ def test_a_comment_naming_a_deleted_script_does_not_false_fire() -> None:
         raise AssertionError(f"a comment triggered a rejection: {rejection}")
 
 
+def test_a_comment_naming_an_interpreter_invocation_does_not_false_fire() -> None:
+    """INVOCATION has no command-position anchor at all.
+
+    Unlike DIRECT_INVOCATION, `python3 <path>` is matched anywhere in the
+    text, so a comment reading "python3 scripts/check_ghost.py was removed"
+    matches INVOCATION even outside a command position. This is the shape
+    that makes invoked_scripts()'s comment-stripping load-bearing: without
+    it, this fixture reports a false "does not exist" rejection.
+    """
+    rejection = run_on(
+        "# python3 scripts/check_ghost.py was removed, no longer used\n"
+        "check:\n\t@python3 scripts/check_probe.py\n",
+        {"check_probe.py": RUNNABLE},
+    )
+    if rejection is not None:
+        raise AssertionError(f"a comment triggered a rejection: {rejection}")
+
+
 def test_a_direct_invocation_after_a_shell_separator_is_still_caught() -> None:
     """Anchoring to a command position must not blind the gate to real use."""
     expect_rejection(
@@ -323,6 +341,7 @@ def main() -> None:
     test_rejects_a_gate_that_takes_the_default_failure_prefix()
     test_rejects_a_binding_that_names_another_script()
     test_a_comment_naming_a_deleted_script_does_not_false_fire()
+    test_a_comment_naming_an_interpreter_invocation_does_not_false_fire()
     test_a_direct_invocation_after_a_shell_separator_is_still_caught()
     test_sweeps_an_uninvoked_extensionless_hook_gate()
     test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule()
