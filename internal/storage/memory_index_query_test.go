@@ -29,6 +29,9 @@ func TestSearchMemoryIndexScopesAndReturnsContent(t *testing.T) {
 	if len(results) != 2 || results[0].Content == "" || results[1].Content == "" {
 		t.Fatalf("results = %#v, want both scoped documents with content", results)
 	}
+	if count, err := store.CountMemoryIndex(context.Background(), "project", "repo", ""); err != nil || count != 1 {
+		t.Fatalf("project index count = %d, err=%v; want 1", count, err)
+	}
 }
 
 func TestSearchMemoryIndexTreatsWildcardsAsText(t *testing.T) {
