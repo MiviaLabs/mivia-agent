@@ -3,7 +3,7 @@ id: viewer_surfaces_must_agree
 title: Every event kind must reach every viewer, or say why not
 content: An event kind is produced once and rendered on four surfaces; all four must agree.
 importance: high
-tags: [[events, ui, invariants]]
+tags: [events, ui, invariants]
 ---
 
 # Every event kind must reach every viewer, or say why not
@@ -69,4 +69,4 @@ unexercised by any user path.
 reader uses - was missing for two commits while the gate's own message claimed
 the class was closed. A review found it. When you add a viewer, add it to the
 table in the same change: a gate that covers three of four surfaces reads as
-covering all of them. Related: [[no-big-test-suites]].
+covering all of them.

@@ -3,7 +3,7 @@ id: test_fixtures_use_guaranteed_binaries_only
 title: Test fixtures use only platform-guaranteed binaries
 content: A test fixture that shells out may invoke only binaries every CI surface guarantees.
 importance: high
-tags: [[tests, ci, fixtures]]
+tags: [tests, ci, fixtures]
 ---
 
 # Test fixtures must use only platform-guaranteed binaries

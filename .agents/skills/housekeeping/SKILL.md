@@ -90,7 +90,7 @@ proposal:
 | Action | How |
 |--------|-----|
 | `mark-stale` | `search_replace` the frontmatter to add or update `status: stale` (preserving the original `id`, `title`, `content`, `importance`, `tags`). Do not rewrite the body. |
-| `archive` | Write first, delete last, so a failed write cannot lose the memory. `write_file` the copy at `.agents/memories/.archive/<id>.md` with `archived_on: <date>` added to the frontmatter. `write_file` creates `.agents/memories/.archive/` if it does not exist. `read_file` the copy and confirm the content matches. Only then `delete_file` the original. Never hard-delete. |
+| `archive` | Write first, delete last, so a failed write cannot lose the memory. `write_file` the copy at `.agents/memories/.archive/<filename>`, keeping the original kebab-case filename, with `archived_on: <date>` added to the frontmatter. `write_file` creates `.agents/memories/.archive/` if it does not exist. `read_file` the copy and confirm the content matches. Only then `delete_file` the original. Never hard-delete. |
 | `merge-with` | With operator confirmation of the merge target, `write_file` a new consolidated memory and `delete_file` the two originals. Record the merge in the new file's frontmatter via `supersedes: [<id1>, <id2>]`. |
 | `fix-schema` | `search_replace` the frontmatter in place. Do not touch the body. |
 

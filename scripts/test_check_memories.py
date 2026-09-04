@@ -114,7 +114,33 @@ def test_rejects_a_non_slug_filename() -> None:
 def test_rejects_bare_csv_tags() -> None:
     expect_rejection(
         {"probe-memory.md": GOOD.replace("tags: [probe]", "tags: a, b")},
-        "tags must be a list",
+        "flat non-empty list",
+    )
+
+
+def test_rejects_a_nested_tags_list() -> None:
+    """[[a, b]] is one element holding a list, not a list of keywords.
+
+    A blanket re-wrap produced exactly this in 15 memories while the gate,
+    which then tested only the first character, reported ok.
+    """
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("tags: [probe]", "tags: [[a, b]]")},
+        "flat non-empty list",
+    )
+
+
+def test_rejects_empty_tags() -> None:
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("tags: [probe]", "tags: []")},
+        "flat non-empty list",
+    )
+
+
+def test_rejects_an_unclosed_tags_list() -> None:
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("tags: [probe]", "tags: [unclosed")},
+        "flat non-empty list",
     )
 
 
@@ -126,6 +152,9 @@ def main() -> None:
     test_rejects_an_unknown_importance()
     test_rejects_a_non_slug_filename()
     test_rejects_bare_csv_tags()
+    test_rejects_a_nested_tags_list()
+    test_rejects_empty_tags()
+    test_rejects_an_unclosed_tags_list()
     print("test_check_memories: ok")
 
 

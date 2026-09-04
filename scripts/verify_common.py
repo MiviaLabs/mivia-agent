@@ -15,8 +15,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def fail(msg: str) -> None:
-    print(f"verify_agent_config: {msg}", file=sys.stderr)
+def fail(msg: str, prefix: str = "verify_agent_config") -> None:
+    """Report a failure and stop.
+
+    Take the prefix so each gate reports under its own name. Every
+    verify_skill_tree failure used to print "verify_agent_config:", which sent
+    an operator to a script that passes.
+    """
+    print(f"{prefix}: {msg}", file=sys.stderr)
     raise SystemExit(1)
 
 

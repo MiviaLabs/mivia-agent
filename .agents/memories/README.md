@@ -50,8 +50,9 @@ are operational, not authoritative.
 ## The archive
 
 A memory that is no longer true but is worth keeping goes to
-`.agents/memories/.archive/<id>.md`, with `archived_on: <date>` added to
-its frontmatter. Archived files are not read at the start of a task.
+`.agents/memories/.archive/<filename>`, keeping the original kebab-case
+filename, with `archived_on: <date>` added to its frontmatter. The `id`
+field stays the identifier; the path stays kebab-case. Archived files are not read at the start of a task.
 
 Write the archived copy first, read it back and confirm the content
 matches, then delete the original. A delete that runs before its write

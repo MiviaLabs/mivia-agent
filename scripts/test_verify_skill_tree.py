@@ -342,7 +342,9 @@ def test_alias_gate_rejects_a_canonical_file_without_frontmatter() -> None:
         target = root / ".agents" / "skills" / "probe-skill" / "SKILL.md"
         target.write_text("No frontmatter here.\n", encoding="utf-8")
 
-    expect_alias_rejection(mutate, "missing YAML frontmatter")
+    expect_alias_rejection(
+        mutate, ".agents/skills/probe-skill/SKILL.md: missing YAML frontmatter"
+    )
 
 
 def test_alias_gate_rejects_a_stub_without_frontmatter() -> None:
@@ -350,7 +352,9 @@ def test_alias_gate_rejects_a_stub_without_frontmatter() -> None:
         target = root / ".claude" / "skills" / "probe-skill" / "SKILL.md"
         target.write_text("No frontmatter here.\n", encoding="utf-8")
 
-    expect_alias_rejection(mutate, "missing YAML frontmatter")
+    expect_alias_rejection(
+        mutate, ".claude/skills/probe-skill/SKILL.md: missing YAML frontmatter"
+    )
 
 
 def test_alias_gate_rejects_a_plain_file_in_the_tree_root() -> None:

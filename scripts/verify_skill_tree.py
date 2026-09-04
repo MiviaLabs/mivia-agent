@@ -14,7 +14,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from verify_common import ROOT, fail, rel_to_root
+import functools
+
+from verify_common import ROOT, rel_to_root
+from verify_common import fail as _fail
+
+fail = functools.partial(_fail, prefix="verify_skill_tree")
 
 
 # Mirrors descriptionMaxLen in internal/skills/skill_markdown.go. loader.go

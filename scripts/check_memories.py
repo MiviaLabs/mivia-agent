@@ -5,30 +5,29 @@ AGENTS.md tells every agent to read this directory at the start of a task and
 to treat each memory as an active constraint. No compiled code reads it, so
 this gate is the only control over its shape.
 
-Two skills act on that shape. `capture` writes a new memory and validates it,
-and `housekeeping` classifies the store and proposes a `fix-schema` change.
-Both drive off the README, so a rule the store cannot satisfy turns a routine
-audit into a mass rewrite: before this gate existed the README asked for an id
-equal to the filename, the store used a snake_case id against a kebab-case
-filename, and all 20 memories therefore read as schema failures.
+Two skills act on that shape. `capture` writes a new memory and validates it.
+`housekeeping` classifies the store and proposes a `fix-schema` change. Both
+drive off the README, so a rule the store cannot satisfy turns a routine audit
+into a mass rewrite.
+
+That happened. The README asked for an id equal to the filename. The store used
+a snake_case id against a kebab-case filename. All 20 memories therefore read as
+schema failures.
 """
 
 from __future__ import annotations
 
+import functools
 import re
-import sys
 from pathlib import Path
 
 from verify_common import ROOT, rel_to_root
+from verify_common import fail as _fail
+
+fail = functools.partial(_fail, prefix="check_memories")
 
 
 MEMORIES_DIR = ROOT / ".agents" / "memories"
-
-
-def fail(msg: str) -> None:
-    """Report under this gate's own name, not the shared one."""
-    print(f"check_memories: {msg}", file=sys.stderr)
-    raise SystemExit(1)
 
 
 # The five keys .agents/memories/README.md marks mandatory.
@@ -37,6 +36,12 @@ REQUIRED_KEYS = ("id", "title", "content", "importance", "tags")
 IMPORTANCE_VALUES = ("high", "medium", "low")
 
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# A flat, non-empty flow sequence. A prefix test would accept "[[a, b]]",
+# which is a one-element list holding a list, and "[unclosed". A blanket
+# re-wrap once produced exactly the first shape in 15 files while the gate
+# reported ok, so the shape is checked, not the first character.
+TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]$")
 
 
 def expected_id(stem: str) -> str:
@@ -100,8 +105,11 @@ def check_memories(directory: Path) -> None:
                 f"{name}: importance is {fields['importance']!r}, not one of "
                 f"{list(IMPORTANCE_VALUES)}."
             )
-        if not fields["tags"].startswith("["):
-            fail(f"{name}: tags must be a list, for example [a, b].")
+        if not TAGS.match(fields["tags"]):
+            fail(
+                f"{name}: tags must be a flat non-empty list, for example "
+                f"[a, b]; got {fields['tags']!r}."
+            )
 
 
 def main() -> None:
