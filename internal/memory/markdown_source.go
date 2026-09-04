@@ -113,7 +113,7 @@ func (s MarkdownSource) Scan(ctx context.Context, scope Scope) ([]MarkdownDocume
 	}
 	docs := make([]MarkdownDocument, 0, len(entries))
 	for _, item := range entries {
-		if item.IsDir() || filepath.Ext(item.Name()) != ".md" {
+		if item.IsDir() || item.Name() == "README.md" || filepath.Ext(item.Name()) != ".md" {
 			continue
 		}
 		path := filepath.Join(dir, item.Name())
