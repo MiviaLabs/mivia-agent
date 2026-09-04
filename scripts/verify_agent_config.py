@@ -17,21 +17,32 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Mirrors SanitizeModelFacingText(description, 200) in internal/skills/loader.go.
-# A longer description is truncated mid-sentence in the model-facing skill surface,
-# which degrades skill selection with no other signal that it happened.
+# Mirrors descriptionMaxLen in internal/skills/skill_markdown.go. loader.go
+# applies it through SanitizeModelFacingText. A longer description is truncated
+# mid-sentence in the model-facing skill surface, which degrades skill selection
+# with no other signal that it happened.
 SKILL_DESCRIPTION_MAX = 200
 
-# Mirrors trigger caps in internal/skills/loader.go.
+# Mirrors triggerMaxLen and triggersJoinedMax in
+# internal/skills/skill_markdown.go. loader.go applies both.
 SKILL_TRIGGER_MAX = 64       # per trigger
 SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 
-# Mirrors knownSkillKeys in internal/skills/loader.go. Keep the two in sync:
-# the loader hard-errors on anything else, so a key accepted here but rejected
-# there would pass `make verify` and then fail at runtime.
+# Mirrors knownSkillKeys in internal/skills/skill_markdown.go. Keep the two sets
+# equal. Change them together in one commit. Both directions of drift are bugs:
+# - a key here that the loader rejects passes `make verify` and then fails at
+#   runtime;
+# - a key the loader accepts but this set omits makes the gate stricter than the
+#   contract, so a valid skill fails `make verify` for no real reason.
+# This set is an explicit literal on purpose. Do not derive it from the Go source
+# at runtime. A parse of the Go map must fail closed, and a simple regex parse
+# fails open. scripts/test_verify_agent_config.py proves the two sets are equal.
 SKILL_KNOWN_KEYS = {
     "name", "description", "triggers", "user-invocable", "argument-hint",
     "short-description", "tools",
+    # JSON-string schemas. The frontmatter subset parser holds them as
+    # strings, not as nested maps.
+    "input_schema", "output_schema",
 }
 
 
@@ -305,6 +316,106 @@ def check_core_tier_covers_prompted_tools() -> None:
                     f"it in the prompt."
                 )
 
+
+def rel_to_root(path: Path) -> str:
+    """Path relative to the repo root, or the plain path when it is outside.
+
+    check_skill_dir also runs against a fixture directory in the tests. A
+    fixture lives outside ROOT, where relative_to raises ValueError.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def check_skill_dir(skills_dir: Path) -> None:
+    """Apply the skill frontmatter rules to every SKILL.md in one directory.
+
+    This is a separate function so the tests can run it against a fixture
+    directory. A test must never write a probe skill into .agents/skills:
+    that tree is the one the mivia binary loads, and `make verify` runs
+    verify-agent and agent-hook-test as separate targets, so a planted skill
+    can fail a sibling target in the same run.
+    """
+    for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
+        body = skill_path.read_text(encoding="utf-8")
+        name = skill_path.parent.name
+        if not body.lstrip().startswith("---"):
+            fail(f"{rel_to_root(skill_path)}: missing YAML frontmatter")
+        if f"name: {name}" not in body and f'name: "{name}"' not in body:
+            fail(f"{rel_to_root(skill_path)}: frontmatter name must be {name}")
+        # Unknown keys are rejected at load by internal/skills/skill_markdown.go,
+        # which checks the frontmatter against knownSkillKeys. Catch them here so
+        # `make verify` fails before the loader does.
+        for key in frontmatter_keys(body):
+            if key not in SKILL_KNOWN_KEYS:
+                fail(
+                    f"{rel_to_root(skill_path)}: unknown frontmatter key "
+                    f"{key!r}; recognised: {sorted(SKILL_KNOWN_KEYS)} "
+                    f"(rejected by internal/skills/skill_markdown.go)"
+                )
+        # Check description length.
+        for line in body.splitlines():
+            if line.startswith("description:"):
+                description = line.split(":", 1)[1].strip()
+                if len(description) > SKILL_DESCRIPTION_MAX:
+                    fail(
+                        f"{rel_to_root(skill_path)}: description is "
+                        f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
+                        f"(silently truncated by internal/skills/loader.go)"
+                    )
+                break
+        # Check trigger entries are non-empty and joined block within cap.
+        in_triggers = False
+        trigger_items = []
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped == "triggers:" or stripped.startswith("triggers: ["):
+                if stripped == "triggers:":
+                    in_triggers = True
+                elif stripped.startswith("triggers: ["):
+                    # Flow sequence: extract items. Handle trailing content after ].
+                    inner = stripped[len("triggers: ["):]
+                    # Find the closing bracket, handling trailing whitespace/comments.
+                    bracket_idx = inner.find("]")
+                    if bracket_idx >= 0:
+                        inner = inner[:bracket_idx]
+                    # Also strip any trailing comment before the bracket
+                    # (already handled by find("]") above).
+                    inner = inner.strip()
+                    for part in split_flow_items(inner):
+                        item = part.strip().strip("\"'")
+                        if item:
+                            trigger_items.append(item)
+                continue
+            if in_triggers:
+                # Comments and blank lines are skipped in the Go parser
+                # but stay in the block - handle them the same way.
+                if stripped == "" or stripped.startswith("#"):
+                    continue
+                if stripped.startswith("- "):
+                    item = stripped[2:].strip()
+                    if item:
+                        trigger_items.append(item)
+                elif line.startswith("  ") or line.startswith("\t"):
+                    # Still in block sequence (indented continuation).
+                    continue
+                else:
+                    in_triggers = False
+        if trigger_items:
+            joined = "\n".join(trigger_items)
+            if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
+                fail(
+                    f"{rel_to_root(skill_path)}: triggers joined block is "
+                    f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
+                    f"(silently truncated by internal/skills/loader.go)"
+                )
+            for item in trigger_items:
+                if not item:
+                    fail(
+                        f"{rel_to_root(skill_path)}: trigger entry is empty"
+                    )
 
 def main() -> None:
     # Prefer declarative list when present.
@@ -602,89 +713,18 @@ def main() -> None:
             if rule_id not in sg:
                 fail(f"semgrep/agent-standards.yml: missing {rule_id}")
 
-    # Skill frontmatter when skills exist. .agents/skills is the shared
-    # cross-tool mirror; .mivia/skills is the copy the compiled mivia binary
-    # itself loads at runtime (internal/workspace.SkillsDir). Both are checked
-    # so the two mirrors cannot silently diverge.
+    # Skill frontmatter when skills exist. The compiled mivia binary loads
+    # .agents/skills at runtime: internal/workspace.SkillsDir(root) returns
+    # <root>/.agents/skills. .mivia/skills is a mirror that the binary does
+    # not load.
+    #
+    # This gate applies the same frontmatter rules to each directory it finds.
+    # It does not compare the two directories. A skill that exists in one tree
+    # and not the other passes here, so this gate does not detect divergence
+    # between the trees.
     skill_dirs = [d for d in (ROOT / ".agents" / "skills", ROOT / ".mivia" / "skills") if d.is_dir()]
     for skills_dir in skill_dirs:
-        for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
-            body = skill_path.read_text(encoding="utf-8")
-            name = skill_path.parent.name
-            if not body.lstrip().startswith("---"):
-                fail(f"{skill_path.relative_to(ROOT)}: missing YAML frontmatter")
-            if f"name: {name}" not in body and f'name: "{name}"' not in body:
-                fail(f"{skill_path.relative_to(ROOT)}: frontmatter name must be {name}")
-            # Unknown keys are rejected by internal/skills/loader.go at load time.
-            # Catch them here so `make verify` fails before the loader does.
-            for key in frontmatter_keys(body):
-                if key not in SKILL_KNOWN_KEYS:
-                    fail(
-                        f"{skill_path.relative_to(ROOT)}: unknown frontmatter key "
-                        f"{key!r}; recognised: {sorted(SKILL_KNOWN_KEYS)} "
-                        f"(rejected by internal/skills/loader.go)"
-                    )
-            # Check description length.
-            for line in body.splitlines():
-                if line.startswith("description:"):
-                    description = line.split(":", 1)[1].strip()
-                    if len(description) > SKILL_DESCRIPTION_MAX:
-                        fail(
-                            f"{skill_path.relative_to(ROOT)}: description is "
-                            f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
-                            f"(silently truncated by internal/skills/loader.go)"
-                        )
-                    break
-            # Check trigger entries are non-empty and joined block within cap.
-            in_triggers = False
-            trigger_items = []
-            for line in body.splitlines():
-                stripped = line.strip()
-                if stripped == "triggers:" or stripped.startswith("triggers: ["):
-                    if stripped == "triggers:":
-                        in_triggers = True
-                    elif stripped.startswith("triggers: ["):
-                        # Flow sequence: extract items. Handle trailing content after ].
-                        inner = stripped[len("triggers: ["):]
-                        # Find the closing bracket, handling trailing whitespace/comments.
-                        bracket_idx = inner.find("]")
-                        if bracket_idx >= 0:
-                            inner = inner[:bracket_idx]
-                        # Also strip any trailing comment before the bracket
-                        # (already handled by find("]") above).
-                        inner = inner.strip()
-                        for part in split_flow_items(inner):
-                            item = part.strip().strip("\"'")
-                            if item:
-                                trigger_items.append(item)
-                    continue
-                if in_triggers:
-                    # Comments and blank lines are skipped in the Go parser
-                    # but stay in the block - handle them the same way.
-                    if stripped == "" or stripped.startswith("#"):
-                        continue
-                    if stripped.startswith("- "):
-                        item = stripped[2:].strip()
-                        if item:
-                            trigger_items.append(item)
-                    elif line.startswith("  ") or line.startswith("\t"):
-                        # Still in block sequence (indented continuation).
-                        continue
-                    else:
-                        in_triggers = False
-            if trigger_items:
-                joined = "\n".join(trigger_items)
-                if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
-                    fail(
-                        f"{skill_path.relative_to(ROOT)}: triggers joined block is "
-                        f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
-                        f"(silently truncated by internal/skills/loader.go)"
-                    )
-                for item in trigger_items:
-                    if not item:
-                        fail(
-                            f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
-                        )
+        check_skill_dir(skills_dir)
 
     check_agents_directory()
     check_core_tier_covers_prompted_tools()
