@@ -2,7 +2,6 @@ package chatsync
 
 import (
 	"context"
-	"fmt"
 )
 
 // Stop terminates the session sync loop, flushes pending events, and closes
@@ -17,6 +16,12 @@ import (
 func (s *SyncSession) Stop(ctx context.Context) error {
 	if !s.running.CompareAndSwap(true, false) {
 		return nil
+	}
+	// Cancel the context used by the normal uploader before waiting for the
+	// worker. This interrupts an active HTTP request; the final upload below
+	// uses the caller's still-bounded Stop context.
+	if s.uploaderCancel != nil {
+		s.uploaderCancel()
 	}
 
 	// The worker's final drain and flush inherits the caller's deadline.
@@ -59,38 +64,41 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	}
 
 	if timedOut {
-		go func() {
-			<-s.doneCh
-			if s.unsubscribe != nil {
-				s.unsubscribe()
-			}
-			// The worker is done, so this cannot race its own records. A
-			// drain that overran the deadline is the stuck-server case the
-			// file exists to diagnose, and it must not be left reading
-			// "healthy".
-			s.health.noteStop("session closed, final drain timed out", s.outbox.UnflushedCount())
-			_ = s.outbox.Close()
-		}()
+		go s.finishTimedOutStop()
 		return ctx.Err()
 	}
 
-	// This is a SECOND, independent flush, off the uploader. In the ordinary
-	// case the uploader's final flush has already emptied the outbox and it
-	// is a no-op. Its failure is CLASSIFIED and recorded, never recovered:
-	// the uploader is gone, so recovery's retry schedule has no owner. The
-	// remoteEnded guard means it fires only on non-latching outcomes - an
-	// interval or throttle defer, a transient failure - never after a poison
-	// or a no-progress stop, so a reader must not expect it there.
+	return s.finishStop()
+}
+
+func (s *SyncSession) finishTimedOutStop() {
+	<-s.doneCh
+	if s.unsubscribe != nil {
+		s.unsubscribe()
+	}
+	reason := "session closed, final drain timed out"
+	if err := s.finalUploadError(); err != nil {
+		reason += ": " + err.Error()
+	}
+	s.health.noteStop(reason, s.outbox.UnflushedCount())
+	_ = s.outbox.Close()
+}
+
+func (s *SyncSession) finishStop() error {
 	reason := "session closed"
 	if s.remoteEnded.Load() {
 		reason = s.StopReason()
-	} else if _, err := FlushOutbox(ctx, s.client, s.outbox, s.SessionID()); err != nil {
-		reason = fmt.Sprintf("session closed, final push failed (%s): %v", classifyFlushError(err), err)
+	} else if err := s.finalUploadError(); err != nil {
+		reason = err.Error()
 	}
 	// A terminal latch already recorded its own reason; noteStop keeps the
 	// first one. This call is what makes the record outlive the process.
 	s.health.noteStop(reason, s.outbox.UnflushedCount())
-	return s.outbox.Close()
+	closeErr := s.outbox.Close()
+	if err := s.finalUploadError(); err != nil {
+		return err
+	}
+	return closeErr
 }
 
 // shutdownCtx returns the deadline Stop asked the worker to shut down under,

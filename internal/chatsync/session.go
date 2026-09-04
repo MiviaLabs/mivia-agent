@@ -270,8 +270,10 @@ type SyncSession struct {
 	// after the worker has drained and appended the tail. uploaderDone
 	// closes when the uploader has returned; the worker waits on it before
 	// closing doneCh, so doneCh still means "nothing touches the outbox".
-	finalCh      chan context.Context
-	uploaderDone chan struct{}
+	finalCh        chan context.Context
+	finalErr       atomic.Pointer[error]
+	uploaderDone   chan struct{}
+	uploaderCancel context.CancelFunc
 }
 
 // OpenSession opens or creates a remote session and begins synchronization.
@@ -347,7 +349,9 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 		s.poller.Start(ctx)
 	}
 
-	go s.uploaderLoop(ctx)
+	uploaderCtx, uploaderCancel := context.WithCancel(ctx)
+	s.uploaderCancel = uploaderCancel
+	go s.uploaderLoop(uploaderCtx)
 	go s.workerLoop(ctx)
 
 	return s, nil

@@ -3,6 +3,8 @@ package chatsync
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -285,6 +287,95 @@ func TestStopDrainsTheBacklogThroughTheUploaderOnce(t *testing.T) {
 	}
 }
 
+// TestStopCancelsAnInFlightUpload verifies the shutdown ownership contract.
+// A normal upload uses the uploader context, so Stop must cancel that context
+// before it waits for the worker to release the uploader. Otherwise a slow
+// server keeps the uploader alive after Stop's deadline.
+func TestStopCancelsAnInFlightUpload(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("stop-cancels-upload")
+	f.SetAppendDelay(3 * time.Second)
+	dir := t.TempDir()
+	bus := events.New()
+	s, err := OpenSession(context.Background(), bus, id, SessionOptions{
+		TokenProvider:    testTokenProvider,
+		ClientOptions:    ClientOptions{BaseURL: f.URL()},
+		ProjectorOptions: ProjectorOptions{StreamAssistant: true},
+		RemoteSessionID:  id,
+		OutboxDir:        dir,
+		MaxUnflushed:     100,
+		CreateTitle:      "Stop Cancels Upload",
+		HeartbeatPeriod:  10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	publishTurnStart(bus, id, "turn:1", "in flight")
+	waitForSeqAtLeast(t, s, 1, 5*time.Second)
+	waitUntil(t, "the upload request to start", func() bool {
+		return countRequests(f, "POST", "/v1/chat-sessions/"+id+"/events") >= 1
+	})
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_ = s.Stop(stopCtx)
+
+	select {
+	case <-s.uploaderDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("uploader remained alive after Stop cancelled its in-flight HTTP request")
+	}
+}
+
+// TestStopReportsTheExactUnsentRange keeps the durable recovery contract
+// visible. A failed final upload must not close or advance away the outbox;
+// the caller needs both the exact range and the persisted events for retry.
+func TestStopReportsTheExactUnsentRange(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("stop-unsent-range")
+	f.RejectAppendsWith(http.StatusInternalServerError, "Internal Server Error", "append unavailable")
+	dir := t.TempDir()
+	bus := events.New()
+	s, err := OpenSession(context.Background(), bus, id, SessionOptions{
+		TokenProvider:    testTokenProvider,
+		ClientOptions:    ClientOptions{BaseURL: f.URL()},
+		ProjectorOptions: ProjectorOptions{StreamAssistant: true},
+		RemoteSessionID:  id,
+		OutboxDir:        dir,
+		MaxUnflushed:     100,
+		CreateTitle:      "Stop Unsent Range",
+		HeartbeatPeriod:  10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	publishTurnStart(bus, id, "turn:1", "unsent")
+	publishDeltas(bus, id, "turn:1", 3)
+	waitForSeqAtLeast(t, s, 4, 5*time.Second)
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stopErr := s.Stop(stopCtx)
+	if stopErr == nil || !strings.Contains(stopErr.Error(), "unsent sequence range 1-4") {
+		t.Fatalf("Stop error = %v, want exact unsent range 1-4", stopErr)
+	}
+
+	reopened, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatalf("reopen durable outbox: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	unsent, err := reopened.UnflushedEvents()
+	if err != nil {
+		t.Fatalf("read reopened outbox: %v", err)
+	}
+	if len(unsent) != 4 || unsent[0].Seq != 1 || unsent[len(unsent)-1].Seq != 4 {
+		t.Fatalf("reopened unsent events = %v, want durable range 1-4", unsent)
+	}
+}
+
 // TestSessionContextCancelReleasesBothGoroutines: a cancelled session
 // context unwinds the worker AND the uploader without a hang - the worker
 // waits for the uploader's final pass, so an uploader that did not exit
@@ -293,7 +384,7 @@ func TestStopDrainsTheBacklogThroughTheUploaderOnce(t *testing.T) {
 func TestSessionContextCancelReleasesBothGoroutines(t *testing.T) {
 	f := newFakeAPI(t)
 	id := f.NewSession("ctx-cancel")
-	f.SetAppendDelay(20 * time.Millisecond)
+	f.SetAppendDelay(1 * time.Second)
 	bus := events.New()
 	ctx, cancel := context.WithCancel(context.Background())
 	s, err := OpenSession(ctx, bus, id, SessionOptions{
@@ -327,13 +418,12 @@ func TestSessionContextCancelReleasesBothGoroutines(t *testing.T) {
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), RecommendedStopTimeout)
 	defer stopCancel()
-	if err := s.Stop(stopCtx); err != nil {
-		t.Fatalf("Stop: %v", err)
+	if err := s.Stop(stopCtx); err == nil || !strings.Contains(err.Error(), "unsent sequence range 1-101") {
+		t.Fatalf("Stop error = %v, want the cancelled final upload to report range 1-101", err)
 	}
-	if got := len(f.Events(id)); got != 101 {
-		t.Errorf("server holds %d events, want 101 after Stop's direct flush", got)
+	if got := len(f.Events(id)); got != 0 {
+		t.Errorf("server holds %d events, want 0 after the cancelled upload", got)
 	}
-	assertContiguousFrom1(t, serverSeqs(f, id))
 }
 
 // TestOutboxAppendAndFlushAreConcurrencySafe is the handoff under -race: the
