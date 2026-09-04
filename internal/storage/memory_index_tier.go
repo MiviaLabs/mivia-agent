@@ -21,7 +21,7 @@ func (s *SQLite) PromoteMemoryIndexEntry(ctx context.Context, id, projectID, org
 	}
 	defer tx.Rollback()
 	var scope, tier string
-	err = tx.QueryRowContext(ctx, `SELECT scope,tier FROM memory_entries WHERE id=? AND ((scope='project' AND project_id=? AND org_id='') OR (scope='org' AND org_id=? AND project_id=''))`, id, projectID, orgID).Scan(&scope, &tier)
+	err = tx.QueryRowContext(ctx, `SELECT scope,tier FROM memory_entries WHERE id=? AND ((scope='project' AND project_id=? AND org_id='') OR (scope='org' AND org_id=? AND project_id='')) ORDER BY CASE WHEN scope='project' THEN 0 ELSE 1 END LIMIT 1`, id, projectID, orgID).Scan(&scope, &tier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrMemoryIndexEntryNotFound
 	}
@@ -47,7 +47,7 @@ func (s *SQLite) PromoteMemoryIndexEntry(ctx context.Context, id, projectID, org
 // FindMemoryIndexEntry returns one indexed entry by ID in the configured buckets.
 func (s *SQLite) FindMemoryIndexEntry(ctx context.Context, id, projectID, orgID string) (MemoryIndexDocument, error) {
 	var doc MemoryIndexDocument
-	err := s.db.QueryRowContext(ctx, `SELECT id,scope,project_id,org_id,source_path,source_hash,title,summary,verdict,tags,created,content,tier FROM memory_entries WHERE id=? AND ((scope='project' AND project_id=? AND org_id='') OR (scope='org' AND org_id=? AND project_id=''))`, id, projectID, orgID).Scan(&doc.ID, &doc.Scope, &doc.ProjectID, &doc.OrgID, &doc.SourcePath, &doc.SourceHash, &doc.Title, &doc.Summary, &doc.Verdict, &doc.Tags, &doc.Created, &doc.Content, &doc.Tier)
+	err := s.db.QueryRowContext(ctx, `SELECT id,scope,project_id,org_id,source_path,source_hash,title,summary,verdict,tags,created,content,tier FROM memory_entries WHERE id=? AND ((scope='project' AND project_id=? AND org_id='') OR (scope='org' AND org_id=? AND project_id='')) ORDER BY CASE WHEN scope='project' THEN 0 ELSE 1 END LIMIT 1`, id, projectID, orgID).Scan(&doc.ID, &doc.Scope, &doc.ProjectID, &doc.OrgID, &doc.SourcePath, &doc.SourceHash, &doc.Title, &doc.Summary, &doc.Verdict, &doc.Tags, &doc.Created, &doc.Content, &doc.Tier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MemoryIndexDocument{}, ErrMemoryIndexEntryNotFound
 	}

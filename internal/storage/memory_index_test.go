@@ -70,6 +70,39 @@ func TestSyncMemoryIndexIsolatesProjects(t *testing.T) {
 	}
 }
 
+func TestFindAndPromotePreferProjectOnSharedID(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := MemoryIndexDocument{ID: "same", Scope: "project", ProjectID: "repo", SourcePath: "/project.md", SourceHash: "p", Title: "Project", Summary: "project", Verdict: "good", Created: "2026-09-04", Content: "project"}
+	org := MemoryIndexDocument{ID: "same", Scope: "org", OrgID: "acme", SourcePath: "/org.md", SourceHash: "o", Title: "Org", Summary: "org", Verdict: "good", Created: "2026-09-04", Content: "org"}
+	if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", []MemoryIndexDocument{project}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SyncMemoryIndex(context.Background(), "org", "", "acme", []MemoryIndexDocument{org}); err != nil {
+		t.Fatal(err)
+	}
+	found, err := store.FindMemoryIndexEntry(context.Background(), "same", "repo", "acme")
+	if err != nil || found.Scope != "project" {
+		t.Fatalf("found=%+v err=%v, want project entry", found, err)
+	}
+	if err := store.PromoteMemoryIndexEntry(context.Background(), "same", "repo", "acme"); err != nil {
+		t.Fatal(err)
+	}
+	var projectTier, orgTier string
+	if err := store.db.QueryRow(`SELECT tier FROM memory_entries WHERE scope='project'`).Scan(&projectTier); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT tier FROM memory_entries WHERE scope='org'`).Scan(&orgTier); err != nil {
+		t.Fatal(err)
+	}
+	if projectTier != "core" || orgTier != "archive" {
+		t.Fatalf("tiers project=%q org=%q, want core/archive", projectTier, orgTier)
+	}
+}
+
 func TestSyncMemoryIndexRejectsMismatchedProject(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
