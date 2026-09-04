@@ -4,11 +4,29 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
+
+type synchronizedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // TestSessionSyncObservabilityFlow proves the production-shaped path from a
 // bus event to the durable API append. It uses the real session, projector,
@@ -19,7 +37,7 @@ import (
 func TestSessionSyncObservabilityFlow(t *testing.T) {
 	f := newFakeAPI(t)
 	remoteID := f.NewSession("observability")
-	var logs bytes.Buffer
+	var logs synchronizedBuffer
 	telemetry := NewSyncTelemetry(slog.New(slog.NewTextHandler(&logs, nil)))
 	bus := events.New()
 
@@ -76,7 +94,7 @@ func TestSessionSyncObservabilityFlow(t *testing.T) {
 	if snapshot.LastAckSeq != 1 || snapshot.OutboxDepth != 0 || snapshot.LastSuccessAt.IsZero() {
 		t.Fatalf("upload telemetry did not record the acknowledged append: %+v", snapshot)
 	}
-	if !bytes.Contains(logs.Bytes(), []byte("upload_batch_id="+appendRequest.UploadBatchID)) {
+	if !bytes.Contains([]byte(logs.String()), []byte("upload_batch_id="+appendRequest.UploadBatchID)) {
 		t.Fatalf("telemetry logs do not contain upload batch id %q: %s", appendRequest.UploadBatchID, logs.String())
 	}
 }
