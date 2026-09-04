@@ -136,7 +136,7 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 		s.telemetry.uploadStarted(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, unflushed[0].Seq, unflushed[len(unflushed)-1].Seq, len(unflushed))
 	}
 
-	moved, err := FlushOutbox(ctx, s.client, s.outbox, sessionID)
+	moved, err := FlushOutboxWithTrace(ctx, s.client, s.outbox, sessionID, batchID, s.opts.ProjectorOptions.WriterID)
 	if err == nil {
 		s.telemetry.uploadFinished(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, s.LastSeq(), s.outbox.UnflushedCount(), moved)
 		s.retryBase = 0

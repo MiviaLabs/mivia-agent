@@ -110,6 +110,14 @@ const maxAppendBatch = 100
 // from there rather than resending what already landed. If a 409 Conflict is
 // returned it returns ErrConflict so the session can stop.
 func FlushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID string) (int, error) {
+	return flushOutbox(ctx, client, outbox, sessionID, "", "")
+}
+
+func FlushOutboxWithTrace(ctx context.Context, client *Client, outbox *Outbox, sessionID, batchID, writerID string) (int, error) {
+	return flushOutbox(ctx, client, outbox, sessionID, batchID, writerID)
+}
+
+func flushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID, batchID, writerID string) (int, error) {
 	total := 0
 	for {
 		unflushed, err := outbox.UnflushedEvents()
@@ -138,7 +146,7 @@ func FlushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID 
 			}
 		}
 
-		res, err := client.AppendEvents(ctx, sessionID, items)
+		res, err := client.AppendEventsWithTrace(ctx, sessionID, items, batchID, writerID)
 		if err != nil {
 			return total, err
 		}
