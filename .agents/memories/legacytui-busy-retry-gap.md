@@ -3,7 +3,7 @@ id: legacytui_busy_retry_gap
 title: Worktree-instance write lacks busy-retry; do not inherit the gap post-refactor
 content: The historical legacytui worktree-instance allocation write surfaced raw SQLITE_BUSY under parallel load; internal/legacytui has been deleted, and any new worktree-dialog or session instance-write flows must route instance writes through storage's retrySQLiteBusy wrapper.
 importance: medium
-tags: [[legacytui, sqlite, busy-retry, refactor-debt, worktree]]
+tags: [legacytui, sqlite, busy-retry, refactor-debt, worktree]
 ---
 
 Historical note: TestAsyncCreateMessageRetainsAllocatedInstance

@@ -3,7 +3,7 @@ id: task_identity_two_forms
 title: A task id has two forms; ledger indexes key by the FULL namespaced one
 content: dispatch_tasks tasks carry a full namespaced TaskID (ledger, events, message index) and a stripped model-visible RawID; any producer lookup keyed by the stripped form compiles and silently misses - key lookups by the snapshot row's full TaskID, or read attachments off the snapshot row directly.
 importance: high
-tags: [[orchestration, dispatch_tasks, ledger, identity, dc-11, conformance]]
+tags: [orchestration, dispatch_tasks, ledger, identity, dc-11, conformance]
 ---
 
 # A task id has two identity forms, and indexes key by the full one
