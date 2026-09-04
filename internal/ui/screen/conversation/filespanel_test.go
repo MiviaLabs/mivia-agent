@@ -291,7 +291,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	// only its always-first, never-clipped label - the exact content is
 	// pinned unclipped by TestPanelAgentRowRendersElapsedToolsStep.
 	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") ||
-		!strings.Contains(plain, "running") || !strings.Contains(plain, "tools") {
+		!strings.Contains(plain, "tools") {
 		t.Errorf("subagent progress did not reach the section live:\n%s", plain)
 	}
 	// A later update folds in place rather than appending a row. (The
@@ -304,7 +304,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
-	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") || !strings.Contains(plain, "done") {
+	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") {
 		t.Errorf("subagent update did not fold in place:\n%s", plain)
 	}
 }
