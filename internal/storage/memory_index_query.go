@@ -43,3 +43,16 @@ func (s *SQLite) SearchMemoryIndex(ctx context.Context, scope, projectID, orgID,
 	}
 	return out, rows.Err()
 }
+
+// CountMemoryIndex returns the number of indexed entries in one scope.
+func (s *SQLite) CountMemoryIndex(ctx context.Context, scope, projectID, orgID string) (int, error) {
+	if scope != "project" && scope != "org" {
+		return 0, fmt.Errorf("memory index scope %q is invalid", scope)
+	}
+	query := `SELECT COUNT(*) FROM memory_entries WHERE scope=? AND project_id=? AND org_id=?`
+	var count int
+	if err := s.db.QueryRowContext(ctx, query, scope, projectID, orgID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count memory index: %w", err)
+	}
+	return count, nil
+}
