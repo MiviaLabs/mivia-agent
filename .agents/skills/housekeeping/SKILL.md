@@ -12,6 +12,9 @@ tools:
   - grep
   - glob
   - search
+  - write_file
+  - search_replace
+  - delete_file
 argument-hint: "Optional scope: 'all' (default) or 'stale-only'"
 user-invocable: true
 ---
@@ -122,6 +125,12 @@ files.
 
 ## Tool surface
 
-`read_file`, `list_dir`, `grep`, `glob`, `search`. `write_file`,
-`search_replace`, and `delete_file` are used only when the operator
-approves a specific proposal in Step 4.
+`read_file`, `list_dir`, `grep`, `glob`, `search`, `write_file`,
+`search_replace`, `delete_file`.
+
+This list is the frontmatter `tools:` list, and the two must stay equal. The
+list is an admission requirement, not a description: `internal/agents`
+refuses the skill to a role whose effective tools do not cover every name
+here. Step 4 needs `write_file`, `search_replace`, and `delete_file`. Steps 1
+to 3 are read-only. Use the three write tools only after the operator
+approves a specific proposal.
