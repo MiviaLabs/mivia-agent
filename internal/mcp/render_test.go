@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestSanitizeToolMetadataBoundsUntrustedValues(t *testing.T) {
@@ -51,6 +53,88 @@ func TestSanitizeToolMetadataCopiesSafeSchema(t *testing.T) {
 	properties["name"].(map[string]any)["type"] = "changed"
 	if schema["properties"].(map[string]any)["name"].(map[string]any)["type"] != "string" {
 		t.Fatal("bridge returned a mutable source schema")
+	}
+}
+
+// TestSanitizeToolMetadataKeepsDescriptionBearingProperties is the
+// empty-advertised-schema regression: the codegraph_explore schema - like
+// nearly every real server's - puts "description" on the schema and on each
+// property. bridgeSchemaValue treated any unlisted key as fatal, so the whole
+// schema collapsed to a bare open object: the model was never shown the
+// parameter names or the required list, sent empty arguments, and the server
+// rejected them. Descriptions must survive the bridge.
+func TestSanitizeToolMetadataKeepsDescriptionBearingProperties(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Symbol names or a natural-language question",
+			},
+			"maxFiles": map[string]any{"type": "number", "default": float64(12)},
+		},
+		"required": []any{"query"},
+	}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["type"] != "object" {
+		t.Fatalf("bridged schema = %#v, want type object", got)
+	}
+	properties, ok := got["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("bridged schema = %#v, want the properties preserved", got)
+	}
+	query, ok := properties["query"].(map[string]any)
+	if !ok || query["type"] != "string" || query["description"] != "Symbol names or a natural-language question" {
+		t.Fatalf("bridged query property = %#v, want type and description preserved", query)
+	}
+	maxFiles := properties["maxFiles"].(map[string]any)
+	if maxFiles["default"] != float64(12) {
+		t.Fatalf("bridged maxFiles property = %#v, want the default preserved", maxFiles)
+	}
+	required, ok := got["required"].([]string)
+	if !ok || !slices.Equal(required, []string{"query"}) {
+		t.Fatalf("bridged required = %#v, want [query]", got["required"])
+	}
+}
+
+// TestSanitizeToolMetadataOmitsUnknownAnnotations pins the fail-open rule:
+// one vendor annotation key ("x-vendor") must not nuke the parameter
+// contract - the key is dropped, everything else survives.
+func TestSanitizeToolMetadataOmitsUnknownAnnotations(t *testing.T) {
+	schema := map[string]any{
+		"type":     "object",
+		"x-vendor": map[string]any{"internal": "metadata"},
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+		},
+	}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := got["x-vendor"]; exists {
+		t.Fatalf("bridged schema = %#v, want the unknown annotation omitted", got)
+	}
+	if got["properties"] == nil {
+		t.Fatalf("bridged schema = %#v, want the properties kept despite the unknown key", got)
+	}
+}
+
+// TestCallToolErrorTextKeepsServerDetail pins the second half of the
+// transcript-visibility fix: an isError result carries the actionable reason
+// in its CONTENT, and the old CallTool discarded it for a generic constant.
+func TestCallToolErrorTextKeepsServerDetail(t *testing.T) {
+	got := callToolErrorText([]sdk.Content{
+		&sdk.TextContent{Text: "missing required argument: query"},
+	})
+	if got != "missing required argument: query" {
+		t.Fatalf("callToolErrorText() = %q", got)
+	}
+	if empty := callToolErrorText(nil); empty != "MCP tool returned an error" {
+		t.Fatalf("callToolErrorText(nil) = %q, want the honest generic", empty)
 	}
 }
 
