@@ -286,12 +286,37 @@ def test_rejects_tag_shapes_the_first_tag_check_missed() -> None:
 def test_accepts_more_legal_tag_forms() -> None:
     for label, value in (
         ("null tag alone", "!!null"),
-        ("int tag", "!!int 5"),
+        ("str tag empty", "!!str"),
         ("standard verbatim tag", "!<tag:yaml.org,2002:str> foo"),
     ):
         body = GOOD.replace("title: Probe memory", f"title: {value}")
         if (r := run_on({"probe-memory.md": body})) is not None:
             raise AssertionError(f"{label} ({value!r}) rejected: {r}")
+
+
+def test_rejects_a_verbatim_tag_naming_an_unresolvable_uri() -> None:
+    """A "tag:" prefix alone is not enough: the tag must be one
+    yaml.safe_load actually has a constructor for. A first draft of this
+    check accepted any "tag:"-shaped text, including a made-up scheme."""
+    for value in (
+        "!<tag:example.com,2000:foo> hi",
+        "!<tag:yaml.org,2002:foo> hi",
+        "!<tag:yaml.org,2002:map> hi",
+        "!<tag:yaml.org,2002:python/object> hi",
+    ):
+        body = GOOD.replace("title: Probe memory", f"title: {value}")
+        if (r := run_on({"probe-memory.md": body})) is None:
+            raise AssertionError(f"{value!r} was accepted; yaml.safe_load refuses it")
+
+
+def test_rejects_int_float_bool_tags() -> None:
+    """int/float/bool constructors validate their content's format
+    ("!!int abc" raises the same as "!!binary abc" does), which this gate
+    does not replicate - so they are excluded, not merely under-tested."""
+    for value in ("!!int abc", "!!float xyz", "!!bool maybe", "!!int 5"):
+        body = GOOD.replace("title: Probe memory", f"title: {value}")
+        if (r := run_on({"probe-memory.md": body})) is None:
+            raise AssertionError(f"{value!r} was accepted, but its format is unvalidated")
 
 
 def main() -> None:
@@ -317,6 +342,8 @@ def main() -> None:
     test_accepts_the_legal_tag_forms()
     test_rejects_tag_shapes_the_first_tag_check_missed()
     test_accepts_more_legal_tag_forms()
+    test_rejects_a_verbatim_tag_naming_an_unresolvable_uri()
+    test_rejects_int_float_bool_tags()
     print("test_check_memories: ok")
 
 
