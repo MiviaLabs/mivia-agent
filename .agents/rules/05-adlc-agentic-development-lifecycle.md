@@ -26,6 +26,11 @@ warrant the loop.
 5. **Fail fast, roll back.** If a step reveals a plan flaw, return to Step 0.
 6. **Idempotency.** Every step must be safely re-runnable.
 7. **Zero files for workflow.** No `.md` plan files. No artifact directories. Everything stays in the orchestrator's context or tool results.
+8. **Carry evidence forward, do not force rediscovery.** A second or later
+   round of the same loop (a repeat Step 0 challenge, a Step 5 audit round)
+   must hand each dispatched agent a compact carryover of what the PRIOR
+   round already established - not just the restated task text. See
+   "Round-to-round evidence carryover" below.
 
 ---
 
@@ -97,7 +102,7 @@ same empty-string-as-noise failure mode.
    tested.
 4. The smoke test asserts per-kind counts, not just first/last.
 
-If any of these checks fail, the reviewer returns **Block** with
+If any of these checks fail, the reviewer returns **changes_requested** with
 the specific missing piece, not as a polish note.
 
 ---
@@ -126,6 +131,47 @@ Need to check status of work?       → inspect_agents
 Need to cancel stuck work?          → cancel_run
 Need to run build/test commands?    → Direct execution (not a tool)
 ```
+
+## Round-to-round evidence carryover
+
+The compiled workflow engine (`.mivia/workflows/*.toml`, run by the `mivia`
+binary) never makes a reviewing agent regenerate a prior round's findings
+from scratch: every repair-loop template carries the prior round's own
+output forward as a ledger reference (`workflow_inspect(run_id, step,
+attempt)`), and repeated review steps bind their own prior output back into
+the next prompt as `prior_findings`. This protocol has no ledger - `Save
+nothing to disk` (Step 0) and `Zero files for workflow` both hold - so the
+same guarantee has to come from the orchestrator's own context instead of a
+tool-resolved reference. Do this explicitly on every repeat round:
+
+1. **Never re-dispatch a challenge or audit round with only the restated
+   task text.** When Step 0 repeats (a rejected plan) or Step 5 repeats
+   (bugs found, fixed, and re-audited), the next round's prompt must
+   include a short carryover block: what the prior round found, what was
+   confirmed vs. rejected and why, and what changed since. This is the
+   in-context equivalent of the engine's `prior_findings` binding - the same
+   fact carried a different way, not a different guarantee.
+2. **Carryover is a compact summary, not a transcript.** List finding IDs
+   (invent short stable IDs like `C1`, `C2` per round if the challenge
+   agent did not supply its own), one line each: id, one-line claim,
+   disposition (confirmed-and-fixed / rejected-with-rationale / still-open).
+   Do not paste a prior agent's full raw output back in; that defeats the
+   purpose (bloats context without adding signal the orchestrator has
+   already distilled).
+3. **A dispatched agent that reads the SAME files a prior round already
+   read is not itself a defect** - independent re-verification of source is
+   the point of a hostile challenge or audit (the compiled engine's own
+   review templates say the same: "Independently verify each claim by
+   reading the cited source paths"). The defect this principle targets is
+   the orchestrator handing the same task prompt to round 2 that it handed
+   to round 1, with no memory of round 1's outcome baked in - that produces
+   either a repeat of the same findings (wasted round) or contradictory
+   findings with no way to tell which one is stale.
+4. **Track round count and confirmed/rejected history in the orchestrator's
+   own context across the whole loop**, not just within one Step 0 or Step
+   5 pass - Step 0 and Step 5 share the same 3-round-default /
+   5-round-max discipline (see Step 5's round limit), and neither round
+   count means anything if round N+1 cannot see round N's disposition.
 
 ### Handler Types - Critical
 
@@ -178,7 +224,12 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
      ]
    })
    ```
-   Each agent receives the plan description in their prompt.
+   Each agent receives the plan description in their prompt. On a REPEAT
+   Step 0 (the plan was rejected and revised), each agent's prompt also
+   carries the carryover block from "Round-to-round evidence carryover"
+   above: what the prior round found and how it was dispositioned. Do not
+   dispatch a repeat round with only the revised plan and no memory of why
+   the prior round rejected it.
 
 4. **Disposition every challenge output.** For each finding: confirmed → update plan in context. Rejected → note rationale. Save nothing to disk.
 
@@ -269,7 +320,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 1. Execute waves **in order** using `dispatch_tasks` with `wait: "run"` (or `depends_on` across tasks). Wave N never starts until Wave N-1 gates pass.
 2. Within a wave, dispatch parallel tasks via `dispatch_tasks`.
-3. **Reviewer tasks** in Wave N read Wave N-1 code via tool output. REJECT blocks the wave - orchestrator must fix before proceeding.
+3. **Reviewer tasks** in Wave N read Wave N-1 code via tool output. `changes_requested` blocks the wave - orchestrator must fix before proceeding.
 4. Sub-agents BLOCKED >2 min → inspect with `inspect_agents`, cancel with `cancel_run`.
 5. **Wave gate:** `go build ./... && go test -race ./<affected>/...` must pass.
    - Quick fix (<5 lines) → apply directly, re-verify, proceed.
@@ -309,6 +360,10 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 3. Loop until zero bugs. The round limit is configured via subagents.max_audit_rounds
    in mivia.toml (default: 0, meaning unlimited). If the same bug keeps
    reappearing after 3 fix attempts, escalate to Step 0 (plan rejected).
+   Each round after the first carries forward the "Round-to-round evidence
+   carryover" block (prior findings, dispositions, what changed) in the
+   auditor prompts - do not dispatch round N+1 with only the restated scope
+   and no memory of round N's confirmed/rejected findings.
 
 4. While auditors run, do not poll `inspect_agents` as a feedback loop -
    block on the dispatch (or `join_run`) and read the returned results;
@@ -377,7 +432,7 @@ multi-auditor pass catch - the exact machinery Fast Path skips.
 | Step 2 validator REJECTs | Return to Step 1. 2nd REJECT on same task → Step 0. |
 | Step 4 RED phase missing (test not written first) | Task rejected. Redo. |
 | Step 4 RED test doesn't compile (just "undefined") | Task rejected. Write assertion-failing test. |
-| Step 4 reviewer REJECTs | Orchestrator fixes. If fix >5 lines → return to Step 1. |
+| Step 4 reviewer requests changes | Orchestrator fixes. If fix >5 lines → return to Step 1. |
 | Step 4 wave fails - plan flaw | Return to Step 0. |
 | Step 5 audit loop exceeds configured max_audit_rounds | Plan rejected. Return to Step 0 with evidence. |
 | Step 5 fix breaks existing tests | Halt. Revert. Re-analyse. |

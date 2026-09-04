@@ -18,6 +18,10 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant production code and tests. Do not edit files in this step. Do not run
 commands, commit, push, publish, or read secret-like files.
 
+Start from the exact paths named in the delivery plan's own `inspected` list above - that is
+the planner's own read-set. Read every one of those paths yourself; extend it with any test
+file or fixture path the plan did not name but the test cases below require.
+
 Specify tests before implementation. Cover success behavior and each reachable error or negative
 path. For decoded or parsed untrusted structured input, include empty, malformed, oversized, and
 duplicate input. Include security and hook-policy regression tests when the scope can affect them.

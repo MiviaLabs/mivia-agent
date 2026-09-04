@@ -12,6 +12,11 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths named in `files_changed` in the implementation summary above, plus
+the delivery plan's own `inspected` list (see `evidence.plan`) - that is the builder's own
+read-set, not a claim to trust blindly. Read every one of those paths yourself before
+extending the search for architectural fit.
+
 Check boundary fitness, dependency direction, abstraction cost, and whether the change breaks a
 caller, an invariant, or a contract elsewhere in the codebase. Check that the change composes with
 existing behavior instead of duplicating or contradicting it. Independently verify each claim by

@@ -53,6 +53,10 @@ Implement the smallest change that satisfies the plan. Write or update the regre
 before or with the implementation; each test must fail before the fix and pass after. Cover
 success and at least one negative path.
 
+Start from the exact paths named in the approved fix plan's own `inspected` list above (see
+`evidence.plan`) - that is where the planner already looked. Read every one of those paths
+yourself before extending the search.
+
 Scope discipline:
 - Edit production code, tests, and owned docs only, except when the declared scope is the
   harness itself ({{ inputs.scope }} names scripts/, semgrep/, or Makefile).

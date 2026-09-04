@@ -124,6 +124,21 @@ human and ADLC-driven workflow. The four standard roles are:
 | `builder` | `.agents/agents/builder.md` | read + write + run_command |
 | `reviewer` | `.agents/agents/reviewer.md` | read-only |
 
+`planner` and `plan-reviewer` are standalone, manually-selectable roles for
+ad-hoc plan drafting and challenge; they are not dispatched by name in
+either automated path. The ADLC rule's own dispatch examples name
+`reviewer` (Step 0/5), `auditor` (Step 0/5), `verifier` (Step 2/6),
+`go-engineer` (Step 4), and `performance` (Step 5) - never `planner`,
+`plan-reviewer`, or `builder`. The compiled workflow engine's shape varies
+by workflow: `.mivia/workflows/feature-delivery.toml` uses
+`workflow-engineer` for plan/implement/repair steps and a
+`panel-reviewer`/`review-synthesizer` panel for review; `.mivia/workflows/
+bug-fix.toml` and `bug-fix-fast.toml` instead gate review with an ACTIVE
+`agent = "reviewer"` triage step (their own panel/review/perf-verify
+layers are currently commented out as a temporary debug cut - see
+`docs/development/debug-cut.md`). None of these three workflows dispatch
+`plan-reviewer` or `builder` by name.
+
 Frontmatter schema and the loading contract are documented in
 [`.agents/agents/README.md`](agents/README.md). The `mivia` binary and workflow
 engine load workspace agents directly from `.agents/agents/*.md`. Run `make

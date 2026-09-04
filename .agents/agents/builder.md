@@ -77,5 +77,5 @@ the literal output that proves each one passed.
 
 ## Vocabulary
 
-- `Block` / `PASS` / `REJECT` come from the reviewer, not from you.
+- `approved` / `changes_requested` come from the reviewer, not from you.
 - You produce evidence; the reviewer judges it.

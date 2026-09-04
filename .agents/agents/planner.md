@@ -88,5 +88,7 @@ it. The plan-reviewer blocks on TBDs that look like avoidance.
 
 ## Vocabulary
 
-- `PASS` / `Block` / `REJECT` come from the plan-reviewer, not from you.
+- `approved` / `changes_requested` come from the plan-reviewer, not from
+  you. `changes_requested` may carry `Reject: true` when the plan-reviewer
+  judges the shape wrong, not just fixable.
 - You produce the plan; the plan-reviewer judges it.

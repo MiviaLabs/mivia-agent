@@ -49,6 +49,11 @@ attempt) before responding; never guess from the preview.
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths named in `files_changed` in the implementation summary above, plus
+the approved fix plan's own `inspected` list (see `evidence.plan`) - that is the builder's own
+read-set, not a claim to trust blindly. Read every one of those paths yourself before
+extending the search.
+
 Check that:
 1. The fix resolves every retained finding (by id) with the smallest correct change.
 2. The regression tests fail before the fix and pass after, and cover the negative path.

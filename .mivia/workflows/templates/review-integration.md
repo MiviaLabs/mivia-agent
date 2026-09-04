@@ -32,6 +32,11 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths named in `files_changed` and `inspected` in the implementation
+summary above, plus the delivery plan's own `inspected` list (see `evidence.plan`) - that is
+the builder's own read-set, not a claim to trust blindly. Read every one of those paths
+yourself before extending the search to the cross-layer surfaces below.
+
 ## Task fulfilment (check this first)
 
 Before you review the interaction surface, check that the change does the task.
