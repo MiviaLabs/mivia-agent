@@ -32,7 +32,7 @@ func wireSessionMemory(opts *tools.DefaultOptions, root string, res *config.Reso
 // [memory] config, read-write.
 //
 // store_path resolves relative to the workspace root, so a repo owner can
-// keep the database inside the repository (for example ".mivia/memory.db")
+// keep durable memory in Markdown files and the global derived index.
 // and commit it to transport memories with the repo; "~" expands to the home
 // directory. Relative paths must stay inside the workspace: ".." segments are
 // rejected so a repo-controlled config cannot route project writes to

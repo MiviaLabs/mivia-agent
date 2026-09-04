@@ -15,14 +15,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
 
-// runMemory handles the memory CLI commands: search, promote, dump.
+// runMemory handles the memory CLI commands: search and promote.
 func runMemory(args []string) error {
 	return runMemoryWithIO(args, os.Stdout, os.Stderr)
 }
 
 func runMemoryWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("memory: expected search, promote, or dump")
+		return fmt.Errorf("memory: expected search or promote")
 	}
 	subcommand := args[0]
 	switch subcommand {
@@ -30,10 +30,8 @@ func runMemoryWithIO(args []string, stdout, stderr io.Writer) error {
 		return runMemorySearch(args[1:], stdout)
 	case "promote":
 		return runMemoryPromote(args[1:], stdout)
-	case "dump":
-		return runMemoryDump(args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("memory: unknown subcommand %q (try search, promote, dump)", cliagents.SafeCatalogText(subcommand, 80))
+		return fmt.Errorf("memory: unknown subcommand %q (try search, promote)", cliagents.SafeCatalogText(subcommand, 80))
 	}
 }
 

@@ -81,11 +81,11 @@ and removes that Markdown entry. Use `memory_search` first to find the id.
 ```toml
 [memory]
 enabled = true              # default true; false removes the tools
-store_backend = "markdown"  # "memory", legacy "sqlite", or "markdown" (default)
+store_backend = "markdown"  # "memory" or "markdown" (default)
 store_path = ""             # unused by the Markdown backend
 org_id = ""                 # USER config only; see below
 max_entry_bytes = 8192      # per-entry cap
-max_entries = 500           # compatibility limit for legacy SQLite storage
+max_entries = 500           # maximum entries per memory source
 max_search_results = 8      # memory_search result cap
 block_patterns = []         # regexes; matching content is refused
 inject_core = false         # default false; see below

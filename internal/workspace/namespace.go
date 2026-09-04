@@ -112,19 +112,3 @@ func GlobalMemoryDir() string {
 	}
 	return NamespacePath(home, "memories")
 }
-
-// MemoryDBPath is the default project-scoped memory database (plan 68). A
-// repo owner may point [memory] store_path at a tracked path instead and
-// commit memories with the repository.
-func MemoryDBPath(root string) string { return NamespacePath(root, "memory.db") }
-
-// OrgMemoryDBPath is the user-level org-scoped memory database. An
-// unavailable home directory yields an empty path so callers can disable the
-// org store.
-func OrgMemoryDBPath() string {
-	home, err := UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return NamespacePath(home, "memory", "org.db")
-}
