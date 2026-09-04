@@ -1,7 +1,6 @@
 package mark
 
 import (
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -125,6 +124,37 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, TickCmd()
 }
 
+// pulseGlyph returns the animated glyph for an active frame.
+// TrueColor/256Color/16 tiers use an 8-frame diamond braille pulse;
+// ASCII/NoTTY tiers use a 3-symbol cycle (. + * * + * + .) matching
+// the 8 frames so character positions stay identical.
+func pulseGlyph(phase int, isASCII bool) rune {
+	if isASCII {
+		switch phase {
+		case 2, 3, 5:
+			return '*'
+		case 1, 4, 6:
+			return '+'
+		default:
+			return '.'
+		}
+	}
+	switch phase {
+	case 0, 7:
+		return '⠶'
+	case 1, 6:
+		return '⠛'
+	case 2, 5:
+		return '⠿'
+	case 3:
+		return '⣿'
+	case 4:
+		return '⣶'
+	default:
+		return '⠶'
+	}
+}
+
 // Glyph is the mark's lead cell, unstyled.
 func (m Model) Glyph() rune {
 	if m.state == Idle || m.state == Done {
@@ -144,31 +174,15 @@ func (m Model) Glyph() rune {
 	if m.state == Waiting {
 		f = m.frame / waitDivisor
 	}
-	phase := f % 6
+	phase := f % 8
 	if phase < 0 {
-		phase += 6
+		phase += 8
 	}
-	switch phase {
-	case 0, 1:
-		if isASCII {
-			return '*'
-		}
-		return '✦'
-	case 2, 5:
-		if isASCII {
-			return '+'
-		}
-		return '✧'
-	default:
-		if isASCII {
-			return '.'
-		}
-		return '·'
-	}
+	return pulseGlyph(phase, isASCII)
 }
 
 // View renders the mark: single brand glyph for idle/done/failed, and
-// an animated 3-cell colorful aurora wave for active states.
+// an animated single-cell braille pulse with role shading for active states.
 func (m Model) View() string {
 	if m.state == Idle {
 		glyph := '⬖'
@@ -192,75 +206,23 @@ func (m Model) View() string {
 		return render.Role(m.Theme, m.Tier, theme.RoleSuccess).Render(string(glyph))
 	}
 
-	return m.renderAuroraWave()
+	return m.renderPulse()
 }
 
-func (m Model) renderAuroraWave() string {
+func (m Model) renderPulse() string {
 	isASCII := m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY
-
-	var peakRole, midRole, valleyRole theme.Role
-	switch m.state {
-	case Thinking, Running:
-		peakRole = theme.RoleFG
-		midRole = theme.RoleFGMuted
-		valleyRole = theme.RoleFGSubtle
-	case Streaming:
-		peakRole = theme.RoleSuccess
-		midRole = theme.RoleSuccess
-		valleyRole = theme.RoleFGSubtle
-	case Waiting, Pending:
-		peakRole = theme.RoleWarning
-		midRole = theme.RoleWarning
-		valleyRole = theme.RoleFGSubtle
-	default:
-		peakRole = theme.RoleFG
-		midRole = theme.RoleFGMuted
-		valleyRole = theme.RoleFGSubtle
-	}
 
 	f := m.frame
 	if m.state == Waiting {
 		f = m.frame / waitDivisor
 	}
 
-	var sb strings.Builder
-	for c := 0; c < 3; c++ {
-		if c > 0 {
-			sb.WriteString(" ")
-		}
-		phase := (f - c) % 6
-		if phase < 0 {
-			phase += 6
-		}
-
-		var glyph rune
-		var role theme.Role
-
-		switch phase {
-		case 0, 1:
-			if isASCII {
-				glyph = '*'
-			} else {
-				glyph = '✦'
-			}
-			role = peakRole
-		case 2, 5:
-			if isASCII {
-				glyph = '+'
-			} else {
-				glyph = '✧'
-			}
-			role = midRole
-		default:
-			if isASCII {
-				glyph = '.'
-			} else {
-				glyph = '·'
-			}
-			role = valleyRole
-		}
-
-		sb.WriteString(render.Role(m.Theme, m.Tier, role).Render(string(glyph)))
+	phase := f % 8
+	if phase < 0 {
+		phase += 8
 	}
-	return sb.String()
+
+	glyph := pulseGlyph(phase, isASCII)
+	role := roles[m.state]
+	return render.Role(m.Theme, m.Tier, role).Render(string(glyph))
 }
