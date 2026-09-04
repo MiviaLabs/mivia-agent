@@ -40,6 +40,29 @@ func TestMarkdownSourceWritesAndScansProjectMemory(t *testing.T) {
 	}
 }
 
+func TestMarkdownSourceScansProtocolMemory(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("---\nid: stable_memory\ntitle: Stable memory\ncontent: Keep this fact.\nimportance: high\ntags: [ops, tests]\n---\n\nThe detail matters.\n")
+	if err := os.WriteFile(filepath.Join(dir, "stable-memory.md"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs, err := source.Scan(context.Background(), ScopeProject)
+	if err != nil || len(docs) != 1 {
+		t.Fatalf("docs=%d err=%v, want one protocol memory", len(docs), err)
+	}
+	if docs[0].ID != "stable_memory" || docs[0].Entry.Summary != "Keep this fact." || len(docs[0].Entry.Tags) != 2 {
+		t.Fatalf("protocol document = %+v, want mapped fields", docs[0])
+	}
+}
+
 func TestMarkdownSourceSeparatesProjectAndOrgFiles(t *testing.T) {
 	project, org := t.TempDir(), filepath.Join(t.TempDir(), "org-memories")
 	source, err := NewMarkdownSource(project, org, "acme")
