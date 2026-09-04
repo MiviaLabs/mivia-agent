@@ -409,9 +409,9 @@ run_timeout_seconds = 900
 # change. When set, tools the agent is authorized for but that are NOT named
 # here are DEFERRED: their JSON schemas stop shipping on every request, and the
 # model sees a one-line index of them plus a `load_tools` tool it can call to
-# pull the ones it needs. Loaded tools become callable on the model's NEXT turn
-# (the current turn's tool list was already sent), and they stay loaded for the
-# rest of the agent binding.
+# pull the ones it needs. Calling a deferred tool directly runs immediately -
+# calling it is the load - and the tool is also admitted natively at the next
+# step boundary, staying loaded for the rest of the agent binding.
 # Naming a tool here never grants authority: the list is intersected with the
 # selected agent's effective tool set. Per-agent override: tools_core in the
 # agent TOML.

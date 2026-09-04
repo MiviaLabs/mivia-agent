@@ -531,11 +531,14 @@ func TestNoOpLoadToolsIsCorrectivelyBounded(t *testing.T) {
 	}
 }
 
-// TestReRequestingAStagedToolIsNotCalledCallableNow is R3: staging takes effect
-// at the NEXT turn (D6), so a name staged earlier in this same turn is not
-// callable. Reporting it under "callable now" tells the model to call a tool
-// that will fail with unknown-tool, and a pure re-request emits no other line.
-func TestReRequestingAStagedToolIsNotCalledCallableNow(t *testing.T) {
+// TestReRequestingAStagedToolRunsNowEvenWhenUnpublished was R3: staging took
+// effect at the NEXT turn (D6), so a name staged earlier in this same turn was
+// reported as not callable. Hot-serve inverted the promise: calling a staged
+// tool runs immediately (the synchronous serve), while native publication -
+// what puts it in sess.Tools - still waits for the boundary. The re-request
+// must keep the two states apart: staged means "runs now, not yet in the
+// registry", never "already loaded".
+func TestReRequestingAStagedToolRunsNowEvenWhenUnpublished(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
 	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
@@ -546,17 +549,17 @@ func TestReRequestingAStagedToolIsNotCalledCallableNow(t *testing.T) {
 		t.Fatalf("first load: %v", err)
 	}
 	if _, callable := fixture.sess.Tools.Get("grep"); callable {
-		t.Fatal("a staged tool became callable inside the staging turn")
+		t.Fatal("a staged tool was natively admitted inside the staging turn")
 	}
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
 	if err != nil {
 		t.Fatalf("re-request: %v", err)
 	}
 	if strings.Contains(out, "callable now") {
-		t.Fatalf("a staged-but-unpublished tool was reported as callable now: %q", out)
+		t.Fatalf("a staged-but-unpublished tool was listed under the already-loaded promise: %q", out)
 	}
-	if !strings.Contains(out, "next turn") {
-		t.Fatalf("re-requesting a staged tool gave no next-turn signal: %q", out)
+	if !strings.Contains(out, "run immediately") {
+		t.Fatalf("re-requesting a staged tool gave no hot-serve signal: %q", out)
 	}
 }
 
@@ -583,7 +586,7 @@ func TestMixedLoadToolsResultSeparatesLoadedFromStaged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mixed re-request: %v", err)
 	}
-	if !strings.Contains(out, "callable now") || !strings.Contains(out, "next turn") {
+	if !strings.Contains(out, "callable now") || !strings.Contains(out, "run immediately") {
 		t.Fatalf("mixed result does not distinguish the two states at all: %q", out)
 	}
 	loaded := lineWithPrefix(out, "already loaded: ")
@@ -642,7 +645,7 @@ func TestLoadToolsQueryMatchesDeferredDescriptions(t *testing.T) {
 	if !strings.Contains(out, "grep") {
 		t.Fatalf("query result = %q, want grep staged", out)
 	}
-	if !strings.Contains(out, "next turn") {
-		t.Fatalf("result must state the next-turn availability honestly: %q", out)
+	if !strings.Contains(out, "run immediately") {
+		t.Fatalf("result must state the hot-serve promise honestly: %q", out)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -318,4 +319,115 @@ func (t *countingWriteTool) Capability(json.RawMessage) tools.Capability {
 func (t *countingWriteTool) Execute(context.Context, json.RawMessage) (string, error) {
 	t.runs.Add(1)
 	return t.name + " ran", nil
+}
+
+// TestStagedPendingCallIsHotServedWithoutRecharging pins the hot-serve change:
+// a root-turn call to a name that is ALREADY staged (by load_tools, or by an
+// earlier deferred call whose publication deferred) must fall through the
+// staged notice to the synchronous serve - and must NOT charge a second
+// admission attempt, because the call that staged the name already spent it.
+// The stage itself stays pending: native publication at the boundary remains
+// what makes the tool admitted for later steps and turns.
+func TestStagedPendingCallIsHotServedWithoutRecharging(t *testing.T) {
+	s := prefixResetSession(t)
+
+	full := tools.NewRegistry()
+	full.Register(fixedBodyTool{name: "read_file"})
+	full.Register(fixedBodyTool{name: "grep", body: "main.go:1:package main"})
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	dispatcher := runtime.New(runtime.Policy{})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+	if _, err := s.StageToolAdmission([]string{"grep"}, 7); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	// The staged notice no longer answers a root turn calling a staged name.
+	if msg, ok := opts.StagedToolMessage("grep"); ok {
+		t.Fatalf("a root turn calling a staged tool must hot-serve, got notice %q", msg)
+	}
+
+	attemptsBefore := s.admissionAttempts
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if result.Execute == nil {
+		t.Fatalf("staged call must be admitted for execution, got denial: %q", result.Content)
+	}
+	if s.admissionAttempts != attemptsBefore {
+		t.Fatalf("hot-serving an already-staged name charged another attempt (%d -> %d); "+
+			"the staging call already spent it", attemptsBefore, s.admissionAttempts)
+	}
+
+	stage, has := s.PendingAdmission()
+	if !has || !slices.Contains(stage.Names, "grep") {
+		t.Fatalf("the stage must stay pending for native publication, got %+v (has=%v)", stage, has)
+	}
+
+	// While the surface is switching, the staged notice is the honest answer.
+	s.mu.Lock()
+	s.switching = true
+	s.mu.Unlock()
+	if msg, ok := opts.StagedToolMessage("grep"); !ok || !strings.Contains(msg, "staged for loading") {
+		t.Fatalf("a switching surface must keep the staged notice, got ok=%v %q", ok, msg)
+	}
+	s.mu.Lock()
+	s.switching = false
+	s.mu.Unlock()
+
+	// A scoped turn keeps the notice too: for it, "callable at the next
+	// boundary" is true, while serveUnadmittedTool could only refuse.
+	turn := &TurnOptions{Tools: tools.NewRegistry()}
+	var scopedOpts agent.Options
+	s.wireStepBoundaryAdmission(&scopedOpts, turn)
+	if msg, ok := scopedOpts.StagedToolMessage("grep"); !ok || !strings.Contains(msg, "staged for loading") {
+		t.Fatalf("a scoped turn must keep the staged notice, got ok=%v %q", ok, msg)
+	}
+}
+
+// TestHotServingAStagedWriteToolStillAsksApproval pins that the hot-serve
+// shortcut is not a way past a prompt: the per-call approval decision runs
+// before the skip-the-charge branch, so a staged WRITE tool under a deny
+// policy is refused and rendered as a failure, exactly like a fresh deferred
+// call would be.
+func TestHotServingAStagedWriteToolStillAsksApproval(t *testing.T) {
+	s := prefixResetSession(t)
+
+	write := &countingWriteTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(fixedBodyTool{name: "read_file"})
+	full.Register(write)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	dispatcher := runtime.New(runtime.Policy{})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+
+	s.mu.Lock()
+	s.turnID = 7
+	s.ApprovalPolicy = config.ApprovalPolicyDeny
+	s.mu.Unlock()
+	if _, err := s.StageToolAdmission([]string{"grep"}, 7); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+
+	if write.runs.Load() != 0 {
+		t.Fatal("the policy denied the call but the staged hot-serve ran the tool anyway")
+	}
+	if !result.Failed {
+		t.Error("a denied hot-serve is not marked Failed, so every viewer shows the " +
+			"refusal as a completed, successful tool call")
+	}
 }
