@@ -198,13 +198,20 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running TUI invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s) || INV_FAIL=1
   fi
-  # .agents/agents and .agents/skills had NO entry here, so a role or skill
-  # edit ran zero structural checks at commit time and waited for the push.
-  # This test resolves the real EffectiveTools through the loader, so it holds
-  # the agent-skill tool contract and every skills: name that a hand-rolled
-  # frontmatter scanner cannot: inherits, tools_add, tools_remove, tools_core
-  # and disallowed_tools all change the effective set.
-  if echo "$STAGED" | grep -qE '^\.agents/(agents|skills)/'; then
+  # .agents/agents and .agents/skills had no invariant-test entry here.
+  # verify_agent_config.py already checks frontmatter shape and alias parity on
+  # every commit, but nothing resolved the real effective tools until push.
+  # This test resolves them through the loader, so it holds the agent-skill
+  # tool contract and every skills: name that a hand-rolled frontmatter scanner
+  # cannot: inherits, tools_add, tools_remove, tools_core and disallowed_tools
+  # all change the effective set.
+  #
+  # This entry needs its own status list. $STAGED is ACM, which omits deletions
+  # and renames, and deleting or renaming a skill directory is exactly the edit
+  # that leaves a role's skills: list naming a skill with no SKILL.md. INV-AG-30
+  # rejects that at load and the role loses the skill in silence.
+  STAGED_ROSTER="$(git diff --cached --name-only --diff-filter=ACMRD)"
+  if echo "$STAGED_ROSTER" | grep -qE '^\.agents/(agents|skills)/'; then
     echo " → Running agent-skill roster tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestCommittedRosterSkillCompatibilityMatrix' ./internal/agents/ -count=1 -timeout=60s) || INV_FAIL=1
   fi

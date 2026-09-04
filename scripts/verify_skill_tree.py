@@ -12,7 +12,6 @@ against a fixture. A test must never write a probe skill into .agents/skills.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from verify_common import ROOT, fail, rel_to_root
@@ -300,7 +299,10 @@ def check_skill_dir(skills_dir: Path) -> None:
         # Check description length.
         for line in body.splitlines():
             if line.startswith("description:"):
-                description = line.split(":", 1)[1].strip()
+                # internal/skills/frontmatter.go unquote() strips a
+                # balanced quote pair before the cap applies, so measure
+                # the same text the loader measures.
+                description = line.split(":", 1)[1].strip().strip("\"'")
                 if len(description) > SKILL_DESCRIPTION_MAX:
                     fail(
                         f"{rel_to_root(skill_path)}: description is "
