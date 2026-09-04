@@ -38,7 +38,10 @@ type Input struct {
 	// filesystem tools.
 	Workspace *workspace.Root
 	// MCPConfig selects the MCP servers attached after the registry is
-	// built. Disabled (Enabled=false) is a no-op, not an error.
+	// built. Disabled (Enabled=false) is a no-op, not an error. This seam
+	// has no agent-selection concept, so it always attaches every global
+	// (global = true) server - the same default the root/no-agent-selected
+	// CLI session applies (SelectedOrGlobalMCPServers).
 	MCPConfig config.MCPConfig
 	// SessionID is the checkpoint principal's subject scope. Empty
 	// defaults to chat.Session.SessionID inside BuildSession.
@@ -132,7 +135,7 @@ func New(ctx context.Context, in Input) (*Adapter, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("uiadapter: build registry: %w", err)
 	}
-	mcpMgr, mcpCleanup, err := composition.AttachMCPServers(registry, in.MCPConfig, in.RedactionPolicy, nil)
+	mcpMgr, mcpCleanup, err := composition.AttachMCPServers(registry, in.MCPConfig, in.RedactionPolicy, in.MCPConfig.GlobalServerIDs())
 	if err != nil {
 		return nil, nil, fmt.Errorf("uiadapter: attach MCP servers: %w", err)
 	}
