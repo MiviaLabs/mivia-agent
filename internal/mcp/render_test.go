@@ -123,11 +123,53 @@ func TestDiscoveredToolUsesExternalServerCapability(t *testing.T) {
 	}
 }
 
-func TestDiscoveredToolHidesRemoteError(t *testing.T) {
-	tool := discoveredTool{remoteName: "result", client: failingResultClient{}}
+// TestDiscoveredToolSurfacesServerErrorRedacted pins the transcript contract
+// reversed from TestDiscoveredToolHidesRemoteError: the operator and the model
+// must see WHY an MCP call failed - a bare "MCP tool call failed" hid whether
+// the arguments were wrong, the index stale, or the server crashed. The
+// server-owned text passes through the session redaction policy (the same one
+// results use) before it reaches the transcript.
+func TestDiscoveredToolSurfacesServerErrorRedacted(t *testing.T) {
+	policy, err := redact.Compile([]string{"hush-\\d+"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := discoveredTool{
+		remoteName: "result",
+		client:     errorMessageClient{"index stale: token hush-12345 in request"},
+		redaction:  policy,
+	}
+	_, err = tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the server-owned failure surfaced")
+	}
+	if !strings.Contains(err.Error(), "MCP tool call failed: index stale: token") {
+		t.Fatalf("Execute() error = %v, want the server error detail surfaced for the transcript", err)
+	}
+	if strings.Contains(err.Error(), "hush-12345") {
+		t.Fatalf("Execute() error = %v, want the secret redacted before surfacing", err)
+	}
+}
+
+func TestDiscoveredToolBoundsServerErrorLength(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: errorMessageClient{strings.Repeat("x", 4096)}}
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
-	if err == nil || err.Error() != "MCP tool call failed" {
-		t.Fatalf("Execute() error = %v", err)
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the server-owned failure surfaced")
+	}
+	if len(err.Error()) > 600 {
+		t.Fatalf("Execute() error is %d bytes, want the server detail bounded", len(err.Error()))
+	}
+	if !strings.HasSuffix(err.Error(), "…[truncated]") {
+		t.Fatalf("Execute() error = %.80s..., want a truncation marker", err.Error())
+	}
+}
+
+func TestDiscoveredToolEmptyServerErrorFallsBackToNoDetail(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: errorMessageClient{"   "}}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "server returned no error detail") {
+		t.Fatalf("Execute() error = %v, want an honest no-detail message", err)
 	}
 }
 
@@ -174,13 +216,13 @@ func (resultClient) CallTool(context.Context, string, map[string]any) (string, e
 }
 func (resultClient) Close() error { return nil }
 
-type failingResultClient struct{}
+type errorMessageClient struct{ msg string }
 
-func (failingResultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
-func (failingResultClient) CallTool(context.Context, string, map[string]any) (string, error) {
-	return "", errors.New("untrusted server diagnostic")
+func (c errorMessageClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (c errorMessageClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", errors.New(c.msg)
 }
-func (failingResultClient) Close() error { return nil }
+func (c errorMessageClient) Close() error { return nil }
 
 type canceledResultClient struct{}
 
