@@ -184,7 +184,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		t.Fatalf("committed skills must load without warnings, got: %v", warnings)
 	}
 	wantNames := []string{
-		"architecture-review", "bug-audit", "capture", "concurrency-review",
+		"agent-creator", "architecture-review", "bug-audit", "capture", "concurrency-review",
 		"delivery",
 		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
 		"gate-authoring",
@@ -404,6 +404,7 @@ var wantNilAllowlistRefusals = map[string][]string{
 		"workflow-runs-analysis(workflow_list_runs)",
 	},
 	"e2e-engineer": {
+		"agent-creator(run_command)",
 		"feature-delivery(run_command)",
 		"gate-authoring(run_command)",
 		"memory-housekeeping(memory_search)",
@@ -422,6 +423,7 @@ var wantNilAllowlistRefusals = map[string][]string{
 // The three read-only review roles hold no write or exec tools on purpose, so
 // they share one refusal set.
 var reviewerRefusals = []string{
+	"agent-creator(write_file)",
 	"capture(write_file)",
 	"docs-maintenance(write_file)",
 	"docs-update(write_file)",
