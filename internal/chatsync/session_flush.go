@@ -70,13 +70,13 @@ func (s *SyncSession) uploaderLoop(ctx context.Context) {
 		// deadline and covers everything the wake would have pushed.
 		select {
 		case finalCtx := <-s.finalCh:
-			s.flushNow(finalCtx)
+			s.setFinalUploadError(s.flushFinal(finalCtx))
 			return
 		default:
 		}
 		select {
 		case finalCtx := <-s.finalCh:
-			s.flushNow(finalCtx)
+			s.setFinalUploadError(s.flushFinal(finalCtx))
 			return
 		case <-s.flushCh:
 			s.flush(ctx)
@@ -90,12 +90,32 @@ func (s *SyncSession) uploaderLoop(ctx context.Context) {
 // finish. finalCh is buffered and sent on exactly once, so the send cannot
 // block; the wait is what makes doneCh mean "nothing touches the outbox any
 // more", which Stop's timed-out path relies on before closing it.
-func (s *SyncSession) releaseUploader(ctx context.Context) {
+func (s *SyncSession) releaseUploader(ctx context.Context) error {
+	select {
+	case <-s.uploaderDone:
+		return s.finalUploadError()
+	default:
+	}
 	select {
 	case s.finalCh <- ctx:
 	default:
 	}
 	<-s.uploaderDone
+	return s.finalUploadError()
+}
+
+func (s *SyncSession) setFinalUploadError(err error) {
+	if err == nil {
+		return
+	}
+	s.finalErr.Store(&err)
+}
+
+func (s *SyncSession) finalUploadError() error {
+	if err := s.finalErr.Load(); err != nil {
+		return *err
+	}
+	return nil
 }
 
 const (
@@ -168,6 +188,47 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 		s.scheduleRetry()
 		s.reportHealth(s.health.noteFailure(err, s.outbox.UnflushedCount()), err.Error())
 	}
+}
+
+// flushFinal performs the single upload owned by shutdown. It does not enter
+// the normal retry or recovery state machine: the uploader exits after this
+// call, and the durable outbox must remain available for a later retry.
+func (s *SyncSession) flushFinal(ctx context.Context) error {
+	if s.remoteEnded.Load() {
+		return nil
+	}
+	sessionID := s.SessionID()
+	batchID := sessionID + "-" + strconv.FormatUint(s.uploadBatch.Add(1), 10)
+	unflushed, readErr := s.outbox.UnflushedEvents()
+	if readErr != nil {
+		return fmt.Errorf("final upload could not read outbox: %w", readErr)
+	}
+	if len(unflushed) == 0 {
+		return nil
+	}
+	s.telemetry.uploadStarted(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, unflushed[0].Seq, unflushed[len(unflushed)-1].Seq, len(unflushed))
+	moved, err := FlushOutboxWithTrace(ctx, s.client, s.outbox, sessionID, batchID, s.opts.ProjectorOptions.WriterID)
+	if err != nil {
+		s.telemetry.uploadFailed(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, unflushed[0].Seq, s.outbox.UnflushedCount(), err)
+		return s.withUnsentRange(err)
+	}
+	s.telemetry.uploadFinished(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, s.LastSeq(), s.outbox.UnflushedCount(), moved)
+	s.retryBase = 0
+	s.retryAt = time.Time{}
+	s.lastGapBase = noGapBase
+	s.reportHealth(s.health.noteSuccess(s.outbox.UnflushedCount()), "")
+	return nil
+}
+
+func (s *SyncSession) withUnsentRange(cause error) error {
+	unflushed, err := s.outbox.UnflushedEvents()
+	if err != nil {
+		return fmt.Errorf("final upload failed; unsent sequence range unavailable: %w: %v", cause, err)
+	}
+	if len(unflushed) == 0 {
+		return fmt.Errorf("final upload failed; unsent sequence range empty: %w", cause)
+	}
+	return fmt.Errorf("final upload failed; unsent sequence range %d-%d: %w", unflushed[0].Seq, unflushed[len(unflushed)-1].Seq, cause)
 }
 
 // stopTerminally latches an outcomeStop with the wording each cause has
@@ -279,5 +340,5 @@ drained:
 	}
 	s.mu.Unlock()
 
-	s.releaseUploader(ctx)
+	_ = s.releaseUploader(ctx)
 }

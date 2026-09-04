@@ -162,12 +162,11 @@ func armLongRetry(t *testing.T, f *fakeAPI, bus *events.Bus, localID, turn strin
 	waitUntil(t, "three transient failures", func() bool { return len(f.Batches()) >= base+3 })
 }
 
-// TestFinalFlushOn404RecoversTheBacklog: the 404 arrives on the flush issued
-// from drainAndFlushFinal during Stop. The backlog must land in a new session
-// before Stop returns - a final-flush loss is permanent, nothing re-opens a
-// one-shot run's outbox later. Fails under a running-based guard, because
-// Stop clears running before the final drain.
-func TestFinalFlushOn404RecoversTheBacklog(t *testing.T) {
+// TestFinalFlushOn404LeavesBacklogForRetry: shutdown makes one bounded final
+// attempt. A missing remote session is not repaired during shutdown; the
+// caller gets the exact unsent range and the durable outbox remains available
+// for a later attach/recovery attempt.
+func TestFinalFlushOn404LeavesBacklogForRetry(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("final-404")
 	bus, s, _ := openRecoverable(t, f, a, nil)
@@ -177,29 +176,22 @@ func TestFinalFlushOn404RecoversTheBacklog(t *testing.T) {
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.Stop(stopCtx); err != nil {
-		t.Fatalf("Stop: %v", err)
+	if err := s.Stop(stopCtx); err == nil || !strings.Contains(err.Error(), "unsent sequence range 1-1") {
+		t.Fatalf("Stop error = %v, want exact unsent range 1-1", err)
 	}
 	ids := f.SessionIDs()
-	if len(ids) != 2 {
-		t.Fatalf("%d sessions after Stop, want 2: the final flush's 404 did not recover", len(ids))
-	}
-	if n := f.LastSeq(ids[1]); n < 1 {
-		t.Fatalf("the backlog did not land in %s before Stop returned (lastSeq %d)", ids[1], n)
+	if len(ids) != 1 {
+		t.Fatalf("%d sessions after Stop, want 1: shutdown must not create a replacement session", len(ids))
 	}
 	if s.Stopped() {
 		t.Errorf("stopped: %q", s.StopReason())
 	}
 }
 
-// TestStopsDirectFlushFailureIsRecorded pins rule 7: Stop's second,
-// off-worker flush used to discard its result. A NON-latching arrangement is
-// load-bearing - the direct flush is guarded by !remoteEnded, so any latching
-// path skips the very line under test. Here one recovery has already fired,
-// so the 404 on the final drain is DEFERRED by the interval refusal, the
-// backlog survives, remoteEnded stays false, and the direct flush fails the
-// same way. That failure must reach status.json, classified.
-func TestStopsDirectFlushFailureIsRecorded(t *testing.T) {
+// TestStopsFinalFlushFailureIsRecorded pins the shutdown failure contract.
+// The final upload result must reach status.json with the exact range that
+// remains in the durable outbox.
+func TestStopsFinalFlushFailureIsRecorded(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("direct-flush")
 	bus, s, _ := openRecoverable(t, f, a, nil)
@@ -222,8 +214,8 @@ func TestStopsDirectFlushFailureIsRecorded(t *testing.T) {
 		t.Fatalf("%d sessions, want 2: the second recovery inside the interval must be deferred", n)
 	}
 	st := readStatusFile(t, s.opts.OutboxDir)
-	if st.State != SyncStateStopped || !strings.Contains(st.Reason, "final push failed") || !strings.Contains(st.Reason, "recover") {
-		t.Fatalf("status.json = %+v, want stopped with the direct flush's failure classified in the reason", st)
+	if st.State != SyncStateStopped || !strings.Contains(st.Reason, "final upload failed") || !strings.Contains(st.Reason, "unsent sequence range") {
+		t.Fatalf("status.json = %+v, want stopped with the final upload failure and range", st)
 	}
 	if st.Unflushed == 0 {
 		t.Errorf("unflushed = 0, want the backlog the deferred recovery left behind")
