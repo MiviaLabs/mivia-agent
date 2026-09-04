@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -51,9 +52,7 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	result, err := t.client.CallTool(ctx, t.remoteName, values)
 	if err != nil {
 		// Preserve the cancellation/timeout identity so the runtime can stamp
-		// "canceled"/"timed_out" instead of a generic "failed" (DC-9). The
-		// sentinels carry no external content; server-owned error text stays
-		// hidden on every branch.
+		// "canceled"/"timed_out" instead of a generic "failed" (DC-9).
 		if errors.Is(err, context.Canceled) {
 			return "", context.Canceled
 		}
@@ -63,9 +62,34 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("MCP tool call failed")
+		return "", fmt.Errorf("MCP tool call failed: %s", mcpCallErrText(t.redaction, err))
 	}
 	return capMCPResult(t.redaction.Text(result), t.maxResultBytes), nil
+}
+
+// mcpCallErrText renders the server-owned error for the chat transcript. The
+// operator and the model must see the real failure - a bare "MCP tool call
+// failed" hides whether the arguments were wrong, the index is stale, or the
+// server crashed - so the detail is surfaced. DC-14's concern (external text
+// can carry request content) is met by passing it through the session's
+// redaction policy, the same policy every MCP result already goes through,
+// and bounding its length. Empty detail falls back to an honest no-detail
+// message instead of a dangling suffix.
+func mcpCallErrText(policy *redact.Policy, err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "server returned no error detail"
+	}
+	msg = policy.Text(msg)
+	const maxMCPErrorBytes = 512
+	if len(msg) <= maxMCPErrorBytes {
+		return msg
+	}
+	cut := maxMCPErrorBytes
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+	return msg[:cut] + "…[truncated]"
 }
 
 func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxDescriptionBytes, maxSchemaBytes, maxResultBytes, timeoutSeconds int, redaction *redact.Policy) ([]tools.Tool, error) {
