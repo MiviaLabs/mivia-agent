@@ -229,6 +229,106 @@ def test_gate_rejects_a_long_joined_trigger_block() -> None:
     raise AssertionError("gate accepted a joined trigger block over the cap")
 
 
+def skill_fixture(tmp: str, body: str, name: str = "probe-skill") -> Path:
+    """Write one canonical skill and return its directory."""
+    skills_dir = Path(tmp) / "skills"
+    (skills_dir / name).mkdir(parents=True)
+    (skills_dir / name / "SKILL.md").write_text(body, encoding="utf-8")
+    return skills_dir
+
+
+def run_check_skill_dir(body: str, name: str = "probe-skill") -> str | None:
+    """Drive check_skill_dir over one fixture skill. Return the failure text."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        skills_dir = skill_fixture(tmp, body, name)
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_skill_dir(skills_dir)
+        except SystemExit:
+            return captured.getvalue().strip()
+    return None
+
+
+BASIC_SKILL = """\
+---
+name: probe-skill
+description: Probe skill for the check_skill_dir rules.
+---
+
+Probe body.
+"""
+
+
+def test_gate_rejects_a_name_that_is_not_its_directory() -> None:
+    """The rewritten name check had no test at all.
+
+    Every other fixture writes `name: probe-skill` into `probe-skill/`, so the
+    mismatch branch never executed and the whole rule could be deleted with
+    the suite green.
+    """
+    body = BASIC_SKILL.replace("name: probe-skill", "name: probe-other")
+    rejection = run_check_skill_dir(body)
+    if rejection is None or "but the directory is" not in rejection:
+        raise AssertionError(f"expected a name-mismatch rejection, got: {rejection}")
+
+
+def test_gate_rejects_an_over_length_short_description() -> None:
+    """The loader truncates this silently, so only the gate can catch it."""
+    mod = load_gate()
+    value = "x" * (mod.SKILL_SHORT_DESCRIPTION_MAX + 1)
+    body = BASIC_SKILL.replace(
+        "description: Probe skill for the check_skill_dir rules.",
+        f"description: Probe.\nshort-description: {value}",
+    )
+    rejection = run_check_skill_dir(body)
+    if rejection is None or "short-description is" not in rejection:
+        raise AssertionError(f"expected a short-description cap rejection, got: {rejection}")
+
+
+def test_gate_rejects_an_over_length_argument_hint() -> None:
+    mod = load_gate()
+    value = "x" * (mod.SKILL_ARGS_HINT_MAX + 1)
+    body = BASIC_SKILL.replace(
+        "description: Probe skill for the check_skill_dir rules.",
+        f"description: Probe.\nargument-hint: {value}",
+    )
+    rejection = run_check_skill_dir(body)
+    if rejection is None or "argument-hint is" not in rejection:
+        raise AssertionError(f"expected an argument-hint cap rejection, got: {rejection}")
+
+
+def test_gate_rejects_an_unbalanced_quote_the_loader_refuses() -> None:
+    """internal/skills/frontmatter.go errors on this and drops the skill."""
+    body = BASIC_SKILL.replace(
+        "description: Probe skill for the check_skill_dir rules.",
+        'description: Probe.\nshort-description: "abc',
+    )
+    rejection = run_check_skill_dir(body)
+    if rejection is None or "never closes" not in rejection:
+        raise AssertionError(f"expected an unbalanced-quote rejection, got: {rejection}")
+
+
+def test_check_skill_dir_rejects_missing_frontmatter() -> None:
+    """check_skill_dir's own copy of this rule was unpinned.
+
+    The alias gate has an equivalent rule with identical message text, so a
+    test that did not assert the .agents/skills path could be satisfied by the
+    wrong site.
+    """
+    rejection = run_check_skill_dir("# No frontmatter here\n\nBody.\n")
+    if rejection is None or ".agents/skills" not in rejection and "skills/probe-skill" not in rejection:
+        raise AssertionError(f"expected a missing-frontmatter rejection, got: {rejection}")
+
+
+def test_check_skill_dir_rejects_frontmatter_with_no_name() -> None:
+    body = BASIC_SKILL.replace("name: probe-skill\n", "")
+    rejection = run_check_skill_dir(body)
+    if rejection is None or "declares no name" not in rejection:
+        raise AssertionError(f"expected a no-name rejection, got: {rejection}")
+
+
 def test_dead_skill_tree_is_refused() -> None:
     """.mivia/skills must never come back; a second copy silently drifts."""
     mod = load_gate()
@@ -446,6 +546,12 @@ def main() -> None:
     test_gate_rejects_a_long_trigger()
     test_gate_rejects_shapes_the_go_parser_refuses()
     test_gate_rejects_a_long_joined_trigger_block()
+    test_gate_rejects_a_name_that_is_not_its_directory()
+    test_gate_rejects_an_over_length_short_description()
+    test_gate_rejects_an_over_length_argument_hint()
+    test_gate_rejects_an_unbalanced_quote_the_loader_refuses()
+    test_check_skill_dir_rejects_missing_frontmatter()
+    test_check_skill_dir_rejects_frontmatter_with_no_name()
     test_dead_skill_tree_is_refused()
     test_alias_gate_accepts_a_clean_stub()
     test_alias_gate_rejects_a_missing_stub()

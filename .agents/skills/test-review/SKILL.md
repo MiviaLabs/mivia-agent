@@ -125,12 +125,15 @@ The rules below hold in this repository:
 - **Invariant verification**: Every invariant listed in `.mivia/invariants.md` must have a corresponding, non-skipping test verified via `make invariants` and `scripts/validate_invariants.py`.
 - **AST test quality**: Empty test bodies, zero-assertion tests, tautological assertions, and unreviewed `t.Skip` additions are blocked by `scripts/check_test_quality.py`.
 - **Structure and file limits**: Packages follow `.mivia/policy/go-structure.json` and pass `scripts/check_go_structure.py`.
-- **Run the offline gates**: `make verify` must pass cleanly before any code is committed.
+- **The offline gates**: `make verify` must pass cleanly before any code is committed. This skill declares no command execution, so that is implementer work; report it under Evidence.
 
 ## Output format
 
-Report three sections:
+Report four sections:
 
 1. **A per-test verdict list**: For each test: `tests-what-it-claims`, `weak`, `vacuous`, or `untested` with `file:line`.
 2. **A prioritized gap list**: Each gap states a reproduction, a severity, and a concrete test that would catch it.
 3. **A coverage summary**: State the line coverage and any reachable uncovered lines.
+4. **Evidence**: Name every gate this review depends on and its status. This
+   skill declares no command execution, so a gate nobody ran is `NOT_RUN` with
+   the reason, never an assumed pass.

@@ -211,11 +211,12 @@ func TestLoadingAnIncompleteChunkSequenceFails(t *testing.T) {
 // means the sequence was written by two different layouts.
 //
 // The neighbouring validations - a non-positive count, an index outside
-// the count, a repeated index - are deliberately not tested: the table
-// declares PRIMARY KEY(ref, chunk_index) and CHECK(chunk_index >= 0 AND
-// chunk_count > 0 AND chunk_index < chunk_count), so those rows cannot be
-// inserted at all. Covering them would mean dropping the constraints and
-// asserting against a database that cannot exist.
+// the count, a repeated index, a missing body - cannot be reached through
+// this table: it declares PRIMARY KEY(ref, chunk_index) and
+// CHECK(chunk_index >= 0 AND chunk_count > 0 AND chunk_index < chunk_count).
+// They are covered in context_payloads_corrupt_test.go against a chunk table
+// without those constraints, which is what these reader guards are for: rows
+// this schema would not have written, in a file another process did.
 func TestReadPayloadChunksRejectsASequenceThatDisagreesWithItself(t *testing.T) {
 	smallChunks(t, 256)
 	s, principal := openContextTestStore(t)

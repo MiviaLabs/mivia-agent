@@ -56,6 +56,41 @@ TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
 QUOTED = re.compile(r"^(\"([^\"\\]|\\.)*\"|'([^']|'')*')$")
 
 
+# Characters YAML refuses at the head of a plain scalar, verified against
+# yaml.safe_load in both the `Xfoo` and `X foo` forms. Deliberately NOT here:
+# `&` (anchor) and `?`/`-`/`:` (legal in the plain-scalar position), `!` (tag),
+# and `|`/`>`, which open a block scalar - the first draft rejected
+# `content: >-`, which every parser accepts.
+YAML_INDICATORS = ("@", "`", "*", "%", ",", "]", "}")
+
+# A well-formed block scalar header: | or > with optional chomping and indent
+# indicators. The value itself follows on indented lines.
+BLOCK_SCALAR = re.compile(r"^[|>][+-]?[0-9]*$")
+
+
+def strip_trailing_comment(value: str) -> str:
+    """Drop an unquoted trailing `# ...` comment, which YAML ignores.
+
+    Only a `#` that opens a token is a comment, and only outside quotes: a
+    fragment like `a#b` is part of the scalar.
+    """
+    out, quote = [], ""
+    for index, char in enumerate(value):
+        if quote:
+            out.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in ('"', "'"):
+            quote = char
+            out.append(char)
+            continue
+        if char == "#" and (index == 0 or value[index - 1] in " \t"):
+            break
+        out.append(char)
+    return "".join(out)
+
+
 def expected_id(stem: str) -> str:
     """The id the README derives from a filename: hyphens become underscores."""
     return stem.replace("-", "_")
@@ -101,6 +136,8 @@ def check_memories(directory: Path) -> None:
         for line in front.split("\n"):
             if not line.strip():
                 continue
+            if line.lstrip().startswith("#"):
+                continue  # a comment line is legal YAML
             if line[:1] in (" ", "\t"):
                 if not fields:
                     fail(
@@ -115,7 +152,47 @@ def check_memories(directory: Path) -> None:
                     f"read this block."
                 )
             key, _, value = line.partition(":")
-            value = value.strip()
+            raw_value = value
+            value = strip_trailing_comment(value).strip()
+            # Test the RAW value: .strip() removes the leading and trailing
+            # tabs that are exactly the positions a parser refuses, so testing
+            # the stripped value made this rule dead.
+            if "\t" in raw_value:
+                fail(
+                    f"{name}: {key.strip()} holds a raw tab, which YAML does "
+                    f"not accept as whitespace: {value!r}."
+                )
+            if BLOCK_SCALAR.match(value):
+                # A block scalar; its text is on the indented lines that
+                # follow. Record the key as present so the required-key check
+                # does not read it as missing.
+                fields[key.strip()] = value
+                continue
+            if value[:1] in ("|", ">"):
+                fail(
+                    f"{name}: {key.strip()} opens a block scalar with a "
+                    f"malformed header: {value!r}."
+                )
+            if value[:2] in ("- ", "? ", ": ", "& ", "! ") or value in ("-", "?", "&"):
+                fail(
+                    f"{name}: {key.strip()} opens with {value[:1]!r} followed "
+                    f"by a space, which YAML reads as a block indicator or an "
+                    f"empty anchor and then refuses: {value!r}."
+                )
+            if value[:1] in YAML_INDICATORS:
+                fail(
+                    f"{name}: {key.strip()} opens with {value[:1]!r}, which "
+                    f"YAML reserves as an indicator. No parser can read this "
+                    f"frontmatter. Wrap the whole value in single quotes: "
+                    f"{value!r}."
+                )
+            if value[:1] in ("[", "{"):
+                closer = "]" if value[0] == "[" else "}"
+                if not value.endswith(closer):
+                    fail(
+                        f"{name}: {key.strip()} opens a flow collection that "
+                        f"never closes: {value!r}."
+                    )
             if value[:1] not in ('"', "'", "[", "{", "") and (
                 ": " in value or value.endswith(":")
             ):
@@ -150,7 +227,10 @@ def check_memories(directory: Path) -> None:
                 f"{name}: tags must be a flat non-empty list, for example "
                 f"[a, b]; got {fields['tags']!r}."
             )
-        inner = fields["tags"]
+        # Strip the comment BEFORE slicing. rindex("]") over the raw value
+        # found a bracket inside the comment, so `tags: [a, ] # x]` sliced to
+        # "a, ] # x" and every element rule below inspected comment text.
+        inner = strip_trailing_comment(fields["tags"]).strip()
         inner = inner[inner.index("[") + 1 : inner.rindex("]")]
         for tag in inner.split(","):
             tag = tag.strip()

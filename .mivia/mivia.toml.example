@@ -336,11 +336,14 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # this key leaves ALL paths writable by workflow agents, including .git and its
 # own workflow definition - choose deliberately.
 #
-# This file carries the blocklist. An agent that can edit it can empty this key
-# and restore write access to every other entry, so the file must block itself.
+# The config this file becomes carries the blocklist. An agent that can edit
+# that config can empty this key and restore write access to every other
+# entry, so the config must block itself. The entry below names it.
 #
 # .git carries commit history: an agent that can edit it can rewrite history.
-# Blocking .git alone does NOT protect the hooks. install_git_hooks.sh points
+# Blocking .git alone does NOT protect the hooks, and blocking the hooks alone
+# does not protect the gate scripts they run: an agent that rewrites one of
+# those to exit 0 passes every check while the hooks stay untouched. install_git_hooks.sh points
 # the hooks path at .githooks, so the live hooks are .githooks/* and the
 # implementations they exec in scripts/git-hooks/*, and neither lives under
 # .git. Block all three, or an agent can plant a hook that bypasses the
@@ -351,7 +354,8 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 write_path_blocklist = [
     ".git",               # commit history
     ".githooks",          # hook wrappers the hooks path points at
-    "scripts/git-hooks",  # hook implementations the wrappers exec
+    "scripts",            # hook implementations AND the gates the hooks run
+    "Makefile",           # it decides which gates run at all
     ".mivia/mivia.toml",  # this file: it carries the blocklist
     ".mivia/policy",      # the pattern files the hook guard reads
 ]

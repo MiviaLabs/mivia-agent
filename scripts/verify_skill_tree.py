@@ -208,10 +208,36 @@ def frontmatter_block(body: str) -> str | None:
     return None
 
 
+def sanitize_model_facing(text: str) -> str:
+    """Mirror SanitizeModelFacingText in internal/skills/skills.go.
+
+    The loader measures the caps AFTER this transform, so measuring the raw
+    value here rejected strings the loader keeps whole.
+    """
+    out = []
+    for char in text:
+        if char in "\n\r\t":
+            out.append(" ")
+        elif ord(char) >= 0x20 and ord(char) != 0x7F and char not in ('\\', '"'):
+            out.append(char)
+    return "".join(out).strip()
+
+
+class UnbalancedQuote(ValueError):
+    """A value opening with a quote that never closes."""
+
+
 def unquote(value: str) -> str:
-    """Strip one balanced quote pair, matching unquote in frontmatter.go."""
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-        return value[1:-1]
+    """Strip one balanced quote pair, matching unquote in frontmatter.go.
+
+    That function returns an ERROR on an unbalanced quote, and ParseFrontmatter
+    then refuses the whole skill. Returning the raw string here, as this did,
+    let a skill the loader cannot read pass the gate.
+    """
+    if value[:1] in ('"', "'"):
+        if len(value) >= 2 and value[-1] == value[0]:
+            return value[1:-1]
+        raise UnbalancedQuote(value)
     return value
 
 
@@ -335,7 +361,14 @@ def check_skill_dir(skills_dir: Path) -> None:
         # name verbatim, so both shapes register the skill under a name no
         # reference points at. It also rejected 'name: single-quoted', which
         # the loader's unquote accepts.
-        declared = frontmatter_value(body, "name")
+        try:
+            declared = frontmatter_value(body, "name")
+        except UnbalancedQuote as exc:
+            fail(
+                f"{rel_to_root(skill_path)}: name opens with a quote that "
+                f"never closes: {exc.args[0]!r}. "
+                f"internal/skills/frontmatter.go refuses the whole skill."
+            )
         if declared is None:
             fail(f"{rel_to_root(skill_path)}: frontmatter declares no name")
         if declared != name:
@@ -357,10 +390,17 @@ def check_skill_dir(skills_dir: Path) -> None:
             ("short-description", SKILL_SHORT_DESCRIPTION_MAX),
             ("argument-hint", SKILL_ARGS_HINT_MAX),
         ):
-            value = frontmatter_value(body, key)
+            try:
+                value = frontmatter_value(body, key)
+            except UnbalancedQuote as exc:
+                fail(
+                    f"{rel_to_root(skill_path)}: {key} opens with a quote that "
+                    f"never closes: {exc.args[0]!r}. "
+                    f"internal/skills/frontmatter.go refuses the whole skill."
+                )
             if value is None:
                 continue
-            size = len(value.encode("utf-8"))
+            size = len(sanitize_model_facing(value).encode("utf-8"))
             if size > cap:
                 fail(
                     f"{rel_to_root(skill_path)}: {key} is {size} bytes, max "
@@ -381,7 +421,7 @@ def check_skill_dir(skills_dir: Path) -> None:
                 # balanced quote pair before the cap applies, so measure
                 # the same text the loader measures.
                 description = line.split(":", 1)[1].strip().strip("\"'")
-                if len(description.encode("utf-8")) > SKILL_DESCRIPTION_MAX:
+                if len(sanitize_model_facing(description).encode("utf-8")) > SKILL_DESCRIPTION_MAX:
                     fail(
                         f"{rel_to_root(skill_path)}: description is "
                         f"{len(description.encode('utf-8'))} bytes, max "

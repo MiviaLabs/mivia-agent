@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,5 +155,65 @@ func TestGlobReportsAByteTruncationInsteadOfNoMatches(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(out), "truncat") && !strings.Contains(out, "bytes") {
 		t.Errorf("out = %q, want it to say the output was cut", out)
+	}
+}
+
+// TestGlobRejectsMalformedArguments: the arguments arrive as model-authored
+// JSON. A decode failure must surface as the tool's error rather than fall
+// through to a zero-valued input, which would run the walk with an empty
+// pattern the caller never asked for.
+func TestGlobRejectsMalformedArguments(t *testing.T) {
+	tool := &globTool{ws: globWorkspace(t, "a.go"), maxBytes: 4096}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"pattern": `))
+	if err == nil {
+		t.Fatalf("malformed arguments were accepted, returning %q", out)
+	}
+	if out != "" {
+		t.Errorf("a failed decode still produced output %q", out)
+	}
+	// The decode failure must be reported as such. Falling through to a
+	// zero-valued input would surface the generic "pattern is required"
+	// instead, which sends the caller looking for a missing argument it
+	// actually supplied.
+	if strings.Contains(err.Error(), "pattern is required") {
+		t.Errorf("decode failure was reported as a missing pattern: %v", err)
+	}
+}
+
+// expiresAfterEntryContext is a context that is still live when the tool's
+// entry guard reads it and expired by the time the walk starts. It models a
+// tool deadline that lapses inside Execute - the only way a walk failure
+// that is neither errMaxMatches nor errMaxBytes reaches the caller.
+type expiresAfterEntryContext struct {
+	context.Context
+	reads int
+}
+
+func (c *expiresAfterEntryContext) Err() error {
+	c.reads++
+	if c.reads == 1 {
+		return nil
+	}
+	return context.DeadlineExceeded
+}
+
+// TestGlobSurfacesAWalkFailureThatIsNotACap: errMaxMatches and errMaxBytes
+// are page boundaries the tool reports as partial results, but any other
+// walk failure is real. Swallowing it would report "no matches" for a walk
+// that never finished, and the model reads that as proof the files are
+// absent.
+func TestGlobSurfacesAWalkFailureThatIsNotACap(t *testing.T) {
+	tool := &globTool{ws: globWorkspace(t, "a.go", "b/c.go"), maxBytes: 4096}
+	ctx := &expiresAfterEntryContext{Context: context.Background()}
+
+	out, err := tool.Execute(ctx, json.RawMessage(`{"pattern":"**/*.go"}`))
+	if err == nil {
+		t.Fatalf("a walk that never completed reported success with output %q", out)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v; want the walk's own %v", err, context.DeadlineExceeded)
+	}
+	if out != "" {
+		t.Fatalf("a failed walk still produced output %q; \"no matches\" here would read as an empty repository", out)
 	}
 }

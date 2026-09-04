@@ -163,8 +163,8 @@ func specCost(t *testing.T, spec provider.ToolSpec) (tokens, descBytes, paramByt
 // recorded in the ratchet table above.
 func TestCoreToolSchemaBudget(t *testing.T) {
 	core, deferred, session := budgetSpecs(t)
-	if len(core) != 19 {
-		t.Fatalf("core tier = %d tools, want 19 (repo [tools] core)", len(core))
+	if len(core) != 20 {
+		t.Fatalf("core tier = %d tools, want 20 (repo [tools] core)", len(core))
 	}
 	coreCost, err := provider.EstimateToolSchemaCost(core)
 	if err != nil {

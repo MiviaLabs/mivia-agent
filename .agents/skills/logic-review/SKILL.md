@@ -85,7 +85,8 @@ repo. A rule that lives only in a comment is a finding.
 For each path from the function pass, find the test that drives it.
 Apply the mutation check: flip the branch, drop the guard, or break
 the return value. Ask which test fails. A path with no failing test
-is a gap. Confirm a gap with a scratch test under `/tmp` when the
+is a gap. Confirm a gap with a scratch test in the host's temporary
+directory when the
 confirm is cheap. Never edit repo code to prove a finding.
 
 Then read each test as code. Tests carry the same fault classes as
@@ -114,7 +115,9 @@ This skill declares no command execution. Read the tool list before you
 plan the evidence.
 
 - When the invoking agent has command execution, confirm every finding with
-  a run: `go test ./<pkg>/`, or a scratch test under the scratchpad. Report
+  a run: `go test ./<pkg>/`. A scratch test needs a write tool as well,
+  which this skill does not declare either; without both, do not claim one.
+  Report
   the command and its output. When the function touches shared state, run
   `go test -race ./<pkg>/`.
 - Without command execution, give the reproduction as the exact input, the
@@ -125,13 +128,15 @@ plan the evidence.
 
 ## Output format
 
-Report four sections.
+Report five sections.
 
 1. The contract. One line per function reviewed.
 2. The path table. One row per path: path, driving test, verdict.
    Verdicts: pinned, weak, untested.
 3. Findings. Reproduction, severity, file:line, minimal fix.
-4. Handoffs. Suite-level gaps go to `test-review`. Gate concerns go
+4. Evidence. The command behind each finding and its output. A finding
+   traced but not run is `NOT_RUN` with the reason.
+5. Handoffs. Suite-level gaps go to `test-review`. Gate concerns go
    to `review`.
 
 ## Bounds

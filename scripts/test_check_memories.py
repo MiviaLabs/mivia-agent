@@ -138,9 +138,14 @@ def test_rejects_empty_tags() -> None:
 
 
 def test_rejects_an_unclosed_tags_list() -> None:
+    """The flow-collection rule now names the cause more precisely.
+
+    It fires before the shape rule, so assert on the message that is actually
+    produced; asserting the older text would pass only by accident.
+    """
     expect_rejection(
         {"probe-memory.md": GOOD.replace("tags: [probe]", "tags: [unclosed")},
-        "flat non-empty list",
+        "never closes",
     )
 
 
@@ -231,6 +236,14 @@ def test_accepts_shapes_a_real_parser_accepts() -> None:
             raise AssertionError(f"{label} rejected: {r}")
 
 
+def test_rejects_frontmatter_opening_with_an_indented_line() -> None:
+    """An indented first key is a parse error and had no test."""
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("id: probe_memory", "  id: probe_memory")},
+        "opens with an indented line",
+    )
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -249,6 +262,7 @@ def main() -> None:
     test_accepts_the_yaml_escapes_inside_a_quoted_scalar()
     test_rejects_frontmatter_no_parser_can_read()
     test_accepts_shapes_a_real_parser_accepts()
+    test_rejects_frontmatter_opening_with_an_indented_line()
     print("test_check_memories: ok")
 
 

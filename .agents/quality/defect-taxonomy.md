@@ -1534,6 +1534,10 @@ already a `tool_end`. Gated by
 
 ## DC-40 A check inspects a proxy for the property it asserts
 
+*Numbered DC-30 in commits `ad7b21ab` and `45ecc175`, before that id was
+found to be taken by the teardown class above. Renumbered in `eeb3fdb1`;
+the `Class:` trailer on those two commits means this class, not DC-30.*
+
 **Mechanism.** A gate, contract, or comment asserts a property, and the code
 under it examines something correlated with that property instead of the
 property itself. The two agree on the cases that exist when it is written, so
@@ -1582,8 +1586,23 @@ whether it looks there. Concretely:
   rejecting something is not evidence.
 - Does the comment above it claim more than the code below it does?
 
-**Gate.** `scripts/check_gate_scripts.py` closes the one form with a
-mechanical boundary: a gate script that cannot report. The rest is a review
-probe, not a gate, because "the check examines a proxy" is not a syntactic
-property. Say so rather than implying coverage that does not exist - which
-would itself be this class.
+**Gate.** No gate closes this class as a whole: "the check examines a proxy"
+is not a syntactic property. Several named forms do have gates.
+
+- `scripts/check_gate_scripts.py` closes the one form with a mechanical
+  boundary: a gate script that cannot report.
+- `scripts/verify_skill_tree.py` measures the skill caps in bytes, as the
+  loader does, and refuses a quote the loader refuses.
+- `scripts/check_memories.py` rejects the frontmatter shapes that a
+  differential run against `yaml.safe_load` proved a parser refuses:
+  indicator-led scalars, malformed block-scalar headers, raw tabs, unclosed
+  flow collections, unbalanced quotes and colonless lines. It does NOT parse
+  YAML, so it is not equivalent to a parser; claiming it is would be this
+  class again.
+- `scripts/verify_agent_config.py` gates the write blocklist against the
+  paths it must cover, the PreToolUse guard's matcher, timeout and program,
+  the shape of a Makefile rule, and the core tier against both prompt
+  directions.
+
+The forms with no gate stay a review probe. Say which is which rather than
+implying coverage that does not exist - which would itself be this class.

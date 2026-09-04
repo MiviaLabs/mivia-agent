@@ -100,6 +100,14 @@ SELF_PROTECTING_BLOCKLIST = (
     ".git",
     ".githooks",
     "scripts/git-hooks",
+    # The hooks are only as good as what they run. With scripts/ writable, a
+    # workflow agent step rewrites verify_agent_config.py to exit 0 and every
+    # gate the protected hook invokes passes, .githooks untouched. The Makefile
+    # decides which gates run at all.
+    "scripts/verify_agent_config.py",
+    "scripts/agent_hook_guard.py",
+    "scripts/secret_scan.py",
+    "Makefile",
     ".mivia/mivia.toml",
     ".mivia/policy",
 )
@@ -123,9 +131,12 @@ def check_workflow_self_protection() -> None:
         fail(f"{rel}: tools.write_path_blocklist must be a list")
     entries = {str(item).strip().strip("/") for item in blocklist}
     for want in SELF_PROTECTING_BLOCKLIST:
-        if want not in entries:
+        # A parent entry covers its children: 'scripts' blocks
+        # 'scripts/git-hooks'. Exact membership would force a redundant entry
+        # and reject a strictly stronger list.
+        if not any(want == e or want.startswith(e + "/") for e in entries):
             fail(
-                f"{rel}: tools.write_path_blocklist does not hold {want!r}. "
+                f"{rel}: tools.write_path_blocklist does not cover {want!r}. "
                 f"A workflow agent step can then write it, and for "
                 f"'.mivia/mivia.toml' that means emptying this key and "
                 f"restoring write access to every other entry."
@@ -141,6 +152,36 @@ def check_workflow_self_protection() -> None:
             # resolveProgram resolves a relative argv[0] against .mivia/, so
             # check the file the config actually names: asserting only the
             # string in argv let the guard be deleted with every gate green.
+            # A guard bound to another tool is not this guard. parseMatcher
+            # in internal/hooks/config.go treats an absent or empty matcher as
+            # match-all, so only a non-empty matcher has to be checked.
+            matcher = group.get("matcher")
+            if matcher is not None and not isinstance(matcher, str):
+                fail(
+                    f"{rel}: PreToolUse matcher must be a string; "
+                    f"internal/hooks/config.go refuses {matcher!r}, and "
+                    f"internal/hooksession downgrades that to a warning, "
+                    f"which drops every lifecycle hook in this config."
+                )
+            # Only nil and "" are match-all in parseMatcher. A
+            # whitespace-only pattern compiles and matches nothing.
+            if isinstance(matcher, str) and matcher != "":
+                try:
+                    bound = re.search(matcher, "run_command") is not None
+                except re.error:
+                    fail(f"{rel}: PreToolUse matcher {matcher!r} does not compile.")
+                if not bound:
+                    fail(
+                        f"{rel}: the PreToolUse guard is bound to matcher "
+                        f"{matcher!r}, which does not match 'run_command'. The "
+                        f"hook then never fires on the tool it exists to gate."
+                    )
+            if (handler or {}).get("on_timeout") != "block":
+                fail(
+                    f"{rel}: the PreToolUse guard has on_timeout="
+                    f"{(handler or {}).get('on_timeout')!r}. A guard that fails "
+                    f"open on timeout is not a control."
+                )
             program = (ROOT / ".mivia" / str(argv[0])).resolve()
             if not program.is_file():
                 fail(
@@ -274,19 +315,111 @@ def makefile_defines_target(makefile: str, target: str) -> bool:
     for index, line in enumerate(lines):
         if line.startswith("\t") or ":" not in line:
             continue
+        # A comment is prose, not a rule. The word `verify` inside
+        # `# verifier-integration is no longer a verify prerequisite` used to
+        # satisfy this check, so deleting the whole verify: rule passed while
+        # `make verify` printed "Nothing to be done".
+        if line.lstrip().startswith("#"):
+            continue
         head, _, rest = line.partition(":")
+        if "#" in head:
+            continue
         if head.startswith(".PHONY") or head.startswith("."):
             continue
         if target not in head.split():
             continue
-        if rest.strip().lstrip("="):
-            return True  # has prerequisites
+        # `verify := x`, `verify ::= x` and `verify ?= x` are assignments. The
+        # partition on ":" leaves head ending in the operator's first half.
+        if head.rstrip().endswith(("=", "!", "?", "+")):
+            continue
+        prereqs = rest.strip()
+        if prereqs.startswith("=") or prereqs.startswith(":="):
+            continue  # `verify := x` seen as head "verify " rest "= x"
+        # A target-specific variable (`verify: CFLAGS=-g`) sets a variable for
+        # a rule defined elsewhere; on its own it defines nothing.
+        if prereqs and not _is_target_specific_variable(prereqs):
+            return True
         for following in lines[index + 1 :]:
             if following.startswith("\t"):
                 return True  # has a recipe
+            if following.lstrip().startswith("#"):
+                continue  # a comment between target and recipe is still one rule
             if following.strip():
                 break
     return False
+
+
+def _is_target_specific_variable(prereqs: str) -> bool:
+    """True for `NAME=value` / `NAME := value` and nothing else."""
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*[:+?]?=", prereqs))
+
+
+LOCKED_LIST_HEAD = "Additional tools below are authorized"
+
+
+def check_locked_list_excludes_core(config_path: Path, core: set[str]) -> None:
+    """No tool in [tools] core may be advertised as locked in a prompt.
+
+    A core tool is always advertised. Telling the model to call load_tools for
+    one costs the same wasted turn as deferring a prompted tool, in the other
+    direction.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        return
+    with config_path.open("rb") as handle:
+        data = tomllib.load(handle)
+    prompt = ((data.get("chat") or {}).get("system_prompt")) or ""
+    if LOCKED_LIST_HEAD not in prompt:
+        return
+    tail = prompt.split(LOCKED_LIST_HEAD, 1)[1]
+    for line in tail.split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        name = stripped[2:].split(":", 1)[0].strip()
+        if name in core:
+            fail(
+                f"{rel_to_root(config_path)}: [chat] system_prompt lists "
+                f"{name!r} as a locked tool, but [tools] core advertises it "
+                f"already. The model is told to load_tools something it can "
+                f"call, which wastes the same turn a deferred prompted tool "
+                f"does."
+            )
+
+
+def agent_core_override(body: str) -> set[str] | None:
+    """The agent's own tools_core list, or None when it declares no override.
+
+    internal/config/agents.go lets one agent replace the global core tier. The
+    global-only check passed while such an agent's prompt named tools its own
+    core deferred - the same defect one scope down.
+    """
+    block = body.split("---")
+    if len(block) < 3:
+        return None
+    names: list[str] = []
+    in_key = False
+    for line in block[1].split("\n"):
+        if re.match(r"^tools_core\s*:", line):
+            in_key = True
+            inline = line.split(":", 1)[1].strip()
+            if inline.startswith("["):
+                return {
+                    n.strip().strip("\"'")
+                    for n in inline.strip("[]").split(",")
+                    if n.strip()
+                }
+            continue
+        if in_key:
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                names.append(stripped[2:].strip().strip("\"'"))
+                continue
+            if stripped:
+                break
+    return set(names) if in_key else None
 
 
 def check_core_tier_covers_prompted_tools() -> None:
@@ -347,15 +480,44 @@ def check_core_tier_covers_prompted_tools() -> None:
         return
 
     for rel, body in model_facing_prompts():
-        for tool in sorted(deferred):
+        # An agent may replace the global tier with its own tools_core
+        # (internal/config/agents.go). Checking only the global set let such an
+        # agent's prompt name tools its OWN core defers - the same defect one
+        # scope down, invisible to a global-only check.
+        source = ROOT / rel
+        override = (
+            agent_core_override(source.read_text(encoding="utf-8"))
+            if source.is_file()
+            else None
+        )
+        # `is not None`, not truthiness: ToolsCore is *[]string in
+        # internal/config/agents_parse.go, so an explicit empty list is an
+        # override that defers EVERY tool, not an absent one.
+        agent_deferred = (
+            (known - override - NON_DEFERRABLE_TOOLS)
+            if override is not None
+            else deferred
+        )
+        scope = (
+            "its own tools_core"
+            if override is not None
+            else "[tools] core in .mivia/mivia.toml"
+        )
+        for tool in sorted(agent_deferred):
             if re.search(r"\b" + re.escape(tool) + r"\b", body):
                 fail(
-                    f"{rel} instructs the model to use {tool!r}, but [tools] core "
-                    f"in .mivia/mivia.toml defers it. A prompted tool whose schema "
-                    f"is withheld costs a wasted turn every session (plan tools/07 "
-                    f"was rejected on this). Add {tool!r} to core, or stop naming "
-                    f"it in the prompt."
+                    f"{rel} instructs the model to use {tool!r}, but {scope} "
+                    f"defers it. A prompted tool whose schema is withheld costs "
+                    f"a wasted turn every session (plan tools/07 was rejected "
+                    f"on this). Add {tool!r} to core, or stop naming it in the "
+                    f"prompt."
                 )
+
+    # The inverse direction, which nothing checked: a prompt that tells the
+    # model to load_tools a tool that is already core. Adding delete_file to
+    # core to fix a deferred-but-prompted defect created exactly this one in
+    # the same file.
+    check_locked_list_excludes_core(config_path, core)
 
 
 def main() -> None:
