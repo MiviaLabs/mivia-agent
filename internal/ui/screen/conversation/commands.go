@@ -57,6 +57,15 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 		}
 		return s.withError("no command runner configured for /" + name), nil
 	}
+	if name == "compact" {
+		if async, ok := s.runner.(ports.AsyncCompactionRunner); ok {
+			h, err := async.StartCompaction(context.Background(), args)
+			if err != nil {
+				return s.withError("compact failed: " + err.Error()), nil
+			}
+			return s.startCompaction(h)
+		}
+	}
 	outcome := s.runner.Run(context.Background(), name, args)
 	if s.conv != nil {
 		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
