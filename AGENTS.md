@@ -11,7 +11,7 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 2. `.agents/INDEX.md` - fuller control-surface index (skills, policy, quality, hooks, semgrep)
 3. `.agents/doctrines/*` - evidence and verification doctrines
 4. `.agents/rules/*` - durable policy (linked by title below)
-5. `.agents/skills/*` - real-directory skills under the development surface; the `mivia` binary's loader (`internal/workspace.SkillsDir`) reads from this path. `.claude/skills/` mirrors each skill as a real directory for tool discovery
+5. `.agents/skills/*` - real-directory skills under the development surface; the `mivia` binary's loader (`internal/workspace.SkillsDir`) reads from this path. Claude Code discovers skills only under `.claude/skills/`, so `.claude/skills/<name>/SKILL.md` is an alias stub that repeats the canonical frontmatter and points at the canonical file. It is a plain file, not a symlink, because Git sets `core.symlinks=false` on Windows by default
 6. `docs/OWNERS.yaml` - doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/`
 

@@ -161,16 +161,16 @@ PROBES = [
     ),
     (
         "mivia.generic.no-skill-freeform-output-heading",
-        ".claude/skills/probe-output-heading/SKILL.md",
+        ".agents/skills/probe-output-heading/SKILL.md",
         "# Probe Skill\n\n## Output\nFree-form text here.\n",
-        ".claude/skills/probe-output-heading-clean/SKILL.md",
+        ".agents/skills/probe-output-heading-clean/SKILL.md",
         "# Probe Skill\n\n## ReportFormat\nmivia-report/v1\n",
     ),
     (
         "mivia.generic.skills-require-mivia-report-v1",
-        ".claude/skills/probe-report-format/SKILL.md",
+        ".agents/skills/probe-report-format/SKILL.md",
         "# Probe Skill\n\nReportFormat: legacy-format\n",
-        ".claude/skills/probe-report-format-clean/SKILL.md",
+        ".agents/skills/probe-report-format-clean/SKILL.md",
         "# Probe Skill\n\nReportFormat: mivia-report/v1\n",
     ),
     (

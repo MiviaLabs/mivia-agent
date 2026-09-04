@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract tests for scripts/verify_agent_config.py.
+"""Contract tests for scripts/verify_skill_tree.py.
 
 The skill-frontmatter gate mirrors knownSkillKeys in
 internal/skills/skill_markdown.go. A narrower mirror rejects a skill that the
@@ -18,12 +18,13 @@ import contextlib
 import importlib.util
 import io
 import re
+import sys
 import tempfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GATE = ROOT / "scripts" / "verify_agent_config.py"
+GATE = ROOT / "scripts" / "verify_skill_tree.py"
 GO_SOURCE = ROOT / "internal" / "skills" / "skill_markdown.go"
 
 SKILL_TEMPLATE = """\
@@ -38,9 +39,11 @@ Probe body.
 
 
 def load_gate():
-    spec = importlib.util.spec_from_file_location("verify_agent_config", GATE)
+    if str(GATE.parent) not in sys.path:
+        sys.path.insert(0, str(GATE.parent))
+    spec = importlib.util.spec_from_file_location("verify_skill_tree", GATE)
     if spec is None or spec.loader is None:
-        raise AssertionError("unable to load verify_agent_config.py")
+        raise AssertionError("unable to load verify_skill_tree.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -171,6 +174,138 @@ def test_dead_skill_tree_is_refused() -> None:
     raise AssertionError("gate accepted a .mivia/skills directory")
 
 
+def build_alias_fixture(root: Path, name: str = "probe-skill") -> Path:
+    """Write one canonical skill and its matching .claude alias stub.
+
+    Return the fixture root. The caller mutates the tree to prove the gate
+    rejects each defect. A probe never goes into the real .agents/skills or
+    .claude/skills tree.
+    """
+    mod = load_gate()
+    canonical = root / ".agents" / "skills" / name
+    canonical.mkdir(parents=True)
+    front = f"---\nname: {name}\ndescription: Probe skill for the alias gate.\n---\n"
+    canonical.joinpath("SKILL.md").write_text(
+        front + "\nCanonical body.\n", encoding="utf-8"
+    )
+    alias = root / ".claude" / "skills" / name
+    alias.mkdir(parents=True)
+    alias.joinpath("SKILL.md").write_text(
+        front + mod.CLAUDE_ALIAS_BODY.format(name=name), encoding="utf-8"
+    )
+    return root
+
+
+def run_alias_gate(root: Path) -> str | None:
+    """Run check_claude_skill_aliases. Return the failure text or None."""
+    mod = load_gate()
+    captured = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(captured):
+            mod.check_claude_skill_aliases(root)
+    except SystemExit:
+        return captured.getvalue().strip()
+    return None
+
+
+def expect_alias_rejection(mutate, expected: str) -> None:
+    """Mutate a clean fixture and require the gate to reject it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_alias_fixture(Path(tmp))
+        mutate(root)
+        rejection = run_alias_gate(root)
+        if rejection is None:
+            raise AssertionError(f"gate accepted a tree that should fail: {expected}")
+        if expected not in rejection:
+            raise AssertionError(
+                f"expected {expected!r} in the rejection, got:\n{rejection}"
+            )
+
+
+def test_alias_gate_accepts_a_clean_stub() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_alias_fixture(Path(tmp))
+        rejection = run_alias_gate(root)
+        if rejection is not None:
+            raise AssertionError(rejection)
+
+
+def test_alias_gate_rejects_a_missing_stub() -> None:
+    def mutate(root: Path) -> None:
+        (root / ".claude" / "skills" / "probe-skill" / "SKILL.md").unlink()
+
+    expect_alias_rejection(mutate, "is missing")
+
+
+def test_alias_gate_rejects_drifted_frontmatter() -> None:
+    """Claude Code picks a skill by name and description, so drift misroutes."""
+
+    def mutate(root: Path) -> None:
+        stub = root / ".claude" / "skills" / "probe-skill" / "SKILL.md"
+        stub.write_text(
+            stub.read_text(encoding="utf-8").replace(
+                "Probe skill for the alias gate.", "A stale description."
+            ),
+            encoding="utf-8",
+        )
+
+    expect_alias_rejection(mutate, "frontmatter is not identical")
+
+
+def test_alias_gate_rejects_a_corrupted_body() -> None:
+    def mutate(root: Path) -> None:
+        stub = root / ".claude" / "skills" / "probe-skill" / "SKILL.md"
+        stub.write_text(
+            stub.read_text(encoding="utf-8") + "Copied skill prose.\n",
+            encoding="utf-8",
+        )
+
+    expect_alias_rejection(mutate, "body must be the alias text")
+
+
+def test_alias_gate_rejects_a_body_naming_the_wrong_skill() -> None:
+    """A copied stub that still names another skill sends the reader astray."""
+
+    def mutate(root: Path) -> None:
+        stub = root / ".claude" / "skills" / "probe-skill" / "SKILL.md"
+        stub.write_text(
+            stub.read_text(encoding="utf-8").replace(
+                ".agents/skills/probe-skill/SKILL.md",
+                ".agents/skills/other-skill/SKILL.md",
+            ),
+            encoding="utf-8",
+        )
+
+    expect_alias_rejection(mutate, "body must be the alias text")
+
+
+def test_alias_gate_rejects_an_orphan_directory() -> None:
+    def mutate(root: Path) -> None:
+        orphan = root / ".claude" / "skills" / "ghost-skill"
+        orphan.mkdir()
+        orphan.joinpath("SKILL.md").write_text("---\nname: ghost-skill\n---\n", encoding="utf-8")
+
+    expect_alias_rejection(mutate, "has no canonical skill")
+
+
+def test_alias_gate_rejects_a_stray_resource_file() -> None:
+    def mutate(root: Path) -> None:
+        (root / ".claude" / "skills" / "probe-skill" / "report-template.md").write_text(
+            "Duplicate resource.\n", encoding="utf-8"
+        )
+
+    expect_alias_rejection(mutate, "holds the alias stub alone")
+
+
+def test_alias_gate_rejects_a_missing_claude_tree() -> None:
+    def mutate(root: Path) -> None:
+        (root / ".claude" / "skills" / "probe-skill" / "SKILL.md").unlink()
+        (root / ".claude" / "skills" / "probe-skill").rmdir()
+        (root / ".claude" / "skills").rmdir()
+
+    expect_alias_rejection(mutate, ".claude/skills is missing")
+
+
 def main() -> None:
     test_known_keys_match_go_source()
     test_gate_accepts_schema_keys()
@@ -178,7 +313,15 @@ def main() -> None:
     test_gate_rejects_a_long_trigger()
     test_gate_rejects_shapes_the_go_parser_refuses()
     test_dead_skill_tree_is_refused()
-    print("test_verify_agent_config: ok")
+    test_alias_gate_accepts_a_clean_stub()
+    test_alias_gate_rejects_a_missing_stub()
+    test_alias_gate_rejects_drifted_frontmatter()
+    test_alias_gate_rejects_a_corrupted_body()
+    test_alias_gate_rejects_a_body_naming_the_wrong_skill()
+    test_alias_gate_rejects_an_orphan_directory()
+    test_alias_gate_rejects_a_stray_resource_file()
+    test_alias_gate_rejects_a_missing_claude_tree()
+    print("test_verify_skill_tree: ok")
 
 
 if __name__ == "__main__":

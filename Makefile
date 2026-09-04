@@ -187,7 +187,7 @@ agent-hook-test:
 	@python3 scripts/test_check_names.py
 	@python3 scripts/test_check_prose.py
 	@python3 scripts/test_import_layers.py
-	@python3 scripts/test_verify_agent_config.py
+	@python3 scripts/test_verify_skill_tree.py
 
 pre-commit:
 	@.githooks/pre-commit

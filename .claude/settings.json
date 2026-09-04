@@ -38,6 +38,7 @@
       "Bash(git push -u origin master)",
       "Read(./AGENTS.md)",
       "Read(./CLAUDE.md)",
+      "Read(./.agents/**)",
       "Read(./.mivia/**)",
       "Read(./docs/**)",
       "Read(./cmd/**)",

@@ -15,141 +15,13 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+from verify_common import ROOT, fail, rel_to_root  # noqa: E402
+from verify_skill_tree import (  # noqa: E402
+    check_claude_skill_aliases,
+    check_no_dead_skill_tree,
+    check_skill_dir,
+)
 
-# Mirrors descriptionMaxLen in internal/skills/skill_markdown.go. loader.go
-# applies it through SanitizeModelFacingText. A longer description is truncated
-# mid-sentence in the model-facing skill surface, which degrades skill selection
-# with no other signal that it happened.
-SKILL_DESCRIPTION_MAX = 200
-
-# Mirrors triggerMaxLen and triggersJoinedMax in
-# internal/skills/skill_markdown.go. loader.go applies both.
-SKILL_TRIGGER_MAX = 64       # per trigger
-SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
-
-# Mirrors knownSkillKeys in internal/skills/skill_markdown.go. Keep the two sets
-# equal. Change them together in one commit. Both directions of drift are bugs:
-# - a key here that the loader rejects passes `make verify` and then fails at
-#   runtime;
-# - a key the loader accepts but this set omits makes the gate stricter than the
-#   contract, so a valid skill fails `make verify` for no real reason.
-# This set is an explicit literal on purpose. Do not derive it from the Go source
-# at runtime. A parse of the Go map must fail closed, and a simple regex parse
-# fails open. scripts/test_verify_agent_config.py proves the two sets are equal.
-SKILL_KNOWN_KEYS = {
-    "name", "description", "triggers", "user-invocable", "argument-hint",
-    "short-description", "tools",
-    # JSON-string schemas. The frontmatter subset parser holds them as
-    # strings, not as nested maps.
-    "input_schema", "output_schema",
-}
-
-
-def frontmatter_keys(body: str) -> list[str]:
-    """Top-level keys in a SKILL.md frontmatter block.
-
-    Mirrors the subset grammar in internal/skills/frontmatter.go: indented
-    lines belong to a block sequence, comments and blanks are skipped.
-    """
-    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    if not lines or lines[0].strip() != "---":
-        return []
-    keys = []
-    for line in lines[1:]:
-        stripped = line.strip()
-        if stripped == "---":
-            break
-        if not stripped or stripped.startswith("#") or line[:1] in (" ", "\t"):
-            continue
-        if ":" in stripped:
-            keys.append(stripped.split(":", 1)[0].strip())
-    return keys
-
-
-def frontmatter_violations(body: str) -> list[str]:
-    """Frontmatter shapes that internal/skills/frontmatter.go rejects at load.
-
-    frontmatter_keys is deliberately lax: it collects key names and skips
-    anything else. The Go parser is stricter, so a file can pass this gate and
-    then fail the loader. parseFrontLines refuses three shapes this checks for:
-    an indented line outside a block sequence (nested maps are not supported,
-    frontmatter.go:168), a repeated key (frontmatter.go:198), and a
-    non-indented line with no colon.
-    """
-    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    if not lines or lines[0].strip() != "---":
-        return []
-    problems: list[str] = []
-    seen: set[str] = set()
-    in_block = False
-    for offset, line in enumerate(lines[1:]):
-        line_num = offset + 2
-        stripped = line.strip()
-        if stripped == "---":
-            break
-        if not stripped or stripped.startswith("#"):
-            continue
-        if line[:1] in (" ", "\t"):
-            if not in_block:
-                problems.append(
-                    f"line {line_num}: unexpected indented line "
-                    f"(nested maps are not supported)"
-                )
-            continue
-        if ":" not in stripped:
-            problems.append(f"line {line_num}: expected key: value (no colon found)")
-            in_block = False
-            continue
-        key, _, rest = stripped.partition(":")
-        key = key.strip()
-        if not key:
-            problems.append(f"line {line_num}: empty key")
-            continue
-        if key in seen:
-            problems.append(f"line {line_num}: duplicate frontmatter key {key!r}")
-        seen.add(key)
-        # A key with no inline value opens a block sequence.
-        in_block = rest.strip() == ""
-    return problems
-
-
-def split_flow_items(inner: str) -> list[str]:
-    """Split a flow sequence inner string with quote awareness.
-
-    Matches the Go splitFlowSequence behaviour: commas inside single or
-    double quotes are preserved.
-    """
-    inner = inner.strip()
-    if not inner:
-        return []
-    items = []
-    current: list[str] = []
-    in_single = False
-    in_double = False
-    for ch in inner:
-        if ch == '"' and not in_single:
-            in_double = not in_double
-            current.append(ch)
-        elif ch == "'" and not in_double:
-            in_single = not in_single
-            current.append(ch)
-        elif ch == "," and not in_single and not in_double:
-            item = "".join(current).strip().strip("\"'")
-            if item:
-                items.append(item)
-            current = []
-        else:
-            current.append(ch)
-    item = "".join(current).strip().strip("\"'")
-    if item or items:
-        items.append(item)
-    return items
-
-
-def fail(msg: str) -> None:
-    print(f"verify_agent_config: {msg}", file=sys.stderr)
-    raise SystemExit(1)
 
 
 def text(rel: str) -> str:
@@ -362,130 +234,6 @@ def check_core_tier_covers_prompted_tools() -> None:
                     f"was rejected on this). Add {tool!r} to core, or stop naming "
                     f"it in the prompt."
                 )
-
-
-def rel_to_root(path: Path) -> str:
-    """Path relative to the repo root, or the plain path when it is outside.
-
-    check_skill_dir also runs against a fixture directory in the tests. A
-    fixture lives outside ROOT, where relative_to raises ValueError.
-    """
-    try:
-        return str(path.relative_to(ROOT))
-    except ValueError:
-        return str(path)
-
-
-def check_no_dead_skill_tree(root: Path) -> None:
-    """Refuse a second workspace skill tree under .mivia/skills.
-
-    .mivia/skills was a copy that nothing loaded. It drifted three skills
-    behind before anyone noticed, because a gate that walks each tree on its
-    own never compares them. Take root as an argument so a test can exercise
-    this against a fixture.
-    """
-    if (root / ".mivia" / "skills").exists():
-        fail(
-            ".mivia/skills must not exist: workspace skills live only in "
-            ".agents/skills, the path internal/workspace.SkillsDir reads. "
-            "A second copy drifts because nothing loads it."
-        )
-
-
-def check_skill_dir(skills_dir: Path) -> None:
-    """Apply the skill frontmatter rules to every SKILL.md in one directory.
-
-    This is a separate function so the tests can run it against a fixture
-    directory. A test must never write a probe skill into .agents/skills.
-    That tree is the one the mivia binary loads. `make verify` also runs
-    verify-agent and agent-hook-test as separate targets, so a planted skill
-    can fail a sibling target in the same run.
-    """
-    for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
-        body = skill_path.read_text(encoding="utf-8")
-        name = skill_path.parent.name
-        if not body.lstrip().startswith("---"):
-            fail(f"{rel_to_root(skill_path)}: missing YAML frontmatter")
-        if f"name: {name}" not in body and f'name: "{name}"' not in body:
-            fail(f"{rel_to_root(skill_path)}: frontmatter name must be {name}")
-        # Unknown keys are rejected at load by internal/skills/skill_markdown.go,
-        # which checks the frontmatter against knownSkillKeys. Catch them here so
-        # `make verify` fails before the loader does.
-        for problem in frontmatter_violations(body):
-            fail(
-                f"{rel_to_root(skill_path)}: {problem} "
-                f"(rejected by internal/skills/frontmatter.go)"
-            )
-        for key in frontmatter_keys(body):
-            if key not in SKILL_KNOWN_KEYS:
-                fail(
-                    f"{rel_to_root(skill_path)}: unknown frontmatter key "
-                    f"{key!r}; recognised: {sorted(SKILL_KNOWN_KEYS)} "
-                    f"(rejected by internal/skills/skill_markdown.go)"
-                )
-        # Check description length.
-        for line in body.splitlines():
-            if line.startswith("description:"):
-                description = line.split(":", 1)[1].strip()
-                if len(description) > SKILL_DESCRIPTION_MAX:
-                    fail(
-                        f"{rel_to_root(skill_path)}: description is "
-                        f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
-                        f"(silently truncated by internal/skills/loader.go)"
-                    )
-                break
-        # Check trigger entries are non-empty and joined block within cap.
-        in_triggers = False
-        trigger_items = []
-        for line in body.splitlines():
-            stripped = line.strip()
-            if stripped == "triggers:" or stripped.startswith("triggers: ["):
-                if stripped == "triggers:":
-                    in_triggers = True
-                elif stripped.startswith("triggers: ["):
-                    # Flow sequence: extract items. Handle trailing content after ].
-                    inner = stripped[len("triggers: ["):]
-                    # Find the closing bracket, handling trailing whitespace/comments.
-                    bracket_idx = inner.find("]")
-                    if bracket_idx >= 0:
-                        inner = inner[:bracket_idx]
-                    # Also strip any trailing comment before the bracket
-                    # (already handled by find("]") above).
-                    inner = inner.strip()
-                    for part in split_flow_items(inner):
-                        item = part.strip().strip("\"'")
-                        if item:
-                            trigger_items.append(item)
-                continue
-            if in_triggers:
-                # Comments and blank lines are skipped in the Go parser
-                # but stay in the block - handle them the same way.
-                if stripped == "" or stripped.startswith("#"):
-                    continue
-                if stripped.startswith("- "):
-                    item = stripped[2:].strip()
-                    if item:
-                        trigger_items.append(item)
-                elif line.startswith("  ") or line.startswith("\t"):
-                    # Still in block sequence (indented continuation).
-                    continue
-                else:
-                    in_triggers = False
-        if trigger_items:
-            joined = "\n".join(trigger_items)
-            if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
-                fail(
-                    f"{rel_to_root(skill_path)}: triggers joined block is "
-                    f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
-                    f"(silently truncated by internal/skills/loader.go)"
-                )
-            for item in trigger_items:
-                if len(item) > SKILL_TRIGGER_MAX:
-                    fail(
-                        f"{rel_to_root(skill_path)}: trigger is {len(item)} "
-                        f"chars, max {SKILL_TRIGGER_MAX} "
-                        f"(silently truncated by internal/skills/loader.go)"
-                    )
 
 
 def main() -> None:
@@ -793,6 +541,7 @@ def main() -> None:
     if not skills_dir.is_dir():
         fail(".agents/skills is missing: it is the only workspace skill home")
     check_skill_dir(skills_dir)
+    check_claude_skill_aliases(ROOT)
 
     check_agents_directory()
     check_core_tier_covers_prompted_tools()
