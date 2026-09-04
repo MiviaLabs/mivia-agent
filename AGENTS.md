@@ -23,8 +23,9 @@ instructions: `mivia.toml` (this repo's own dogfooded config), `workflows/*`
 `internal/tools/workflow_tools.go`), `hooks/` (this repo's lifecycle hook
 scripts), `policy/*` (commit-message, pr-title, go-structure, docs-ownership,
 agent-hook-bypass - all read by compiled Go code or scripts at a hardcoded
-`.mivia/policy/` path), and `skills/` (a required mirror - see point 5). Never
-move those; they are functional, not instructional.
+`.mivia/policy/` path). Never move those; they are functional, not
+instructional. `.mivia/` holds no skills: workspace skills live only in
+`.agents/skills/`, which is the path `internal/workspace.SkillsDir` reads.
 
 ### `.agents/memories/`
 

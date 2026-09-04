@@ -14,7 +14,7 @@ the fast path, not the habitual slow one:
   delivery, only the hunt step's skill/template differ (`fast-bug-audit` /
   `templates/bugfix-hunt-fast.md` vs `bug-audit` / `templates/bugfix-hunt.md`).
 - Interactive/direct skill invocation: `fast-bug-audit`
-  (`.mivia/skills/fast-bug-audit/SKILL.md`), not `bug-audit`.
+  (`.agents/skills/fast-bug-audit/SKILL.md`), not `bug-audit`.
 - Feature-delivery task text: the template at
   `.agents/templates/bug-hunt-task-fast.md` (scope placeholder at the end,
   fill in and paste as the `task` input).

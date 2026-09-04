@@ -175,9 +175,9 @@ PROBES = [
     ),
     (
         "mivia.generic.architecture-review-must-stay-portable",
-        ".mivia/skills/architecture-review/viol.md",
+        ".agents/skills/architecture-review/viol.md",
         "This skill follows the ADLC process.\n",
-        ".mivia/skills/architecture-review/clean.md",
+        ".agents/skills/architecture-review/clean.md",
         "This skill reviews architecture using discovered project conventions and generic checks.\n",
     ),
     (

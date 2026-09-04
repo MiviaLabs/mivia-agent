@@ -230,7 +230,7 @@ Use the report shape in `.agents/rules/01-output-budget.md`.
 
 ## Skill frontmatter
 
-Workspace skills (`.mivia/skills/*/SKILL.md`) use a strict YAML subset for
+Workspace skills (`.agents/skills/*/SKILL.md`) use a strict YAML subset for
 frontmatter between `---` delimiters. The parser lives in
 `internal/skills/frontmatter.go` and supports:
 

@@ -21,7 +21,7 @@ Hunt for confirmed reachable bugs in this scope: {{ inputs.scope }}
 
 Task: {{ inputs.task }}
 
-Follow the methodology in .mivia/skills/bug-audit/SKILL.md exactly:
+Follow the methodology in .agents/skills/bug-audit/SKILL.md exactly:
 - Work invariant-first and hypothesis-led. Do not do a linear file-by-file review.
 - Report AT MOST 2 confirmed reachable bugs. Restrict findings to PERFORMANCE errors and
   LOGICAL (correctness/reliability) errors.

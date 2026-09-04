@@ -27,12 +27,12 @@ contracts:
   - name: skill-report-contract
     required: true
     paths:
-      - .mivia/skills/**/SKILL.md
+      - .agents/skills/**/SKILL.md
       - .agents/templates/agent-report-v1.md
     verifiers:
       - python3 scripts/test_semgrep_rules.py
       - rg -Fx 'ReportFormat: mivia-report/v1' .agents/templates/agent-report-v1.md
-      - bash -c '! rg -n "^## Output\\s*$" .mivia/skills/*/SKILL.md'
+      - bash -c '! rg -n "^## Output\\s*$" .agents/skills/*/SKILL.md'
     mutation_proof:
       - add free-form Output H2 heading to a skill and expect semgrep no-skill-freeform-output-heading to fail
       - remove ReportFormat: mivia-report/v1 from the template and expect contract verifier to fail
@@ -84,7 +84,7 @@ contracts:
     required: true
     paths:
       - .agents/rules/**
-      - .mivia/skills/concurrency-review/**
+      - .agents/skills/concurrency-review/**
       - docs/**
     verifiers:
       - bash -c '! rg -n -i "use (one )?process per (sub-)?agent|prefer process-per-(sub-)?agent|defaults? to process-per" .agents/rules docs 2>/dev/null'
@@ -97,11 +97,11 @@ contracts:
     paths:
       - docs/OWNERS.yaml
       - docs/**
-      - .mivia/skills/docs-update/**
+      - .agents/skills/docs-update/**
       - .agents/rules/40-docs-ownership.md
     verifiers:
       - test -f docs/OWNERS.yaml
-      - rg -n 'docs/OWNERS.yaml' .mivia/skills/docs-update/SKILL.md
-      - rg -n 'docs-update' .mivia/skills/docs-update/SKILL.md
+      - rg -n 'docs/OWNERS.yaml' .agents/skills/docs-update/SKILL.md
+      - rg -n 'docs-update' .agents/skills/docs-update/SKILL.md
     mutation_proof:
       - remove docs/OWNERS.yaml and expect agent-control-surface and docs-ownership verifiers to fail

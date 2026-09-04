@@ -2,7 +2,7 @@
 
 Product: **mivia** (MiviaLabs)
 Binary: `mivia` (`cmd/mivia/`)
-`.agents/` is the canonical project-level control surface for agentic development in this repo: durable rules, doctrines, skills, quality docs, and templates that tool adapters reference. Root `AGENTS.md` is the canonical instruction file. `.mivia/` is scoped to the product's own runtime config and state (`mivia.toml`, `workflows/`, `hooks/`, `agents/*.toml`, `policy/*.json` consumed by compiled Go code, `skills/` mirrored for the `mivia` binary's own loader) - not agent instructions.
+`.agents/` is the canonical project-level control surface for agentic development in this repo: durable rules, doctrines, skills, quality docs, and templates that tool adapters reference. Root `AGENTS.md` is the canonical instruction file. `.mivia/` is scoped to the product's own runtime config and state (`mivia.toml`, `workflows/`, `hooks/`, `agents/*.toml`, `policy/*.json` consumed by compiled Go code) - not agent instructions. `.mivia/` holds no skills: the `mivia` binary loads workspace skills from `.agents/skills/`.
 
 ## Read Order
 
@@ -69,8 +69,7 @@ skill as a real directory for tool discovery (Claude's adapter looks
 there independently of the binary). To add a skill: create a directory
 under `.agents/skills/<name>/SKILL.md` with the YAML frontmatter schema
 documented in any existing skill, and a matching copy under
-`.claude/skills/<name>/`. Run `make skills-move` only when migrating
-the canonical home, not for routine skill additions.
+`.claude/skills/<name>/`.
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 

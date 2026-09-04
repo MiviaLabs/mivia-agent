@@ -131,7 +131,7 @@ The task agent setting is separate from direct user-invoked skill slash handlers
 
 ## Skills
 
-A skill is a reusable task template. It is a `SKILL.md` file with optional YAML frontmatter. Skills live in `~/.mivia/skills/` (user) or `.mivia/skills/` (workspace).
+A skill is a reusable task template. It is a `SKILL.md` file with optional YAML frontmatter. Skills live in `~/.mivia/skills/` (user) or `.agents/skills/` (workspace).
 
 Pre-built skills include:
 

@@ -49,7 +49,7 @@ scope.
 
 - `AGENTS.md` and `.agents/rules/` (operating doctrine, evidence-before-claims,
   STE100 writing standard, security and privacy)
-- `.mivia/skills/workflow-runs-analysis/report-template.md` (report grammar)
+- `.agents/skills/workflow-runs-analysis/report-template.md` (report grammar)
 - `.mivia/workflows/*.toml` (read-only: declared limits, repair steps, delivery
   presence). These files are the reference for every "vs declared limit"
   comparison.

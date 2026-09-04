@@ -232,29 +232,6 @@ verify-fast: verify-go
 agents-check:
 	@python3 scripts/check_agents.py
 
-# skills-move is a one-time migration target: when the canonical skill
-# home moves (today from .mivia/skills/ to .agents/skills/), this target
-# performs the copy, verifies the destination, and removes the source.
-# It is idempotent: running it twice when the source is already gone is
-# a clean no-op. After the migration lands, this target stays as the
-# documented procedure if the home ever has to move again.
-skills-move:
-	@src=.mivia/skills; dst=.agents/skills; claude_dst=.claude/skills; \
-	if [ ! -d "$$src" ]; then \
-		echo "skills-move: $$src already absent, nothing to do"; \
-	else \
-		mkdir -p "$$dst" "$$claude_dst"; \
-		for d in "$$src"/*/; do \
-			[ -d "$$d" ] || continue; \
-			name=$$(basename "$$d"); \
-			rm -rf "$$dst/$$name" "$$claude_dst/$$name"; \
-			cp -r "$$d" "$$dst/$$name"; \
-			cp -r "$$d" "$$claude_dst/$$name"; \
-		done; \
-		rm -rf "$$src"; \
-		echo "skills-move: copied $$(ls $$dst | wc -l) skill(s) to $$dst and $$claude_dst"; \
-	fi
-
 # verify-go is go-check plus the diff-coverage gate over ONE instrumented run
 # of the suite. The two used to be separate full runs of the same tests: an
 # uninstrumented `go test ./...` and then diff-coverage's own -count=1

@@ -713,18 +713,20 @@ def main() -> None:
             if rule_id not in sg:
                 fail(f"semgrep/agent-standards.yml: missing {rule_id}")
 
-    # Skill frontmatter when skills exist. The compiled mivia binary loads
-    # .agents/skills at runtime: internal/workspace.SkillsDir(root) returns
-    # <root>/.agents/skills. .mivia/skills is a mirror that the binary does
-    # not load.
+    # .agents/skills is the only workspace skill home. The compiled mivia
+    # binary loads it at runtime: internal/workspace.SkillsDir(root) returns
+    # <root>/.agents/skills.
     #
-    # This gate applies the same frontmatter rules to each directory it finds.
-    # It does not compare the two directories. A skill that exists in one tree
-    # and not the other passes here, so this gate does not detect divergence
-    # between the trees.
-    skill_dirs = [d for d in (ROOT / ".agents" / "skills", ROOT / ".mivia" / "skills") if d.is_dir()]
-    for skills_dir in skill_dirs:
-        check_skill_dir(skills_dir)
+    # .mivia/skills was a second copy that nothing loaded. It drifted three
+    # skills behind before anyone noticed, because a gate that walks each tree
+    # on its own never compares them. Refuse to let it come back.
+    if (ROOT / ".mivia" / "skills").exists():
+        fail(
+            ".mivia/skills must not exist: workspace skills live only in "
+            ".agents/skills, the path internal/workspace.SkillsDir reads. "
+            "A second copy drifts because nothing loads it."
+        )
+    check_skill_dir(ROOT / ".agents" / "skills")
 
     check_agents_directory()
     check_core_tier_covers_prompted_tools()

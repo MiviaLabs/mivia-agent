@@ -1,6 +1,0 @@
-format = 1
-
-[[resources]]
-id = "report-template"
-path = "report-template.md"
-summary = "Canonical mivia-report/v1 verification structure."

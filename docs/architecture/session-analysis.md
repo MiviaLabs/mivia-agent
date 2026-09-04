@@ -1,7 +1,7 @@
 # Session-Analysis Skill: Ledger Surface
 
 `session-analysis` is a read-only, metadata-only process-quality analysis skill
-(`.mivia/skills/session-analysis/`). It analyzes chat sessions recorded in the
+(`.agents/skills/session-analysis/`). It analyzes chat sessions recorded in the
 durable chat ledger. This document records the design surface and the hostile
 audit/review findings that shaped it (both challenges returned conditional-fail
 verdicts; every must-fix landed).
