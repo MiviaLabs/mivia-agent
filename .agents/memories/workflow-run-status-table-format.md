@@ -1,6 +1,6 @@
 ---
 id: workflow_run_status_table_format
-title: "status"/"stats" request format for dispatched mivia workflow runs
+title: '"status"/"stats" request format for dispatched mivia workflow runs'
 content: Table with columns Run ID, scope, status+step, last heartbeat, resolution (no_diff or PR link), scoped to the currently-tracked batch only.
 importance: medium
 tags: [workflow, cli, reporting]
