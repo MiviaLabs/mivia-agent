@@ -114,11 +114,10 @@ func (s *generalSection) rebuild() {
 	rmF := mk("reduced motion")
 	rmF.SetChoices([]string{"on", "off"}, boolChoice(v.ReducedMotion))
 
-	// Persisted in the operator's USER config only and applied on the next
-	// launch - the label says so, because unlike every other row here this
-	// one cannot take effect live (the startup full-disk notice must fire,
-	// and the live workspace root is not mutated mid-session).
-	fdF := mk("full disk (next launch)")
+	// Persisted in the operator's USER config AND applied live to the
+	// session's workspace root via the state re-arm - the never-silent
+	// FULL DISK ACCESS notice is pushed into the transcript either way.
+	fdF := mk("full disk access")
 	fdF.SetChoices([]string{"on", "off"}, boolChoice(v.FullDiskAccess))
 
 	s.rows = []generalRow{

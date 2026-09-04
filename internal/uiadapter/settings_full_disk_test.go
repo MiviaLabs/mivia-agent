@@ -13,12 +13,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // fullDiskFixture builds a store whose res.ConfigPath IS the workspace's
@@ -89,6 +91,82 @@ func TestSettingsFullDiskAccessPersistsToUserConfigOnly(t *testing.T) {
 	}
 	if !config.UserFullDiskAccessForWorkspace(filepath.Dir(filepath.Dir(wsConfig))) {
 		t.Fatal("UserFullDiskAccessForWorkspace does not see the persisted grant")
+	}
+}
+
+// TestSettingsFullDiskAccessLiveReArmAndNeverSilentNotice drives the whole
+// live-apply chain end to end (offline smoke shape: exactly one notice per
+// toggle): persist -> live re-arm of a REAL workspace root -> the
+// single-sourced disclosure pushed through the notifier. Lifting is loud;
+// re-imposing announces too; no toggle, no notice.
+func TestSettingsFullDiskAccessLiveReArmAndNeverSilentNotice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ws := t.TempDir()
+	root, err := workspace.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry(), WorkspaceRoot: ws}
+	state.SetFullDiskReArm(root.SetUnrestricted)
+	res := &config.Resolved{
+		ConfigPath:   filepath.Join(ws, ".mivia", "mivia.toml"),
+		ProviderName: "ollama",
+		Model:        "llama3.3",
+	}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+	notices := make(chan string, 8)
+	store.SetFullDiskNotifier(func(text string) { notices <- text })
+
+	handle, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetFullDiskAccess{On: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := drainFullDiskSave(t, handle); last.State != ports.SaveSaved {
+		t.Fatalf("save state = %v, want SaveSaved", last.State)
+	}
+	select {
+	case text := <-notices:
+		if !strings.Contains(text, "FULL DISK ACCESS") {
+			t.Fatalf("live lift notice = %q, want the never-silent disclosure", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no disclosure notice for a live lift; lifting confinement went silent")
+	}
+	if !root.Unrestricted() {
+		t.Fatal("live re-arm did not lift the workspace root")
+	}
+	userRaw, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(userRaw), "full_disk = true") {
+		t.Fatalf("live toggle did not persist to the user config:\n%s", userRaw)
+	}
+
+	// Toggling off live: re-imposes and announces in the other direction.
+	handle, err = store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetFullDiskAccess{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := drainFullDiskSave(t, handle); last.State != ports.SaveSaved {
+		t.Fatalf("off save state = %v, want SaveSaved", last.State)
+	}
+	select {
+	case text := <-notices:
+		if !strings.Contains(text, "confined") {
+			t.Fatalf("live re-impose notice = %q, want it to say tools are confined again", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no notice for a live re-impose")
+	}
+	if root.Unrestricted() {
+		t.Fatal("live re-arm did not re-impose confinement")
+	}
+	select {
+	case extra := <-notices:
+		t.Fatalf("exactly one notice per toggle; got extra %q", extra)
+	default:
 	}
 }
 

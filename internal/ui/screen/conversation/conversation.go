@@ -232,6 +232,31 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	return scr, cmd
 }
 
+// handleAppSettingsMsg folds the app-level settings/routing messages into
+// the immutable-update flow: ScreenResumedMsg refreshes the topbar, and the
+// settings layer's permanent, host-authored disclosure (the full-disk live
+// re-arm's never-silent notice) is folded into the transcript. The returned
+// Screen replaces the router's stack entry.
+func (s Screen) handleAppSettingsMsg(msg tea.Msg) (app.Screen, tea.Cmd) {
+	switch msg := msg.(type) {
+	case app.ScreenResumedMsg:
+		s.refreshTopbar()
+		return s, nil
+	case app.SettingsNoticeMsg:
+		return s.handleSettingsNoticeMsg(msg)
+	}
+	return s, nil
+}
+
+// handleSettingsNoticeMsg folds the settings layer's permanent, host-
+// authored disclosure (the full-disk live re-arm's never-silent notice)
+// into the transcript through the immutable-update flow: Notice mutates
+// this local copy and the returned Screen replaces the router's entry.
+func (s Screen) handleSettingsNoticeMsg(msg app.SettingsNoticeMsg) (app.Screen, tea.Cmd) {
+	s.Notice(msg.Text)
+	return s, nil
+}
+
 // contentWidth is the usable column count: the terminal minus the
 // one-column gutter each side, so no component or message touches the
 // screen edge. Below 3 columns the gutter gives way - there is nothing
@@ -402,9 +427,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		}
 		return s.forwardThreadMsg(msg)
 
-	case app.ScreenResumedMsg:
-		s.refreshTopbar()
-		return s, nil
+	case app.ScreenResumedMsg, app.SettingsNoticeMsg:
+		return s.handleAppSettingsMsg(msg)
 	case turnEndedMsg:
 		return s.handleTurnEndedMsg(msg)
 	case remoteInputMsg:

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // Root is a resolved workspace directory.
@@ -20,15 +21,31 @@ type Root struct {
 	// the direct spelling.
 	LexicalAbs string
 
-	// Unrestricted lifts the workspace escape check: file tools may resolve
+	// unrestricted lifts the workspace escape check: file tools may resolve
 	// paths anywhere on the filesystem, not only under Abs. Operator-owned
 	// provenance only: the `mivia chat --full-disk` flag (OpenFullDisk) or
 	// the operator's own user config ([workspace_access] full_disk, read
 	// via config.UserFullDiskAccessForWorkspace) - NEVER workspace config,
 	// so a repository cannot grant itself full disk access. The
 	// operator-owned provenance is the security property; keep it that way.
-	Unrestricted bool
+	//
+	// Atomic so the operator's Settings -> General toggle can re-arm the
+	// LIVE root (SetUnrestricted) without racing tool goroutines that read
+	// it inside Resolve/LexicalRel. Always pair a live lift with the loud
+	// FULL DISK ACCESS disclosure - lifting confinement is never silent.
+	unrestricted atomic.Bool
 }
+
+// Unrestricted reports whether the escape check is currently lifted.
+func (r *Root) Unrestricted() bool { return r.unrestricted.Load() }
+
+// SetUnrestricted arms (true) or re-imposes (false) the escape check on
+// the live root. The only sanctioned callers are the operator's launch
+// flag (OpenFullDisk) and the settings re-arm wired by
+// cliagents.ConfigureChatWorkspace from the operator's own Settings ->
+// General action - never workspace config, and a live lift must always be
+// announced through the conversation notice path.
+func (r *Root) SetUnrestricted(on bool) { r.unrestricted.Store(on) }
 
 // SameExistingPath reports whether two existing paths name the same file.
 func SameExistingPath(a, b string) (bool, error) {
@@ -82,7 +99,7 @@ func OpenFullDisk(rootPath string) (*Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.Unrestricted = true
+	r.SetUnrestricted(true)
 	return r, nil
 }
 
@@ -106,7 +123,7 @@ func (r *Root) Resolve(userPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !r.Unrestricted && !isUnder(r.Abs, resolved) {
+	if !r.Unrestricted() && !isUnder(r.Abs, resolved) {
 		return "", fmt.Errorf("path %q escapes workspace %s", userPath, r.Abs)
 	}
 	return resolved, nil
@@ -176,7 +193,7 @@ func (r *Root) LexicalRel(userPath string) (string, error) {
 	if !filepath.IsAbs(cleaned) {
 		return filepath.ToSlash(cleaned), nil
 	}
-	if !r.Unrestricted && !isUnder(r.LexicalAbs, cleaned) {
+	if !r.Unrestricted() && !isUnder(r.LexicalAbs, cleaned) {
 		return "", fmt.Errorf("path %q escapes workspace %s", userPath, r.LexicalAbs)
 	}
 	if !isUnder(r.LexicalAbs, cleaned) {

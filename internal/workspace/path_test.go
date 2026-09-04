@@ -166,7 +166,7 @@ func TestResolveUnrestricted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ws.Unrestricted {
+	if !ws.Unrestricted() {
 		t.Fatal("OpenFullDisk should set Unrestricted")
 	}
 
@@ -217,10 +217,10 @@ func TestOpenFullDiskPreservesRoot(t *testing.T) {
 	if unrestricted.LexicalAbs != restricted.LexicalAbs {
 		t.Fatalf("LexicalAbs mismatch: %q vs %q", unrestricted.LexicalAbs, restricted.LexicalAbs)
 	}
-	if !unrestricted.Unrestricted {
+	if !unrestricted.Unrestricted() {
 		t.Fatal("Unrestricted not set")
 	}
-	if restricted.Unrestricted {
+	if restricted.Unrestricted() {
 		t.Fatal("Open should not set Unrestricted")
 	}
 }

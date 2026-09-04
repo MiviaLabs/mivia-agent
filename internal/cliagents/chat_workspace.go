@@ -118,6 +118,13 @@ func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		return func() {}, err
 	}
 	stashMemoryOnState(state, opts.Memory, res)
+	// Register the live confinement re-arm BEFORE the registry build so the
+	// operator's Settings -> General toggle can flip the very root the
+	// session's tools hold, without a restart. State is nil for some test
+	// harnesses; persistence-only then.
+	if state != nil {
+		state.SetFullDiskReArm(opts.Workspace.SetUnrestricted)
+	}
 	// composition.BuildRegistry cannot fail today (see its doc comment); the
 	// error return is discarded here rather than propagated through a new,
 	// untestable branch, matching the pre-move tools.NewDefaultRegistry call

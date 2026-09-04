@@ -143,6 +143,26 @@ func TestSelectingThemeChangesRenderedColourAndPreservesState(t *testing.T) {
 	}
 }
 
+// TestSettingsNoticeReachesTheConversationTranscript pins the routing of
+// the full-disk live re-arm's never-silent disclosure: the message lands in
+// the base conversation screen's transcript as a permanent notice, even
+// while a pushed modal (Settings) sits on top.
+func TestSettingsNoticeReachesTheConversationTranscript(t *testing.T) {
+	f := newRouterFixture(t)
+	base := conversation.New(f.dark, theme.TierTrueColor, f.themes, replay.New(nil, 0), nil, 80, nil)
+	m := app.New(base, f.dark, theme.TierTrueColor, f.themes)
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(app.Model)
+
+	next, _ = m.Update(app.SettingsNoticeMsg{Text: "workspace: FULL DISK ACCESS — file tools are not confined to the workspace"})
+	m = next.(app.Model)
+
+	if got := m.View().Content; !strings.Contains(got, "FULL DISK ACCESS") {
+		t.Errorf("transcript view missing the never-silent disclosure:\n%s", got)
+	}
+}
+
 // TestTranscriptPagerAndBaseScreenReceiveBroadcastEvents verifies that while the
 // transcript pager is open, broadcast event messages update both the pager on top
 // and the underlying conversation screen.

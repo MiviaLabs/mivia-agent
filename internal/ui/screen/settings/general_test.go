@@ -43,7 +43,7 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 	plain := ansi.Strip(s.sections[0].View())
 	for _, want := range []string{
 		"mouse capture", "show reasoning", "iteration notice", "prompt cache notice", "scroll lines",
-		"approval default", "screen reader", "reduced motion", "full disk (next launch)",
+		"approval default", "screen reader", "reduced motion", "full disk access",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("General view is missing %q:\n%s", want, plain)

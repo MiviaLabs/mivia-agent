@@ -89,8 +89,9 @@ type GeneralView struct {
 	// deliberately NOT part of config.GeneralSettings' TOML round-trip:
 	// general settings persist to whichever file configPath resolves to,
 	// often the workspace's own committable .mivia/mivia.toml, and this
-	// grant must never land in a repo-controlled file. Applies on next
-	// launch; the live session's workspace root is never mutated.
+	// grant must never land in a repo-controlled file. Toggling persists
+	// AND re-arms the live session root (atomic SetUnrestricted), with the
+	// never-silent FULL DISK ACCESS notice pushed to the transcript.
 	FullDiskAccess bool
 }
 

@@ -76,6 +76,43 @@ type AgentSessionState struct {
 	// MemoryConfig is the resolved [memory] section, read alongside Memory
 	// to build the core-tier injection block (coreMemoryBlock).
 	MemoryConfig config.MemoryConfig
+	// fullDiskReArm lifts or re-imposes workspace confinement on the LIVE
+	// session workspace root; wired by ConfigureChatWorkspace from the root
+	// the session's tools actually hold. The settings store calls it through
+	// ApplyFullDisk when the operator flips Settings -> General "full disk",
+	// so the change lands without a restart (bug-audit AR-4's sanctioned
+	// synchronized re-arm; Root.SetUnrestricted is atomic). Nil when tools
+	// are off or no chat workspace was configured - persistence-only then.
+	fullDiskReArm func(on bool)
+}
+
+// SetFullDiskReArm registers the live confinement re-arm. Only
+// ConfigureChatWorkspace (the code that owns the session's workspace root)
+// may call it.
+func (s *AgentSessionState) SetFullDiskReArm(fn func(on bool)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fullDiskReArm = fn
+}
+
+// ApplyFullDisk drives the live re-arm, reporting whether one was wired.
+// Nil-receiver and nil-hook safe: without a chat workspace there is nothing
+// to re-arm and the setting stays persistence-only (next launch).
+func (s *AgentSessionState) ApplyFullDisk(on bool) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	fn := s.fullDiskReArm
+	s.mu.Unlock()
+	if fn == nil {
+		return false
+	}
+	fn(on)
+	return true
 }
 
 // DisplayName is the status dialog's "agent" row: the locked, nil-safe read

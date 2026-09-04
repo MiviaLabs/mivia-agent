@@ -228,10 +228,11 @@ branch_prefix = "mivia/"
 # filesystem, same as `mivia chat --full-disk`. Read ONLY from this fixed
 # USER-level file (~/.mivia/mivia.toml) - never from a workspace's own
 # .mivia/mivia.toml, so a cloned repository cannot grant itself full disk
-# access. Also settable live from the TUI: Settings -> General -> "full
-# disk (next launch)". Applies on the next launch; the loud
-# "FULL DISK ACCESS" startup notice fires whenever it is active (unless
-# --quiet). Off by default; fail-closed on a missing or unparsable file.
+# access. Also toggleable live from the TUI: Settings -> General -> "full
+# disk access" - the toggle persists here AND re-arms the running session.
+# The loud "FULL DISK ACCESS" notice fires whenever it is active (startup
+# banner; permanent transcript notice on a live toggle; --quiet suppresses
+# the banner). Off by default; fail-closed on a missing or unparsable file.
 
 # ---------------------------------------------------------------------------
 # Tool execution policies
