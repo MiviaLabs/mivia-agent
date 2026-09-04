@@ -31,24 +31,15 @@ func wireSessionMemory(opts *tools.DefaultOptions, root string, res *config.Reso
 // openMemoryStore builds the session memory backend from the resolved
 // [memory] config, read-write.
 //
-// store_path resolves relative to the workspace root, so a repo owner can
-// keep the database inside the repository (for example ".mivia/memory.db")
-// and commit it to transport memories with the repo; "~" expands to the home
-// directory. Relative paths must stay inside the workspace: ".." segments are
-// rejected so a repo-controlled config cannot route project writes to
-// user-level files. Absolute paths (including ~-expanded ones) are allowed
-// and are treated as repo-controlled config, like lifecycle hooks. The org
-// store is user-level and fixed for v1.
-//
-// The returned store lives for the session (process lifetime for the CLI);
-// every save runs a WAL checkpoint, so the main database file is always
-// current and safe to commit at any time.
+// Durable project memory uses Markdown files in the workspace and a derived
+// index in the global context store. The org source is user-level and fixed
+// for v1.
 func openMemoryStore(root string, mc config.MemoryConfig) (memory.Store, error) {
 	return openMemoryStoreWithReadOnly(root, mc, false)
 }
 
-// openMemoryStoreReadOnly is openMemoryStore with ReadOnly: true: a search
-// session that must never write the committed database file.
+// openMemoryStoreReadOnly prevents source mutations while allowing the
+// derived index to refresh from changed Markdown files.
 func openMemoryStoreReadOnly(root string, mc config.MemoryConfig) (memory.Store, error) {
 	return openMemoryStoreWithReadOnly(root, mc, true)
 }

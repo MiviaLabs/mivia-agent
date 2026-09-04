@@ -15,14 +15,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
 
-// runMemory handles the memory CLI commands: search, promote, dump.
+// runMemory handles the memory CLI commands: search and promote.
 func runMemory(args []string) error {
 	return runMemoryWithIO(args, os.Stdout, os.Stderr)
 }
 
 func runMemoryWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("memory: expected search, promote, or dump")
+		return fmt.Errorf("memory: expected search or promote")
 	}
 	subcommand := args[0]
 	switch subcommand {
@@ -30,10 +30,8 @@ func runMemoryWithIO(args []string, stdout, stderr io.Writer) error {
 		return runMemorySearch(args[1:], stdout)
 	case "promote":
 		return runMemoryPromote(args[1:], stdout)
-	case "dump":
-		return runMemoryDump(args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("memory: unknown subcommand %q (try search, promote, dump)", cliagents.SafeCatalogText(subcommand, 80))
+		return fmt.Errorf("memory: unknown subcommand %q (try search, promote)", cliagents.SafeCatalogText(subcommand, 80))
 	}
 }
 
@@ -106,84 +104,6 @@ func runMemoryPromote(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "promoted %s to core tier\n", id)
 	return nil
-}
-
-// memoryDumpWarnBytes is the stderr-warning threshold (decision 8): a
-// margin under the repo's 500 KiB pre-commit file-size gate
-// (scripts/git-hooks/file-size-check), so an operator gets a signal before
-// a commit would hard-fail rather than after.
-const memoryDumpWarnBytes = 400 * 1024
-
-// runMemoryDump is the harness-generic export path (D5): deterministic
-// JSONL to stdout, for a manual reviewable export of the memory store (e.g.
-// `mivia memory dump --workspace . > .mivia/memory.jsonl`). Opens the store
-// read-only - dump never writes the database.
-func runMemoryDump(args []string, stdout, stderr io.Writer) error {
-	workspaceRoot, cfgPath, err := parseMemoryDumpArgs(args)
-	if err != nil {
-		return err
-	}
-	root, err := clichat.ChatWorkspaceRoot(workspaceRoot)
-	if err != nil {
-		return fmt.Errorf("memory dump: %w", err)
-	}
-	res, err := config.Load(config.LoadOptions{
-		ConfigPath:         cfgPath,
-		WorkspaceRoot:      root,
-		AllowMissingConfig: true,
-	})
-	if err != nil {
-		return err
-	}
-	if !res.Memory.IsEnabled() {
-		return fmt.Errorf("memory dump: memory is disabled; set [memory] enabled = true")
-	}
-	store, err := openMemoryStoreReadOnly(root, res.Memory)
-	if err != nil {
-		return fmt.Errorf("memory dump: %w", err)
-	}
-	defer store.Close()
-
-	var buf strings.Builder
-	if err := memory.Dump(store, &buf); err != nil {
-		return fmt.Errorf("memory dump: %w", err)
-	}
-	if buf.Len() > memoryDumpWarnBytes {
-		fmt.Fprintf(stderr, "memory dump: output is %d bytes, over the %d byte warning threshold (decision 8) - the repo's 500 KiB pre-commit file-size gate may reject this commit\n", buf.Len(), memoryDumpWarnBytes)
-	}
-	_, err = io.WriteString(stdout, buf.String())
-	return err
-}
-
-// parseMemoryDumpArgs parses `memory dump` flags: no positional arguments.
-func parseMemoryDumpArgs(args []string) (workspaceRoot, configPath string, err error) {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		name, value, hasValue := cutMemoryFlag(arg)
-		switch name {
-		case "--workspace":
-			workspaceRoot, i, err = memoryFlag("memory dump", name, value, "a directory", hasValue, args, i)
-			if err == nil && (strings.TrimSpace(workspaceRoot) == "" || strings.HasPrefix(workspaceRoot, "-")) {
-				err = fmt.Errorf("memory dump: --workspace requires a directory")
-			}
-		case "--config":
-			configPath, i, err = memoryFlag("memory dump", name, value, "a path", hasValue, args, i)
-			if err == nil && (strings.TrimSpace(configPath) == "" || strings.HasPrefix(configPath, "-")) {
-				err = fmt.Errorf("memory dump: --config requires a path")
-			}
-		case "":
-			// cutMemoryFlag returns "" only for non-flag args: dump takes
-			// no positional arguments (Step 5 review: this used to fall to
-			// "unknown flag", mislabeling a stray non-flag token as one).
-			err = fmt.Errorf("memory dump: unexpected argument %q (dump takes no positional arguments)", cliagents.SafeCatalogText(arg, 80))
-		default:
-			err = fmt.Errorf("memory dump: unknown flag %q", cliagents.SafeCatalogText(arg, 80))
-		}
-		if err != nil {
-			return "", "", err
-		}
-	}
-	return workspaceRoot, configPath, nil
 }
 
 // parseMemoryPromoteArgs parses `memory promote <id>` flags, following

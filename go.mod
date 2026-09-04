@@ -17,6 +17,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/MiviaLabs/mivia-ai-sdk v0.1.3
 	github.com/alecthomas/chroma/v2 v2.14.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3

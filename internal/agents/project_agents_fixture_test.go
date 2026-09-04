@@ -190,7 +190,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		"gate-authoring",
 		"memories-housekeeping",
 		"logic-review",
-		"memory-housekeeping", "panel-architecture-review",
+		"panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
 		"review",
 		"review-synthesis",
@@ -399,7 +399,6 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 var wantNilAllowlistRefusals = map[string][]string{
 	"builder": {
 		"memories-housekeeping(delete_file)",
-		"memory-housekeeping(memory_search)",
 		"workflow-feature-delivery(multi_edit)",
 		"workflow-runs-analysis(workflow_list_runs)",
 	},
@@ -407,7 +406,6 @@ var wantNilAllowlistRefusals = map[string][]string{
 		"agent-creator(run_command)",
 		"feature-delivery(run_command)",
 		"gate-authoring(run_command)",
-		"memory-housekeeping(memory_search)",
 		"performance-review(run_command)",
 		"session-analysis(run_command)",
 		"skill-creator(run_command)",
@@ -430,7 +428,6 @@ var reviewerRefusals = []string{
 	"feature-delivery(write_file)",
 	"gate-authoring(run_command)",
 	"memories-housekeeping(write_file)",
-	"memory-housekeeping(memory_search)",
 	"performance-review(run_command)",
 	"session-analysis(run_command)",
 	"skill-creator(write_file)",

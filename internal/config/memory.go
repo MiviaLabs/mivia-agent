@@ -9,19 +9,11 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
 )
 
-// resolveMemoryConfig resolves [memory] with defaults and bounds, honoring
-// org_id from the user config file only, and fills StorePath's default via
-// the three-tier rule when the operator left store_path unset: an explicit
-// [memory] store_path always wins; otherwise root's own project config
-// (projectConfigFound, computed by the caller via ProjectConfigExists)
-// selects workspace.MemoryDBPath(root); its absence selects
-// TempStorePath(root, "memory"). The fill runs unconditionally, before the
-// enabled/disabled branch, so a disabled config still carries a resolved
-// StorePath (storage_reset.go reads it regardless of enabled state).
+// resolveMemoryConfig resolves [memory] with defaults and bounds. Markdown
+// memory files live in the workspace and the derived index lives globally.
 //
 // A workspace config is repo-controlled: any repository can ship its own
 // .mivia/mivia.toml, so it must not name the org store its agents write into
@@ -29,24 +21,17 @@ import (
 // file (~/.mivia/mivia.toml) unless the selected config IS that file.
 func resolveMemoryConfig(file File, selectedPath string, root string, projectConfigFound bool) (MemoryConfig, error) {
 	mc := file.Memory
-	if strings.TrimSpace(mc.StorePath) == "" {
-		if projectConfigFound {
-			mc.StorePath = workspace.MemoryDBPath(root)
-		} else {
-			mc.StorePath = TempStorePath(root, "memory")
-		}
+	backend := strings.ToLower(strings.TrimSpace(mc.StoreBackend))
+	if backend == "" {
+		backend = DefaultMemoryConfig.StoreBackend
 	}
 	if !mc.IsEnabled() {
 		mc.Enabled = boolPtr(false)
 		return mc, nil
 	}
 	mc.Enabled = boolPtr(true)
-	backend := strings.ToLower(strings.TrimSpace(mc.StoreBackend))
-	if backend == "" {
-		backend = DefaultMemoryConfig.StoreBackend
-	}
-	if backend != memory.BackendMemory && backend != memory.BackendSQLite {
-		return MemoryConfig{}, fmt.Errorf("[memory] store_backend must be \"memory\" or \"sqlite\", got %q", mc.StoreBackend)
+	if backend != memory.BackendMemory && backend != memory.BackendMarkdown {
+		return MemoryConfig{}, fmt.Errorf("[memory] store_backend must be \"memory\" or \"markdown\", got %q", mc.StoreBackend)
 	}
 	mc.StoreBackend = backend
 	if mc.MaxEntryBytes <= 0 {
@@ -63,6 +48,12 @@ func resolveMemoryConfig(file File, selectedPath string, root string, projectCon
 	}
 	if mc.MaxSearchResults > MaxMemorySearchResults {
 		return MemoryConfig{}, fmt.Errorf("[memory] max_search_results must be at most %d, got %d", MaxMemorySearchResults, mc.MaxSearchResults)
+	}
+	if mc.IndexRefreshIntervalSeconds <= 0 {
+		mc.IndexRefreshIntervalSeconds = DefaultMemoryConfig.IndexRefreshIntervalSeconds
+	}
+	if mc.IndexRefreshIntervalSeconds > MaxMemoryIndexRefreshIntervalSeconds {
+		return MemoryConfig{}, fmt.Errorf("[memory] index_refresh_interval_seconds must be at most %d, got %d", MaxMemoryIndexRefreshIntervalSeconds, mc.IndexRefreshIntervalSeconds)
 	}
 	for _, pattern := range mc.BlockPatterns {
 		if _, err := regexp.Compile(pattern); err != nil {

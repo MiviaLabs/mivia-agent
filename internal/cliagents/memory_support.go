@@ -2,14 +2,16 @@ package cliagents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -19,43 +21,83 @@ import (
 // openMemoryStore and openMemoryStoreReadOnly can delegate here without
 // duplicating the path-resolution logic.
 func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
-	projectPath := strings.TrimSpace(mc.StorePath)
-	if projectPath == "" {
-		// This branch is now only reachable when the caller constructs
-		// config.MemoryConfig{} directly, bypassing config.Load()/
-		// resolveMemoryConfig - every config.Load()-sourced MemoryConfig now
-		// always has StorePath filled by resolveMemoryConfig's new
-		// three-tier default. Confirmed sole real caller that still needs
-		// it: internal/cliagents/memory_support_coverage_test.go:34-38
-		// (TestOpenMemoryStoreRejectsMissingPath).
-		projectPath = workspace.MemoryDBPath(root)
-	} else {
-		projectPath = config.ExpandPath(projectPath)
-		// Clean before every use: an operator-supplied path may carry dot-dot
-		// or double-slash segments, and an unclean spelling that names the
-		// temp store must not slip past the hardening gate below.
-		projectPath = filepath.Clean(projectPath)
-		if !filepath.IsAbs(projectPath) {
-			if projectPath == ".." || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
-				return nil, fmt.Errorf("memory store_path %q escapes the workspace root", mc.StorePath)
-			}
-			projectPath = filepath.Join(root, projectPath)
-		}
+	backend := strings.ToLower(strings.TrimSpace(mc.StoreBackend))
+	if backend == "" {
+		backend = memory.BackendMarkdown
 	}
-	hardenTempStore := SameFilePath(runtime.GOOS, projectPath, config.TempStorePath(root, "memory"))
-	cfg := memory.Config{
-		Backend:          mc.StoreBackend,
-		ProjectPath:      projectPath,
-		OrgPath:          workspace.OrgMemoryDBPath(),
-		OrgID:            mc.OrgID,
-		MaxEntryBytes:    mc.MaxEntryBytes,
-		MaxEntries:       mc.MaxEntries,
+	switch backend {
+	case memory.BackendMarkdown:
+		return openMarkdownMemoryStore(root, mc, readOnly)
+	case memory.BackendMemory:
+		return memory.Open(memory.Config{
+			Backend: memory.BackendMemory, OrgID: mc.OrgID,
+			MaxEntryBytes: mc.MaxEntryBytes, MaxEntries: mc.MaxEntries,
+			MaxSearchResults: mc.MaxSearchResults, BlockPatterns: mc.BlockPatterns,
+			ReadOnly: readOnly,
+		})
+	default:
+		return nil, fmt.Errorf("memory backend %q is not supported", mc.StoreBackend)
+	}
+}
+
+func openMarkdownMemoryStore(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
+	projectRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("memory project root: %w", err)
+	}
+	orgDir := workspace.GlobalMemoryDir()
+	if orgDir == "" && strings.TrimSpace(mc.OrgID) != "" {
+		return nil, errors.New("memory organization directory is unavailable")
+	}
+	source, err := memory.NewMarkdownSource(projectRoot, orgDir, mc.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("memory Markdown source: %w", err)
+	}
+	indexPath := workspace.GlobalContextStorePath(projectRoot)
+	// Read-only applies to Markdown source mutations. The derived index is a
+	// cache, so searches may refresh it to reflect external file changes.
+	index, err := storage.OpenSQLiteWithOptions(indexPath, storage.Options{Harden: true})
+	if err != nil {
+		return nil, fmt.Errorf("memory index: %w", err)
+	}
+	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{
+		Source: source, Index: index, ProjectID: projectRoot, OrgID: mc.OrgID,
 		MaxSearchResults: mc.MaxSearchResults,
-		BlockPatterns:    mc.BlockPatterns,
+		Limits:           memory.Limits{MaxEntryBytes: mc.MaxEntryBytes, BlockPatterns: mc.BlockPatterns},
 		ReadOnly:         readOnly,
-		HardenTempStore:  hardenTempStore,
+	})
+	if err != nil {
+		_ = index.Close()
+		return nil, err
 	}
-	return memory.Open(cfg)
+	return &ownedMarkdownStore{Store: store, index: index}, nil
+}
+
+type ownedMarkdownStore struct {
+	memory.Store
+	index *storage.SQLite
+
+	// stopMu guards stop, the reconciler stop func StartMemoryIndexReconciler
+	// records here. Close runs it defensively, so a caller that dropped the
+	// returned stop func still cannot leak a watcher past the index close.
+	stopMu sync.Mutex
+	stop   func()
+}
+
+func (s *ownedMarkdownStore) Close() error {
+	s.stopMu.Lock()
+	stop := s.stop
+	s.stop = nil
+	s.stopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	storeErr := s.Store.Close()
+	indexErr := s.index.Close()
+	if storeErr != nil {
+		return storeErr
+	}
+	return indexErr
 }
 
 // SameFilePath reports whether two path spellings name the same file:

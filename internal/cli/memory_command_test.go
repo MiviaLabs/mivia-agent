@@ -54,10 +54,9 @@ models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
 
 [memory]
 enabled = %t
-store_backend = "sqlite"
-store_path = %q
+	store_backend = "markdown"
 max_search_results = 8
-`, enabled, storePath)
+`, enabled)
 	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +71,7 @@ func saveTestMemories(t *testing.T, root string) {
 	enabled := true
 	mc := config.MemoryConfig{
 		Enabled:          &enabled,
-		StoreBackend:     "sqlite",
-		StorePath:        ".mivia/memory.db",
+		StoreBackend:     "markdown",
 		MaxSearchResults: 8,
 	}
 	store, err := openMemoryStore(root, mc)
@@ -339,23 +337,6 @@ func TestMemorySearchConfigLoadError(t *testing.T) {
 	}
 }
 
-// TestMemorySearchStoreSearchError covers the store.Search failure branch: the
-// read-only store opens lazily (sql.Open does not touch the file), so a corrupt
-// database file fails on the first query inside Search.
-func TestMemorySearchStoreSearchError(t *testing.T) {
-	root := t.TempDir()
-	cfgPath := writeMemoryTestConfigPath(t, root, true, ".mivia/corrupt.db")
-	if err := os.WriteFile(filepath.Join(root, ".mivia", "corrupt.db"), []byte("not a sqlite database"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var out, errOut strings.Builder
-	err := runMemoryWithIO([]string{"search", "fix", "--workspace", root, "--config", cfgPath}, &out, &errOut)
-	if err == nil || !strings.Contains(err.Error(), "memory search:") {
-		t.Fatalf("runMemoryWithIO error = %v, want memory search failure", err)
-	}
-}
-
 // TestWriteMemorySearchJSONEncodeError covers the JSON encoder write-failure
 // branch in writeMemorySearchJSON.
 func TestWriteMemorySearchJSONEncodeError(t *testing.T) {
@@ -511,22 +492,6 @@ func TestMemorySearchDisabledMemoryError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "memory") || !strings.Contains(err.Error(), "[memory]") || !strings.Contains(err.Error(), "enabled") {
 		t.Fatalf("error = %q, want a [memory] enabled mention", err)
-	}
-}
-
-// TestMemorySearchStoreOpenFailure pins that a store open failure (escaping
-// store_path) surfaces as an error.
-func TestMemorySearchStoreOpenFailure(t *testing.T) {
-	root := t.TempDir()
-	cfgPath := writeMemoryTestConfigPath(t, root, true, "../escape.db")
-
-	var out, errOut strings.Builder
-	err := runMemoryWithIO([]string{"search", "fix", "--workspace", root, "--config", cfgPath}, &out, &errOut)
-	if err == nil {
-		t.Fatal("escaping store_path must fail the search")
-	}
-	if !strings.Contains(err.Error(), "memory") {
-		t.Fatalf("error = %q, want a memory mention", err)
 	}
 }
 
