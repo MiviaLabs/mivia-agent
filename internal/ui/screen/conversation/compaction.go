@@ -50,6 +50,7 @@ func (s Screen) startCompaction(h ports.CompactionHandle) (app.Screen, tea.Cmd) 
 
 func (s Screen) handleCompactionEvent(ev ports.CompactionEvent) (app.Screen, tea.Cmd) {
 	if ev.Done {
+		s.refreshTopbar()
 		s.compaction = nil
 		s.compactionSessionID = ""
 		s.compactionCancelRequested = false
