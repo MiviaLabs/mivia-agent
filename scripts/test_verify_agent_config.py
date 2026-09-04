@@ -66,7 +66,7 @@ def run_gate_on_fixture(extra_key: str) -> str | None:
 
     fail() raises SystemExit after it prints to stderr, so a caught SystemExit
     means the gate rejected the skill. A rejection is the expected result in one
-    of these tests, so stderr is captured to keep the run output clean.
+    of these tests, so this helper captures stderr and keeps the output clean.
     """
     mod = load_gate()
     with tempfile.TemporaryDirectory() as tmp:
@@ -115,10 +115,69 @@ def test_gate_rejects_unknown_key() -> None:
         )
 
 
+def test_gate_rejects_a_long_trigger() -> None:
+    """A trigger over the cap is silently truncated by the loader."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        skills_dir = Path(tmp) / "skills"
+        (skills_dir / "probe-skill").mkdir(parents=True)
+        (skills_dir / "probe-skill" / "SKILL.md").write_text(
+            "---\nname: probe-skill\ndescription: Probe.\ntriggers:\n  - "
+            + ("x" * (mod.SKILL_TRIGGER_MAX + 1))
+            + "\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_skill_dir(skills_dir)
+        except SystemExit:
+            if "max" not in captured.getvalue():
+                raise AssertionError("expected a trigger-length rejection")
+            return
+    raise AssertionError("gate accepted a trigger over the cap")
+
+
+def test_gate_rejects_shapes_the_go_parser_refuses() -> None:
+    """Duplicate keys and stray indentation must not pass a laxer mirror."""
+    mod = load_gate()
+    cases = {
+        "duplicate frontmatter key": "---\nname: p\ndescription: A.\nname: q\n---\n\nB.\n",
+        "nested maps are not supported": "---\nname: p\n  stray: 1\ndescription: A.\n---\n\nB.\n",
+    }
+    for expected, body in cases.items():
+        problems = mod.frontmatter_violations(body)
+        if not any(expected in p for p in problems):
+            raise AssertionError(
+                f"expected {expected!r} among violations, got {problems}"
+            )
+
+
+def test_dead_skill_tree_is_refused() -> None:
+    """.mivia/skills must never come back; a second copy silently drifts."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        mod.check_no_dead_skill_tree(root)  # absent: must not raise
+        (root / ".mivia" / "skills").mkdir(parents=True)
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_no_dead_skill_tree(root)
+        except SystemExit:
+            if ".mivia/skills must not exist" not in captured.getvalue():
+                raise AssertionError("unexpected message: " + captured.getvalue())
+            return
+    raise AssertionError("gate accepted a .mivia/skills directory")
+
+
 def main() -> None:
     test_known_keys_match_go_source()
     test_gate_accepts_schema_keys()
     test_gate_rejects_unknown_key()
+    test_gate_rejects_a_long_trigger()
+    test_gate_rejects_shapes_the_go_parser_refuses()
+    test_dead_skill_tree_is_refused()
     print("test_verify_agent_config: ok")
 
 

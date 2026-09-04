@@ -97,11 +97,11 @@ contracts:
     paths:
       - docs/OWNERS.yaml
       - docs/**
-      - .agents/skills/docs-update/**
+      - .agents/skills/docs-maintenance/**
       - .agents/rules/40-docs-ownership.md
     verifiers:
       - test -f docs/OWNERS.yaml
-      - rg -n 'docs/OWNERS.yaml' .agents/skills/docs-update/SKILL.md
-      - rg -n 'docs-update' .agents/skills/docs-update/SKILL.md
+      - rg -n 'docs/OWNERS.yaml' .agents/skills/docs-maintenance/SKILL.md
+      - rg -n 'docs-maintenance' .agents/skills/docs-maintenance/SKILL.md
     mutation_proof:
       - remove docs/OWNERS.yaml and expect agent-control-surface and docs-ownership verifiers to fail

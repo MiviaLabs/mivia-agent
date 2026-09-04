@@ -241,7 +241,9 @@ frontmatter between `---` delimiters. The parser lives in
 
 **Recognised keys:** `name`, `description`, `triggers`, `user-invocable`,
 `argument-hint`, `short-description`, `tools` (optional list of required tool
-names for agent skill binding).
+names for agent skill binding), `input_schema`, `output_schema`. The two schema
+keys take a JSON string, not a nested map: the frontmatter subset parser has no
+nested maps.
 
 **Rejected with a line-numbered error:**
 
