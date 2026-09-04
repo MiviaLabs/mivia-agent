@@ -108,7 +108,8 @@ func TestMarkCarriesItsStateRole(t *testing.T) {
 		label string
 		role  theme.Role
 	}{
-		{"running", theme.RoleInfo},
+		{"running", theme.RoleFG},
+		{"waiting", theme.RoleWarning},
 		{"pending", theme.RoleWarning},
 		{"failed", theme.RoleDanger},
 		{"done", theme.RoleSuccess},
