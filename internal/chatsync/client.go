@@ -220,13 +220,26 @@ func (c *Client) GetSession(ctx context.Context, sessionID string) (*Session, er
 
 // AppendEvents appends a batch of events to a session stream.
 func (c *Client) AppendEvents(ctx context.Context, sessionID string, events []EventItem) (*AppendResult, error) {
+	return c.AppendEventsWithTrace(ctx, sessionID, events, "", "")
+}
+
+// AppendEventsWithTrace appends events and carries correlation headers for
+// server-side delivery diagnostics without changing the event payload schema.
+func (c *Client) AppendEventsWithTrace(ctx context.Context, sessionID string, events []EventItem, batchID, writerID string) (*AppendResult, error) {
 	if err := validatePathID(sessionID); err != nil {
 		return nil, err
 	}
 	var out AppendResult
 	path := fmt.Sprintf("/v1/chat-sessions/%s/events", sessionID)
 	body := map[string]any{"events": events}
-	if err := c.doJSON(ctx, http.MethodPost, path, body, &out); err != nil {
+	headers := map[string]string{}
+	if batchID != "" {
+		headers["X-Mivia-Upload-Batch-ID"] = batchID
+	}
+	if writerID != "" {
+		headers["X-Mivia-Writer-ID"] = writerID
+	}
+	if err := c.doJSONHeaders(ctx, http.MethodPost, path, body, &out, headers); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -318,23 +331,27 @@ func (c *Client) EndSession(ctx context.Context, sessionID string) (*Session, er
 // for everything, and retrying either of those in a loop is how a live
 // session gets destroyed.
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {
+	return c.doJSONHeaders(ctx, method, path, reqBody, respBody, nil)
+}
+
+func (c *Client) doJSONHeaders(ctx context.Context, method, path string, reqBody any, respBody any, headers map[string]string) error {
 	if c.authLost.Load() {
 		return ErrAuthStop
 	}
-	err := c.execRequest(ctx, method, path, reqBody, respBody, false)
+	err := c.execRequest(ctx, method, path, reqBody, respBody, false, headers)
 	if err == nil || !errors.Is(err, ErrUnauthorized) {
 		return err
 	}
-	return c.execRequest(ctx, method, path, reqBody, respBody, true)
+	return c.execRequest(ctx, method, path, reqBody, respBody, true, headers)
 }
 
-func (c *Client) execRequest(ctx context.Context, method, path string, reqBody, respBody any, forceRefresh bool) error {
+func (c *Client) execRequest(ctx context.Context, method, path string, reqBody, respBody any, forceRefresh bool, headers map[string]string) error {
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
 		defer cancel()
 	}
-	req, err := c.buildRequest(ctx, method, path, reqBody, forceRefresh)
+	req, err := c.buildRequest(ctx, method, path, reqBody, forceRefresh, headers)
 	if err != nil {
 		return err
 	}
@@ -357,7 +374,7 @@ func (c *Client) execRequest(ctx context.Context, method, path string, reqBody, 
 	return parseErrorResponse(resp)
 }
 
-func (c *Client) buildRequest(ctx context.Context, method, path string, reqBody any, forceRefresh bool) (*http.Request, error) {
+func (c *Client) buildRequest(ctx context.Context, method, path string, reqBody any, forceRefresh bool, headers map[string]string) (*http.Request, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -374,6 +391,9 @@ func (c *Client) buildRequest(ctx context.Context, method, path string, reqBody 
 	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 
 	tok, err := c.tokenProvider(ctx, forceRefresh)

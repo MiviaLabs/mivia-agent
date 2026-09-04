@@ -126,6 +126,31 @@ func TestClientAppendEventsAndNext(t *testing.T) {
 	}
 }
 
+func TestClientAppendEventsWithTraceSendsCorrelationHeaders(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Mivia-Upload-Batch-ID"); got != "batch-7" {
+			t.Errorf("batch header = %q", got)
+		}
+		if got := r.Header.Get("X-Mivia-Writer-ID"); got != "writer-2" {
+			t.Errorf("writer header = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{InsertedCount: 1, LastSeq: 9})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	got, err := client.AppendEventsWithTrace(context.Background(), "sess-1", []EventItem{{Seq: 9, Type: TypeTurnEnded}}, "batch-7", "writer-2")
+	if err != nil {
+		t.Fatalf("AppendEventsWithTrace: %v", err)
+	}
+	if got.LastSeq != 9 {
+		t.Fatalf("LastSeq = %d, want 9", got.LastSeq)
+	}
+}
+
 func TestClientAuthRetryOn401(t *testing.T) {
 	var requestCount int32
 
