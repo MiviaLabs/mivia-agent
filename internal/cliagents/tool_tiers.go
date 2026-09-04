@@ -49,7 +49,7 @@ func PlanToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *co
 		return ToolTierPlan{Tiers: tools.Tiers{Core: authorizedNamesInRegistryOrder(base, selected)}}
 	}
 	authorized := authorizedNamesInRegistryOrder(base, selected)
-	tiers := tools.SplitTiers(authorized, withMCPServerToolsAlwaysCore(*core, authorized, selected))
+	tiers := tools.SplitTiers(authorized, withMCPServerToolsAlwaysCore(*core, authorized, identityMCPServerScope(selected, res)))
 	plan := ToolTierPlan{Tiers: tiers}
 	for _, name := range tiers.Deferred {
 		// Every name here came out of base.List(), so the lookup cannot miss.
@@ -72,25 +72,46 @@ func PlanToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *co
 // is derived at runtime from remote server reports and changes dynamically. Setting
 // any core tier would otherwise move all MCP tools into the deferred tier.
 //
-// Names are derivable via reversible hex encoding (EncodeToolName), but static
-// configuration cannot track dynamic server changes. isMCPServerTool treats server
-// selection as authority (mcp_scope.go); this function applies the same rule to
-// core-tier placement.
+// scope is the identity's MCP server selection - the same rule that granted
+// authority and attached the tools in the first place (SelectedOrGlobalMCPServers):
+// the selected agent's EffectiveMCPServers, or the config's global server set
+// for the root/no-agent-selected identity. A workspace with no agent
+// definitions at all runs the root identity, and its global = true servers
+// (e.g. codegraph) must stay callable without load_tools just like a named
+// agent's selection is.
 //
 // Copies core rather than appending in place because core aliases config memory
 // (*[]string); appending could mutate capacity read by another binding.
-func withMCPServerToolsAlwaysCore(core, authorized []string, selected *agents.ResolvedAgent) []string {
-	if selected == nil || len(selected.EffectiveMCPServers) == 0 {
+func withMCPServerToolsAlwaysCore(core, authorized, scope []string) []string {
+	if len(scope) == 0 {
 		return core
 	}
 	out := make([]string, len(core), len(core)+len(authorized))
 	copy(out, core)
 	for _, name := range authorized {
-		if isMCPServerTool(name, selected) {
+		if isMCPServerToolForServers(name, scope) {
 			out = append(out, name)
 		}
 	}
 	return out
+}
+
+// identityMCPServerScope returns the MCP server IDs whose tools this identity
+// may invoke - the exact server selection SetupSessionMCPTools attached
+// (SelectedOrGlobalMCPServers): a selected agent's own effective scope, or,
+// when no agent is selected (the root identity; also every workspace without
+// an agent named config.DefaultAgentName), the config's global server set.
+// The tier split must consult the same selection that granted authority,
+// otherwise the root identity's global MCP tools are deferred behind
+// load_tools even though they are advertised and authorized.
+func identityMCPServerScope(selected *agents.ResolvedAgent, res *config.Resolved) []string {
+	if selected != nil {
+		return selected.EffectiveMCPServers
+	}
+	if res == nil {
+		return nil
+	}
+	return res.MCP.GlobalServerIDs()
 }
 
 // authorizedNamesInRegistryOrder lists the names the selected agent may invoke,

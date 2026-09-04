@@ -14,16 +14,22 @@ import (
 )
 
 // fakeProviderServer answers OpenAI-compatible chat completions with one fixed
-// assistant message and records the tool list of every request, so an
-// entrypoint test can assert what the model was actually advertised.
+// assistant message and records the tool list and system prompt of every
+// request, so an entrypoint test can assert what the model was actually
+// advertised and what the prompt's deferred-tool index locked away.
 type fakeProviderServer struct {
 	mu        sync.Mutex
 	toolNames [][]string
+	prompts   []string
 }
 
 func (f *fakeProviderServer) handler(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Tools []map[string]any `json:"tools"`
+		Tools    []map[string]any `json:"tools"`
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	names := make([]string, 0, len(body.Tools))
@@ -35,6 +41,29 @@ func (f *fakeProviderServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	f.toolNames = append(f.toolNames, names)
+	for _, message := range body.Messages {
+		if message.Role != "system" {
+			continue
+		}
+		// The system message's content is cache-marked into an array of text
+		// parts; stitch the parts back together so assertions can substring-
+		// match the composed prompt. A plain string stays a plain string.
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(message.Content, &parts); err == nil && len(parts) > 0 {
+			var b strings.Builder
+			for _, part := range parts {
+				b.WriteString(part.Text)
+			}
+			f.prompts = append(f.prompts, b.String())
+			continue
+		}
+		var content string
+		if err := json.Unmarshal(message.Content, &content); err == nil {
+			f.prompts = append(f.prompts, content)
+		}
+	}
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"id":"1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`))
@@ -46,6 +75,12 @@ func (f *fakeProviderServer) advertised() [][]string {
 	out := make([][]string, len(f.toolNames))
 	copy(out, f.toolNames)
 	return out
+}
+
+func (f *fakeProviderServer) systemPrompts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
 }
 
 // TestRunConfiguredChatOneShotAdvertisesTheWholeUnion drives the real chat

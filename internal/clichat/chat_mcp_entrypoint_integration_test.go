@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -176,6 +177,88 @@ description = "root orchestrator"
 	for _, want := range []string{"read_file", "list_dir", "grep", "glob"} {
 		if !slices.Contains(first, want) {
 			t.Fatalf("advertised = %v, want configured core tool %q", first, want)
+		}
+	}
+}
+
+// TestRunConfiguredChatKeepsGlobalMCPToolCoreWithNoAgentDefinitions is the
+// end-to-end regression for a workspace with NO agent definitions at all:
+// no .agents/agents in the workspace, no user agents under HOME. The session
+// runs the root/no-agent-selected identity, whose MCP server selection is the
+// config's global server set. Before the fix the tool tier plan consulted
+// only a selected agent's EffectiveMCPServers, so the root identity's global
+// MCP tool was advertised but silently deferred behind load_tools - whose
+// publication can defer again (sibling turns, background orchestration) -
+// leaving a configured, successfully-connected server like codegraph a tool
+// the model could never actually call. Core placement is proven negatively:
+// a core tool never appears in the system prompt's deferred-tool index.
+func TestRunConfiguredChatKeepsGlobalMCPToolCoreWithNoAgentDefinitions(t *testing.T) {
+	t.Setenv("MIVIA_CLI_MCP_HELPER", "1")
+	fake := &fakeProviderServer{}
+	server := httptest.NewServer(http.HandlerFunc(fake.handler))
+	t.Cleanup(server.Close)
+
+	home := t.TempDir()
+	ws := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(ws)
+	// Deliberately no writeTestAgent call: no agent named
+	// config.DefaultAgentName, no agent passed in the invocation, nothing to
+	// select - the root identity is the surface under test.
+
+	res := &config.Resolved{
+		ProviderName: "openrouter",
+		Model:        "test/model",
+		Models:       []string{"test/model"},
+		BaseURL:      server.URL,
+		APIKey:       "test-key",
+		APIKeyEnv:    "TEST_KEY",
+		APIKeySet:    true,
+		SystemPrompt: "ROOT PROMPT",
+		Subagents:    config.DefaultSubagentConfig,
+		Tools:        config.ToolsConfig{Core: &[]string{"read_file", "list_dir", "grep", "glob"}},
+		MCP: config.MCPConfig{
+			Enabled:                 true,
+			StartupTimeoutSeconds:   10,
+			MaxServers:              16,
+			MaxToolsPerServer:       64,
+			MaxToolSchemaBytes:      64 << 10,
+			MaxToolDescriptionBytes: 4 << 10,
+			MaxToolResultBytes:      64 << 10,
+			Servers: []config.MCPServerConfig{{
+				ID: "repo", Transport: "stdio", Command: os.Args[0],
+				Args: []string{"-test.run=^TestMCPStdioHelper$"}, Env: []string{"MIVIA_CLI_MCP_HELPER"},
+				Global: true, TimeoutSeconds: 10,
+			}},
+		},
+	}
+	res.Subagents.StoreBackend = "sqlite"
+	res.Subagents.StorePath = filepath.Join(t.TempDir(), "context.db")
+	writeWorkspaceMCPConfig(t, ws, os.Args[0])
+
+	invocation := chatInvocation{prompt: "hello", workspacePath: ws, plainUI: true}
+	if err := runConfiguredChat(invocation, res); err != nil {
+		t.Fatalf("runConfiguredChat: %v", err)
+	}
+
+	requests := fake.advertised()
+	if len(requests) == 0 {
+		t.Fatal("the stub provider was never called")
+	}
+	if !slices.Contains(requests[0], "mcp__repo__x6563686f") {
+		t.Fatalf("advertised = %v, want the global MCP tool advertised to the root identity", requests[0])
+	}
+	// Core, not deferred: the deferred-tool index lives in the system prompt,
+	// so a tool the root identity can call without load_tools must never be
+	// named there.
+	prompts := fake.systemPrompts()
+	if len(prompts) == 0 {
+		t.Fatal("no system prompt captured; the deferred-index assertion would be vacuous")
+	}
+	for _, prompt := range prompts {
+		if strings.Contains(prompt, "mcp__repo__x6563686f") {
+			t.Fatalf("the system prompt defers the global MCP tool to load_tools; "+
+				"the root identity must keep it core (prompt: %.200s...)", prompt)
 		}
 	}
 }
