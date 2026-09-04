@@ -149,6 +149,94 @@ func TestStreamingIsNotSerializedOnTheUploadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCLIFinishesTurnWhileUploadIsSlow exercises the shutdown boundary, not
+// only the projection throughput. A completed CLI turn must return control
+// while the uploader is still waiting on the API; Stop then performs the
+// bounded final drain and leaves no event behind.
+func TestCLIFinishesTurnWhileUploadIsSlow(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("slow-final-upload")
+	f.SetAppendDelay(350 * time.Millisecond)
+	bus, s := openStreaming(t, f, id, 100)
+
+	publishTurnStart(bus, id, "turn:1", "the CLI turn is complete")
+	waitForSeqAtLeast(t, s, 1, 2*time.Second)
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.Stop(stopCtx); err != nil {
+		t.Fatalf("Stop after a slow upload: %v", err)
+	}
+	if got := f.LastSeq(id); got != 1 {
+		t.Fatalf("server lastSeq = %d, want 1: the completed turn was not finally drained", got)
+	}
+}
+
+// TestCLIRestartDrainsUnsentOutboxEvents models a process exit after the
+// local append but before the API accepts the upload. The second process uses
+// the same durable outbox directory and remote session, then drains the exact
+// unsent event after the API is available again.
+func TestCLIRestartDrainsUnsentOutboxEvents(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("restart-unsent-outbox")
+	outboxDir := t.TempDir()
+	f.SetAppendDelay(2 * time.Second)
+
+	bus1 := events.New()
+	s1, err := OpenSession(context.Background(), bus1, id, SessionOptions{
+		TokenProvider:    testTokenProvider,
+		ClientOptions:    ClientOptions{BaseURL: f.URL()},
+		ProjectorOptions: ProjectorOptions{StreamAssistant: true},
+		RemoteSessionID:  id,
+		OutboxDir:        outboxDir,
+		MaxUnflushed:     100,
+		CreateTitle:      "Restart",
+		HeartbeatPeriod:  time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession first process: %v", err)
+	}
+	publishTurnStart(bus1, id, "turn:1", "survive restart")
+	waitForSeqAtLeast(t, s1, 1, 2*time.Second)
+
+	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	stopErr := s1.Stop(timeoutCtx)
+	timeoutCancel()
+	if stopErr == nil {
+		t.Fatal("first process Stop returned nil, want bounded timeout while upload is unavailable")
+	}
+	select {
+	case <-s1.shutdownDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first process did not finish closing its outbox")
+	}
+
+	f.SetAppendDelay(0)
+	bus2 := events.New()
+	s2, err := OpenSession(context.Background(), bus2, id, SessionOptions{
+		TokenProvider:    testTokenProvider,
+		ClientOptions:    ClientOptions{BaseURL: f.URL()},
+		ProjectorOptions: ProjectorOptions{StreamAssistant: true},
+		RemoteSessionID:  id,
+		OutboxDir:        outboxDir,
+		MaxUnflushed:     100,
+		CreateTitle:      "Restart",
+		HeartbeatPeriod:  time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession restarted process: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s2.Stop(ctx)
+	}()
+	waitUntil(t, "the restarted process to drain its outbox", func() bool { return f.LastSeq(id) >= 1 })
+	if got := countType(f.Events(id), TypeTurnStarted); got != 1 {
+		t.Fatalf("server stored %d turn.started events, want exactly one after restart replay", got)
+	}
+}
+
 func waitUntilWithin(t *testing.T, what string, within time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(within)
