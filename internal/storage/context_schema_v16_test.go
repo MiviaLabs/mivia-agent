@@ -61,3 +61,23 @@ func TestMigrationV16MemoryIndexIdentityIsComposite(t *testing.T) {
 		t.Fatalf("same memory id in two projects must be allowed: %v", err)
 	}
 }
+
+func TestEnsureContextSchemaV16RejectsMalformedExistingIndexTable(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE memory_entries`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE memory_entries(id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureContextSchemaV16(db); err == nil {
+		t.Fatal("ensureContextSchemaV16 accepted a malformed memory_entries table")
+	}
+}

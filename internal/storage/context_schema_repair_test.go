@@ -561,13 +561,22 @@ func assertContextSchemaClean(t *testing.T, db *sql.DB) {
 	if dirty {
 		t.Fatal("schema still dirty after repair")
 	}
-	for _, table := range []string{"context_sessions", "chat_sessions", "chat_session_admissions", "chat_session_dirs", "worktree_routes", "worktree_instances", "worktree_catalog_keys", "worktree_routes_v9_contract", "chat_sessions_v11_contract"} {
+	for _, table := range []string{"context_sessions", "chat_sessions", "chat_session_admissions", "chat_session_dirs", "worktree_routes", "worktree_instances", "worktree_catalog_keys", "worktree_routes_v9_contract", "chat_sessions_v11_contract", "memory_sources", "memory_entries"} {
 		var count int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
 			t.Fatalf("table %s missing after repair", table)
+		}
+	}
+	for _, index := range []string{"memory_entries_project_idx", "memory_entries_org_idx", "memory_sources_project_idx"} {
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name = ?`, index).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("index %s missing after repair", index)
 		}
 	}
 }
