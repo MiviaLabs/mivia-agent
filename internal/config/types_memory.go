@@ -21,6 +21,12 @@ type MemoryConfig struct {
 	MaxEntries int `toml:"max_entries"`
 	// MaxSearchResults caps memory_search results. Default 8.
 	MaxSearchResults int `toml:"max_search_results"`
+	// IndexRefreshIntervalSeconds bounds the background memory index
+	// reconciler's full-scan fallback, and how long a read may skip its own
+	// rescan because the reconciler marked the scope fresh. Zero means the
+	// default; values above MaxMemoryIndexRefreshIntervalSeconds are a load
+	// error. The watcher itself has no interval: events apply as they arrive.
+	IndexRefreshIntervalSeconds int `toml:"index_refresh_interval_seconds"`
 	// BlockPatterns are regexes; a save whose content matches any of them is
 	// refused. Configuration-only, like the privacy redaction patterns.
 	BlockPatterns []string `toml:"block_patterns"`

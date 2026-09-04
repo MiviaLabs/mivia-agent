@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -14,8 +15,20 @@ import (
 var ErrMarkdownStoreUnsupported = errors.New("memory: operation is not supported by markdown store")
 var ErrMarkdownIndexStale = errors.New("memory: markdown saved but index is stale")
 
+// markdownSource is the store's view of the Markdown files: the flat
+// per-scope operations plus the derived directory accessors the reconciler
+// watches. memory.MarkdownSource is the production implementation; tests
+// wrap it to count scans.
+type markdownSource interface {
+	Scan(ctx context.Context, scope memory.Scope) ([]memory.MarkdownDocument, error)
+	Save(ctx context.Context, e memory.Entry) (memory.MarkdownDocument, error)
+	Delete(ctx context.Context, path string) error
+	ProjectDir() string
+	OrgDir() string
+}
+
 type MarkdownStoreConfig struct {
-	Source           memory.MarkdownSource
+	Source           markdownSource
 	Index            *storage.SQLite
 	ProjectID, OrgID string
 	MaxSearchResults int
@@ -26,6 +39,14 @@ type MarkdownStoreConfig struct {
 type markdownStore struct {
 	cfg MarkdownStoreConfig
 	mu  sync.Mutex
+
+	// Freshness state, guarded by mu. A reconciler-attached store skips the
+	// pre-read refresh for a scope only while the scope is neither degraded
+	// nor older than the fallback TTL; on any doubt the read path rescans.
+	lastSync           map[memory.Scope]time.Time
+	degraded           map[memory.Scope]bool
+	reconcilerAttached bool
+	fallback           time.Duration
 }
 
 var _ memory.Store = (*markdownStore)(nil)
@@ -67,6 +88,67 @@ func (s *markdownStore) refresh(ctx context.Context, scope memory.Scope) error {
 	return nil
 }
 
+// syncScope scans one scope, applies one index sync, and stamps freshness on
+// success. It takes s.mu, so the reconciler serializes with every store
+// operation on the same lock.
+func (s *markdownStore) syncScope(ctx context.Context, scope memory.Scope) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncScopeLocked(ctx, scope)
+}
+
+// syncScopeLocked is syncScope for callers already holding s.mu.
+func (s *markdownStore) syncScopeLocked(ctx context.Context, scope memory.Scope) error {
+	if err := s.refresh(ctx, scope); err != nil {
+		return err
+	}
+	s.stampSync(scope)
+	return nil
+}
+
+// stampSync records a successful sync of scope. Callers hold s.mu.
+func (s *markdownStore) stampSync(scope memory.Scope) {
+	if s.lastSync == nil {
+		s.lastSync = make(map[memory.Scope]time.Time)
+	}
+	s.lastSync[scope] = time.Now()
+}
+
+// scopeIsFresh reports whether the pre-read refresh may be skipped: a
+// reconciler owns the store, the scope's watch is healthy, and the last sync
+// is inside the fallback TTL. Callers hold s.mu.
+func (s *markdownStore) scopeIsFresh(scope memory.Scope) bool {
+	if !s.reconcilerAttached || s.fallback <= 0 || s.degraded[scope] {
+		return false
+	}
+	last, ok := s.lastSync[scope]
+	return ok && time.Since(last) < s.fallback
+}
+
+// refreshForRead refreshes scope before a read unless the reconciler keeps it
+// fresh. Callers hold s.mu.
+func (s *markdownStore) refreshForRead(ctx context.Context, scope memory.Scope) error {
+	if s.scopeIsFresh(scope) {
+		return nil
+	}
+	if err := s.refresh(ctx, scope); err != nil {
+		return err
+	}
+	s.stampSync(scope)
+	return nil
+}
+
+// setDegraded marks a scope's watch unhealthy or recovered. The reconciler
+// calls it; degraded scopes always rescan on read.
+func (s *markdownStore) setDegraded(scope memory.Scope, degraded bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.degraded == nil {
+		s.degraded = make(map[memory.Scope]bool)
+	}
+	s.degraded[scope] = degraded
+}
+
 func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -80,7 +162,7 @@ func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result
 	if err != nil {
 		return memory.Result{}, err
 	}
-	if err := s.refresh(ctx, e.Scope); err != nil {
+	if err := s.syncScopeLocked(ctx, e.Scope); err != nil {
 		return memory.Result{}, err
 	}
 	return memory.Result{ID: doc.ID, Scope: e.Scope, Org: s.cfg.OrgID, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: doc.Entry.Created, Snippet: e.Summary}, nil
@@ -90,12 +172,12 @@ func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Re
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if q.Scope == memory.ScopeAll || q.Scope == memory.ScopeProject {
-		if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+		if err := s.refreshForRead(ctx, memory.ScopeProject); err != nil {
 			return nil, err
 		}
 	}
 	if (q.Scope == memory.ScopeAll || q.Scope == memory.ScopeOrg) && s.cfg.OrgID != "" {
-		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
+		if err := s.refreshForRead(ctx, memory.ScopeOrg); err != nil {
 			return nil, err
 		}
 	}
@@ -113,7 +195,7 @@ func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Re
 func (s *markdownStore) Count(ctx context.Context, scope memory.Scope) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.refresh(ctx, scope); err != nil {
+	if err := s.refreshForRead(ctx, scope); err != nil {
 		return 0, err
 	}
 	return s.cfg.Index.CountMemoryIndex(ctx, string(scope), projectID(scope, s.cfg.ProjectID), orgID(scope, s.cfg.OrgID))
@@ -124,11 +206,11 @@ func (s *markdownStore) PromoteToCore(ctx context.Context, id string) error {
 	if s.cfg.ReadOnly {
 		return errors.New("memory store is read-only")
 	}
-	if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+	if err := s.refreshForRead(ctx, memory.ScopeProject); err != nil {
 		return err
 	}
 	if s.cfg.OrgID != "" {
-		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
+		if err := s.refreshForRead(ctx, memory.ScopeOrg); err != nil {
 			return err
 		}
 	}
@@ -144,7 +226,7 @@ func (s *markdownStore) CoreEntries(ctx context.Context, scope memory.Scope) ([]
 	if scope != memory.ScopeProject && scope != memory.ScopeOrg {
 		return nil, fmt.Errorf("scope must be project or org, got %q", scope)
 	}
-	if err := s.refresh(ctx, scope); err != nil {
+	if err := s.refreshForRead(ctx, scope); err != nil {
 		return nil, err
 	}
 	rows, err := s.cfg.Index.CoreMemoryIndexEntries(ctx, string(scope), s.cfg.ProjectID, s.cfg.OrgID)
@@ -177,7 +259,7 @@ func (s *markdownStore) Delete(ctx context.Context, id string) error {
 	if err := s.cfg.Source.Delete(ctx, doc.SourcePath); err != nil {
 		return err
 	}
-	if err := s.refresh(ctx, memory.Scope(doc.Scope)); err != nil {
+	if err := s.syncScopeLocked(ctx, memory.Scope(doc.Scope)); err != nil {
 		return err
 	}
 	return nil

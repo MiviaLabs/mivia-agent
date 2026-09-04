@@ -113,3 +113,29 @@ func TestNewMarkdownSourceRejectsRelativeOrganizationDirectory(t *testing.T) {
 		t.Fatal("NewMarkdownSource accepted a relative organization directory")
 	}
 }
+
+func TestMarkdownSourceDirAccessors(t *testing.T) {
+	root := t.TempDir()
+	orgDir := filepath.Join(t.TempDir(), "org-memories")
+	source, err := NewMarkdownSource(root, orgDir, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantProject := filepath.Join(root, ".agents", "memories")
+	if got := source.ProjectDir(); got != wantProject {
+		t.Fatalf("ProjectDir() = %q, want %q", got, wantProject)
+	}
+	if got := source.OrgDir(); got != orgDir {
+		t.Fatalf("OrgDir() = %q, want %q", got, orgDir)
+	}
+	bare, err := NewMarkdownSource(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bare.ProjectDir(); got != wantProject {
+		t.Fatalf("ProjectDir() = %q, want %q", got, wantProject)
+	}
+	if got := bare.OrgDir(); got != "" {
+		t.Fatalf("OrgDir() = %q, want empty when no organization directory is configured", got)
+	}
+}

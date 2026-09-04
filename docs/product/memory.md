@@ -104,11 +104,16 @@ default.
 ### Markdown and the derived index
 
 Markdown files are the source of truth. The harness scans project files at
-startup and before memory reads and writes. It updates the shared SQLite index
-after a file changes. The index can be rebuilt from the Markdown files.
+startup and before memory reads and writes. A background watcher also watches
+the memory directories. When a file changes, the watcher rescans that scope
+and updates the shared SQLite index. A full-scan fallback runs every
+`index_refresh_interval_seconds` (default 30). Each fallback scan reads every
+memory file in the scope, so the interval trades I/O against freshness. A read
+skips its own rescan when a sync of that scope ran inside the interval. The
+index can be rebuilt from the Markdown files.
 
 The index is a cache. A failed index update does not remove a saved Markdown
-file. The next writable memory operation retries the scan.
+file. The watcher and the fallback retry the scan until a sync succeeds.
 
 The shared context database can contain proprietary information. Protect the
 `~/.mivia` directory with local filesystem permissions.

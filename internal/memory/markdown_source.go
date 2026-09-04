@@ -197,6 +197,19 @@ func (s MarkdownSource) Delete(ctx context.Context, path string) error {
 	return nil
 }
 
+// ProjectDir returns the project memory directory this source scans:
+// <projectRoot>/.agents/memories.
+func (s MarkdownSource) ProjectDir() string { return s.projectDir }
+
+// OrgDir returns the organization memory directory this source scans, or an
+// empty value when no organization directory is configured.
+func (s MarkdownSource) OrgDir() string {
+	if s.orgDir == "" || s.orgDir == "." {
+		return ""
+	}
+	return s.orgDir
+}
+
 func (s MarkdownSource) dir(scope Scope) (string, error) {
 	switch scope {
 	case ScopeProject:

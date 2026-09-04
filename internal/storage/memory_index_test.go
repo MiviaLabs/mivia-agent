@@ -26,6 +26,11 @@ func TestSyncMemoryIndexReplacesDeletedSourcesAndPreservesTier(t *testing.T) {
 	}
 	docs = docs[:1]
 	docs[0].Title = "One updated"
+	// The no-op skip treats an identical source_hash as an unchanged file, and
+	// the scan pipeline derives the hash from the same bytes as every content
+	// field - so a rescan that changes the title always changes the hash too.
+	// The update must carry one, or the skip correctly leaves the row alone.
+	docs[0].SourceHash = "h1b"
 	if err := store.SyncMemoryIndex(context.Background(), "project", "repo-a", "", docs); err != nil {
 		t.Fatal(err)
 	}

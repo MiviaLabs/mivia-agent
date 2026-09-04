@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -75,9 +76,22 @@ func openMarkdownMemoryStore(root string, mc config.MemoryConfig, readOnly bool)
 type ownedMarkdownStore struct {
 	memory.Store
 	index *storage.SQLite
+
+	// stopMu guards stop, the reconciler stop func StartMemoryIndexReconciler
+	// records here. Close runs it defensively, so a caller that dropped the
+	// returned stop func still cannot leak a watcher past the index close.
+	stopMu sync.Mutex
+	stop   func()
 }
 
 func (s *ownedMarkdownStore) Close() error {
+	s.stopMu.Lock()
+	stop := s.stop
+	s.stop = nil
+	s.stopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
 	storeErr := s.Store.Close()
 	indexErr := s.index.Close()
 	if storeErr != nil {
