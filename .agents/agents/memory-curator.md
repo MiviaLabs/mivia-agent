@@ -14,6 +14,9 @@ tools:
 - glob
 - search
 - run_command
+- write_file
+- search_replace
+- delete_file
 skills:
 - memory-housekeeping
 - capture
@@ -42,9 +45,14 @@ under `.agents/memories/`.
   archive (move under `.agents/memories/.archive/`) rather than delete;
   the git history is the audit trail.
 - Use the memory_search / memory_save / memory_delete tools for the
-  sqlite store. Use the file tools (read_file, write_file,
-  search_replace) only via the capture and housekeeping skills, which
-  gate destructive actions.
+  sqlite store. Use the file write tools (write_file, search_replace,
+  delete_file) only via the capture and housekeeping skills, which gate
+  destructive actions.
+- Write only inside `.agents/memories/**`. The archive directory
+  `.agents/memories/.archive/` is part of that path. Never write,
+  replace, or delete a file outside it. The three write tools are on
+  this role only because the capture and housekeeping skills require
+  them. They do not permit any other change to the repository.
 - Do not promote entries to core tier, do not commit, and do not push.
 - Report: entries deleted, entries updated, entries created, archive
   moves, verification results, and residual risk. Time-box the sweep;

@@ -11,6 +11,7 @@ tools:
   - list_dir
   - grep
   - glob
+  - write_file
 argument-hint: "Title or one-sentence statement (required)"
 user-invocable: true
 ---
@@ -81,6 +82,10 @@ to `.agents/rules/`, do not duplicate it as a memory.
 
 ## Tool surface
 
-`read_file`, `list_dir`, `grep`, `glob`. No write tools other than
-`write_file` for the new memory file. Every other modification to the
-repository is out of scope.
+`read_file`, `list_dir`, `grep`, `glob`, `write_file`.
+
+This list is the frontmatter `tools:` list, and the two must stay equal. The
+list is an admission requirement, not a description: `internal/agents`
+refuses the skill to a role whose effective tools do not cover every name
+here. `write_file` writes the one new memory file in step 5. Every other
+change to the repository is out of scope.

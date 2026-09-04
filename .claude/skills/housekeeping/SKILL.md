@@ -12,6 +12,9 @@ tools:
   - grep
   - glob
   - search
+  - write_file
+  - search_replace
+  - delete_file
 argument-hint: "Optional scope: 'all' (default) or 'stale-only'"
 user-invocable: true
 ---

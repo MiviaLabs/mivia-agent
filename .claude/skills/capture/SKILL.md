@@ -11,6 +11,7 @@ tools:
   - list_dir
   - grep
   - glob
+  - write_file
 argument-hint: "Title or one-sentence statement (required)"
 user-invocable: true
 ---

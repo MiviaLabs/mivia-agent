@@ -306,6 +306,117 @@ def test_alias_gate_rejects_a_missing_claude_tree() -> None:
     expect_alias_rejection(mutate, ".claude/skills is missing")
 
 
+def build_role_fixture(
+    root: Path,
+    skill_tools: str = "tools:\n  - read_file\n  - write_file\n",
+    role_tools: str = "tools:\n- read_file\n- write_file\n",
+    role_skills: str = "skills:\n- probe-skill\n",
+) -> Path:
+    """Write one canonical skill and one role that lists it.
+
+    The clean fixture covers the skill's tools exactly. Each caller mutates one
+    side to prove the gate rejects the mismatch. A probe never goes into the
+    real .agents tree.
+    """
+    skill = root / ".agents" / "skills" / "probe-skill"
+    skill.mkdir(parents=True)
+    skill.joinpath("SKILL.md").write_text(
+        "---\nname: probe-skill\ndescription: Probe skill for the role gate.\n"
+        + skill_tools
+        + "---\n\nCanonical body.\n",
+        encoding="utf-8",
+    )
+    agents = root / ".agents" / "agents"
+    agents.mkdir(parents=True)
+    agents.joinpath("probe-role.md").write_text(
+        "---\nname: probe-role\ndescription: Probe role for the role gate.\n"
+        + role_tools
+        + role_skills
+        + "---\n\nRole prompt.\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def run_role_gate(root: Path) -> str | None:
+    """Run check_agent_skill_tools. Return the failure text or None."""
+    mod = load_gate()
+    captured = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(captured):
+            mod.check_agent_skill_tools(root)
+    except SystemExit:
+        return captured.getvalue().strip()
+    return None
+
+
+def test_role_gate_accepts_a_covering_role() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_role_fixture(Path(tmp))
+        rejection = run_role_gate(root)
+        if rejection is not None:
+            raise AssertionError(rejection)
+
+
+def test_role_gate_rejects_a_role_missing_a_skill_tool() -> None:
+    """skill_policy.go refuses the call, so the role must declare the tool."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_role_fixture(Path(tmp), role_tools="tools:\n- read_file\n")
+        rejection = run_role_gate(root)
+        if rejection is None:
+            raise AssertionError("gate accepted a role that under-declares tools")
+        if "'write_file'" not in rejection or "does not" not in rejection:
+            raise AssertionError(
+                "expected a missing-tool rejection, got:\n" + rejection
+            )
+
+
+def test_role_gate_rejects_an_empty_tool_list_against_a_skill() -> None:
+    """`tools: []` is a flow sequence; the parser must read it as empty."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_role_fixture(Path(tmp), role_tools="tools: []\n")
+        rejection = run_role_gate(root)
+        if rejection is None:
+            raise AssertionError("gate accepted a role with no tools at all")
+        if "'read_file'" not in rejection:
+            raise AssertionError(
+                "expected the first missing tool named, got:\n" + rejection
+            )
+
+
+def test_role_gate_rejects_an_unknown_skill() -> None:
+    """INV-AG-30 drops an unknown skill at load, so a typo disarms the role."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_role_fixture(Path(tmp), role_skills="skills:\n- probe-skil\n")
+        rejection = run_role_gate(root)
+        if rejection is None:
+            raise AssertionError("gate accepted a role naming a skill that does not exist")
+        if "has no .agents/skills/probe-skil/SKILL.md" not in rejection:
+            raise AssertionError(
+                "expected an unknown-skill rejection, got:\n" + rejection
+            )
+
+
+def test_role_gate_ignores_a_role_with_no_skills_list() -> None:
+    """No allowlist means the role restricts nothing; there is nothing to check."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_role_fixture(Path(tmp), role_tools="tools: []\n", role_skills="")
+        rejection = run_role_gate(root)
+        if rejection is not None:
+            raise AssertionError(rejection)
+
+
+def test_role_gate_reads_the_committed_tree() -> None:
+    """The gate must pass on the real tree it ships with."""
+    mod = load_gate()
+    captured = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(captured):
+            mod.check_agent_skill_tools(ROOT)
+    except SystemExit:
+        raise AssertionError(captured.getvalue().strip())
+
+
 def main() -> None:
     test_known_keys_match_go_source()
     test_gate_accepts_schema_keys()
@@ -321,6 +432,12 @@ def main() -> None:
     test_alias_gate_rejects_an_orphan_directory()
     test_alias_gate_rejects_a_stray_resource_file()
     test_alias_gate_rejects_a_missing_claude_tree()
+    test_role_gate_accepts_a_covering_role()
+    test_role_gate_rejects_a_role_missing_a_skill_tool()
+    test_role_gate_rejects_an_empty_tool_list_against_a_skill()
+    test_role_gate_rejects_an_unknown_skill()
+    test_role_gate_ignores_a_role_with_no_skills_list()
+    test_role_gate_reads_the_committed_tree()
     print("test_verify_skill_tree: ok")
 
 
