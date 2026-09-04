@@ -95,6 +95,7 @@
       "internal/agent",
       "internal/agents",
       "internal/chat",
+      "internal/cliworktree",
       "internal/composition",
       "internal/config",
       "internal/contextmgr",
@@ -206,7 +207,8 @@
       "internal/contextstate",
       "internal/storage",
       "internal/vcs",
-      "internal/workspace"
+      "internal/workspace",
+      "internal/worktreeroute"
     ],
     "internal/composition": [
       "internal/chat",
@@ -506,7 +508,15 @@
       "internal/uikit/intent",
       "internal/uikit/ports",
       "internal/uikit/uievent",
-      "internal/workspace"
+      "internal/vcs",
+      "internal/workspace",
+      "internal/worktreeroute"
+    ],
+    "internal/worktreeroute": [
+      "internal/chat",
+      "internal/contextstate",
+      "internal/storage",
+      "internal/vcs"
     ],
     "internal/uikit/ports": [
       "internal/uikit/intent",
@@ -580,5 +590,6 @@
       "internal/workflows/ledger",
       "internal/workspace"
     ]
-  }
+  },
+  "allowedDeletions": []
 }

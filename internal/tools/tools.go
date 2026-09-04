@@ -82,6 +82,28 @@ type Registry struct {
 	mu    sync.RWMutex
 	order []Tool
 	by    map[string]Tool
+
+	// Workspace metadata for registries built by NewDefaultRegistry.
+	// Hand-assembled registries leave both empty, and the accessors report
+	// that as "unknown" rather than an implied confinement root.
+	workspaceRoot         string
+	workspaceUnrestricted bool
+}
+
+// WorkspaceRoot reports the absolute root this registry resolves relative
+// paths against; empty for hand-assembled registries.
+func (r *Registry) WorkspaceRoot() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.workspaceRoot
+}
+
+// WorkspaceUnrestricted reports whether the registry may escape its root
+// (--full-disk); false for hand-assembled registries.
+func (r *Registry) WorkspaceUnrestricted() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.workspaceUnrestricted
 }
 
 // NewRegistry builds an empty registry.

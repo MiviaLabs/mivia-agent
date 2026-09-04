@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -63,6 +64,13 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	}
 
 	key := msg.String()
+	// Ctrl+W starts a new worktree-bound session when the composer is
+	// empty; non-empty keeps the composer's delete-word binding.
+	if key == "ctrl+w" && s.composer.IsEmpty() && !s.embedded && s.runner != nil {
+		out := s.runner.StartInNewWorktree(context.Background(), "")
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	}
 	if s.composer.MenuActive() {
 		if id, ok := s.keys.Match(keymap.ContextCompletion, key); ok {
 			return s.completionAction(id)

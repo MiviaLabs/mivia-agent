@@ -348,7 +348,7 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 	if err != nil {
 		return err
 	}
-	if err := ensureSelectedMCPTools(state, selected); err != nil {
+	if err := ensureSelectedMCPTools(sess, state, selected); err != nil {
 		return fmt.Errorf("MCP tools: %w", err)
 	}
 	if !state.BaselineCaptured {

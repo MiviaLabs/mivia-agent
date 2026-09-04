@@ -328,6 +328,12 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 		next, cmd, _ := s.quit()
 		return next, tea.Batch(cmd, tea.ClearScreen)
 	}
+	if msg.String() == "ctrl+w" && s.runner != nil && s.sessionPicker != nil && s.sessionPicker.filter == "" {
+		s.sessionPicker = nil
+		out := s.runner.StartInNewWorktree(context.Background(), "")
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	}
 	next, cmd := s.sessionPicker.Update(msg)
 	s.sessionPicker = &next
 	if cmd == nil {
@@ -340,6 +346,19 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 			return s.withError("no command runner configured for /resume"), tea.ClearScreen
 		}
 		out := s.runner.SelectSession(context.Background(), m.Item)
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	case resumePickMsg:
+		s.sessionPicker = nil
+		if s.runner == nil {
+			return s.withError("no command runner configured for /resume"), tea.ClearScreen
+		}
+		var out ports.CommandOutcome
+		if m.summary.WorktreeRoute {
+			out = s.runner.StartInWorktree(context.Background(), m.summary)
+		} else {
+			out = s.runner.ResumeInWorktree(context.Background(), m.summary)
+		}
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:

@@ -89,6 +89,21 @@ func (f *fakeRunner) SelectSession(_ context.Context, id string) ports.CommandOu
 	return f.selectOutcome
 }
 
+func (f *fakeRunner) StartInWorktree(_ context.Context, summary ports.SessionSummary) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "start-worktree:"+summary.Worktree)
+	return f.outcome
+}
+
+func (f *fakeRunner) StartInNewWorktree(_ context.Context, name string) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "start-new-worktree:"+name)
+	return ports.CommandOutcome{}
+}
+
+func (f *fakeRunner) ResumeInWorktree(_ context.Context, summary ports.SessionSummary) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "resume-worktree:"+summary.ID)
+	return f.outcome
+}
+
 func (f *fakeRunner) SelectEffort(_ context.Context, level string) ports.CommandOutcome {
 	f.selectCalls = append(f.selectCalls, "effort:"+level)
 	return f.selectOutcome

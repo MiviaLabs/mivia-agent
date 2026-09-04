@@ -180,7 +180,7 @@ func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.ToolBase == nil {
+	if entryBase(sess, state) == nil {
 		return nil, nil
 	}
 	// The skill registry is frozen for the life of the agent binding, exactly
@@ -195,7 +195,7 @@ func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	// The dispatcher is built for the generation this binding will become, the
 	// same value SwitchBinding assigns when it publishes.
 	binding.ModelGeneration = sess.CurrentModelGeneration() + 1
-	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
+	base := entryBase(sess, state).CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
 	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
 		selected: state.Selected,
 		base:     base,
