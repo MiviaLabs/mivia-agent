@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"time"
 )
 
@@ -129,9 +130,15 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 		return
 	}
 	sessionID := s.SessionID()
+	batchID := sessionID + "-" + strconv.FormatUint(s.uploadBatch.Add(1), 10)
+	unflushed, _ := s.outbox.UnflushedEvents()
+	if len(unflushed) > 0 {
+		s.telemetry.uploadStarted(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, unflushed[0].Seq, unflushed[len(unflushed)-1].Seq, len(unflushed))
+	}
 
 	moved, err := FlushOutbox(ctx, s.client, s.outbox, sessionID)
 	if err == nil {
+		s.telemetry.uploadFinished(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, s.LastSeq(), s.outbox.UnflushedCount(), moved)
 		s.retryBase = 0
 		s.retryAt = time.Time{}
 		s.lastGapBase = noGapBase
@@ -142,6 +149,9 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 		}
 		s.reportHealth(s.health.noteSuccess(s.outbox.UnflushedCount()), "")
 		return
+	}
+	if len(unflushed) > 0 {
+		s.telemetry.uploadFailed(s.localSessionID, s.opts.ProjectorOptions.WriterID, batchID, unflushed[0].Seq, s.outbox.UnflushedCount(), err)
 	}
 	switch classifyFlushError(err) {
 	case outcomeStop:

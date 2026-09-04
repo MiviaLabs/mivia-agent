@@ -57,6 +57,7 @@ type SessionOptions struct {
 	MaxUnflushed    int
 	PollWaitSeconds int
 	HeartbeatPeriod time.Duration
+	Telemetry       *SyncTelemetry
 	CreateTitle     string
 	CwdLabel        string
 	HostLabel       string
@@ -239,6 +240,8 @@ type SyncSession struct {
 	// createParams is the body recovery re-posts to mint a replacement
 	// session: the same title and labels the run attached with.
 	createParams CreateSessionParams
+	telemetry    *SyncTelemetry
+	uploadBatch  atomic.Uint64
 
 	// beforeRecoveryLock is a test seam, nil in production. It runs after
 	// recovery's CreateSession and before it takes s.mu, which is the one
@@ -372,6 +375,7 @@ func newSyncSession(localID, remoteID string, initialSeq int64, client *Client, 
 		lastGapBase:    noGapBase,
 		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),
 		createParams:   params,
+		telemetry:      opts.Telemetry,
 	}
 	s.running.Store(true)
 	s.appender = outbox
@@ -416,6 +420,7 @@ func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 	if !s.running.Load() {
 		return
 	}
+	s.telemetry.producedEvent(s.localSessionID, s.opts.ProjectorOptions.WriterID, string(ev.Kind))
 
 	select {
 	case s.eventCh <- ev:
