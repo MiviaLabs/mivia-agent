@@ -110,6 +110,13 @@ SELF_PROTECTING_BLOCKLIST = (
     "Makefile",
     ".mivia/mivia.toml",
     ".mivia/policy",
+    # .mivia/hooks holds run-command-guard.py, the PreToolUse guard's own
+    # program (layer 3). .claude/settings.json registers that guard as the
+    # handler (layer 2's declaration). Either writable lets a workflow agent
+    # step silently disable enforcement while this very check stays green -
+    # this tuple's own name claims coverage it did not have until now.
+    ".mivia/hooks",
+    ".claude/settings.json",
 )
 
 RUN_COMMAND_GUARD = "run-command-guard.py"

@@ -173,11 +173,29 @@ def check_memories(directory: Path) -> None:
                     f"{name}: {key.strip()} opens a block scalar with a "
                     f"malformed header: {value!r}."
                 )
-            if value[:2] in ("- ", "? ", ": ", "& ", "! ") or value in ("-", "?", "&"):
+            if value[:2] in ("- ", "? ", ": ", "& ") or value in ("-", "?", "&"):
                 fail(
                     f"{name}: {key.strip()} opens with {value[:1]!r} followed "
                     f"by a space, which YAML reads as a block indicator or an "
                     f"empty anchor and then refuses: {value!r}."
+                )
+            # A bang opens a tag, not the indicator list above: "! foo" (a
+            # bare non-specific tag) and "!!str foo" / "!<uri> foo" (built-in
+            # or verbatim tags) are all legal under yaml.safe_load. A custom
+            # single-bang tag like "!foo" or "!foo bar" is not - safe_load has
+            # no constructor for it and raises. Removing "! " from the block-
+            # indicator list above without adding this check would silently
+            # readmit "! foo" as a rejection AND leave "!foo" unrejected.
+            if value.startswith("!") and not (
+                (value.startswith("!!") and len(value) > 2)
+                or (value.startswith("!<") and ">" in value)
+                or value in ("!", "! ")
+                or value.startswith("! ")
+            ):
+                fail(
+                    f"{name}: {key.strip()} opens a custom tag {value!r}. "
+                    f"yaml.safe_load has no constructor for it and refuses "
+                    f"to load this frontmatter."
                 )
             if value[:1] in YAML_INDICATORS:
                 fail(
