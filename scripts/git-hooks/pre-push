@@ -87,6 +87,7 @@ done
 
 run_verify python3 scripts/verify_agent_config.py
 run_verify python3 scripts/check_memories.py
+run_verify python3 scripts/check_gate_scripts.py
 run_verify python3 scripts/git-hooks/file-size-check --tracked
 run_verify python3 scripts/check_go_structure.py --strict --all
 
