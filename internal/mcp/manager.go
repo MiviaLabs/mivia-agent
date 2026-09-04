@@ -60,7 +60,7 @@ func (c *sdkClient) CallTool(ctx context.Context, name string, arguments map[str
 		return "", err
 	}
 	if result.IsError {
-		return "", fmt.Errorf("MCP tool returned an error")
+		return "", fmt.Errorf("%s", callToolErrorText(result.Content))
 	}
 	parts := make([]string, 0, len(result.Content))
 	for _, content := range result.Content {
@@ -72,6 +72,29 @@ func (c *sdkClient) CallTool(ctx context.Context, name string, arguments map[str
 	}
 	return strings.Join(parts, "\n"), nil
 }
+
+// callToolErrorText renders an isError MCP result as the error message the
+// transcript will show (after the caller's redaction and length bound).
+// Servers put the actionable reason - bad arguments, stale index, crashed
+// subsystem - in the result CONTENT, not the JSON-RPC error, so dropping the
+// content hid everything but the fact of failure. Empty content degrades to
+// the honest generic instead of an empty message.
+func callToolErrorText(contents []sdk.Content) string {
+	parts := make([]string, 0, len(contents))
+	for _, content := range contents {
+		if text, ok := content.(*sdk.TextContent); ok {
+			parts = append(parts, text.Text)
+			continue
+		}
+		parts = append(parts, "[unsupported MCP result content]")
+	}
+	msg := strings.TrimSpace(strings.Join(parts, "\n"))
+	if msg == "" {
+		return "MCP tool returned an error"
+	}
+	return msg
+}
+
 func (c *sdkClient) Close() error {
 	if c.httpClient != nil {
 		c.httpClient.CloseIdleConnections()

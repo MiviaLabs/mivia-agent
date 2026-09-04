@@ -154,10 +154,52 @@ func bridgeSchemaValue(value map[string]any, depth int) (map[string]any, bool) {
 			}
 			out[key] = allowed
 		default:
-			return nil, false
+			bridged, ok := bridgeSchemaAnnotation(key, raw)
+			if !ok {
+				return nil, false
+			}
+			if bridged != nil {
+				out[key] = bridged
+			}
 		}
 	}
+	if out["type"] == nil && (out["properties"] != nil || out["required"] != nil) {
+		out["type"] = "object"
+	}
 	return out, true
+}
+
+// bridgeSchemaAnnotation bridges the annotation keys (description, format,
+// title, default, numeric bounds) that carry no argument-contract structure.
+// ok=false marks the annotation malformed for its key; ok=true with a nil
+// value omits it. Omission is the fail-open rule: unknown vendor annotations
+// are metadata for humans, not the argument contract, and nuking the whole
+// schema over one exotic key used to leave the model blind to every
+// parameter name - description-bearing schemas (in practice: nearly every
+// real server) collapsed to {}, the model then sent empty arguments, and
+// the server rejected them.
+func bridgeSchemaAnnotation(key string, raw any) (any, bool) {
+	switch key {
+	case "description", "format", "title":
+		text, ok := raw.(string)
+		if !ok {
+			return nil, false
+		}
+		return text, true
+	case "default":
+		switch raw.(type) {
+		case nil, bool, string, float64:
+			return raw, true
+		}
+		return nil, true
+	case "minimum", "maximum", "minLength", "maxLength":
+		if num, ok := raw.(float64); ok {
+			return num, true
+		}
+		return nil, true
+	default:
+		return nil, true
+	}
 }
 
 func validSchemaType(kind string) bool {
