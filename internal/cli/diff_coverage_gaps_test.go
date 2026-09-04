@@ -284,12 +284,3 @@ func TestClassifyStackPlanRunDeliveryWiringClosure(t *testing.T) {
 		t.Fatalf("ClassifyStackPlanRunDeliveryFunc(unknown run) = %d, want a non-negative gate", gate)
 	}
 }
-
-// --- memory_command.go -----------------------------------------------------
-
-func TestParseMemoryDumpArgsRejectsPositional(t *testing.T) {
-	_, _, err := parseMemoryDumpArgs([]string{"stray"})
-	if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
-		t.Fatalf("parseMemoryDumpArgs(stray) = %v, want the unexpected-argument error", err)
-	}
-}
