@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -60,6 +61,58 @@ GIT_COMMIT_SHORT_VALUE_CHARS = "mFC"
 # Shell control operators that start a NEW command. Every command in a
 # compound string must be vetted, so scanning restarts at these.
 SHELL_SEPARATORS = {"&&", ";", "||"}
+
+# Interpreters whose `-c <string>` payload is itself a shell command line,
+# never data. Matched by basename so a full path (/bin/bash, /usr/bin/sh)
+# is recognized the same as the bare name.
+SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+
+
+def _interpreter_name(tok: str) -> str:
+    return tok.rsplit("/", 1)[-1]
+
+
+def _expand_shell_c(tokens: list, *, _depth: int = 0) -> list:
+    """Splice a `sh -c '<command>'` payload's tokens into the scan stream.
+
+    `["sh", "-c", "git --no-pager commit -n"]` is the documented, supported
+    way to run a shell pipeline through this tool (see run_command_test.go),
+    and it was a live bypass: the payload is a single argv element that is
+    never itself token-split, so neither the structural -n walk nor the
+    regex backstop (which needs "git" and "commit" textually adjacent) ever
+    saw the command inside it - an option like --no-pager, -C, or --git-dir
+    between "git" and "commit" defeated the regex too, same as it does
+    unwrapped. Expansion is additive: the wrapper tokens (`sh`, `-c`, and the
+    raw payload string) stay in the output, so a pattern that targets the
+    wrapper itself still matches; recursion handles a payload that itself
+    wraps another `sh -c`. Depth is capped only against pathological input;
+    ordinary nesting is a handful of levels at most.
+    """
+    if _depth > 20:
+        return list(tokens)
+    out = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = str(tokens[i])
+        out.append(tok)
+        if (
+            _interpreter_name(tok) in SHELL_INTERPRETERS
+            and i + 2 < n
+            and str(tokens[i + 1]) == "-c"
+        ):
+            payload = str(tokens[i + 2])
+            out.append(payload)
+            try:
+                inner = shlex.split(payload)
+            except ValueError:
+                inner = None
+            if inner:
+                out.extend(_expand_shell_c(inner, _depth=_depth + 1))
+            i += 3
+            continue
+        i += 1
+    return out
 
 
 def _takes_message_value(tok: str) -> bool:
@@ -176,19 +229,22 @@ def option_vector(argv: list) -> list:
 
 
 # git global options that consume the NEXT argv element as their value, in
-# BOTH their short and long forms (confirmed against git.c handle_options):
-# -C/--git-dir/--work-tree/--namespace/--super-prefix each take a directory
-# or path, -c/--config-env take a key[=value]. Missing any of these here was
-# a real, live bypass: `git --git-dir /tmp/x commit -n` was misread as a
-# boolean flag followed by an unrelated value token, so _git_commit_index
-# never found "commit" and the whole segment skipped both the structural -n
-# check and the regex backstop (which also requires literal "git"+"commit"
-# adjacency). --exec-path is deliberately excluded: given with no "=", git
-# treats it as boolean (prints the path and exits), never reaching a
-# subcommand, so it cannot hide one.
+# BOTH their short and long forms (confirmed against git.c handle_options,
+# and empirically against the real git binary - see
+# scripts/test_agent_hook_guard.py): -C/--git-dir/--work-tree/--namespace/
+# --super-prefix/--attr-source each take a directory, path, or tree-ish,
+# -c/--config-env take a key[=value]. Missing any of these here was a real,
+# live bypass: `git --git-dir /tmp/x commit -n` was misread as a boolean
+# flag followed by an unrelated value token, so _git_commit_index never
+# found "commit" and the whole segment skipped both the structural -n check
+# and the regex backstop (which also requires literal "git"+"commit"
+# adjacency); --attr-source was the same bug, missed by the fix that added
+# the rest of this set. --exec-path is deliberately excluded: given with no
+# "=", git treats it as boolean (prints the path and exits), never reaching
+# a subcommand, so it cannot hide one.
 GIT_GLOBAL_VALUE_OPTIONS = {
     "-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
-    "-c", "--config-env",
+    "-c", "--config-env", "--attr-source",
 }
 
 
@@ -297,7 +353,9 @@ def main() -> None:
     # Scan only the option vector. For git commit, -m/-F/-C VALUES and post-`--`
     # positionals are message data, never bypass flags; a standalone dash-
     # prefixed element after the terminator (`-m x -n`) is still an option.
-    parts = [str(part) for part in argv]
+    # Expand first: a `sh -c '<command>'` payload is itself an unsplit
+    # command line, and every check below operates on tokens.
+    parts = _expand_shell_c([str(part) for part in argv])
     # A structural check, ahead of the pattern-based ones below: -n survives
     # any global git option between `git` and `commit`, which the
     # blockedFlagPatterns regex requires to be textually adjacent.

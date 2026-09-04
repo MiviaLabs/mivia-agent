@@ -665,6 +665,52 @@ def test_run_command_guard_allows_a_global_options_value_named_commit() -> None:
         assert proc.returncode == 0, f"{argv} -> {proc.stderr}"
 
 
+def test_run_command_guard_catches_dash_n_behind_attr_source() -> None:
+    """A live bypass one option short of the fix above: --attr-source takes
+    a separate value token too (confirmed against the real git binary) and
+    was missing from GIT_GLOBAL_VALUE_OPTIONS, the same bug class."""
+    for argv in (
+        ["git", "--attr-source", "foo", "commit", "-n"],
+        ["git", "--attr-source", "foo", "--attr-source", "bar", "commit", "-n"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+    # The "=" form is a single token and was never affected.
+    proc = run_command_guard(["git", "--attr-source=foo", "commit", "-n"])
+    assert proc.returncode == 2, proc.stderr
+
+
+def test_run_command_guard_expands_sh_dash_c_before_scanning() -> None:
+    """A live, critical bypass: a `sh -c '<command>'` (or bash/zsh/...) argv
+    element is the officially supported way to run a shell pipeline through
+    run_command, but the payload is a single unsplit string - neither the
+    structural -n walk nor the regex backstop (which needs "git" and
+    "commit" textually adjacent) ever tokenized it, so ANY decoy option
+    between "git" and "commit" inside the string defeated both checks,
+    with no structural coverage at all before expansion."""
+    for argv in (
+        ["sh", "-c", "git commit -n"],
+        ["sh", "-c", "git --no-pager commit -n"],
+        ["sh", "-c", "git -C /tmp commit -n"],
+        ["sh", "-c", "git --attr-source foo commit -n"],
+        ["sh", "-c", "git --git-dir /tmp/x commit -n"],
+        ["bash", "-c", "git --namespace foo commit -n"],
+        ["/usr/bin/sh", "-c", "git commit -n"],
+        ["sh", "-c", "sh -c 'git commit -n'"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+    # Benign shell payloads, and a decoy branch literally named "commit"
+    # inside the wrapper, must still be allowed.
+    for argv in (
+        ["sh", "-c", "git log -n5"],
+        ["sh", "-c", "git branch commit -n"],
+        ["sh", "-c", "git commit -m hello"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 0, f"{argv} -> {proc.stderr}"
+
+
 def test_run_command_guard_finds_commit_past_a_decoy_value() -> None:
     """A "commit" used as a -c VALUE is not the subcommand; the real one,
     one token later, still is."""
@@ -1011,14 +1057,22 @@ def test_n_reporting_matches_segment_shape_seeded() -> None:
         "--reedit-message",
     ]
 
-    def vec_has_git_commit_n(vec: list[str]) -> bool:
-        try:
-            i_git = vec.index("git")
-            i_commit = vec.index("commit", i_git + 1)
-            vec.index("-n", i_commit + 1)
-        except ValueError:
-            return False
-        return True
+    def segment_has_git_commit_n(segment: list[str]) -> bool:
+        """Oracle for "-n on git commit", delegated to the module's own
+        structural walk (_git_commit_index) rather than a naive index()
+        search. A naive `vec.index("git")` finds the FIRST "git" token; the
+        random phrase pools can independently choose a bare "git" phrase
+        AND a "git_global"/commit phrase in the same segment (unrealistic as
+        a real shell command, but valid fuzz input), giving a segment with
+        two "git" tokens where the naive index-based oracle finds "commit"
+        and a LATER, unrelated "-n" (e.g. from a "grep -n x" phrase chosen
+        afterward) past the first "git" - a false "expected block" the real
+        structural walk correctly does not fire, because it commits to
+        whatever immediately follows the FIRST "git" as the subcommand
+        position and does not skip past an unrelated bare "git" token to
+        find a later, real commit invocation.
+        """
+        return mod._segment_has_git_commit_dash_n(segment)
 
     rng = random.Random(20260812)
     policy = mod.load_policy()
@@ -1057,9 +1111,7 @@ def test_n_reporting_matches_segment_shape_seeded() -> None:
 
         # (b) -n is reported iff some single segment's option vector contains
         # git, then commit, then -n in order.
-        expected = any(
-            vec_has_git_commit_n(mod.option_vector(segment)) for segment in raw_segments
-        )
+        expected = any(segment_has_git_commit_n(segment) for segment in raw_segments)
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
