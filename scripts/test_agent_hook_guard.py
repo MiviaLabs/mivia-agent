@@ -638,6 +638,33 @@ def test_run_command_guard_does_not_misclassify_a_branch_named_commit() -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+def test_run_command_guard_catches_dash_n_behind_every_long_global_option() -> None:
+    """A live bypass: any long-form git global option not in the value-
+    consuming set was read as boolean, its VALUE token then examined instead
+    of the real subcommand, so `_git_commit_index` never found "commit" and
+    the whole segment was skipped by both the structural and regex checks.
+    """
+    for argv in (
+        ["git", "--git-dir", "/tmp/x", "commit", "-n"],
+        ["git", "--work-tree", "/tmp/x", "commit", "-n"],
+        ["git", "--namespace", "foo", "commit", "-n"],
+        ["git", "--super-prefix", "foo", "commit", "-n"],
+        ["git", "--config-env", "user.name=X", "commit", "-n"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+
+
+def test_run_command_guard_allows_a_global_options_value_named_commit() -> None:
+    """A global option's VALUE is never the subcommand, long form included."""
+    for argv in (
+        ["git", "-C", "commit", "status"],
+        ["git", "--git-dir", "commit", "status"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 0, f"{argv} -> {proc.stderr}"
+
+
 def test_run_command_guard_finds_commit_past_a_decoy_value() -> None:
     """A "commit" used as a -c VALUE is not the subcommand; the real one,
     one token later, still is."""

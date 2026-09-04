@@ -175,11 +175,21 @@ def option_vector(argv: list) -> list:
     return vec
 
 
-# git global options that consume the NEXT argv element as their value (short
-# forms only: -C <dir>, -c <key>=<value>). Everything else dash-prefixed
-# before the subcommand is treated as a standalone global flag (its value, if
-# any, is attached with "=" rather than a separate token in real usage).
-GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c"}
+# git global options that consume the NEXT argv element as their value, in
+# BOTH their short and long forms (confirmed against git.c handle_options):
+# -C/--git-dir/--work-tree/--namespace/--super-prefix each take a directory
+# or path, -c/--config-env take a key[=value]. Missing any of these here was
+# a real, live bypass: `git --git-dir /tmp/x commit -n` was misread as a
+# boolean flag followed by an unrelated value token, so _git_commit_index
+# never found "commit" and the whole segment skipped both the structural -n
+# check and the regex backstop (which also requires literal "git"+"commit"
+# adjacency). --exec-path is deliberately excluded: given with no "=", git
+# treats it as boolean (prints the path and exits), never reaching a
+# subcommand, so it cannot hide one.
+GIT_GLOBAL_VALUE_OPTIONS = {
+    "-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+    "-c", "--config-env",
+}
 
 
 def _git_commit_index(segment: list) -> int | None:

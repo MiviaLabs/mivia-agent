@@ -98,20 +98,31 @@ def strip_trailing_comment(value: str) -> str:
 # and timestamp both validate their content's FORMAT (base64, ISO 8601) and
 # are deliberately excluded: "!!binary abc" opens a tag this list would
 # accept but the base64 decoder still refuses. map/seq/set/omap/merge are
-# collection tags, never valid on a single-line frontmatter scalar.
-YAML_SAFE_SCALAR_TAGS = ("str", "int", "float", "bool")
+# collection tags, never valid on a single-line frontmatter scalar. int,
+# float and bool are ALSO excluded, on purpose: their SafeConstructor still
+# validates the scalar text ("!!int abc" raises the same as "!!binary abc"
+# does), which this gate does not replicate. str is the only tag whose
+# constructor accepts arbitrary text.
+YAML_SAFE_SCALAR_TAGS = ("str",)
+
+# The only tag: URIs a real yaml.safe_load can resolve. A bare "tag:" prefix
+# check (an earlier draft of this function) waved through any scheme-shaped
+# text, including "tag:example.com,2000:foo", which yaml.safe_load has no
+# constructor for and still refuses.
+YAML_SAFE_VERBATIM_TAGS = ("tag:yaml.org,2002:str",)
 
 
 def check_tag_scalar(name: str, key: str, value: str) -> None:
     """A value opening with "!" must be a tag yaml.safe_load can construct.
 
-    "! foo" (bare non-specific tag) and "!!str foo" / "!<uri> foo" (built-in
-    or verbatim tags naming a resolvable safe-loader tag) are legal. A custom
-    single-bang tag ("!foo"), an unrecognized "!!name" tag
-    ("!!python/object:x", "!!map"), a malformed verbatim tag ("!<>",
-    "!<has spaces>"), or a second tag indicator right after a bare bang
-    ("! !nested") all raise ConstructorError, ScannerError or ParserError
-    under yaml.safe_load and must fail here the same way.
+    Conservative on purpose: only forms yaml.safe_load is KNOWN to accept for
+    arbitrary text pass. "! foo" (bare non-specific tag), "!!str foo"/"!!str"
+    (the only built-in whose constructor imposes no format), and the one
+    verbatim spelling of it are legal. A custom single-bang tag ("!foo"), an
+    unrecognized or format-validating "!!name" tag ("!!python/object:x",
+    "!!map", "!!int abc"), a non-str verbatim tag, a malformed one ("!<>",
+    "!<a:b>"), or a second tag indicator right after a bare bang
+    ("! !nested") all raise under yaml.safe_load and must fail here too.
     """
     if value.startswith("! "):
         if value[2:3] == "!":
@@ -122,25 +133,23 @@ def check_tag_scalar(name: str, key: str, value: str) -> None:
         return
     if value.startswith("!!"):
         rest = value[2:]
-        tag_name, sep, _ = rest.partition(" ")
-        if tag_name == "null" and not sep:
-            return  # "!!null" alone resolves the empty scalar to null
-        if sep and tag_name in YAML_SAFE_SCALAR_TAGS:
+        tag_name, _, _ = rest.partition(" ")
+        # "!!str" and "!!null" both resolve with no trailing content: str's
+        # constructor accepts the empty string, and null's resolver treats
+        # an empty tail (no separator, or a separator with nothing after) as
+        # the null value either way.
+        if tag_name in ("str", "null"):
             return
         fail(f"{name}: {key} opens tag {value!r}, which yaml.safe_load either "
-             f"has no constructor for, or needs a non-empty value it does "
-             f"not have (resolvable here: null, or one of "
-             f"{', '.join(YAML_SAFE_SCALAR_TAGS)} with content).")
+             f"has no constructor for, or validates in a way this gate does "
+             f"not replicate (only str and null are unconditionally safe "
+             f"here).")
     if value.startswith("!<"):
-        # Only the standard global-tag URI scheme is accepted, matching the
-        # one shape this gate can vouch for without a real URI-grammar
-        # parser: "!<a:b> x" opens but is not a valid tag URI and
-        # yaml.safe_load refuses it too.
         if ">" in value:
             inner, _, tail = value[2:].partition(">")
-            if inner.startswith("tag:") and " " not in inner and tail[:1] in (" ", ""):
+            if inner in YAML_SAFE_VERBATIM_TAGS and tail[:1] in (" ", ""):
                 return
-        fail(f"{name}: {key} opens a malformed or non-standard verbatim tag "
+        fail(f"{name}: {key} opens a malformed or unresolvable verbatim tag "
              f"{value!r}.")
     fail(f"{name}: {key} opens a custom tag {value!r}. yaml.safe_load has "
          f"no constructor for it and refuses to load this frontmatter.")
