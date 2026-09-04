@@ -682,11 +682,12 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert helper_call in push
 
 
-def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path) -> None:
+def test_pre_commit_full_script_auto_stages_memories(root: Path) -> None:
     """Run the REAL scripts/git-hooks/pre-commit end to end in a linked git
-    worktree of this repo, with a genuinely staged .mivia/memory.db change,
-    confirming the memory.db auto-stage step coexists with every other gate
-    (config, secrets, size, structure, semgrep, invariants) running together.
+    worktree of this repo with an UNTRACKED new memory and a DELETED tracked
+    one under .agents/memories/, confirming the auto-stage step adds the new
+    file and stages the deletion, coexisting with every other gate (config,
+    secrets, size, structure, semgrep, invariants) running together.
 
     A linked worktree (not a synthetic fixture) is required: the script's
     other gates live at $ROOT/scripts/... and must actually be present.
@@ -710,25 +711,22 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
         run(["git", "config", "--worktree", "user.name", "Hook Test"], root)
         run(["git", "config", "--worktree", "commit.gpgsign", "false"], root)
 
-        mivia_db = root / ".mivia" / "memory.db"
-        assert mivia_db.is_file(), "worktree must carry the real committed memory.db"
+        memories = root / ".agents" / "memories"
+        assert memories.is_dir(), "worktree must carry the committed .agents/memories"
+        tracked = sorted(memories.glob("*.md"))
+        assert tracked, "worktree must carry at least one committed memory"
 
-        # Real, valid mutation via the actual CLI (not a byte-level edit):
-        # find a real existing id, then promote it - a genuine read-write
-        # open plus (if not already core) a real row change.
-        found = run(
-            ["go", "run", "./cmd/mivia", "memory", "search", "the",
-             "--workspace", str(root), "--limit", "1", "--json"],
-            root,
+        # A new memory exactly as memory_save leaves it: untracked, never
+        # `git add`ed by anyone.
+        created = memories / "auto-stage-fixture.md"
+        created.write_text(
+            "scope: project\nverdict: good\n\n"
+            "## Summary\nAuto-stage fixture; carries no wire vocabulary.\n",
+            encoding="utf-8",
         )
-        results = json.loads(found.stdout)
-        assert results, "expected at least one existing memory entry to promote"
-        entry_id = results[0]["id"]
-        run(
-            ["go", "run", "./cmd/mivia", "memory", "promote", entry_id, "--workspace", str(root)],
-            root,
-        )
-        run(["git", "add", ".mivia/memory.db"], root)
+        # Housekeeping, the other half of the contract: a tracked memory
+        # deleted from the working tree must stage as a deletion too.
+        tracked[0].unlink()
 
         result = run(
             [str(ROOT / "scripts" / "git-hooks" / "pre-commit")],
@@ -739,7 +737,13 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
             f"pre-commit failed:\nstdout={result.stdout}\nstderr={result.stderr}"
         )
         cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
-        assert ".mivia/memory.db" in cached, "memory.db auto-stage step did not run"
+        assert ".agents/memories/auto-stage-fixture.md" in cached, (
+            "the new memory was not auto-staged"
+        )
+        status = run(["git", "diff", "--cached", "--name-status"], root).stdout
+        assert any(
+            line.startswith("D\t.agents/memories/") for line in status.splitlines()
+        ), f"the deleted memory was not staged as a deletion:\n{status}"
         combined = result.stdout + result.stderr
         assert "one or more parallel pre-commit gates failed" not in combined
     finally:
@@ -1076,7 +1080,7 @@ def main() -> None:
         (test_isolated_git_env_preserves_main_and_worktree_indexes, "isolation"),
         (test_install_sets_first_push_upstream_in_linked_worktree, "first-push"),
         (test_pre_commit_does_not_overstage_partially_staged_go_file, "partial-staging"),
-        (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-worktree"),
+        (test_pre_commit_full_script_auto_stages_memories, "full-script-worktree"),
         (test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched, "tree-guard-clean"),
         (test_assert_staged_tree_unchanged_refuses_a_restaged_mutant, "tree-guard-mutated"),
         (test_pre_push_sweeps_the_pushed_ref_not_head, "push-ref"),

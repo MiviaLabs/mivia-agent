@@ -67,13 +67,17 @@ else
   GOFMT_SUMMARY="gofmt skipped"
 fi
 
-# Auto-stage a modified .mivia/memory.db that the caller forgot to `git add`,
-# so every commit picks up the latest memory store instead of silently
-# leaving it behind. Only a working-tree modification to a tracked file is
-# staged here - never an untracked/new file, and never a deletion - so this
-# cannot turn an unrelated commit into one that adds or removes the db.
-if git diff --name-only --diff-filter=M -- .mivia/memory.db | grep -qx '\.mivia/memory\.db'; then
-  git add -- .mivia/memory.db
+# Auto-stage every change under .agents/memories/ - memory_save drops new
+# markdown entries there mid-session and housekeeping edits or deletes old
+# ones, and none of those edits belong to the code change being committed,
+# so they were forgotten one commit after another. Additions and deletions
+# are staged alike: a new memory IS a new file and housekeeping IS a delete,
+# and the secret scan below reads the staged blobs either way. An operator
+# who wants a memory OUT of a commit still can: unstage it explicitly
+# (git restore --staged) after this hook has staged it, and commit with
+# what remains.
+if [ -d .agents/memories ]; then
+  git add -A -- .agents/memories
 fi
 
 # Materialize the STAGED tree into a real directory and run every gate that
