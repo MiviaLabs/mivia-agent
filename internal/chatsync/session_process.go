@@ -13,6 +13,9 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 		s.mu.Unlock()
 		return
 	}
+	for _, wire := range wireEvents {
+		s.telemetry.projectedEvent(s.localSessionID, s.opts.ProjectorOptions.WriterID, wire.Seq, wire.Type)
+	}
 
 	if err := s.appendLocked(wireEvents); err != nil {
 		// One SOURCE event was lost, whatever number of wire events its
@@ -32,6 +35,10 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 		}
 		s.mu.Unlock()
 		return
+	}
+	depth := s.outbox.UnflushedCount()
+	for _, wire := range wireEvents {
+		s.telemetry.appendedEvent(s.localSessionID, s.opts.ProjectorOptions.WriterID, wire.Seq, depth)
 	}
 	s.mu.Unlock()
 

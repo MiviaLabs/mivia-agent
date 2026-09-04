@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -74,6 +75,7 @@ func cliSyncOptions(sess *chat.Session, wsRoot string, res *config.Resolved, tok
 		MaxUnflushed:    res.Sync.MaxUnflushed,
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),
+		Telemetry:       chatsync.NewSyncTelemetry(slog.Default()),
 		CreateTitle:     "CLI Session",
 		// Remote input (chat-sync "steering") is TUI-only, deliberately.
 		// internal/uiadapter/session_pool.go's poolSyncOptions enables it
