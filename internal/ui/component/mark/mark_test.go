@@ -8,29 +8,29 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
-// TestGlyphsMatchWaveTables tests the aurora wave cycle across TrueColor and ASCII tiers.
+// TestGlyphsMatchWaveTables tests the braille pulse cycle across TrueColor and ASCII tiers.
 func TestGlyphsMatchWaveTables(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor, Thinking)
 	var got []rune
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 8; i++ {
 		got = append(got, m.Glyph())
 		next, _ := m.Update(TickMsg{})
 		m = next
 	}
-	if string(got) != "✦✦✧··✧" {
-		t.Errorf("thinking cycle = %q, want ✦✦✧··✧", string(got))
+	if string(got) != "⠶⠛⠿⣿⣶⠿⠛⠶" {
+		t.Errorf("thinking cycle = %q, want ⠶⠛⠿⣿⣶⠿⠛⠶", string(got))
 	}
 
 	m = New(th, theme.TierASCII, Thinking)
 	var asc string
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 8; i++ {
 		asc += string(m.Glyph())
 		next, _ := m.Update(TickMsg{})
 		m = next
 	}
-	if asc != "**+..+" {
-		t.Errorf("ASCII cycle = %q, want **+..+", asc)
+	if asc != ".+**+*+." {
+		t.Errorf("ASCII cycle = %q, want .+**+*+.", asc)
 	}
 
 	if g := New(th, theme.TierTrueColor, Idle).Glyph(); g != '⬖' {
@@ -55,8 +55,8 @@ func TestWaitingBlinksAtAQuarterRate(t *testing.T) {
 		next, _ := m.Update(TickMsg{})
 		m = next
 	}
-	if seq != "✦✦✦✦✦✦✦✦" {
-		t.Errorf("waiting sequence = %q, want eight ✦ across 8 ticks", seq)
+	if seq != "⠶⠶⠶⠶⠛⠛⠛⠛" {
+		t.Errorf("waiting sequence = %q, want ⠶⠶⠶⠶⠛⠛⠛⠛ across 8 ticks", seq)
 	}
 }
 
@@ -87,8 +87,8 @@ func TestSetStateRestartsTheCycle(t *testing.T) {
 		m = next
 	}
 	m.SetState(Running)
-	if g := m.Glyph(); g != '✦' {
-		t.Errorf("cycle did not restart: first glyph %q, want ✦", g)
+	if g := m.Glyph(); g != '⠶' {
+		t.Errorf("cycle did not restart: first glyph %q, want ⠶", g)
 	}
 }
 

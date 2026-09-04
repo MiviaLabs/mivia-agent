@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/mark"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
@@ -151,6 +152,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tickCmd()
 }
 
+// badge returns the fixed-width (14-rune) activity capsule:
+// [ <glyph> <LABEL> ]
+// Brackets and spacers wear RoleFGSubtle; glyph wears the mark's role;
+// Waiting/Pending labels wear RoleWarning (the reserved yellow), while
+// autonomous states stay subtle.
+func (m Model) badge() string {
+	st := stateFor(m.label)
+	labelRole := theme.RoleFGSubtle
+	if st == mark.Waiting || st == mark.Pending {
+		labelRole = theme.RoleWarning
+	}
+
+	clean := strings.ToUpper(m.label)
+	if ansi.StringWidth(clean) > 8 {
+		clean = ansi.Truncate(clean, 8, uikitconfig.ClipMarker)
+	}
+	if pad := 8 - ansi.StringWidth(clean); pad > 0 {
+		clean += strings.Repeat(" ", pad)
+	}
+
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	bracketOpen := subtle.Render("[")
+	bracketClose := subtle.Render("]")
+	glyph := m.mark.View()
+	styledLabel := render.Role(m.Theme, m.Tier, labelRole).Render(clean)
+
+	return bracketOpen + subtle.Render(" ") + glyph + subtle.Render(" ") + styledLabel + subtle.Render(" ") + bracketClose
+}
+
 // View renders the line as of now. now is a parameter rather than
 // time.Now() so the render stays deterministic for golden tests.
 func (m Model) View(now time.Time) string {
@@ -165,7 +195,7 @@ func (m Model) View(now time.Time) string {
 	// a live "18.3s" beside a committed "4.1s" reads as one language.
 	elapsed := now.Sub(m.started).Round(time.Second)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	line := m.mark.View() + subtle.Render(" ") + subtle.Render(m.label)
+	line := m.badge()
 	if m.detail != "" {
 		line += subtle.Render("  " + m.detail)
 	}

@@ -188,7 +188,7 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "run_command"},
 	}})
 	got := next.(Screen)
-	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "running") {
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "RUNNING") {
 		t.Errorf("got %q, want the label to say running once a tool starts", view)
 	}
 	// wireframes-panes.md section 9's "<detail>" field: the tool's own
@@ -202,7 +202,7 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 		Body: uievent.ToolPendingBody{ToolCallID: "c2", Name: "edit"},
 	}})
 	got = next.(Screen)
-	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "pending") {
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "PENDING") {
 		t.Errorf("got %q, want the label to say pending while an approval is awaited", view)
 	}
 	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "edit") {
@@ -214,7 +214,7 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 		Body: uievent.ToolEndBody{ToolCallID: "c2", Name: "edit", OK: true},
 	}})
 	got = next.(Screen)
-	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "thinking") {
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "THINKING") {
 		t.Errorf("got %q, want the label back to thinking once the tool call ends", view)
 	}
 	// The previous tool's detail must not survive the label change back
@@ -544,7 +544,7 @@ func TestViewComposesTranscriptStatuslineAndComposer(t *testing.T) {
 	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
 
 	got := s.View()
-	for _, want := range []string{"live text", "thinking", "run_command"} {
+	for _, want := range []string{"live text", "THINKING", "run_command"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("view missing %q:\n%s", want, got)
 		}
