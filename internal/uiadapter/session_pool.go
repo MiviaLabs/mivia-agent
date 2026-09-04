@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
@@ -61,6 +62,9 @@ type SessionPool struct {
 	// Created once, never closed, fed by one pumpRemoteInputs goroutine per
 	// attached sync session - see attachSyncLocked and RemoteInputs.
 	remoteInputs chan ports.RemoteInputEvent
+
+	// watcher runs background InputPollers for unpooled saved sessions.
+	watcher *RemoteInputWatcher
 }
 
 // AuthorUserIDProvider resolves the CLI's own authenticated principal for
@@ -235,6 +239,9 @@ func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 	}
 	for _, release := range busReleaseList {
 		release()
+	}
+	if p.watcher != nil {
+		p.watcher.Stop(ctx)
 	}
 }
 
@@ -484,19 +491,15 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 // refusal here is silent by design: sync failing is never a reason to break
 // the local chat the user actually asked for.
 func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
-	// A released pool is dead: ReleaseLeases drained syncSessions and
-	// busReleases, so any attach from here on would create a SyncSession
-	// nothing tracks or stops. Checked before the token lookup so a released
-	// pool never resolves credentials again.
-	if p.released.Load() {
-		return
-	}
-	if p.res == nil || sess == nil || sess.EventBus == nil {
+	if p.released.Load() || p.res == nil || sess == nil || sess.EventBus == nil {
 		return
 	}
 	id := sess.SessionID
 	if id == "" {
 		return
+	}
+	if p.watcher != nil {
+		_ = p.watcher.StopSync(id, 2*time.Second)
 	}
 	if _, exists := p.syncSessions[id]; exists {
 		return
@@ -505,62 +508,37 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	if !p.res.Sync.Active(tokens != nil) {
 		return
 	}
-	// wsRoot anchors where chat-sync keeps its identity/outbox files. It must
-	// NOT come from sess.SessionDir - see the matching comment in
-	// internal/clichat/chat_sync.go's cliSyncOptions: that field belongs to
-	// the legacy file-backed session store and is unconditionally nulled the
-	// moment context state is enabled, which every pooled session's context
-	// wiring does. p.agentState.WorkspaceRoot is the same workspace root the
-	// CLI resolved at startup and is never nulled by context enablement.
 	var wsRoot string
 	if p.agentState != nil {
 		wsRoot = p.agentState.WorkspaceRoot
 	}
 	opts := poolSyncOptions(sess, id, wsRoot, p.res, tokens)
-	// "Stop syncing and SAY SO". pushNotice takes no lock and drops rather
-	// than blocks, so it is safe both from here (under p.mu) and from
-	// chatsync's detached stop goroutine.
+	p.wireSyncNotices(&opts)
+	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
+	if err == nil {
+		p.syncSessions[id] = syncSess
+		p.pushNotice("chat sync is running, uploading to " + chatsync.ResolveEndpoint(p.res.Sync.APIURL).Describe())
+		if opts.EnablePolling {
+			go p.pumpRemoteInputs(id, syncSess.Inputs())
+		}
+		if SessionBusRegistrar != nil {
+			p.busReleases[id] = SessionBusRegistrar(id, sess.EventBus)
+		}
+	}
+}
+
+func (p *SessionPool) wireSyncNotices(opts *chatsync.SessionOptions) {
 	opts.OnStop = func(reason string) {
 		p.pushNotice("chat sync stopped: " + reason)
 	}
-	// Degraded is not stopped: the backlog is queued locally and retried.
-	// It is surfaced because a push that never lands is otherwise invisible
-	// for the whole session. Once per transition, never per retry.
 	opts.OnDegraded = func(reason string) {
 		p.pushNotice("chat sync degraded, events are queued locally: " + reason)
 	}
 	opts.OnRecovered = func() {
 		p.pushNotice("chat sync recovered, queued events delivered")
 	}
-	// Visibility for a refusal that never reaches RemoteInputs at all - see
-	// chatsync.SessionOptions.OnInputRejected. pushNotice is lossy-by-contract
-	// (16-slot buffer), which is acceptable here: this is advisory context
-	// for a decision already fully enforced upstream (the input was never
-	// delivered either way), not the load-bearing "no silent loss" surface -
-	// that guarantee lives in RemoteInputs/pumpRemoteInputs instead.
 	opts.OnInputRejected = func(id, sessionID, reason string) {
 		p.pushNotice("chat sync: refused a remote input: " + reason)
-	}
-	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
-	if err == nil {
-		p.syncSessions[id] = syncSess
-		// The endpoint is named so a misdirected upload is visible at the
-		// moment it starts, not after a session's worth of events went to it.
-		p.pushNotice("chat sync is running, uploading to " + chatsync.ResolveEndpoint(p.res.Sync.APIURL).Describe())
-		if opts.EnablePolling {
-			go p.pumpRemoteInputs(id, syncSess.Inputs())
-		}
-		// Bind this session's bus into the CLI-side session-keyed registry
-		// (internal/clichat.RegisterSessionBus, via the indirection var so
-		// this package never imports internal/cli - INV-TUI-29) so a
-		// subagent's lifecycle events, published through the package-level
-		// emitSubagentProgress sink, reach THIS session's chat-sync stream.
-		// Only after a successful attach: a session with no active sync has
-		// nothing for the bus binding to feed, and a nil SessionBusRegistrar
-		// (unwired build, most tests) is a safe no-op.
-		if SessionBusRegistrar != nil {
-			p.busReleases[id] = SessionBusRegistrar(id, sess.EventBus)
-		}
 	}
 }
 
@@ -680,6 +658,66 @@ func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.R
 		AuthorUserIDProvider: AuthorUserIDProvider(),
 		EnablePolling:        true,
 	}
+}
+
+// StartBackgroundWatch begins watch-only polling of up to
+// res.Sync.BackgroundWatchMax recent unpooled sessions with a RemoteSessionID.
+func (p *SessionPool) StartBackgroundWatch(ctx context.Context) {
+	p.mu.Lock()
+	if p.released.Load() || p.res == nil {
+		p.mu.Unlock()
+		return
+	}
+	tokens := chatsync.DefaultTokenProvider()
+	if !p.res.Sync.Active(tokens != nil) {
+		p.mu.Unlock()
+		return
+	}
+	var seed *chat.Session
+	for _, s := range p.sessions {
+		if s != nil {
+			seed = s
+			break
+		}
+	}
+	if seed == nil {
+		p.mu.Unlock()
+		return
+	}
+
+	var wsRoot string
+	if p.agentState != nil {
+		wsRoot = p.agentState.WorkspaceRoot
+	}
+
+	cfg := WatcherConfig{
+		Seed:           seed,
+		Tokens:         tokens,
+		Res:            p.res,
+		WorkspaceRoot:  wsRoot,
+		AuthorProvider: AuthorUserIDProvider(),
+		Max:            p.res.Sync.BackgroundWatchMax,
+		IsPooled: func(sessionID string) bool {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			_, pooled := p.sessions[sessionID]
+			return pooled
+		},
+		Deliver: func(sessionID string, in chatsync.RemoteInput) {
+			p.remoteInputs <- ports.RemoteInputEvent{
+				ID:         in.ID,
+				Kind:       in.Kind,
+				SessionID:  sessionID,
+				Body:       in.Body,
+				ReceivedAt: in.Received,
+			}
+		},
+	}
+	watcher := NewRemoteInputWatcher(cfg)
+	p.watcher = watcher
+	p.mu.Unlock()
+
+	go watcher.Backfill(ctx)
 }
 
 // chatSyncAnchor resolves wsRoot into the directory chat-sync keeps its

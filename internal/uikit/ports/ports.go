@@ -408,6 +408,12 @@ type RemoteInputs interface {
 	RemoteInputs() <-chan RemoteInputEvent
 }
 
+// SessionMounter resolves an existing local session id into a live Conversation
+// for background turn execution without affecting the UI's active session.
+type SessionMounter interface {
+	Mount(id string) (Conversation, error)
+}
+
 // SessionSummary describes one existing session for listing and resuming.
 type SessionSummary struct {
 	ID        string

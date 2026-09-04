@@ -71,6 +71,12 @@ type Screen struct {
 	// SetRemoteInputs, the same seam SetCommandRunner uses. See remote_input.go.
 	remoteInputs <-chan ports.RemoteInputEvent
 
+	// mounter resolves untracked sessions on demand for remote steering.
+	mounter ports.SessionMounter
+
+	// mounting tracks in-flight mounts and queued inputs for unmounted sessions.
+	mounting map[string][]ports.RemoteInputEvent
+
 	// embedded marks the subagent-thread construction of this same
 	// Screen type: no top bar, no activity panel, wrapped event Msgs -
 	// everything else is the identical main-chat machinery. See
@@ -433,6 +439,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.handleTurnEndedMsg(msg)
 	case remoteInputMsg:
 		return s.handleRemoteInput(msg.event)
+	case sessionMountedMsg:
+		return s.handleSessionMountedMsg(msg)
 	case subagentTaskCancelResultMsg:
 		return s.handleSubagentTaskCancelResult(msg)
 	case threadToolCallCancelResultMsg:
@@ -663,6 +671,9 @@ func (s *Screen) SetSettings(store ports.Settings) { s.settings = store }
 // that lives for the screen's whole life. nil (the default) means this
 // screen never receives remote-origin turns - see remote_input.go.
 func (s *Screen) SetRemoteInputs(ch <-chan ports.RemoteInputEvent) { s.remoteInputs = ch }
+
+// SetSessionMounter supplies the session mounter for background remote steering.
+func (s *Screen) SetSessionMounter(m ports.SessionMounter) { s.mounter = m }
 
 // SetHideComposer toggles visibility of the composer. When true, the
 // composer is omitted from layout and rendering (e.g. for subagent

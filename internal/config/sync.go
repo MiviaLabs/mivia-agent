@@ -49,11 +49,12 @@ type SyncConfig struct {
 	//
 	// A plain bool cannot express the opt-out: absent and "false" would look
 	// identical, and the only reachable state would be off.
-	StreamAssistant  *bool  `toml:"stream_assistant"`
-	APIURL           string `toml:"api_url"`
-	PollWaitSeconds  int    `toml:"poll_wait_seconds"`
-	HeartbeatSeconds int    `toml:"heartbeat_seconds"`
-	MaxUnflushed     int    `toml:"max_unflushed"`
+	StreamAssistant    *bool  `toml:"stream_assistant"`
+	APIURL             string `toml:"api_url"`
+	PollWaitSeconds    int    `toml:"poll_wait_seconds"`
+	HeartbeatSeconds   int    `toml:"heartbeat_seconds"`
+	MaxUnflushed       int    `toml:"max_unflushed"`
+	BackgroundWatchMax int    `toml:"background_watch_max"`
 }
 
 // ResolvedSync is the resolved `[sync]` configuration. It is a separate type
@@ -65,13 +66,14 @@ type ResolvedSync struct {
 	// the activation switch: see Active.
 	Disabled bool
 
-	IncludeToolIO    bool
-	IncludeThinking  bool
-	StreamAssistant  bool
-	APIURL           string
-	PollWaitSeconds  int
-	HeartbeatSeconds int
-	MaxUnflushed     int
+	IncludeToolIO      bool
+	IncludeThinking    bool
+	StreamAssistant    bool
+	APIURL             string
+	PollWaitSeconds    int
+	HeartbeatSeconds   int
+	MaxUnflushed       int
+	BackgroundWatchMax int
 }
 
 // Active reports whether chat sync must run for this configuration.
@@ -105,6 +107,11 @@ func resolveSyncConfig(cfg SyncConfig) ResolvedSync {
 	}
 	if out.MaxUnflushed <= 0 {
 		out.MaxUnflushed = 5000
+	}
+	if cfg.BackgroundWatchMax > 0 {
+		out.BackgroundWatchMax = cfg.BackgroundWatchMax
+	} else {
+		out.BackgroundWatchMax = 8
 	}
 	return out
 }

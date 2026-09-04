@@ -167,6 +167,25 @@ func identityPath(dir, key string) (string, error) {
 // working directory, so it runs on an ephemeral identity instead.
 var errNoIdentityDir = errors.New("chatsync: no identity directory")
 
+// LoadIdentityReadOnly reads the persisted sync identity for key WITHOUT
+// minting or creating anything on disk. If the file is missing, invalid, or
+// unreadable, it returns (SyncIdentity{}, false).
+func LoadIdentityReadOnly(dir, key string) (SyncIdentity, bool) {
+	path, err := identityPath(dir, key)
+	if err != nil {
+		return SyncIdentity{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return SyncIdentity{}, false
+	}
+	var id SyncIdentity
+	if err := json.Unmarshal(data, &id); err != nil || id.LocalHandle == "" {
+		return SyncIdentity{}, false
+	}
+	return id, true
+}
+
 // LoadOrCreateIdentity returns the persisted sync identity for key, minting
 // and storing a fresh one when none is readable.
 //
