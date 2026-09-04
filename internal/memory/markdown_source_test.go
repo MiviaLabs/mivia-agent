@@ -84,3 +84,9 @@ func TestMarkdownSourceDeleteRejectsPathOutsideRoots(t *testing.T) {
 		t.Fatalf("outside file was changed: %v", err)
 	}
 }
+
+func TestNewMarkdownSourceRejectsRelativeOrganizationDirectory(t *testing.T) {
+	if _, err := NewMarkdownSource(t.TempDir(), "relative-memories", "acme"); err == nil {
+		t.Fatal("NewMarkdownSource accepted a relative organization directory")
+	}
+}

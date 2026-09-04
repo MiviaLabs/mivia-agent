@@ -40,6 +40,9 @@ func NewMarkdownSource(projectRoot, orgDir, orgID string) (MarkdownSource, error
 	if !filepath.IsAbs(projectRoot) {
 		return MarkdownSource{}, errors.New("project root must be absolute")
 	}
+	if strings.TrimSpace(orgDir) != "" && !filepath.IsAbs(orgDir) {
+		return MarkdownSource{}, errors.New("organization memory directory must be absolute")
+	}
 	if orgID != "" {
 		normalized, err := NormalizeOrgID(orgID)
 		if err != nil {
