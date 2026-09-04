@@ -87,6 +87,11 @@ func TestSyncSession_StopHonoursItsContextDeadline(t *testing.T) {
 	start := time.Now()
 	_ = syncSess.Stop(stopCtx)
 	elapsed := time.Since(start)
+	select {
+	case <-syncSess.shutdownDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed-out Stop did not finish asynchronous shutdown before test cleanup")
+	}
 
 	if elapsed > 1*time.Second {
 		t.Errorf("Stop took %v under a 200ms deadline; want it to return within 1s", elapsed)
