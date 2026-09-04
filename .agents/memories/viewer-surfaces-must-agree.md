@@ -1,3 +1,11 @@
+---
+id: viewer_surfaces_must_agree
+title: Every event kind must reach every viewer, or say why not
+content: An event kind is produced once and rendered on four surfaces; all four must agree.
+importance: high
+tags: [[events, ui, invariants]]
+---
+
 # Every event kind must reach every viewer, or say why not
 
 An event kind is produced once and rendered on four surfaces: the TUI

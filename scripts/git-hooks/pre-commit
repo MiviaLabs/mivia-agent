@@ -206,11 +206,17 @@ if command -v go >/dev/null 2>&1; then
   # cannot: inherits, tools_add, tools_remove, tools_core and disallowed_tools
   # all change the effective set.
   #
-  # This entry needs its own status list. $STAGED is ACM, which omits deletions
-  # and renames, and deleting or renaming a skill directory is exactly the edit
-  # that leaves a role's skills: list naming a skill with no SKILL.md. INV-AG-30
-  # rejects that at load and the role loses the skill in silence.
-  STAGED_ROSTER="$(git diff --cached --name-only --diff-filter=ACMRD)"
+  # This entry needs its own status list. $STAGED is ACM, which omits deletions,
+  # and deleting or moving a skill directory is exactly the edit that leaves a
+  # role's skills: list naming a skill with no SKILL.md. INV-AG-30 rejects that
+  # at load and the role loses the skill in silence.
+  #
+  # --no-renames is load-bearing, not a style choice. With rename detection on,
+  # --name-only prints the DESTINATION only, so `git mv .agents/skills/foo`
+  # to any path outside the tree matches nothing here and skips the test.
+  # --no-renames splits the rename into a delete and an add, so the source path
+  # appears and the pattern matches.
+  STAGED_ROSTER="$(git diff --cached --name-only --no-renames --diff-filter=ACMD)"
   if echo "$STAGED_ROSTER" | grep -qE '^\.agents/(agents|skills)/'; then
     echo " → Running agent-skill roster tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestCommittedRosterSkillCompatibilityMatrix' ./internal/agents/ -count=1 -timeout=60s) || INV_FAIL=1

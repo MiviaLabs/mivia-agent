@@ -90,6 +90,7 @@ verify: verify-agent docs-check release-test secret-scan structure-check \
 
 verify-agent: agents-check
 	@python3 scripts/verify_agent_config.py
+	@python3 scripts/check_memories.py
 
 test-quality:
 	@echo "Checking test quality and fake-test prevention..."
@@ -188,6 +189,7 @@ agent-hook-test:
 	@python3 scripts/test_check_prose.py
 	@python3 scripts/test_import_layers.py
 	@python3 scripts/test_verify_skill_tree.py
+	@python3 scripts/test_check_memories.py
 
 pre-commit:
 	@.githooks/pre-commit

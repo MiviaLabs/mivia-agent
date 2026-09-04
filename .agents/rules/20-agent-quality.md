@@ -48,7 +48,7 @@ security/privacy), run `make invariants` to execute the relevant test suite(s).
   `func Test` names, not wildcards.
 - **Liveness invariants** must have at least one stress test that exercises the
   invariant under scheduling pressure or concurrent dispatch. Pure unit tests on
-  a single call sequence are insufficient (e.g. `internal/chat/concurrency_test.go` and `internal/uiadapter/conversation_test.go`).
+  a single call sequence are insufficient (e.g. `internal/chat/turn_fencing_stress_test.go` and `internal/uiadapter/conversation_test.go`).
 
 ## Reviews
 

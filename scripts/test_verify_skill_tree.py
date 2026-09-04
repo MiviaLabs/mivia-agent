@@ -337,6 +337,30 @@ def test_gate_measures_description_in_bytes() -> None:
     )
 
 
+def test_alias_gate_rejects_a_canonical_file_without_frontmatter() -> None:
+    def mutate(root: Path) -> None:
+        target = root / ".agents" / "skills" / "probe-skill" / "SKILL.md"
+        target.write_text("No frontmatter here.\n", encoding="utf-8")
+
+    expect_alias_rejection(mutate, "missing YAML frontmatter")
+
+
+def test_alias_gate_rejects_a_stub_without_frontmatter() -> None:
+    def mutate(root: Path) -> None:
+        target = root / ".claude" / "skills" / "probe-skill" / "SKILL.md"
+        target.write_text("No frontmatter here.\n", encoding="utf-8")
+
+    expect_alias_rejection(mutate, "missing YAML frontmatter")
+
+
+def test_alias_gate_rejects_a_plain_file_in_the_tree_root() -> None:
+    """.claude/skills holds one directory per skill and nothing else."""
+    def mutate(root: Path) -> None:
+        (root / ".claude" / "skills" / "README.md").write_text("x\n", encoding="utf-8")
+
+    expect_alias_rejection(mutate, "is a file")
+
+
 def main() -> None:
     test_known_keys_match_go_source()
     test_gate_accepts_schema_keys()
@@ -353,6 +377,9 @@ def main() -> None:
     test_alias_gate_rejects_a_stray_resource_file()
     test_alias_gate_rejects_a_missing_claude_tree()
     test_gate_measures_description_in_bytes()
+    test_alias_gate_rejects_a_canonical_file_without_frontmatter()
+    test_alias_gate_rejects_a_stub_without_frontmatter()
+    test_alias_gate_rejects_a_plain_file_in_the_tree_root()
     print("test_verify_skill_tree: ok")
 
 

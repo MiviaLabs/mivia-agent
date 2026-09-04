@@ -332,7 +332,8 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # (or a project layered on top of yours) added here.
 #
 # Recommended starting values: the set below keeps workflow agents away from
-# agent definitions, hook-policy gates, rules, skills, the workflow definition
+# agent definitions, the Git hooks, hook-policy gates, rules, skills (both the
+# canonical tree and the Claude Code alias stubs), the workflow definition
 # they run under, Go module metadata, and - explicitly re-added below, since
 # there is no compiled-in default - Git metadata and this config file. A
 # project that omits this key leaves ALL of these writable by workflow
