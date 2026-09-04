@@ -4,6 +4,7 @@ title: A struct field added without updating every hand-written enumeration of t
 content: When a struct's fields are walked by a hand-maintained list - a scaling slice, a preserving copy, a field-by-field bridge - a new field missed by one of them produces a wrong number rather than a compile error; gate it by reflecting over the struct, never by naming fields.
 importance: high
 tags: [review, invariants, testing, reflection, gates, context-breakdown]
+updated: 2026-09-04
 ---
 
 # Hand-enumerated struct fields drift from the struct

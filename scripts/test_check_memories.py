@@ -26,6 +26,7 @@ title: Probe memory
 content: One sentence of fact.
 importance: high
 tags: [probe]
+updated: 2026-09-04
 ---
 
 Body.
@@ -319,6 +320,50 @@ def test_rejects_int_float_bool_tags() -> None:
             raise AssertionError(f"{value!r} was accepted, but its format is unvalidated")
 
 
+def test_rejects_a_missing_updated_stamp() -> None:
+    """The housekeeping staleness rule reads `updated`; without the field it
+    can never fire, so the field is mandatory and not merely expected."""
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("updated: 2026-09-04\n", "")},
+        "missing a non-empty 'updated'",
+    )
+
+
+def test_rejects_a_malformed_updated_stamp() -> None:
+    """Only the ISO YYYY-MM-DD shape the README declares is accepted."""
+    for value in ("2026-9-4", "Sept 4 2026", "2026-09-04T00:00:00", "20260904"):
+        expect_rejection(
+            {"probe-memory.md": GOOD.replace("updated: 2026-09-04",
+                                             f"updated: {value}")},
+            "YYYY-MM-DD",
+        )
+
+
+def test_rejects_an_impossible_calendar_date() -> None:
+    """2026-02-30 matches the shape, so the value is parsed, not merely
+    pattern-matched."""
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("updated: 2026-09-04",
+                                         "updated: 2026-02-30")},
+        "not a real calendar date",
+    )
+
+
+def test_accepts_a_future_stamp_the_gate_checks_shape_not_recency() -> None:
+    """A deliberate scope boundary, pinned so it cannot erode silently.
+
+    Whether a stamp lies in the future has no answer without a wall-clock
+    read, and a clock read made this gate fail a valid store on any machine
+    with a skewed clock. The gate judges the value alone; the housekeeping
+    audit judges recency against its session date and flags a future stamp
+    as fix-schema. Re-adding a clock read here means consciously deleting
+    this pin.
+    """
+    if (r := run_on({"probe-memory.md": GOOD.replace(
+            "updated: 2026-09-04", "updated: 9999-01-01")})) is not None:
+        raise AssertionError(f"future stamp rejected: {r}")
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -344,6 +389,10 @@ def main() -> None:
     test_accepts_more_legal_tag_forms()
     test_rejects_a_verbatim_tag_naming_an_unresolvable_uri()
     test_rejects_int_float_bool_tags()
+    test_rejects_a_missing_updated_stamp()
+    test_rejects_a_malformed_updated_stamp()
+    test_rejects_an_impossible_calendar_date()
+    test_accepts_a_future_stamp_the_gate_checks_shape_not_recency()
     print("test_check_memories: ok")
 
 

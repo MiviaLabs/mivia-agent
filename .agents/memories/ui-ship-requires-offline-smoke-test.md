@@ -4,6 +4,7 @@ title: UI-ship phases must include an offline smoke test, not just unit tests
 content: When a phase ships user-visible behavior on the new UI (cmd/mivia-ui --demo=false real mode, the conversation screen, the Approver panel, settings ports), the implementation must include an offline-runnable smoke test that mirrors what manual acceptance does, in addition to the focused unit tests.
 importance: high
 tags: [ui, adlc, smoke-test, manual-acceptance, regression]
+updated: 2026-09-04
 ---
 
 Phase 3 (`de1d2e70 feat(cli): wire real conversation mode into cmd/mivia-ui`)

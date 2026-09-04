@@ -4,6 +4,7 @@ title: '"status"/"stats" request format for dispatched mivia workflow runs'
 content: Table with columns Run ID, scope, status+step, last heartbeat, resolution (no_diff or PR link), scoped to the currently-tracked batch only.
 importance: medium
 tags: [workflow, cli, reporting]
+updated: 2026-09-04
 ---
 
 When asked for "status" or "stats" (bare, no other qualifiers) on dispatched

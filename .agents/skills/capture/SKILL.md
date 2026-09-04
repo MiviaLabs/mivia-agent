@@ -62,9 +62,11 @@ to `.agents/rules/`, do not duplicate it as a memory.
      `## How to apply`.
    - **Incident writeup** (~80-100 lines): the timeline plus the lesson.
 6. After writing, `read_file` the new file and confirm:
-   - Frontmatter parses (five fields, `tags` is a YAML list).
+   - Frontmatter parses (six fields, `tags` is a YAML list).
    - `id` is the filename without `.md`, with every hyphen replaced by an
      underscore.
+   - `updated` is today's date, in the `YYYY-MM-DD` shape
+     `scripts/check_memories.py` enforces.
    - The body has substance (not a one-liner stub).
 7. Report: the file path, the `id`, the `importance`, and a one-line
    summary of what was captured.
