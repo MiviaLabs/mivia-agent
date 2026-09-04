@@ -19,8 +19,19 @@ type MemoryIndexDocument struct {
 
 // SyncMemoryIndex updates one project or organization scope from a complete
 // Markdown scan. It removes rows for deleted source files and preserves the
-// operator-selected tier for files that still exist.
+// operator-selected tier for files that still exist. A sibling process
+// holding the database write lock longer than busy_timeout is retried
+// (retrySQLiteBusy): the body is one full transaction, so a retry re-reads
+// current state.
 func (s *SQLite) SyncMemoryIndex(ctx context.Context, scope, projectID, orgID string, docs []MemoryIndexDocument) error {
+	return retrySQLiteBusy(ctx, func() error {
+		return s.syncMemoryIndexOnce(ctx, scope, projectID, orgID, docs)
+	})
+}
+
+// syncMemoryIndexOnce runs one complete sync transaction. It is retried as a
+// whole; no partial state survives a failed attempt.
+func (s *SQLite) syncMemoryIndexOnce(ctx context.Context, scope, projectID, orgID string, docs []MemoryIndexDocument) error {
 	if scope != "project" && scope != "org" {
 		return fmt.Errorf("memory index scope %q is invalid", scope)
 	}
@@ -41,30 +52,19 @@ func (s *SQLite) SyncMemoryIndex(ctx context.Context, scope, projectID, orgID st
 		return err
 	}
 	defer tx.Rollback()
-	args := []any{scope, projectID, orgID}
-	rows, err := tx.QueryContext(ctx, `SELECT source_path FROM memory_sources WHERE scope=? AND project_id=? AND org_id=?`, args...)
+	old := make(map[string]struct{})
+	sources, entries, err := loadMemoryIndexScopeState(ctx, tx, scope, projectID, orgID, old)
 	if err != nil {
 		return err
 	}
-	old := make(map[string]struct{})
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			rows.Close()
-			return err
-		}
-		old[path] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
 	for _, doc := range docs {
 		if doc.Scope != scope {
 			return fmt.Errorf("memory index scope %q does not match the scan scope %q", doc.Scope, scope)
 		}
 		delete(old, doc.SourcePath)
+		if memoryIndexDocUnchanged(doc, sources, entries) {
+			continue
+		}
 		if err := upsertMemoryIndexDocument(ctx, tx, doc); err != nil {
 			return err
 		}
@@ -78,6 +78,77 @@ func (s *SQLite) SyncMemoryIndex(ctx context.Context, scope, projectID, orgID st
 		}
 	}
 	return tx.Commit()
+}
+
+// memoryIndexEntryRef is one memory_entries row identity, keyed by path in the
+// scope state.
+type memoryIndexEntryRef struct{ id, sourceHash string }
+
+// loadMemoryIndexScopeState reads the scope's current rows inside the sync
+// transaction. old collects the memory_sources paths (the scanned-path
+// bookkeeping: any path left in old after the doc loop was removed on disk and
+// gets deleted), sources maps path -> source_hash, and entries maps path ->
+// matching entry refs. The schema does not enforce memory_entries source_path
+// uniqueness (context_schema_v16), so one path can carry more than one ref.
+func loadMemoryIndexScopeState(ctx context.Context, tx *sql.Tx, scope, projectID, orgID string, old map[string]struct{}) (map[string]string, map[string][]memoryIndexEntryRef, error) {
+	sources := make(map[string]string)
+	rows, err := tx.QueryContext(ctx, `SELECT source_path, source_hash FROM memory_sources WHERE scope=? AND project_id=? AND org_id=?`, scope, projectID, orgID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var path, hash string
+		if err := rows.Scan(&path, &hash); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		old[path] = struct{}{}
+		sources[path] = hash
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, err
+	}
+	rows.Close()
+	entries := make(map[string][]memoryIndexEntryRef)
+	rows, err = tx.QueryContext(ctx, `SELECT source_path, id, source_hash FROM memory_entries WHERE scope=? AND project_id=? AND org_id=?`, scope, projectID, orgID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var path string
+		var ref memoryIndexEntryRef
+		if err := rows.Scan(&path, &ref.id, &ref.sourceHash); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		entries[path] = append(entries[path], ref)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, err
+	}
+	rows.Close()
+	return sources, entries, nil
+}
+
+// memoryIndexDocUnchanged reports whether doc is already indexed exactly as
+// scanned, so the sync can skip the upsert and leave every row - including
+// the operator-selected tier - untouched. The skip requires the path in BOTH
+// maps with identical hashes, an identical id, and exactly one memory_entries
+// row for the path: more than one match is treated as changed and healed by
+// the full upsert, whose same-path-different-id DELETE stays the enforcer of
+// at most one entries row per path.
+func memoryIndexDocUnchanged(doc MemoryIndexDocument, sources map[string]string, entries map[string][]memoryIndexEntryRef) bool {
+	hash, ok := sources[doc.SourcePath]
+	if !ok || hash != doc.SourceHash {
+		return false
+	}
+	refs, ok := entries[doc.SourcePath]
+	if !ok || len(refs) != 1 {
+		return false
+	}
+	return refs[0].id == doc.ID && refs[0].sourceHash == doc.SourceHash
 }
 
 func validateMemoryIndexDocuments(scope, projectID, orgID string, docs []MemoryIndexDocument) error {

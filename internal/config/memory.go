@@ -49,6 +49,12 @@ func resolveMemoryConfig(file File, selectedPath string, root string, projectCon
 	if mc.MaxSearchResults > MaxMemorySearchResults {
 		return MemoryConfig{}, fmt.Errorf("[memory] max_search_results must be at most %d, got %d", MaxMemorySearchResults, mc.MaxSearchResults)
 	}
+	if mc.IndexRefreshIntervalSeconds <= 0 {
+		mc.IndexRefreshIntervalSeconds = DefaultMemoryConfig.IndexRefreshIntervalSeconds
+	}
+	if mc.IndexRefreshIntervalSeconds > MaxMemoryIndexRefreshIntervalSeconds {
+		return MemoryConfig{}, fmt.Errorf("[memory] index_refresh_interval_seconds must be at most %d, got %d", MaxMemoryIndexRefreshIntervalSeconds, mc.IndexRefreshIntervalSeconds)
+	}
 	for _, pattern := range mc.BlockPatterns {
 		if _, err := regexp.Compile(pattern); err != nil {
 			return MemoryConfig{}, fmt.Errorf("[memory] block_patterns: %w", err)
