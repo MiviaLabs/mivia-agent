@@ -103,6 +103,16 @@ func GlobalContextStorePath(root string) string {
 	return NamespacePath(home, "context.db")
 }
 
+// GlobalMemoryDir is the user-level directory for Markdown memories shared by
+// all workspaces on this machine.
+func GlobalMemoryDir() string {
+	home, err := UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return NamespacePath(home, "memories")
+}
+
 // MemoryDBPath is the default project-scoped memory database (plan 68). A
 // repo owner may point [memory] store_path at a tracked path instead and
 // commit memories with the repository.

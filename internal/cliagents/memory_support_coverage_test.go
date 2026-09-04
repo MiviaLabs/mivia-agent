@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestMemoryOfAndMemoryConfigOfNilSafe(t *testing.T) {
@@ -219,8 +220,8 @@ func TestLoadAdHocWorkspaceStoreHardensThroughOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load = %v, want nil", err)
 	}
-	if want := config.TempStorePath(root, "memory"); res.Memory.StorePath != want {
-		t.Fatalf("Load filled StorePath = %q, want the temp-tier default %q", res.Memory.StorePath, want)
+	if res.Memory.StorePath != "" {
+		t.Fatalf("Load filled StorePath = %q, want empty for Markdown memory", res.Memory.StorePath)
 	}
 	if res.Memory.OrgID != "" {
 		t.Fatalf("org_id = %q from a config that names none; the user config leaked into the load", res.Memory.OrgID)
@@ -230,14 +231,14 @@ func TestLoadAdHocWorkspaceStoreHardensThroughOpen(t *testing.T) {
 		t.Fatalf("OpenMemoryStoreWithReadOnly = %v, want nil", err)
 	}
 	defer store.Close()
-	st, err := os.Stat(res.Memory.StorePath)
+	st, err := os.Stat(workspace.GlobalContextStorePath(root))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if perm := st.Mode().Perm(); perm != 0o600 {
 		t.Errorf("as-loaded temp store mode = %o, want 600", perm)
 	}
-	dirSt, err := os.Stat(filepath.Dir(res.Memory.StorePath))
+	dirSt, err := os.Stat(filepath.Dir(workspace.GlobalContextStorePath(root)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -22,7 +23,10 @@ type MarkdownStoreConfig struct {
 	ReadOnly         bool
 }
 
-type markdownStore struct{ cfg MarkdownStoreConfig }
+type markdownStore struct {
+	cfg MarkdownStoreConfig
+	mu  sync.Mutex
+}
 
 var _ memory.Store = (*markdownStore)(nil)
 
@@ -66,6 +70,8 @@ func (s *markdownStore) refresh(ctx context.Context, scope memory.Scope) error {
 }
 
 func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cfg.ReadOnly {
 		return memory.Result{}, errors.New("memory store is read-only")
 	}
@@ -83,6 +89,8 @@ func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result
 }
 
 func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.cfg.ReadOnly {
 		if q.Scope == memory.ScopeAll || q.Scope == memory.ScopeProject {
 			if err := s.refresh(ctx, memory.ScopeProject); err != nil {
@@ -107,6 +115,8 @@ func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Re
 }
 
 func (s *markdownStore) Count(ctx context.Context, scope memory.Scope) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.cfg.ReadOnly {
 		if err := s.refresh(ctx, scope); err != nil {
 			return 0, err
@@ -114,14 +124,73 @@ func (s *markdownStore) Count(ctx context.Context, scope memory.Scope) (int, err
 	}
 	return s.cfg.Index.CountMemoryIndex(ctx, string(scope), projectID(scope, s.cfg.ProjectID), orgID(scope, s.cfg.OrgID))
 }
-func (*markdownStore) PromoteToCore(context.Context, string) error {
-	return ErrMarkdownStoreUnsupported
+func (s *markdownStore) PromoteToCore(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.ReadOnly {
+		return errors.New("memory store is read-only")
+	}
+	if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+		return err
+	}
+	if s.cfg.OrgID != "" {
+		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
+			return err
+		}
+	}
+	err := s.cfg.Index.PromoteMemoryIndexEntry(ctx, id, s.cfg.ProjectID, s.cfg.OrgID)
+	if errors.Is(err, storage.ErrMemoryIndexEntryNotFound) {
+		return memory.ErrEntryNotFound
+	}
+	return err
 }
-func (*markdownStore) CoreEntries(context.Context, memory.Scope) ([]memory.Result, error) {
-	return nil, ErrMarkdownStoreUnsupported
+func (s *markdownStore) CoreEntries(ctx context.Context, scope memory.Scope) ([]memory.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope != memory.ScopeProject && scope != memory.ScopeOrg {
+		return nil, fmt.Errorf("scope must be project or org, got %q", scope)
+	}
+	if !s.cfg.ReadOnly {
+		if err := s.refresh(ctx, scope); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := s.cfg.Index.CoreMemoryIndexEntries(ctx, string(scope), s.cfg.ProjectID, s.cfg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	return indexResults(rows), nil
 }
-func (*markdownStore) Delete(context.Context, string) error { return ErrMarkdownStoreUnsupported }
-func (*markdownStore) Close() error                         { return nil }
+func (s *markdownStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.ReadOnly {
+		return errors.New("memory store is read-only")
+	}
+	if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+		return err
+	}
+	if s.cfg.OrgID != "" {
+		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
+			return err
+		}
+	}
+	doc, err := s.cfg.Index.FindMemoryIndexEntry(ctx, id, s.cfg.ProjectID, s.cfg.OrgID)
+	if errors.Is(err, storage.ErrMemoryIndexEntryNotFound) {
+		return memory.ErrEntryNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.cfg.Source.Delete(ctx, doc.SourcePath); err != nil {
+		return err
+	}
+	if err := s.refresh(ctx, memory.Scope(doc.Scope)); err != nil {
+		return err
+	}
+	return nil
+}
+func (*markdownStore) Close() error { return nil }
 func projectID(scope memory.Scope, value string) string {
 	if scope == memory.ScopeOrg {
 		return ""
@@ -150,6 +219,14 @@ func splitTags(value string) []string {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+func indexResults(rows []storage.MemoryIndexDocument) []memory.Result {
+	out := make([]memory.Result, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, memory.Result{ID: row.ID, Scope: memory.Scope(row.Scope), Org: row.OrgID, Title: row.Title, Verdict: memory.Verdict(row.Verdict), Tags: splitTags(row.Tags), Created: row.Created, Snippet: row.Summary})
 	}
 	return out
 }

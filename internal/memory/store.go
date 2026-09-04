@@ -63,7 +63,9 @@ type Store interface {
 
 // Config selects the backend and bounds.
 type Config struct {
-	// Backend is "memory" or "sqlite". Empty defaults to "sqlite".
+	// Backend is "memory" or "sqlite". Empty defaults to "sqlite". The
+	// Markdown backend is opened by cliagents because it needs the workspace
+	// source and shared context index.
 	Backend string
 	// ProjectPath is the project memory database file. Required for sqlite.
 	// A repo owner may point it at a tracked path and commit memories with
@@ -103,8 +105,9 @@ type Config struct {
 
 // Backend names.
 const (
-	BackendMemory = "memory"
-	BackendSQLite = "sqlite"
+	BackendMemory   = "memory"
+	BackendSQLite   = "sqlite"
+	BackendMarkdown = "markdown"
 )
 
 // Store defaults.

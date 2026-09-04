@@ -2,6 +2,7 @@ package cliagents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -19,6 +21,9 @@ import (
 // openMemoryStore and openMemoryStoreReadOnly can delegate here without
 // duplicating the path-resolution logic.
 func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
+	if strings.ToLower(strings.TrimSpace(mc.StoreBackend)) == memory.BackendMarkdown {
+		return openMarkdownMemoryStore(root, mc, readOnly)
+	}
 	projectPath := strings.TrimSpace(mc.StorePath)
 	if projectPath == "" {
 		// This branch is now only reachable when the caller constructs
@@ -56,6 +61,56 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 		HardenTempStore:  hardenTempStore,
 	}
 	return memory.Open(cfg)
+}
+
+func openMarkdownMemoryStore(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
+	projectRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("memory project root: %w", err)
+	}
+	orgDir := workspace.GlobalMemoryDir()
+	if orgDir == "" && strings.TrimSpace(mc.OrgID) != "" {
+		return nil, errors.New("memory organization directory is unavailable")
+	}
+	source, err := memory.NewMarkdownSource(projectRoot, orgDir, mc.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("memory Markdown source: %w", err)
+	}
+	indexPath := workspace.GlobalContextStorePath(projectRoot)
+	var index *storage.SQLite
+	if readOnly {
+		index, err = storage.OpenSQLiteReadOnly(indexPath)
+	} else {
+		index, err = storage.OpenSQLiteWithOptions(indexPath, storage.Options{Harden: true})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("memory index: %w", err)
+	}
+	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{
+		Source: source, Index: index, ProjectID: projectRoot, OrgID: mc.OrgID,
+		MaxSearchResults: mc.MaxSearchResults,
+		Limits:           memory.Limits{MaxEntryBytes: mc.MaxEntryBytes, BlockPatterns: mc.BlockPatterns},
+		ReadOnly:         readOnly,
+	})
+	if err != nil {
+		_ = index.Close()
+		return nil, err
+	}
+	return &ownedMarkdownStore{Store: store, index: index}, nil
+}
+
+type ownedMarkdownStore struct {
+	memory.Store
+	index *storage.SQLite
+}
+
+func (s *ownedMarkdownStore) Close() error {
+	storeErr := s.Store.Close()
+	indexErr := s.index.Close()
+	if storeErr != nil {
+		return storeErr
+	}
+	return indexErr
 }
 
 // SameFilePath reports whether two path spellings name the same file:
