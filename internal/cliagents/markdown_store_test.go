@@ -2,12 +2,31 @@ package cliagents
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
+
+func TestMarkdownSourceScanIgnoresReadme(t *testing.T) {
+	root := t.TempDir()
+	source, err := memory.NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Documentation\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if docs, err := source.Scan(context.Background(), memory.ScopeProject); err != nil || len(docs) != 0 {
+		t.Fatalf("Scan docs=%d err=%v, want no documents", len(docs), err)
+	}
+}
 
 func TestMarkdownStoreSaveSearchCountAndReopen(t *testing.T) {
 	root, indexPath := t.TempDir(), filepath.Join(t.TempDir(), "context.db")
