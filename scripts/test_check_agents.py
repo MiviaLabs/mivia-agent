@@ -19,10 +19,10 @@ def load_gate():
     return mod
 
 
-def run(body: str) -> list[str]:
+def run(body: str, filename: str = "builder.md") -> list[str]:
     mod = load_gate()
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "builder.md"
+        path = Path(tmp) / filename
         path.write_text(body, encoding="utf-8")
         return mod._check_role(path)
 
@@ -55,7 +55,19 @@ def test_good_role_passes() -> None:
     assert run(GOOD) == []
 
 
+def test_role_name_uses_identifier_pattern() -> None:
+    custom = GOOD.replace("name: builder", "name: custom-role_2").replace(
+        "## Disallowed operations", "## Guidelines"
+    )
+    assert run(custom, "custom-role_2.md") == []
+
+    malformed = custom.replace("name: custom-role_2", "name: Custom.role")
+    failures = run(malformed, "Custom.role.md")
+    assert any("role 'Custom.role' is not a valid lowercase identifier" in failure for failure in failures), failures
+
+
 if __name__ == "__main__":
     test_roster_invariants_are_enforced()
     test_good_role_passes()
+    test_role_name_uses_identifier_pattern()
     print("test_check_agents: ok")
