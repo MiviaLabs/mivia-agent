@@ -172,6 +172,12 @@ func (s *generalSection) Update(msg tea.Msg) (section, tea.Cmd) {
 		return s, nil
 	case generalFailedMsg:
 		s.notice = msg.message
+		// Re-show the last CONFIRMED values: the optimistic Cycle in
+		// commit() left the row on the refused value, and this is the first
+		// General row whose apply can legitimately fail by design (the
+		// full-disk same-file refusal). Without the rebuild the row renders
+		// "on" while the store holds false (bug-audit ec8a9ef4 a2-2).
+		s.rebuild()
 		return s, nil
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)

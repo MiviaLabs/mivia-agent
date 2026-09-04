@@ -170,6 +170,72 @@ full_disk = true
 	}
 }
 
+// TestUserFullDiskAccessRefusesCwdAsWorkspace pins the relative-root hole
+// (bug-audit ec8a9ef4 a3-1/a2-1): launched with cwd == $HOME and no
+// --workspace, the pre-enterChatWorkspace call passes "" - the guard must
+// still trip (EvalSymlinks keeps relative input relative, so without
+// canonicalization abs-vs-rel never matched and a repo-planted
+// $HOME/.mivia/mivia.toml answered the grant question).
+func TestUserFullDiskAccessRefusesCwdAsWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	homeConfig := filepath.Join(home, ".mivia", "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(homeConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(homeConfig, []byte("[workspace_access]\nfull_disk = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	if UserFullDiskAccessForWorkspace("") {
+		t.Fatal("empty (cwd-relative) root granted full disk while the user config IS the workspace's own config")
+	}
+	if UserFullDiskAccessForWorkspace(".") {
+		t.Fatal("explicit relative root granted full disk from home-as-workspace")
+	}
+}
+
+// TestSetUserFullDiskAccessRefusesCwdAsWorkspace pins the write-side twin
+// (bug-audit ec8a9ef4 a3-2): the same relative-root resolution must refuse
+// the write, not persist the grant into the workspace-owned file.
+func TestSetUserFullDiskAccessRefusesCwdAsWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	homeConfig := filepath.Join(home, ".mivia", "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(homeConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := "[tui]\ntheme = \"mivia-dark\"\n"
+	if err := os.WriteFile(homeConfig, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	if err := SetUserFullDiskAccess("", true); err == nil {
+		t.Fatal("empty (cwd-relative) root wrote the grant into the workspace-owned config")
+	}
+	raw, err := os.ReadFile(homeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatalf("refused write still modified the file:\n%s", raw)
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
 }

@@ -78,6 +78,60 @@ func TestSpaceCommitsTheFullDiskRow(t *testing.T) {
 	}
 }
 
+// failingGeneralStore is a ports.GeneralSettings whose full-disk save
+// fails the way the real store does on the same-file refusal (nil error
+// from Apply, SaveFailed on the handle), so the section's failure path can
+// be driven end to end.
+type failingGeneralStore struct{ view ports.GeneralView }
+
+func (f *failingGeneralStore) General() ports.GeneralView { return f.view }
+
+func (f *failingGeneralStore) Apply(_ context.Context, _ ports.Scope, e ports.GeneralEdit) (ports.SaveHandle, error) {
+	state := ports.SaveSaved
+	if _, ok := e.(ports.SetFullDiskAccess); ok {
+		state = ports.SaveFailed
+	}
+	ch := make(chan ports.SaveEvent, 1)
+	ch <- ports.SaveEvent{State: state, Field: "full disk", Message: "persist full-disk setting: refusing"}
+	close(ch)
+	return stubSaveHandle{events: ch}, nil
+}
+
+type stubSaveHandle struct{ events chan ports.SaveEvent }
+
+func (h stubSaveHandle) ID() string                     { return "stub" }
+func (h stubSaveHandle) Events() <-chan ports.SaveEvent { return h.events }
+func (h stubSaveHandle) Cancel()                        {}
+
+// TestRefusedFullDiskToggleShowsConfirmedValue pins the failure-path
+// rebuild (bug-audit ec8a9ef4 a2-2): commit() cycles the row BEFORE the
+// save resolves, and a refused save must rebuild back to the store's last
+// CONFIRMED value - the row may not keep rendering the refused "on".
+func TestRefusedFullDiskToggleShowsConfirmedValue(t *testing.T) {
+	th := loadTheme(t)
+	store := &failingGeneralStore{view: ports.GeneralView{Mouse: true, FullDiskAccess: false}}
+	sec := newGeneralSection(store)
+	sec.SetSize(100, 30)
+	sec.SetTheme(th, theme.TierTrueColor) // triggers rebuild
+	sec.cursor = len(sec.rows) - 1        // the full-disk row
+
+	next, cmd := sec.commit()
+	if cmd == nil {
+		t.Fatal("expected a save Cmd from committing the row")
+	}
+	got, _ := next.Update(cmd()) // delivers generalFailedMsg
+	gs, ok := got.(*generalSection)
+	if !ok {
+		t.Fatalf("Update returned %T, want *generalSection", got)
+	}
+	if gs.notice == "" {
+		t.Fatal("refusal notice not shown")
+	}
+	if got := gs.rows[gs.cursor].f.Value(); got != "off" {
+		t.Fatalf("full-disk row renders %q after a refused save, want the confirmed \"off\"", got)
+	}
+}
+
 // TestGeneralSectionHasNoThemeRow: Ctrl-T's dedicated theme picker
 // dialog live-previews every theme as the cursor moves, a strictly
 // better picking experience than a KindChoice cycler, so General does
