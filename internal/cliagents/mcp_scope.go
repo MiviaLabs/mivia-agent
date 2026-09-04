@@ -76,7 +76,16 @@ func isMCPServerTool(name string, agent *agents.ResolvedAgent) bool {
 	if agent == nil {
 		return false
 	}
-	for _, serverID := range agent.EffectiveMCPServers {
+	return isMCPServerToolForServers(name, agent.EffectiveMCPServers)
+}
+
+// isMCPServerToolForServers is isMCPServerTool against an explicit server
+// scope: an agent's EffectiveMCPServers, or - for the root/no-agent-selected
+// identity, which owns no ResolvedAgent - the config's global server set that
+// SetupSessionMCPTools attached to the registry (see identityMCPServerScope
+// in tool_tiers.go).
+func isMCPServerToolForServers(name string, serverIDs []string) bool {
+	for _, serverID := range serverIDs {
 		if strings.HasPrefix(name, "mcp__"+serverID+"__") {
 			return true
 		}

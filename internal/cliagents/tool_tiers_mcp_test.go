@@ -35,6 +35,52 @@ func TestPlanToolTiersNeverDefersAnAuthorizedMCPTool(t *testing.T) {
 	}
 }
 
+// TestPlanToolTiersKeepsGlobalMCPToolCoreForTheRootIdentity is the
+// no-agents-defined regression: a workspace with no agent named
+// config.DefaultAgentName (and no --agent) runs the ROOT identity, whose MCP
+// server selection is the config's global server set - the same set
+// SetupSessionMCPTools attached. Before the fix, withMCPServerToolsAlwaysCore
+// bailed on selected == nil, so the root identity's global MCP tool was
+// advertised yet silently deferred behind load_tools, whose publication can
+// then defer again (background orchestration, sibling turns). The tier rule
+// must consult the same server selection that granted authority.
+func TestPlanToolTiersKeepsGlobalMCPToolCoreForTheRootIdentity(t *testing.T) {
+	base := tierRegistry("read_file", "grep", "mcp__repo__x6563686f")
+	res := &config.Resolved{
+		Tools: config.ToolsConfig{Core: corePtr("read_file")},
+		MCP: config.MCPConfig{
+			Enabled: true,
+			Servers: []config.MCPServerConfig{{ID: "repo", Global: true}},
+		},
+	}
+	plan := planToolTiers(base, nil, res)
+	if !slices.Contains(plan.Tiers.Core, "mcp__repo__x6563686f") {
+		t.Fatalf("core = %v, want the root identity's global MCP tool kept core", plan.Tiers.Core)
+	}
+	if !slices.Equal(plan.Tiers.Deferred, []string{"grep"}) {
+		t.Fatalf("deferred = %v, want only [grep] - the MCP tool must not appear here", plan.Tiers.Deferred)
+	}
+}
+
+// TestPlanToolTiersRootIdentityDefersNonGlobalMCPTool pins the authority
+// boundary of the root-identity exemption: GlobalServerIDs is what the root
+// identity attaches, so a non-global server's tool must NOT be pulled into
+// the core tier by the same rule.
+func TestPlanToolTiersRootIdentityDefersNonGlobalMCPTool(t *testing.T) {
+	base := tierRegistry("read_file", "mcp__repo__x6563686f")
+	res := &config.Resolved{
+		Tools: config.ToolsConfig{Core: corePtr("read_file")},
+		MCP: config.MCPConfig{
+			Enabled: true,
+			Servers: []config.MCPServerConfig{{ID: "repo"}}, // not global: root never attaches it
+		},
+	}
+	plan := planToolTiers(base, nil, res)
+	if slices.Contains(plan.Tiers.Core, "mcp__repo__x6563686f") {
+		t.Fatalf("core = %v, want a non-global server's tool to stay out of the root identity's core tier", plan.Tiers.Core)
+	}
+}
+
 // TestWithMCPServerToolsAlwaysCoreDoesNotMutateTheConfiguredCoreSlice guards
 // the append-in-place hazard: core aliases *config.Resolved.Tools.Core, so
 // growing it in place (when it happens to have spare capacity) would corrupt
@@ -43,10 +89,9 @@ func TestPlanToolTiersNeverDefersAnAuthorizedMCPTool(t *testing.T) {
 func TestWithMCPServerToolsAlwaysCoreDoesNotMutateTheConfiguredCoreSlice(t *testing.T) {
 	backing := make([]string, 1, 4) // spare capacity: append would write through without a copy
 	backing[0] = "read_file"
-	selected := &agents.ResolvedAgent{EffectiveMCPServers: []string{"repo"}}
 	authorized := []string{"read_file", "mcp__repo__x6563686f"}
 
-	out := withMCPServerToolsAlwaysCore(backing, authorized, selected)
+	out := withMCPServerToolsAlwaysCore(backing, authorized, []string{"repo"})
 
 	if !slices.Equal(out, []string{"read_file", "mcp__repo__x6563686f"}) {
 		t.Fatalf("out = %v, want the MCP tool appended", out)
