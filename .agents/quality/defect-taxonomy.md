@@ -1531,3 +1531,59 @@ already a `tool_end`. Gated by
 - Sweep every consumer of the kind, not the one a bug report named: counters,
   list appends, and cap accounting each fail differently and only one of them
   is usually visible.
+
+## DC-30 A check inspects a proxy for the property it asserts
+
+**Mechanism.** A gate, contract, or comment asserts a property, and the code
+under it examines something correlated with that property instead of the
+property itself. The two agree on the cases that exist when it is written, so
+it passes, and it keeps passing after they diverge. The check reports coverage
+it never had.
+
+Nine forms shipped in this repository, all in one batch of work:
+
+- A semgrep rule forbade a path and scoped `paths.include` to Go files only,
+  so it could police path constructions in code and never the directory's
+  existence, the docs, the templates or the contracts.
+- A contract verifier globbed a directory that was deleted, so `rg` errored,
+  `!` inverted the error into a pass, and the contract reported success while
+  inspecting nothing.
+- A length cap compared characters where the loader compares bytes, so a
+  200-character description holding one em dash passed and was then truncated.
+- A tags rule tested `startswith("[")`, so `[[a, b]]` passed in 15 files.
+- A frontmatter gate sliced lines and never parsed, so a scalar no YAML parser
+  can read sat green through every run.
+- A write blocklist named one of two directories holding the same definitions;
+  the second inherited protection only while it was a byte-identical copy.
+- A blocklist entry named `.git` for the stated reason of protecting the hooks,
+  which live outside `.git`.
+- A pre-commit entry keyed on a status list that omitted the edit it targets.
+- A script defined its checks and no entry point, so running it printed nothing
+  and exited 0.
+
+**Why it recurs.** The proxy is almost always the cheaper thing to write, and
+it is correct on the day it is written. Nothing later re-asks whether the proxy
+still tracks the property, because the check is green and a green check is read
+as evidence. The comment above it then states the property, not the proxy, so
+the next reader inherits the stronger claim.
+
+**Probe.** For every check, ask what it would have to see to be wrong, and
+whether it looks there. Concretely:
+
+- Does the assertion compare the whole value, or a prefix, a first character,
+  a count, or a presence?
+- Does it measure the same unit the consumer measures (bytes vs characters,
+  bytes vs runes)?
+- If it names one path, file, directory or implementation, is there a second
+  that serves the same purpose?
+- If it is scoped (`paths.include`, a status filter, a glob), can the case it
+  targets appear outside that scope?
+- Can it fail at all? Run the mutation. A check that has never been watched
+  rejecting something is not evidence.
+- Does the comment above it claim more than the code below it does?
+
+**Gate.** `scripts/check_gate_scripts.py` closes the one form with a
+mechanical boundary: a gate script that cannot report. The rest is a review
+probe, not a gate, because "the check examines a proxy" is not a syntactic
+property. Say so rather than implying coverage that does not exist - which
+would itself be this class.
