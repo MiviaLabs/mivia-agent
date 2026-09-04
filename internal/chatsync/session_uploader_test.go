@@ -326,6 +326,11 @@ func TestStopCancelsAnInFlightUpload(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("uploader remained alive after Stop cancelled its in-flight HTTP request")
 	}
+	select {
+	case <-s.shutdownDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("shutdown finalizer remained active after the uploader exited")
+	}
 }
 
 // TestStopReportsTheExactUnsentRange keeps the durable recovery contract
