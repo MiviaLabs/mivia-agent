@@ -24,6 +24,13 @@ func (s *SQLite) SyncMemoryIndex(ctx context.Context, scope, projectID, orgID st
 	if scope != "project" && scope != "org" {
 		return fmt.Errorf("memory index scope %q is invalid", scope)
 	}
+	if orgID != "" {
+		normalized, err := normalizeMemoryOrgID(orgID)
+		if err != nil {
+			return err
+		}
+		orgID = normalized
+	}
 	if err := validateMemoryIndexDocuments(scope, projectID, orgID, docs); err != nil {
 		return err
 	}
@@ -81,6 +88,7 @@ func validateMemoryIndexDocuments(scope, projectID, orgID string, docs []MemoryI
 		return errors.New("memory index org_id is required for an organization scan")
 	}
 	seen := make(map[string]struct{}, len(docs))
+	seenIDs := make(map[string]struct{}, len(docs))
 	for _, doc := range docs {
 		if doc.Scope != "project" && doc.Scope != "org" {
 			return fmt.Errorf("memory index scope %q is invalid", doc.Scope)
@@ -97,6 +105,10 @@ func validateMemoryIndexDocuments(scope, projectID, orgID string, docs []MemoryI
 		if doc.ID == "" || doc.SourcePath == "" {
 			return errors.New("memory index id and source_path are required")
 		}
+		if _, exists := seenIDs[doc.ID]; exists {
+			return fmt.Errorf("duplicate memory index id %q", doc.ID)
+		}
+		seenIDs[doc.ID] = struct{}{}
 		key := doc.Scope + "\x00" + doc.ProjectID + "\x00" + doc.OrgID + "\x00" + doc.SourcePath
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("duplicate memory index source %q", doc.SourcePath)
@@ -104,6 +116,20 @@ func validateMemoryIndexDocuments(scope, projectID, orgID string, docs []MemoryI
 		seen[key] = struct{}{}
 	}
 	return nil
+}
+
+func normalizeMemoryOrgID(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "..") {
+		return "", errors.New("memory index org_id is invalid")
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' || r == '/' {
+			continue
+		}
+		return "", fmt.Errorf("memory index org_id contains unsupported character %q", r)
+	}
+	return value, nil
 }
 
 func upsertMemoryIndexDocument(ctx context.Context, tx *sql.Tx, doc MemoryIndexDocument) error {

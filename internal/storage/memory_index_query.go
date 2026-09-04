@@ -15,6 +15,13 @@ func (s *SQLite) SearchMemoryIndex(ctx context.Context, scope, projectID, orgID,
 	if scope != "project" && scope != "org" && scope != "all" {
 		return nil, fmt.Errorf("memory index scope %q is invalid", scope)
 	}
+	if orgID != "" {
+		normalized, err := normalizeMemoryOrgID(orgID)
+		if err != nil {
+			return nil, err
+		}
+		orgID = normalized
+	}
 	literal := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(text))
 	where := []string{"(lower(title) LIKE ? ESCAPE '\\' OR lower(summary) LIKE ? ESCAPE '\\' OR lower(content) LIKE ? ESCAPE '\\')"}
 	args := []any{"%" + literal + "%", "%" + literal + "%", "%" + literal + "%"}
