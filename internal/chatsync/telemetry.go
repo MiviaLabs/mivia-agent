@@ -72,12 +72,12 @@ func (t *SyncTelemetry) record(stage, sessionID, writerID, batchID string, seq i
 	}, attrs...)...)
 }
 
-func (t *SyncTelemetry) producedEvent(sessionID, writerID string, kind string) {
+func (t *SyncTelemetry) producedEvent(sessionID, writerID string, seq int64, kind string) {
 	if t == nil {
 		return
 	}
 	t.produced.Add(1)
-	t.record("event_produced", sessionID, writerID, "", 0, "event_kind", kind)
+	t.record("event_produced", sessionID, writerID, "", seq, "event_kind", kind)
 }
 
 func (t *SyncTelemetry) projectedEvent(sessionID, writerID string, seq int64, kind string) {

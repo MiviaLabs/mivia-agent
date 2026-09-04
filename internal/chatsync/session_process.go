@@ -14,6 +14,7 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 		return
 	}
 	for _, wire := range wireEvents {
+		s.telemetry.producedEvent(s.localSessionID, s.opts.ProjectorOptions.WriterID, wire.Seq, wire.Type)
 		s.telemetry.projectedEvent(s.localSessionID, s.opts.ProjectorOptions.WriterID, wire.Seq, wire.Type)
 	}
 
