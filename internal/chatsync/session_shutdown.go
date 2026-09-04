@@ -72,6 +72,7 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 }
 
 func (s *SyncSession) finishTimedOutStop() {
+	defer close(s.shutdownDone)
 	<-s.doneCh
 	if s.unsubscribe != nil {
 		s.unsubscribe()
@@ -85,6 +86,7 @@ func (s *SyncSession) finishTimedOutStop() {
 }
 
 func (s *SyncSession) finishStop() error {
+	defer close(s.shutdownDone)
 	reason := "session closed"
 	if s.remoteEnded.Load() {
 		reason = s.StopReason()

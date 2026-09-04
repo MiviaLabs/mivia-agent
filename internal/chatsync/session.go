@@ -270,9 +270,13 @@ type SyncSession struct {
 	// after the worker has drained and appended the tail. uploaderDone
 	// closes when the uploader has returned; the worker waits on it before
 	// closing doneCh, so doneCh still means "nothing touches the outbox".
-	finalCh        chan context.Context
-	finalErr       atomic.Pointer[error]
-	uploaderDone   chan struct{}
+	finalCh      chan context.Context
+	finalErr     atomic.Pointer[error]
+	uploaderDone chan struct{}
+	// shutdownDone closes after the timeout finalizer has finished closing the
+	// outbox. Stop may return earlier when its caller deadline expires, but
+	// owners that release the session's storage can wait for this signal.
+	shutdownDone   chan struct{}
 	uploaderCancel context.CancelFunc
 }
 
@@ -375,6 +379,7 @@ func newSyncSession(localID, remoteID string, initialSeq int64, client *Client, 
 		flushCh:        make(chan struct{}, 1),
 		finalCh:        make(chan context.Context, 1),
 		uploaderDone:   make(chan struct{}),
+		shutdownDone:   make(chan struct{}),
 		stopCtxCh:      make(chan context.Context, 1),
 		lastGapBase:    noGapBase,
 		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),
