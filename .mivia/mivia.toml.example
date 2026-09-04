@@ -358,6 +358,8 @@ write_path_blocklist = [
     "Makefile",           # it decides which gates run at all
     ".mivia/mivia.toml",  # this file: it carries the blocklist
     ".mivia/policy",      # the pattern files the hook guard reads
+    ".mivia/hooks",       # the run-command guard script itself
+    ".claude",            # settings.json registers that guard as a hook handler
 ]
 # An entry in BOTH keys is a load error, so an opt-out names an entry a layer
 # above added, not one of the entries above:

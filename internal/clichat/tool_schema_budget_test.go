@@ -37,7 +37,7 @@ import (
 // Budget constants are ratcheted down only with a measured reason recorded
 // here and in the commit message.
 const (
-	coreSchemaTokenBudget       = 4043 // achieved 3851 + 5% margin
+	coreSchemaTokenBudget       = 4043 // achieved 3953 (20 tools, delete_file joined) + margin
 	advertisedSchemaTokenBudget = 9818 // achieved 9351 + 5% margin
 )
 

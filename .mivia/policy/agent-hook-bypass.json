@@ -38,7 +38,8 @@
     "(?i)\\bSKIP\\s*=\\s*.*hook",
     "(?i)\\bMISE_SKIP_HOOKS\\b",
     "(?i)\\bSIMPLE_GIT_HOOKS_SKIP\\b",
-    "(?i)\\bPRE_COMMIT_ALLOW_NO_CONFIG\\b"
+    "(?i)\\bPRE_COMMIT_ALLOW_NO_CONFIG\\b",
+    "(?i)\\bGIT_CONFIG_(COUNT|KEY_\\d+|VALUE_\\d+|GLOBAL|SYSTEM|NOSYSTEM)\\s*="
   ],
   "blockedLegacyEnv": [
     "HUSKY_SKIP_HOOKS",
@@ -52,8 +53,13 @@
     "(?i)\\bgit\\s+push\\b[\\s\\S]*--no-verify",
     "(?i)\\bgit\\s+-c\\s+core\\.hooksPath=",
     "(?i)\\bgit\\s+config\\b[\\s\\S]*core\\.hooksPath",
-    "(?i)\\bchmod\\s+-x\\b[\\s\\S]*hooks",
-    "(?i)\\brm\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?(\\.git/)?hooks/"
+    "(?i)\\bchmod\\s+([0-7]{3,4}|[ugoa]*[-=][rwx]*)\\b[\\s\\S]*hooks",
+    "(?i)\\b(rm|mv|cp|install|truncate)\\b[\\s\\S]*(\\.githooks/|\\.git/hooks/|scripts/git-hooks/|scripts/agent_hook_guard\\.py|\\.mivia/(policy|hooks)/|\\.claude/settings\\.json)",
+    "(?i)(^|[;&|]\\s*)(:\\s*>|>{1,2}|\\btee\\b|\\bsed\\s+-i\\b)[\\s\\S]*(\\.githooks/|\\.git/hooks/|scripts/git-hooks/|scripts/agent_hook_guard\\.py|\\.mivia/(policy|hooks)/|\\.claude/settings\\.json)",
+    "(?i)\\bln\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?(-s\\s+)?\\S+\\s+(\\.githooks/|\\.git/hooks/)",
+    "(?i)\\bGIT_CONFIG_(COUNT|KEY_\\d+|VALUE_\\d+|GLOBAL|SYSTEM|NOSYSTEM)\\b",
+    "(?i)(^|[;&|]\\s*)(:\\s*>|>{1,2}|\\btee\\b|\\bsed\\s+-i\\b)[\\s\\S]*\\.git/config\\b",
+    "(?i)[^|&;]*>{1,2}\\s*(\\.githooks/|\\.git/hooks/|\\.git/config|scripts/git-hooks/|scripts/agent_hook_guard\\.py|\\.mivia/(policy|hooks)/|\\.claude/settings\\.json)"
   ],
   "correctiveMessage": "Do not bypass Git hooks or verification for the mivia product. Blocked patterns include --no-verify, -n on commit, HUSKY=0, LEFTHOOK=0, SKIP_GIT_HOOKS, HUSKY_SKIP_HOOKS, core.hooksPath overrides, and deleting/disabling hooks. Run hooks normally, fix the failing check/test/lint, then retry once. If one focused repair cannot resolve the blocker, stop and report the exact failing hook output to the user - never bypass verification.",
   "onDetect": "block",

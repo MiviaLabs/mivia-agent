@@ -240,9 +240,36 @@ func committedSkillsDir(t *testing.T) string {
 	cwd, _ := os.Getwd()
 	dir := filepath.Join(cwd, "..", "..", ".agents", "skills")
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		requireThisRepo(t)
 		t.Skip("committed skills not present at", dir)
 	}
 	return dir
+}
+
+// requireThisRepo fails (not skips) when the working tree IS the mivia-agent
+// module but .agents/skills or .agents/agents has gone missing. A deleted
+// tree the loader glob then walks is empty, which reads as zero warnings and
+// zero violations - the same "absent directory reads as a pass" defect
+// verify_skill_tree.check_skill_dir documents and guards against. Skipping
+// here would let the same class through on the Go side.
+func requireThisRepo(t *testing.T) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	goMod := filepath.Join(cwd, "..", "..", "go.mod")
+	body, err := os.ReadFile(goMod)
+	if err != nil {
+		return // no go.mod two levels up: genuinely a foreign checkout
+	}
+	if strings.Contains(string(body), "module github.com/MiviaLabs/mivia-agent") {
+		t.Fatalf(
+			"this IS the mivia-agent module (%s), but the committed .agents "+
+				"tree is missing. That is not a foreign checkout to skip past.",
+			goMod,
+		)
+	}
 }
 
 // committedAgentInputs discovers the committed .agents/agents Markdown files into
@@ -256,6 +283,7 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 		dir = filepath.Join(root, ".agents", "agents")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "planner.md")); err != nil {
+		requireThisRepo(t)
 		t.Skip("project agents not present at", dir)
 	}
 	entries, err := os.ReadDir(dir)

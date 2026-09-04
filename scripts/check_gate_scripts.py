@@ -58,7 +58,12 @@ INVOCATION = re.compile(
 )
 
 # A gate invoked straight by path, e.g. `"$ROOT"/scripts/git-hooks/pre-commit`.
-DIRECT_INVOCATION = re.compile(r"(?:^|(?<=[\s\"']))" + _ROOT_PREFIX + _PATH, re.M)
+# A command position: start of line (optional make @/- prefix), or after a
+# shell separator. A bare "(?<=[\s"'])" matched ANY scripts/... token,
+# including one sitting in a comment or a Makefile prose line - a comment
+# naming a deleted script then failed the gate with a false "does not exist".
+_COMMAND_START = r"(?:^[\t ]*[@-]*|[;&|(]\s*|&&\s*|\bthen\s+|\bdo\s+|\bexec\s+)"
+DIRECT_INVOCATION = re.compile(_COMMAND_START + r"[\"']?" + _ROOT_PREFIX + _PATH, re.M)
 
 # A file is a Python gate because it runs under python3, not because its name
 # ends in .py: two of the hook-directory gates carry no extension.
@@ -92,13 +97,16 @@ DEFAULT_PREFIX_OWNER = "verify_agent_config"
 def invoked_scripts(root: Path) -> dict[str, set[str]]:
     """Every scripts/*.py the Makefile or a hook invokes, and who invokes it."""
     found: dict[str, set[str]] = {}
-    for pattern in INVOKER_GLOBS:
-        for invoker in sorted(root.glob(pattern)):
+    for glob_pattern in INVOKER_GLOBS:
+        for invoker in sorted(root.glob(glob_pattern)):
             if not invoker.is_file():
                 continue
             body = invoker.read_text(encoding="utf-8", errors="replace")
+            no_comments = "\n".join(
+                line for line in body.split("\n") if not line.lstrip().startswith("#")
+            )
             for pattern in (INVOCATION, DIRECT_INVOCATION):
-                for match in pattern.finditer(body):
+                for match in pattern.finditer(no_comments):
                     path = match.group(1).rstrip("\"'")
                     found.setdefault(path, set()).add(rel_to_root(invoker))
     return found

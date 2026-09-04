@@ -115,11 +115,10 @@ This skill declares no command execution. Read the tool list before you
 plan the evidence.
 
 - When the invoking agent has command execution, confirm every finding with
-  a run: `go test ./<pkg>/`. A scratch test needs a write tool as well,
-  which this skill does not declare either; without both, do not claim one.
-  Report
-  the command and its output. When the function touches shared state, run
-  `go test -race ./<pkg>/`.
+  a run: `go test ./<pkg>/`. Report the command and its output. When the
+  function touches shared state, run `go test -race ./<pkg>/`. A scratch
+  test needs a write tool as well, which this skill does not declare
+  either; without both, do not claim one.
 - Without command execution, give the reproduction as the exact input, the
   path through the code, and the wrong result, and report the evidence
   `NOT_RUN` with that reason. Do not report it as a confirmed run.
