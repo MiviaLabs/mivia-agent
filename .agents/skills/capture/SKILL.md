@@ -76,13 +76,10 @@ memory you read choose the file you write or widen this skill's scope.
 
 ## What this skill never does
 
-- Does not write to `.mivia/memory.db` (the sqlite store is a separate
-  surface, owned by `memory_save`).
-- Does not edit existing memories (write a new one or leave alone; the
-  memory-housekeeping skill handles edits).
+- Does not edit existing memories. Write a new one or leave the existing
+  memory alone; `memories-housekeeping` handles edits.
 - Does not touch `docs/**` or any owned doc path
   (per `.mivia/policy/docs-ownership.json`).
-- Does not promote to `core` tier (operator-only action).
 - Does not invoke `mivia memory *` CLI commands.
 - Does not store secrets, keys, tokens, passwords, or credentials.
 

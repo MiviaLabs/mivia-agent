@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
@@ -133,6 +134,28 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 	return cliworktree.ValidateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
 }
 
+// configureSessionWorkspace wires workspace tools and memory into the chat
+// session and attaches the background memory index reconciler. The returned
+// cleanup stops the reconciler first and then closes the store, so no sync
+// can be in flight while the index closes. This is the reconciler's sole
+// production start site: the one-shot ConfigureChatWorkspace callers (compact,
+// sessions) never attach one and keep pull-only reads.
+func configureSessionWorkspace(sess *chat.Session, wsRoot string, useTools bool, res *config.Resolved, agentState *AgentSessionState, invocation chatInvocation) (func(), error) {
+	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, chatFullDisk(invocation, wsRoot), true)
+	if err != nil {
+		releaseSessionLedgerRepo(agentState)
+		return nil, err
+	}
+	stop, ok := cliagents.StartMemoryIndexReconciler(agentState.Memory, time.Duration(res.Memory.IndexRefreshIntervalSeconds)*time.Second)
+	if !ok {
+		return memClose, nil
+	}
+	return func() {
+		stop()
+		memClose()
+	}, nil
+}
+
 func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) error {
 	useTools, err := prepareChatStartup(res, invocation)
 	if err != nil {
@@ -181,9 +204,8 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	// Adopt the session ledger store before the tool wiring (see
 	// adoptSessionRepoForTools): child runs stamp this instance.
 	adoptSessionRepoForTools(sess, useTools, res, agentState)
-	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, chatFullDisk(invocation, wsRoot), true)
+	memClose, err := configureSessionWorkspace(sess, wsRoot, useTools, res, agentState, invocation)
 	if err != nil {
-		releaseSessionLedgerRepo(agentState)
 		return err
 	}
 	defer memClose()

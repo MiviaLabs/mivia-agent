@@ -499,6 +499,6 @@ func memoryTestResolved(enabled bool) *config.Resolved {
 	return &config.Resolved{
 		ProviderName: "deepseek",
 		Model:        "deepseek-v4-flash",
-		Memory:       config.MemoryConfig{Enabled: &enabled, StoreBackend: "sqlite"},
+		Memory:       config.MemoryConfig{Enabled: &enabled, StoreBackend: "markdown"},
 	}
 }

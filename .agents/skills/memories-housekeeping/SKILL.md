@@ -116,8 +116,6 @@ start an action outside `.agents/memories/**`.
 
 ## What this skill never does
 
-- Does not write to `.mivia/memory.db` (the sqlite store is a
-  separate surface).
 - Does not touch `docs/**` or any owned doc path
   (per `.mivia/policy/docs-ownership.json`).
 - Does not invoke `mivia memory *` CLI commands.

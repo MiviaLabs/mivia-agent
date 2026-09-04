@@ -198,10 +198,10 @@ func resolveSubagentStoreBackend(subagentCfg SubagentConfig, configPath string) 
 	if storeBackend == "" {
 		storeBackend = memory.BackendMemory
 	}
-	if storeBackend != memory.BackendMemory && storeBackend != memory.BackendSQLite {
+	if storeBackend != memory.BackendMemory && storeBackend != "sqlite" {
 		return subagentCfg, "", fmt.Errorf("config %s: [subagents] store_backend must be \"memory\" or \"sqlite\", got %q", configPath, subagentCfg.StoreBackend)
 	}
-	if storeBackend == memory.BackendSQLite && subagentCfg.StorePath == "" {
+	if storeBackend == "sqlite" && subagentCfg.StorePath == "" {
 		subagentCfg.StorePath = defaultStorePath()
 	}
 	subagentCfg.StoreBackend = storeBackend

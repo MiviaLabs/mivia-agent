@@ -269,9 +269,11 @@ func TestRunConfiguredChatOnceContextSetupFailureReleasesLedgerStore(t *testing.
 func TestRunConfiguredChatOnceMemoryStoreFailureReleasesLedgerStore(t *testing.T) {
 	ws := hermeticOllamaLoopbackWorkspace(t)
 	res := loadChatTestConfig(t, ws)
-	// The default memory store path is <ws>/.mivia/memory.db; a directory
-	// there makes the store open fail inside ConfigureChatWorkspace.
-	if err := os.MkdirAll(filepath.Join(ws, ".mivia", "memory.db"), 0o700); err != nil {
+	// The Markdown backend must fail while scanning an invalid source file.
+	if err := os.MkdirAll(filepath.Join(ws, ".agents", "memories"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".agents", "memories", "broken.md"), []byte("not a memory document\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

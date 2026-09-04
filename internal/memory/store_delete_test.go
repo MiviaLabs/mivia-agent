@@ -100,8 +100,7 @@ func TestStoreDeleteRefusesReadOnly(t *testing.T) {
 	for _, backend := range []string{"sqlite", "memory"} {
 		t.Run(backend, func(t *testing.T) {
 			cfg := Config{
-				Backend:          backend,
-				ProjectPath:      t.TempDir() + "/project.db",
+				Backend:          BackendMemory,
 				MaxEntryBytes:    8192,
 				MaxEntries:       5,
 				MaxSearchResults: 8,
