@@ -247,9 +247,11 @@ func (f *fakeAPI) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 // built and the bytes it sent. It exists so a test can assert what is NOT on
 // the wire, which no handler-level assertion can do.
 type recordedRequest struct {
-	Method string
-	Target string
-	Body   []byte
+	Method        string
+	Target        string
+	Body          []byte
+	UploadBatchID string
+	WriterID      string
 }
 
 // record captures the request and restores its body for the real handler.
@@ -265,9 +267,11 @@ func (f *fakeAPI) record(r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, recordedRequest{
-		Method: r.Method,
-		Target: r.URL.RequestURI(),
-		Body:   body,
+		Method:        r.Method,
+		Target:        r.URL.RequestURI(),
+		Body:          body,
+		UploadBatchID: r.Header.Get("X-Mivia-Upload-Batch-ID"),
+		WriterID:      r.Header.Get("X-Mivia-Writer-ID"),
 	})
 }
 

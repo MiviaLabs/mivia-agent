@@ -420,8 +420,6 @@ func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 	if !s.running.Load() {
 		return
 	}
-	s.telemetry.producedEvent(s.localSessionID, s.opts.ProjectorOptions.WriterID, string(ev.Kind))
-
 	select {
 	case s.eventCh <- ev:
 	default:
