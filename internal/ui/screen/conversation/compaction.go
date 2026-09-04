@@ -10,7 +10,13 @@ import (
 type compactionEventMsg struct{ event ports.CompactionEvent }
 
 func (s Screen) handleCompactionMessage(ev ports.CompactionEvent) (app.Screen, tea.Cmd) {
-	if ev.SessionID != "" && ev.SessionID != s.convID() {
+	// A canceled operation can still publish its final event after a session
+	// switch. Once the handle is gone, that event must not stop a newer
+	// session's spinner or clear its compaction state.
+	if s.compaction == nil {
+		return s, nil
+	}
+	if ev.SessionID != "" && ev.SessionID != s.compactionSessionID {
 		return s, nil
 	}
 	return s.handleCompactionEvent(ev)
