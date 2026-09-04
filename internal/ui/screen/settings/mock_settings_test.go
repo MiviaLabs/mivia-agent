@@ -140,6 +140,8 @@ func (m *mockSettings) applyGeneral(e ports.GeneralEdit) error {
 		m.general.ScreenReader = v.On
 	case ports.SetReducedMotion:
 		m.general.ReducedMotion = v.On
+	case ports.SetFullDiskAccess:
+		m.general.FullDiskAccess = v.On
 	default:
 		return fmt.Errorf("unknown general edit %T", e)
 	}

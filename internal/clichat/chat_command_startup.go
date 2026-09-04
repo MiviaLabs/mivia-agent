@@ -157,10 +157,25 @@ func prepareChatStartup(res *config.Resolved, invocation chatInvocation) (bool, 
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
 	logEffectiveLimitsOnce(os.Stderr, res, invocation.quiet)
-	if invocation.fullDisk && !invocation.quiet {
+	effectiveFullDisk := chatFullDisk(invocation, invocation.workspacePath)
+	if effectiveFullDisk && !invocation.quiet {
 		fmt.Fprintln(os.Stderr, "workspace: FULL DISK ACCESS — file tools are not confined to the workspace")
 	}
 	return useTools, nil
+}
+
+// chatFullDisk resolves the session's effective full-disk request: the
+// invocation flag, OR the operator's own user config ([workspace_access]
+// full_disk, read from UserConfigPath ONLY - config.UserFullDiskAccessForWorkspace
+// fails closed and refuses a workspace-controlled file). A workspace's own
+// .mivia/mivia.toml can never lift its own confinement, and the loud
+// startup notice above fires for EITHER source: lifting confinement is
+// never silent, no matter which provenance granted it.
+func chatFullDisk(invocation chatInvocation, workspaceRoot string) bool {
+	if invocation.fullDisk {
+		return true
+	}
+	return config.UserFullDiskAccessForWorkspace(workspaceRoot)
 }
 
 // validateJSONModeInvocation fails closed on --json combined with any path

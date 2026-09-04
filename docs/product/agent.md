@@ -302,13 +302,13 @@ Hooks are safety scripts that a project can set. They run at fixed moments durin
 
 ## Safety and limits
 
-- Paths must stay under `--workspace` (default: current directory), unless `--full-disk` is passed by the operator.
+- Paths must stay under `--workspace` (default: current directory), unless `--full-disk` is passed by the operator, or the operator's own user config enables `[workspace_access] full_disk`.
 - File-tool secret filtering is controlled by `[tools].secret_path_patterns` and `[tools].secret_path_exceptions`. With no patterns, secret-like paths are not filtered.
 - `run_command` receives an argv array, not a shell command string, and needs a configured program allowlist.
 - Redaction is also configuration-controlled. Do not put secrets in prompts. Do not rely on tool filtering as a security boundary.
 - Run results are stored by content reference and exposed to the model through bounded references. Stored content is raw at rest, even when a privacy policy redacts displayed content. Protect the store and keep secrets out of prompts.
 
-`--full-disk` lifts the workspace confinement: file tools (`read_file`, `write_file`, `edit`, `list_dir`, `grep`, `glob`, etc.) may operate anywhere on the filesystem. This is an **operator-invocation flag only** — it cannot be set from workspace config (`.mivia/mivia.toml`), so a cloned repository cannot grant itself full disk access. The program allowlist, env allowlists, and the write-path denylist (`.git`, `.mivia/mivia.toml`) still apply to in-workspace paths even when `--full-disk` is active.
+`--full-disk` lifts the workspace confinement: file tools (`read_file`, `write_file`, `edit`, `list_dir`, `grep`, `glob`, etc.) may operate anywhere on the filesystem. The grant has two operator-owned sources: the `--full-disk` invocation flag, or `[workspace_access] full_disk = true` in the operator's own USER config (`~/.mivia/mivia.toml`) — settable from the TUI's Settings → General ("full disk (next launch)"). It cannot come from workspace config (`.mivia/mivia.toml`): the key is read only from the fixed user config path, never from the workspace-overlay-merged config, so a cloned repository cannot grant itself full disk access. The persisted setting applies on the next launch, and the loud `FULL DISK ACCESS` startup notice fires for either source (suppressed only by `--quiet`). The program allowlist, env allowlists, and the write-path denylist (`.git`, `.mivia/mivia.toml`) still apply to in-workspace paths even when full disk is active.
 
 By default, one interactive turn has no step ceiling. Set `[chat] max_steps` to a positive number to cap turns, or use `/steps`. Ctrl-C cancels a reply in progress.
 

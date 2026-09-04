@@ -21,11 +21,12 @@ type Root struct {
 	LexicalAbs string
 
 	// Unrestricted lifts the workspace escape check: file tools may resolve
-	// paths anywhere on the filesystem, not only under Abs. Set only by the
-	// operator-level `mivia chat --full-disk` flag (OpenFullDisk) - never by
-	// workspace config, so a repository cannot grant itself full disk access.
-	// The operator-invocation-only provenance is the security property; keep
-	// it that way.
+	// paths anywhere on the filesystem, not only under Abs. Operator-owned
+	// provenance only: the `mivia chat --full-disk` flag (OpenFullDisk) or
+	// the operator's own user config ([workspace_access] full_disk, read
+	// via config.UserFullDiskAccessForWorkspace) - NEVER workspace config,
+	// so a repository cannot grant itself full disk access. The
+	// operator-owned provenance is the security property; keep it that way.
 	Unrestricted bool
 }
 

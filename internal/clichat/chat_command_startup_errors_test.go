@@ -6,6 +6,8 @@ package clichat
 // warning, and both --json invocation refusals.
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -110,6 +112,55 @@ func TestPrepareChatStartupFullDiskWarns(t *testing.T) {
 	none := stop()
 	if strings.Contains(none, want) {
 		t.Fatalf("full-disk notice printed without --full-disk: %q", none)
+	}
+}
+
+// TestPrepareChatStartupUserConfigFullDiskWarns pins the notice for the
+// OTHER provenance (audit required-fix #2): a full-disk grant persisted in
+// the operator's USER config must print the same loud startup notice - the
+// disclosure keys off the EFFECTIVE grant, never off which source granted
+// it. A workspace config carrying the key must NOT trip it: the TUI-
+// persisted setting is user-config-only, so this also catches anyone
+// re-wiring the read onto the merged/workspace config.
+func TestPrepareChatStartupUserConfigFullDiskWarns(t *testing.T) {
+	const want = "workspace: FULL DISK ACCESS"
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userConfig := filepath.Join(home, ".mivia", "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(userConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfig, []byte("[workspace_access]\nfull_disk = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := captureStderr(t)
+	if _, err := prepareChatStartup(keyedResolved(), chatInvocation{workspacePath: t.TempDir()}); err != nil {
+		t.Fatalf("prepareChatStartup: %v", err)
+	}
+	got := stop()
+	if !strings.Contains(got, want) {
+		t.Fatalf("stderr = %q, want the notice for a user-config full-disk grant", got)
+	}
+
+	// --quiet suppresses the informational notice for this source too.
+	stop = captureStderr(t)
+	if _, err := prepareChatStartup(keyedResolved(), chatInvocation{workspacePath: t.TempDir(), quiet: true}); err != nil {
+		t.Fatalf("prepareChatStartup: %v", err)
+	}
+	if quiet := stop(); strings.Contains(quiet, want) {
+		t.Fatalf("--quiet still printed the full-disk notice: %q", quiet)
+	}
+
+	// No grant anywhere: no notice.
+	t.Setenv("HOME", t.TempDir())
+	stop = captureStderr(t)
+	if _, err := prepareChatStartup(keyedResolved(), chatInvocation{workspacePath: t.TempDir()}); err != nil {
+		t.Fatalf("prepareChatStartup: %v", err)
+	}
+	if none := stop(); strings.Contains(none, want) {
+		t.Fatalf("full-disk notice printed with no grant: %q", none)
 	}
 }
 
