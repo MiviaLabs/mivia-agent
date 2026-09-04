@@ -19,16 +19,12 @@ that a focused parser is clearer than a generic one.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 ADLC_ROLES = frozenset({"planner", "plan-reviewer", "builder", "reviewer"})
-ALLOWED_ROLES = frozenset({
-    "planner", "plan-reviewer", "builder", "reviewer",
-    "mivia", "auditor", "docs", "e2e-engineer", "go-engineer",
-    "memory-curator", "panel-reviewer", "performance", "researcher",
-    "review-synthesizer", "security", "verifier", "workflow-engineer",
-})
+ROLE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -99,8 +95,8 @@ KNOWN_FRONTMATTER_KEYS = frozenset({
 def _check_role(path: Path) -> list[str]:
     failures: list[str] = []
     role_name = path.stem
-    if role_name not in ALLOWED_ROLES:
-        failures.append(f"{path}: role {role_name!r} is not in the standard set {sorted(ALLOWED_ROLES)}")
+    if ROLE_NAME_RE.fullmatch(role_name) is None:
+        failures.append(f"{path}: role {role_name!r} is not a valid lowercase identifier")
     text = path.read_text(encoding="utf-8")
     keys, body = _parse_frontmatter(text)
     if not keys and not text.startswith("---\n"):

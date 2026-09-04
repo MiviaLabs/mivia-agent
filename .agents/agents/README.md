@@ -45,7 +45,8 @@ session). A file of the same name overrides `general-purpose`; the
 
 ## Adding a role
 
-1. Pick a name that matches lowercase identifier conventions (`[a-z0-9_-]+`).
+1. Pick a name that matches `^[a-z0-9][a-z0-9_-]*$`. The `mivia` role is a
+   compiled root role and has no Markdown file here.
 2. Match the frontmatter schema above (`name`, `description`, `tools`, etc.).
 3. Include clear guidelines and, for ADLC roles, a "Disallowed operations" section.
 4. Run `make agents-check` before committing.
