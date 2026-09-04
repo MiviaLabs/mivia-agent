@@ -53,12 +53,9 @@ func openMarkdownMemoryStore(root string, mc config.MemoryConfig, readOnly bool)
 		return nil, fmt.Errorf("memory Markdown source: %w", err)
 	}
 	indexPath := workspace.GlobalContextStorePath(projectRoot)
-	var index *storage.SQLite
-	if readOnly {
-		index, err = storage.OpenSQLiteReadOnly(indexPath)
-	} else {
-		index, err = storage.OpenSQLiteWithOptions(indexPath, storage.Options{Harden: true})
-	}
+	// Read-only applies to Markdown source mutations. The derived index is a
+	// cache, so searches may refresh it to reflect external file changes.
+	index, err := storage.OpenSQLiteWithOptions(indexPath, storage.Options{Harden: true})
 	if err != nil {
 		return nil, fmt.Errorf("memory index: %w", err)
 	}

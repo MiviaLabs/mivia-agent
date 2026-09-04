@@ -124,6 +124,66 @@ func TestOpenMemoryStoreUsesMarkdownAndGlobalIndex(t *testing.T) {
 	}
 }
 
+func TestReadOnlySearchRefreshesChangedMarkdownIndex(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	indexPath := filepath.Join(home, ".mivia", "context.db")
+	source, err := memory.NewMarkdownSource(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := storage.OpenSQLite(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Save(context.Background(), memory.Entry{Title: "Old fact", Scope: memory.ScopeProject, Verdict: memory.VerdictGood, Summary: "old marker", Why: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Save(context.Background(), memory.Entry{Title: "New fact", Scope: memory.ScopeProject, Verdict: memory.VerdictGood, Summary: "new marker", Why: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	oldDoc, err := source.Scan(context.Background(), memory.ScopeProject)
+	if err != nil || len(oldDoc) != 2 {
+		t.Fatalf("scan after add: %d, %v", len(oldDoc), err)
+	}
+	var oldPath string
+	for _, doc := range oldDoc {
+		if doc.Entry.Title == "Old fact" {
+			oldPath = doc.Path
+		}
+	}
+	if oldPath == "" {
+		t.Fatal("old memory path not found")
+	}
+	if err := source.Delete(context.Background(), oldPath); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: root, ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	hits, err := store.Search(context.Background(), memory.Query{Text: "new marker", Scope: memory.ScopeProject})
+	if err != nil || len(hits) != 1 || hits[0].Title != "New fact" {
+		t.Fatalf("new search: %+v, %v", hits, err)
+	}
+	hits, err = store.Search(context.Background(), memory.Query{Text: "old marker", Scope: memory.ScopeProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("deleted memory remained indexed: %+v", hits)
+	}
+}
+
 func TestMarkdownStorePromoteCoreAndDelete(t *testing.T) {
 	root, indexPath := t.TempDir(), filepath.Join(t.TempDir(), "context.db")
 	source, err := memory.NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")

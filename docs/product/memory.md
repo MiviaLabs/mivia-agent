@@ -82,7 +82,6 @@ and removes that Markdown entry. Use `memory_search` first to find the id.
 [memory]
 enabled = true              # default true; false removes the tools
 store_backend = "markdown"  # "memory" or "markdown" (default)
-store_path = ""             # unused by the Markdown backend
 org_id = ""                 # USER config only; see below
 max_entry_bytes = 8192      # per-entry cap
 max_entries = 500           # maximum entries per memory source
@@ -100,7 +99,7 @@ choice, not a default an upgrade should hand you silently.
 
 `store_backend = "memory"` keeps memories in the process only. It is useful
 for tests and sessions that must not persist. `"markdown"` is the durable
-default. Explicit `"sqlite"` remains a legacy compatibility backend.
+default.
 
 ### Markdown and the derived index
 

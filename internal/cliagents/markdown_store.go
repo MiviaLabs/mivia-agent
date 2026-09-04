@@ -41,14 +41,12 @@ func OpenMarkdownStore(ctx context.Context, cfg MarkdownStoreConfig) (memory.Sto
 		cfg.MaxSearchResults = memory.DefaultMaxSearchResults
 	}
 	s := &markdownStore{cfg: cfg}
-	if !cfg.ReadOnly {
-		if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+	if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+		return nil, err
+	}
+	if cfg.OrgID != "" {
+		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
 			return nil, err
-		}
-		if cfg.OrgID != "" {
-			if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
-				return nil, err
-			}
 		}
 	}
 	return s, nil
@@ -91,16 +89,14 @@ func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result
 func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.cfg.ReadOnly {
-		if q.Scope == memory.ScopeAll || q.Scope == memory.ScopeProject {
-			if err := s.refresh(ctx, memory.ScopeProject); err != nil {
-				return nil, err
-			}
+	if q.Scope == memory.ScopeAll || q.Scope == memory.ScopeProject {
+		if err := s.refresh(ctx, memory.ScopeProject); err != nil {
+			return nil, err
 		}
-		if (q.Scope == memory.ScopeAll || q.Scope == memory.ScopeOrg) && s.cfg.OrgID != "" {
-			if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
-				return nil, err
-			}
+	}
+	if (q.Scope == memory.ScopeAll || q.Scope == memory.ScopeOrg) && s.cfg.OrgID != "" {
+		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
+			return nil, err
 		}
 	}
 	rows, err := s.cfg.Index.SearchMemoryIndex(ctx, string(q.Scope), s.cfg.ProjectID, s.cfg.OrgID, q.Text, searchLimit(q.MaxResults, s.cfg.MaxSearchResults))
@@ -117,10 +113,8 @@ func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Re
 func (s *markdownStore) Count(ctx context.Context, scope memory.Scope) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.cfg.ReadOnly {
-		if err := s.refresh(ctx, scope); err != nil {
-			return 0, err
-		}
+	if err := s.refresh(ctx, scope); err != nil {
+		return 0, err
 	}
 	return s.cfg.Index.CountMemoryIndex(ctx, string(scope), projectID(scope, s.cfg.ProjectID), orgID(scope, s.cfg.OrgID))
 }
@@ -150,10 +144,8 @@ func (s *markdownStore) CoreEntries(ctx context.Context, scope memory.Scope) ([]
 	if scope != memory.ScopeProject && scope != memory.ScopeOrg {
 		return nil, fmt.Errorf("scope must be project or org, got %q", scope)
 	}
-	if !s.cfg.ReadOnly {
-		if err := s.refresh(ctx, scope); err != nil {
-			return nil, err
-		}
+	if err := s.refresh(ctx, scope); err != nil {
+		return nil, err
 	}
 	rows, err := s.cfg.Index.CoreMemoryIndexEntries(ctx, string(scope), s.cfg.ProjectID, s.cfg.OrgID)
 	if err != nil {
