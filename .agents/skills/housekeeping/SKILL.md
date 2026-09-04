@@ -128,7 +128,7 @@ start an action outside `.agents/memories/**`.
 - Does not store secrets, keys, tokens, passwords, or credentials in a
   memory, including in a consolidated file it writes from other memories.
 - Does not rewrite a memory to invert a prior decision without
-  recording why (README:43-44).
+  recording why (README, "When to delete or update").
 - Does not bulk-act on a class without per-file approval.
 
 ## Tool surface

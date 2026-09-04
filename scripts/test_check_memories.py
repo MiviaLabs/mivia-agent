@@ -144,6 +144,43 @@ def test_rejects_an_unclosed_tags_list() -> None:
     )
 
 
+def test_rejects_an_empty_tag_element() -> None:
+    """A stray or trailing comma is a parse error in real YAML."""
+    for shape in ("[a, , b]", "[a,]", "[,]"):
+        expect_rejection(
+            {"probe-memory.md": GOOD.replace("tags: [probe]", f"tags: {shape}")},
+            "empty element",
+        )
+
+
+def test_rejects_a_tag_that_is_not_a_plain_keyword() -> None:
+    """A list of maps defeats the tag-set comparison housekeeping uses."""
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("tags: [probe]", "tags: [{a: b}]")},
+        "not a plain keyword",
+    )
+
+
+def test_rejects_a_scalar_that_no_yaml_parser_can_read() -> None:
+    """A value opening with a quote must be one complete quoted scalar.
+
+    A live memory carried `title: "status"/"stats" request format ...`, which
+    reads as the scalar "status" followed by junk. It sat green through every
+    run because the gate never checked that the block parses.
+    """
+    bad = 'title: "status"/"stats" request format'
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("title: Probe memory", bad)},
+        "not one quoted scalar",
+    )
+
+
+def test_accepts_a_properly_quoted_scalar() -> None:
+    good = "title: '\"status\"/\"stats\" request format'"
+    if (r := run_on({"probe-memory.md": GOOD.replace("title: Probe memory", good)})) is not None:
+        raise AssertionError(r)
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -155,6 +192,10 @@ def main() -> None:
     test_rejects_a_nested_tags_list()
     test_rejects_empty_tags()
     test_rejects_an_unclosed_tags_list()
+    test_rejects_an_empty_tag_element()
+    test_rejects_a_tag_that_is_not_a_plain_keyword()
+    test_rejects_a_scalar_that_no_yaml_parser_can_read()
+    test_accepts_a_properly_quoted_scalar()
     print("test_check_memories: ok")
 
 

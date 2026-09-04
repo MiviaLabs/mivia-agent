@@ -374,3 +374,20 @@ def check_skill_dir(skills_dir: Path) -> None:
                         f"{len(item.encode('utf-8'))} bytes, max {SKILL_TRIGGER_MAX} "
                         f"(silently truncated by internal/skills/loader.go)"
                     )
+
+
+def main() -> None:
+    """Run every skill-tree check against the repository.
+
+    verify_agent_config.py calls these functions directly, so this entry point
+    is for an operator who was sent here by a failure message. Without it the
+    script printed nothing and exited 0, which reads as a pass.
+    """
+    check_no_dead_skill_tree(ROOT)
+    check_skill_dir(ROOT / ".agents" / "skills")
+    check_claude_skill_aliases(ROOT)
+    print("verify_skill_tree: ok")
+
+
+if __name__ == "__main__":
+    main()

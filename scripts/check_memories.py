@@ -37,11 +37,19 @@ IMPORTANCE_VALUES = ("high", "medium", "low")
 
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
-# A flat, non-empty flow sequence. A prefix test would accept "[[a, b]]",
-# which is a one-element list holding a list, and "[unclosed". A blanket
-# re-wrap once produced exactly the first shape in 15 files while the gate
-# reported ok, so the shape is checked, not the first character.
+# A flat flow sequence. A prefix test would accept "[[a, b]]", a one-element
+# list holding a list, and "[unclosed". A blanket re-wrap once produced the
+# first shape in 15 files while the gate reported ok, so check the shape.
+# The elements are checked separately: this pattern alone still admits an
+# empty element, a trailing comma and a nested map.
 TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]$")
+
+# A scalar that opens with a quote must close with the same quote and nothing
+# may follow it. PyYAML is not a dependency of this repository, so the gate
+# cannot parse the block; this one rule catches the shape a real parser
+# rejects. A title of `"status"/"stats" ...` reads as the scalar "status"
+# followed by junk, and no YAML parser can load the file.
+QUOTED = re.compile(r"^(\"[^\"]*\"|'[^']*')$")
 
 
 def expected_id(stem: str) -> str:
@@ -110,6 +118,26 @@ def check_memories(directory: Path) -> None:
                 f"{name}: tags must be a flat non-empty list, for example "
                 f"[a, b]; got {fields['tags']!r}."
             )
+        for tag in fields["tags"][1:-1].split(","):
+            tag = tag.strip()
+            if not tag:
+                fail(
+                    f"{name}: tags holds an empty element. A stray or trailing "
+                    f"comma is a parse error in YAML: {fields['tags']!r}."
+                )
+            if ":" in tag or "{" in tag or "}" in tag:
+                fail(
+                    f"{name}: tag {tag!r} is not a plain keyword. A list of "
+                    f"maps defeats the tag-set comparison housekeeping uses "
+                    f"to find near-duplicates."
+                )
+        for key, value in fields.items():
+            if value[:1] in ('"', "'") and not QUOTED.match(value):
+                fail(
+                    f"{name}: {key} opens with a quote but is not one quoted "
+                    f"scalar, so no YAML parser can read this frontmatter. "
+                    f"Wrap the whole value in single quotes: {value!r}."
+                )
 
 
 def main() -> None:
