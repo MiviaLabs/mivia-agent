@@ -93,6 +93,15 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 		s.composer.Clear()
 		return s, nil
 	}
+	if s.compaction != nil {
+		s.queue = append(s.queue, text)
+		if s.queueOverlay.Active() {
+			s.queueOverlay.SetItems(s.queue)
+		}
+		s.composer.Clear()
+		s.statusline.Notice(fmt.Sprintf("message queued until compaction finishes (%d in queue)", len(s.queue)))
+		return s, nil
+	}
 	if s.active != nil {
 		s.queue = append(s.queue, text)
 		if s.queueOverlay.Active() {
