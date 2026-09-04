@@ -65,3 +65,35 @@ func TestPickSkillOriginPrefersUserAndGatesProject(t *testing.T) {
 		t.Errorf("project-only with the gate open resolved to (%q, %v), want the workspace origin", got, err)
 	}
 }
+
+// TestDuplicateSkillNamesCollapseToOneEntry pins the dedup arm. A list
+// that repeats a name must resolve to a single allowlist entry: the list
+// is a set, and a repeated name that survived would be priced and looked
+// up twice for one skill.
+func TestDuplicateSkillNamesCollapseToOneEntry(t *testing.T) {
+	skills := []string{"review", " review ", "capture", "review"}
+	out, origins, err := resolveSkillsAllowlist("reviewer", &skills, ResolveOptions{
+		SkillCatalogue: map[string]SkillCatalogueEntry{
+			"review":  {User: true},
+			"capture": {User: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("a repeated skill name was refused: %v", err)
+	}
+	if out == nil {
+		t.Fatal("resolve returned a nil allowlist for a non-empty list")
+	}
+	want := []string{"review", "capture"}
+	if len(*out) != len(want) {
+		t.Fatalf("allowlist = %v; want %v (duplicates collapsed, order kept)", *out, want)
+	}
+	for i, name := range want {
+		if (*out)[i] != name {
+			t.Fatalf("allowlist = %v; want %v (duplicates collapsed, order kept)", *out, want)
+		}
+	}
+	if len(origins) != 2 || origins["review"] == "" || origins["capture"] == "" {
+		t.Fatalf("origins = %v; want one origin per distinct skill", origins)
+	}
+}

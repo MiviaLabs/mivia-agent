@@ -223,8 +223,9 @@ def test_rejects_a_dollar_var_invocation_of_a_missing_script() -> None:
 def test_rejects_a_borrower_that_reaches_fail_through_the_module() -> None:
     """`import verify_common` then `verify_common.fail` is the same defect."""
     borrower = (
-        "import verify_common\n"
-        "from verify_common import ROOT, rel_to_root\n\n"
+        # No from-import here: with one, IMPORTS_COMMON matched the other
+        # branch and this fixture never exercised the module form it names.
+        "import verify_common\n\n"
         "fail = verify_common.fail\n\n\n"
         "def main() -> None:\n    fail('x')\n\n\n"
         'if __name__ == "__main__":\n    main()\n'
@@ -254,6 +255,32 @@ def test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule() -> None:
     )
 
 
+def test_sweeps_an_uninvoked_extensionless_hook_gate() -> None:
+    """Pins the hook-directory SWEEP, not the invoked-script rule.
+
+    The earlier version's fixture was invoked by its fake pre-push, so the
+    invoked-guard rule produced the asserted text first and both
+    `SCRIPT_GLOBS = ("scripts/*.py",)` and a disabled shebang test left the
+    suite green. Nothing invokes this one, so only the sweep can reject it.
+    """
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build(Path(tmp), "check:\n\t@python3 scripts/check_probe.py\n",
+                     {"check_probe.py": RUNNABLE})
+        hooks = root / "scripts" / "git-hooks"
+        hooks.mkdir()
+        (hooks / "orphan-check").write_text(HOOK_GATE, encoding="utf-8")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_gate_scripts(root)
+        except SystemExit:
+            if "defines main()" not in captured.getvalue():
+                raise AssertionError(captured.getvalue())
+            return
+    raise AssertionError("gate accepted an uninvoked hook gate with no entry point")
+
+
 def test_rejects_a_tree_where_the_invocation_pattern_matches_nothing() -> None:
     """The gate must fail closed if it can no longer see any invocation."""
     expect_rejection(
@@ -270,6 +297,7 @@ def main() -> None:
     test_rejects_an_uninvoked_script_with_no_guard()
     test_rejects_a_gate_that_takes_the_default_failure_prefix()
     test_rejects_a_binding_that_names_another_script()
+    test_sweeps_an_uninvoked_extensionless_hook_gate()
     test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule()
     test_rejects_a_borrower_that_reaches_fail_through_the_module()
     test_rejects_a_dollar_var_invocation_of_a_missing_script()

@@ -82,6 +82,9 @@ is nothing to generate from. Resync by reading the source files listed under
 curl -s http://localhost:3001/docs/json | python3 -m json.tool
 ```
 
+This skill declares no command execution. Without it, read the source files
+instead and report the resync as `NOT_RUN`.
+
 Then update `source.transcribedOn`, per `api/contracts/README.md`. Never make
 the test regenerate the JSON: the guarantee is that a person edits it.
 
@@ -108,7 +111,9 @@ the test regenerate the JSON: the guarantee is that a person edits it.
 - If a doc change is large (new architecture area, restructure, many
   files), route it through the delivery workflow: start it with
   `scripts/run-delivery-workflow.sh <label>` (see `AGENTS.md`, section
-  "Workflow runs", and `.agents/skills/feature-delivery/SKILL.md`).
+  "Workflow runs", and `.agents/skills/feature-delivery/SKILL.md`). Starting
+  that run needs command execution this skill does not declare, so name it as
+  the implementer's step.
 
 ## Done means verified
 

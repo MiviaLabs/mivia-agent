@@ -133,3 +133,40 @@ func TestAnEnumDeclaredAsStringsIsAccepted(t *testing.T) {
 		t.Errorf("an unreadable enum should not itself refuse values: %v", err)
 	}
 }
+
+// TestBoundChecksIgnoreAValueOfTheWrongGoType pins the floors inside the
+// two constraint helpers. validateProperty screens the type before calling
+// them, so these arms are reachable only directly - but they decide what
+// happens to a value the type check did not produce, and the wrong answer
+// is silent. A helper that compared a non-float64 against a minimum would
+// see Go's zero value and reject every legitimate argument of that shape;
+// the contract is to defer to the type check, not to invent a verdict.
+func TestBoundChecksIgnoreAValueOfTheWrongGoType(t *testing.T) {
+	numDef := map[string]any{"type": "integer", "minimum": float64(1), "maximum": float64(10)}
+	for _, value := range []any{nil, "7", true, 7, map[string]any{}} {
+		if err := validateNumberBounds("n", value, numDef); err != nil {
+			t.Errorf("validateNumberBounds(%#v) = %v; want nil, the type check owns this verdict", value, err)
+		}
+	}
+
+	arrDef := map[string]any{
+		"type":     "array",
+		"minItems": float64(2),
+		"maxItems": float64(3),
+		"items":    map[string]any{"type": "string", "enum": []any{"a", "b"}},
+	}
+	for _, value := range []any{nil, "abc", []string{"a"}, 7} {
+		if err := validateArrayConstraints("items", value, arrDef); err != nil {
+			t.Errorf("validateArrayConstraints(%#v) = %v; want nil, the type check owns this verdict", value, err)
+		}
+	}
+
+	// The constraints still bite on the shape the type check does produce,
+	// so the floors above are a deferral and not a disabled guard.
+	if err := validateNumberBounds("n", float64(0), numDef); err == nil {
+		t.Error("validateNumberBounds accepted 0 against a minimum of 1")
+	}
+	if err := validateArrayConstraints("items", []any{"a"}, arrDef); err == nil {
+		t.Error("validateArrayConstraints accepted 1 item against minItems 2")
+	}
+}

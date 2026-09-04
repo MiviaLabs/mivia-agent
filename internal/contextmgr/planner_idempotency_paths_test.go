@@ -147,3 +147,44 @@ func TestASuppliedIdempotencyKeyIsValidatedNotTrusted(t *testing.T) {
 		t.Errorf("key came back as %q, want %q unchanged", got, good)
 	}
 }
+
+// TestAnExplicitRangeIsValidatedBeforeItIsTrusted covers the arm between the
+// two above: a caller-supplied range that is not the zero value and does not
+// pass contextstate's own SourceRange.Validate.
+//
+// The coverage check the other tests give is not enough on its own. The
+// "does not cover source events" arm below it only runs when events were
+// ALSO supplied, so a range handed in alone - which is the ordinary call
+// shape when the caller compacts a window it read elsewhere - is checked by
+// this Validate call and nothing else. Without it an inverted or
+// cross-session range would be returned verbatim, get hashed into the
+// idempotency key, and name a window the plan never read.
+func TestAnExplicitRangeIsValidatedBeforeItIsTrusted(t *testing.T) {
+	for name, rng := range map[string]contextstate.SourceRange{
+		"inverted": {
+			Start: contextstate.SourceID{SessionID: "session", Sequence: 9},
+			End:   contextstate.SourceID{SessionID: "session", Sequence: 4},
+		},
+		"two sessions": {
+			Start: contextstate.SourceID{SessionID: "session-a", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "session-b", Sequence: 2},
+		},
+		"malformed endpoint": {
+			Start: contextstate.SourceID{SessionID: "", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "session", Sequence: 2},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := planSourceRange(PlanInput{SourceRange: rng})
+			if err == nil {
+				t.Fatalf("range %+v was accepted; it would be hashed into the idempotency key as if it named a real window", rng)
+			}
+			if got != (contextstate.SourceRange{}) {
+				t.Errorf("a refused range still returned %+v, want the zero range", got)
+			}
+			if !strings.Contains(err.Error(), "source_range") && !strings.Contains(err.Error(), "source_id") {
+				t.Errorf("error %q names neither source_range nor source_id", err)
+			}
+		})
+	}
+}

@@ -43,3 +43,27 @@ func TestContextBarUsesTheTiersOwnGlyphs(t *testing.T) {
 		}
 	}
 }
+
+// TestContextCellsClaimsNothingOnAZeroWidthBar: the split bar (the
+// sidebar's floor/conversation runs) asks for a cell count before it knows
+// it has room. A bar with no cells has none to claim, and the rounding
+// arithmetic below would otherwise hand back a positive count for a bar
+// that is not drawn - or a negative one for a negative width, which the
+// caller then repeats into a string.
+func TestContextCellsClaimsNothingOnAZeroWidthBar(t *testing.T) {
+	for _, blocks := range []int{0, -1, -8} {
+		for _, pct := range []int{0, 50, 100, 150} {
+			if got := ContextCells(pct, blocks); got != 0 {
+				t.Errorf("ContextCells(%d, %d) = %d, want 0", pct, blocks, got)
+			}
+		}
+	}
+	// A real bar still fills, so the zero above is the no-width arm and not
+	// a gauge that never draws.
+	if got := ContextCells(50, 4); got != 2 {
+		t.Errorf("ContextCells(50, 4) = %d, want 2", got)
+	}
+	if got := ContextCells(150, 4); got != 4 {
+		t.Errorf("ContextCells(150, 4) = %d, want the bar clamped to 4", got)
+	}
+}

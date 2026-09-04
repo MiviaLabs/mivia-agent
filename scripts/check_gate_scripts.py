@@ -45,9 +45,20 @@ SCRIPT_GLOBS = ("scripts/*.py", "scripts/git-hooks/*")
 # "$ROOT/..." invocation were invisible. One of those, file-size-check, is
 # invoked by both pre-commit and pre-push and could lose its entry point with
 # this gate green: the exact defect this file exists to stop.
+# Two shapes count as invoking a gate: through an interpreter, and directly
+# by path (the hooks rely on the shebang). Both may carry a "$VAR"/, $VAR/ or
+# ${VAR}/ root prefix, and the interpreter may carry flags.
+_ROOT_PREFIX = r"(?:[\"']?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?[\"']?/)?"
+_SEG = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
+_PATH = r"[\"']?(scripts/" + _SEG + r"(?:/" + _SEG + r")*)"
+
 INVOCATION = re.compile(
-    r"python3?\s+(?:\"?\$[A-Z_]+\"?/)?(scripts/[A-Za-z0-9_./-]+)"
+    r"(?:python3?|\$[A-Za-z_]+|[\"']?\$\{?PYTHON\}?[\"']?)"
+    r"(?:\s+-[A-Za-z]+)*\s+" + _ROOT_PREFIX + _PATH
 )
+
+# A gate invoked straight by path, e.g. `"$ROOT"/scripts/git-hooks/pre-commit`.
+DIRECT_INVOCATION = re.compile(r"(?:^|(?<=[\s\"']))" + _ROOT_PREFIX + _PATH, re.M)
 
 # A file is a Python gate because it runs under python3, not because its name
 # ends in .py: two of the hook-directory gates carry no extension.
@@ -55,7 +66,22 @@ PY_SHEBANG = re.compile(r"^#!.*\bpython3?\b")
 
 GUARD = re.compile(r"^if __name__ == [\"']__main__[\"']:", re.M)
 IMPORTS_COMMON = re.compile(r"^(from verify_common import|import verify_common)", re.M)
-REACHES_FAIL = re.compile(r"\bfail\b")
+# `from verify_common import ROOT` reaches no fail(), and a module that defines
+# its own fail() borrows nothing. Match the imported NAME, not the bare word.
+FROM_IMPORT_FAIL = re.compile(r"^from verify_common import ([^\n]*)", re.M)
+MODULE_FAIL = re.compile(r"\bverify_common\.fail\b")
+
+
+def borrows_common_fail(body: str) -> bool:
+    """True when this module actually reaches verify_common.fail."""
+    if MODULE_FAIL.search(body):
+        return True
+    for match in FROM_IMPORT_FAIL.finditer(body):
+        names = match.group(1).split("#", 1)[0]
+        for part in names.split(","):
+            if part.split(" as ")[0].strip() == "fail":
+                return True
+    return False
 DEFINES_MAIN = re.compile(r"^def main\(", re.M)
 
 # The one module allowed to take verify_common.fail's default prefix, because
@@ -71,9 +97,18 @@ def invoked_scripts(root: Path) -> dict[str, set[str]]:
             if not invoker.is_file():
                 continue
             body = invoker.read_text(encoding="utf-8", errors="replace")
-            for match in INVOCATION.finditer(body):
-                found.setdefault(match.group(1), set()).add(rel_to_root(invoker))
+            for pattern in (INVOCATION, DIRECT_INVOCATION):
+                for match in pattern.finditer(body):
+                    path = match.group(1).rstrip("\"'")
+                    found.setdefault(path, set()).add(rel_to_root(invoker))
     return found
+
+
+def is_python_gate(path: Path, body: str) -> bool:
+    """True when this file runs under python3: by suffix or by shebang."""
+    if path.suffix == ".py":
+        return True
+    return bool(PY_SHEBANG.match(body.split("\n", 1)[0]))
 
 
 def python_gate_files(root: Path):
@@ -90,10 +125,10 @@ def python_gate_files(root: Path):
                 yield path
                 continue
             try:
-                first = path.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+                head = path.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
             except OSError:
                 continue
-            if PY_SHEBANG.match(first):
+            if PY_SHEBANG.match(head):
                 yield path
 
 
@@ -112,6 +147,11 @@ def check_gate_scripts(root: Path) -> None:
         if not path.is_file():
             fail(f"{callers} invokes {rel}, which does not exist.")
         body = path.read_text(encoding="utf-8")
+        # The guard rule is a Python rule. Direct-path invocation also finds
+        # the bash hooks under scripts/git-hooks, which have no __main__ guard
+        # by construction; holding them to it would be a false fire.
+        if not is_python_gate(path, body):
+            continue
         if not GUARD.search(body):
             fail(
                 f"{rel} has no `if __name__ == \"__main__\":` guard, so the "
@@ -148,7 +188,7 @@ def check_gate_scripts(root: Path) -> None:
         # entirely. `binds` is matched on the partial application itself, not
         # as a loose substring: the string prefix="<stem>" in a comment or a
         # docstring used to satisfy it.
-        if not REACHES_FAIL.search(body):
+        if not borrows_common_fail(body):
             continue
         if not re.search(
             rf"functools\.partial\(\s*[A-Za-z_.]*fail\s*,\s*prefix=[\"']{re.escape(stem)}[\"']",
