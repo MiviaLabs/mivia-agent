@@ -307,9 +307,9 @@ def main() -> int:
     if scope is not None and scope not in scopes:
         fail(policy, f"unknown scope {scope!r}")
 
-    if not body:
-        fail(policy, "empty subject body after type(scope):")
-
+    # No `if not body:` guard: the type(scope): subject regex captures body as
+    # `(?P<body>.+)`, which requires at least one character, so an empty body
+    # can never reach here (confirmed by neutering the guard - no test moved).
     if not re.match(r"^[a-z0-9]", body):
         fail(policy, "subject body must start with a lowercase letter or digit")
 

@@ -255,6 +255,31 @@ def test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule() -> None:
     )
 
 
+def test_a_comment_naming_a_deleted_script_does_not_false_fire() -> None:
+    """A prose mention is not an invocation.
+
+    DIRECT_INVOCATION once matched any scripts/... token anywhere in the
+    invoker body, so a Makefile comment documenting a deleted or renamed
+    script failed the gate with a false "does not exist" claim.
+    """
+    rejection = run_on(
+        "# see scripts/check_ghost.py for background\n"
+        "check:\n\t@python3 scripts/check_probe.py\n",
+        {"check_probe.py": RUNNABLE},
+    )
+    if rejection is not None:
+        raise AssertionError(f"a comment triggered a rejection: {rejection}")
+
+
+def test_a_direct_invocation_after_a_shell_separator_is_still_caught() -> None:
+    """Anchoring to a command position must not blind the gate to real use."""
+    expect_rejection(
+        'check:\n\t@true && "$ROOT"/scripts/check_ghost.py\n',
+        {"check_probe.py": RUNNABLE},
+        "does not exist",
+    )
+
+
 def test_sweeps_an_uninvoked_extensionless_hook_gate() -> None:
     """Pins the hook-directory SWEEP, not the invoked-script rule.
 
@@ -297,6 +322,8 @@ def main() -> None:
     test_rejects_an_uninvoked_script_with_no_guard()
     test_rejects_a_gate_that_takes_the_default_failure_prefix()
     test_rejects_a_binding_that_names_another_script()
+    test_a_comment_naming_a_deleted_script_does_not_false_fire()
+    test_a_direct_invocation_after_a_shell_separator_is_still_caught()
     test_sweeps_an_uninvoked_extensionless_hook_gate()
     test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule()
     test_rejects_a_borrower_that_reaches_fail_through_the_module()

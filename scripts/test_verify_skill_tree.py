@@ -318,8 +318,16 @@ def test_check_skill_dir_rejects_missing_frontmatter() -> None:
     wrong site.
     """
     rejection = run_check_skill_dir("# No frontmatter here\n\nBody.\n")
-    if rejection is None or ".agents/skills" not in rejection and "skills/probe-skill" not in rejection:
-        raise AssertionError(f"expected a missing-frontmatter rejection, got: {rejection}")
+    if rejection is None:
+        raise AssertionError("gate accepted a skill with no frontmatter")
+    # Assert the rule's own text, not just "some rejection happened" - the
+    # unparenthesised `or ... and ...` here used to collapse to that, and
+    # a run through .agents/skills always contains "skills/probe-skill"
+    # regardless of which rule fired.
+    if "missing YAML frontmatter" not in rejection:
+        raise AssertionError(f"expected the missing-frontmatter rule, got: {rejection}")
+    if "declares no name" in rejection:
+        raise AssertionError(f"the no-name rule fired instead: {rejection}")
 
 
 def test_check_skill_dir_rejects_frontmatter_with_no_name() -> None:

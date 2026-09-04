@@ -476,9 +476,9 @@ def check_core_tier_covers_prompted_tools() -> None:
             f"silently defers the tool it was meant to keep"
         )
     deferred = known - core - NON_DEFERRABLE_TOOLS
-    if not deferred:
-        return
-
+    # No early return on an empty deferred set: that is exactly the state
+    # where every entry in a hand-maintained "locked tools" list is wrong,
+    # and check_locked_list_excludes_core below must still run.
     for rel, body in model_facing_prompts():
         # An agent may replace the global tier with its own tools_core
         # (internal/config/agents.go). Checking only the global set let such an
@@ -513,10 +513,12 @@ def check_core_tier_covers_prompted_tools() -> None:
                     f"prompt."
                 )
 
-    # The inverse direction, which nothing checked: a prompt that tells the
-    # model to load_tools a tool that is already core. Adding delete_file to
-    # core to fix a deferred-but-prompted defect created exactly this one in
-    # the same file.
+    # The inverse direction. A prompt that tells the model to load_tools a
+    # tool that is already core costs the same wasted turn a deferred
+    # prompted tool does. This must run unconditionally, not only when
+    # `deferred` is non-empty - a core set covering everything deferrable is
+    # exactly the state where every "locked" entry in a hand-copied prompt
+    # list is guaranteed wrong.
     check_locked_list_excludes_core(config_path, core)
 
 

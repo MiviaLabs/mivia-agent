@@ -227,10 +227,10 @@ def check_memories(directory: Path) -> None:
                 f"{name}: tags must be a flat non-empty list, for example "
                 f"[a, b]; got {fields['tags']!r}."
             )
-        # Strip the comment BEFORE slicing. rindex("]") over the raw value
-        # found a bracket inside the comment, so `tags: [a, ] # x]` sliced to
-        # "a, ] # x" and every element rule below inspected comment text.
-        inner = strip_trailing_comment(fields["tags"]).strip()
+        # fields["tags"] is already comment-stripped: the field split above
+        # stores strip_trailing_comment(value), so a second strip here was
+        # dead code (confirmed by neutering it - no test moved).
+        inner = fields["tags"]
         inner = inner[inner.index("[") + 1 : inner.rindex("]")]
         for tag in inner.split(","):
             tag = tag.strip()

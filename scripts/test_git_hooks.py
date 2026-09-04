@@ -238,6 +238,45 @@ def test_commit_msg_rejects_unknown_scope() -> None:
     assert "ai:" in err  # scope guide mentions ai for control surface work
 
 
+def run_commit_msg_subject(subject: str) -> subprocess.CompletedProcess:
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(subject)
+        path = fh.name
+    return run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+
+
+def test_commit_msg_rejects_an_empty_subject() -> None:
+    """subject_line() skips blank and comment lines, so an all-blank message
+    (or one holding only comments) is what actually reaches the empty check."""
+    proc = run_commit_msg_subject("\n# just a comment\n\n")
+    assert proc.returncode != 0
+    assert "empty commit subject" in proc.stderr
+
+
+def test_commit_msg_rejects_an_over_length_subject() -> None:
+    proc = run_commit_msg_subject("chore(build): " + "x" * 100 + "\n\nbody\n")
+    assert proc.returncode != 0
+    assert "longer than" in proc.stderr
+
+
+def test_commit_msg_rejects_an_unknown_type() -> None:
+    proc = run_commit_msg_subject("frobnicate(build): do a thing\n\nbody\n")
+    assert proc.returncode != 0
+    assert "unknown type" in proc.stderr
+
+
+def test_commit_msg_rejects_a_body_starting_uppercase() -> None:
+    proc = run_commit_msg_subject("chore(build): Capitalized start\n\nbody\n")
+    assert proc.returncode != 0
+    assert "lowercase letter or digit" in proc.stderr
+
+
+def test_commit_msg_rejects_a_trailing_period() -> None:
+    proc = run_commit_msg_subject("chore(build): do a thing.\n\nbody\n")
+    assert proc.returncode != 0
+    assert "must not end with a period" in proc.stderr
+
+
 # A real test name: the hook now resolves every Regression name to a real
 # func in a _test.go file, so a placeholder here would (correctly) fail.
 FIX_TRAILERS = (
