@@ -306,6 +306,37 @@ def test_alias_gate_rejects_a_missing_claude_tree() -> None:
     expect_alias_rejection(mutate, ".claude/skills is missing")
 
 
+def test_gate_measures_description_in_bytes() -> None:
+    """The loader compares Go len() on a string, which counts bytes.
+
+    A 200-character description holding one multi-byte rune is 202 bytes. It
+    passed a character count and was then truncated mid-sentence at load, which
+    is the exact silent truncation this cap exists to stop.
+    """
+    mod = load_gate()
+    body = "x" * 199 + "\u2014"  # 200 characters, 202 bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        skills_dir = Path(tmp) / "skills"
+        (skills_dir / "probe-skill").mkdir(parents=True)
+        (skills_dir / "probe-skill" / "SKILL.md").write_text(
+            f"---\nname: probe-skill\ndescription: {body}\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_skill_dir(skills_dir)
+        except SystemExit:
+            if "bytes" not in captured.getvalue():
+                raise AssertionError(
+                    "expected a byte-count rejection, got:\n" + captured.getvalue()
+                )
+            return
+    raise AssertionError(
+        "gate accepted a description of 200 characters and 202 bytes"
+    )
+
+
 def main() -> None:
     test_known_keys_match_go_source()
     test_gate_accepts_schema_keys()
@@ -321,6 +352,7 @@ def main() -> None:
     test_alias_gate_rejects_an_orphan_directory()
     test_alias_gate_rejects_a_stray_resource_file()
     test_alias_gate_rejects_a_missing_claude_tree()
+    test_gate_measures_description_in_bytes()
     print("test_verify_skill_tree: ok")
 
 
