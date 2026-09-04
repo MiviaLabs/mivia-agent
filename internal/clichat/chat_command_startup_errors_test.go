@@ -144,6 +144,28 @@ func TestPrepareChatStartupUserConfigFullDiskWarns(t *testing.T) {
 		t.Fatalf("stderr = %q, want the notice for a user-config full-disk grant", got)
 	}
 
+	// cwd == $HOME with no --workspace: the user config IS the workspace's
+	// own file, the same-file guard must refuse it, and the notice must NOT
+	// fire - it has to agree with the enforcement gate, which sees the
+	// absolute root and keeps tools confined (bug-audit ec8a9ef4 a2-1/a3-1:
+	// the relative root used to bypass the guard and print a false
+	// FULL DISK ACCESS banner).
+	wd, wdErr := os.Getwd()
+	if wdErr != nil {
+		t.Fatal(wdErr)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	stop = captureStderr(t)
+	if _, err := prepareChatStartup(keyedResolved(), chatInvocation{}); err != nil {
+		t.Fatalf("prepareChatStartup: %v", err)
+	}
+	if homeAsWS := stop(); strings.Contains(homeAsWS, want) {
+		t.Fatalf("notice fired from a workspace-owned user config the gate refuses: %q", homeAsWS)
+	}
+
 	// --quiet suppresses the informational notice for this source too.
 	stop = captureStderr(t)
 	if _, err := prepareChatStartup(keyedResolved(), chatInvocation{workspacePath: t.TempDir(), quiet: true}); err != nil {

@@ -98,12 +98,26 @@ func SetUserFullDiskAccess(workspaceRoot string, on bool) error {
 // workspace". Mirrors LoadAgentsGlobal's two-step guard: resolved
 // directories equal means the fixed filename lands on the same file even
 // when lexical paths differ.
+//
+// Both operands are canonicalized to ABSOLUTE paths before comparing:
+// relative roots ("", "." - what prepareChatStartup passes before
+// enterChatWorkspace absolutizes, and what the ""-resolution contract
+// documents) would otherwise compare a relative .mivia/mivia.toml against
+// the absolute user path, and EvalSymlinks keeps relative input relative -
+// the guard could never trip and a repo-planted $HOME/.mivia/mivia.toml
+// would answer the grant question (bug-audit ec8a9ef4 findings a2-1/a3-1).
 func sameFilePathAsWorkspaceConfig(path, workspaceRoot string) bool {
 	wsRoot := strings.TrimSpace(workspaceRoot)
 	if wsRoot == "" {
 		wsRoot = "."
 	}
 	wsConfig := workspace.NamespacePath(wsRoot, "mivia.toml")
+	if pathAbs, err := filepath.Abs(path); err == nil {
+		path = pathAbs
+	}
+	if wsAbs, err := filepath.Abs(wsConfig); err == nil {
+		wsConfig = wsAbs
+	}
 	if same, err := sameResolvedDir(filepath.Dir(path), filepath.Dir(wsConfig)); err == nil && same {
 		return true
 	}
