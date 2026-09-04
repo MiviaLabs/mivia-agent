@@ -341,18 +341,25 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 #
 # .mivia/mivia.toml carries this very blocklist: an agent that can edit it
 # can remove its own restrictions, including the entries below. .git carries
-# commit history and hooks: an agent that can edit it can rewrite history or
-# plant hooks that bypass the host hook-policy gates. Keep both listed here
-# unless a host-owned step genuinely needs the path. An entry in BOTH this
-# key and write_path_blocklist_remove is a load error.
+# commit history: an agent that can edit it can rewrite history. Blocking
+# .git alone does NOT protect the hooks. install_git_hooks.sh points the
+# hooks path at .githooks, so the live hooks are .githooks/* and the
+# implementations they exec in scripts/git-hooks/*, and neither lives under
+# .git. Block all three, or an agent can plant a hook that bypasses the
+# host gates. Keep them listed unless a host-owned step genuinely needs the
+# path. An entry in BOTH this key and write_path_blocklist_remove is a load
+# error.
 write_path_blocklist = [
-    ".git",              # commit history and hooks
+    ".git",              # commit history
+    ".githooks",         # hook wrappers the hooks path points at
+    "scripts/git-hooks", # hook implementations the wrappers exec
     ".mivia/mivia.toml", # this config, including this very blocklist
     ".agents/agents",   # agent definitions
     ".mivia/agents",    # agent definitions (legacy path)
     ".mivia/policy",    # hook-policy gates
     ".agents/rules",    # durable rules
     ".agents/skills",   # skill definitions (mivia binary's own load path)
+    ".claude/skills",   # alias stubs: the only definition Claude Code reads
     ".mivia/workflows", # workflow definitions and templates
     "go.mod",
     "go.sum",

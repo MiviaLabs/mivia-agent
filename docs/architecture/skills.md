@@ -141,7 +141,7 @@ A symlink is not used here. Git sets `core.symlinks=false` by default on
 Windows, so a cloned symlink becomes a plain text file and the skill tree
 breaks with no error. A plain-file stub is portable on every operating system.
 `scripts/verify_agent_config.py` (`check_claude_skill_aliases`) enforces the
-stub shape, and `scripts/test_verify_agent_config.py` proves the gate rejects
+stub shape, and `scripts/test_verify_skill_tree.py` proves the gate rejects
 each defect.
 
 `report-template.md` is a repository convention enforced by the control-surface

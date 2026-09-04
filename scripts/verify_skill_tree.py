@@ -18,7 +18,10 @@ from verify_common import ROOT, fail, rel_to_root
 
 
 # Mirrors descriptionMaxLen in internal/skills/skill_markdown.go. loader.go
-# applies it through SanitizeModelFacingText. A longer description is truncated
+# applies it through SanitizeModelFacingText. The caps below count BYTES, not
+# characters: internal/skills/skills.go compares Go len() on a string, which is
+# a byte count. Measure with .encode("utf-8"), or one em dash in a 200-character
+# description passes this gate and is then truncated mid-sentence at load. A longer description is truncated
 # mid-sentence in the model-facing skill surface, which degrades skill selection
 # with no other signal that it happened.
 SKILL_DESCRIPTION_MAX = 200
@@ -36,7 +39,7 @@ SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 #   contract, so a valid skill fails `make verify` for no real reason.
 # This set is an explicit literal on purpose. Do not derive it from the Go source
 # at runtime. A parse of the Go map must fail closed, and a simple regex parse
-# fails open. scripts/test_verify_agent_config.py proves the two sets are equal.
+# fails open. scripts/test_verify_skill_tree.py proves the two sets are equal.
 SKILL_KNOWN_KEYS = {
     "name", "description", "triggers", "user-invocable", "argument-hint",
     "short-description", "tools",
@@ -303,10 +306,11 @@ def check_skill_dir(skills_dir: Path) -> None:
                 # balanced quote pair before the cap applies, so measure
                 # the same text the loader measures.
                 description = line.split(":", 1)[1].strip().strip("\"'")
-                if len(description) > SKILL_DESCRIPTION_MAX:
+                if len(description.encode("utf-8")) > SKILL_DESCRIPTION_MAX:
                     fail(
                         f"{rel_to_root(skill_path)}: description is "
-                        f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
+                        f"{len(description.encode('utf-8'))} bytes, max "
+                        f"{SKILL_DESCRIPTION_MAX} "
                         f"(silently truncated by internal/skills/loader.go)"
                     )
                 break
@@ -349,16 +353,17 @@ def check_skill_dir(skills_dir: Path) -> None:
                     in_triggers = False
         if trigger_items:
             joined = "\n".join(trigger_items)
-            if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
+            if len(joined.encode("utf-8")) > SKILL_TRIGGERS_JOINED_MAX:
                 fail(
                     f"{rel_to_root(skill_path)}: triggers joined block is "
-                    f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
+                    f"{len(joined.encode('utf-8'))} bytes, max "
+                    f"{SKILL_TRIGGERS_JOINED_MAX} "
                     f"(silently truncated by internal/skills/loader.go)"
                 )
             for item in trigger_items:
-                if len(item) > SKILL_TRIGGER_MAX:
+                if len(item.encode("utf-8")) > SKILL_TRIGGER_MAX:
                     fail(
-                        f"{rel_to_root(skill_path)}: trigger is {len(item)} "
-                        f"chars, max {SKILL_TRIGGER_MAX} "
+                        f"{rel_to_root(skill_path)}: trigger is "
+                        f"{len(item.encode('utf-8'))} bytes, max {SKILL_TRIGGER_MAX} "
                         f"(silently truncated by internal/skills/loader.go)"
                     )
