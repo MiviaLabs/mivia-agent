@@ -43,6 +43,18 @@ are operational, not authoritative.
 - Never rewrite a memory to invert a previous decision without
   recording why; the diff itself is the audit trail.
 
+## The archive
+
+A memory that is no longer true but is worth keeping goes to
+`.agents/memories/.archive/<id>.md`, with `archived_on: <date>` added to
+its frontmatter. Archived files are not read at the start of a task.
+
+Write the archived copy first, read it back and confirm the content
+matches, then delete the original. A delete that runs before its write
+loses the memory and leaves only the git history to recover it. The
+`housekeeping` skill follows this order and gates the move on operator
+approval.
+
 ## Reading
 
 `AGENTS.md` mandates: "Read every file under `.agents/memories/` at the
