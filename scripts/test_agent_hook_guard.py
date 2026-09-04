@@ -627,6 +627,31 @@ def test_run_command_guard_catches_dash_n_across_a_global_option() -> None:
         assert "agent-hook-bypass.json" in proc.stderr
 
 
+def test_run_command_guard_does_not_misclassify_a_branch_named_commit() -> None:
+    """A literal "commit" token that is not the subcommand must not count.
+
+    _git_commit_index used to scan for the first "commit" token anywhere
+    after "git", so `git branch commit -n` (a branch literally named commit)
+    was misread as a git-commit invocation and its own -n falsely blocked.
+    """
+    proc = run_command_guard(["git", "branch", "commit", "-n"])
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_run_command_guard_finds_commit_past_a_decoy_value() -> None:
+    """A "commit" used as a -c VALUE is not the subcommand; the real one,
+    one token later, still is."""
+    proc = run_command_guard(["git", "-c", "commit", "commit", "-n"])
+    assert proc.returncode == 2, proc.stderr
+
+
+def test_run_command_guard_does_not_misclassify_log_dash_n() -> None:
+    """`git log -n5` is not git commit; -n5 is a bundled count, not a bare
+    bypass flag, and log is not commit regardless."""
+    proc = run_command_guard(["git", "-C", "/tmp", "log", "-n5"])
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_run_command_guard_allows_dash_capital_c_before_commit() -> None:
     """git's own -C <dir> (change directory) is not commit's reuse-message.
 

@@ -74,6 +74,10 @@ GUARD = re.compile(r"^if __name__ == [\"']__main__[\"']:", re.M)
 IMPORTS_COMMON = re.compile(r"^(from verify_common import|import verify_common)", re.M)
 # `from verify_common import ROOT` reaches no fail(), and a module that defines
 # its own fail() borrows nothing. Match the imported NAME, not the bare word.
+class UnparsableGateScript(ValueError):
+    """A scripts/*.py file that ast.parse cannot read."""
+
+
 def borrows_common_fail(body: str) -> bool:
     """True when this module actually reaches verify_common.fail.
 
@@ -86,8 +90,11 @@ def borrows_common_fail(body: str) -> bool:
     """
     try:
         tree = ast.parse(body)
-    except SyntaxError:
-        return False
+    except SyntaxError as exc:
+        # A silent False here reads identically to "never touches fail",
+        # exempting a script from the very check that would catch a wrong
+        # prefix binding if it also happens to have a syntax error elsewhere.
+        raise UnparsableGateScript(str(exc)) from exc
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "verify_common":
             if any(alias.name == "fail" for alias in node.names):
@@ -197,6 +204,13 @@ def check_gate_scripts(root: Path) -> None:
         body = path.read_text(encoding="utf-8")
         if not IMPORTS_COMMON.search(body):
             continue
+        try:
+            reaches_fail = borrows_common_fail(body)
+        except UnparsableGateScript as exc:
+            fail(f"{rel_to_root(path)}: cannot parse this file to check its "
+                 f"verify_common usage: {exc}")
+        if not reaches_fail:
+            continue
         stem = path.stem
         if stem == DEFAULT_PREFIX_OWNER:
             continue
@@ -206,8 +220,6 @@ def check_gate_scripts(root: Path) -> None:
         # entirely. `binds` is matched on the partial application itself, not
         # as a loose substring: the string prefix="<stem>" in a comment or a
         # docstring used to satisfy it.
-        if not borrows_common_fail(body):
-            continue
         if not re.search(
             rf"functools\.partial\(\s*[A-Za-z_.]*fail\s*,\s*prefix=[\"']{re.escape(stem)}[\"']",
             body,

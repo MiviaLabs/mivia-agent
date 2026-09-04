@@ -271,6 +271,29 @@ def test_accepts_the_legal_tag_forms() -> None:
             raise AssertionError(f"{label} ({value!r}) rejected: {r}")
 
 
+def test_rejects_tag_shapes_the_first_tag_check_missed() -> None:
+    """Six shapes the first differential sweep did not cover, all refused by
+    yaml.safe_load: an unrecognized double-bang construct, a malformed
+    verbatim tag with no scheme, an empty verbatim tag, a bare double-bang
+    collection tag, and a chained tag indicator."""
+    for value in ("!!python/object:foo", "!<a:b> x", "!<>", "!!map",
+                  "! !nested", "!!binary abc"):
+        body = GOOD.replace("title: Probe memory", f"title: {value}")
+        if (r := run_on({"probe-memory.md": body})) is None:
+            raise AssertionError(f"{value!r} was accepted; yaml.safe_load refuses it")
+
+
+def test_accepts_more_legal_tag_forms() -> None:
+    for label, value in (
+        ("null tag alone", "!!null"),
+        ("int tag", "!!int 5"),
+        ("standard verbatim tag", "!<tag:yaml.org,2002:str> foo"),
+    ):
+        body = GOOD.replace("title: Probe memory", f"title: {value}")
+        if (r := run_on({"probe-memory.md": body})) is not None:
+            raise AssertionError(f"{label} ({value!r}) rejected: {r}")
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -292,6 +315,8 @@ def main() -> None:
     test_rejects_frontmatter_opening_with_an_indented_line()
     test_rejects_a_custom_tag_scalar()
     test_accepts_the_legal_tag_forms()
+    test_rejects_tag_shapes_the_first_tag_check_missed()
+    test_accepts_more_legal_tag_forms()
     print("test_check_memories: ok")
 
 
