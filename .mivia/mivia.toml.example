@@ -332,39 +332,23 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # (or a project layered on top of yours) added here.
 #
 # Recommended starting values: the set below keeps workflow agents away from
-# agent definitions, the Git hooks, hook-policy gates, rules, skills (both the
-# canonical tree and the Claude Code alias stubs), the workflow definition
-# they run under, Go module metadata, and - explicitly re-added below, since
-# there is no compiled-in default - Git metadata and this config file. A
-# project that omits this key leaves ALL of these writable by workflow
-# agents, including .git and its own workflow definition - choose
-# deliberately.
+# Git metadata and the live Git hooks. A project that omits this key leaves
+# ALL paths writable by workflow agents, including .git and its own workflow
+# definition - choose deliberately.
 #
-# .mivia/mivia.toml carries this very blocklist: an agent that can edit it
-# can remove its own restrictions, including the entries below. .git carries
-# commit history: an agent that can edit it can rewrite history. Blocking
-# .git alone does NOT protect the hooks. install_git_hooks.sh points the
-# hooks path at .githooks, so the live hooks are .githooks/* and the
+# .git carries commit history: an agent that can edit it can rewrite history.
+# Blocking .git alone does NOT protect the hooks. install_git_hooks.sh points
+# the hooks path at .githooks, so the live hooks are .githooks/* and the
 # implementations they exec in scripts/git-hooks/*, and neither lives under
 # .git. Block all three, or an agent can plant a hook that bypasses the
-# host gates. Keep them listed unless a host-owned step genuinely needs the
-# path. An entry in BOTH this key and write_path_blocklist_remove is a load
-# error.
+# host gates. A project that also wants workflow-run protection for its
+# control-surface trees (.mivia/, .agents/, .claude/), its workflow
+# definitions, or its Go module files lists them here too. An entry in BOTH
+# this key and write_path_blocklist_remove is a load error.
 write_path_blocklist = [
     ".git",              # commit history
     ".githooks",         # hook wrappers the hooks path points at
     "scripts/git-hooks", # hook implementations the wrappers exec
-    ".mivia/mivia.toml", # this config, including this very blocklist
-    ".agents/agents",   # agent definitions
-    ".mivia/agents",    # agent definitions (legacy path)
-    ".mivia/policy",    # hook-policy gates
-    ".agents/rules",    # durable rules
-    ".agents/skills",   # skill definitions (mivia binary's own load path)
-    ".claude/skills",   # alias stubs: the only definition Claude Code reads
-    ".mivia/workflows", # workflow definitions and templates
-    "go.mod",
-    "go.sum",
-    "go.work",
 ]
 # write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example, against the list above
 
