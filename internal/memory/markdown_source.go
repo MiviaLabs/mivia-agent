@@ -78,8 +78,14 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	if err != nil {
 		return MarkdownDocument{}, err
 	}
+	if err := rejectSymlinkComponents(dir); err != nil {
+		return MarkdownDocument{}, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return MarkdownDocument{}, fmt.Errorf("create memory directory: %w", err)
+	}
+	if err := rejectSymlinkComponents(dir); err != nil {
+		return MarkdownDocument{}, err
 	}
 	path := filepath.Join(dir, slug(e.Title)+"-"+id+".md")
 	if err := atomicWrite(ctx, path, content); err != nil {
@@ -111,6 +117,9 @@ func (s MarkdownSource) Scan(ctx context.Context, scope Scope) ([]MarkdownDocume
 			continue
 		}
 		path := filepath.Join(dir, item.Name())
+		if item.Type()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("memory source %s is a symbolic link", path)
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read memory %s: %w", path, err)
@@ -133,6 +142,9 @@ func (s MarkdownSource) Delete(ctx context.Context, path string) error {
 		return err
 	}
 	clean := filepath.Clean(path)
+	if err := rejectSymlinkComponents(filepath.Dir(clean)); err != nil {
+		return err
+	}
 	if !s.inRoot(clean, s.projectDir) && !s.inRoot(clean, s.orgDir) {
 		return errors.New("memory path is outside configured roots")
 	}
@@ -224,6 +236,35 @@ func atomicWrite(ctx context.Context, path string, data []byte) error {
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("replace memory: %w", err)
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("open memory directory for sync: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync memory directory: %w", err)
+	}
+	return nil
+}
+
+func rejectSymlinkComponents(path string) error {
+	clean, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	for current := clean; ; current = filepath.Dir(current) {
+		info, statErr := os.Lstat(current)
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("memory source path contains symbolic link: %s", current)
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
 	}
 	return nil
 }

@@ -106,16 +106,18 @@ func validateMemoryIndexSchema(db *sql.DB) error {
 			return fmt.Errorf("memory index %s is missing", index)
 		}
 	}
-	for table, required := range map[string]string{
-		"memory_sources": "CHECK((scope='project' AND project_id <> '' AND org_id='')",
-		"memory_entries": "CHECK((scope='project' AND project_id <> '' AND org_id='')",
+	for table, requiredChecks := range map[string][]string{
+		"memory_sources": {"CHECK((scope='project' AND project_id <> '' AND org_id='')", "CHECK(source_path <> '')", "CHECK(source_hash <> '')"},
+		"memory_entries": {"CHECK((scope='project' AND project_id <> '' AND org_id='')", "CHECK(id <> '')", "CHECK(source_path <> '')", "CHECK(source_hash <> '')", "CHECK(verdict IN ('good','bad','mixed','neutral'))", "CHECK(tier IN ('core','archive'))"},
 	} {
 		var sqlText string
 		if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&sqlText); err != nil {
 			return err
 		}
-		if !strings.Contains(sqlText, required) {
-			return fmt.Errorf("memory index table %s has invalid scope constraint", table)
+		for _, required := range requiredChecks {
+			if !strings.Contains(sqlText, required) {
+				return fmt.Errorf("memory index table %s is missing constraint %s", table, required)
+			}
 		}
 	}
 	return nil

@@ -107,6 +107,21 @@ func TestSyncMemoryIndexCanClearEmptyOrganizationScan(t *testing.T) {
 	}
 }
 
+func TestSyncMemoryIndexRejectsDuplicateIDs(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	docs := []MemoryIndexDocument{
+		{ID: "same", Scope: "project", ProjectID: "repo", SourcePath: "/one.md", SourceHash: "1", Title: "One", Summary: "one", Verdict: "good", Content: "one"},
+		{ID: "same", Scope: "project", ProjectID: "repo", SourcePath: "/two.md", SourceHash: "2", Title: "Two", Summary: "two", Verdict: "good", Content: "two"},
+	}
+	if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", docs); err == nil {
+		t.Fatal("SyncMemoryIndex accepted duplicate IDs")
+	}
+}
+
 func TestSyncMemoryIndexRemovesOldIDForChangedSource(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
