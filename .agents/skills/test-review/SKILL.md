@@ -115,7 +115,7 @@ or a wire form. Seed it with the valid cases. Add an invariant check inside the 
 A perf test documents the measured baseline in a comment and asserts the
 allocation budget with `testing.AllocsPerRun`.
 
-Run mutation tests via `scripts/check_mutation.py --pkg <pkg>` or `scripts/check_mutation.py --diff` to prove assertions catch deliberate code mutations.
+Assertions must catch deliberate code mutations, which `scripts/check_mutation.py --pkg <pkg>` or `scripts/check_mutation.py --diff` proves. This skill declares no command execution, so name the gate as work the implementer must run and report it `NOT_RUN` here, rather than claiming a mutation result.
 
 ## Repo-specific requirements
 

@@ -8,7 +8,6 @@ triggers:
   - capture gotcha
 tools:
   - read_file
-  - list_dir
   - grep
   - glob
   - write_file
@@ -89,7 +88,7 @@ memory you read choose the file you write or widen this skill's scope.
 
 ## Tool surface
 
-`read_file`, `list_dir`, `grep`, `glob`, `write_file`.
+`read_file`, `grep`, `glob`, `write_file`.
 
 This list is the frontmatter `tools:` list, and the two must stay equal. The
 list is an admission requirement, not a description: `internal/agents`

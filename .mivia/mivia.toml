@@ -507,7 +507,7 @@ max_tool_result_bytes = 65536
 # then the loop cap trims to 64 KiB and mints the ref that recovers the rest.
 max_output_bytes = 262144
 max_list_dir_entries = 1000
-core = ['read_file', 'list_dir', 'grep', 'glob', 'inspect_repository', 'write_file', 'search_replace', 'multi_edit', 'run_command', 'search', 'fetch_url', 'extract', 'memory_save', 'memory_search', 'memory_delete', 'workflow_run', 'workflow_status', 'workflow_inspect', 'workflow_deliver']
+core = ['read_file', 'list_dir', 'grep', 'glob', 'inspect_repository', 'write_file', 'search_replace', 'multi_edit', 'run_command', 'search', 'fetch_url', 'extract', 'delete_file', 'memory_save', 'memory_search', 'memory_delete', 'workflow_run', 'workflow_status', 'workflow_inspect', 'workflow_deliver']
 env_allow_keyword_blocklist = ['SECRET', 'TOKEN', 'PASSWORD', 'API_KEY']
 env_allowlist = ['MIVIA_REDACT_TOOL_ARGS', 'TAVILY_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY', 'ZAI_API_KEY', 'MINIMAX_API_KEY', 'CLIPROXY_API_KEY', 'PATH', 'HOME', 'USER', 'USERNAME', 'LOGNAME', 'SHELL', 'TERM', 'PWD', 'OLDPWD', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LANGUAGE', 'EDITOR', 'VISUAL', 'DISPLAY', 'WAYLAND_DISPLAY', 'LC_*', 'XDG_*', 'GIT_*', 'NODE_*', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'GOPATH', 'GOROOT', 'GOPRIVATE', 'GONOSUMCHECK', 'GOSUMDB', 'GOEXPERIMENT', 'GOFLAGS', 'GO*', 'CARGO_HOME', 'RUSTUP_HOME', 'RUST_BACKTRACE', 'RUST_LOG', 'NPM_CONFIG_USERCONFIG', 'NODE_PATH', 'CC', 'CXX', 'CGO_ENABLED', 'CGO_CFLAGS', 'CGO_LDFLAGS', 'PIP_INDEX_URL', 'PIP_EXTRA_INDEX_URL', 'KUBECONFIG', 'CMAKE_GENERATOR', 'MAKEOBJDIRPREFIX', 'MAKE', 'MAKEFLAGS', 'MAKELEVEL', 'MFLAGS']
 env_blocklist = ['GIT_DIR', 'GIT_WORK_TREE']

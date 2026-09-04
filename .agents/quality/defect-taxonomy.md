@@ -1532,7 +1532,7 @@ already a `tool_end`. Gated by
   list appends, and cap accounting each fail differently and only one of them
   is usually visible.
 
-## DC-30 A check inspects a proxy for the property it asserts
+## DC-40 A check inspects a proxy for the property it asserts
 
 **Mechanism.** A gate, contract, or comment asserts a property, and the code
 under it examines something correlated with that property instead of the

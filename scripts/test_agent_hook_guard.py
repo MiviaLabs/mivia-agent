@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import os
 import random
 import subprocess
@@ -189,6 +190,71 @@ def test_blocks_commit_dash_n_argv() -> None:
     )
     assert proc.returncode != 0
     assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def flags_with_no_backing_pattern() -> list[str]:
+    """blockedFlags entries that no blockedFlagPatterns regex also catches.
+
+    Derived, never hand-listed: a hand-listed copy of a computed set is the
+    same defect one level up.
+    """
+    policy = json.loads(
+        (ROOT / ".mivia" / "policy" / "agent-hook-bypass.json").read_text(encoding="utf-8")
+    )
+    flags = policy.get("blockedFlags") or []
+    patterns = [re.compile(p) for p in policy.get("blockedFlagPatterns") or []]
+    return [f for f in flags if not any(p.search(f"git commit {f} -m x") for p in patterns)]
+
+
+def test_the_exact_flag_list_is_load_bearing() -> None:
+    """Pins the blockedFlags mechanism itself, not the regexes that shadow it.
+
+    Almost every blocked flag is also matched by a blockedFlagPatterns regex,
+    so the exact-flag loop could be deleted, or a policy entry dropped, with
+    the whole suite green. The flags below have no backing pattern, and the
+    assertion is on the reason string, so neither mechanism can stand in for
+    the other.
+    """
+    unbacked = flags_with_no_backing_pattern()
+    assert unbacked, (
+        "every blockedFlags entry is also pattern-matched, so this test pins "
+        "nothing. Keep one flag covered by the list alone, or assert the "
+        "reason string for a pattern-backed flag instead."
+    )
+    for flag in unbacked:
+        proc = run_guard(
+            "claude",
+            "PreToolUse",
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git commit {flag} -m x"},
+            },
+        )
+        assert proc.returncode != 0, f"{flag} was not blocked"
+        assert f"blocked flag {flag}" in (proc.stderr + proc.stdout), (
+            f"{flag} was blocked, but not by the exact-flag list"
+        )
+
+
+def test_every_blocked_flag_is_actually_blocked() -> None:
+    """Sweep the whole policy list, so a new entry cannot ship untested."""
+    policy = json.loads(
+        (ROOT / ".mivia" / "policy" / "agent-hook-bypass.json").read_text(encoding="utf-8")
+    )
+    flags = policy.get("blockedFlags") or []
+    assert flags, "blockedFlags is empty: the exact-flag mechanism would be inert"
+    for flag in flags:
+        proc = run_guard(
+            "claude",
+            "PreToolUse",
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git commit {flag} -m x"},
+            },
+        )
+        assert proc.returncode != 0, f"{flag} was not blocked"
 
 
 def test_blocks_commit_no_verify_argv() -> None:

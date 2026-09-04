@@ -77,3 +77,9 @@ Step 7: <status> - <commit landed | blocked | abandoned>
   three rounds before human escalation.
 - **A step finds a deviation between this skill and the ADLC rule.**
   Trust the rule; this skill is a router, not the source of truth.
+## Report shape
+
+Write the run report in the shape of
+`.agents/skills/delivery/report-template.md`. Read that file with `read_file`
+before the first step, so the per-step verdicts are recorded as the loop runs
+rather than reconstructed at the end.

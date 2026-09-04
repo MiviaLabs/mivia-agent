@@ -194,6 +194,43 @@ def test_accepts_the_yaml_escapes_inside_a_quoted_scalar() -> None:
             raise AssertionError(f"{good!r} rejected: {r}")
 
 
+def test_rejects_frontmatter_no_parser_can_read() -> None:
+    """Two shapes PyYAML refuses that the lenient field split skipped.
+
+    The old split dropped any line without a colon and any indented line, so
+    an unquoted `title: status: stats` (a nested mapping YAML then refuses)
+    and a stray line of prose both reported ok. Verified against yaml.safe_load
+    for every shape here.
+    """
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("title: Probe memory",
+                                         "title: status: stats disagree")},
+        "unquoted scalar holding a",
+    )
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("title: Probe memory", "title: broken:")},
+        "unquoted scalar holding a",
+    )
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("importance: high\n",
+                                         "importance: high\nthis line has no colon\n")},
+        "has no colon",
+    )
+
+
+def test_accepts_shapes_a_real_parser_accepts() -> None:
+    """The gate must not reject legal YAML: a trailing comment on the tags
+    list, a folded continuation line, and a quoted scalar holding a colon."""
+    for label, body in (
+        ("tags comment", GOOD.replace("tags: [probe]", "tags: [probe, memory]  # in sync")),
+        ("folded value", GOOD.replace("content: One sentence of fact.",
+                                      "content: >-\n  folded text here")),
+        ("quoted colon", GOOD.replace("title: Probe memory", "title: 'status: stats'")),
+    ):
+        if (r := run_on({"probe-memory.md": body})) is not None:
+            raise AssertionError(f"{label} rejected: {r}")
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -210,6 +247,8 @@ def main() -> None:
     test_rejects_a_scalar_that_no_yaml_parser_can_read()
     test_accepts_a_properly_quoted_scalar()
     test_accepts_the_yaml_escapes_inside_a_quoted_scalar()
+    test_rejects_frontmatter_no_parser_can_read()
+    test_accepts_shapes_a_real_parser_accepts()
     print("test_check_memories: ok")
 
 

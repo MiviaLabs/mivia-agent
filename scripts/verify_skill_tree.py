@@ -37,6 +37,13 @@ SKILL_DESCRIPTION_MAX = 200
 SKILL_TRIGGER_MAX = 64       # per trigger
 SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 
+# Two more caps the loader applies with no warning. sanitizeOptionalText
+# discards its truncated bool (internal/skills/loader.go), so an over-length
+# value ships cut mid-phrase and nothing says so: session-analysis had a
+# 67-byte short-description stored as "... in the durable".
+SKILL_SHORT_DESCRIPTION_MAX = 60  # shortDescriptionMaxLen
+SKILL_ARGS_HINT_MAX = 80          # argsHintMaxLen
+
 # Mirrors knownSkillKeys in internal/skills/skill_markdown.go. Keep the two sets
 # equal. Change them together in one commit. Both directions of drift are bugs:
 # - a key here that the loader rejects passes `make verify` and then fails at
@@ -201,6 +208,29 @@ def frontmatter_block(body: str) -> str | None:
     return None
 
 
+def unquote(value: str) -> str:
+    """Strip one balanced quote pair, matching unquote in frontmatter.go."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
+def frontmatter_value(body: str, key: str) -> str | None:
+    """The value of one top-level frontmatter key, or None when absent."""
+    block = frontmatter_block(body)
+    if block is None:
+        return None
+    for line in block.split("\n")[1:]:
+        if line == "---":
+            break
+        if line[:1] in (" ", "\t") or ":" not in line:
+            continue
+        found, _, value = line.partition(":")
+        if found.strip() == key:
+            return unquote(value.strip())
+    return None
+
+
 def check_claude_skill_aliases(root: Path) -> None:
     """Hold .claude/skills to alias stubs of the canonical .agents/skills tree.
 
@@ -298,8 +328,23 @@ def check_skill_dir(skills_dir: Path) -> None:
         name = skill_path.parent.name
         if not body.lstrip().startswith("---"):
             fail(f"{rel_to_root(skill_path)}: missing YAML frontmatter")
-        if f"name: {name}" not in body and f'name: "{name}"' not in body:
-            fail(f"{rel_to_root(skill_path)}: frontmatter name must be {name}")
+        # Read the key, do not search the file. A substring test accepted
+        # "name: delivery-extra" as a match for "delivery", and accepted a
+        # "name: delivery" written anywhere in the prose body while the real
+        # frontmatter said something else. The loader takes the frontmatter
+        # name verbatim, so both shapes register the skill under a name no
+        # reference points at. It also rejected 'name: single-quoted', which
+        # the loader's unquote accepts.
+        declared = frontmatter_value(body, "name")
+        if declared is None:
+            fail(f"{rel_to_root(skill_path)}: frontmatter declares no name")
+        if declared != name:
+            fail(
+                f"{rel_to_root(skill_path)}: frontmatter name is {declared!r}, "
+                f"but the directory is {name!r}. The loader registers the "
+                f"frontmatter name, so every reference to {name!r} would "
+                f"resolve to nothing."
+            )
         # Unknown keys are rejected at load by internal/skills/skill_markdown.go,
         # which checks the frontmatter against knownSkillKeys. Catch them here so
         # `make verify` fails before the loader does.
@@ -308,6 +353,20 @@ def check_skill_dir(skills_dir: Path) -> None:
                 f"{rel_to_root(skill_path)}: {problem} "
                 f"(rejected by internal/skills/frontmatter.go)"
             )
+        for key, cap in (
+            ("short-description", SKILL_SHORT_DESCRIPTION_MAX),
+            ("argument-hint", SKILL_ARGS_HINT_MAX),
+        ):
+            value = frontmatter_value(body, key)
+            if value is None:
+                continue
+            size = len(value.encode("utf-8"))
+            if size > cap:
+                fail(
+                    f"{rel_to_root(skill_path)}: {key} is {size} bytes, max "
+                    f"{cap} (silently truncated by internal/skills/loader.go, "
+                    f"which drops the value's tail without a warning)"
+                )
         for key in frontmatter_keys(body):
             if key not in SKILL_KNOWN_KEYS:
                 fail(

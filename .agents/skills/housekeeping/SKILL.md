@@ -10,8 +10,6 @@ tools:
   - read_file
   - list_dir
   - grep
-  - glob
-  - search
   - write_file
   - search_replace
   - delete_file
@@ -133,7 +131,7 @@ start an action outside `.agents/memories/**`.
 
 ## Tool surface
 
-`read_file`, `list_dir`, `grep`, `glob`, `search`, `write_file`,
+`read_file`, `list_dir`, `grep`, `write_file`,
 `search_replace`, `delete_file`.
 
 This list is the frontmatter `tools:` list, and the two must stay equal. The

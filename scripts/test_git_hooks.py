@@ -724,8 +724,9 @@ def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
 set -euo pipefail
 case \"$*\" in
   'rev-parse --abbrev-ref HEAD') printf 'mivia/no-upstream\\n' ;;
-  'rev-list --first-parent -2 HEAD') printf 'first-parent\\n' ;;
-  'merge-base HEAD first-parent') printf 'first-parent-base\\n'; exit 0 ;;
+  # No first-parent branches here on purpose: the assertion below is that the
+  # slice never reaches for them. A stub case for a call that cannot happen
+  # reads as coverage of a path this fixture does not drive.
   *) exit 1 ;;
 esac
 """,

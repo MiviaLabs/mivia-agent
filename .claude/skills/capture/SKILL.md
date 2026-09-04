@@ -8,7 +8,6 @@ triggers:
   - capture gotcha
 tools:
   - read_file
-  - list_dir
   - grep
   - glob
   - write_file

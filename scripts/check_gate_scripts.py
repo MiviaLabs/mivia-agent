@@ -35,13 +35,27 @@ fail = functools.partial(_fail, prefix="check_gate_scripts")
 # nobody invokes is a helper module and is not held to these rules.
 INVOKER_GLOBS = ("Makefile", ".githooks/*", "scripts/git-hooks/*")
 
-# `python3 scripts/x.py`, with or without a staged-tree prefix.
+# Every tree the sweeps walk. scripts/*.py alone missed scripts/git-hooks/.
+SCRIPT_GLOBS = ("scripts/*.py", "scripts/git-hooks/*")
+
+# `python3 <path>`, with or without a "$VAR"/ or $VAR/ prefix. The old pattern
+# accepted only $STAGED_ROOT and only scripts/<name>.py, so the three Python
+# gates under scripts/git-hooks/ (file-size-check, check-commit-subject,
+# strip_coauthor.py - two of them extension-less and hyphenated) and every
+# "$ROOT/..." invocation were invisible. One of those, file-size-check, is
+# invoked by both pre-commit and pre-push and could lose its entry point with
+# this gate green: the exact defect this file exists to stop.
 INVOCATION = re.compile(
-    r"python3?\s+(?:\"\$STAGED_ROOT\"/|\$STAGED_ROOT/)?(scripts/[A-Za-z0-9_]+\.py)"
+    r"python3?\s+(?:\"?\$[A-Z_]+\"?/)?(scripts/[A-Za-z0-9_./-]+)"
 )
 
+# A file is a Python gate because it runs under python3, not because its name
+# ends in .py: two of the hook-directory gates carry no extension.
+PY_SHEBANG = re.compile(r"^#!.*\bpython3?\b")
+
 GUARD = re.compile(r"^if __name__ == [\"']__main__[\"']:", re.M)
-IMPORTS_FAIL = re.compile(r"^from verify_common import [^\n]*\bfail\b", re.M)
+IMPORTS_COMMON = re.compile(r"^(from verify_common import|import verify_common)", re.M)
+REACHES_FAIL = re.compile(r"\bfail\b")
 DEFINES_MAIN = re.compile(r"^def main\(", re.M)
 
 # The one module allowed to take verify_common.fail's default prefix, because
@@ -60,6 +74,27 @@ def invoked_scripts(root: Path) -> dict[str, set[str]]:
             for match in INVOCATION.finditer(body):
                 found.setdefault(match.group(1), set()).add(rel_to_root(invoker))
     return found
+
+
+def python_gate_files(root: Path):
+    """Every Python file the gate sweeps: scripts/*.py plus the hook gates.
+
+    Selection is by shebang, not by extension: scripts/git-hooks/file-size-check
+    and check-commit-subject run under python3 and carry no .py suffix.
+    """
+    for pattern in SCRIPT_GLOBS:
+        for path in root.glob(pattern):
+            if not path.is_file():
+                continue
+            if path.suffix == ".py":
+                yield path
+                continue
+            try:
+                first = path.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+            except OSError:
+                continue
+            if PY_SHEBANG.match(first):
+                yield path
 
 
 def check_gate_scripts(root: Path) -> None:
@@ -89,7 +124,7 @@ def check_gate_scripts(root: Path) -> None:
     # missing entry point prompted this gate. Keying only on invocation would
     # have missed it, which is the proxy-for-the-property defect this gate
     # exists to stop. A main() with no guard is dead code in every case.
-    for path in sorted((root / "scripts").glob("*.py")):
+    for path in sorted(python_gate_files(root)):
         body = path.read_text(encoding="utf-8")
         if DEFINES_MAIN.search(body) and not GUARD.search(body):
             fail(
@@ -100,22 +135,25 @@ def check_gate_scripts(root: Path) -> None:
 
     # A gate that borrows the shared failure path must report under its own
     # name, or its failures send an operator to a script that passes.
-    for path in sorted((root / "scripts").glob("*.py")):
+    for path in sorted(python_gate_files(root)):
         body = path.read_text(encoding="utf-8")
-        if "from verify_common import" not in body:
-            continue
-        if "fail" not in body:
+        if not IMPORTS_COMMON.search(body):
             continue
         stem = path.stem
         if stem == DEFAULT_PREFIX_OWNER:
             continue
-        # Any import form counts. Keying on the bare form missed every
-        # borrower in the tree, which all import `fail as _fail`, and it could
-        # never see the defect that matters most: a binding that names another
-        # script. That is this gate committing the class it exists to stop.
-        imports_fail = IMPORTS_FAIL.search(body)
-        binds = f'prefix="{stem}"' in body or f"prefix='{stem}'" in body
-        if imports_fail and not binds:
+        # Key on reaching the function, not on how it was imported. The rule
+        # once required the bare `from verify_common import fail` form, which
+        # no file in the tree uses, and `import verify_common` bypassed it
+        # entirely. `binds` is matched on the partial application itself, not
+        # as a loose substring: the string prefix="<stem>" in a comment or a
+        # docstring used to satisfy it.
+        if not REACHES_FAIL.search(body):
+            continue
+        if not re.search(
+            rf"functools\.partial\(\s*[A-Za-z_.]*fail\s*,\s*prefix=[\"']{re.escape(stem)}[\"']",
+            body,
+        ):
             fail(
                 f"{rel_to_root(path)} imports verify_common.fail without "
                 f"binding prefix=\"{stem}\", so its failures name a different "

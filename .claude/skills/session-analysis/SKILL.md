@@ -12,10 +12,9 @@ tools:
   - list_dir
   - grep
   - glob
-  - inspect_repository
   - run_command
 argument-hint: "Time frame (optional): 24h|7d|ISO range; default last 24h"
-short-description: Read-only validated analysis of chat sessions in the durable ledger
+short-description: Read-only analysis of chat sessions in the ledger
 user-invocable: true
 ---
 
