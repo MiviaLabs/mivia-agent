@@ -53,6 +53,19 @@ func openRecoverable(t *testing.T, f *fakeAPI, remoteID string, extra func(*Sess
 	return bus, s, ref
 }
 
+// attachByFirstEvent drives the deferred attach the way production does: the
+// first message triggers it. OpenSession (and openRecoverable) arm sync with
+// nothing on the wire, so every scenario that needs an ATTACHED session - a
+// delete, a foreign writer, an append rejection - must send that first
+// message and wait for it to land before it arranges the failure.
+func attachByFirstEvent(t *testing.T, f *fakeAPI, bus *events.Bus, remoteID string) {
+	t.Helper()
+	publishTurnStart(bus, remoteID, "turn:attach", "first message")
+	waitUntil(t, "the first message to land (the deferred attach)", func() bool {
+		return f.LastSeq(remoteID) >= 1
+	})
+}
+
 func waitForSecondSession(t *testing.T, f *fakeAPI) string {
 	t.Helper()
 	waitUntil(t, "a replacement session with the backlog in it", func() bool {
@@ -119,6 +132,7 @@ func TestRecoveryNamesTheAbandonedSessionOnCreate(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("named")
 	bus, _, _ := openRecoverable(t, f, a, nil)
+	attachByFirstEvent(t, f, bus, a)
 	f.DeleteSession(a)
 	publishTurnStart(bus, a, "turn:1", "after the delete")
 	waitForSecondSession(t, f)
@@ -195,6 +209,7 @@ func TestStopsFinalFlushFailureIsRecorded(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("direct-flush")
 	bus, s, _ := openRecoverable(t, f, a, nil)
+	attachByFirstEvent(t, f, bus, a)
 	f.DeleteSession(a)
 	publishTurnStart(bus, a, "turn:1", "first recovery")
 	b := waitForSecondSession(t, f)
@@ -229,6 +244,7 @@ func TestFlushRecoversFromDeletedSession(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("deleted")
 	bus, s, ref := openRecoverable(t, f, a, nil)
+	attachByFirstEvent(t, f, bus, a)
 	f.DeleteSession(a)
 	publishTurnStart(bus, a, "turn:1", "after the web deleted it")
 	b := waitForSecondSession(t, f)
@@ -309,6 +325,7 @@ func TestIntervalRefusalDefersItDoesNotLatch(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("interval")
 	bus, s, _ := openRecoverable(t, f, a, nil)
+	attachByFirstEvent(t, f, bus, a)
 	f.DeleteSession(a)
 	publishTurnStart(bus, a, "turn:1", "one")
 	b := waitForSecondSession(t, f)
@@ -406,6 +423,7 @@ func TestRecoveryIsRaceFreeUnderConcurrentReaders(t *testing.T) {
 	f := newFakeAPI(t)
 	a := f.NewSession("race")
 	bus, s, _ := openRecoverable(t, f, a, nil)
+	attachByFirstEvent(t, f, bus, a)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -445,6 +463,8 @@ func TestRecoveryAbandonsTheNewSessionWhenTheSessionIsAlreadyFinished(t *testing
 	f := newFakeAPI(t)
 	a := f.NewSession("abandon")
 	bus, s, _ := openRecoverable(t, f, a, nil)
+	attachByFirstEvent(t, f, bus, a)
+	cursorBefore := s.outbox.Cursor().FlushedSeq
 	s.beforeRecoveryLock = func() {
 		s.handleRemoteEnd(context.Background(), "test: finished during recovery")
 	}
@@ -459,8 +479,20 @@ func TestRecoveryAbandonsTheNewSessionWhenTheSessionIsAlreadyFinished(t *testing
 	if n := f.LastSeq(b); n != 0 {
 		t.Errorf("%d events pushed into the abandoned session %s, want 0", n, b)
 	}
-	if s.outbox.Cursor().FlushedSeq != 0 || s.outbox.MaxSeq() < 1 {
-		t.Errorf("outbox was rebased: cursor=%+v maxSeq=%d", s.outbox.Cursor(), s.outbox.MaxSeq())
+	// The outbox must NOT be rebased: the cursor keeps its pre-recovery mark
+	// and no fork marker is stored. The raced event may still have projected
+	// on top (the worker never stopped), which is why maxSeq is not pinned.
+	if s.outbox.Cursor().FlushedSeq != cursorBefore {
+		t.Errorf("outbox cursor = %+v, want the pre-recovery mark %d", s.outbox.Cursor(), cursorBefore)
+	}
+	unflushed, err := s.outbox.UnflushedEvents()
+	if err != nil {
+		t.Fatalf("read unflushed events: %v", err)
+	}
+	for _, ev := range unflushed {
+		if ev.Type == TypeSyncForked {
+			t.Errorf("the outbox holds a fork marker onto %s; the abandon must not rebase", b)
+		}
 	}
 }
 

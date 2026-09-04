@@ -362,6 +362,11 @@ func TestSyncSession_StopDrainsAndFlushesFinal(t *testing.T) {
 		Detail:    "message to drain",
 		Timestamp: time.Now(),
 	})
+	// Stop only drains what reached the sync session's own queue; the hosts
+	// flush the bus before Stop (chat_sync.go's detach closure), so the test
+	// mirrors that order. Without it the Stop below can win the race against
+	// the bus delivery and close a session that never saw the event.
+	bus.Flush()
 
 	// Stop immediately to trigger drainAndFlushFinal
 	if err := syncSess.Stop(context.Background()); err != nil {

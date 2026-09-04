@@ -152,7 +152,8 @@ func TestOpenSessionPersistsTheRemoteSessionID(t *testing.T) {
 		t.Fatalf("a fresh identity already names a remote session: %q", ident.RemoteSessionID)
 	}
 
-	syncSess, err := OpenSession(context.Background(), events.New(), "principal-writeback", SessionOptions{
+	bus := events.New()
+	syncSess, err := OpenSession(context.Background(), bus, "principal-writeback", SessionOptions{
 		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: fake.URL()},
 		OutboxDir:       OutboxDirFor(storeDir, ident.LocalHandle),
@@ -165,7 +166,15 @@ func TestOpenSessionPersistsTheRemoteSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
+	// The attach (and with it the write-back) runs on the first message. The
+	// first projected seq is strictly after the write-back, so waiting for it
+	// makes the read below deterministic.
+	publishTurnStart(bus, "principal-writeback", "turn:1", "the message that attaches")
+	waitForSeq(t, syncSess, 1)
 	remoteID := syncSess.SessionID()
+	if remoteID == "" {
+		t.Fatal("SessionID() is empty after the first event attached; nothing was written back")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = syncSess.Stop(ctx)

@@ -46,6 +46,7 @@ func TestAttachCLISyncEnabled(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chatsync.NextInput{Input: nil})
 	})
+	registerEventsAck(mux)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -65,7 +66,7 @@ func TestAttachCLISyncEnabled(t *testing.T) {
 	sess.EventBus = bus
 
 	detach := attachCLISync(sess, t.TempDir(), res)
-	time.Sleep(50 * time.Millisecond)
+	waitFirstMessageCreate(t, bus, sess.SessionID, &createdCount)
 	detach()
 
 	if atomic.LoadInt32(&createdCount) != 1 {
@@ -90,6 +91,7 @@ func TestAttachCLISyncAuthenticatesEveryRequest(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: r.PathValue("id"), Status: "running"})
 	})
+	registerEventsAck(mux)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			atomic.AddInt32(&unauthenticated, 1)
@@ -114,7 +116,7 @@ func TestAttachCLISyncAuthenticatesEveryRequest(t *testing.T) {
 
 	installTestAuthToken(t)
 	detach := attachCLISync(sess, t.TempDir(), res)
-	time.Sleep(50 * time.Millisecond)
+	waitFirstMessageCreate(t, sess.EventBus, sess.SessionID, &created)
 	detach()
 
 	if n := atomic.LoadInt32(&unauthenticated); n != 0 {

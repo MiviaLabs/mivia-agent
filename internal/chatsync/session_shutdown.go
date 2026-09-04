@@ -56,12 +56,7 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 		s.unsubscribe()
 	}
 
-	if s.heartbeat != nil {
-		s.heartbeat.Stop(ctx)
-	}
-	if s.poller != nil {
-		s.poller.Stop(ctx)
-	}
+	s.stopRunners(ctx)
 
 	if timedOut {
 		go s.finishTimedOutStop()

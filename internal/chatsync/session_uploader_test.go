@@ -231,10 +231,37 @@ func TestCLIRestartDrainsUnsentOutboxEvents(t *testing.T) {
 		defer cancel()
 		_ = s2.Stop(ctx)
 	}()
-	waitUntil(t, "the restarted process to drain its outbox", func() bool { return f.LastSeq(id) >= 1 })
-	if got := countType(f.Events(id), TypeTurnStarted); got != 1 {
-		t.Fatalf("server stored %d turn.started events, want exactly one after restart replay", got)
+	// The restart replays the unsent outbox when its first message attaches -
+	// the production shape: a user comes back and sends another message. The
+	// replayed turn must appear exactly once, and the new turn continues the
+	// stream.
+	publishTurnStart(bus2, id, "turn:2", "the message that drains the outbox")
+	waitUntil(t, "the restarted process to drain its outbox", func() bool {
+		return countTurnStartedTurns(f.Events(id), "turn:1") == 1
+	})
+	if got := countTurnStartedTurns(f.Events(id), "turn:1"); got != 1 {
+		t.Fatalf("server stored %d turn.started events for turn:1, want exactly one after restart replay", got)
 	}
+	if got := countTurnStartedTurns(f.Events(id), "turn:2"); got != 1 {
+		t.Errorf("server stored %d turn.started events for turn:2, want 1", got)
+	}
+}
+
+// countTurnStartedTurns counts turn.started events carrying one turn id.
+func countTurnStartedTurns(evs []StoredEvent, turn string) int {
+	n := 0
+	for _, ev := range evs {
+		if ev.Type != TypeTurnStarted {
+			continue
+		}
+		var p struct {
+			Turn string `json:"turn"`
+		}
+		if json.Unmarshal(ev.Payload, &p) == nil && p.Turn == turn {
+			n++
+		}
+	}
+	return n
 }
 
 func waitUntilWithin(t *testing.T, what string, within time.Duration, cond func() bool) {

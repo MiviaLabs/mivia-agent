@@ -177,8 +177,12 @@ func TestFlush_TranscriptConflictRecoversOntoANewSession(t *testing.T) {
 	id := f.NewSession("conflict-recover")
 
 	bus, s := openAgainstFake(t, f, id, t.TempDir())
-	// Only after attach: a second writer takes seqs 1..3 while this client is
-	// still numbering from 0, so its first event collides with a foreign body.
+	// The deferred attach runs on the first message: one event while the
+	// server is still at 0. Only then does a second writer take the seqs past
+	// it, so the next event's append is skipped as a replay of a body we
+	// never sent - and the ack readback names the foreign transcript.
+	publishTurnStart(bus, id, "turn:attach", "first message")
+	waitUntil(t, "the attach event to land", func() bool { return f.LastSeq(id) >= 1 })
 	f.AdvanceServerSeq(id, 3)
 	publishTurnStart(bus, id, "turn:1", "ours")
 

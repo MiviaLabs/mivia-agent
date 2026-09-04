@@ -45,6 +45,9 @@ func TestAttachRebasesOntoTheServerMarkNotTheLocalMax(t *testing.T) {
 
 	seedCrashedOutbox(t, outboxDir)
 
+	// OpenSession arms sync with nothing on the wire; the attach (and with it the
+	// renumbering onto the server's mark) runs on the FIRST message, exactly as
+	// in production. The event below is that message.
 	bus := events.New()
 	syncSess, err := OpenSession(context.Background(), bus, "principal-rebase", SessionOptions{
 		TokenProvider: testTokenProvider,
@@ -62,15 +65,19 @@ func TestAttachRebasesOntoTheServerMarkNotTheLocalMax(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 
-	// The crisp statement of the rule: the counter opens at the SERVER mark
-	// (0, a freshly created session) plus the three events the outbox still
-	// holds, never at the local high-water mark of 6.
-	if got := syncSess.LastSeq(); got != 3 {
-		t.Fatalf("projector opened at seq %d, want 3 (server mark 0 + 3 recovered events)", got)
+	// The crisp statement of the rule, observable once the first message has
+	// been through the attach: the counter opens at the SERVER mark (0, a
+	// freshly created session) plus the three events the outbox still holds,
+	// never at the local high-water mark of 6 - so the new event takes seq 4,
+	// not 7.
+	publishTurnStart(bus, "principal-rebase", "turn:new", "after recovery")
+	waitForSeq(t, syncSess, 4)
+	if got := syncSess.LastSeq(); got != 4 {
+		t.Fatalf("projector opened at the server mark 0 + 3 recovered events, so the new event takes 4; got %d (a local-max open would take 7)", got)
 	}
 	baseSeq := syncSess.LastSeq()
 
-	// A new event on top of the recovered outbox. This is where taking the
+	// A second event on top of the recovered outbox. This is where taking the
 	// local max is not merely wasteful: the projector keeps numbering from 6
 	// while the outbox has been renumbered onto the server's mark, so the next
 	// append is another gap at the SAME server mark - which the rebase loop
@@ -78,8 +85,8 @@ func TestAttachRebasesOntoTheServerMarkNotTheLocalMax(t *testing.T) {
 	bus.Publish(events.Event{
 		Kind:      events.KindTurnStart,
 		SessionID: "principal-rebase",
-		TurnID:    "turn:new",
-		Detail:    "after recovery",
+		TurnID:    "turn:new-2",
+		Detail:    "after recovery, again",
 		Timestamp: time.Now(),
 	})
 	waitUntilSeqPast(t, syncSess, baseSeq)
@@ -93,7 +100,7 @@ func TestAttachRebasesOntoTheServerMarkNotTheLocalMax(t *testing.T) {
 	if syncSess.Stopped() {
 		t.Fatalf("sync stopped: %s", syncSess.StopReason())
 	}
-	assertContiguousTranscript(t, f, syncSess.SessionID(), 4)
+	assertContiguousTranscript(t, f, syncSess.SessionID(), 5)
 }
 
 // seedCrashedOutbox writes the state a crashed run leaves behind: seqs 1..3
