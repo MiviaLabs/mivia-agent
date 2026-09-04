@@ -42,7 +42,7 @@
     "agent": "orchestrator, agent loop, subagents, runtime concurrency; also internal/agentmsg, internal/agents, internal/chat, internal/coordinator, internal/hub, internal/memory, internal/prompts, internal/contextmgr, internal/contextstate, internal/contentref, internal/codeintel, internal/config",
     "mcp": "MCP client/server, tool gateway, capability servers",
     "hooks": "Git hooks (.githooks, scripts/git-hooks) and agent tool hooks (internal/hooks)",
-    "ai": ".mivia/ control surface: rules, skills, doctrines, policy JSON; also internal/skills",
+    "ai": ".agents/ control surface: rules, skills, doctrines; .mivia/ policy JSON and workflow config; also internal/skills",
     "docs": "docs/** and docs/OWNERS.yaml (not AGENTS.md - use ai)",
     "security": "secrets, privacy, authz, secret_scan, secure-change paths; also internal/miviaauth, internal/secretpath, internal/envfile, internal/redact",
     "quality": "verify scripts, Semgrep, contract tests, make verify gates",

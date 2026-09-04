@@ -67,6 +67,53 @@ def frontmatter_keys(body: str) -> list[str]:
     return keys
 
 
+def frontmatter_violations(body: str) -> list[str]:
+    """Frontmatter shapes that internal/skills/frontmatter.go rejects at load.
+
+    frontmatter_keys is deliberately lax: it collects key names and skips
+    anything else. The Go parser is stricter, so a file can pass this gate and
+    then fail the loader. parseFrontLines refuses three shapes this checks for:
+    an indented line outside a block sequence (nested maps are not supported,
+    frontmatter.go:168), a repeated key (frontmatter.go:198), and a
+    non-indented line with no colon.
+    """
+    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return []
+    problems: list[str] = []
+    seen: set[str] = set()
+    in_block = False
+    for offset, line in enumerate(lines[1:]):
+        line_num = offset + 2
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line[:1] in (" ", "\t"):
+            if not in_block:
+                problems.append(
+                    f"line {line_num}: unexpected indented line "
+                    f"(nested maps are not supported)"
+                )
+            continue
+        if ":" not in stripped:
+            problems.append(f"line {line_num}: expected key: value (no colon found)")
+            in_block = False
+            continue
+        key, _, rest = stripped.partition(":")
+        key = key.strip()
+        if not key:
+            problems.append(f"line {line_num}: empty key")
+            continue
+        if key in seen:
+            problems.append(f"line {line_num}: duplicate frontmatter key {key!r}")
+        seen.add(key)
+        # A key with no inline value opens a block sequence.
+        in_block = rest.strip() == ""
+    return problems
+
+
 def split_flow_items(inner: str) -> list[str]:
     """Split a flow sequence inner string with quote awareness.
 
@@ -329,12 +376,28 @@ def rel_to_root(path: Path) -> str:
         return str(path)
 
 
+def check_no_dead_skill_tree(root: Path) -> None:
+    """Refuse a second workspace skill tree under .mivia/skills.
+
+    .mivia/skills was a copy that nothing loaded. It drifted three skills
+    behind before anyone noticed, because a gate that walks each tree on its
+    own never compares them. Take root as an argument so a test can exercise
+    this against a fixture.
+    """
+    if (root / ".mivia" / "skills").exists():
+        fail(
+            ".mivia/skills must not exist: workspace skills live only in "
+            ".agents/skills, the path internal/workspace.SkillsDir reads. "
+            "A second copy drifts because nothing loads it."
+        )
+
+
 def check_skill_dir(skills_dir: Path) -> None:
     """Apply the skill frontmatter rules to every SKILL.md in one directory.
 
     This is a separate function so the tests can run it against a fixture
-    directory. A test must never write a probe skill into .agents/skills:
-    that tree is the one the mivia binary loads, and `make verify` runs
+    directory. A test must never write a probe skill into .agents/skills.
+    That tree is the one the mivia binary loads. `make verify` also runs
     verify-agent and agent-hook-test as separate targets, so a planted skill
     can fail a sibling target in the same run.
     """
@@ -348,6 +411,11 @@ def check_skill_dir(skills_dir: Path) -> None:
         # Unknown keys are rejected at load by internal/skills/skill_markdown.go,
         # which checks the frontmatter against knownSkillKeys. Catch them here so
         # `make verify` fails before the loader does.
+        for problem in frontmatter_violations(body):
+            fail(
+                f"{rel_to_root(skill_path)}: {problem} "
+                f"(rejected by internal/skills/frontmatter.go)"
+            )
         for key in frontmatter_keys(body):
             if key not in SKILL_KNOWN_KEYS:
                 fail(
@@ -412,10 +480,13 @@ def check_skill_dir(skills_dir: Path) -> None:
                     f"(silently truncated by internal/skills/loader.go)"
                 )
             for item in trigger_items:
-                if not item:
+                if len(item) > SKILL_TRIGGER_MAX:
                     fail(
-                        f"{rel_to_root(skill_path)}: trigger entry is empty"
+                        f"{rel_to_root(skill_path)}: trigger is {len(item)} "
+                        f"chars, max {SKILL_TRIGGER_MAX} "
+                        f"(silently truncated by internal/skills/loader.go)"
                     )
+
 
 def main() -> None:
     # Prefer declarative list when present.
@@ -717,16 +788,11 @@ def main() -> None:
     # binary loads it at runtime: internal/workspace.SkillsDir(root) returns
     # <root>/.agents/skills.
     #
-    # .mivia/skills was a second copy that nothing loaded. It drifted three
-    # skills behind before anyone noticed, because a gate that walks each tree
-    # on its own never compares them. Refuse to let it come back.
-    if (ROOT / ".mivia" / "skills").exists():
-        fail(
-            ".mivia/skills must not exist: workspace skills live only in "
-            ".agents/skills, the path internal/workspace.SkillsDir reads. "
-            "A second copy drifts because nothing loads it."
-        )
-    check_skill_dir(ROOT / ".agents" / "skills")
+    check_no_dead_skill_tree(ROOT)
+    skills_dir = ROOT / ".agents" / "skills"
+    if not skills_dir.is_dir():
+        fail(".agents/skills is missing: it is the only workspace skill home")
+    check_skill_dir(skills_dir)
 
     check_agents_directory()
     check_core_tier_covers_prompted_tools()
