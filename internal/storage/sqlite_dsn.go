@@ -11,6 +11,8 @@ import (
 // per-connection parity, not the only enforcement point.
 const pragmaDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 
+const pragmaReadOnlyDSNParams = "_pragma=query_only(1)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+
 // writeTxDSNParams add _txlock=immediate to the shared pragmas. The driver
 // emits BEGIN IMMEDIATE for every BeginTx on such a connection, so the
 // transaction takes SQLite's single write lock before its first read instead
@@ -39,6 +41,8 @@ const writeTxDSNParams = pragmaDSNParams + "&_txlock=immediate"
 // authority ("//"), query ('?'), and fragment ('#') injection into the path
 // portion, so no wrong-file or path-confusion vector remains.
 func sqliteDSN(path string) string { return storeDSN(path, pragmaDSNParams) }
+
+func sqliteReadOnlyDSN(path string) string { return storeDSN(path, pragmaReadOnlyDSNParams) }
 
 // sqliteWriteDSN builds the driver DSN for the immediate-txlock write pool.
 // It applies the identical path transform as sqliteDSN; only the parameters
