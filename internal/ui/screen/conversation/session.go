@@ -81,6 +81,10 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	}
 	if s.compaction != nil {
 		s.compaction.Cancel()
+		// The compaction belongs to the session being saved below. Stop its
+		// activity mark before copying the statusline into that session's
+		// state; the canceled worker may still emit a late Done event.
+		s.statusline.Stop()
 		s.compaction = nil
 		s.compactionSessionID = ""
 		s.compactionCancelRequested = false

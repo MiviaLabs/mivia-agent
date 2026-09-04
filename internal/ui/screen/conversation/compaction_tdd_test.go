@@ -57,3 +57,40 @@ func TestCompactionCompletionRefreshesTopbarUsage(t *testing.T) {
 		t.Fatalf("topbar input tokens = %d, want 120", usage)
 	}
 }
+
+func TestSwitchConversationStopsAndSavesNoCompactionSpinner(t *testing.T) {
+	current := &backgroundTestConversation{id: "compact-current", title: "Current"}
+	next := &backgroundTestConversation{id: "compact-next", title: "Next"}
+	s := newScreen(t, current, nil, nil)
+	s.compaction = compactionTestHandle{events: make(chan ports.CompactionEvent)}
+	s.compactionSessionID = current.ID()
+	s.statusline.Start("compact", fixedNow())
+
+	s.switchConversation(next)
+	saved := s.sessions[current.ID()]
+	if saved == nil {
+		t.Fatal("switch did not save the previous session")
+	}
+	if saved.statusline.Active() {
+		t.Fatal("saved session retained an active compaction spinner after switching")
+	}
+}
+
+func TestLateCompactionEventCannotClearNewSessionCompaction(t *testing.T) {
+	current := &backgroundTestConversation{id: "compact-old", title: "Old"}
+	next := &backgroundTestConversation{id: "compact-new", title: "New"}
+	s := newScreen(t, current, nil, nil)
+	s.compaction = compactionTestHandle{events: make(chan ports.CompactionEvent)}
+	s.compactionSessionID = current.ID()
+	s.statusline.Start("compact", fixedNow())
+	s.switchConversation(next)
+
+	h := compactionTestHandle{events: make(chan ports.CompactionEvent)}
+	updated, _ := s.startCompaction(h)
+	s = updated.(Screen)
+	updated, _ = s.handleCompactionMessage(ports.CompactionEvent{SessionID: current.ID(), Done: true})
+	got := updated.(Screen)
+	if got.compaction == nil {
+		t.Fatal("late event from the previous session cleared the new compaction")
+	}
+}
