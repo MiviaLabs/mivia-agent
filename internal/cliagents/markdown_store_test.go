@@ -122,9 +122,6 @@ func TestOpenMemoryStoreUsesMarkdownAndGlobalIndex(t *testing.T) {
 	if _, err := os.Stat(workspace.GlobalContextStorePath(root)); err != nil {
 		t.Fatalf("global context index: %v", err)
 	}
-	if _, err := os.Stat(workspace.MemoryDBPath(root)); !os.IsNotExist(err) {
-		t.Fatalf("project memory.db exists or stat failed: %v", err)
-	}
 }
 
 func TestMarkdownStorePromoteCoreAndDelete(t *testing.T) {

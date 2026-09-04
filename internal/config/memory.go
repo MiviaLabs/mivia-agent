@@ -9,14 +9,11 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
 )
 
 // resolveMemoryConfig resolves [memory] with defaults and bounds. Markdown
-// memory has no project StorePath: its files live in the workspace and its
-// derived index lives in the global context store. StorePath remains only for
-// explicit legacy SQLite configurations.
+// memory files live in the workspace and the derived index lives globally.
 //
 // A workspace config is repo-controlled: any repository can ship its own
 // .mivia/mivia.toml, so it must not name the org store its agents write into
@@ -28,20 +25,13 @@ func resolveMemoryConfig(file File, selectedPath string, root string, projectCon
 	if backend == "" {
 		backend = DefaultMemoryConfig.StoreBackend
 	}
-	if strings.TrimSpace(mc.StorePath) == "" && backend != memory.BackendMarkdown {
-		if projectConfigFound {
-			mc.StorePath = workspace.MemoryDBPath(root)
-		} else {
-			mc.StorePath = TempStorePath(root, "memory")
-		}
-	}
 	if !mc.IsEnabled() {
 		mc.Enabled = boolPtr(false)
 		return mc, nil
 	}
 	mc.Enabled = boolPtr(true)
-	if backend != memory.BackendMemory && backend != memory.BackendSQLite && backend != memory.BackendMarkdown {
-		return MemoryConfig{}, fmt.Errorf("[memory] store_backend must be \"memory\", \"sqlite\", or \"markdown\", got %q", mc.StoreBackend)
+	if backend != memory.BackendMemory && backend != memory.BackendMarkdown {
+		return MemoryConfig{}, fmt.Errorf("[memory] store_backend must be \"memory\" or \"markdown\", got %q", mc.StoreBackend)
 	}
 	mc.StoreBackend = backend
 	if mc.MaxEntryBytes <= 0 {

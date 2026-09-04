@@ -54,10 +54,9 @@ models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
 
 [memory]
 enabled = %t
-store_backend = "sqlite"
-store_path = %q
+	store_backend = "markdown"
 max_search_results = 8
-`, enabled, storePath)
+`, enabled)
 	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +71,7 @@ func saveTestMemories(t *testing.T, root string) {
 	enabled := true
 	mc := config.MemoryConfig{
 		Enabled:          &enabled,
-		StoreBackend:     "sqlite",
-		StorePath:        ".mivia/memory.db",
+		StoreBackend:     "markdown",
 		MaxSearchResults: 8,
 	}
 	store, err := openMemoryStore(root, mc)

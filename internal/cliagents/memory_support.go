@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -21,46 +20,23 @@ import (
 // openMemoryStore and openMemoryStoreReadOnly can delegate here without
 // duplicating the path-resolution logic.
 func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
-	if strings.ToLower(strings.TrimSpace(mc.StoreBackend)) == memory.BackendMarkdown {
+	backend := strings.ToLower(strings.TrimSpace(mc.StoreBackend))
+	if backend == "" {
+		backend = memory.BackendMarkdown
+	}
+	switch backend {
+	case memory.BackendMarkdown:
 		return openMarkdownMemoryStore(root, mc, readOnly)
+	case memory.BackendMemory:
+		return memory.Open(memory.Config{
+			Backend: memory.BackendMemory, OrgID: mc.OrgID,
+			MaxEntryBytes: mc.MaxEntryBytes, MaxEntries: mc.MaxEntries,
+			MaxSearchResults: mc.MaxSearchResults, BlockPatterns: mc.BlockPatterns,
+			ReadOnly: readOnly,
+		})
+	default:
+		return nil, fmt.Errorf("memory backend %q is not supported", mc.StoreBackend)
 	}
-	projectPath := strings.TrimSpace(mc.StorePath)
-	if projectPath == "" {
-		// This branch is now only reachable when the caller constructs
-		// config.MemoryConfig{} directly, bypassing config.Load()/
-		// resolveMemoryConfig - every config.Load()-sourced MemoryConfig now
-		// always has StorePath filled by resolveMemoryConfig's new
-		// three-tier default. Confirmed sole real caller that still needs
-		// it: internal/cliagents/memory_support_coverage_test.go:34-38
-		// (TestOpenMemoryStoreRejectsMissingPath).
-		projectPath = workspace.MemoryDBPath(root)
-	} else {
-		projectPath = config.ExpandPath(projectPath)
-		// Clean before every use: an operator-supplied path may carry dot-dot
-		// or double-slash segments, and an unclean spelling that names the
-		// temp store must not slip past the hardening gate below.
-		projectPath = filepath.Clean(projectPath)
-		if !filepath.IsAbs(projectPath) {
-			if projectPath == ".." || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
-				return nil, fmt.Errorf("memory store_path %q escapes the workspace root", mc.StorePath)
-			}
-			projectPath = filepath.Join(root, projectPath)
-		}
-	}
-	hardenTempStore := SameFilePath(runtime.GOOS, projectPath, config.TempStorePath(root, "memory"))
-	cfg := memory.Config{
-		Backend:          mc.StoreBackend,
-		ProjectPath:      projectPath,
-		OrgPath:          workspace.OrgMemoryDBPath(),
-		OrgID:            mc.OrgID,
-		MaxEntryBytes:    mc.MaxEntryBytes,
-		MaxEntries:       mc.MaxEntries,
-		MaxSearchResults: mc.MaxSearchResults,
-		BlockPatterns:    mc.BlockPatterns,
-		ReadOnly:         readOnly,
-		HardenTempStore:  hardenTempStore,
-	}
-	return memory.Open(cfg)
 }
 
 func openMarkdownMemoryStore(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {

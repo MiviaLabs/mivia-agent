@@ -14,7 +14,7 @@ func TestMemoryPromoteEndToEnd(t *testing.T) {
 	cfgPath := writeMemoryTestConfig(t, root, true)
 	saveTestMemories(t, root)
 
-	mc := config.MemoryConfig{StoreBackend: "sqlite", StorePath: ".mivia/memory.db"}
+	mc := config.MemoryConfig{StoreBackend: "markdown"}
 	store, err := openMemoryStore(root, mc)
 	if err != nil {
 		t.Fatalf("openMemoryStore: %v", err)
@@ -90,7 +90,7 @@ func TestExecuteMemoryPromoteRoutesToCommand(t *testing.T) {
 	cfgPath := writeMemoryTestConfig(t, root, true)
 	saveTestMemories(t, root)
 
-	mc := config.MemoryConfig{StoreBackend: "sqlite", StorePath: ".mivia/memory.db"}
+	mc := config.MemoryConfig{StoreBackend: "markdown"}
 	store, err := openMemoryStore(root, mc)
 	if err != nil {
 		t.Fatalf("openMemoryStore: %v", err)

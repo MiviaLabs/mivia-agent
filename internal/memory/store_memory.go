@@ -18,7 +18,7 @@ type memRow struct {
 	e         Entry
 	id, org   string
 	createdAt time.Time
-	tier      string // "core" or "" (treated as "archive", the sqlite-backend default)
+	tier      string // "core" or "" (treated as "archive")
 }
 
 type memStore struct {
@@ -32,9 +32,9 @@ func newMemStore(cfg Config) *memStore {
 	return &memStore{cfg: cfg}
 }
 
-// Save on this backend has no consolidation trigger, unlike sqliteStore.Save
-// (plan 76, D2): consolidation was scoped to sqlite only - it exists to keep
-// a *committed* database growing gracefully, and the in-memory backend has
+// Save on this backend has no consolidation trigger.
+// (plan 76, D2): consolidation was scoped to the removed durable database -
+// it exists to keep a committed database growing gracefully, and this backend has
 // nothing committed to grow. A store_backend = "memory" config still hits
 // the hard MaxEntries refusal at the cap with no auto-consolidation; this is
 // an intentional asymmetry, not an oversight (confirmed in Step 5 review).
@@ -56,8 +56,8 @@ func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 	if e.Scope == ScopeOrg {
 		org = s.cfg.OrgID
 	}
-	// The content-addressed id includes the org identity (backend parity with
-	// the sqlite store), so an identical entry under a different org id cannot
+	// The content-addressed id includes the org identity, so an identical entry
+	// under a different org id cannot
 	// collide with an existing row.
 	id := entryID(e.Scope, org, e.Title, rendered)
 	s.mu.Lock()
@@ -139,7 +139,7 @@ func (s *memStore) matchParsed(rows []memRow, text string, p parsedQuery, limit 
 	}
 	matched := make([]scored, 0, len(rows))
 	for _, row := range rows {
-		// Backend parity: the sqlite backend searches lower(content), and the
+		// Search matches lower(content), and the
 		// content column holds the FULL rendered Markdown (e.Render(), stored
 		// by Save on both backends). The in-memory backend must search the same
 		// text, so a query matching only rendered metadata - the verdict or
@@ -266,8 +266,8 @@ func (s *memStore) Count(ctx context.Context, scope Scope) (int, error) {
 	}
 }
 
-// Delete removes one entry (by id) from the project or org slice, mirroring
-// the sqlite backend's project-then-org search. Returns ErrEntryNotFound if
+// Delete removes one entry (by id) from the project or org slice. Returns
+// ErrEntryNotFound if
 // no row with that id exists. Refused on a read-only store.
 func (s *memStore) Delete(ctx context.Context, id string) error {
 	if s.cfg.ReadOnly {
