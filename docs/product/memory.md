@@ -11,13 +11,12 @@ A memory has one of two scopes.
 
 | Scope | Meaning | Store |
 |-------|---------|-------|
-| `project` | This workspace only | `<workspace>/.mivia/memory.db` by default |
-| `org` | Every project of the org on this machine | `~/.mivia/memory/org.db` (user level) |
+| `project` | This workspace only | `<workspace>/.agents/memories/*.md` |
+| `org` | Every project of the org on this machine | `~/.mivia/memories/*.md` |
 
-The default project path is inside the current workspace. This keeps default
-project memory separate from other projects. A custom `store_path` can point
-outside the workspace, and SQLite follows symlinks. Treat a custom path as
-shared data and verify its target before use.
+Project memories are Markdown files in the workspace. A single derived index
+at `~/.mivia/context.db` serves all workspaces and scopes entries by project
+path or org identity.
 
 Org memory is shared across the org's projects, so one agent can record a
 solution in one repo and another agent finds it in the next repo.
@@ -26,9 +25,9 @@ solution in one repo and another agent finds it in the next repo.
 
 | Tool | Purpose |
 |------|---------|
-| `memory_save` | Save one memory entry |
-| `memory_search` | Find entries by keyword |
-| `memory_delete` | Delete one saved memory by id |
+| `memory_save` | Save one Markdown memory entry |
+| `memory_search` | Find indexed Markdown entries by keyword |
+| `memory_delete` | Delete one Markdown entry by id |
 
 Both tools are available to the root session and to subagents. The tools
 honor `disable_tools` in `[tools]`.
@@ -75,18 +74,18 @@ feed and tab) or content that matches a `block_patterns` regex. It also
 refuses org-scope saves when no org identity is configured.
 
 `memory_delete` takes the `id` returned by `memory_save` or `memory_search`
-and permanently removes that entry. Use `memory_search` first to find the id.
+and removes that Markdown entry. Use `memory_search` first to find the id.
 
 ## Configuration
 
 ```toml
 [memory]
 enabled = true              # default true; false removes the tools
-store_backend = "sqlite"    # "memory" (ephemeral) or "sqlite" (default)
-store_path = ""             # project DB; default <workspace>/.mivia/memory.db
+store_backend = "markdown"  # "memory", legacy "sqlite", or "markdown" (default)
+store_path = ""             # unused by the Markdown backend
 org_id = ""                 # USER config only; see below
 max_entry_bytes = 8192      # per-entry cap
-max_entries = 500           # row cap per store file
+max_entries = 500           # compatibility limit for legacy SQLite storage
 max_search_results = 8      # memory_search result cap
 block_patterns = []         # regexes; matching content is refused
 inject_core = false         # default false; see below
@@ -100,46 +99,24 @@ operator who allowlists the mivia binary itself in
 choice, not a default an upgrade should hand you silently.
 
 `store_backend = "memory"` keeps memories in the process only. It is useful
-for tests and for sessions that must not persist. `"sqlite"` is the durable
-default and mirrors `[subagents] store_backend`.
+for tests and sessions that must not persist. `"markdown"` is the durable
+default. Explicit `"sqlite"` remains a legacy compatibility backend.
 
-### Transporting memory with the repository
+### Markdown and the derived index
 
-The default project path `<workspace>/.mivia/memory.db` is machine-local: it
-is a SQLite file and is not part of the repository tree unless the owner
-commits it. To transport project memory with the repository, set
-`store_path` to a path inside the tree (for example
-`store_path = ".mivia/memory.db"`) and commit the database. The repository
-ships with this setting.
+Markdown files are the source of truth. The harness scans project files at
+startup and before memory reads and writes. It updates the shared SQLite index
+after a file changes. The index can be rebuilt from the Markdown files.
 
-Before you commit the database, run a WAL checkpoint so recent writes are in
-the main file:
+The index is a cache. A failed index update does not remove a saved Markdown
+file. The next writable memory operation retries the scan.
 
-```sql
-PRAGMA wal_checkpoint(TRUNCATE);
-```
+The shared context database can contain proprietary information. Protect the
+`~/.mivia` directory with local filesystem permissions.
 
-The store attempts this checkpoint after every save and on close. A concurrent
-SQLite reader can keep the write-ahead log active. Before you commit a memory
-database, stop other mivia processes, run the checkpoint, and confirm that no
-`-wal` or `-shm` sidecar contains newer data. Do not commit those sidecar files.
-
-Project memory databases can contain proprietary information. The project
-database path does not provide a cross-user privacy boundary. Protect the file
-and its parent directory with local filesystem permissions.
-
-When no project configuration exists, mivia falls back to an ad-hoc database
-under the OS temp directory, keyed to the workspace path so different
-workspaces' ad-hoc stores never collide; that file and its parent directory
-are chmod'd to 0600/0700 automatically, unlike the general project-tier case
-above where permissions are the operator's responsibility.
-
-Two automated controls protect the committed artifact: `scripts/secret_scan.py`
-decodes the database and scans its text columns on every commit (staged,
-tracked, and base-range modes), and the `block_patterns` list in the repo's own
-`.mivia/mivia.toml` refuses common secret shapes at save time. Keep entries
-small: the repository's staged-file size gate (500 KiB) bounds how much memory
-history the committed database can carry.
+The `block_patterns` list in the repo's own `.mivia/mivia.toml` refuses common
+secret shapes at save time. Keep entries small. The repository stores the
+source Markdown in Git and the derived index outside the repository.
 
 ### Org identity is user-owned
 
