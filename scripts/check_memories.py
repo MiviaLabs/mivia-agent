@@ -91,6 +91,61 @@ def strip_trailing_comment(value: str) -> str:
     return "".join(out)
 
 
+# yaml.safe_load's SafeConstructor resolves these tags from a plain scalar
+# with no format validation beyond "there is content" - str/int/float/bool
+# accept any non-empty text (the actual int()/float()/bool() coercion is a
+# construction-time concern this gate does not need to replicate). binary
+# and timestamp both validate their content's FORMAT (base64, ISO 8601) and
+# are deliberately excluded: "!!binary abc" opens a tag this list would
+# accept but the base64 decoder still refuses. map/seq/set/omap/merge are
+# collection tags, never valid on a single-line frontmatter scalar.
+YAML_SAFE_SCALAR_TAGS = ("str", "int", "float", "bool")
+
+
+def check_tag_scalar(name: str, key: str, value: str) -> None:
+    """A value opening with "!" must be a tag yaml.safe_load can construct.
+
+    "! foo" (bare non-specific tag) and "!!str foo" / "!<uri> foo" (built-in
+    or verbatim tags naming a resolvable safe-loader tag) are legal. A custom
+    single-bang tag ("!foo"), an unrecognized "!!name" tag
+    ("!!python/object:x", "!!map"), a malformed verbatim tag ("!<>",
+    "!<has spaces>"), or a second tag indicator right after a bare bang
+    ("! !nested") all raise ConstructorError, ScannerError or ParserError
+    under yaml.safe_load and must fail here the same way.
+    """
+    if value.startswith("! "):
+        if value[2:3] == "!":
+            fail(f"{name}: {key} chains a second tag indicator after a bare "
+                 f"bang, which YAML cannot parse: {value!r}.")
+        return  # bare non-specific tag: legal
+    if value == "!":
+        return
+    if value.startswith("!!"):
+        rest = value[2:]
+        tag_name, sep, _ = rest.partition(" ")
+        if tag_name == "null" and not sep:
+            return  # "!!null" alone resolves the empty scalar to null
+        if sep and tag_name in YAML_SAFE_SCALAR_TAGS:
+            return
+        fail(f"{name}: {key} opens tag {value!r}, which yaml.safe_load either "
+             f"has no constructor for, or needs a non-empty value it does "
+             f"not have (resolvable here: null, or one of "
+             f"{', '.join(YAML_SAFE_SCALAR_TAGS)} with content).")
+    if value.startswith("!<"):
+        # Only the standard global-tag URI scheme is accepted, matching the
+        # one shape this gate can vouch for without a real URI-grammar
+        # parser: "!<a:b> x" opens but is not a valid tag URI and
+        # yaml.safe_load refuses it too.
+        if ">" in value:
+            inner, _, tail = value[2:].partition(">")
+            if inner.startswith("tag:") and " " not in inner and tail[:1] in (" ", ""):
+                return
+        fail(f"{name}: {key} opens a malformed or non-standard verbatim tag "
+             f"{value!r}.")
+    fail(f"{name}: {key} opens a custom tag {value!r}. yaml.safe_load has "
+         f"no constructor for it and refuses to load this frontmatter.")
+
+
 def expected_id(stem: str) -> str:
     """The id the README derives from a filename: hyphens become underscores."""
     return stem.replace("-", "_")
@@ -179,24 +234,8 @@ def check_memories(directory: Path) -> None:
                     f"by a space, which YAML reads as a block indicator or an "
                     f"empty anchor and then refuses: {value!r}."
                 )
-            # A bang opens a tag, not the indicator list above: "! foo" (a
-            # bare non-specific tag) and "!!str foo" / "!<uri> foo" (built-in
-            # or verbatim tags) are all legal under yaml.safe_load. A custom
-            # single-bang tag like "!foo" or "!foo bar" is not - safe_load has
-            # no constructor for it and raises. Removing "! " from the block-
-            # indicator list above without adding this check would silently
-            # readmit "! foo" as a rejection AND leave "!foo" unrejected.
-            if value.startswith("!") and not (
-                (value.startswith("!!") and len(value) > 2)
-                or (value.startswith("!<") and ">" in value)
-                or value in ("!", "! ")
-                or value.startswith("! ")
-            ):
-                fail(
-                    f"{name}: {key.strip()} opens a custom tag {value!r}. "
-                    f"yaml.safe_load has no constructor for it and refuses "
-                    f"to load this frontmatter."
-                )
+            if value.startswith("!"):
+                check_tag_scalar(name, key.strip(), value)
             if value[:1] in YAML_INDICATORS:
                 fail(
                     f"{name}: {key.strip()} opens with {value[:1]!r}, which "

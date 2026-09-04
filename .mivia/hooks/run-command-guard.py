@@ -175,21 +175,38 @@ def option_vector(argv: list) -> list:
     return vec
 
 
-def _git_commit_index(segment: list) -> int | None:
-    """Index of the `commit` token if this segment invokes `git ... commit`.
+# git global options that consume the NEXT argv element as their value (short
+# forms only: -C <dir>, -c <key>=<value>). Everything else dash-prefixed
+# before the subcommand is treated as a standalone global flag (its value, if
+# any, is attached with "=" rather than a separate token in real usage).
+GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c"}
 
-    None when the segment is not a git-commit call at all. Tokens before the
-    returned index (git itself, and any global option like -C/--no-pager)
-    are never part of _scan_segment's char-bundling: that logic exists only
-    to find bypass flags AMONG git commit's own arguments.
+
+def _git_commit_index(segment: list) -> int | None:
+    """Index of the `commit` SUBCOMMAND token, if this segment invokes it.
+
+    None when the segment does not invoke git commit. Scans past global
+    options (and their values, for -C/-c) to find the actual subcommand
+    position - the first token after `git` that is not itself an option.
+    A bare scan for the first literal "commit" token anywhere misclassifies
+    `git branch commit` (a branch NAMED commit) as a commit invocation, and
+    under-classifies `git -c commit commit -n` (a decoy "commit" used as a
+    -c VALUE, with the real subcommand one token later).
     """
     parts = [str(part) for part in segment]
     if "git" not in parts:
         return None
-    git_i = parts.index("git")
-    for i in range(git_i + 1, len(parts)):
-        if parts[i] == "commit":
-            return i
+    i = parts.index("git") + 1
+    n = len(parts)
+    while i < n:
+        tok = parts[i]
+        if tok in GIT_GLOBAL_VALUE_OPTIONS:
+            i += 2  # skip the option and its value
+            continue
+        if tok.startswith("-"):
+            i += 1  # a boolean global flag; its value, if any, is attached
+            continue
+        return i if tok == "commit" else None
     return None
 
 

@@ -134,6 +134,25 @@ def test_rejects_an_uninvoked_script_with_no_guard() -> None:
     )
 
 
+def test_rejects_an_unparsable_gate_script() -> None:
+    """A syntax error must not silently exempt a script from this check.
+
+    borrows_common_fail used to catch SyntaxError and return False, which
+    the caller read identically to "never touches fail" - so a script with
+    both a wrong prefix binding AND an unrelated syntax error passed.
+    """
+    borrower = (
+        "from verify_common import ROOT, fail, rel_to_root\n"
+        "fail('x')\n"
+        "def broken(:\n"
+    )
+    expect_rejection(
+        "check:\n\t@python3 scripts/check_probe.py\n",
+        {"check_probe.py": RUNNABLE, "check_borrower.py": borrower},
+        "cannot parse this file",
+    )
+
+
 def test_rejects_a_gate_that_takes_the_default_failure_prefix() -> None:
     """A borrowed failure path must report under the borrower's own name."""
     borrower = (
@@ -339,6 +358,7 @@ def main() -> None:
     test_rejects_an_invoked_script_with_no_guard()
     test_rejects_an_uninvoked_script_with_no_guard()
     test_rejects_a_gate_that_takes_the_default_failure_prefix()
+    test_rejects_an_unparsable_gate_script()
     test_rejects_a_binding_that_names_another_script()
     test_a_comment_naming_a_deleted_script_does_not_false_fire()
     test_a_comment_naming_an_interpreter_invocation_does_not_false_fire()
