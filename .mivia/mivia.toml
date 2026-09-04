@@ -199,6 +199,13 @@ reasoning_efforts = ['low', 'medium', 'high']
 [[providers.llmproxycli.models]]
 context_window_tokens = 1048576
 max_output_tokens = 65536
+name = 'gemini-3.8-flash-high'
+reasoning = 'high'
+reasoning_efforts = ['low', 'medium', 'high']
+
+[[providers.llmproxycli.models]]
+context_window_tokens = 1048576
+max_output_tokens = 65536
 name = 'gemini-3.7-flash-high'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
@@ -324,6 +331,14 @@ reasoning_efforts = ['low', 'medium', 'high', 'max']
 context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'google/gemini-3.1-pro'
+reasoning = 'high'
+reasoning_dialect = 'openrouter'
+reasoning_efforts = ['low', 'medium', 'high']
+
+[[providers.openrouter.models]]
+context_window_tokens = 1048576
+max_output_tokens = 65536
+name = 'google/gemini-3.8-flash'
 reasoning = 'high'
 reasoning_dialect = 'openrouter'
 reasoning_efforts = ['low', 'medium', 'high']
