@@ -128,12 +128,52 @@ func (s MarkdownSource) Scan(ctx context.Context, scope Scope) ([]MarkdownDocume
 		if err != nil {
 			return nil, fmt.Errorf("parse memory %s: %w", path, err)
 		}
+		if e.Scope == "" {
+			legacy, id, ok := parseProtocolMemory(data, scope)
+			if ok {
+				doc := document(path, legacy, data)
+				doc.ID = id
+				docs = append(docs, doc)
+				continue
+			}
+		}
 		if e.Scope != scope {
 			return nil, fmt.Errorf("memory %s declares scope %q, want %q", path, e.Scope, scope)
 		}
 		docs = append(docs, document(path, e, data))
 	}
 	return docs, nil
+}
+
+func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
+	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n"), "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+		return Entry{}, "", false
+	}
+	values := make(map[string]string)
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+		key, value, ok := strings.Cut(lines[i], ":")
+		if ok {
+			values[strings.TrimSpace(strings.ToLower(key))] = strings.TrimSpace(value)
+		}
+	}
+	if end < 0 || values["id"] == "" || values["title"] == "" || values["content"] == "" {
+		return Entry{}, "", false
+	}
+	tags := strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(values["tags"], "]"), "["))
+	var tagList []string
+	for _, tag := range strings.Split(tags, ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tagList = append(tagList, tag)
+		}
+	}
+	body := strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
+	return Entry{Title: values["title"], Scope: scope, Verdict: VerdictNeutral, Tags: tagList, Summary: values["content"], Why: body}, values["id"], true
 }
 
 // Delete removes one file under a configured memory root.
