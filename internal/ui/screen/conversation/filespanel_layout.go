@@ -424,17 +424,22 @@ func elapsedFor(a subagentRow, now time.Time) time.Duration {
 
 // subagentMark renders the visual status indicator for a subagent status,
 // matching the visual language used across session listings (sessionMark in sessionpicker.go)
-// and cockpit status marks.
+// and cockpit status marks. For animated states (running, thinking, stalled),
+// it synchronizes with the statusline spinner frame so the glyph animates live.
 func (s Screen) subagentMark(status string) string {
+	frame := s.statusline.Frame()
 	switch status {
 	case "running":
 		m := mark.New(s.Theme, s.Tier, mark.Running)
+		m.SetFrame(frame)
 		return render.Role(s.Theme, s.Tier, statusIndicatorRole(status)).Render(string(m.Glyph()))
 	case "thinking":
 		m := mark.New(s.Theme, s.Tier, mark.Thinking)
+		m.SetFrame(frame)
 		return render.Role(s.Theme, s.Tier, statusIndicatorRole(status)).Render(string(m.Glyph()))
 	case statusStalled:
 		m := mark.New(s.Theme, s.Tier, mark.Thinking)
+		m.SetFrame(frame)
 		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render(string(m.Glyph()))
 	case "failed", "error", "interrupted", "timed_out":
 		return mark.New(s.Theme, s.Tier, mark.Failed).View()

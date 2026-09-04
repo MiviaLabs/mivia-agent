@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -295,7 +296,26 @@ func TestAgentMetricsDropsWholeFactsInsteadOfClipping(t *testing.T) {
 	}
 }
 
-// TestPanelWindowGroupsNeverSplitsAGroup pins the windowing contract added
+// TestSubagentMarkAnimatesWithStatuslineFrame tests that animated states
+// advance their glyph with the statusline frame.
+func TestSubagentMarkAnimatesWithStatuslineFrame(t *testing.T) {
+	th := loadTheme(t)
+	s := New(th, theme.TierTrueColor, nil, nil, nil, 80, fixedNow)
+
+	// At frame 0 vs frame 1 vs frame 2
+	m0 := s.subagentMark("running")
+	// Update statusline directly with TickMsg when active:
+	s.statusline.Start("running", fixedNow())
+	m1 := s.subagentMark("running")
+	s.statusline, _ = s.statusline.Update(statusline.TickMsg{})
+	m2 := s.subagentMark("running")
+
+	if m1 == m2 {
+		t.Errorf("subagentMark glyph did not animate across statusline frames: %q == %q", m1, m2)
+	}
+	_ = m0
+}
+
 // for two-line agent rows: clipping to a tight maxRows must drop or keep a
 // whole group (an agent's name+metrics pair), never leave a metrics line
 // stranded without its name line above it.

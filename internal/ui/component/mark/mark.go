@@ -102,6 +102,12 @@ func New(t theme.Theme, tier theme.Tier, s State) Model {
 	return Model{Theme: t, Tier: tier, state: s}
 }
 
+// Frame returns the mark's current animation frame index.
+func (m Model) Frame() int { return m.frame }
+
+// SetFrame sets the mark's animation frame index.
+func (m *Model) SetFrame(f int) { m.frame = f }
+
 // SetState changes the state, resetting the frame so a rotation never
 // resumes mid-cycle from a stale position.
 func (m *Model) SetState(s State) {

@@ -451,12 +451,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		}
 		return s, nil
 	case statusline.TickMsg:
-		next, cmd := s.statusline.Update(msg)
-		s.statusline = next
-		// Ticks are idempotent repaint clocks: the embedded thread (if
-		// one is cached) gets its own copy.
-		s.forwardSharedMsg(msg)
-		return s, cmd
+		return s.handleStatuslineTick(msg)
 	case sessionPickerTickMsg:
 		return s.handleSessionPickerTick()
 	case loginResultMsg:
@@ -488,6 +483,18 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.applyTheme(msg), nil
 	}
 	return s, nil
+}
+
+// handleStatuslineTick advances the statusline spinner frame and continues
+// ticking while turns or subagents are active.
+func (s Screen) handleStatuslineTick(msg statusline.TickMsg) (app.Screen, tea.Cmd) {
+	next, cmd := s.statusline.Update(msg)
+	s.statusline = next
+	if cmd == nil && s.panel.activeAgentCount() > 0 {
+		cmd = statusline.TickCmd()
+	}
+	s.forwardSharedMsg(msg)
+	return s, cmd
 }
 
 // handleSessionPickerTick refreshes the open /resume picker's per-row
