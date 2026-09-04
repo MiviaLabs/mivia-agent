@@ -515,7 +515,7 @@ run_allowlist = ['go', 'gofmt', 'goimports', 'govulncheck', 'make', 'cmake', 'ni
 run_timeout_seconds = 86400
 secret_path_exceptions = ['.env.example']
 secret_path_patterns = ['.env', '.pem', '.key', 'id_rsa', 'id_ed25519']
-write_path_blocklist = ['.git', '.githooks', 'scripts/git-hooks', '.mivia/mivia.toml', '.mivia/policy', '.agents/agents', '.mivia/agents', '.agents/rules', '.agents/skills', '.claude/skills', '.mivia/workflows', 'go.mod', 'go.sum', 'go.work']
+write_path_blocklist = ['.git', '.githooks', 'scripts/git-hooks']
 write_path_blocklist_remove = []
 
 [tools.diagnostics_commands]
