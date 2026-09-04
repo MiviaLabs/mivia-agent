@@ -1,6 +1,6 @@
 ---
 name: delivery
-description: ADLC delivery loop in skill form: Plan -> Breakdown -> Validate -> Finalize -> Implement (TDD) -> Audit -> Commit. Points at the rule, role files, and runtime templates without duplicating them.
+description: "ADLC delivery loop in skill form: Plan -> Breakdown -> Validate -> Finalize -> Implement (TDD) -> Audit -> Commit. Points at the rule, role files, and runtime templates without duplicating them."
 tools:
   - read_file
   - list_dir

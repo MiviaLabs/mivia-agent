@@ -17,7 +17,6 @@ from pathlib import Path
 
 from verify_common import ROOT, fail, rel_to_root  # noqa: E402
 from verify_skill_tree import (  # noqa: E402
-    check_agent_skill_tools,
     check_claude_skill_aliases,
     check_no_dead_skill_tree,
     check_skill_dir,
@@ -546,7 +545,6 @@ def main() -> None:
     check_claude_skill_aliases(ROOT)
 
     check_agents_directory()
-    check_agent_skill_tools(ROOT)
     check_core_tier_covers_prompted_tools()
 
     print("verify_agent_config: ok")

@@ -198,6 +198,16 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running TUI invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s) || INV_FAIL=1
   fi
+  # .agents/agents and .agents/skills had NO entry here, so a role or skill
+  # edit ran zero structural checks at commit time and waited for the push.
+  # This test resolves the real EffectiveTools through the loader, so it holds
+  # the agent-skill tool contract and every skills: name that a hand-rolled
+  # frontmatter scanner cannot: inherits, tools_add, tools_remove, tools_core
+  # and disallowed_tools all change the effective set.
+  if echo "$STAGED" | grep -qE '^\.agents/(agents|skills)/'; then
+    echo " → Running agent-skill roster tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestCommittedRosterSkillCompatibilityMatrix' ./internal/agents/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/tools/'; then
     echo " → Running tool invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s) || INV_FAIL=1
