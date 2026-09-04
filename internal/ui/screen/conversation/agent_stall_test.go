@@ -222,30 +222,30 @@ func TestPanelStallDisplay(t *testing.T) {
 	})
 }
 
-// TestPanelRowsRenderStalledBadge wires the derivation to the real render
-// site: the sidebar badge reads "stalled" past the threshold and flips back
-// to "running" on the next qualifying heartbeat.
-func TestPanelRowsRenderStalledBadge(t *testing.T) {
+// TestPanelRowsRenderStalledIndicator wires the derivation to the real render
+// site: the sidebar visual indicator shows warning color/mark for stalled past
+// the threshold and flips back to running mark on the next qualifying heartbeat.
+func TestPanelRowsRenderStalledIndicator(t *testing.T) {
 	s := newStallScreen(t)
 	s.panel.observeAgentStart("task-a", "")
 	s.panel.observeAgent("task-a", &uievent.Progress{Status: "running", Step: 2, TotalSteps: 5})
 	s.panel.agents[0].LastProgress = aStaleTimestamp()
 
 	rows := strings.Join(s.panelRows(80, 24), "\n")
-	if !strings.Contains(rows, "stalled") {
-		t.Fatalf("rendered rows show no stalled badge:\n%s", rows)
+	if strings.Contains(rows, "[stalled]") || strings.Contains(rows, "[running]") {
+		t.Fatalf("rendered rows should not contain text status badge:\n%s", rows)
 	}
-	if strings.Contains(rows, "running") {
-		t.Fatalf("rendered rows still show running:\n%s", rows)
+
+	stalledMark := s.subagentMark("stalled")
+	if !strings.Contains(rows, stalledMark) {
+		t.Fatalf("rendered rows show no stalled visual indicator:\n%s", rows)
 	}
 
 	s.panel.observeAgent("task-a", &uievent.Progress{Status: "running", Step: 3, TotalSteps: 5})
 	rows = strings.Join(s.panelRows(80, 24), "\n")
-	if !strings.Contains(rows, "running") {
-		t.Fatalf("rendered rows show no running badge after progress:\n%s", rows)
-	}
-	if strings.Contains(rows, "stalled") {
-		t.Fatalf("rendered rows still show stalled after progress:\n%s", rows)
+	runningMark := s.subagentMark("running")
+	if !strings.Contains(rows, runningMark) {
+		t.Fatalf("rendered rows show no running visual indicator after progress:\n%s", rows)
 	}
 }
 

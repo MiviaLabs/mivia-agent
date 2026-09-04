@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/mark"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -361,12 +362,8 @@ func (s Screen) panelFileRow(e fileEntry, selected bool) string {
 	return row
 }
 
-// statusBadgeRole maps a subagent row's display status to its badge color.
-// theme.RoleInfo is the default for "running"/"pending" (no explicit case),
-// so every terminal status needs its own case here - otherwise it renders
-// indistinguishably from an actively running row, defeating the point of
-// adding it to the terminal vocabulary (isTerminalStatus).
-func statusBadgeRole(status string) theme.Role {
+// statusIndicatorRole maps a subagent row's display status to its indicator color.
+func statusIndicatorRole(status string) theme.Role {
 	switch status {
 	case "completed", "done":
 		return theme.RoleSuccess
@@ -381,6 +378,11 @@ func statusBadgeRole(status string) theme.Role {
 	default:
 		return theme.RoleInfo
 	}
+}
+
+// statusBadgeRole is retained as an alias for statusIndicatorRole for backward compatibility.
+func statusBadgeRole(status string) theme.Role {
+	return statusIndicatorRole(status)
 }
 
 // formatElapsed renders a duration as the sidebar's compact elapsed label
@@ -420,30 +422,52 @@ func elapsedFor(a subagentRow, now time.Time) time.Duration {
 	return now.Sub(a.StartedAt)
 }
 
-// panelAgentRow renders one subagent as two lines: the name/status badge
+// subagentMark renders the visual status indicator for a subagent status,
+// matching the visual language used across session listings (sessionMark in sessionpicker.go)
+// and cockpit status marks.
+func (s Screen) subagentMark(status string) string {
+	switch status {
+	case "running":
+		m := mark.New(s.Theme, s.Tier, mark.Running)
+		return render.Role(s.Theme, s.Tier, statusIndicatorRole(status)).Render(string(m.Glyph()))
+	case "thinking":
+		m := mark.New(s.Theme, s.Tier, mark.Thinking)
+		return render.Role(s.Theme, s.Tier, statusIndicatorRole(status)).Render(string(m.Glyph()))
+	case statusStalled:
+		m := mark.New(s.Theme, s.Tier, mark.Thinking)
+		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render(string(m.Glyph()))
+	case "failed", "error", "interrupted", "timed_out":
+		return mark.New(s.Theme, s.Tier, mark.Failed).View()
+	case "completed", "done":
+		return mark.New(s.Theme, s.Tier, mark.Done).View()
+	case "cancelled", "canceled":
+		return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("○")
+	default:
+		return mark.New(s.Theme, s.Tier, mark.Idle).View()
+	}
+}
+
+// panelAgentRow renders one subagent as two lines: the indicator/name
 // (selectable, matches rowLabel), and an indented metrics line carrying
 // Elapsed/Tools/Step - moved here from the chat transcript (which used to
 // live-rewrite a churning "elapsed=Xs steps=N" line into the middle of the
 // scrollback on every heartbeat) so this sidebar row is the one live-updating
 // surface for subagent progress.
 func (s Screen) panelAgentRow(a subagentRow, inner int, selected bool) []string {
-	prefix := "  · "
+	prefix := "  "
+	if selected {
+		prefix = "> "
+	}
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
 	if selected {
-		prefix = "> · "
 		fg = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
-	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
 	// displayStatus derives "stalled" at render time from the row's stall
 	// clock (agent_stall.go); the stored status itself never changes.
 	status := s.panel.displayStatus(a)
-	var statusBadge string
-	if status != "" {
-		statusStyle := render.Role(s.Theme, s.Tier, statusBadgeRole(status))
-		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
-	}
-	nameLine := subtle.Render(prefix) + fg.Render(a.displayName()) + statusBadge
+	indicator := s.subagentMark(status)
+	nameLine := subtle.Render(prefix) + indicator + " " + fg.Render(a.displayName())
 	// inner, not panelInnerWidth(): that one is the WIDE layout's nav
 	// pane, and the narrow layout draws these rows at full content
 	// width. Fitting to the wrong width dropped "step N" with most of

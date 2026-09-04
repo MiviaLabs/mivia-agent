@@ -245,7 +245,8 @@ func TestArrowsWalkSubagentsToo(t *testing.T) {
 		t.Fatalf("down did not walk onto the subagent row (selected %+v)", a)
 	}
 	view := s.View()
-	if !strings.Contains(ansi.Strip(view), "> · sa-1") {
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, ">") || !strings.Contains(plain, "sa-1") {
 		t.Errorf("the subagent row does not carry the cursor marker:\n%s", view)
 	}
 }

@@ -243,6 +243,13 @@ func TestPanelAgentRowRendersElapsedToolsStep(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("panelAgentRow returned %d lines, want 2: %v", len(lines), lines)
 	}
+	if strings.Contains(ansi.Strip(lines[0]), "[running]") {
+		t.Errorf("name line %q contains text status badge [running]", ansi.Strip(lines[0]))
+	}
+	// Visual indicator check:
+	if !strings.Contains(lines[0], s.subagentMark("running")) {
+		t.Errorf("name line %q missing visual indicator for running", lines[0])
+	}
 	// The elapsed time survives at every sidebar width; how many of the
 	// other facts fit beside it is agentMetrics's business, pinned by
 	// TestAgentMetricsDropsWholeFactsInsteadOfClipping.
