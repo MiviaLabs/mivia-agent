@@ -83,6 +83,15 @@ type GeneralView struct {
 	ApprovalDefault        string // "once" | "always" | "deny"
 	ScreenReader           bool
 	ReducedMotion          bool
+	// FullDiskAccess mirrors the operator's persisted full-disk grant
+	// ([workspace_access] full_disk in the USER config only - see
+	// config.UserFullDiskAccessForWorkspace for the provenance rule). It is
+	// deliberately NOT part of config.GeneralSettings' TOML round-trip:
+	// general settings persist to whichever file configPath resolves to,
+	// often the workspace's own committable .mivia/mivia.toml, and this
+	// grant must never land in a repo-controlled file. Applies on next
+	// launch; the live session's workspace root is never mutated.
+	FullDiskAccess bool
 }
 
 // GeneralEdit is a closed union, one variant per General field: a
@@ -100,6 +109,10 @@ type SetApprovalDefault struct{ Mode string }
 type SetScreenReader struct{ On bool }
 type SetReducedMotion struct{ On bool }
 
+// SetFullDiskAccess persists the operator's full-disk grant to the user
+// config (config.SetUserFullDiskAccess). Restart-to-apply by design.
+type SetFullDiskAccess struct{ On bool }
+
 func (SetTheme) isGeneralEdit()                  {}
 func (SetMouse) isGeneralEdit()                  {}
 func (SetShowReasoning) isGeneralEdit()          {}
@@ -109,6 +122,7 @@ func (SetScrollLines) isGeneralEdit()            {}
 func (SetApprovalDefault) isGeneralEdit()        {}
 func (SetScreenReader) isGeneralEdit()           {}
 func (SetReducedMotion) isGeneralEdit()          {}
+func (SetFullDiskAccess) isGeneralEdit()         {}
 
 // GeneralSettings is the General section's read/write surface.
 type GeneralSettings interface {

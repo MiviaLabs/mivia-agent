@@ -43,11 +43,38 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 	plain := ansi.Strip(s.sections[0].View())
 	for _, want := range []string{
 		"mouse capture", "show reasoning", "iteration notice", "prompt cache notice", "scroll lines",
-		"approval default", "screen reader", "reduced motion",
+		"approval default", "screen reader", "reduced motion", "full disk (next launch)",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("General view is missing %q:\n%s", want, plain)
 		}
+	}
+}
+
+// TestSpaceCommitsTheFullDiskRow drives the real path for the full-disk
+// row (the LAST row): cycling it must reach the store as
+// ports.SetFullDiskAccess and round-trip through General() - the row is
+// wired to its own edit variant, not a repurposed boolean.
+func TestSpaceCommitsTheFullDiskRow(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	before := h.SettingsAdapters().General.General().FullDiskAccess
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyRight}) // focus detail
+	s = next.(Screen)
+	for i := 0; i < 8; i++ { // down to the 9th (last) row
+		next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
+	next, cmd := s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
+	s = awaitGeneralSave(t, next.(Screen), cmd)
+
+	after := h.SettingsAdapters().General.General().FullDiskAccess
+	if after == before {
+		t.Errorf("full disk did not change after committing the row: still %v", after)
+	}
+	plain := ansi.Strip(s.sections[0].View())
+	if !strings.Contains(plain, boolChoice(after)) {
+		t.Errorf("the section did not rebuild to show the new value %v:\n%s", after, plain)
 	}
 }
 

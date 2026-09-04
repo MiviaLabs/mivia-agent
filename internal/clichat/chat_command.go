@@ -181,7 +181,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	// Adopt the session ledger store before the tool wiring (see
 	// adoptSessionRepoForTools): child runs stamp this instance.
 	adoptSessionRepoForTools(sess, useTools, res, agentState)
-	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
+	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, chatFullDisk(invocation, wsRoot), true)
 	if err != nil {
 		releaseSessionLedgerRepo(agentState)
 		return err

@@ -114,6 +114,13 @@ func (s *generalSection) rebuild() {
 	rmF := mk("reduced motion")
 	rmF.SetChoices([]string{"on", "off"}, boolChoice(v.ReducedMotion))
 
+	// Persisted in the operator's USER config only and applied on the next
+	// launch - the label says so, because unlike every other row here this
+	// one cannot take effect live (the startup full-disk notice must fire,
+	// and the live workspace root is not mutated mid-session).
+	fdF := mk("full disk (next launch)")
+	fdF.SetChoices([]string{"on", "off"}, boolChoice(v.FullDiskAccess))
+
 	s.rows = []generalRow{
 		{mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }},
 		{reasonF, func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }},
@@ -126,6 +133,7 @@ func (s *generalSection) rebuild() {
 		{approvalF, func(val string) ports.GeneralEdit { return ports.SetApprovalDefault{Mode: val} }},
 		{srF, func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }},
 		{rmF, func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }},
+		{fdF, func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }},
 	}
 	if s.cursor >= len(s.rows) {
 		s.cursor = len(s.rows) - 1

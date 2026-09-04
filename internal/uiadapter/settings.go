@@ -85,11 +85,21 @@ func (s *SettingsStore) initFromConfig() {
 	showIter := false
 	showCache := false
 	approvalDefault := "always"
+	fullDisk := false
+	workspaceRoot := ""
+	if s.agentState != nil {
+		workspaceRoot = s.agentState.WorkspaceRoot
+	}
 	if s.res != nil {
 		showIter = s.res.ShowIterationNotices
 		showCache = s.res.ShowPromptCacheNotices
 		approvalDefault = approvalModeToView(s.res.Approvals.ApprovalPolicy())
 	}
+	// Full disk comes from the operator's user config, never from res: res
+	// is the workspace-overlay-merged view, and this grant must only ever
+	// reflect the operator's own file (config.UserFullDiskAccessForWorkspace
+	// enforces that provenance and fails closed).
+	fullDisk = config.UserFullDiskAccessForWorkspace(workspaceRoot)
 	s.general = ports.GeneralView{
 		Theme:                  "mivia-dark",
 		Mouse:                  true,
@@ -100,6 +110,7 @@ func (s *SettingsStore) initFromConfig() {
 		ApprovalDefault:        approvalDefault,
 		ScreenReader:           false,
 		ReducedMotion:          false,
+		FullDiskAccess:         fullDisk,
 	}
 	s.initProjectsFromConfig()
 	s.initProvidersFromConfig()
@@ -453,6 +464,25 @@ func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 	}
 }
 
+// applySetFullDiskAccess persists the full-disk grant to the operator's
+// USER config only - never the generic UpdateGeneralConfig path, whose
+// configPath() may resolve to the workspace's own committable
+// .mivia/mivia.toml (audit F2). Restart-to-apply: the live session's
+// workspace root is never mutated mid-flight (audit AR-4); the startup
+// notice announces the lifted confinement on the next launch, keeping the
+// full-disk disclosure never-silent.
+func (s *SettingsStore) applySetFullDiskAccess(on bool) error {
+	workspaceRoot := ""
+	if s.agentState != nil {
+		workspaceRoot = s.agentState.WorkspaceRoot
+	}
+	if err := config.SetUserFullDiskAccess(workspaceRoot, on); err != nil {
+		return fmt.Errorf("persist full-disk setting: %w", err)
+	}
+	s.general.FullDiskAccess = on
+	return nil
+}
+
 func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	var mouseNotifier func(bool)
 	switch v := e.(type) {
@@ -512,6 +542,10 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 		s.general.ScreenReader = v.On
 	case ports.SetReducedMotion:
 		s.general.ReducedMotion = v.On
+	case ports.SetFullDiskAccess:
+		// USER-config-only persistence, restart-to-apply - see
+		// applySetFullDiskAccess for the provenance rules (audit F2/AR-4).
+		return s.applySetFullDiskAccess(v.On)
 	default:
 		return fmt.Errorf("unknown general edit %T", e)
 	}
