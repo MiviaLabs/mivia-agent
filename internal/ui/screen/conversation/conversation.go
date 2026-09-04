@@ -105,8 +105,11 @@ type Screen struct {
 
 	sessions map[string]*sessionState
 
-	active ports.TurnHandle
-	queue  []string
+	active                    ports.TurnHandle
+	compaction                ports.CompactionHandle
+	compactionSessionID       string
+	compactionCancelRequested bool
+	queue                     []string
 
 	// pendingForce holds the FORCED text parked between the keypress and
 	// the async turnEndedMsg; NOT the displaced turn's text - chat.Session's
@@ -412,6 +415,9 @@ func (s *Screen) refreshTopbar() {
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		if next, cmd, handled := s.handleCompactionKey(msg); handled {
+			return next, cmd
+		}
 		return s.handleKey(msg)
 	case tea.PasteMsg:
 		// Paste lands in the composer; see handlePaste for the why.
@@ -452,6 +458,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case statusline.TickMsg:
 		return s.handleStatuslineTick(msg)
+	case compactionEventMsg:
+		return s.handleCompactionMessage(msg.event)
 	case sessionPickerTickMsg:
 		return s.handleSessionPickerTick()
 	case loginResultMsg:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -23,11 +24,13 @@ import (
 // CommandRunner bridges the UI slash-command loop with the backend session,
 // config, and agent state.
 type CommandRunner struct {
-	sess          *chat.Session
-	pool          *SessionPool
-	res           *config.Resolved
-	agentState    *cliagents.AgentSessionState
-	settingsStore *SettingsStore
+	compactionMu     sync.Mutex
+	compactionActive bool
+	sess             *chat.Session
+	pool             *SessionPool
+	res              *config.Resolved
+	agentState       *cliagents.AgentSessionState
+	settingsStore    *SettingsStore
 
 	// loginService builds the miviaauth.Service /login talks to. A field
 	// rather than a direct miviaauth.DefaultService() call so tests in

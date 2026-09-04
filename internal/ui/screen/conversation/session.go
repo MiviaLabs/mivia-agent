@@ -79,6 +79,12 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	if newConv == nil {
 		return
 	}
+	if s.compaction != nil {
+		s.compaction.Cancel()
+		s.compaction = nil
+		s.compactionSessionID = ""
+		s.compactionCancelRequested = false
+	}
 	if s.sessions == nil {
 		s.sessions = make(map[string]*sessionState)
 	}
