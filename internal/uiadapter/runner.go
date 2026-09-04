@@ -37,6 +37,10 @@ type CommandRunner struct {
 	// this package can substitute a stub sessionClient without a real
 	// HTTP round trip or a real ~/.mivia/auth.json.
 	loginService func() (*miviaauth.Service, error)
+
+	// summariesFn overrides the worktree-row listing source for tests
+	// (nil = the real three-arm UNION query). Package-internal only.
+	summariesFn func() ([]ports.SessionSummary, error)
 }
 
 // Compile-time check that CommandRunner satisfies ports.CommandRunner.
@@ -644,7 +648,7 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("no active session")
 	}
-	infos, err := sess.ListSessions()
+	infos, err := sess.ListAllSessions()
 	if err != nil {
 		return nil, err
 	}
@@ -659,20 +663,29 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 		if title == "" {
 			title = info.Name
 		}
+		// Route pseudo-rows keep the "Worktree · <name>" label the REPL's
+		// session catalog uses, so both surfaces name them alike.
+		if info.WorktreeRoute && info.Worktree != "" {
+			title = "Worktree · " + info.Worktree
+		}
 		active := r.SessionActive(id)
 		state := "done"
 		if active {
 			state = "running"
 		}
 		out = append(out, ports.SessionSummary{
-			ID:            id,
-			Title:         title,
-			UpdatedAt:     info.UpdatedAt,
-			Active:        active,
-			State:         state,
-			IsCurrent:     id == currID,
-			Turns:         info.TurnCount,
-			ContextTokens: info.TokenCount,
+			ID:                 id,
+			Title:              title,
+			UpdatedAt:          info.UpdatedAt,
+			Active:             active,
+			State:              state,
+			IsCurrent:          id == currID,
+			Turns:              info.TurnCount,
+			ContextTokens:      info.TokenCount,
+			Worktree:           info.Worktree,
+			WorktreeRoute:      info.WorktreeRoute,
+			WorktreeDir:        info.Dir,
+			WorktreeInstanceID: info.WorktreeInstance.ID,
 		})
 	}
 	return out, nil
@@ -701,6 +714,13 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 		return ports.CommandOutcome{Err: "session ID is empty"}
 	}
 	if r.pool != nil {
+		// Tripwire 1 router: if the typed id matches a LISTED bound row,
+		// resume through the root-scoped creator instead of an unbound
+		// Load - today byte-identical (bound ids are never listed), and
+		// correct-by-construction if storage ever starts leaking them.
+		if summary, ok := selectWorktreeSummary(r.summariesFor(), id); ok {
+			return r.ResumeInWorktree(ctx, summary)
+		}
 		conv, err := r.pool.GetOrCreate(id)
 		if err != nil {
 			return ports.CommandOutcome{Err: resumeErrorText(id, err)}

@@ -65,6 +65,16 @@ type SessionPool struct {
 
 	// watcher runs background InputPollers for unpooled saved sessions.
 	watcher *RemoteInputWatcher
+
+	// Worktree registries are memoized by canonical root. They are separate
+	// from the launch session's registry and are released by CloseAll.
+	regByRoot           map[string]*tools.Registry
+	regCloses           []func()
+	buildSer            sync.Mutex
+	lastCreated         *Conversation
+	lastToolScopeNotice string
+	launchRootDone      bool
+	launchRootVal       string
 }
 
 // AuthorUserIDProvider resolves the CLI's own authenticated principal for

@@ -437,6 +437,37 @@ type SessionSummary struct {
 	// zero check (wireframes-panes.md section 12.2).
 	Turns         int
 	ContextTokens int
+
+	// Worktree names the mivia worktree this session is bound to; it is
+	// empty for plain sessions. WorktreeRoute marks the synthesized
+	// "start a new session here" pseudo-rows storage lists for worktrees
+	// that have no transcript yet, and WorktreeDir carries that
+	// directory's absolute path. All are zero-value-safe display
+	// metadata: rows without worktree state keep rendering exactly as
+	// before.
+	//
+	// WorktreeInstanceID is the managed worktree instance the session is
+	// bound to, when storage tracks one. It gates RESUME routing: only a
+	// row carrying an instance may take the instance-scoped resume path;
+	// rows with bare worktree metadata (legacy pre-instance sessions,
+	// sessions saved from an unadopted worktree directory) resume plain,
+	// exactly as they did before worktree routing existed.
+	Worktree           string
+	WorktreeRoute      bool
+	WorktreeDir        string
+	WorktreeInstanceID string
+}
+
+// WorktreeBound reports whether this row is an INSTANCE-BOUND resumable
+// session: worktree metadata present, a live managed instance recorded,
+// and not a route pseudo-row. This is the ONE routing predicate for
+// scoped resume - the picker's enter-key dispatch and the typed-/resume
+// router both call it, so the two surfaces cannot drift apart on which
+// rows take the instance-scoped path (rows with bare worktree metadata
+// resume plain; the scoped creator fails on LiveWorktreeInstance for
+// worktrees storage never tracked).
+func (s SessionSummary) WorktreeBound() bool {
+	return s.Worktree != "" && s.WorktreeInstanceID != "" && !s.WorktreeRoute
 }
 
 // SessionMeta describes a saved session for listing/loading.

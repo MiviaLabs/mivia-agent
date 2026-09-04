@@ -38,6 +38,25 @@ func (s *Session) ListSessions() ([]SessionInfo, error) {
 	return out, nil
 }
 
+// ListAllSessions returns the complete catalog for global resume pickers.
+// ListSessions remains scoped to the active worktree for local operations.
+func (s *Session) ListAllSessions() ([]SessionInfo, error) {
+	catalog, principal, ok := s.contextCatalogState()
+	if !ok {
+		return nil, fmt.Errorf("context session catalog is not configured")
+	}
+	infos, err := catalog.ListSessions(context.Background(), principal)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, sessionInfoFromCatalog(info))
+	}
+	fillSessionTitles(context.Background(), catalog, principal, out)
+	return out, nil
+}
+
 // DeleteSession removes a saved session.
 func (s *Session) DeleteSession(name string) error {
 	catalog, principal, ok := s.contextCatalogState()

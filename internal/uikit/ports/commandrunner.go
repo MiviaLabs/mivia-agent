@@ -135,6 +135,23 @@ type CommandRunner interface {
 	// picker: switch/resume the selected session and report the outcome.
 	SelectSession(ctx context.Context, id string) CommandOutcome
 
+	// StartInWorktree starts a brand-new chat session inside the worktree
+	// a route pseudo-row stands for: summary.Worktree and
+	// summary.WorktreeDir name the target, and no transcript exists yet.
+	// The outcome installs the new Conversation like SelectSession does.
+	StartInWorktree(ctx context.Context, summary SessionSummary) CommandOutcome
+
+	// StartInNewWorktree creates a worktree (auto-named when name is empty)
+	// and starts a new chat session bound to it. Duplicate errors surface
+	// as Err; the user presses the shortcut again.
+	StartInNewWorktree(ctx context.Context, name string) CommandOutcome
+
+	// ResumeInWorktree resumes an existing worktree-bound session,
+	// re-applying its worktree binding before the chat surface renders so
+	// later turns land in that worktree. A summary without worktree
+	// metadata behaves exactly like SelectSession(summary.ID).
+	ResumeInWorktree(ctx context.Context, summary SessionSummary) CommandOutcome
+
 	// SelectEffort applies a reasoning effort choice returned by an EffortChoices
 	// picker and reports a CommandOutcome, typically a confirmation Notice.
 	SelectEffort(ctx context.Context, level string) CommandOutcome

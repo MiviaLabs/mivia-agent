@@ -1,6 +1,7 @@
 package cliagents
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -56,11 +57,11 @@ func redactionPolicyOf(cfg *config.Resolved) *redact.Policy {
 	return cfg.RedactionPolicy
 }
 
-func ensureSelectedMCPTools(state *AgentSessionState, selected agents.ResolvedAgent) error {
+func ensureSelectedMCPTools(sess *chat.Session, state *AgentSessionState, selected agents.ResolvedAgent) error {
 	if state == nil {
 		return nil
 	}
-	return composition.MergeMCPTools(state.ToolBase, state.MCPManager, selected.EffectiveMCPServers)
+	return composition.MergeMCPTools(entryBase(sess, state), state.MCPManager, selected.EffectiveMCPServers)
 }
 
 // ensureRootMCPTools merges every configured global MCP server into state's

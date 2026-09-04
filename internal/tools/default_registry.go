@@ -157,6 +157,10 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	envExact, envPrefix, envBlocked := resolveEnvAllowlist(opts.EnvAllowlist, opts.EnvAllowlistOnly, opts.EnvBlocklist)
 	disabled := disabledToolNames(opts.DisableTools)
 	r := NewRegistry()
+	if opts.Workspace != nil {
+		r.workspaceRoot = opts.Workspace.Abs
+		r.workspaceUnrestricted = opts.Workspace.Unrestricted()
+	}
 	registerDefaultTools(r, opts, allowlist, envExact, envPrefix, envBlocked, secretPatterns, secretExceptions, disabled)
 	return r
 }

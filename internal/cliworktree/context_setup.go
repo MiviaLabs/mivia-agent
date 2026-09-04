@@ -3,7 +3,6 @@ package cliworktree
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	"github.com/MiviaLabs/mivia-agent/internal/worktreeroute"
 )
 
 var contextSetupRoutePrincipal = WorktreeRoutePrincipal
@@ -39,27 +39,14 @@ var abandonContextWorktreeCreation = func(store *storage.SQLite, principal conte
 // that file's worktree-session-binding logic.
 var OpenRepositoryContextStoreFunc func(root string) (*storage.SQLite, error)
 
-// contextWorkspaceID is a package-local copy of internal/cli's
-// contextWorkspaceID (context_setup_session.go): a pure, dependency-free hash
-// of the canonicalized root. Duplicated rather than imported for the same
-// import-cycle reason as OpenRepositoryContextStoreFunc above; unlike that
-// function, this one has no further dependencies, so a copy carries no drift
-// risk beyond keeping the two hash implementations identical by inspection.
-func contextWorkspaceID(root string) string {
-	resolved, err := filepath.Abs(root)
-	if err != nil {
-		resolved = filepath.Clean(root)
-	}
-	if linked, err := filepath.EvalSymlinks(resolved); err == nil {
-		resolved = linked
-	}
-	digest := sha256.Sum256([]byte(resolved))
-	return "workspace-" + hex.EncodeToString(digest[:8])
-}
-
 // WorktreeRoutePrincipal implements worktree route principal.
+//
+// Delegates to internal/worktreeroute: uiadapter must reach route identity
+// without importing cliworktree (UI isolation policy), so the shared leaf
+// owns the derivation. Its hash must stay byte-identical to internal/cli's
+// contextWorkspaceID or previously stored catalog rows strand.
 func WorktreeRoutePrincipal(root string) (contextstate.Principal, error) {
-	return contextstate.NewPrincipal(contextWorkspaceID(root), "worktree-routes", "local-user")
+	return worktreeroute.Principal(root)
 }
 
 // openRepositoryContextStore opens the repository context store via the func

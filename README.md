@@ -144,9 +144,39 @@ Successful workflow runs stop at `delivery_pending` until you pass the explicit 
 - Configurable MCP servers over stdio and Streamable HTTP, scoped per agent.
 - Workflows: durable, multi-step processes with retries and evidence gates.
 - Worktrees: isolated checkouts for a workflow run, so your working tree stays clean.
+- Worktree sessions in the terminal UI: start a chat in any registered worktree,
+  or resume one that already runs there (see below).
 - Agents and skills: named specialists you can route work to.
 - Lifecycle hooks: your own scripts run on `PreToolUse`, `PostToolUse`, and
   `Stop` - gate, format, or log every tool call, deterministically.
+
+### Worktree sessions
+
+The `/resume` picker shows worktree state. A `⎇` glyph marks every session
+that is bound to a worktree. Below the normal rows, one route row per
+registered worktree starts a fresh chat session inside that worktree:
+
+```
+resume session
+> ○ Refactor Storage Engine      [○ IDLE]  14 turns  2h ago
+  ○ ⎇ Worktree Work              [○ IDLE]  4 turns   2h ago
+-- in worktree --
+  ○ ⎇ Worktree · wt2             [○ IDLE]
+```
+
+Rules the picker follows:
+
+1. Select a session row with `⎇` to resume it. The app re-applies its
+   worktree binding before the chat opens.
+2. Select a row under `-- in worktree --` to start a new session in that
+   worktree. The new session has no transcript.
+3. Route rows disappear when a saved session covers their worktree, and
+   they return when no saved session covers it.
+
+Press Ctrl+W anywhere (or inside the picker) to start a new session in a
+worktree without opening /resume. Type to filter as usual; route rows match
+by worktree name via their title. The preview
+pane (`←`/`→`) shows the selected row's worktree directory.
 
 ## Architecture
 

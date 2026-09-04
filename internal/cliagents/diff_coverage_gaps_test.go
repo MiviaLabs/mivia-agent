@@ -266,7 +266,7 @@ func TestAddMCPToolsUnknownServerErrors(t *testing.T) {
 }
 
 func TestEnsureSelectedMCPToolsNilStateIsNoOp(t *testing.T) {
-	if err := ensureSelectedMCPTools(nil, agents.ResolvedAgent{EffectiveMCPServers: []string{"repo"}}); err != nil {
+	if err := ensureSelectedMCPTools(nil, nil, agents.ResolvedAgent{EffectiveMCPServers: []string{"repo"}}); err != nil {
 		t.Fatalf("ensureSelectedMCPTools(nil state) = %v, want nil", err)
 	}
 }

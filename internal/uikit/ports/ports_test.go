@@ -428,3 +428,26 @@ func TestScaleFieldsRefusesNonsense(t *testing.T) {
 		t.Errorf("a negative target rewrote the buckets to (%d, %d), want (7, 11)", a, b)
 	}
 }
+
+// TestSessionSummaryWorktreeBound is the routing-predicate table both the
+// picker dispatch and the typed-/resume router build on. Every arm matters:
+// a drifted copy of this predicate is how legacy instance-less rows were
+// once misrouted into the scoped creator and failed as "worktree deleted".
+func TestSessionSummaryWorktreeBound(t *testing.T) {
+	cases := []struct {
+		name string
+		s    SessionSummary
+		want bool
+	}{
+		{"instance-bound row", SessionSummary{Worktree: "wt1", WorktreeInstanceID: "wt_01"}, true},
+		{"bare worktree metadata (legacy)", SessionSummary{Worktree: "wt1"}, false},
+		{"route pseudo-row", SessionSummary{Worktree: "wt1", WorktreeInstanceID: "wt_01", WorktreeRoute: true}, false},
+		{"instance without worktree name", SessionSummary{WorktreeInstanceID: "wt_01"}, false},
+		{"plain row", SessionSummary{ID: "s1"}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.s.WorktreeBound(); got != tc.want {
+			t.Errorf("%s: WorktreeBound()=%v want %v", tc.name, got, tc.want)
+		}
+	}
+}
