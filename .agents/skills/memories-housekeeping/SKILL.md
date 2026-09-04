@@ -31,7 +31,8 @@ operator approval.
 ## Read first
 
 1. `.agents/memories/README.md` — the schema and the canonical
-   delete/update rules (lines 38-44). Every proposal must respect them.
+   delete/update rules (`## When to delete or update`). Every proposal
+   must respect them.
 2. The memory `*.md` files themselves. Each one is the contract.
 
 ## Step 1: Inventory

@@ -342,7 +342,18 @@ def check_memories(directory: Path) -> None:
                     f"maps defeats the tag-set comparison housekeeping uses "
                     f"to find near-duplicates."
                 )
+        # `title` accepts a quoted scalar because some titles need quoting,
+        # and the same tolerance applies here: a quoted ISO date carries the
+        # same value as the plain spelling. Strip one outer MATCHED quote
+        # pair before validating; anything else (an unclosed quote) fails
+        # the shape check below with the raw value in the message.
         stamp = fields["updated"]
+        if (
+            len(stamp) >= 2
+            and stamp[0] == stamp[-1]
+            and stamp[0] in ('"', "'")
+        ):
+            stamp = stamp[1:-1]
         if not UPDATED.match(stamp):
             fail(
                 f"{name}: updated must be an ISO date of the shape YYYY-MM-DD, "

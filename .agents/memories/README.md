@@ -29,7 +29,10 @@ or body). Stamp it on creation and bump it on every later edit: the
 housekeeping staleness rule measures it, and `scripts/check_memories.py`
 enforces the format. The gate judges the value alone - shape and calendar
 validity - and never reads the clock; recency, including a stamp ahead of
-the session date, is the audit's judgment.
+the session date, is the audit's judgment. Write the date as a plain
+scalar; the gate also accepts one matched quote pair around it. `id`,
+`importance`, and `tags` must be plain scalars in the shapes shown; only
+`title` accepts quoting freely.
 
 ## Filename convention
 
