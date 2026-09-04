@@ -57,7 +57,7 @@ field stays the identifier; the path stays kebab-case. Archived files are not re
 Write the archived copy first, read it back and confirm the content
 matches, then delete the original. A delete that runs before its write
 loses the memory and leaves only the git history to recover it. The
-`housekeeping` skill follows this order and gates the move on operator
+`memories-housekeeping` skill follows this order and gates the move on operator
 approval.
 
 ## Reading
