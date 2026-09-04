@@ -16,16 +16,7 @@ func resolveMCPServers(in ResolveInput, parent *ResolvedAgent, cfg config.MCPCon
 		if parent != nil {
 			return slices.Clone(parent.EffectiveMCPServers), nil
 		}
-		if !cfg.Enabled {
-			return nil, nil
-		}
-		out := make([]string, 0, len(cfg.Servers))
-		for _, server := range cfg.Servers {
-			if server.Global {
-				out = append(out, server.ID)
-			}
-		}
-		return out, nil
+		return cfg.GlobalServerIDs(), nil
 	}
 
 	allowedByParent := make(map[string]bool)

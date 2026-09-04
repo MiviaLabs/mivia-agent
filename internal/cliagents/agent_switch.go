@@ -281,6 +281,9 @@ func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 		state.Selected = nil
 		return nil
 	}
+	if err := ensureRootMCPTools(res, state); err != nil {
+		return fmt.Errorf("MCP tools: %w", err)
+	}
 	var candidate *agentSurface
 	var err error
 	if sess.Tools != nil && state.ToolBase != nil {
