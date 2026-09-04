@@ -1,6 +1,6 @@
 ---
 name: memory-housekeeping
-description: Audit and maintain the project memory store: verify facts, delete stale or duplicate entries, update outdated ones, and create missing ones. Use for memory cleanup and accuracy passes.
+description: "Audit and maintain the project memory store: verify facts, delete stale or duplicate entries, update outdated ones, and create missing ones. Use for memory cleanup and accuracy passes."
 tools:
   - memory_search
   - memory_save

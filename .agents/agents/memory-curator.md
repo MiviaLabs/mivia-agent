@@ -53,6 +53,11 @@ under `.agents/memories/`.
   replace, or delete a file outside it. The three write tools are on
   this role only because the capture and housekeeping skills require
   them. They do not permit any other change to the repository.
+  This bound is an instruction, not an enforced control. No mechanism
+  restricts this role's write paths: `write_path_blocklist` applies to
+  workflow agent steps only, and an interactive session runs with an
+  empty denylist. Obey the bound because it is correct, not because
+  something stops you.
 - Do not promote entries to core tier, do not commit, and do not push.
 - Report: entries deleted, entries updated, entries created, archive
   moves, verification results, and residual risk. Time-box the sweep;
