@@ -97,7 +97,7 @@ run_verify python3 scripts/test_git_hooks.py
 run_verify python3 scripts/test_agent_hook_guard.py
 run_verify python3 scripts/test_secret_scan.py
 run_verify python3 scripts/test_docs_ownership.py
-run_verify python3 scripts/test_verify_agent_config.py
+run_verify python3 scripts/test_verify_skill_tree.py
 run_verify python3 scripts/test_check_provider_docs.py
 run_verify python3 scripts/test_semgrep_rules.py
 

@@ -63,7 +63,7 @@ boundaries of the input space:
 ### Step four: hunt the fault classes
 
 Check the function against the fault classes. Read
-`references/method-faults.md` for the full catalog with examples.
+`.agents/skills/logic-review/references/method-faults.md` for the full catalog with examples.
 The short list:
 
 - inverted, duplicated, or always-true conditions
@@ -89,7 +89,7 @@ is a gap. Confirm a gap with a scratch test under `/tmp` when the
 confirm is cheap. Never edit repo code to prove a finding.
 
 Then read each test as code. Tests carry the same fault classes as
-the code they test. Read `references/test-faults.md` for the full
+the code they test. Read `.agents/skills/logic-review/references/test-faults.md` for the full
 catalog. The short list:
 
 - the expected value comes from calling the code under test

@@ -64,12 +64,17 @@ Canonical project skills live under `.agents/skills/` as real directories.
 The compiled `mivia` binary's loader (`internal/workspace.SkillsDir`,
 returns `<root>/.agents/skills`) reads from this path; the loader's
 `os.Root` sandbox cannot follow symlinks, so a skill must be a real
-directory at this path to be discovered. `.claude/skills/` mirrors each
-skill as a real directory for tool discovery (Claude's adapter looks
-there independently of the binary). To add a skill: create a directory
-under `.agents/skills/<name>/SKILL.md` with the YAML frontmatter schema
-documented in any existing skill, and a matching copy under
-`.claude/skills/<name>/`.
+directory at this path to be discovered. Claude Code discovers skills
+only under `.claude/skills/`, so `.claude/skills/<name>/SKILL.md` is an alias stub: it
+repeats the canonical frontmatter block byte for byte and its body
+points at `.agents/skills/<name>/SKILL.md`. The stub is a plain file,
+not a symlink, because Git sets `core.symlinks=false` on Windows and a
+cloned symlink turns into a plain text file. To add a skill: create a
+directory under `.agents/skills/<name>/SKILL.md` with the YAML
+frontmatter schema documented in any existing skill, then add the alias
+stub under `.claude/skills/<name>/SKILL.md`. Keep bundled resources
+beside the canonical file only. `scripts/verify_agent_config.py`
+enforces this.
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 

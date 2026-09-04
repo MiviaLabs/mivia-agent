@@ -126,9 +126,23 @@ task-agent `agent` + optional `skill` binding enforced by the root dispatcher.
 ```
 
 Project skills live under `.agents/skills/`, not `.mivia/`; `.mivia/` is
-scoped to product runtime config and state. A `.claude/skills/` tree, if
-present, is a separate copy maintained for Claude Code tool discovery — the
-mivia skill loader never reads it.
+scoped to product runtime config and state. The mivia skill loader reads only
+`.agents/skills/`.
+
+Claude Code discovers skills only under `.claude/skills/`, so each skill also needs a file at
+`.claude/skills/<name>/SKILL.md`. That file is an alias stub, not a copy. It
+holds the canonical frontmatter block byte for byte, because Claude Code
+selects a skill by `name` and `description`. Its body is a fixed pointer to
+`.agents/skills/<name>/SKILL.md`. Bundled resources such as
+`report-template.md` and `resources.toml` stay beside the canonical file; the
+stub directory holds `SKILL.md` alone.
+
+A symlink is not used here. Git sets `core.symlinks=false` by default on
+Windows, so a cloned symlink becomes a plain text file and the skill tree
+breaks with no error. A plain-file stub is portable on every operating system.
+`scripts/verify_agent_config.py` (`check_claude_skill_aliases`) enforces the
+stub shape, and `scripts/test_verify_agent_config.py` proves the gate rejects
+each defect.
 
 `report-template.md` is a repository convention enforced by the control-surface
 checks for report-producing skills. It is not a host-level semantic required of
