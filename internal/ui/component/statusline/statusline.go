@@ -152,6 +152,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tickCmd()
 }
 
+// TickCmd returns a Cmd to start or continue the spinner tick loop.
+func TickCmd() tea.Cmd {
+	return tickCmd()
+}
+
+// Mark returns a copy of the statusline's current mark Model.
+func (m Model) Mark() mark.Model { return m.mark }
+
+// MarkView returns the statusline mark's rendered view.
+func (m Model) MarkView() string { return m.mark.View() }
+
+// MarkGlyph returns the statusline mark's current glyph rune.
+func (m Model) MarkGlyph() rune { return m.mark.Glyph() }
+
+// Frame returns the spinner frame index.
+func (m Model) Frame() int { return m.frame }
+
 // badge returns the fixed-width (14-rune) activity capsule:
 // [ <glyph> <LABEL> ]
 // Brackets and spacers wear RoleFGSubtle; glyph wears the mark's role;
