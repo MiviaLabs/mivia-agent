@@ -364,6 +364,25 @@ def test_accepts_a_future_stamp_the_gate_checks_shape_not_recency() -> None:
         raise AssertionError(f"future stamp rejected: {r}")
 
 
+def test_accepts_a_quoted_updated_stamp() -> None:
+    """A quoted ISO date carries the same value as the plain spelling, so
+    the title-style quoting tolerance applies here too."""
+    for value in ('"2026-09-04"', "'2026-09-04'"):
+        if (r := run_on({"probe-memory.md": GOOD.replace(
+                "updated: 2026-09-04", f"updated: {value}")})) is not None:
+            raise AssertionError(f"{value!r} rejected: {r}")
+
+
+def test_rejects_an_unmatched_quote_around_the_stamp() -> None:
+    """Only a matched pair is stripped; an unclosed quote fails the shape
+    check with the raw value in the message."""
+    expect_rejection(
+        {"probe-memory.md": GOOD.replace("updated: 2026-09-04",
+                                         'updated: "2026-09-04')},
+        "YYYY-MM-DD",
+    )
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -393,6 +412,8 @@ def main() -> None:
     test_rejects_a_malformed_updated_stamp()
     test_rejects_an_impossible_calendar_date()
     test_accepts_a_future_stamp_the_gate_checks_shape_not_recency()
+    test_accepts_a_quoted_updated_stamp()
+    test_rejects_an_unmatched_quote_around_the_stamp()
     print("test_check_memories: ok")
 
 
