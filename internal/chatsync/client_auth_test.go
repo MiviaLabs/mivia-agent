@@ -2,6 +2,7 @@ package chatsync
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,9 +18,35 @@ import (
 // that it happened. Recording is the point: a client that fails open sends an
 // unauthenticated request and then reports a plain "unauthorized" error, which
 // is indistinguishable from an expired token unless the fake remembers.
+// Session reads return a session object; the append-ack readback (a GET that
+// returns an ARRAY) has its own shape, or a short-ack verification after a
+// real append decodes garbage and reports an unrelated upload failure.
 func newAuthGuardedServer(t *testing.T, unauthenticated *atomic.Int64) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		// A full ack for whatever batch arrives, so a real append verifies
+		// cleanly; without it the short-ack readback turns the auth assertion
+		// into an unrelated upload failure.
+		var req struct {
+			Events []struct {
+				Seq int64 `json:"seq"`
+			} `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last := int64(0)
+		for _, ev := range req.Events {
+			if ev.Seq > last {
+				last = ev.Seq
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{LastSeq: last, InsertedCount: len(req.Events)})
+	})
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"sess-auth-1","status":"running","lastSeq":0}`))
@@ -62,11 +89,14 @@ func TestOpenSessionRefusesWithoutTokenProvider(t *testing.T) {
 
 // TestOpenSessionAuthenticatesEveryRequest drives the constructor both
 // production sites call and asserts the server never sees a request without a
-// bearer token.
+// bearer token. The requests exist only once the first message attaches, so
+// the test sends one - otherwise the no-request state would make the
+// assertion pass vacuously.
 func TestOpenSessionAuthenticatesEveryRequest(t *testing.T) {
 	var unauthenticated atomic.Int64
 	srv := newAuthGuardedServer(t, &unauthenticated)
 
+	bus := events.New()
 	opts := SessionOptions{
 		TokenProvider: func(context.Context, bool) (string, error) { return "tok-1", nil },
 		ClientOptions: ClientOptions{BaseURL: srv.URL},
@@ -74,10 +104,14 @@ func TestOpenSessionAuthenticatesEveryRequest(t *testing.T) {
 		CreateTitle:   "With Auth",
 	}
 
-	sess, err := OpenSession(context.Background(), events.New(), "local-1", opts)
+	sess, err := OpenSession(context.Background(), bus, "local-1", opts)
 	if err != nil {
 		t.Fatalf("OpenSession() error = %v, want nil", err)
 	}
+	publishTurnStart(bus, "local-1", "turn:1", "the message that attaches")
+	waitUntil(t, "the deferred attach to reach the server", func() bool {
+		return sess.LastSeq() >= 1
+	})
 	if err := sess.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}

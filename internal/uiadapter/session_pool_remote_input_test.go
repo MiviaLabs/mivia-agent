@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,11 +29,13 @@ func withFixedAuthorUserIDProvider(t *testing.T, id string) {
 	t.Cleanup(func() { uiadapter.AuthorUserIDProvider = orig })
 }
 
-func remoteInputMockServer(t *testing.T, input chatsync.SessionInput) *httptest.Server {
+func remoteInputMockServer(t *testing.T, input chatsync.SessionInput) (*httptest.Server, *int32) {
 	t.Helper()
+	var created int32
 	mux := http.NewServeMux()
 	served := false
 	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&created, 1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: input.SessionID, Status: "running"})
@@ -64,10 +67,10 @@ func remoteInputMockServer(t *testing.T, input chatsync.SessionInput) *httptest.
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, &created
 }
 
-func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string) *uiadapter.SessionPool {
+func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string, created *int32) *uiadapter.SessionPool {
 	t.Helper()
 	installTestAuthToken(t)
 	res := &config.Resolved{
@@ -84,6 +87,28 @@ func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string) *u
 	sess.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+
+	// The deferred attach - and with it the input poller - runs on the
+	// session's first message. Without it the poller never starts, and the
+	// "never forwarded" assertion passes vacuously.
+	sess.EventBus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: sess.SessionID,
+		TurnID:    "turn:1",
+		Detail:    "the first message",
+		Timestamp: time.Now(),
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(created) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(created) == 0 {
+		t.Fatal("the session never attached on its first message; the poller tests prove nothing")
+	}
+	// The poller starts in the same goroutine, right after the create. Give
+	// it a beat so the tests below observe a RUNNING poller.
+	time.Sleep(50 * time.Millisecond)
+
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -98,11 +123,11 @@ func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string) *u
 // pool.RemoteInputs() tagged with the LOCAL chat session id.
 func TestSessionPool_RemoteInputsForwardsAuthorizedInput(t *testing.T) {
 	withFixedAuthorUserIDProvider(t, "user-1")
-	srv := remoteInputMockServer(t, chatsync.SessionInput{
+	srv, created := remoteInputMockServer(t, chatsync.SessionInput{
 		ID: "input-1", SessionID: "remote-authorized-1", AuthorUserID: "user-1",
 		Kind: "message", Body: "hello from the tablet",
 	})
-	pool := newRemoteInputPool(t, srv, "local-authorized-1")
+	pool := newRemoteInputPool(t, srv, "local-authorized-1", created)
 
 	select {
 	case ev := <-pool.RemoteInputs():
@@ -128,11 +153,11 @@ func TestSessionPool_RemoteInputsForwardsAuthorizedInput(t *testing.T) {
 // a local turn from this package.
 func TestSessionPool_RemoteInputsRejectsUnverifiedAuthor(t *testing.T) {
 	withFixedAuthorUserIDProvider(t, "user-1")
-	srv := remoteInputMockServer(t, chatsync.SessionInput{
+	srv, created := remoteInputMockServer(t, chatsync.SessionInput{
 		ID: "input-attacker", SessionID: "remote-attacker-1", AuthorUserID: "someone-else",
 		Kind: "message", Body: "rm -rf /",
 	})
-	pool := newRemoteInputPool(t, srv, "local-attacker-1")
+	pool := newRemoteInputPool(t, srv, "local-attacker-1", created)
 
 	select {
 	case ev := <-pool.RemoteInputs():

@@ -261,16 +261,16 @@ func TestStatusFileSurvivesProcessExit(t *testing.T) {
 		}
 	})
 
-	t.Run("a healthy open writes the file at once", func(t *testing.T) {
+	t.Run("a healthy attach writes the file at once", func(t *testing.T) {
 		f := newFakeAPI(t)
 		id := f.NewSession("fresh")
 		dir := t.TempDir()
-		openAgainstFake(t, f, id, dir)
+		bus, _ := openAgainstFake(t, f, id, dir)
 
-		st := readStatusFile(t, dir)
-		if st.State != SyncStateHealthy {
-			t.Fatalf("state = %q, want %q", st.State, SyncStateHealthy)
-		}
+		// The healthy record is written by the attach, which waits for the
+		// first message: a session nobody has used writes nothing to diagnose.
+		publishTurnStart(bus, id, "turn:attach", "first message")
+		st := waitForStatusState(t, dir, SyncStateHealthy)
 		if st.LastSuccessAt == nil {
 			t.Errorf("last_success_at is null after a successful attach")
 		}

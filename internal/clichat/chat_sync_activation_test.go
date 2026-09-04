@@ -17,10 +17,34 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 )
 
+// registerEventsAck teaches a mock the append route, so a real first message
+// can be acknowledged instead of 404ing into the 404-recovery path (which
+// would mint a second session). Activation mocks only need the create, the
+// heartbeat, and an append that acknowledges what it receives.
+func registerEventsAck(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Events []struct {
+				Seq int64 `json:"seq"`
+			} `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last := int64(0)
+		for _, ev := range req.Events {
+			if ev.Seq > last {
+				last = ev.Seq
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.AppendResult{LastSeq: last, InsertedCount: len(req.Events)})
+	})
+}
+
 // syncActivationServer answers the create/heartbeat pair the sync wiring makes
 // on attach, and counts the creates. A create is the observable that proves
 // sync actually started: it is the first authenticated request OpenSession
-// makes, and nothing else in the wiring can produce one.
+// makes - now on the session's first message - and nothing else in the wiring
+// can produce one.
 func syncActivationServer(t *testing.T) (*httptest.Server, *int32) {
 	t.Helper()
 	var created int32
@@ -35,6 +59,7 @@ func syncActivationServer(t *testing.T) (*httptest.Server, *int32) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: r.PathValue("id"), Status: "running"})
 	})
+	registerEventsAck(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, &created
@@ -52,11 +77,62 @@ func activationSession(t *testing.T, res *config.Resolved) (*chat.Session, strin
 	return sess, t.TempDir()
 }
 
+// waitFirstMessageCreate publishes the message that drives the deferred
+// attach - an event only exists once a turn starts, so sync's create fires on
+// the FIRST message, not on attachCLISync - and waits for the server to see
+// that create.
+func waitFirstMessageCreate(t *testing.T, bus *events.Bus, sessionID string, created *int32) {
+	t.Helper()
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: sessionID,
+		TurnID:    "turn:1",
+		Detail:    "the first message",
+		Timestamp: time.Now(),
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(created) >= 1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for the deferred attach's create")
+}
+
+// TestAttachCLISyncCreatesNothingBeforeTheFirstMessage is the plain-CLI twin
+// of the chatsync laziness pin: a logged-in user who opens the CLI and sends
+// nothing must leave no trace on the server - no create, no heartbeat, no
+// long poll. The settle window gives a wrongly eager attach time to make the
+// request it should not make.
+func TestAttachCLISyncCreatesNothingBeforeTheFirstMessage(t *testing.T) {
+	srv, created := syncActivationServer(t)
+	res := &config.Resolved{
+		Sync: config.ResolvedSync{
+			APIURL:           srv.URL,
+			PollWaitSeconds:  1,
+			HeartbeatSeconds: 1,
+			MaxUnflushed:     50,
+		},
+	}
+	installTestAuthToken(t)
+	sess, wsRoot := activationSession(t, res)
+
+	detach := attachCLISync(sess, wsRoot, res)
+	time.Sleep(300 * time.Millisecond)
+	detach()
+
+	if n := atomic.LoadInt32(created); n != 0 {
+		t.Errorf("created = %d, want 0; no message was sent, so nothing may be created", n)
+	}
+}
+
 // TestAttachCLISyncRunsWhenLoggedInWithoutExplicitEnable pins the product
 // decision: a logged-in user gets sync with no flag, no prompt, and no
 // `enabled = true` in their config. The [sync] table here sets only the
 // endpoint and the bounds; the enable key is absent, which is the state
-// every real user's config is in.
+// every real user's config is in. The create follows the session's first
+// message, which is what the helper sends.
 func TestAttachCLISyncRunsWhenLoggedInWithoutExplicitEnable(t *testing.T) {
 	srv, created := syncActivationServer(t)
 	res := &config.Resolved{
@@ -71,7 +147,7 @@ func TestAttachCLISyncRunsWhenLoggedInWithoutExplicitEnable(t *testing.T) {
 	sess, wsRoot := activationSession(t, res)
 
 	detach := attachCLISync(sess, wsRoot, res)
-	time.Sleep(50 * time.Millisecond)
+	waitFirstMessageCreate(t, sess.EventBus, sess.SessionID, created)
 	detach()
 
 	if n := atomic.LoadInt32(created); n != 1 {

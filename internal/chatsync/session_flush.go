@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// workerLoop is the projection goroutine. It projects bus events and appends
-// them to the outbox, and it does NOTHING else: no network call runs here.
+// workerLoop is the projection goroutine. It performs the one-time deferred
+// attach (ensureAttached), projects bus events and appends them to the
+// outbox, and it does NOTHING else: no other network call runs here.
 //
 // It used to also own the push. One select served the event channel, the
 // per-event flush signal and the ticker, so under a streaming model the loop
@@ -39,7 +40,12 @@ func (s *SyncSession) workerLoop(ctx context.Context) {
 			s.drainAndFlushFinal(ctx)
 			return
 		case ev := <-s.eventCh:
-			s.processEvent(ctx, ev)
+			// The first event attaches; if the attach failed, the terminal
+			// stop above exits the loop on the next iteration and this
+			// event is dropped - sync is dead, the local chat is not.
+			if s.ensureAttached(ctx) == nil {
+				s.processEvent(ctx, ev)
+			}
 		}
 	}
 }
@@ -149,6 +155,13 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 	if s.remoteEnded.Load() {
 		return
 	}
+	// Before the first event attaches there is nothing in the outbox and no
+	// session to push to. The ticker still wakes this path every 100ms in
+	// exactly that state - a session the user opened and has not used - so
+	// this gate is what keeps an idle, never-messaged CLI silent.
+	if !s.attached.Load() {
+		return
+	}
 	sessionID := s.SessionID()
 	batchID := sessionID + "-" + strconv.FormatUint(s.uploadBatch.Add(1), 10)
 	unflushed, _ := s.outbox.UnflushedEvents()
@@ -195,6 +208,12 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 // call, and the durable outbox must remain available for a later retry.
 func (s *SyncSession) flushFinal(ctx context.Context) error {
 	if s.remoteEnded.Load() {
+		return nil
+	}
+	// A session that never got a message never attached, so it has nothing
+	// to flush and no session to flush to; Stop must close it without a
+	// single request.
+	if !s.attached.Load() {
 		return nil
 	}
 	sessionID := s.SessionID()
@@ -266,13 +285,14 @@ func jitterBackoff(d time.Duration) time.Duration {
 }
 
 // handleRemoteEnd latches the terminal state and shuts the pusher, the poller
-// and the heartbeat down. It is reached only through classifyFlushError's
-// outcomeStop, the recovery bounds, or a dead outbox; a 409 or 404 on its own
-// recovers instead (recoverRemoteSession). The local chat is untouched.
+// and the heartbeat down. It is reached through classifyFlushError's
+// outcomeStop, the recovery bounds, a dead outbox, or a failed deferred attach
+// (see ensureAttached); a 409 or 404 on its own recovers instead
+// (recoverRemoteSession). The local chat is untouched.
 //
-// It is called from the uploader goroutine, so the (blocking) runner stops are
-// detached. Both runner Stop methods are idempotent, so a later Stop(ctx) that
-// races this one is safe.
+// It is called from the uploader or the worker goroutine, so the (blocking)
+// runner stops are detached. Both runner Stop methods are idempotent, so a
+// later Stop(ctx) that races this one is safe.
 func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 	if !s.remoteEnded.CompareAndSwap(false, true) {
 		return
@@ -280,12 +300,7 @@ func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 	s.stopReason.Store(&reason)
 	s.health.noteStop(reason, s.outbox.UnflushedCount())
 	go func() {
-		if s.heartbeat != nil {
-			s.heartbeat.Stop(ctx)
-		}
-		if s.poller != nil {
-			s.poller.Stop(ctx)
-		}
+		s.stopRunners(ctx)
 		// The "say so" half of the contract's poison rule. The
 		// CompareAndSwap above makes this exactly-once, and running it here
 		// - already off the uploader - keeps a host callback that blocks on
@@ -321,7 +336,13 @@ func (s *SyncSession) drainAndFlushFinal(ctx context.Context) {
 	for {
 		select {
 		case ev := <-s.eventCh:
-			s.processEvent(ctx, ev)
+			// Events queued while shutdown began are real content: the
+			// deferred attach runs for them here, so the final flush below
+			// can deliver the tail. A session with NO queued events never
+			// attaches - closing an unused session stays silent.
+			if s.ensureAttached(ctx) == nil {
+				s.processEvent(ctx, ev)
+			}
 		default:
 			goto drained
 		}

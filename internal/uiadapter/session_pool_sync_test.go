@@ -58,6 +58,32 @@ func setupSyncMockServer(mu *sync.Mutex, createdIDs *[]string, sessionEvents map
 	return httptest.NewServer(mux)
 }
 
+// sendFirstMessage publishes the turn-start that drives the deferred attach
+// for sessionID and waits until the mock has recorded want creates. An event
+// only exists once a turn starts, so sync's create fires on the FIRST
+// message, not on pool construction.
+func sendFirstMessage(t *testing.T, bus *events.Bus, sessionID string, mu *sync.Mutex, createdIDs *[]string, want int) {
+	t.Helper()
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: sessionID,
+		TurnID:    "turn:" + sessionID,
+		Detail:    "the first message",
+		Timestamp: time.Now(),
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(*createdIDs)
+		mu.Unlock()
+		if n >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d remote session(s) after the first message", want)
+}
+
 func TestSessionPool_SyncPerPooledSession(t *testing.T) {
 	var mu sync.Mutex
 	var createdIDs []string
@@ -90,7 +116,9 @@ func TestSessionPool_SyncPerPooledSession(t *testing.T) {
 		t.Fatalf("CreateFresh: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// One first message per pooled session; each drives its own attach.
+	sendFirstMessage(t, bus, sess1.SessionID, &mu, &createdIDs, 1)
+	sendFirstMessage(t, bus, conv2.ID(), &mu, &createdIDs, 2)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -156,7 +184,7 @@ func TestSessionPool_SyncAuthenticatesEveryRequest(t *testing.T) {
 	sess1.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
-	time.Sleep(50 * time.Millisecond)
+	sendFirstMessage(t, sess1.EventBus, sess1.SessionID, &mu, &createdIDs, 1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

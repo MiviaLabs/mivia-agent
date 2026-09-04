@@ -335,6 +335,14 @@ a sequence number immediately before subsequent events to preserve causality.
 
 ## Outbox Durability and Conflict Handling
 
+Sync is lazy. Nothing reaches the network before the session's first message.
+Opening the CLI arms sync locally - the outbox, the bus subscription, the
+local workers - while the remote session is created, or re-attached to through
+the stored identity, only when the first event arrives. The heartbeat and the
+input long-poll start with it, because both speak to a session that must exist
+first. A session that is opened and closed with no message leaves no trace on
+the server: no create, no heartbeat, no poll.
+
 The system writes and persists events locally to `chat-sync/sessions/<id>/events.jsonl`
 before network transmission. The local cursor `cursor.json` updates atomically
 only after the remote server acknowledges receipt (HTTP 200/201).

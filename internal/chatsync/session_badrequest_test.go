@@ -51,13 +51,16 @@ func openAgainstFake(t *testing.T, f *fakeAPI, localID, outboxDir string) (*even
 }
 
 // TestFlush_SequenceGap400RebasesAndContinues covers the settled recovery
-// (chat-sync-cli-slice.md:194-197): a sequence-gap 400 re-reads GET /:id and
-// rebases on serverLastSeq+1. Treating it as fatal "guarantees the failure it
-// is trying to avoid".
+// (chat-sync-cli-slice.md:194-197): a stream that reaches the server out of
+// order is renumbered onto the server's mark and continues contiguously.
+// Treating it as fatal "guarantees the failure it is trying to avoid".
 //
 // The state is the crash window settled decision 4 explicitly accepts: the
 // cursor was fsynced past events the server never received, so the outbox holds
-// seqs 5..7 while the session is still at 0.
+// seqs 5..7 while the session is still at 0. Under the deferred attach that
+// renumbering happens when the first message attaches (openingSeq), before any
+// push - so the trigger event below is both the attach and the continuation,
+// and the whole stream must land contiguous from 1.
 func TestFlush_SequenceGap400RebasesAndContinues(t *testing.T) {
 	f := newFakeAPI(t)
 	id := f.NewSession("gap-rebase")
@@ -83,19 +86,20 @@ func TestFlush_SequenceGap400RebasesAndContinues(t *testing.T) {
 		t.Fatalf("seed Close: %v", err)
 	}
 
-	_, s := openAgainstFake(t, f, id, dir)
+	bus, s := openAgainstFake(t, f, id, dir)
 
+	publishTurnStart(bus, id, "turn:trigger", "first message")
 	waitUntil(t, "the rebased batch to be accepted", func() bool {
-		return f.LastSeq(id) == 3
+		return f.LastSeq(id) == 4
 	})
-	if got := len(f.Events(id)); got != 3 {
-		t.Errorf("the server stored %d events, want 3 (5..7 rebased onto 1..3)", got)
+	if got := len(f.Events(id)); got != 4 {
+		t.Errorf("the server stored %d events, want 4 (5..7 rebased onto 1..3 by the attach, then the trigger event as 4)", got)
 	}
 	if s.Stopped() {
 		t.Errorf("sync stopped on a sequence-gap 400; the settled behaviour is rebase and continue (reason: %q)", s.StopReason())
 	}
-	if next := s.LastSeq(); next != 3 {
-		t.Errorf("projector LastSeq() = %d, want 3; the next event must continue the rebased stream", next)
+	if next := s.LastSeq(); next != 4 {
+		t.Errorf("projector LastSeq() = %d, want 4; the next event must continue the rebased stream", next)
 	}
 }
 
@@ -198,8 +202,14 @@ func TestFlush_SequenceGap400WithUnreadableSessionRetries(t *testing.T) {
 	f.RejectAppendsWith(400, "Bad Request", "sequence gap: expected 1, got 9")
 
 	bus, s := openAgainstFake(t, f, id, t.TempDir())
-	// Only after attach: AttachSession reads the session too, and a session it
-	// cannot read is a startup failure, not the case under test.
+	// The deferred attach must complete BEFORE the session becomes unreadable:
+	// an attach that cannot read the session is a startup failure, not the
+	// flush-path case under test. One event triggers the attach; the batch it
+	// pushes is rejected by the blanket rule above, which is the trigger the
+	// rebase path needs.
+	publishTurnStart(bus, id, "turn:attach", "first message")
+	waitUntil(t, "the first push attempt (the attach ran)", func() bool { return len(f.Batches()) >= 1 })
+
 	f.FailSessionReads(true)
 	publishTurnStart(bus, id, "turn:1", "hello")
 

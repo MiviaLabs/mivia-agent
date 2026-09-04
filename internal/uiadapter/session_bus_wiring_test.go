@@ -162,9 +162,9 @@ func TestSessionPool_BusWiring_NilRegistrarIsNoOp(t *testing.T) {
 // resurrection guard: ReattachSyncAfterLogin snapshots p.sessions and
 // re-locks per session, so a /login completing while the TUI quits could
 // otherwise re-run attachSyncLocked AFTER ReleaseLeases drained the pool and
-// attach a SyncSession nothing will ever stop. Mutation proof: removing the
-// released latch (the p.released check in attachSyncLocked) makes this test
-// fail - the reattach creates one more remote session on the mock server.
+// attach a SyncSession nothing will ever stop. The observable is the mock's
+// create count on the session's first message: a released pool must never
+// gain another one.
 func TestSessionPool_ReattachSyncAfterLogin_DoesNotReviveAReleasedPool(t *testing.T) {
 	var mu sync.Mutex
 	var createdIDs []string
@@ -185,7 +185,7 @@ func TestSessionPool_ReattachSyncAfterLogin_DoesNotReviveAReleasedPool(t *testin
 	sess.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
-	time.Sleep(30 * time.Millisecond)
+	sendFirstMessage(t, sess.EventBus, sess.SessionID, &mu, &createdIDs, 1)
 	mu.Lock()
 	attached := len(createdIDs)
 	mu.Unlock()
@@ -214,10 +214,9 @@ func TestSessionPool_ReattachSyncAfterLogin_DoesNotReviveAReleasedPool(t *testin
 // session gains a real chat-sync session; a session already syncing before
 // the call gains NO duplicate (attachSyncLocked's own per-id guard).
 //
-// Mutation proof: making ReattachSyncAfterLogin a no-op (its body
-// replaced with a bare `return`) makes this test fail, because the
-// pre-login session never gets its post-login sync session and
-// createdIDs stays at the pre-login count.
+// Each sync session attaches when ITS first message arrives, so both messages
+// are published after the reattach. The observable for the no-duplicate half
+// is the mock's create count: a second login adds no new remote session.
 func TestSessionPool_ReattachSyncAfterLogin_ClosesTheLoginGap(t *testing.T) {
 	var mu sync.Mutex
 	var createdIDs []string
@@ -247,6 +246,7 @@ func TestSessionPool_ReattachSyncAfterLogin_ClosesTheLoginGap(t *testing.T) {
 	if err != nil || sess2Conv == nil {
 		t.Fatalf("CreateFresh: %v", err)
 	}
+	sess2ID := sess2Conv.ID()
 
 	time.Sleep(30 * time.Millisecond)
 	mu.Lock()
@@ -261,7 +261,10 @@ func TestSessionPool_ReattachSyncAfterLogin_ClosesTheLoginGap(t *testing.T) {
 	installTestAuthToken(t)
 
 	pool.ReattachSyncAfterLogin()
-	time.Sleep(50 * time.Millisecond)
+
+	// The armed sessions attach on their first messages: one per session.
+	sendFirstMessage(t, sess1.EventBus, sess1.SessionID, &mu, &createdIDs, 1)
+	sendFirstMessage(t, sess1.EventBus, sess2ID, &mu, &createdIDs, 2)
 
 	mu.Lock()
 	postLoginCreated := len(createdIDs)

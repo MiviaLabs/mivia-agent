@@ -216,6 +216,13 @@ type SyncSession struct {
 	// holds across an fsync.
 	running atomic.Bool
 
+	// attached latches the deferred remote attach (ensureAttached). False
+	// from OpenSession until the FIRST event reaches the worker: an event
+	// only exists once a turn starts, so until then no request - create,
+	// heartbeat, long poll - is ever put on the wire. The uploader gates its
+	// pushes on it; the worker performs the attach itself.
+	attached atomic.Bool
+
 	// retryBase and retryAt hold the jittered push-retry schedule. They are
 	// touched only by the uploader goroutine, so they need no lock.
 	retryBase time.Duration
@@ -262,6 +269,12 @@ type SyncSession struct {
 	stopCh  chan struct{}
 	doneCh  chan struct{}
 	eventCh chan events.Event
+
+	// runnersMu guards the heartbeat and poller fields, which are created
+	// and started by the worker inside the deferred attach and stopped by
+	// Stop and the terminal latch from other goroutines. Each runner has
+	// its own lock; this one only protects the fields themselves.
+	runnersMu sync.Mutex
 	// flushCh wakes the uploader. processEvent signals it after every
 	// append; buffered 1, so a storm of signals coalesces into one wake and
 	// the uploader batches whatever landed during its last round trip.
@@ -280,7 +293,15 @@ type SyncSession struct {
 	uploaderCancel context.CancelFunc
 }
 
-// OpenSession opens or creates a remote session and begins synchronization.
+// OpenSession arms chat sync for a local chat session: it opens the outbox,
+// subscribes to the event bus and starts the local workers. It puts NOTHING
+// on the wire. The remote attach - the create or re-attach request, the
+// identity write-back, the heartbeat and the input poller - is deferred to
+// the FIRST event, in ensureAttached. Events only exist once a turn starts,
+// so a user who opens the CLI and sends no message creates no remote session
+// and no request of any kind; a session closed before its first event is a
+// purely local object. The first event attaches exactly once and is then
+// delivered like any other.
 //
 // chatSessionID is the LOCAL chat session id and is used for exactly one
 // thing: filtering the event bus, which stamps that id on every event. It is
@@ -305,53 +326,21 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 		HostLabel: opts.HostLabel,
 	}
 
-	att, err := AttachSession(ctx, client, outbox, params, opts.RemoteSessionID, opts.ProjectorOptions.WriterID)
-	if err != nil {
-		_ = outbox.Close()
-		return nil, fmt.Errorf("attach session: %w", err)
-	}
+	s := newSyncSession(chatSessionID, client, outbox, opts, params)
 
-	activeSessionID := att.SessionID
-	// A write-back failure costs the NEXT run its resume, not this one: this
-	// session is attached and healthy. Failing here would trade a degraded
-	// restart for no sync at all.
-	_ = opts.persistRemoteSessionID(activeSessionID)
-	localSessionID := chatSessionID
-	initialSeq, err := openingSeq(outbox, att)
-	if err != nil {
-		_ = outbox.Close()
-		return nil, err
-	}
-
-	s := newSyncSession(localSessionID, activeSessionID, initialSeq, client, outbox, opts, params)
-
-	if att.ForkedFrom != "" {
-		// No worker exists yet, but the lock is taken anyway so one contract
-		// serves both callers of rebaseOntoSessionLocked.
-		s.mu.Lock()
-		err := s.rebaseOntoSessionLocked(att.ForkedFrom)
-		s.mu.Unlock()
-		if err != nil {
-			_ = outbox.Close()
-			return nil, fmt.Errorf("apply forked attach: %w", err)
-		}
-	}
-	// After the fork block: a refused open must not leave a healthy record.
-	s.health.noteOpen(outbox.UnflushedCount())
-
+	// The poller OBJECT is local until Start: building it here keeps
+	// Inputs() a real channel from the first moment (the TUI pumps it right
+	// after OpenSession returns), while Start - and with it the long poll
+	// and the pending-input recovery - waits for the attach in
+	// ensureAttached.
 	if opts.EnablePolling {
-		s.poller = NewInputPoller(client, activeSessionID, opts.PollWaitSeconds, opts.AuthorUserIDProvider, opts.OutboxDir)
+		s.poller = NewInputPoller(client, opts.RemoteSessionID, opts.PollWaitSeconds, opts.AuthorUserIDProvider, opts.OutboxDir)
 		s.poller.SetOnRejected(opts.OnInputRejected)
 	}
 
 	s.sub = bus.SubscribeAcross(syncKinds, s, events.SubscribeOptions{BufSize: 1024})
 	s.dropSource = s.preProjectionDrops
 	s.unsubscribe = s.sub.Unsubscribe
-
-	s.heartbeat.Start(ctx)
-	if s.poller != nil {
-		s.poller.Start(ctx)
-	}
 
 	uploaderCtx, uploaderCancel := context.WithCancel(ctx)
 	s.uploaderCancel = uploaderCancel
@@ -363,15 +352,15 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 
 // newSyncSession builds the session value with every channel, counter and
 // seam in its starting state. Neither the worker nor the uploader is started
-// here.
-func newSyncSession(localID, remoteID string, initialSeq int64, client *Client, outbox *Outbox, opts SessionOptions, params CreateSessionParams) *SyncSession {
+// here, the remote session id is still empty, and the projector's seq is
+// provisional: ensureAttached sets both to the server's mark before the first
+// event is projected.
+func newSyncSession(localID string, client *Client, outbox *Outbox, opts SessionOptions, params CreateSessionParams) *SyncSession {
 	s := &SyncSession{
 		localSessionID: localID,
-		sessionID:      remoteID,
 		client:         client,
 		outbox:         outbox,
-		projector:      NewProjector(localID, initialSeq, opts.ProjectorOptions),
-		heartbeat:      NewHeartbeatRunner(client, remoteID, opts.HeartbeatPeriod),
+		projector:      NewProjector(localID, 0, opts.ProjectorOptions),
 		opts:           opts,
 		stopCh:         make(chan struct{}),
 		doneCh:         make(chan struct{}),
@@ -443,7 +432,9 @@ func (s *SyncSession) triggerFlush() {
 	}
 }
 
-// SessionID returns the currently active remote session ID.
+// SessionID returns the currently active remote session ID, or the empty
+// string until the first event attaches - an id exists only once the server
+// has assigned one, and the server is not asked until a message is sent.
 func (s *SyncSession) SessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -478,9 +469,11 @@ func (s *SyncSession) Inputs() <-chan RemoteInput {
 	return nil
 }
 
-// SetStatus forwards status updates to the heartbeat runner.
+// SetStatus forwards status updates to the heartbeat runner. Before the
+// first event attaches there is no runner and nothing to send to: a status
+// is API traffic, and a session with no message produces none.
 func (s *SyncSession) SetStatus(ctx context.Context, status string) {
-	if s.heartbeat != nil {
-		s.heartbeat.SetStatus(ctx, status)
+	if hb := s.statusRunner(); hb != nil {
+		hb.SetStatus(ctx, status)
 	}
 }

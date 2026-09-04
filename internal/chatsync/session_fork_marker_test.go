@@ -16,6 +16,10 @@ import (
 // rollback site. AttachSession forks when a foreign writer owns the session;
 // the sync.forked marker that follows consumes a seq, so an append the outbox
 // refuses must fail loudly instead of leaving the counter ahead of the file.
+// Under the deferred attach the fork happens on the FIRST message, so the
+// failure surfaces as that attach's terminal stop - named through the same
+// channel every other fatal condition uses - rather than an OpenSession
+// error: the open itself is local and cannot fail on a fork.
 func TestOpenSession_ForkMarkerAppendFailureIsNotSwallowed(t *testing.T) {
 	outboxDir := t.TempDir()
 
@@ -74,14 +78,18 @@ func TestOpenSession_ForkMarkerAppendFailureIsNotSwallowed(t *testing.T) {
 		CreateTitle:      "Fork Marker",
 		HeartbeatPeriod:  10 * time.Minute,
 	})
-	if err == nil {
+	if err != nil {
+		t.Fatalf("OpenSession: %v; the open is local and must not touch the fork", err)
+	}
+	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = syncSess.Stop(stopCtx)
-		t.Fatal("OpenSession succeeded, want an error: the sync.forked marker " +
-			"could not be stored, so its seq must not be silently consumed")
-	}
-	if !strings.Contains(err.Error(), "append fork marker") {
-		t.Errorf("OpenSession error = %v, want it to name the failed fork marker append", err)
+	}()
+
+	publishTurnStart(bus, "sess-foreign", "turn:1", "the message that attaches")
+	waitUntil(t, "the failed fork marker to latch the terminal stop", syncSess.Stopped)
+	if reason := syncSess.StopReason(); !strings.Contains(reason, "append fork marker") {
+		t.Errorf("StopReason = %q, want it to name the failed fork marker append", reason)
 	}
 }
