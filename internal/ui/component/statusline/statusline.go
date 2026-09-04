@@ -196,10 +196,18 @@ func (m Model) View(now time.Time) string {
 	elapsed := now.Sub(m.started).Round(time.Second)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	line := m.badge()
-	if m.detail != "" {
-		line += subtle.Render("  " + m.detail)
+
+	isASCII := m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY
+	divider := " · "
+	if isASCII {
+		divider = " - "
 	}
-	line += subtle.Render("  " + render.FormatElapsed(int(elapsed.Milliseconds())))
+
+	if m.detail != "" {
+		line += subtle.Render("  " + m.detail + divider + render.FormatElapsed(int(elapsed.Milliseconds())))
+	} else {
+		line += subtle.Render("  " + render.FormatElapsed(int(elapsed.Milliseconds())))
+	}
 
 	// Telemetry & Safety Pill badges
 	var pills []string

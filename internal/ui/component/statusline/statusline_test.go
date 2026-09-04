@@ -258,6 +258,33 @@ func TestStatusLineBadgeFixedFourteenRunes(t *testing.T) {
 	}
 }
 
+func TestStatusLineDividerTierGated(t *testing.T) {
+	th := loadTheme(t)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := start.Add(3 * time.Second)
+
+	// TrueColor tier uses hairline middle dot divider " · "
+	mTrue := New(th, theme.TierTrueColor)
+	mTrue.Start("running", start)
+	mTrue.SetDetail("go test ./...")
+	vTrue := mTrue.View(now)
+	if !strings.Contains(vTrue, "go test ./... · 3.0s") {
+		t.Errorf("got %q, want 'go test ./... · 3.0s' on TrueColor tier", vTrue)
+	}
+
+	// ASCII tier uses " - " divider
+	mAscii := New(th, theme.TierASCII)
+	mAscii.Start("running", start)
+	mAscii.SetDetail("go test ./...")
+	vAscii := mAscii.View(now)
+	if !strings.Contains(vAscii, "go test ./... - 3.0s") {
+		t.Errorf("got %q, want 'go test ./... - 3.0s' on ASCII tier", vAscii)
+	}
+	if strings.Contains(vAscii, "·") {
+		t.Errorf("ASCII tier must not contain unicode middle dot '·': %q", vAscii)
+	}
+}
+
 func TestStatusLineSafetyPillsAndTelemetry(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierASCII)
