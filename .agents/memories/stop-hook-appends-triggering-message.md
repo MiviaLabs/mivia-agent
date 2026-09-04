@@ -3,7 +3,7 @@ id: stop_hook_appends_triggering_message
 title: agentloop ContinueOnStop fires after the triggering assistant message is already in history
 content: The SDK loop appends resp.Message to the run history BEFORE the ContinueOnStop decision, so a continuation can only append and the host must drop empty assistant shapes at the trim input and the session write-back.
 importance: high
-tags: [agentloop, ContinueOnStop, mivia-ai-sdk, empty-response, continuation]
+tags: [[agentloop, ContinueOnStop, mivia-ai-sdk, empty-response, continuation]]
 ---
 
 ## When this applies

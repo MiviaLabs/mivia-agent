@@ -3,7 +3,7 @@ id: non_stream_header_wait_is_generation_time
 title: A non-stream LLM request's header wait is the model thinking, not a stall
 content: ResponseHeaderTimeout on a non-stream completion is a ceiling on thinking time; only streaming requests may carry a header bound, and every Completer must honor req.StreamTransport.
 importance: high
-tags: [provider, timeouts, streaming, subagents, anthropic, transport]
+tags: [[provider, timeouts, streaming, subagents, anthropic, transport]]
 ---
 
 # A non-stream header wait is generation time

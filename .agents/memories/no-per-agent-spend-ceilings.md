@@ -3,7 +3,7 @@ id: no_per_agent_spend_ceilings
 title: Do not add timeout_seconds/max_tokens ceilings to .agents/agents/*.md
 content: Keep max_turns=0 (unlimited); rely on session-level caps only.
 importance: medium
-tags: mivia, agents, config, budget
+tags: [mivia, agents, config, budget]
 ---
 
 Do not add `timeout_seconds` or `max_tokens` ceilings to `.agents/agents/*.md`,

@@ -38,7 +38,8 @@ policy) or a private per-machine agent memory store; a fact that becomes a
 hard rule belongs in `.agents/rules/`, not here.
 
 Read every file under `.agents/memories/` at the start of a task, the same
-way you read this file.
+way you read this file. `.agents/memories/.archive/` is the one exception:
+an archived memory is a record, not an active constraint.
 
 ### `.agents/agents/`
 

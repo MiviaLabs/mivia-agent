@@ -18,12 +18,13 @@ from verify_common import ROOT, fail, rel_to_root
 
 
 # Mirrors descriptionMaxLen in internal/skills/skill_markdown.go. loader.go
-# applies it through SanitizeModelFacingText. The caps below count BYTES, not
-# characters: internal/skills/skills.go compares Go len() on a string, which is
-# a byte count. Measure with .encode("utf-8"), or one em dash in a 200-character
-# description passes this gate and is then truncated mid-sentence at load. A longer description is truncated
-# mid-sentence in the model-facing skill surface, which degrades skill selection
-# with no other signal that it happened.
+# applies it through SanitizeModelFacingText.
+#
+# The caps count BYTES, not characters. internal/skills/skills.go compares Go
+# len() on a string, which is a byte count, so measure with .encode("utf-8").
+# One em dash in a 200-character description otherwise passes this gate and is
+# then truncated mid-sentence in the model-facing surface, which degrades skill
+# selection with no other signal.
 SKILL_DESCRIPTION_MAX = 200
 
 # Mirrors triggerMaxLen and triggersJoinedMax in
@@ -167,9 +168,10 @@ def check_no_dead_skill_tree(root: Path) -> None:
 
 
 # The alias body every .claude/skills/<name>/SKILL.md must carry after its
-# frontmatter. Claude Code discovers skills only under .claude/skills, so it needs a file at this
-# path. The file is a pointer, not a copy: a byte-identical duplicate drifts
-# from the canonical skill and nothing sees it. A symlink is not an option
+# frontmatter. Claude Code discovers skills only under .claude/skills, so it
+# needs a file at this path. The file is a pointer, not a copy: a
+# byte-identical duplicate drifts from the canonical skill and nothing sees
+# it. A symlink is not an option
 # either, because Git sets core.symlinks=false on Windows by default and the
 # clone turns the link into a plain text file.
 CLAUDE_ALIAS_BODY = (

@@ -3,7 +3,7 @@ id: transport_stage_timeout_is_not_a_deadline
 title: net/http stage timeouts claim equality with context.DeadlineExceeded
 content: A response-header or client-backstop timeout satisfies errors.Is(err, context.DeadlineExceeded) with no context expired; use provider.IsTransportStageTimeout to tell a transport fault from a spent budget.
 importance: high
-tags: [provider, timeouts, errors, classification, transport, http]
+tags: [[provider, timeouts, errors, classification, transport, http]]
 ---
 
 # A transport stage timeout is not the caller's deadline

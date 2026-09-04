@@ -3,7 +3,7 @@ id: prompt_lines_require_observed_failures
 title: Compiled prompt lines require an observed failure mode
 content: Add a line to a compiled prompt constant only for an observed failure mode, and check the change in behavior; do not add or reword lines on speculation.
 importance: high
-tags: [prompts, agents, reliability, instruction-density]
+tags: [[prompts, agents, reliability, instruction-density]]
 ---
 
 The compiled prompt constants (`BuiltInOrchestratorPrompt`,

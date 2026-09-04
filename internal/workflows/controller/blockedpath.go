@@ -159,8 +159,13 @@ func tokenNamesPath(token, blockedPath string) bool {
 // and the checked path are normalized (dot-slash and trailing slashes
 // stripped) before comparison. An empty blocklist blocks nothing.
 //
-// Kept in sync with internal/tools.isWritePathDenied, which enforces the same
-// rule at the write-tool boundary.
+// The write-tool boundary applies the same prefix rule in
+// internal/tools.isWriteDeniedPath. The two are NOT identical: that one
+// lowercases both sides so a deny list still matches on a case-insensitive
+// filesystem, and this one compares as written. A step naming ".Githooks/x"
+// is therefore refused by the write tool but is not recognised here, so the
+// run reports no progress instead of the blocked path that caused it. Match
+// the names exactly when you author a scope.
 func IsBlockedPath(rel string, blocklist []string) bool {
 	if len(blocklist) == 0 {
 		return false

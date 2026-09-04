@@ -2,8 +2,9 @@
 
 Team-shared, cross-tool operational memory. One Markdown file per memory,
 each file is git-committed and read at the start of every task. The
-frontmatter schema is fixed; the schema is also enforced at skill load
-(see `INV-AG-17` in `.mivia/invariants.md`).
+frontmatter schema below is mandatory. `scripts/check_memories.py` enforces
+it; nothing in the compiled binary reads this directory, so that gate is the
+only control.
 
 ## Frontmatter schema (mandatory)
 
@@ -24,9 +25,12 @@ or deleted.
 
 ## Filename convention
 
-`<topic>_<slug>.md`. The `id` field must match the filename without the
-`.md`. Example: `id: no_per_agent_spend_ceilings` lives in
-`no-per-agent-spend-ceilings.md`.
+The filename is a kebab-case slug: `<slug>.md`, using only `[a-z0-9-]`.
+
+Derive `id` from the filename: remove the `.md`, then replace every hyphen
+with an underscore. `no-per-agent-spend-ceilings.md` therefore carries
+`id: no_per_agent_spend_ceilings`. The two spellings differ on purpose: a
+path is kebab-case and an identifier is snake_case.
 
 ## When to write
 
@@ -58,6 +62,8 @@ approval.
 ## Reading
 
 `AGENTS.md` mandates: "Read every file under `.agents/memories/` at the
-start of a task, the same way you read this file." Treat each memory
+start of a task, the same way you read this file." That mandate excludes
+`.agents/memories/.archive/`, which holds records rather than active
+constraints. Treat each memory
 as an active constraint; if it conflicts with the request, raise it
 before acting.

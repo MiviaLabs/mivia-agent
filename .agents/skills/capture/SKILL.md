@@ -47,11 +47,12 @@ to `.agents/rules/`, do not duplicate it as a memory.
    content's distinctive terms against the existing files. If a memory
    covers the same ground, stop and tell the operator. Do not silently
    duplicate.
-3. Derive the filename `<topic>_<slug>.md` where:
-   - `topic` is a short noun (1-3 words, lowercase).
-   - `slug` is a kebab-case phrase, 1-6 words, only `[a-z0-9-]`.
-   - `id` in the frontmatter equals the filename minus `.md`
-     (README convention).
+3. Derive the filename and the id:
+   - The filename is `<slug>.md`, a kebab-case phrase of 1-6 words using
+     only `[a-z0-9-]`.
+   - `id` is the filename with `.md` removed and every hyphen replaced by
+     an underscore. `no-direct-commits.md` carries `id: no_direct_commits`.
+     `scripts/check_memories.py` enforces this.
 4. Pick `importance` deliberately:
    - `high` — affects future work the operator would not want redone.
    - `medium` — useful context, low risk of misdirecting planning.
