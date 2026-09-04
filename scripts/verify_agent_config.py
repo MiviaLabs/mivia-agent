@@ -81,6 +81,69 @@ def check_hook_events() -> None:
                 )
 
 
+# .mivia/mivia.toml binds this repository's own workflow agent steps. Two of
+# its keys protect the controls that protect everything else, and nothing else
+# in the tree asserts either one:
+#
+#   - write_path_blocklist must hold the live Git hook paths, the config file
+#     itself, and .mivia/policy. install_git_hooks.sh points core.hooksPath at
+#     .githooks, so blocking .git alone leaves the hooks writable. Omitting the
+#     config file lets a workflow agent step empty the list and restore write
+#     access to all of them.
+#   - AGENTS.md names the PreToolUse run-command-guard hook as one of the three
+#     layers enforcing "never bypass Git hooks". check_hook_events only
+#     validates a declared event name, so deleting the declaration passed.
+#
+# A commit once trimmed the blocklist to the three hook paths and justified it
+# with the commit-time gates. None of those gates reads this key.
+SELF_PROTECTING_BLOCKLIST = (
+    ".git",
+    ".githooks",
+    "scripts/git-hooks",
+    ".mivia/mivia.toml",
+    ".mivia/policy",
+)
+
+RUN_COMMAND_GUARD = "run-command-guard.py"
+
+
+def check_workflow_self_protection() -> None:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        return
+    rel = ".mivia/mivia.toml"
+    path = ROOT / rel
+    if not path.is_file():
+        fail(f"missing {rel}")
+    with path.open("rb") as handle:
+        data = tomllib.load(handle)
+    blocklist = ((data.get("tools") or {}).get("write_path_blocklist")) or []
+    if not isinstance(blocklist, list):
+        fail(f"{rel}: tools.write_path_blocklist must be a list")
+    entries = {str(item).strip().strip("/") for item in blocklist}
+    for want in SELF_PROTECTING_BLOCKLIST:
+        if want not in entries:
+            fail(
+                f"{rel}: tools.write_path_blocklist does not hold {want!r}. "
+                f"A workflow agent step can then write it, and for "
+                f"'.mivia/mivia.toml' that means emptying this key and "
+                f"restoring write access to every other entry."
+            )
+    for group in data.get("hooks") or []:
+        if not isinstance(group, dict) or group.get("event") != "PreToolUse":
+            continue
+        for handler in group.get("handlers") or []:
+            argv = (handler or {}).get("argv") or []
+            if any(RUN_COMMAND_GUARD in str(item) for item in argv):
+                return
+    fail(
+        f"{rel}: no PreToolUse handler runs {RUN_COMMAND_GUARD}. AGENTS.md "
+        f"names it as one of the three layers enforcing the never-bypass-Git-"
+        f"hooks rule, and no other check asserts the declaration is present."
+    )
+
+
 # The session-tool catalog in internal/clichat/session_tool_catalog.go is the
 # single source of truth for the dispatcher-owned tools every root binding
 # advertises: the pinned wire tools[] array (advertisedToolSpecs) ships the
@@ -538,12 +601,12 @@ def main() -> None:
     # <root>/.agents/skills.
     #
     check_no_dead_skill_tree(ROOT)
-    skills_dir = ROOT / ".agents" / "skills"
-    if not skills_dir.is_dir():
-        fail(".agents/skills is missing: it is the only workspace skill home")
-    check_skill_dir(skills_dir)
+    # check_skill_dir owns the missing-directory guard, so both entry points
+    # inherit it. A copy here would drift from the one in verify_skill_tree.
+    check_skill_dir(ROOT / ".agents" / "skills")
     check_claude_skill_aliases(ROOT)
 
+    check_workflow_self_protection()
     check_agents_directory()
     check_core_tier_covers_prompted_tools()
 
