@@ -36,6 +36,12 @@ type SettingsStore struct {
 	// mode without a restart. Called outside the store lock.
 	mouseNotifier func(on bool)
 
+	// fullDiskNotifier, when set by the launcher, receives the disclosure
+	// text for every LIVE full-disk re-arm (lift or re-impose) so the
+	// conversation transcript can carry the never-silent notice. Called
+	// outside the store lock; only fires when a re-arm was actually wired.
+	fullDiskNotifier func(text string)
+
 	saveSeq uint64
 }
 
@@ -75,10 +81,22 @@ func (s *SettingsStore) SetConversation(conv *Conversation) {
 // SetMouseNotifier registers the callback that receives every live
 // "mouse capture" change. The launcher wires it to the running program;
 // nil clears it. Safe to call before or after construction.
+// SetMouseNotifier wires the launcher-side bridge for live mouse-capture
+// flips (see wireMouseNotifier). Mirrored by SetFullDiskNotifier.
 func (s *SettingsStore) SetMouseNotifier(fn func(on bool)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mouseNotifier = fn
+}
+
+// SetFullDiskNotifier wires the launcher-side bridge that carries the
+// never-silent full-disk disclosure into the conversation transcript when
+// the operator's Settings -> General toggle re-arms the live root (see
+// wireFullDiskNotifier). Mirrors SetMouseNotifier; nil clears it.
+func (s *SettingsStore) SetFullDiskNotifier(fn func(text string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fullDiskNotifier = fn
 }
 
 func (s *SettingsStore) initFromConfig() {
@@ -467,10 +485,11 @@ func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 // applySetFullDiskAccess persists the full-disk grant to the operator's
 // USER config only - never the generic UpdateGeneralConfig path, whose
 // configPath() may resolve to the workspace's own committable
-// .mivia/mivia.toml (audit F2). Restart-to-apply: the live session's
-// workspace root is never mutated mid-flight (audit AR-4); the startup
-// notice announces the lifted confinement on the next launch, keeping the
-// full-disk disclosure never-silent.
+// .mivia/mivia.toml (audit F2) - and then re-arms the LIVE session root
+// so the change lands without a restart (AR-4's sanctioned synchronized
+// re-arm; Root.SetUnrestricted is atomic). A live lift is always
+// announced through fullDiskNotifier with the single-sourced disclosure
+// line - lifting confinement is never silent, live or at launch.
 func (s *SettingsStore) applySetFullDiskAccess(on bool) error {
 	workspaceRoot := ""
 	if s.agentState != nil {
@@ -480,6 +499,15 @@ func (s *SettingsStore) applySetFullDiskAccess(on bool) error {
 		return fmt.Errorf("persist full-disk setting: %w", err)
 	}
 	s.general.FullDiskAccess = on
+	if s.agentState.ApplyFullDisk(on) {
+		text := config.FullDiskNoticeText
+		if !on {
+			text = "workspace: full disk access disabled — file tools are confined to the workspace again"
+		}
+		if fn := s.fullDiskNotifier; fn != nil {
+			go fn(text)
+		}
+	}
 	return nil
 }
 

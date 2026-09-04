@@ -29,6 +29,12 @@ import (
 // workspace.Root.Unrestricted's doc comment (internal/workspace/root.go)
 // pins the same property from the consumer side; keep the two in sync.
 
+// FullDiskNoticeText is the single-sourced operator disclosure for an
+// active full-disk grant: printed at startup (clichat) and pushed as a
+// permanent conversation notice when Settings -> General lifts confinement
+// on the LIVE session. Lifting confinement is never silent.
+const FullDiskNoticeText = "workspace: FULL DISK ACCESS — file tools are not confined to the workspace"
+
 // workspaceAccessTOML is the only shape this file decodes: one dedicated
 // table, no other key of the user config is even modeled, so the section
 // stays invisible to File's decode (decodeConfigInto has no

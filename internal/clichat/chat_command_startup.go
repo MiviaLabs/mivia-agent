@@ -159,7 +159,7 @@ func prepareChatStartup(res *config.Resolved, invocation chatInvocation) (bool, 
 	logEffectiveLimitsOnce(os.Stderr, res, invocation.quiet)
 	effectiveFullDisk := chatFullDisk(invocation, invocation.workspacePath)
 	if effectiveFullDisk && !invocation.quiet {
-		fmt.Fprintln(os.Stderr, "workspace: FULL DISK ACCESS — file tools are not confined to the workspace")
+		fmt.Fprintln(os.Stderr, config.FullDiskNoticeText)
 	}
 	return useTools, nil
 }

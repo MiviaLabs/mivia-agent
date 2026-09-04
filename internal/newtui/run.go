@@ -64,6 +64,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 
 	p := newTeaProgram(root)
 	wireMouseNotifier(settingsStore, p)
+	wireFullDiskNotifier(settingsStore, p)
 	_, err = p.Run()
 	return err
 }
@@ -77,6 +78,19 @@ func wireMouseNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
 	if store != nil {
 		store.SetMouseNotifier(func(on bool) {
 			go p.Send(app.MouseCaptureMsg{On: on})
+		})
+	}
+}
+
+// wireFullDiskNotifier bridges the Settings screen's "full disk" toggle
+// into the running program: a live re-arm pushes the never-silent
+// disclosure (app.SettingsNoticeMsg) so it lands in the conversation
+// transcript as a permanent notice. Send is a no-op once the program
+// stops. A nil store skips wiring.
+func wireFullDiskNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
+	if store != nil {
+		store.SetFullDiskNotifier(func(text string) {
+			go p.Send(app.SettingsNoticeMsg{Text: text})
 		})
 	}
 }
