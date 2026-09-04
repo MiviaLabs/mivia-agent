@@ -51,6 +51,21 @@ exactly what users get. Format and loading contracts are documented in
 [`.agents/agents/README.md`](.agents/agents/README.md). Run `make
 agents-check` after editing any role file.
 
+`planner.md` and `plan-reviewer.md` are standalone, manually-selectable
+roles (pick them from the agent switcher, or dispatch them by name) for
+ad-hoc plan drafting and challenge outside any automated loop. Neither the
+ADLC rule's own Step 0 dispatch example nor the compiled workflow engine
+calls them by name: Step 0 there dispatches the generic `reviewer` (+
+`architecture-review` skill) and `auditor` roles. The compiled workflow
+engine's shape varies by workflow: `.mivia/workflows/feature-delivery.toml`
+uses `workflow-engineer` for plan/implement/repair steps and a
+`panel-reviewer`/`review-synthesizer` panel for review, while
+`bug-fix.toml`/`bug-fix-fast.toml` instead gate review with an active
+`agent = "reviewer"` triage step (their panel/review layers are currently
+commented out as a temporary debug cut - see
+`docs/development/debug-cut.md`). Do not assume either automated path
+routes through `planner.md`/`plan-reviewer.md` - it does not, today.
+
 ## Delivery process
 
 For substantial feature work, bug fixes, refactors, and cross-package

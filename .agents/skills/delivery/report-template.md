@@ -10,7 +10,7 @@ Step 1 (Plan): <verdict>
 
 Step 2 (Breakdown): <chunk count>
 
-Step 3 (Validate): <Block | PASS | REJECT>
+Step 3 (Validate): <approved | changes_requested (+ reject: true|false)>
   findings: <count>
   routed back: <yes | no>
 
@@ -18,7 +18,7 @@ Step 4 (Finalize): <status>
 
 Step 5 (Implement): <chunk-by-chunk summary>
 
-Step 6 (Audit): <Block | PASS | REJECT>
+Step 6 (Audit): <approved | changes_requested>
   re-runs: <list of commands and PASS/FAIL>
   lens: <name from .agents/skills/review/>
   findings: <count>

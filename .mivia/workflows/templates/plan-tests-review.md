@@ -23,6 +23,12 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths named in the delivery plan's and the test plan's own `inspected`
+lists (see `evidence.plan` and `evidence.test_plan` above) - that is the planner's own
+read-set, not a claim to trust blindly. Read every one of those paths yourself and verify the
+test plan's claims against what they actually contain; add any further path the test plan
+should have inspected but did not.
+
 Check that the tests cover accepted behavior and reachable negative paths. Check empty,
 malformed, oversized, and duplicate structured input when it applies. Check security and hook
 regressions, the fuzz decision, and requested host evidence gates. Independently verify each

@@ -42,6 +42,10 @@ update tests before or with the implementation. Cover success behavior and negat
 parsed or decoded untrusted structured input, cover empty, malformed, oversized, and duplicate
 input when applicable.
 
+Start from the exact paths named in the delivery plan's and the test plan's own `inspected`
+lists above - that is where the planner already looked. Read every one of those paths yourself
+before extending the search to whatever else the implementation touches.
+
 Check the delivered change for secrets, unsafe path handling, unsafe external input, privilege
 expansion, fail-open guards, and hook-policy bypasses. State a fuzz decision. Request a bounded
 host fuzz gate when it is practical.

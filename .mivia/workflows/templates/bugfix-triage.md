@@ -23,6 +23,11 @@ Hunt output:
 
 {{ evidence.findings }}
 
+Start from the exact paths named in `inspected` in the hunt output above - that is the hunt
+step's own read-set, not a claim to trust blindly. Read every one of those paths yourself
+before extending the search; do not confirm a finding whose evidence path you have not
+personally read.
+
 For each finding, verify it against the actual code you read:
 1. Invariant: does the finding state a property that must hold and is violated?
 2. Evidence: does the quoted evidence exist in the code and support the claim?

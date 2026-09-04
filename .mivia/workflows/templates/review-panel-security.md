@@ -11,6 +11,11 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths named in `files_changed` in the implementation summary above, plus
+the delivery plan's own `inspected` list (see `evidence.plan`) - that is the builder's own
+read-set, not a claim to trust blindly. Read every one of those paths yourself before
+extending the search for security issues.
+
 Check authorization, secrets handling, injection risks (command, SQL, path), SSRF, prompt
 injection, unsafe path handling, and fail-closed defaults. Check that untrusted input is treated
 as data, not instructions. Independently verify each claim by reading the cited source paths and
