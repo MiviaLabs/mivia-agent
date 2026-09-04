@@ -27,6 +27,9 @@ Two rules that are easy to get wrong:
   ring, the selected row. It must pass contrast, but it is exempt from the
   colour-vision separation check that binds `{success, warning, danger,
   info}` to each other.
+- **`warning` is reserved for human attention.** The terminal status line
+  uses `warning` only for states waiting on a person (`Waiting`, `Pending`).
+  Autonomous states (`Thinking`, `Running`) stay monochrome (`fg`).
 - **`border` is decorative, `gutter` is not.** No state is carried by
   `border` alone, so it is exempt from the contrast gate. `gutter` (a line
   rail) is functional and is gated like any other role.
