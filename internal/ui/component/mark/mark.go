@@ -63,12 +63,15 @@ func (s State) Animated() bool {
 // a slow mark reads as "blocked on someone else" (mock view 18).
 const waitDivisor = 4
 
-// roles maps each state to its primary theme role.
+// roles maps each state to its primary theme role. Yellow (RoleWarning)
+// is strictly reserved for states requiring human attention: Waiting and
+// Pending. Autonomous work (Thinking, Running) renders monochrome (RoleFG),
+// and Streaming retains its success status role (RoleSuccess).
 var roles = map[State]theme.Role{
-	Thinking:  theme.RoleInfo,
+	Thinking:  theme.RoleFG,
 	Streaming: theme.RoleSuccess,
-	Running:   theme.RoleInfo,
-	Waiting:   theme.RoleFGSubtle,
+	Running:   theme.RoleFG,
+	Waiting:   theme.RoleWarning,
 	Idle:      theme.RoleFGSubtle,
 	Pending:   theme.RoleWarning,
 	Failed:    theme.RoleDanger,
@@ -197,25 +200,21 @@ func (m Model) renderAuroraWave() string {
 
 	var peakRole, midRole, valleyRole theme.Role
 	switch m.state {
-	case Thinking:
-		peakRole = theme.RoleInfo
-		midRole = theme.RoleAccent
-		valleyRole = theme.RoleFGSubtle
-	case Running:
-		peakRole = theme.RoleInfo
-		midRole = theme.RoleAccent
+	case Thinking, Running:
+		peakRole = theme.RoleFG
+		midRole = theme.RoleFGMuted
 		valleyRole = theme.RoleFGSubtle
 	case Streaming:
 		peakRole = theme.RoleSuccess
-		midRole = theme.RoleInfo
+		midRole = theme.RoleSuccess
 		valleyRole = theme.RoleFGSubtle
 	case Waiting, Pending:
 		peakRole = theme.RoleWarning
-		midRole = theme.RoleFGSubtle
+		midRole = theme.RoleWarning
 		valleyRole = theme.RoleFGSubtle
 	default:
-		peakRole = theme.RoleAccent
-		midRole = theme.RoleFGSubtle
+		peakRole = theme.RoleFG
+		midRole = theme.RoleFGMuted
 		valleyRole = theme.RoleFGSubtle
 	}
 

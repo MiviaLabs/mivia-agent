@@ -1,8 +1,10 @@
 package mark
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
@@ -90,12 +92,29 @@ func TestSetStateRestartsTheCycle(t *testing.T) {
 	}
 }
 
-func TestAuroraWaveViewRendering(t *testing.T) {
+func TestAutonomousStatesAreMonochromeAndWaitingIsWarning(t *testing.T) {
 	th := loadTheme(t)
-	m := New(th, theme.TierTrueColor, Thinking)
-	view := m.View()
-	if view == "" {
-		t.Error("expected non-empty aurora wave view")
+	for _, st := range []State{Thinking, Running} {
+		m := New(th, theme.TierTrueColor, st)
+		view := m.View()
+		warnSeq := render.Role(th, theme.TierTrueColor, theme.RoleWarning).Render("X")
+		// extract the escape code part
+		warnEscape := strings.TrimSuffix(warnSeq, "X\x1b[0m")
+		warnEscape = strings.TrimSuffix(warnEscape, "X\x1b[m")
+		if strings.Contains(view, warnEscape) {
+			t.Errorf("%s view must not contain RoleWarning escape (%q)", st.Word(), warnEscape)
+		}
+	}
+
+	for _, st := range []State{Waiting, Pending} {
+		m := New(th, theme.TierTrueColor, st)
+		view := m.View()
+		warnSeq := render.Role(th, theme.TierTrueColor, theme.RoleWarning).Render("X")
+		warnEscape := strings.TrimSuffix(warnSeq, "X\x1b[0m")
+		warnEscape = strings.TrimSuffix(warnEscape, "X\x1b[m")
+		if !strings.Contains(view, warnEscape) {
+			t.Errorf("%s view must contain RoleWarning escape (%q) in %q", st.Word(), warnEscape, view)
+		}
 	}
 }
 
