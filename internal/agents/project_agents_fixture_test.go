@@ -188,7 +188,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		"delivery",
 		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
 		"gate-authoring",
-		"housekeeping",
+		"memories-housekeeping",
 		"logic-review",
 		"memory-housekeeping", "panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
@@ -398,7 +398,7 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 // thing standing between them and a runtime refusal.
 var wantNilAllowlistRefusals = map[string][]string{
 	"builder": {
-		"housekeeping(delete_file)",
+		"memories-housekeeping(delete_file)",
 		"memory-housekeeping(memory_search)",
 		"workflow-feature-delivery(multi_edit)",
 		"workflow-runs-analysis(workflow_list_runs)",
@@ -429,7 +429,7 @@ var reviewerRefusals = []string{
 	"docs-update(write_file)",
 	"feature-delivery(write_file)",
 	"gate-authoring(run_command)",
-	"housekeeping(write_file)",
+	"memories-housekeeping(write_file)",
 	"memory-housekeeping(memory_search)",
 	"performance-review(run_command)",
 	"session-analysis(run_command)",

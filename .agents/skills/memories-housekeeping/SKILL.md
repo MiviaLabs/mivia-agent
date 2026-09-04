@@ -1,5 +1,5 @@
 ---
-name: housekeeping
+name: memories-housekeeping
 description: Audit .agents/memories/ for staleness, duplicates, and orphan facts. Mark stale entries, propose archive moves, surface near-duplicates. Use for monthly accuracy passes.
 triggers:
   - memory audit
