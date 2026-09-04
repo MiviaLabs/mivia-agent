@@ -1,6 +1,0 @@
-format = 1
-
-[[resources]]
-id = "report-template"
-path = "report-template.md"
-summary = "Extended mivia-report/v1 grammar for validated workflow-runs analysis findings."

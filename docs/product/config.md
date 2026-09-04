@@ -368,7 +368,7 @@ Nothing is blocked by default: protection is opt-in, not a built-in set a projec
 
 Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
 
-This key is a project decision. A project that omits it leaves every path writable by workflow agents, including `.git` (commit history and hooks a workflow agent could rewrite or bypass), `.mivia/mivia.toml` (this very blocklist — an agent that can edit it can remove its own restrictions), `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, `go.work`, and the workflow definition the run executes. Recommended starting values, including `.git` and `.mivia/mivia.toml`, ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
+This key is a project decision. A project that omits it leaves every path writable by workflow agents, including `.git` (commit history and hooks a workflow agent could rewrite or bypass), `.mivia/mivia.toml` (this very blocklist — an agent that can edit it can remove its own restrictions), `.agents/agents`, `.mivia/policy`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, `go.work`, and the workflow definition the run executes. Recommended starting values, including `.git` and `.mivia/mivia.toml`, ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
 
 ## Redaction and persisted orchestration history
 

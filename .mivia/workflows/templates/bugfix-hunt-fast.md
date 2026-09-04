@@ -21,7 +21,7 @@ Hunt for confirmed reachable bugs in this scope: {{ inputs.scope }}
 
 Task: {{ inputs.task }}
 
-Follow the methodology in .mivia/skills/fast-bug-audit/SKILL.md exactly:
+Follow the methodology in .agents/skills/fast-bug-audit/SKILL.md exactly:
 - Scan broadly and jump between candidate areas freely rather than working one area deeply
   before the next. Grep for the mechanism, skim hits, open a file only when a hit looks
   concretely promising.

@@ -351,9 +351,8 @@ write_path_blocklist = [
     ".agents/agents",   # agent definitions
     ".mivia/agents",    # agent definitions (legacy path)
     ".mivia/policy",    # hook-policy gates
-    ".mivia/skills",    # skill definitions (mivia binary's own load path)
     ".agents/rules",    # durable rules
-    ".agents/skills",   # skill definitions (shared cross-tool mirror)
+    ".agents/skills",   # skill definitions (mivia binary's own load path)
     ".mivia/workflows", # workflow definitions and templates
     "go.mod",
     "go.sum",

@@ -52,11 +52,11 @@ The skill is generic. It does not fix sessions, edit rules, or touch runs.
 ## Data surface
 
 The skill's data surface is the companion program
-`.mivia/skills/session-analysis/queries.py` (Python >= 3.11, stdlib `sqlite3` +
+`.agents/skills/session-analysis/queries.py` (Python >= 3.11, stdlib `sqlite3` +
 `tomllib`). The executor runs it, never retypes SQL:
 
 ```
-python3 .mivia/skills/session-analysis/queries.py --root <workspace-root> [--window 24h|7d|all|ISO-start]
+python3 .agents/skills/session-analysis/queries.py --root <workspace-root> [--window 24h|7d|all|ISO-start]
 ```
 
 Ledger resolution (mirrors `chat_repository_binding.go` + `namespace.go`):
@@ -191,7 +191,7 @@ validation evidence (subagent re-derivation or the fallback cross-check).
 
 ## Deliverable
 
-`mivia-report/v1` per `.mivia/skills/session-analysis/report-template.md`:
+`mivia-report/v1` per `.agents/skills/session-analysis/report-template.md`:
 scope line, window frame, per-arm counts, whole-store context, distributions
 with method and n, anomaly list (anomaly-first, then recency), validation
 block, and process-improvement recommendations. The report never contains
