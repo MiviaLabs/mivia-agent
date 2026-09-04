@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -117,6 +118,63 @@ func TestEveryPathHonoursTheDedupDeclaration(t *testing.T) {
 					"calls; its capability says reads always run fresh, so the "+
 					"second was answered from a record of the first", probe.runs.Load()))
 		})
+	}
+}
+
+// C2b: a call to a tool whose admission is ALREADY staged runs in the same
+// step. load_tools (or the first deferred call) stages the name; when
+// publication then defers - the surface publisher refused, a sibling turn, a
+// supersede - the next call to the name must EXECUTE, not sit through a
+// "staged for loading ... retry next step" notice for a wait the model can
+// skip. This is the end-to-end shape of the C2 case below: before hot-serve,
+// the second identical call in one turn was intercepted by admission staging
+// instead of executed.
+func TestAStagedToolsCallRunsInTheSameStep(t *testing.T) {
+	probe := &countingProbe{name: "probe_tool", class: tools.ExecutionRead}
+	completer := &scriptedCompleter{turns: []provider.Response{
+		toolCallResponse(namedCall("c1", "probe_tool", `{}`)),
+		{Content: "done"},
+	}}
+	core, effective := execPaths[1].tiersFor(probe.Name())
+	fixture := newDeferredFixture(t, completer, core, effective, probe)
+	fixture.sess.ApprovalPolicy = config.ApprovalPolicyAuto
+	// The publisher refuses: the exact production state in which a stage
+	// stays pending while the session is otherwise quiet, so the only way
+	// this call can get a real answer is the synchronous serve. A switch
+	// guard would block hot-serve too, so the refusal must live in the
+	// publisher, not the guard.
+	fixture.sess.SetSurfaceWidener(func([]string, chat.AgentSurfacePublication) (bool, error) {
+		return false, nil
+	})
+	if _, err := fixture.sess.StageToolAdmission([]string{"probe_tool"}, 0); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if _, ok := fixture.sess.PendingAdmission(); !ok {
+		t.Fatal("fixture setup did not leave a pending stage")
+	}
+
+	if _, err := fixture.sess.SendUser(context.Background(), "use the probe", io.Discard); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+
+	bodies := toolResultBodies(completer)
+	if strings.Contains(bodies, "staged for loading") {
+		t.Fatalf("a staged tool's call was answered with the pending-publication "+
+			"notice instead of executing: %q", bodies)
+	}
+	if !strings.Contains(bodies, "run 1") {
+		t.Fatalf("the staged tool's call did not execute: %q", bodies)
+	}
+	if got := probe.runs.Load(); got != 1 {
+		t.Fatalf("the probe executed %d time(s) for one call, want exactly 1", got)
+	}
+	// The stage is untouched: hot-serve executed the call WITHOUT publishing,
+	// so native admission still belongs to the next qualifying boundary.
+	if _, ok := fixture.sess.PendingAdmission(); !ok {
+		t.Fatal("hot-serve must not consume the pending stage")
+	}
+	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
+		t.Fatalf("admitted = %v, want none: hot-serve widens nothing", got)
 	}
 }
 

@@ -217,8 +217,8 @@ func TestLoadToolsToolSurfaceIsGenericAndPrivileged(t *testing.T) {
 	if tool.Name() != tools.LoadToolsToolName {
 		t.Fatalf("name = %q", tool.Name())
 	}
-	if !strings.Contains(tool.Description(), "NEXT turn") {
-		t.Fatalf("description must state the next-turn availability: %q", tool.Description())
+	if !strings.Contains(tool.Description(), "runs immediately") {
+		t.Fatalf("description must state that calling a locked tool runs it immediately: %q", tool.Description())
 	}
 	params := tool.Parameters()
 	props, _ := params["properties"].(map[string]any)

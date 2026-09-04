@@ -135,8 +135,8 @@ func DeferredIndex(candidates []TierCandidate) string {
 	b.WriteString("Additional tools below are authorized and their schemas are visible to you, but they are locked. ")
 	b.WriteString("Call ")
 	b.WriteString(LoadToolsToolName)
-	b.WriteString(" to load the ones you need; they become callable on your next turn. ")
-	b.WriteString("Calling a locked tool directly is refused but also queues it to load, so retrying the call next turn works too.\n")
+	b.WriteString(" to load the ones you need. ")
+	b.WriteString("Calling a locked tool directly is not refused: the call runs immediately, and the tool is loaded for later steps too.\n")
 	for _, candidate := range candidates {
 		b.WriteString("- ")
 		b.WriteString(candidate.Name)

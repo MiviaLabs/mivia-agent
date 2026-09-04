@@ -39,3 +39,57 @@ func TestPendingAdmissionStatusReportsDeferralReason(t *testing.T) {
 		t.Fatal("a stage published after the guard cleared must not stay pending")
 	}
 }
+
+// TestHotServeEligibleTruthTable pins the eligibility predicate behind the
+// hot-serve change: a call to a PENDING-STAGED name is served synchronously on
+// a stable surface instead of answered with the staged-but-not-published
+// notice. The two states in which the current dispatcher itself is about to
+// be replaced or closed - an agent switch in flight, and a switch guard
+// refusing on behalf of background orchestration - keep the notice, because
+// there the wait is real. Hot-serve never widens the surface, so the
+// publication-side fencing (sole active turn, generation, supersede) does not
+// apply here.
+func TestHotServeEligibleTruthTable(t *testing.T) {
+	sess := newAdmissionSession(t)
+
+	if sess.hotServeEligible("grep") {
+		t.Fatal("nothing is staged, so nothing can be hot-served")
+	}
+
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if !sess.hotServeEligible("grep") {
+		t.Fatal("a staged name on a stable surface must be hot-servable")
+	}
+
+	sess.mu.Lock()
+	sess.switching = true
+	sess.mu.Unlock()
+	if sess.hotServeEligible("grep") {
+		t.Fatal("an agent switch in flight must keep the staged notice")
+	}
+	sess.mu.Lock()
+	sess.switching = false
+	sess.mu.Unlock()
+
+	sess.SetSwitchGuard(func() error { return fmt.Errorf("background run active") })
+	if sess.hotServeEligible("grep") {
+		t.Fatal("a switch guard refusing for background work must keep the staged notice")
+	}
+	sess.SetSwitchGuard(nil)
+
+	if !sess.hotServeEligible("grep") {
+		t.Fatal("hot-serve must resume once the guard clears")
+	}
+
+	widener := &recordingWidener{}
+	sess.SetSurfaceWidener(widener.fn)
+	sess.mu.Lock()
+	sess.activeTurns = 1
+	sess.mu.Unlock()
+	sess.PublishPendingAdmission()
+	if sess.hotServeEligible("grep") {
+		t.Fatal("a published name has no pending stage left to hot-serve")
+	}
+}

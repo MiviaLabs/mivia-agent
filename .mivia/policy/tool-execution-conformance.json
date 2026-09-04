@@ -7,7 +7,6 @@
     "Suite: internal/clichat/tool_execution_conformance_test.go"
   ],
   "exempt": {
-    "fresh-read-executes-twice/deferred": "The second identical call in the same turn never reaches execution: the first one staged the tool for admission, so StagedToolMessage answers the second with the staged-but-not-published notice before the deferred path is consulted. The tool's dedup declaration IS honoured (SkipDedup is sent); what differs is that admission intercepts first. Accepted because the notice is true - the tool is about to become natively callable - and the model gets a real result on its next step.",
     "unset-approval-policy-agrees/all": "The two paths read an unset policy differently, each deliberately. sdkadapter.NeedsApprovalLayer treats empty as 'this caller opted out of the approval layer', so the admitted path runs; decideDeferredApproval defaults empty to write-only and fails CLOSED. Not reachable in a shipped session - applySessionApprovalPolicy and inheritApprovalLocked both always seed a non-empty policy - so this is recorded rather than resolved: picking a winner means overturning one of two deliberate security decisions, which belongs in its own change."
   }
 }

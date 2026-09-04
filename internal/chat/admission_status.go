@@ -56,6 +56,29 @@ func (s *Session) PendingAdmissionStatus() (names []string, reason string, ok bo
 	return slices.Clone(s.pendingAdmission.Names), s.admissionDeferralReason, true
 }
 
+// hotServeEligible reports whether a call to a pending-staged name may be
+// SERVED synchronously on the current surface instead of answered with the
+// staged-but-not-published notice.
+//
+// Hot-serve executes on the dispatcher that already exists and widens
+// nothing, so the publication-side fencing does not apply: a sibling turn
+// (R2-1) or background orchestration (R2-2) blocks WIDENING - closing the old
+// dispatcher under someone else - but never this serve. Only the two states
+// in which the current surface itself is about to be replaced or closed keep
+// the notice: an agent switch in flight, and a switch guard refusing on
+// behalf of background work. There the wait is real, and the notice - which
+// publication will make true - is the honest answer.
+func (s *Session) hotServeEligible(name string) bool {
+	s.mu.RLock()
+	staged := s.pendingAdmission != nil && slices.Contains(s.pendingAdmission.Names, name)
+	switching := s.switching
+	s.mu.RUnlock()
+	if !staged || switching {
+		return false
+	}
+	return s.CheckSwitchAllowed() == nil
+}
+
 // PublishPendingAdmission attempts the turn-boundary surface publication for a
 // stage recorded during turn. It is called after the turn's history is durably
 // committed, so the generation bump can never fence that turn out of its own
