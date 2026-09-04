@@ -200,10 +200,10 @@ def frontmatter_block(body: str) -> str | None:
     Return None when the file has no closed frontmatter block.
     """
     lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    if not lines or lines[0] != "---":
+    if not lines or lines[0].strip() != "---":
         return None
     for index in range(1, len(lines)):
-        if lines[index] == "---":
+        if lines[index].strip() == "---":
             return "\n".join(lines[: index + 1]) + "\n"
     return None
 
@@ -442,13 +442,19 @@ def check_skill_dir(skills_dir: Path) -> None:
                     inner = stripped[len("triggers: ["):]
                     # Find the closing bracket, handling trailing whitespace/comments.
                     bracket_idx = inner.find("]")
-                    if bracket_idx >= 0:
-                        inner = inner[:bracket_idx]
+                    if bracket_idx < 0:
+                        fail(f"{rel_to_root(skill_path)}: triggers flow sequence has no closing bracket")
+                    inner = inner[:bracket_idx]
                     # Also strip any trailing comment before the bracket
                     # (already handled by find("]") above).
                     inner = inner.strip()
                     for part in split_flow_items(inner):
-                        item = part.strip().strip("\"'")
+                        item = part.strip()
+                        if item[:1] in ('"', "'") and not (
+                            len(item) >= 2 and item[-1] == item[0]
+                        ):
+                            fail(f"{rel_to_root(skill_path)}: trigger item has an unbalanced quote")
+                        item = item.strip("\"'")
                         if item:
                             trigger_items.append(item)
                 continue
@@ -459,11 +465,15 @@ def check_skill_dir(skills_dir: Path) -> None:
                     continue
                 if stripped.startswith("- "):
                     item = stripped[2:].strip()
-                    if item:
-                        trigger_items.append(item)
+                    if not item:
+                        fail(f"{rel_to_root(skill_path)}: trigger list has an empty item")
+                    if item[:1] in ('"', "'") and not (
+                        len(item) >= 2 and item[-1] == item[0]
+                    ):
+                        fail(f"{rel_to_root(skill_path)}: trigger item has an unbalanced quote")
+                    trigger_items.append(item.strip("\"'"))
                 elif line.startswith("  ") or line.startswith("\t"):
-                    # Still in block sequence (indented continuation).
-                    continue
+                    fail(f"{rel_to_root(skill_path)}: trigger block has a non-list item")
                 else:
                     in_triggers = False
         if trigger_items:
