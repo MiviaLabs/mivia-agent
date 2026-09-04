@@ -4,6 +4,7 @@ title: Every event kind must reach every viewer, or say why not
 content: An event kind is produced once and rendered on four surfaces; all four must agree.
 importance: high
 tags: [events, ui, invariants]
+updated: 2026-09-04
 ---
 
 # Every event kind must reach every viewer, or say why not

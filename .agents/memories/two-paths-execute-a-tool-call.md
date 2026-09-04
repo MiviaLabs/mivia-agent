@@ -1,9 +1,10 @@
 ---
 id: two_paths_execute_a_tool_call
-title: Two code paths execute a model's tool call, and they share no interface
+title: Two routes execute a model's tool call through one shared implementation
 content: execution is now ONE implementation (dispatcherShim.Run); the deferred path decides admission and hands the tool to the loop. The conformance table in internal/clichat holds both routes to the same contracts.
 importance: high
 tags: [tools, execution, conformance, drift, approvals, deferred]
+updated: 2026-09-04
 ---
 
 # Two paths execute a tool call. Change one, check the other.

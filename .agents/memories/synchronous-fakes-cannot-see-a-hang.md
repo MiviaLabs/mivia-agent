@@ -4,6 +4,7 @@ title: A synchronous fake gate or fixture cannot fail the way the real one hangs
 content: Fixtures that answer instantly are green through every deadlock; a blocking dependency must be tested with something that answers only when the test releases it, and a width- or size-dependent bug needs a fixture whose size actually varies.
 importance: high
 tags: [testing, mutation, approvals, hangs, fixtures]
+updated: 2026-09-04
 ---
 
 # A fixture that always answers cannot fail the way the real thing hangs

@@ -4,6 +4,7 @@ title: A contract enforced in one implementation is absent from its sibling
 content: When an interface has more than one implementation, a flag or bound honored by one is routinely dropped by the other; prove coverage with a shared conformance suite, never with a prose Sweep line.
 importance: high
 tags: [review, invariants, interfaces, provider, testing, sweep]
+updated: 2026-09-04
 ---
 
 # Sibling implementations drift, and prose sweeps do not catch it

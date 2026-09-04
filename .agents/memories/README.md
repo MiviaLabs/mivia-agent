@@ -15,6 +15,7 @@ title: <short human-readable title>
 content: <one-sentence statement of the fact or rule>
 importance: <high | medium | low>
 tags: [<comma-separated keywords>]
+updated: <ISO date the memory last changed, YYYY-MM-DD>
 ---
 ```
 
@@ -22,6 +23,13 @@ The body that follows the frontmatter is the full explanation: when the
 fact applies, why it matters, and what to do instead. A memory without
 a body is a stub; it should be promoted to a `.agents/rules/*.md` rule
 or deleted.
+
+`updated` is the date the memory's content last changed (title, content,
+or body). Stamp it on creation and bump it on every later edit: the
+housekeeping staleness rule measures it, and `scripts/check_memories.py`
+enforces the format. The gate judges the value alone - shape and calendar
+validity - and never reads the clock; recency, including a stamp ahead of
+the session date, is the audit's judgment.
 
 ## Filename convention
 
@@ -35,15 +43,17 @@ path is kebab-case and an identifier is snake_case.
 ## When to write
 
 Write a memory only after a real correction or a stated standing
-preference. Speculative memories rot. The same fact belongs in
-`.agents/rules/` (durable policy) if it becomes a hard rule; memories
-are operational, not authoritative.
+preference. Speculative memories rot. Stamp `updated` with the date of
+the write. The same fact belongs in `.agents/rules/` (durable policy) if
+it becomes a hard rule; memories are operational, not authoritative.
 
 ## When to delete or update
 
 - Delete when the underlying fact is gone (e.g. the workflow it
   references no longer exists).
 - Update when the fact is still true but the wording has drifted.
+- Bump `updated` whenever an edit lands, so the staleness rule measures
+  the age of the fact and not of the file.
 - Never rewrite a memory to invert a previous decision without
   recording why; the diff itself is the audit trail.
 

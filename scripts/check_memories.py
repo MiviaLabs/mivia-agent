@@ -17,6 +17,7 @@ schema failures.
 
 from __future__ import annotations
 
+import datetime
 import functools
 import re
 from pathlib import Path
@@ -30,8 +31,8 @@ fail = functools.partial(_fail, prefix="check_memories")
 MEMORIES_DIR = ROOT / ".agents" / "memories"
 
 
-# The five keys .agents/memories/README.md marks mandatory.
-REQUIRED_KEYS = ("id", "title", "content", "importance", "tags")
+# The six keys .agents/memories/README.md marks mandatory.
+REQUIRED_KEYS = ("id", "title", "content", "importance", "tags", "updated")
 
 IMPORTANCE_VALUES = ("high", "medium", "low")
 
@@ -43,6 +44,16 @@ SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # The elements are checked separately: this pattern alone still admits an
 # empty element, a trailing comma and a nested map.
 TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
+
+# The `updated` stamp: an ISO calendar date, the only format the README
+# declares. The shape alone is not enough - "2026-02-30" matches - so the
+# value is also parsed and refused when it is not a real calendar date.
+# Recency is deliberately NOT checked here: "in the future" has no answer
+# without a wall-clock read, and a clock read fails a valid store on any
+# machine with a skewed clock. Judging recency - including a stamp ahead
+# of the session date - is the housekeeping audit's job (Step 2), where
+# the comparison has a trustworthy reference.
+UPDATED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # A scalar that opens with a quote must close with the same quote and nothing
 # may follow it. PyYAML is not a dependency of this repository, so the gate
@@ -331,6 +342,19 @@ def check_memories(directory: Path) -> None:
                     f"maps defeats the tag-set comparison housekeeping uses "
                     f"to find near-duplicates."
                 )
+        stamp = fields["updated"]
+        if not UPDATED.match(stamp):
+            fail(
+                f"{name}: updated must be an ISO date of the shape YYYY-MM-DD, "
+                f"got {stamp!r}."
+            )
+        try:
+            datetime.date.fromisoformat(stamp)
+        except ValueError:
+            fail(
+                f"{name}: updated is {stamp!r}, which is not a real calendar "
+                f"date."
+            )
         for key, value in fields.items():
             if value[:1] in ('"', "'") and not QUOTED.match(value):
                 fail(
