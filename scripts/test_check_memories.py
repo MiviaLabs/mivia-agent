@@ -181,6 +181,19 @@ def test_accepts_a_properly_quoted_scalar() -> None:
         raise AssertionError(r)
 
 
+def test_accepts_the_yaml_escapes_inside_a_quoted_scalar() -> None:
+    """A doubled '' and a backslash escape are legal YAML and must pass.
+
+    The gate's own remediation text tells the author to single-quote the
+    value. An author whose title holds an apostrophe writes the doubled '',
+    which every parser reads, so refusing it would reject the prescribed fix.
+    """
+    for good in ("title: 'It''s fine.'", 'title: "say \\"hi\\" now"'):
+        body = GOOD.replace("title: Probe memory", good)
+        if (r := run_on({"probe-memory.md": body})) is not None:
+            raise AssertionError(f"{good!r} rejected: {r}")
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -196,6 +209,7 @@ def main() -> None:
     test_rejects_a_tag_that_is_not_a_plain_keyword()
     test_rejects_a_scalar_that_no_yaml_parser_can_read()
     test_accepts_a_properly_quoted_scalar()
+    test_accepts_the_yaml_escapes_inside_a_quoted_scalar()
     print("test_check_memories: ok")
 
 

@@ -89,6 +89,27 @@ def run_gate_on_fixture(extra_key: str) -> str | None:
     return None
 
 
+def test_gate_rejects_an_absent_skill_tree() -> None:
+    """An absent .agents/skills must fail, not glob nothing and pass.
+
+    check_skill_dir globs, check_claude_skill_aliases builds an empty map from
+    the same tree, so with the directory gone every check is a no-op and the
+    entry point printed ok on a checkout that holds no skills at all. The
+    guard lives in check_skill_dir so both entry points inherit it.
+    """
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_skill_dir(Path(tmp) / "skills")
+        except SystemExit:
+            if "is missing" not in captured.getvalue():
+                raise AssertionError(captured.getvalue())
+            return
+    raise AssertionError("gate accepted a tree with no .agents/skills")
+
+
 def test_known_keys_match_go_source() -> None:
     mod = load_gate()
     go_keys = go_known_skill_keys()
@@ -367,6 +388,7 @@ def test_alias_gate_rejects_a_plain_file_in_the_tree_root() -> None:
 
 def main() -> None:
     test_known_keys_match_go_source()
+    test_gate_rejects_an_absent_skill_tree()
     test_gate_accepts_schema_keys()
     test_gate_rejects_unknown_key()
     test_gate_rejects_a_long_trigger()

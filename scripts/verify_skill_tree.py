@@ -283,7 +283,16 @@ def check_skill_dir(skills_dir: Path) -> None:
     That tree is the one the mivia binary loads. `make verify` also runs
     verify-agent and agent-hook-test as separate targets, so a planted skill
     can fail a sibling target in the same run.
+
+    The missing-directory guard lives here, not at the call sites. A glob over
+    an absent directory yields nothing, so every check below passes and the
+    caller prints ok on a tree that has no skills at all.
     """
+    if not skills_dir.is_dir():
+        fail(
+            f"{rel_to_root(skills_dir)} is missing: it is the only workspace "
+            f"skill home, and the compiled binary loads it at runtime."
+        )
     for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
         body = skill_path.read_text(encoding="utf-8")
         name = skill_path.parent.name

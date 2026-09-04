@@ -130,6 +130,29 @@ def test_rejects_a_gate_that_takes_the_default_failure_prefix() -> None:
     )
 
 
+def test_rejects_a_binding_that_names_another_script() -> None:
+    """The wrong prefix, not only the missing one.
+
+    Every borrower in the tree imports `fail as _fail`, so a rule keyed on the
+    bare import form never consulted the binding at all and could not see a
+    gate that binds a different gate's name. That is this gate committing the
+    class it exists to stop.
+    """
+    borrower = (
+        "import functools\n"
+        "from verify_common import ROOT, rel_to_root\n"
+        "from verify_common import fail as _fail\n\n"
+        'fail = functools.partial(_fail, prefix="verify_agent_config")\n\n\n'
+        "def main() -> None:\n    fail('x')\n\n\n"
+        'if __name__ == "__main__":\n    main()\n'
+    )
+    expect_rejection(
+        "check:\n\t@python3 scripts/check_probe.py\n",
+        {"check_probe.py": RUNNABLE, "check_borrower.py": borrower},
+        "name a different script",
+    )
+
+
 def test_rejects_a_tree_where_the_invocation_pattern_matches_nothing() -> None:
     """The gate must fail closed if it can no longer see any invocation."""
     expect_rejection(
@@ -145,6 +168,7 @@ def main() -> None:
     test_rejects_an_invoked_script_with_no_guard()
     test_rejects_an_uninvoked_script_with_no_guard()
     test_rejects_a_gate_that_takes_the_default_failure_prefix()
+    test_rejects_a_binding_that_names_another_script()
     test_rejects_a_tree_where_the_invocation_pattern_matches_nothing()
     print("test_check_gate_scripts: ok")
 

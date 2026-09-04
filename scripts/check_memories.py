@@ -49,7 +49,11 @@ TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]$")
 # cannot parse the block; this one rule catches the shape a real parser
 # rejects. A title of `"status"/"stats" ...` reads as the scalar "status"
 # followed by junk, and no YAML parser can load the file.
-QUOTED = re.compile(r"^(\"[^\"]*\"|'[^']*')$")
+# Both YAML escapes are legal inside the scalar and must pass: a doubled ''
+# inside single quotes, and a backslash escape inside double quotes. The
+# remediation text below tells an author to single-quote the value, so a
+# rule that refused '' would reject the fix it asks for.
+QUOTED = re.compile(r"^(\"([^\"\\]|\\.)*\"|'([^']|'')*')$")
 
 
 def expected_id(stem: str) -> str:

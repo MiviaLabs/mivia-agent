@@ -41,6 +41,7 @@ INVOCATION = re.compile(
 )
 
 GUARD = re.compile(r"^if __name__ == [\"']__main__[\"']:", re.M)
+IMPORTS_FAIL = re.compile(r"^from verify_common import [^\n]*\bfail\b", re.M)
 DEFINES_MAIN = re.compile(r"^def main\(", re.M)
 
 # The one module allowed to take verify_common.fail's default prefix, because
@@ -108,14 +109,17 @@ def check_gate_scripts(root: Path) -> None:
         stem = path.stem
         if stem == DEFAULT_PREFIX_OWNER:
             continue
+        # Any import form counts. Keying on the bare form missed every
+        # borrower in the tree, which all import `fail as _fail`, and it could
+        # never see the defect that matters most: a binding that names another
+        # script. That is this gate committing the class it exists to stop.
+        imports_fail = IMPORTS_FAIL.search(body)
         binds = f'prefix="{stem}"' in body or f"prefix='{stem}'" in body
-        uses_bare = re.search(r"^from verify_common import [^\n]*\bfail\b(?!\s+as)",
-                              body, re.M)
-        if uses_bare and not binds:
+        if imports_fail and not binds:
             fail(
                 f"{rel_to_root(path)} imports verify_common.fail without "
-                f"binding prefix=\"{stem}\", so its failures print "
-                f"\"{DEFAULT_PREFIX_OWNER}:\" and name a different script."
+                f"binding prefix=\"{stem}\", so its failures name a different "
+                f"script and send an operator to a gate that passes."
             )
 
 
