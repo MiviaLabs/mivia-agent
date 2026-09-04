@@ -140,7 +140,7 @@ func boolPtr(v bool) *bool { return &v }
 
 // DefaultMemoryConfig is the resolved default for [memory] (plan 68).
 var DefaultMemoryConfig = MemoryConfig{
-	StoreBackend:     "sqlite",
+	StoreBackend:     "markdown",
 	MaxEntryBytes:    8192,
 	MaxEntries:       500,
 	MaxSearchResults: 8,

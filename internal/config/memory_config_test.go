@@ -17,8 +17,8 @@ func TestResolveMemoryConfigDefaults(t *testing.T) {
 	if !mc.IsEnabled() {
 		t.Error("memory must default to enabled")
 	}
-	if mc.StoreBackend != "sqlite" {
-		t.Errorf("store_backend = %q, want sqlite", mc.StoreBackend)
+	if mc.StoreBackend != "markdown" {
+		t.Errorf("store_backend = %q, want markdown", mc.StoreBackend)
 	}
 	if mc.MaxEntryBytes != 8192 || mc.MaxEntries != 500 || mc.MaxSearchResults != 8 {
 		t.Errorf("defaults wrong: %+v", mc)
@@ -209,32 +209,29 @@ func TestResolveMemoryConfigInjectCoreExplicitTrue(t *testing.T) {
 	}
 }
 
-func TestResolveMemoryConfigDefaultStorePathProjectTier(t *testing.T) {
+func TestResolveMemoryConfigMarkdownHasNoProjectStorePath(t *testing.T) {
 	root := t.TempDir()
 	mc, err := resolveMemoryConfig(File{}, "", root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := workspace.MemoryDBPath(root); mc.StorePath != want {
-		t.Errorf("StorePath = %q, want project-tier default %q", mc.StorePath, want)
+	if mc.StorePath != "" {
+		t.Errorf("StorePath = %q, want empty for Markdown backend", mc.StorePath)
 	}
 }
 
-func TestResolveMemoryConfigDefaultStorePathTempTier(t *testing.T) {
+func TestResolveMemoryConfigMarkdownHasNoTempStorePath(t *testing.T) {
 	root := t.TempDir()
 	mc, err := resolveMemoryConfig(File{}, "", root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := TempStorePath(root, "memory"); mc.StorePath != want {
-		t.Errorf("StorePath = %q, want temp-tier default %q", mc.StorePath, want)
-	}
-	if mc.StorePath == workspace.MemoryDBPath(root) {
-		t.Errorf("StorePath must not equal the project-tier default when no project config exists")
+	if mc.StorePath != "" {
+		t.Errorf("StorePath = %q, want empty for Markdown backend", mc.StorePath)
 	}
 }
 
-func TestResolveMemoryConfigFillsStorePathEvenWhenDisabled(t *testing.T) {
+func TestResolveMemoryConfigLeavesStorePathEmptyWhenMarkdownIsDisabled(t *testing.T) {
 	disabled := false
 
 	t.Run("project tier", func(t *testing.T) {
@@ -246,8 +243,8 @@ func TestResolveMemoryConfigFillsStorePathEvenWhenDisabled(t *testing.T) {
 		if mc.IsEnabled() {
 			t.Fatal("memory must stay disabled")
 		}
-		if want := workspace.MemoryDBPath(root); mc.StorePath != want {
-			t.Errorf("StorePath = %q, want %q even though memory is disabled", mc.StorePath, want)
+		if mc.StorePath != "" {
+			t.Errorf("StorePath = %q, want empty for disabled Markdown memory", mc.StorePath)
 		}
 	})
 
@@ -260,8 +257,8 @@ func TestResolveMemoryConfigFillsStorePathEvenWhenDisabled(t *testing.T) {
 		if mc.IsEnabled() {
 			t.Fatal("memory must stay disabled")
 		}
-		if want := TempStorePath(root, "memory"); mc.StorePath != want {
-			t.Errorf("StorePath = %q, want %q even though memory is disabled", mc.StorePath, want)
+		if mc.StorePath != "" {
+			t.Errorf("StorePath = %q, want empty for disabled Markdown memory", mc.StorePath)
 		}
 	})
 }

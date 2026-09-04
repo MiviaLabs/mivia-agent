@@ -127,7 +127,7 @@ func TestOpenOrchestrationStoreAtLeavesOperatorPathAlone(t *testing.T) {
 // dry run and the executed --yes path.
 func TestStorageResetPreservesMemoryPaths(t *testing.T) {
 	root := storageResetWorkspace(t)
-	memoryPath := filepath.Join(root, ".mivia", "memory.db")
+	memoryPath := filepath.Join(root, ".agents", "memories")
 
 	var dryOut, dryErr bytes.Buffer
 	if err := runStorageWithIO([]string{"reset", "--workspace", root}, &dryOut, &dryErr); err != nil {

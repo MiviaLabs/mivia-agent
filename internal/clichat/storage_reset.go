@@ -35,9 +35,7 @@ func runStorageWithIO(args []string, stdout, stderr io.Writer) error {
 
 // runStorageReset implements `mivia storage reset`: an irreversible wipe of
 // every durable session/context/workflow row in this workspace, keeping only
-// the store's migrated schema and never touching the separate memory files
-// (memory.db, org.db - internal/memory, a different file this command never
-// opens).
+// the store's migrated schema and never touching Markdown memory files.
 //
 // Dry-run by default: prints per-table row counts and the files that would
 // be wiped and preserved, and exits 0 with no writes. --yes performs the
@@ -84,8 +82,8 @@ func runStorageReset(args []string, stdout, stderr io.Writer) error {
 		stores = append(stores, orchestrationStore)
 	}
 
-	preserved := []string{res.Memory.StorePath}
-	if org := workspace.OrgMemoryDBPath(); org != "" {
+	preserved := []string{workspace.AgentsPath(root, "memories")}
+	if org := workspace.GlobalMemoryDir(); org != "" {
 		preserved = append(preserved, org)
 	}
 

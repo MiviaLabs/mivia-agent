@@ -10,10 +10,10 @@ type MemoryConfig struct {
 	// Enabled controls whether the memory tools are wired. nil (the key
 	// omitted) means enabled, so existing configs load unchanged.
 	Enabled *bool `toml:"enabled"`
-	// StoreBackend is "memory" (ephemeral, in-process) or "sqlite"
-	// (durable, default). Mirrors [subagents] store_backend.
+	// StoreBackend is "memory" (ephemeral), "sqlite" (legacy durable), or
+	// "markdown" (the durable Markdown-plus-global-index backend).
 	StoreBackend string `toml:"store_backend"`
-	// StorePath is the project memory database file. Empty resolves by the
+	// StorePath is the legacy project memory database file. Empty resolves by the
 	// three-tier rule in resolveMemoryConfig: a workspace with its own
 	// project config defaults to <workspace>/.mivia/memory.db; an ad-hoc
 	// directory defaults to a temp-dir store keyed by the sanitized root.
