@@ -21,6 +21,7 @@ from verify_skill_tree import (  # noqa: E402
     check_no_dead_skill_tree,
     check_skill_dir,
 )
+from check_agents import _parse_frontmatter  # noqa: E402
 
 
 def text(rel: str) -> str:
@@ -290,6 +291,53 @@ def check_agents_directory() -> list[Path]:
     if not agent_files:
         fail(".agents/agents: expected at least one *.md agent definition")
     return agent_files
+
+
+def _frontmatter_list(value: str) -> set[str]:
+    """Parse a block or inline frontmatter list of names."""
+    value = value.strip()
+    if not value or value == "[]":
+        return set()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    return {
+        item.strip().strip("\"'")
+        for item in value.replace(",", "\n").splitlines()
+        if item.strip()
+    }
+
+
+def check_agent_skill_contract(root: Path) -> None:
+    """Require role skill names to resolve and their tools to be granted."""
+    agents_dir = root / ".agents" / "agents"
+    skills_dir = root / ".agents" / "skills"
+    skill_tools: dict[str, set[str]] = {}
+    for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
+        frontmatter, _ = _parse_frontmatter(skill_path.read_text(encoding="utf-8"))
+        skill_tools[skill_path.parent.name] = _frontmatter_list(frontmatter.get("tools", ""))
+    for role_path in sorted(agents_dir.glob("*.md")):
+        if role_path.name == "README.md":
+            continue
+        frontmatter, _ = _parse_frontmatter(role_path.read_text(encoding="utf-8"))
+        role_skills = _frontmatter_list(frontmatter.get("skills", ""))
+        if not role_skills:
+            continue
+        missing_skills = sorted(role_skills - skill_tools.keys())
+        if missing_skills:
+            fail(
+                f"{rel_to_root(role_path)} declares unknown skill(s) "
+                f"{missing_skills}; each skills: name must resolve to "
+                f".agents/skills/<name>/"
+            )
+        role_tools = _frontmatter_list(frontmatter.get("tools", ""))
+        for skill_name in sorted(role_skills):
+            missing_tools = sorted(skill_tools[skill_name] - role_tools)
+            if missing_tools:
+                fail(
+                    f"{rel_to_root(role_path)} grants skill {skill_name!r} "
+                    f"without required tool(s) {missing_tools}; "
+                    f"agent.tools must be a superset of skill.tools"
+                )
 
 
 def model_facing_prompts() -> list[tuple[str, str]]:
@@ -855,6 +903,7 @@ def main() -> None:
     # inherit it. A copy here would drift from the one in verify_skill_tree.
     check_skill_dir(ROOT / ".agents" / "skills")
     check_claude_skill_aliases(ROOT)
+    check_agent_skill_contract(ROOT)
 
     check_workflow_self_protection()
     check_agents_directory()
