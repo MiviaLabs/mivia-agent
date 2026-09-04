@@ -65,7 +65,27 @@ YAML_INDICATORS = ("@", "`", "*", "%", ",", "]", "}")
 
 # A well-formed block scalar header: | or > with optional chomping and indent
 # indicators. The value itself follows on indented lines.
-BLOCK_SCALAR = re.compile(r"^[|>][+-]?[0-9]*$")
+BLOCK_SCALAR = re.compile(r"^[|>](?:[+-][1-9]?|[1-9][+-]?)?$")
+
+
+def has_unquoted_tab(value: str) -> bool:
+    quote = ""
+    escaped = False
+    for char in value:
+        if quote == '"' and escaped:
+            escaped = False
+            continue
+        if quote == '"' and char == "\\":
+            escaped = True
+            continue
+        if char in ('"', "'"):
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+        elif char == "\t" and not quote:
+            return True
+    return False
 
 
 def strip_trailing_comment(value: str) -> str:
@@ -221,7 +241,7 @@ def check_memories(directory: Path) -> None:
             # Test the RAW value: .strip() removes the leading and trailing
             # tabs that are exactly the positions a parser refuses, so testing
             # the stripped value made this rule dead.
-            if "\t" in raw_value:
+            if has_unquoted_tab(raw_value):
                 fail(
                     f"{name}: {key.strip()} holds a raw tab, which YAML does "
                     f"not accept as whitespace: {value!r}."

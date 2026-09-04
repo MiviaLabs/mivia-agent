@@ -302,6 +302,7 @@ def _pattern_hits(texts: list[str], policy: dict[str, Any]) -> list[str]:
             try:
                 cre = re.compile(pat)
             except re.error:
+                hits.append(f"invalid blocked pattern ({key})")
                 continue
             if any(cre.search(t) for t in texts):
                 hits.append(f"blocked pattern ({key})")

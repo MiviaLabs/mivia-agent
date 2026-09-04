@@ -191,6 +191,7 @@ agent-hook-test:
 	@python3 scripts/test_import_layers.py
 	@python3 scripts/test_verify_skill_tree.py
 	@python3 scripts/test_check_memories.py
+	@python3 scripts/test_check_agents.py
 	@python3 scripts/test_check_gate_scripts.py
 
 pre-commit:

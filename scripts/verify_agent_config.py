@@ -137,6 +137,10 @@ def check_workflow_self_protection() -> None:
     if not isinstance(blocklist, list):
         fail(f"{rel}: tools.write_path_blocklist must be a list")
     entries = {str(item).strip().strip("/") for item in blocklist}
+    removals = {
+        str(item).strip().strip("/")
+        for item in (((data.get("tools") or {}).get("write_path_blocklist_remove")) or [])
+    }
     for want in SELF_PROTECTING_BLOCKLIST:
         # A parent entry covers its children: 'scripts' blocks
         # 'scripts/git-hooks'. Exact membership would force a redundant entry
@@ -147,6 +151,11 @@ def check_workflow_self_protection() -> None:
                 f"A workflow agent step can then write it, and for "
                 f"'.mivia/mivia.toml' that means emptying this key and "
                 f"restoring write access to every other entry."
+            )
+        if any(r == want or want.startswith(r + "/") for r in removals):
+            fail(
+                f"{rel}: tools.write_path_blocklist_remove removes {want!r}, "
+                "so the effective workflow denylist does not protect it."
             )
     for group in data.get("hooks") or []:
         if not isinstance(group, dict) or group.get("event") != "PreToolUse":
@@ -340,6 +349,8 @@ def makefile_defines_target(makefile: str, target: str) -> bool:
         if head.rstrip().endswith(("=", "!", "?", "+")):
             continue
         prereqs = rest.strip()
+        if prereqs.startswith(";"):
+            return bool(prereqs[1:].strip())
         if prereqs.startswith("=") or prereqs.startswith(":="):
             continue  # `verify := x` seen as head "verify " rest "= x"
         # A target-specific variable (`verify: CFLAGS=-g`) sets a variable for
