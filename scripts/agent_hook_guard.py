@@ -55,6 +55,54 @@ GIT_COMMIT_SHORT_VALUE_CHARS = "mFC"
 # compound string must be vetted, so scanning restarts at these.
 SHELL_SEPARATORS = {"&&", ";", "||"}
 
+# Interpreters whose `-c <string>` payload is itself a shell command line,
+# never data. Matched by basename so a full path (/bin/bash, /usr/bin/sh)
+# is recognized the same as the bare name.
+SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+
+# git global options that consume the NEXT argv element as their value, in
+# BOTH short and long forms (mirrors .mivia/hooks/run-command-guard.py,
+# confirmed against git.c handle_options and empirically against the real
+# git binary): -C/--git-dir/--work-tree/--namespace/--super-prefix/
+# --attr-source each take a directory, path, or tree-ish; -c/--config-env
+# take a key[=value]. --exec-path is deliberately excluded: given with no
+# "=", git treats it as boolean and never reaches a subcommand.
+GIT_GLOBAL_VALUE_OPTIONS = {
+    "-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+    "-c", "--config-env", "--attr-source",
+}
+
+
+def _interpreter_name(tok: str) -> str:
+    return tok.rsplit("/", 1)[-1]
+
+
+def _git_commit_index(segment: list[str]) -> int | None:
+    """Index of the `commit` SUBCOMMAND token, if this segment invokes it.
+
+    Mirrors .mivia/hooks/run-command-guard.py's _git_commit_index. Scans
+    past global options (and their values) to find the actual subcommand
+    position, rather than a bare scan for the first literal "commit" token
+    anywhere - that naive form misclassifies `git branch commit` (a branch
+    NAMED commit) as a commit invocation, and under-classifies
+    `git -c commit commit -n` (a decoy "commit" used as a -c VALUE, with the
+    real subcommand one token later).
+    """
+    if "git" not in segment:
+        return None
+    i = segment.index("git") + 1
+    n = len(segment)
+    while i < n:
+        tok = segment[i]
+        if tok in GIT_GLOBAL_VALUE_OPTIONS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return i if tok == "commit" else None
+    return None
+
 
 def _takes_message_value(tok: str) -> bool:
     """True when the exact option `tok` consumes the NEXT argv element as a
@@ -81,6 +129,41 @@ def _split_shell_segments(argv: list[str]) -> list[list[str]]:
     if current:
         segments.append(current)
     return segments
+
+
+def _expand_shell_c(tokens: list[str], *, _depth: int = 0) -> list[str]:
+    """Splice a `sh -c '<command>'` payload's tokens into the scan stream.
+
+    Mirrors .mivia/hooks/run-command-guard.py's _expand_shell_c: a `sh -c`
+    payload is a single argv/command-string element that is never itself
+    token-split, so the structural git-commit -n walk (and the regex
+    backstop, which also needs "git" and "commit" textually adjacent) never
+    saw a command wrapped this way. Expansion is additive - the wrapper
+    tokens and the raw payload string stay in the output - and recursive, so
+    a payload that itself wraps another `sh -c` is still covered.
+    """
+    if _depth > 20:
+        return list(tokens)
+    out: list[str] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
+        out.append(tok)
+        if (
+            _interpreter_name(tok) in SHELL_INTERPRETERS
+            and i + 2 < n
+            and tokens[i + 1] == "-c"
+        ):
+            payload = tokens[i + 2]
+            out.append(payload)
+            inner = _split_command(payload)
+            if inner:
+                out.extend(_expand_shell_c(inner, _depth=_depth + 1))
+            i += 3
+            continue
+        i += 1
+    return out
 
 
 def _scan_segment(segment: list[str]) -> list[str]:
@@ -146,9 +229,15 @@ def _scan_segment(segment: list[str]) -> list[str]:
 def _option_segments(argv: list[str]) -> list[list[str]]:
     """One scanned option vector per shell segment.
 
-    option_vector() flattens these; _flag_hits() needs the grouping so the
-    -n structural check (git then commit then -n inside ONE command) cannot
-    fire across a shell separator or across -m/-F/-C value consumption.
+    option_vector() flattens these for the general blockedFlags exact-match
+    check: -m/-F/-C and their long forms consume their value token in EVERY
+    segment, git commit or not, so a value literal can never surface as a
+    flag regardless of context (see
+    test_n_reporting_matches_segment_shape_seeded). bypass_reasons() does
+    NOT use this scanned form for the git-commit -n structural check - see
+    _segment_has_git_commit_dash_n, which needs RAW segments and does its
+    own commit_at-scoped scan so a global `-C <path>` before `commit` can
+    never be misread as commit's own value-consuming `-C`.
     """
     return [_scan_segment(segment) for segment in _split_shell_segments(argv)]
 
@@ -170,10 +259,7 @@ def option_vector(argv: list[str]) -> list[str]:
 
 def is_git_commit(argv: list[str]) -> bool:
     """True when argv invokes `git commit` (git options like -c included)."""
-    for i, tok in enumerate(argv):
-        if tok == "git" and any(t == "commit" for t in argv[i + 1 :]):
-            return True
-    return False
+    return any(_git_commit_index(seg) is not None for seg in _split_shell_segments(argv))
 
 
 def _structured_argv(payload: dict[str, Any]) -> list[str] | None:
@@ -246,22 +332,24 @@ def _split_command(text: str) -> list[str] | None:
 
 
 def _segment_has_git_commit_dash_n(segment: list[str]) -> bool:
-    """True when one command's option vector has git, then commit, then -n.
+    """True when this RAW (unscanned) segment's git-commit arguments contain
+    a bare -n.
 
-    -n only skips hooks when it is an option of `git commit`. Git global
-    options between `git` and `commit` (-C path, --git-dir=..., -c key=value,
-    --work-tree=...) and commit options before -n are covered because only the
-    relative order inside one command matters. -n on a non-commit command
-    (git log -n 5, grep -n) is never flagged, and option values (already
-    excluded from the vector) can never contribute.
+    Structural, via _git_commit_index, not a bare index() scan: a bare scan
+    for the first literal "commit" token misclassified `git branch commit`
+    (a branch NAMED commit) as a commit invocation, and missed a long-form
+    global option (--git-dir=..., --attr-source ...) sitting between "git"
+    and "commit" whose VALUE token isn't "commit" either - both fixed by
+    walking global options the same way run-command-guard.py's sibling
+    function does. Takes the RAW segment (not the caller's pre-scanned
+    option vector): scanning here from commit_at onward, on top of an
+    already-scanned vec, would apply commit's value-consuming grammar a
+    second time to tokens a GLOBAL option (e.g. -C) already shifted.
     """
-    try:
-        i_git = segment.index("git")
-        i_commit = segment.index("commit", i_git + 1)
-        segment.index("-n", i_commit + 1)
-    except ValueError:
+    commit_at = _git_commit_index(segment)
+    if commit_at is None:
         return False
-    return True
+    return "-n" in _scan_segment(segment[commit_at + 1 :])
 
 
 def _flag_hits(vec: list[str], segments: list[list[str]], policy: dict[str, Any]) -> list[str]:
@@ -341,9 +429,15 @@ def bypass_reasons(payload: dict[str, Any], policy: dict[str, Any]) -> list[str]
         # argument VALUES) are data and are never scanned for flags. The -n
         # structural check needs the per-segment grouping; non-git-commit argv
         # gets no segments so the -n loop stays inert (git log -n 5, grep -n).
+        # Expand first: a `sh -c '<command>'` element is itself an unsplit
+        # command line, and every check below operates on tokens.
+        argv = _expand_shell_c(argv)
         if is_git_commit(argv):
             vec = option_vector(argv)
-            segments = _option_segments(argv)
+            # Raw, unscanned segments for the -n structural check: see
+            # _segment_has_git_commit_dash_n for why it must not receive an
+            # already-scanned vec.
+            segments = _split_shell_segments(argv)
         else:
             vec = argv
             segments = []
@@ -360,9 +454,10 @@ def bypass_reasons(payload: dict[str, Any], policy: dict[str, Any]) -> list[str]
                 # Unparseable (unbalanced quotes): scan the raw text, fail closed.
                 texts.append(raw)
                 continue
+            tokens = _expand_shell_c(tokens)
             if is_git_commit(tokens):
                 parsed = option_vector(tokens)
-                segments.extend(_option_segments(tokens))
+                segments.extend(_split_shell_segments(tokens))
             else:
                 parsed = tokens
             vec.extend(parsed)
