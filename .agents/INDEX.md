@@ -103,7 +103,6 @@ Repo-native:
 - `session-analysis` - read-only validated analysis of chat sessions in the durable chat ledger; metadata-only (no message content); default window last 24h; owned by the unrestricted root
 - `capture` - record a durable decision or correction to `.agents/memories/`
 - `memories-housekeeping` - audit `.agents/memories/` for staleness, duplicates, and orphan facts
-- `memory-housekeeping` - audit the memory store: verify facts, delete stale or duplicate entries, update outdated ones, create missing ones
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fix` `review_panel` members):
 
