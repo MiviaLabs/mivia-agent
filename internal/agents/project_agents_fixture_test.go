@@ -1,8 +1,11 @@
 package agents
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -313,6 +316,15 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A nil Skills key admits EVERY skill (SkillAllowed returns true), so
+	// skipping those agents left five of sixteen committed roles and 52
+	// admitted pairs unverified. Pin the refusals instead: each one is a
+	// dispatch that fails closed at CheckSkillInvocation, and the set must
+	// change only on purpose. A role that deliberately cannot write files or
+	// run commands is expected here; a NEW entry means a skill just became
+	// unreachable for that role.
+	assertNilAllowlistRefusals(t, reg, skillReg)
+
 	covered := make(map[string]bool)
 	for _, agent := range reg.List() {
 		if agent.Skills == nil {
@@ -349,6 +361,82 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 			continue
 		}
 		t.Fatalf("committed skill %q is neither allowlisted by any committed agent nor owned by the unrestricted root", def.Name)
+	}
+}
+
+// wantNilAllowlistRefusals maps each committed role with no skills: key to the
+// skills its effective tools cannot cover, as "<skill>(<first missing tool>)".
+// These roles admit every skill by policy, so the tool superset is the only
+// thing standing between them and a runtime refusal.
+var wantNilAllowlistRefusals = map[string][]string{
+	"builder": {
+		"housekeeping(delete_file)",
+		"memory-housekeeping(memory_search)",
+		"workflow-feature-delivery(multi_edit)",
+		"workflow-runs-analysis(workflow_list_runs)",
+	},
+	"e2e-engineer": {
+		"feature-delivery(run_command)",
+		"gate-authoring(run_command)",
+		"memory-housekeeping(memory_search)",
+		"performance-review(run_command)",
+		"session-analysis(run_command)",
+		"verify-change(run_command)",
+		"verify-code-change(run_command)",
+		"workflow-runs-analysis(workflow_list_runs)",
+	},
+	"panel-reviewer": reviewerRefusals,
+	"plan-reviewer":  reviewerRefusals,
+	"planner":        reviewerRefusals,
+}
+
+// The three read-only review roles hold no write or exec tools on purpose, so
+// they share one refusal set.
+var reviewerRefusals = []string{
+	"capture(write_file)",
+	"docs-maintenance(write_file)",
+	"docs-update(write_file)",
+	"feature-delivery(write_file)",
+	"gate-authoring(run_command)",
+	"housekeeping(write_file)",
+	"memory-housekeeping(memory_search)",
+	"performance-review(run_command)",
+	"session-analysis(run_command)",
+	"verify-change(run_command)",
+	"verify-code-change(run_command)",
+	"workflow-feature-delivery(write_file)",
+	"workflow-runs-analysis(workflow_list_runs)",
+}
+
+func assertNilAllowlistRefusals(t *testing.T, reg *AgentRegistry, skillReg *skills.Registry) {
+	t.Helper()
+	seen := make(map[string]bool)
+	for _, agent := range reg.List() {
+		if agent.Skills != nil {
+			continue
+		}
+		seen[agent.Name] = true
+		var refused []string
+		for _, def := range skillReg.List() {
+			if missing := firstMissingSkillTool(&agent, def.Tools); missing != "" {
+				refused = append(refused, fmt.Sprintf("%s(%s)", def.Name, missing))
+			}
+		}
+		sort.Strings(refused)
+		want, ok := wantNilAllowlistRefusals[agent.Name]
+		if !ok {
+			t.Fatalf("agent %q has no skills: key and is not pinned in wantNilAllowlistRefusals; it admits every skill, so its refusals must be recorded. Observed: %v", agent.Name, refused)
+		}
+		sorted := append([]string(nil), want...)
+		sort.Strings(sorted)
+		if !slices.Equal(refused, sorted) {
+			t.Fatalf("agent %q nil-allowlist refusals drifted.\n got: %v\nwant: %v\nA new entry means a skill became unreachable for this role; a removed one means it gained a tool. Update the pin only when the change is intended.", agent.Name, refused, sorted)
+		}
+	}
+	for name := range wantNilAllowlistRefusals {
+		if !seen[name] {
+			t.Fatalf("wantNilAllowlistRefusals pins %q, which is not a committed role with a nil skills: key. A stale pin covers nothing.", name)
+		}
 	}
 }
 

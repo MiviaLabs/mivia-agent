@@ -42,7 +42,7 @@ SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # first shape in 15 files while the gate reported ok, so check the shape.
 # The elements are checked separately: this pattern alone still admits an
 # empty element, a trailing comma and a nested map.
-TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]$")
+TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
 
 # A scalar that opens with a quote must close with the same quote and nothing
 # may follow it. PyYAML is not a dependency of this repository, so the gate
@@ -92,12 +92,40 @@ def check_memories(directory: Path) -> None:
                 f"{name}: missing a closed YAML frontmatter block. Every memory "
                 f"carries {', '.join(REQUIRED_KEYS)}."
             )
+        # Validate the block, then read it. The old filter skipped any line
+        # without a colon and any indented line, so a stray line of prose and
+        # an unquoted `title: status: stats` both passed while PyYAML raised
+        # a ScannerError on the same block. The gate's own docstring says its
+        # motivating defect was frontmatter no parser can load.
         fields = {}
         for line in front.split("\n"):
-            if line[:1] in (" ", "\t") or ":" not in line:
+            if not line.strip():
                 continue
+            if line[:1] in (" ", "\t"):
+                if not fields:
+                    fail(
+                        f"{name}: frontmatter opens with an indented line, "
+                        f"which no YAML parser can read: {line!r}."
+                    )
+                continue  # a continuation of the previous key
+            if ":" not in line:
+                fail(
+                    f"{name}: frontmatter line {line!r} has no colon, so it is "
+                    f"neither a key nor a continuation. No YAML parser can "
+                    f"read this block."
+                )
             key, _, value = line.partition(":")
-            fields[key.strip()] = value.strip()
+            value = value.strip()
+            if value[:1] not in ('"', "'", "[", "{", "") and (
+                ": " in value or value.endswith(":")
+            ):
+                fail(
+                    f"{name}: {key.strip()} is an unquoted scalar holding a "
+                    f"colon, which YAML reads as a nested mapping and then "
+                    f"refuses: {value!r}. Wrap the whole value in single "
+                    f"quotes."
+                )
+            fields[key.strip()] = value
         for key in REQUIRED_KEYS:
             if not fields.get(key):
                 fail(f"{name}: frontmatter is missing a non-empty {key!r}.")
@@ -122,7 +150,9 @@ def check_memories(directory: Path) -> None:
                 f"{name}: tags must be a flat non-empty list, for example "
                 f"[a, b]; got {fields['tags']!r}."
             )
-        for tag in fields["tags"][1:-1].split(","):
+        inner = fields["tags"]
+        inner = inner[inner.index("[") + 1 : inner.rindex("]")]
+        for tag in inner.split(","):
             tag = tag.strip()
             if not tag:
                 fail(

@@ -154,7 +154,7 @@ Machine-readable hook and agent policy:
 ## Quality
 
 - `.agents/quality/contracts/` - project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
-- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-19`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
+- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-40`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
 
 ## Runtime Artifacts
 

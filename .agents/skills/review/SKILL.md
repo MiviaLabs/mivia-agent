@@ -75,3 +75,9 @@ Routing decision for <diff summary>:
 - **The diff mixes a feature change with a refactor.** Surface this to
   the orchestrator and ask whether to split the commit. Do not review
   a mixed-shape diff as a single unit.
+## Report shape
+
+Write the synthesised report in the shape of
+`.agents/skills/review/report-template.md`. Read that file with `read_file`
+before merging the lens findings, so every lens reports under the same
+headings.

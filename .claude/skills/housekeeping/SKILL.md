@@ -10,8 +10,6 @@ tools:
   - read_file
   - list_dir
   - grep
-  - glob
-  - search
   - write_file
   - search_replace
   - delete_file

@@ -175,6 +175,58 @@ def test_gate_rejects_shapes_the_go_parser_refuses() -> None:
             raise AssertionError(
                 f"expected {expected!r} among violations, got {problems}"
             )
+        # Drive the same shape through the gate. Testing the helper alone left
+        # the call site unpinned: replacing it with an empty loop kept the
+        # suite green, so the wiring could be deleted without notice.
+        with tempfile.TemporaryDirectory() as tmp:
+            skills_dir = Path(tmp) / "skills"
+            (skills_dir / "probe-skill").mkdir(parents=True)
+            (skills_dir / "probe-skill" / "SKILL.md").write_text(
+                body.replace("name: p", "name: probe-skill"), encoding="utf-8")
+            captured = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(captured):
+                    mod.check_skill_dir(skills_dir)
+            except SystemExit:
+                if "rejected by internal/skills/frontmatter.go" not in captured.getvalue():
+                    raise AssertionError(captured.getvalue())
+                continue
+            raise AssertionError(f"check_skill_dir accepted {expected!r}")
+
+
+def test_gate_rejects_a_long_joined_trigger_block() -> None:
+    """The joined cap is a separate rule from the per-trigger cap.
+
+    Each trigger here is well under SKILL_TRIGGER_MAX, so only the joined rule
+    can reject the file. Without this, replacing that rule with `if False:`
+    left the suite green.
+    """
+    mod = load_gate()
+    triggers = [f"probe trigger number {n:02d} for the joined cap" for n in range(12)]
+    joined = "\n".join(triggers)
+    if len(joined.encode("utf-8")) <= mod.SKILL_TRIGGERS_JOINED_MAX:
+        raise AssertionError("fixture does not exceed the joined cap")
+    if max(len(t.encode("utf-8")) for t in triggers) > mod.SKILL_TRIGGER_MAX:
+        raise AssertionError("fixture trips the per-trigger cap instead")
+    body = (
+        "---\nname: probe-skill\n"
+        "description: Probe skill for the joined trigger cap.\ntriggers:\n"
+        + "".join(f"  - {t}\n" for t in triggers)
+        + "---\n\nProbe body.\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        skills_dir = Path(tmp) / "skills"
+        (skills_dir / "probe-skill").mkdir(parents=True)
+        (skills_dir / "probe-skill" / "SKILL.md").write_text(body, encoding="utf-8")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_skill_dir(skills_dir)
+        except SystemExit:
+            if "joined block" not in captured.getvalue():
+                raise AssertionError(captured.getvalue())
+            return
+    raise AssertionError("gate accepted a joined trigger block over the cap")
 
 
 def test_dead_skill_tree_is_refused() -> None:
@@ -393,6 +445,7 @@ def main() -> None:
     test_gate_rejects_unknown_key()
     test_gate_rejects_a_long_trigger()
     test_gate_rejects_shapes_the_go_parser_refuses()
+    test_gate_rejects_a_long_joined_trigger_block()
     test_dead_skill_tree_is_refused()
     test_alias_gate_accepts_a_clean_stub()
     test_alias_gate_rejects_a_missing_stub()

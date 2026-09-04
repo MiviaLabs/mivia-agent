@@ -110,11 +110,18 @@ test gap. Do not report it.
 
 ## Evidence
 
-- Confirm every finding with a run: `go test ./<pkg>/`, or a scratch
-  test under `/tmp`. Report the command and its output.
-- When the function touches shared state, run
+This skill declares no command execution. Read the tool list before you
+plan the evidence.
+
+- When the invoking agent has command execution, confirm every finding with
+  a run: `go test ./<pkg>/`, or a scratch test under the scratchpad. Report
+  the command and its output. When the function touches shared state, run
   `go test -race ./<pkg>/`.
-- A finding without a reproduction is a guess. Do not report it.
+- Without command execution, give the reproduction as the exact input, the
+  path through the code, and the wrong result, and report the evidence
+  `NOT_RUN` with that reason. Do not report it as a confirmed run.
+- A finding with neither a run nor a traced reproduction is a guess. Do not
+  report it.
 
 ## Output format
 

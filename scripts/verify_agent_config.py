@@ -135,8 +135,22 @@ def check_workflow_self_protection() -> None:
             continue
         for handler in group.get("handlers") or []:
             argv = (handler or {}).get("argv") or []
-            if any(RUN_COMMAND_GUARD in str(item) for item in argv):
-                return
+            if not argv or RUN_COMMAND_GUARD not in str(argv[0]):
+                continue
+            # The declaration is not the control. internal/hooks/exec.go
+            # resolveProgram resolves a relative argv[0] against .mivia/, so
+            # check the file the config actually names: asserting only the
+            # string in argv let the guard be deleted with every gate green.
+            program = (ROOT / ".mivia" / str(argv[0])).resolve()
+            if not program.is_file():
+                fail(
+                    f"{rel}: the PreToolUse handler names {argv[0]!r}, which "
+                    f"does not exist. The hook then fails at run time, and the "
+                    f"never-bypass-Git-hooks layer AGENTS.md names is absent."
+                )
+            if not os.access(program, os.X_OK):
+                fail(f"{rel}: {argv[0]!r} is not executable, so the hook cannot run.")
+            return
     fail(
         f"{rel}: no PreToolUse handler runs {RUN_COMMAND_GUARD}. AGENTS.md "
         f"names it as one of the three layers enforcing the never-bypass-Git-"
@@ -249,6 +263,32 @@ def model_facing_prompts() -> list[tuple[str, str]]:
     return out
 
 
+def makefile_defines_target(makefile: str, target: str) -> bool:
+    """True when `target` opens a rule that has prerequisites or a recipe.
+
+    Make allows several targets on one rule line, so the name may appear
+    anywhere before the colon. A `.PHONY:` line is excluded: it declares a
+    target, it does not define one.
+    """
+    lines = makefile.split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith("\t") or ":" not in line:
+            continue
+        head, _, rest = line.partition(":")
+        if head.startswith(".PHONY") or head.startswith("."):
+            continue
+        if target not in head.split():
+            continue
+        if rest.strip().lstrip("="):
+            return True  # has prerequisites
+        for following in lines[index + 1 :]:
+            if following.startswith("\t"):
+                return True  # has a recipe
+            if following.strip():
+                break
+    return False
+
+
 def check_core_tier_covers_prompted_tools() -> None:
     """Every tool a system prompt tells the model to use must be in [tools] core.
 
@@ -262,14 +302,32 @@ def check_core_tier_covers_prompted_tools() -> None:
     config_path = ROOT / ".mivia" / "mivia.toml"
     if not config_path.is_file():
         return
-    match = re.search(
-        r"^\s*core\s*=\s*\[(.*?)\]", config_path.read_text(encoding="utf-8"), re.S | re.M
-    )
-    if not match:
-        return  # feature inert: nothing is deferred, nothing to check
-    core = set(re.findall(r'"([^"]+)"', match.group(1)))
-    if not core:
+    # Parse the config, do not pattern-match it. The regex here read only
+    # double-quoted entries, and this repository's own [tools] core uses TOML
+    # single quotes, so `core` came back empty and the whole check below - the
+    # unknown-tool rule and the prompted-deferred-tool rule - was dead code
+    # that reported ok on a tree with ten deferred tools.
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
         return
+    with config_path.open("rb") as handle:
+        data = tomllib.load(handle)
+    tools_table = data.get("tools")
+    if not isinstance(tools_table, dict) or "core" not in tools_table:
+        return  # feature inert: nothing is deferred, nothing to check
+    raw = tools_table["core"]
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        fail(
+            ".mivia/mivia.toml [tools] core must be a list of tool-name strings; "
+            "a shape this gate cannot read must fail, not pass silently"
+        )
+    core = {item for item in raw if item}
+    if not core:
+        fail(
+            ".mivia/mivia.toml [tools] core is declared but empty, which defers "
+            "every tool. Remove the key to disable the tier split instead"
+        )
 
     known = workspace_tool_names()
     if not known:
@@ -577,9 +635,19 @@ def main() -> None:
         "test",
         "build",
     ]:
-        # accept "target:" or "target " in .PHONY / recipes
-        if not re.search(rf"(?m)^[a-zA-Z0-9_.-]*{re.escape(target)}[a-zA-Z0-9_.-]*\s*:", makefile) and target not in makefile:
-            fail(f"Makefile: missing target {target}")
+        # A real rule, not a mention. The old test was two proxies joined by
+        # `or`: a regex that let `verify-fast:` satisfy `verify`, and a bare
+        # substring that any word in the help text satisfied. Deleting a whole
+        # recipe left the gate green while `make verify` silently skipped the
+        # target. Require the name to open a rule, and require that rule to
+        # carry a recipe line or prerequisites.
+        if not makefile_defines_target(makefile, target):
+            fail(
+                f"Makefile: no rule defines target {target}. A .PHONY listing "
+                f"or a mention in the help text is not a rule: `make {target}` "
+                f"would print \"Nothing to be done\" and every gate it runs "
+                f"would be skipped."
+            )
     if "cmd/mivia" not in makefile:
         fail("Makefile: build must target cmd/mivia")
 

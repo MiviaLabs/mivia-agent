@@ -332,9 +332,12 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # (or a project layered on top of yours) added here.
 #
 # Recommended starting values: the set below keeps workflow agents away from
-# Git metadata and the live Git hooks. A project that omits this key leaves
-# ALL paths writable by workflow agents, including .git and its own workflow
-# definition - choose deliberately.
+# Git metadata, the live Git hooks, and this config file. A project that omits
+# this key leaves ALL paths writable by workflow agents, including .git and its
+# own workflow definition - choose deliberately.
+#
+# This file carries the blocklist. An agent that can edit it can empty this key
+# and restore write access to every other entry, so the file must block itself.
 #
 # .git carries commit history: an agent that can edit it can rewrite history.
 # Blocking .git alone does NOT protect the hooks. install_git_hooks.sh points
@@ -346,11 +349,15 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # definitions, or its Go module files lists them here too. An entry in BOTH
 # this key and write_path_blocklist_remove is a load error.
 write_path_blocklist = [
-    ".git",              # commit history
-    ".githooks",         # hook wrappers the hooks path points at
-    "scripts/git-hooks", # hook implementations the wrappers exec
+    ".git",               # commit history
+    ".githooks",          # hook wrappers the hooks path points at
+    "scripts/git-hooks",  # hook implementations the wrappers exec
+    ".mivia/mivia.toml",  # this file: it carries the blocklist
+    ".mivia/policy",      # the pattern files the hook guard reads
 ]
-# write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example, against the list above
+# An entry in BOTH keys is a load error, so an opt-out names an entry a layer
+# above added, not one of the entries above:
+# write_path_blocklist_remove = [".mivia/workflows"]
 
 # Timeouts (seconds).
 run_timeout_seconds = 900

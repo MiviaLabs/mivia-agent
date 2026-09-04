@@ -32,6 +32,17 @@ def main() -> None:
     print("probe: ok")
 '''
 
+# No guard AND no main(): only the invoked-script rule can reject this, so a
+# test using it cannot be satisfied by the uninvoked-main() rule instead.
+NO_GUARD_NO_MAIN = '''#!/usr/bin/env python3
+print("probe: ok")
+'''
+
+HOOK_GATE = '''#!/usr/bin/env python3
+def main() -> None:
+    print("hook probe: ok")
+'''
+
 
 def load_gate():
     if str(GATE.parent) not in sys.path:
@@ -93,10 +104,17 @@ def test_rejects_an_invocation_of_a_missing_script() -> None:
 
 
 def test_rejects_an_invoked_script_with_no_guard() -> None:
+    """Pins the invoked-script rule specifically.
+
+    The fixture defines no main(), so the uninvoked-main() rule cannot fire in
+    its place, and the assertion is on this rule's own wording. With NO_GUARD
+    (which does define main()) both rules matched the same substring, and
+    deleting the invoked-script rule left the suite green.
+    """
     expect_rejection(
         "check:\n\t@python3 scripts/check_probe.py\n",
-        {"check_probe.py": NO_GUARD},
-        "prints nothing and",
+        {"check_probe.py": NO_GUARD_NO_MAIN},
+        "runs the imports",
     )
 
 
@@ -153,6 +171,89 @@ def test_rejects_a_binding_that_names_another_script() -> None:
     )
 
 
+def test_covers_a_gate_in_the_hook_directory() -> None:
+    """scripts/git-hooks/ holds three python3 gates, two without a .py suffix.
+
+    A sweep over scripts/*.py could not see them, so file-size-check - invoked
+    by both pre-commit and pre-push - could lose its entry point with this gate
+    green. That is the defect this file exists to stop, one directory over.
+    """
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build(Path(tmp), "check:\n\t@python3 scripts/check_probe.py\n",
+                     {"check_probe.py": RUNNABLE})
+        hooks = root / "scripts" / "git-hooks"
+        hooks.mkdir()
+        (hooks / "pre-push").write_text(
+            "#!/usr/bin/env bash\npython3 \"$ROOT/scripts/git-hooks/size-check\"\n",
+            encoding="utf-8")
+        (hooks / "size-check").write_text(HOOK_GATE, encoding="utf-8")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_gate_scripts(root)
+        except SystemExit:
+            if "scripts/git-hooks/size-check" not in captured.getvalue():
+                raise AssertionError(captured.getvalue())
+            return
+    raise AssertionError("gate accepted an extension-less hook gate with no entry point")
+
+
+def test_rejects_a_dollar_var_invocation_of_a_missing_script() -> None:
+    """Hooks invoke gates as "$ROOT/scripts/x.py"; the prefix must not hide it."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build(Path(tmp), "check:\n\t@python3 scripts/check_probe.py\n",
+                     {"check_probe.py": RUNNABLE})
+        hooks = root / "scripts" / "git-hooks"
+        hooks.mkdir()
+        (hooks / "pre-push").write_text(
+            '#!/usr/bin/env bash\npython3 "$ROOT/scripts/check_ghost.py"\n', encoding="utf-8")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_gate_scripts(root)
+        except SystemExit:
+            if "does not exist" not in captured.getvalue():
+                raise AssertionError(captured.getvalue())
+            return
+    raise AssertionError("gate accepted a $ROOT-form invocation of a missing script")
+
+
+def test_rejects_a_borrower_that_reaches_fail_through_the_module() -> None:
+    """`import verify_common` then `verify_common.fail` is the same defect."""
+    borrower = (
+        "import verify_common\n"
+        "from verify_common import ROOT, rel_to_root\n\n"
+        "fail = verify_common.fail\n\n\n"
+        "def main() -> None:\n    fail('x')\n\n\n"
+        'if __name__ == "__main__":\n    main()\n'
+    )
+    expect_rejection(
+        "check:\n\t@python3 scripts/check_probe.py\n",
+        {"check_probe.py": RUNNABLE, "check_borrower.py": borrower},
+        "name a different script",
+    )
+
+
+def test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule() -> None:
+    """The binding must be the partial application, not the text anywhere."""
+    borrower = (
+        "import functools\n"
+        "from verify_common import ROOT, rel_to_root\n"
+        "from verify_common import fail as _fail\n\n"
+        '# prefix="check_borrower"\n'
+        'fail = functools.partial(_fail, prefix="verify_agent_config")\n\n\n'
+        "def main() -> None:\n    fail('x')\n\n\n"
+        'if __name__ == "__main__":\n    main()\n'
+    )
+    expect_rejection(
+        "check:\n\t@python3 scripts/check_probe.py\n",
+        {"check_probe.py": RUNNABLE, "check_borrower.py": borrower},
+        "name a different script",
+    )
+
+
 def test_rejects_a_tree_where_the_invocation_pattern_matches_nothing() -> None:
     """The gate must fail closed if it can no longer see any invocation."""
     expect_rejection(
@@ -169,6 +270,10 @@ def main() -> None:
     test_rejects_an_uninvoked_script_with_no_guard()
     test_rejects_a_gate_that_takes_the_default_failure_prefix()
     test_rejects_a_binding_that_names_another_script()
+    test_a_prefix_string_in_a_comment_does_not_satisfy_the_rule()
+    test_rejects_a_borrower_that_reaches_fail_through_the_module()
+    test_rejects_a_dollar_var_invocation_of_a_missing_script()
+    test_covers_a_gate_in_the_hook_directory()
     test_rejects_a_tree_where_the_invocation_pattern_matches_nothing()
     print("test_check_gate_scripts: ok")
 

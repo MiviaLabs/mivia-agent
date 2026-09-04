@@ -94,7 +94,10 @@ the test regenerate the JSON: the guarantee is that a person edits it.
   exists, no duplicate H1 titles, no parallel doc for an owned topic) and
   `scripts/check_provider_docs.py`.
 - `docs-check` is a prerequisite target inside `make verify`.
-- After editing, run `make verify`. It must exit 0.
+- After editing, `make verify` must exit 0. This skill declares no command
+  execution: when the invoking agent has it, run the gate and report the
+  exit status. Otherwise name the gate as `NOT_RUN` and say who must run
+  it. Never report a gate as passing when nothing ran it.
 
 ## Scope discipline
 
@@ -109,5 +112,6 @@ the test regenerate the JSON: the guarantee is that a person edits it.
 
 ## Done means verified
 
-Report what you changed and the `make verify` result. If a gate failed, fix
+Report what you changed and the `make verify` result, or `NOT_RUN`
+with the reason. If a gate failed, fix
 the doc, not the gate. A green tree with truthful docs is the only "done".

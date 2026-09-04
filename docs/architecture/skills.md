@@ -140,7 +140,7 @@ stub directory holds `SKILL.md` alone.
 A symlink is not used here. Git sets `core.symlinks=false` by default on
 Windows, so a cloned symlink becomes a plain text file and the skill tree
 breaks with no error. A plain-file stub is portable on every operating system.
-`scripts/verify_agent_config.py` (`check_claude_skill_aliases`) enforces the
+`scripts/verify_skill_tree.py` (`check_claude_skill_aliases`), run from `scripts/verify_agent_config.py`, enforces the
 stub shape, and `scripts/test_verify_skill_tree.py` proves the gate rejects
 each defect.
 
