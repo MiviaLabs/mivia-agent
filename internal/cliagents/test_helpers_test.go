@@ -5,6 +5,7 @@ package cliagents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -29,6 +31,11 @@ import (
 // process start; tests in this package use a minimal in-package implementation
 // to avoid importing cli (which would create an import cycle).
 func TestMain(m *testing.M) {
+	restoreHome, err := testenv.IsolateHome()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		os.Exit(1)
+	}
 	NewSessionDispatcherVar = testNewSessionDispatcher
 	// WireWorkflowToolOptionsVar is called by ConfigureChatWorkspace. A no-op
 	// is sufficient for tests that call ConfigureChatWorkspace without needing
@@ -46,7 +53,9 @@ func TestMain(m *testing.M) {
 	// BuiltInSlashTokensVar returns an empty set; tests do not need real slash
 	// command collision detection.
 	BuiltInSlashTokensVar = func() map[string]struct{} { return nil }
-	os.Exit(m.Run())
+	code := m.Run()
+	restoreHome()
+	os.Exit(code)
 }
 
 // --- type aliases for unexported tests ------------------------------------

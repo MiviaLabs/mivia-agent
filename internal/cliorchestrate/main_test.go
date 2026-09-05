@@ -2,8 +2,11 @@ package cliorchestrate
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 )
 
 // TestMain fences every doctor test off from the developer's machine. Doctor
@@ -14,16 +17,16 @@ import (
 // for the whole package and the probe seam is inert unless a test installs
 // its own.
 func TestMain(m *testing.M) {
-	home, err := os.MkdirTemp("", "cliorchestrate-home-")
+	restoreHome, err := testenv.IsolateHome()
 	if err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		os.Exit(1)
 	}
-	_ = os.Setenv("HOME", home)
 	_ = os.Setenv("MIVIA_API_BASE_URL", "")
 	syncProbe = func(context.Context, string) (bool, string) {
 		return false, "probe stubbed by TestMain"
 	}
 	code := m.Run()
-	_ = os.RemoveAll(home)
+	restoreHome()
 	os.Exit(code)
 }
