@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -22,9 +23,10 @@ import (
 // through a copy instead; this mirrors orchestrationStorePathFor in
 // internal/clichat/storage_reset.go.
 func workflowToolSubagentConfig(root string, res *config.Resolved) config.SubagentConfig {
+	storeRoot := workflowStoreRoot(root)
 	if res != nil {
 		clone := *res
-		ApplyWorkflowStoreRoot(&clone, root)
+		ApplyWorkflowStoreRoot(&clone, storeRoot)
 		return clone.Subagents
 	}
 	configPath := SessionEngineConfigPath(root, nil)
@@ -32,8 +34,30 @@ func workflowToolSubagentConfig(root string, res *config.Resolved) config.Subage
 	if err != nil || loaded == nil {
 		return config.DefaultSubagentConfig
 	}
-	ApplyWorkflowStoreRoot(loaded, root)
+	ApplyWorkflowStoreRoot(loaded, storeRoot)
 	return loaded.Subagents
+}
+
+// workflowStoreRoot anchors a run's durable ledger to the MAIN checkout when
+// the caller is a linked worktree.
+//
+// A workflow creates its own git worktree under the main repository
+// (localengine's admissionIdentity uses vcs.MainRepoRoot, because that is
+// where worktrees live), so a ledger that followed the caller's root into a
+// linked worktree sat in a different lifecycle domain from the worktrees it
+// owns: removing the caller's worktree destroyed the only record of those
+// runs, orphaning their wf/ worktrees and branches in the operator's main
+// checkout - invisible to workflow_list_runs, never reaped, unrecoverable.
+// Project memory already resolves the identical hazard the identical way (see
+// canonicalRepoRoot: "a disposable worktree would lose memories on removal").
+// The ENGINE root is untouched: a run still executes against the caller's
+// checkout, only its ledger is anchored.
+func workflowStoreRoot(root string) string {
+	mainRoot, err := vcs.MainRepoRoot(root)
+	if err != nil || strings.TrimSpace(mainRoot) == "" {
+		return root // not a git checkout, or the probe failed: keep today's root
+	}
+	return mainRoot
 }
 
 // SessionEngineConfigPath is the config file identity for session workflow
