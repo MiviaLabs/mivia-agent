@@ -73,13 +73,13 @@ func (m Model) renderTab(t SessionTab, maxTitleLen int) string {
 		acc := render.Role(m.Theme, m.Tier, theme.RoleAccent)
 		glyph := "⚡"
 		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			glyph = "*"
+			glyph = "~"
 		}
 		markStr = acc.Render(glyph)
 	case t.IsCurrent:
 		glyph := "●"
 		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			glyph = "*"
+			glyph = ">"
 		}
 		markStr = fg.Render(glyph)
 	default:
@@ -94,6 +94,7 @@ func (m Model) renderTab(t SessionTab, maxTitleLen int) string {
 	if title == "" {
 		title = t.ID
 	}
+	title = ansi.Strip(title)
 	title = strings.ReplaceAll(title, "\r", " ")
 	title = strings.ReplaceAll(title, "\n", " ")
 
@@ -133,7 +134,7 @@ func (m Model) computeTabWindow(availWidth int, startColOffset int) (startIdx, e
 		widths[i] = ansi.StringWidth(standardRendered[i])
 		totalWidth += widths[i]
 		if i > 0 {
-			totalWidth++ // 1 space gap
+			totalWidth++ // 1 space separator
 		}
 	}
 
@@ -152,7 +153,14 @@ func (m Model) computeTabWindow(availWidth int, startColOffset int) (startIdx, e
 		return 0, len(m.tabs), standardRendered, bounds, startColOffset
 	}
 
-	if widths[currIdx] > availWidth {
+	initialOverhead := 0
+	if currIdx > 0 {
+		initialOverhead += ansi.StringWidth(m.overflowLeftMarker())
+	}
+	if currIdx < len(m.tabs)-1 {
+		initialOverhead += ansi.StringWidth(m.overflowRightMarker(len(m.tabs) - 1 - currIdx))
+	}
+	if widths[currIdx]+initialOverhead > availWidth {
 		return 0, 0, nil, nil, startColOffset
 	}
 

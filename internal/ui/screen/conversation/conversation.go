@@ -107,6 +107,8 @@ type Screen struct {
 	topbar       topbar.Model
 	transcript   transcript.Model
 	composer     composer.Model
+	commands     []composer.Command
+	mentions     []composer.Mention
 	statusline   statusline.Model
 	approval     approval.Model
 	history      history.Model
@@ -541,11 +543,31 @@ func (s Screen) updateAsyncPortMsg(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
 func (s Screen) handleStatuslineTick(msg statusline.TickMsg) (app.Screen, tea.Cmd) {
 	next, cmd := s.statusline.Update(msg)
 	s.statusline = next
-	if cmd == nil && s.panel.activeAgentCount() > 0 {
+	if cmd == nil && (s.panel.activeAgentCount() > 0 || s.hasActiveSession()) {
 		cmd = statusline.TickCmd()
 	}
 	s.forwardSharedMsg(msg)
 	return s, cmd
+}
+
+// hasActiveSession reports whether the foreground session or any background session
+// has in-flight turns, active statuslines, or active subagents.
+func (s Screen) hasActiveSession() bool {
+	if s.active != nil || s.statusline.Active() || s.panel.activeAgentCount() > 0 {
+		return true
+	}
+	return s.hasActiveBackgroundSession()
+}
+
+// hasActiveBackgroundSession reports whether any session in s.sessions has an
+// in-flight turn, active statusline, or active subagents.
+func (s Screen) hasActiveBackgroundSession() bool {
+	for _, st := range s.sessions {
+		if st != nil && (st.active != nil || st.statusline.Active() || st.panel.activeAgentCount() > 0) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleSessionPickerTick refreshes the open /resume picker's per-row
@@ -681,6 +703,7 @@ func overlayRows(text string, height int) []string {
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
 func (s *Screen) SetCommands(cmds []composer.Command) {
+	s.commands = cmds
 	s.composer.SetCommands(cmds)
 	if s.thread != nil {
 		s.thread.SetCommands(cmds)
@@ -691,6 +714,7 @@ func (s *Screen) SetCommands(cmds []composer.Command) {
 // picker. The caller (harness or demo) builds this list from the workspace
 // index; the screen holds no filesystem access.
 func (s *Screen) SetMentions(mentions []composer.Mention) {
+	s.mentions = mentions
 	s.composer.SetMentions(mentions)
 	if s.thread != nil {
 		s.thread.SetMentions(mentions)

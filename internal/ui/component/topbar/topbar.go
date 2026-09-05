@@ -349,47 +349,10 @@ func (m Model) ModelBounds() (startCol, endCol int, ok bool) {
 	if m.info.Name == "" || m.sessionHidden {
 		return 0, 0, false
 	}
-	pct, hasPct := m.ContextPercent()
-	withProvider := true
-	withBar := m.width >= 80
-	withActivity := m.width >= 90
-
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-	if withActivity {
-		if act := m.activityBadge(); act != "" {
-			left += " " + act
-		}
-	}
-
-	buildRight := func(prov, bar bool) string {
-		r := m.modelCapsule(prov)
-		if hasPct {
-			r += " " + m.contextBadge(pct, bar)
-		}
-		return r
-	}
-
-	right := buildRight(withProvider, withBar)
-
-	if m.width > 0 {
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			left = m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			withBar = false
-			right = buildRight(withProvider, withBar)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			withProvider = false
-			right = buildRight(withProvider, withBar)
-		}
-	}
-
-	capsule := m.modelCapsule(withProvider)
+	plan := m.planLayout()
+	capsule := m.modelCapsule(plan.withProvider)
 	capsuleWidth := ansi.StringWidth(capsule)
-	rightWidth := ansi.StringWidth(right)
+	rightWidth := ansi.StringWidth(plan.right)
 
 	startCol = m.width - rightWidth
 	if startCol < 0 {
@@ -412,8 +375,8 @@ func (m Model) HitsModel(clickCol int) bool {
 // activity badge (files/agents) in the top bar within the content width.
 // Returns ok = false if no activity badge is displayed.
 func (m Model) ActivityBounds() (startCol, endCol int, ok bool) {
-	withActivity := m.width >= 90
-	if !withActivity {
+	plan := m.planLayout()
+	if !plan.withActivity {
 		return 0, 0, false
 	}
 	act := m.activityBadge()

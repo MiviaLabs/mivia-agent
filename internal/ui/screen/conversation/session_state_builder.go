@@ -26,6 +26,8 @@ func (s Screen) newSessionState(conv ports.Conversation) *sessionState {
 		threads:      s.threads,
 	}
 	st.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
+	st.composer.SetCommands(s.commands)
+	st.composer.SetMentions(s.mentions)
 	st.approval.SetWidth(contentWidth(s.width))
 	st.history.SetWidth(contentWidth(s.width))
 	st.queueOverlay.SetWidth(contentWidth(s.width))

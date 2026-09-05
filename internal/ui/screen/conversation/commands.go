@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
@@ -64,14 +65,21 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 				return s.switchToSessionID(id)
 			}
 		}
-		if idx, err := strconv.Atoi(args); err == nil && idx >= 1 && idx <= len(s.sessionOrder) {
-			return s.switchToSessionIndex(idx - 1)
+		if idx, err := strconv.Atoi(args); err == nil {
+			if idx >= 1 && idx <= len(s.sessionOrder) {
+				return s.switchToSessionIndex(idx - 1)
+			}
+			return s.withError("tab index out of range: " + args), nil
 		}
 		for _, id := range s.sessionOrder {
-			if st, ok := s.sessions[id]; ok && st.conv != nil {
-				if strings.Contains(strings.ToLower(st.conv.Title()), strings.ToLower(args)) {
-					return s.switchToSessionID(id)
-				}
+			var title string
+			if id == s.convID() && s.conv != nil {
+				title = s.conv.Title()
+			} else if st, ok := s.sessions[id]; ok && st.conv != nil {
+				title = st.conv.Title()
+			}
+			if title != "" && strings.Contains(strings.ToLower(title), strings.ToLower(args)) {
+				return s.switchToSessionID(id)
 			}
 		}
 		return s.withError("no session matching /tab " + args), nil
@@ -186,10 +194,14 @@ func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.
 			}
 		}
 	}
-	if o.Notice != "" {
-		return s.withNotice(o.Notice), nil
+	var cmd tea.Cmd
+	if s.hasActiveSession() {
+		cmd = statusline.TickCmd()
 	}
-	return s, nil
+	if o.Notice != "" {
+		return s.withNotice(o.Notice), cmd
+	}
+	return s, cmd
 }
 
 // withNotice and withError append a transcript block. Both take a value

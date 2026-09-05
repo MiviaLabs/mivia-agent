@@ -96,6 +96,7 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 	}
 	st.active = handle
 	st.statusline.Start("thinking", s.now())
+	s.refreshTopbar()
 	return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 }
 

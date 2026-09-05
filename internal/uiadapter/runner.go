@@ -158,6 +158,7 @@ func DefaultCommands() []composer.Command {
 		{Name: "quit", Desc: "exit mivia"},
 		{Name: "resume", Desc: "resume a previous session"},
 		{Name: "settings", Desc: "open the settings screen"},
+		{Name: "tab", Desc: "switch active session tab"},
 		{Name: "theme", Desc: "pick a theme"},
 		{Name: "yolo", Desc: "toggle YOLO mode (auto-approve all tool executions)"},
 	}
