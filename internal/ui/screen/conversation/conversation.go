@@ -71,6 +71,11 @@ type Screen struct {
 	// SetRemoteInputs, the same seam SetCommandRunner uses. See remote_input.go.
 	remoteInputs <-chan ports.RemoteInputEvent
 
+	// notices is the out-of-band advisory port (ports.Notices); nil is valid -
+	// no channel means no out-of-turn advisories are rendered. Set via
+	// SetNotices, the same seam SetRemoteInputs uses. See notices.go.
+	notices <-chan uievent.Event
+
 	// mounter resolves untracked sessions on demand for remote steering.
 	mounter ports.SessionMounter
 
@@ -211,7 +216,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	return s
 }
 
-func (s Screen) Init() tea.Cmd { return s.awaitRemoteInput() }
+func (s Screen) Init() tea.Cmd { return tea.Batch(s.awaitRemoteInput(), s.awaitNotice()) }
 
 // ViewFlags holds the alternate screen: the conversation is the cockpit.
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
@@ -413,6 +418,9 @@ func (s *Screen) refreshTopbar() {
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
+	if next, cmd, handled := s.updateAsyncPortMsg(msg); handled {
+		return next, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if next, cmd, handled := s.handleCompactionKey(msg); handled {
@@ -443,14 +451,6 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.handleAppSettingsMsg(msg)
 	case turnEndedMsg:
 		return s.handleTurnEndedMsg(msg)
-	case remoteInputMsg:
-		return s.handleRemoteInput(msg.event)
-	case sessionMountedMsg:
-		return s.handleSessionMountedMsg(msg)
-	case subagentTaskCancelResultMsg:
-		return s.handleSubagentTaskCancelResult(msg)
-	case threadToolCallCancelResultMsg:
-		return s.handleThreadToolCallCancelResult(msg)
 	case approval.DecisionMsg:
 		if s.approver != nil {
 			s.approver.Resolve(msg.ToolCallID, msg.Decision)
@@ -491,6 +491,35 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.applyTheme(msg), nil
 	}
 	return s, nil
+}
+
+// updateAsyncPortMsg handles every message this screen produces for ITSELF
+// out of band: the two port readers that re-arm one value at a time
+// (ports.RemoteInputs, ports.Notices) and the results of requests issued
+// earlier in a Cmd. They share a shape the rest of update's switch does not -
+// each one owns its own re-arm or completion - so they are dispatched
+// together here, which also keeps update inside the repo's per-function line
+// budget. handled is false for anything else, leaving update's switch
+// authoritative.
+func (s Screen) updateAsyncPortMsg(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case remoteInputMsg:
+		next, cmd := s.handleRemoteInput(msg.event)
+		return next, cmd, true
+	case noticeMsg:
+		next, cmd := s.handleNotice(msg.event)
+		return next, cmd, true
+	case sessionMountedMsg:
+		next, cmd := s.handleSessionMountedMsg(msg)
+		return next, cmd, true
+	case subagentTaskCancelResultMsg:
+		next, cmd := s.handleSubagentTaskCancelResult(msg)
+		return next, cmd, true
+	case threadToolCallCancelResultMsg:
+		next, cmd := s.handleThreadToolCallCancelResult(msg)
+		return next, cmd, true
+	}
+	return s, nil, false
 }
 
 // handleStatuslineTick advances the statusline spinner frame and continues
