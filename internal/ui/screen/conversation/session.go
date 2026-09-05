@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/queue"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
@@ -21,6 +22,7 @@ import (
 type sessionState struct {
 	conv         ports.Conversation
 	transcript   transcript.Model
+	composer     composer.Model
 	active       ports.TurnHandle
 	statusline   statusline.Model
 	approval     approval.Model
@@ -93,6 +95,7 @@ func (s *Screen) snapshotSessionState() *sessionState {
 	return &sessionState{
 		conv:         s.conv,
 		transcript:   s.transcript,
+		composer:     s.composer,
 		active:       s.active,
 		statusline:   s.statusline,
 		approval:     s.approval,
@@ -105,6 +108,31 @@ func (s *Screen) snapshotSessionState() *sessionState {
 		pendingForce: s.pendingForce,
 		liveUsage:    s.liveUsage,
 	}
+}
+
+func (s *Screen) dismissModals() {
+	s.modelPicker = nil
+	s.agentPicker = nil
+	s.sessionPicker = nil
+	s.palettePicker = nil
+	s.effortPicker = nil
+	s.login = nil
+	s.overlay = ""
+}
+
+func (s *Screen) applySessionState(st *sessionState) {
+	s.transcript = st.transcript
+	s.composer = st.composer
+	s.active = st.active
+	s.statusline = st.statusline
+	s.approval = st.approval
+	s.history = st.history
+	s.queueOverlay = st.queueOverlay
+	s.blackboard = st.blackboard
+	s.panel = st.panel
+	s.queue = st.queue
+	s.pendingForce = st.pendingForce
+	s.liveUsage = st.liveUsage
 }
 
 func (s *Screen) switchConversation(newConv ports.Conversation) {
@@ -125,6 +153,8 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.sessions = make(map[string]*sessionState)
 	}
 
+	s.dismissModals()
+
 	// Save current session state
 	if s.conv != nil {
 		s.sessions[s.convID()] = s.snapshotSessionState()
@@ -132,22 +162,14 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 
 	s.conv = newConv
 	newID := s.convID()
+	s.registerSession(newID)
 
 	if st, ok := s.sessions[newID]; ok {
-		s.transcript = st.transcript
-		s.active = st.active
-		s.statusline = st.statusline
-		s.approval = st.approval
-		s.history = st.history
-		s.queueOverlay = st.queueOverlay
-		s.blackboard = st.blackboard
-		s.panel = st.panel
-		s.queue = st.queue
-		s.pendingForce = st.pendingForce
-		s.liveUsage = st.liveUsage
+		s.applySessionState(st)
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
 		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
+		s.composer = composer.New(s.Theme, s.Tier, s.chatWidth())
 		s.active = nil
 		s.queue = nil
 		s.pendingForce = nil
@@ -184,6 +206,7 @@ func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
 	if msg.SessionID != "" && s.convID() != msg.SessionID {
 		if st, ok := s.sessions[msg.SessionID]; ok {
 			st.handleTurnEvent(msg.Event)
+			s.refreshTopbar()
 			if st.active != nil {
 				return s, s.awaitSessionEvent(msg.SessionID, st.active.Events())
 			}
@@ -211,6 +234,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 			st.approval.ClearAll()
 			st.panel.reconcileTerminal("interrupted")
 			st.active = nil
+			s.refreshTopbar()
 			if st.pendingForce != nil {
 				forced := *st.pendingForce
 				st.pendingForce = nil

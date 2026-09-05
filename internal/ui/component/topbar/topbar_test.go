@@ -258,3 +258,225 @@ func TestHitsActivity(t *testing.T) {
 		t.Error("expected HitsActivity false after badge")
 	}
 }
+
+func TestTabsRenderAndHitTest(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 200_000}
+	m := New(th, theme.TierTrueColor, info, ports.Usage{}, 120)
+
+	tabs := []SessionTab{
+		{ID: "sess-1", Title: "auth-refactor", Index: 1, IsCurrent: true},
+		{ID: "sess-2", Title: "perf-bench", Index: 2, Running: true},
+		{ID: "sess-3", Title: "e2e-tests", Index: 3, NeedsAction: true},
+	}
+	m.SetTabs(tabs)
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "1:auth-refactor") {
+		t.Errorf("view missing current tab title: %q", view)
+	}
+	if !strings.Contains(view, "2:perf-bench") {
+		t.Errorf("view missing running tab title: %q", view)
+	}
+	if !strings.Contains(view, "3:e2e-tests") {
+		t.Errorf("view missing needs-action tab title: %q", view)
+	}
+
+	// Hit testing
+	s1, e1, ok1 := m.TabBounds(0)
+	if !ok1 || s1 >= e1 {
+		t.Fatalf("expected valid bounds for tab 0, got [%d, %d)", s1, e1)
+	}
+	tab, hit := m.HitTab((s1 + e1) / 2)
+	if !hit || tab.ID != "sess-1" {
+		t.Errorf("expected hit on sess-1, got tab=%+v hit=%v", tab, hit)
+	}
+
+	s2, e2, ok2 := m.TabBounds(1)
+	if !ok2 || s2 >= e2 {
+		t.Fatalf("expected valid bounds for tab 1, got [%d, %d)", s2, e2)
+	}
+	tab2, hit2 := m.HitTab((s2 + e2) / 2)
+	if !hit2 || tab2.ID != "sess-2" {
+		t.Errorf("expected hit on sess-2, got tab=%+v hit=%v", tab2, hit2)
+	}
+
+	// ModelBounds still valid
+	mStart, mEnd, mOk := m.ModelBounds()
+	if !mOk || mStart <= 0 || mEnd <= mStart {
+		t.Fatalf("expected valid ModelBounds with tabs present: [%d, %d)", mStart, mEnd)
+	}
+	if !m.HitsModel((mStart + mEnd) / 2) {
+		t.Errorf("expected HitsModel to succeed with tabs present")
+	}
+}
+
+func TestTabsSlidingWindow(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "claude", Provider: "anthropic", ContextWindow: 200_000}
+	m := New(th, theme.TierTrueColor, info, ports.Usage{}, 70) // narrow terminal
+
+	tabs := []SessionTab{
+		{ID: "s1", Title: "session-one", Index: 1},
+		{ID: "s2", Title: "session-two", Index: 2},
+		{ID: "s3", Title: "session-three", Index: 3},
+		{ID: "s4", Title: "session-four", Index: 4, IsCurrent: true},
+		{ID: "s5", Title: "session-five", Index: 5},
+		{ID: "s6", Title: "session-six", Index: 6},
+	}
+	m.SetTabs(tabs)
+
+	view := ansi.Strip(m.View())
+	// Active session MUST be visible
+	if !strings.Contains(view, "4:session-four") {
+		t.Errorf("sliding window must contain active tab 4:session-four, got view: %q", view)
+	}
+	// Verify overflow marker rendered
+	if !strings.Contains(view, "◂") && !strings.Contains(view, "▸") {
+		t.Errorf("expected overflow indicators for clipped tabs in narrow view: %q", view)
+	}
+}
+
+func TestTabsEdgeCases(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "claude", Provider: "anthropic", ContextWindow: 200_000}
+
+	// Empty tabs
+	mEmpty := New(th, theme.TierTrueColor, info, ports.Usage{}, 80)
+	if _, hit := mEmpty.HitTab(10); hit {
+		t.Error("expected HitTab false when tabs are empty")
+	}
+
+	// ASCII tier rendering
+	mAscii := New(th, theme.TierASCII, info, ports.Usage{}, 120)
+	tabs := []SessionTab{
+		{ID: "s1", Title: "", Index: 1}, // empty title -> fallback to ID
+		{ID: "s2", Title: "very-long-session-title-that-needs-truncation", Index: 2, Running: true},
+		{ID: "s3", Title: "sess-3", Index: 3, IsCurrent: true},
+		{ID: "s4", Title: "sess-4", Index: 4},
+		{ID: "s5", Title: "sess-5", Index: 5},
+	}
+	mAscii.SetTabs(tabs)
+
+	if got := len(mAscii.Tabs()); got != 5 {
+		t.Fatalf("expected 5 tabs, got %d", got)
+	}
+
+	viewAscii := ansi.Strip(mAscii.View())
+	// Empty title fallback to ID
+	if !strings.Contains(viewAscii, "1:s1") {
+		t.Errorf("expected 1:s1 in ASCII view: %q", viewAscii)
+	}
+	// Long title truncation
+	if !strings.Contains(viewAscii, "…") {
+		t.Errorf("expected truncation ellipsis in ASCII view: %q", viewAscii)
+	}
+	// ASCII indicators
+	if !strings.Contains(viewAscii, ">") && !strings.Contains(viewAscii, "<") {
+		t.Errorf("expected ASCII overflow markers in view: %q", viewAscii)
+	}
+
+	// Bounds checks
+	if _, _, ok := mAscii.TabBounds(-1); ok {
+		t.Error("expected TabBounds(-1) = false")
+	}
+	if _, _, ok := mAscii.TabBounds(100); ok {
+		t.Error("expected TabBounds(100) = false")
+	}
+	if _, hit := mAscii.HitTab(-5); hit {
+		t.Error("expected HitTab(-5) = false")
+	}
+	if _, hit := mAscii.HitTab(500); hit {
+		t.Error("expected HitTab(500) = false")
+	}
+
+	// SetTabs(nil) resets
+	mAscii.SetTabs(nil)
+	if mAscii.Tabs() != nil {
+		t.Error("expected nil tabs after SetTabs(nil)")
+	}
+}
+
+func TestTabsOverflowAndBounds(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "claude", Provider: "anthropic", ContextWindow: 200_000}
+
+	// ASCII tier rendering with sliding window and left/right overflow
+	mAsciiNarrow := New(th, theme.TierASCII, info, ports.Usage{}, 88)
+	mAsciiNarrow.SetActivity(2, 1)
+	tabsExpanded := []SessionTab{
+		{ID: "s1", Title: "t1", Index: 1},
+		{ID: "s2", Title: "t2", Index: 2},
+		{ID: "s3", Title: "t3", Index: 3},
+		{ID: "s4", Title: "t4", Index: 4, IsCurrent: true},
+		{ID: "s5", Title: "t5", Index: 5},
+		{ID: "s6", Title: "t6", Index: 6},
+		{ID: "s7", Title: "t7", Index: 7},
+		{ID: "s8", Title: "t8", Index: 8},
+	}
+	mAsciiNarrow.SetTabs(tabsExpanded)
+	viewNarrow := ansi.Strip(mAsciiNarrow.View())
+	// Should render both < and > in ASCII tier
+	if !strings.Contains(viewNarrow, "<") || !strings.Contains(viewNarrow, ">") {
+		t.Errorf("expected < and > in viewNarrow: %q", viewNarrow)
+	}
+
+	// Tab outside window returns false in TabBounds
+	if _, _, ok := mAsciiNarrow.TabBounds(0); ok {
+		t.Error("expected tab 0 to be clipped outside sliding window")
+	}
+	// HitTab with activity and width >= 90
+	mWideAct := New(th, theme.TierTrueColor, info, ports.Usage{}, 95)
+	mWideAct.SetActivity(2, 1)
+	mWideAct.SetTabs(tabsExpanded)
+	_, _ = mWideAct.HitTab(5)
+
+	// Session hidden with tabs
+	mHidden := New(th, theme.TierTrueColor, info, ports.Usage{}, 100)
+	mHidden.SetTabs(tabsExpanded)
+	mHidden.SetSessionHidden(true)
+	if v := mHidden.View(); strings.Contains(v, "anthropic") {
+		t.Errorf("expected model info hidden: %q", v)
+	}
+	_, _ = mHidden.HitTab(5)
+
+	// Tiny width
+	mTiny := New(th, theme.TierTrueColor, info, ports.Usage{}, 5)
+	mTiny.SetTabs(tabsExpanded)
+	_ = mTiny.View()
+	_, _ = mTiny.HitTab(5)
+}
+
+func TestTabsDegradation(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 200_000}
+	usage := ports.Usage{InputTokens: 100_000, OutputTokens: 10_000}
+
+	tabs := []SessionTab{
+		{ID: "s1", Title: "work-1", Index: 1, IsCurrent: true},
+		{ID: "s2", Title: "work-2", Index: 2},
+	}
+
+	// Test descending widths to exercise degradation steps
+	for width := 110; width >= 30; width-- {
+		m := New(th, theme.TierTrueColor, info, usage, width)
+		m.SetActivity(3, 1)
+		m.SetTabs(tabs)
+		v := m.View()
+		w := ansi.StringWidth(v)
+		if w > width {
+			t.Errorf("width %d exceeded: actual %d\nview: %q", width, w, v)
+		}
+	}
+
+	// Exercise dropping withBar when long model name pushes width over budget
+	longInfo := ports.ModelInfo{
+		Name:          "very-long-custom-fine-tuned-model-name-that-takes-up-lots-of-space",
+		Provider:      "custom-provider",
+		ContextWindow: 200_000,
+	}
+	mLong := New(th, theme.TierTrueColor, longInfo, usage, 85)
+	mLong.SetActivity(3, 1)
+	mLong.SetTabs(tabs)
+	_ = mLong.View()
+}

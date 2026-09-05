@@ -114,7 +114,8 @@ type Screen struct {
 	blackboard   blackboard.Model
 	welcome      welcome.Model
 
-	sessions map[string]*sessionState
+	sessions     map[string]*sessionState
+	sessionOrder []string
 
 	active                    ports.TurnHandle
 	compaction                ports.CompactionHandle
@@ -208,6 +209,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	s.blackboard.SetWidth(contentWidth(width))
 	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
+		s.registerSession(conv.ID())
 		if rp, ok := conv.(interface{ ShowReasoning() bool }); ok {
 			s.transcript = s.transcript.SetHideReasoning(!rp.ShowReasoning())
 		}
@@ -423,6 +425,7 @@ func (s *Screen) refreshTopbar() {
 		}
 	}
 	s.refreshActivity()
+	s.refreshTabs()
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {

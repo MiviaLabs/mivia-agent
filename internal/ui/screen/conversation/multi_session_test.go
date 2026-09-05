@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -637,5 +638,295 @@ func TestMultiSession_BackgroundPathKeepsSessionStateWhole(t *testing.T) {
 	if n := s.blackboard.FindingsCount(); n == 0 {
 		t.Error("a finding posted while the session was backgrounded was dropped")
 	}
+}
 
+func TestTopSessionBar_MultiSessionTabs(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Initially 1 session registered (sess-A)
+	if tabs := s.topbar.Tabs(); len(tabs) != 0 {
+		t.Errorf("single session should not show tabs, got %d tabs", len(tabs))
+	}
+
+	// Switch to sess-B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	tabs := s.topbar.Tabs()
+	if len(tabs) != 2 {
+		t.Fatalf("expected 2 tabs after opening second session, got %d", len(tabs))
+	}
+	if tabs[0].ID != "sess-A" || tabs[0].IsCurrent {
+		t.Errorf("tab 0 want sess-A background, got %+v", tabs[0])
+	}
+	if tabs[1].ID != "sess-B" || !tabs[1].IsCurrent {
+		t.Errorf("tab 1 want sess-B current, got %+v", tabs[1])
+	}
+
+	// Tool pending in background session A
+	s2, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolPending,
+			TurnID: "turn-sess-A",
+			Body: uievent.ToolPendingBody{
+				ToolCallID: "tc-pending",
+				Name:       "write",
+				Args:       map[string]any{"file": "test.txt"},
+			},
+		},
+	})
+	s = s2.(Screen)
+	tabs = s.topbar.Tabs()
+	if !tabs[0].NeedsAction {
+		t.Errorf("expected tab 0 to show NeedsAction: true after ToolPending, got %+v", tabs[0])
+	}
+
+	// View rendering contains tabs
+	view := ansi.Strip(s.View())
+	if !strings.Contains(view, "1:Session A") || !strings.Contains(view, "2:Session B") {
+		t.Errorf("view missing session tabs: %q", view)
+	}
+}
+
+func TestTopSessionBar_ClickSwitchesSession(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	if s.convID() != "sess-B" {
+		t.Fatalf("expected current session to be sess-B, got %q", s.convID())
+	}
+
+	// Locate Tab 0 (sess-A) click column
+	s0, e0, ok := s.topbar.TabBounds(0)
+	if !ok {
+		t.Fatal("expected TabBounds ok for tab 0")
+	}
+	clickX := 1 + (s0+e0)/2 // 1 for screen gutter
+	topGutter := 1
+
+	// Single click on Tab 0
+	next, _ = s.Update(leftClick(clickX, topGutter))
+	s = next.(Screen)
+
+	if s.convID() != "sess-A" {
+		t.Errorf("single click on tab 0 should switch to sess-A, got %q", s.convID())
+	}
+}
+
+func TestTopSessionBar_KeyboardNavigation(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// F6: Previous Tab (from B to A)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("F6 should switch to sess-A, got %q", s.convID())
+	}
+
+	// F7: Next Tab (from A to B)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("F7 should switch to sess-B, got %q", s.convID())
+	}
+
+	// Alt+1: Direct switch to Tab 1 (sess-A)
+	next, _ = s.Update(tea.KeyPressMsg{Code: '1', Mod: tea.ModAlt})
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("Alt+1 should switch to sess-A, got %q", s.convID())
+	}
+}
+
+func TestTopSessionBar_SlashCommandTab(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// /tab prev
+	next, _ = s.runSlashCommand("/tab prev")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("/tab prev should switch to sess-A, got %q", s.convID())
+	}
+
+	// /tab next
+	next, _ = s.runSlashCommand("/tab next")
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("/tab next should switch to sess-B, got %q", s.convID())
+	}
+
+	// /tab 1
+	next, _ = s.runSlashCommand("/tab 1")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("/tab 1 should switch to sess-A, got %q", s.convID())
+	}
+
+	// /tab Session B
+	next, _ = s.runSlashCommand("/tab Session B")
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("/tab Session B should switch to sess-B, got %q", s.convID())
+	}
+}
+
+func TestTopSessionBar_ComposerDraftPreserved(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Type uncommitted draft into Session A
+	s = typeText(t, s, "uncommitted draft in session A")
+	if s.composer.Value() != "uncommitted draft in session A" {
+		t.Fatalf("composer value mismatch: %q", s.composer.Value())
+	}
+
+	// Switch to Session B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Session B should have an empty composer
+	if s.composer.Value() != "" {
+		t.Errorf("session B composer should be empty, got: %q", s.composer.Value())
+	}
+
+	// Type draft in Session B
+	s = typeText(t, s, "uncommitted draft in session B")
+
+	// Switch back to Session A
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	// Session A draft must be preserved
+	if s.composer.Value() != "uncommitted draft in session A" {
+		t.Errorf("session A draft lost after switching back: got %q", s.composer.Value())
+	}
+
+	// Switch back to Session B
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Session B draft must be preserved
+	if s.composer.Value() != "uncommitted draft in session B" {
+		t.Errorf("session B draft lost after switching back: got %q", s.composer.Value())
+	}
+}
+
+func TestTopSessionBar_KeyboardNavigation_Accelerators(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Register sess-B then switch back to sess-A
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	// Alt+2: Switch to Tab 2 (sess-B)
+	next, _ = s.Update(tea.KeyPressMsg{Code: '2', Mod: tea.ModAlt})
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("Alt+2 should switch to sess-B, got %q", s.convID())
+	}
+
+	// Alt+3..9 when tab does not exist should safely no-op
+	for r := '3'; r <= '9'; r++ {
+		next, _ = s.Update(tea.KeyPressMsg{Code: r, Mod: tea.ModAlt})
+		s = next.(Screen)
+		if s.convID() != "sess-B" {
+			t.Errorf("Alt+%c should no-op, got convID %q", r, s.convID())
+		}
+	}
+	_ = runner
+}
+
+func TestTopSessionBar_EdgeCases(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Register sess-B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Exact session ID match with /tab (switch to sess-A)
+	next, _ = s.runSlashCommand("/tab sess-A")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("/tab sess-A should switch to sess-A, got %q", s.convID())
+	}
+
+	// Unknown session returns error and stays on current session
+	next, _ = s.runSlashCommand("/tab nonexistent")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("failed /tab should remain on current session, got %q", s.convID())
+	}
+
+	// Backward wrap-around: from sess-A (index 0), switchTabRelative(-1) wraps to sess-B (index 1)
+	nextScreen, _ := s.switchTabRelative(-1)
+	s = nextScreen.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("switchTabRelative(-1) from index 0 should wrap to sess-B, got %q", s.convID())
+	}
+
+	// Edge checks on switchToSessionID
+	sameScreen, cmd := s.switchToSessionID("")
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionID(\"\") to return unchanged screen and nil cmd")
+	}
+	sameScreen, cmd = s.switchToSessionID(s.convID())
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionID(current) to return unchanged screen and nil cmd")
+	}
+
+	// Edge checks on switchToSessionIndex
+	sameScreen, cmd = s.switchToSessionIndex(-1)
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionIndex(-1) to return unchanged screen and nil cmd")
+	}
+	sameScreen, cmd = s.switchToSessionIndex(999)
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionIndex(999) to return unchanged screen and nil cmd")
+	}
+
+	// len(sessionOrder) <= 1 relative switch
+	singleSessScreen := s
+	singleSessScreen.sessionOrder = []string{"sess-B"}
+	nextSingle, cmd := singleSessScreen.switchTabRelative(1)
+	if cmd != nil || nextSingle.(Screen).convID() != "sess-B" {
+		t.Error("expected single session relative switch to return nil cmd")
+	}
+
+	// Uncached session ID with runner available
+	sWithNewID, _ := s.switchToSessionID("sess-C")
+	if sWithNewID.(Screen).convID() != "sess-B" {
+		t.Errorf("expected session sess-B when sess-C fails in runner, got %q", sWithNewID.(Screen).convID())
+	}
+
+	// Uncached session ID with no runner
+	sNoRunner := s
+	sNoRunner.runner = nil
+	sNoRunnerScreen, _ := sNoRunner.switchToSessionID("sess-C")
+	if sNoRunnerScreen.(Screen).convID() != "sess-B" {
+		t.Errorf("expected unchanged session when no runner, got %q", sNoRunnerScreen.(Screen).convID())
+	}
 }

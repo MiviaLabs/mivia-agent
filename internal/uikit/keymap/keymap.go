@@ -169,6 +169,19 @@ const (
 	// Force-send: interrupt the current turn (composer) or force-send
 	// the selected queued message (dialog).
 	IDForceSend ID = "force-send"
+
+	// Session tabs navigation.
+	IDTabPrev ID = "tab-prev"
+	IDTabNext ID = "tab-next"
+	IDTab1    ID = "tab-1"
+	IDTab2    ID = "tab-2"
+	IDTab3    ID = "tab-3"
+	IDTab4    ID = "tab-4"
+	IDTab5    ID = "tab-5"
+	IDTab6    ID = "tab-6"
+	IDTab7    ID = "tab-7"
+	IDTab8    ID = "tab-8"
+	IDTab9    ID = "tab-9"
 )
 
 // Binding is one row of the table.
@@ -213,6 +226,17 @@ func Default() []Binding {
 		// unbound everywhere and rule 1.1 permits function keys.
 		{ID: IDSettingsDialog, Context: ContextGlobal, Keys: []string{"f2"}, Help: "settings", Short: "settings"},
 		{ID: IDBlackboardDialog, Context: ContextGlobal, Keys: []string{"f3"}, Help: "blackboard & agent messages", Short: "blackboard"},
+		{ID: IDTabPrev, Context: ContextGlobal, Keys: []string{"f6", "alt+["}, Help: "switch to previous session tab", Short: "tab-prev"},
+		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"f7", "alt+]"}, Help: "switch to next session tab", Short: "tab-next"},
+		{ID: IDTab1, Context: ContextGlobal, Keys: []string{"alt+1"}, Help: "switch to session tab 1", Hidden: true},
+		{ID: IDTab2, Context: ContextGlobal, Keys: []string{"alt+2"}, Help: "switch to session tab 2", Hidden: true},
+		{ID: IDTab3, Context: ContextGlobal, Keys: []string{"alt+3"}, Help: "switch to session tab 3", Hidden: true},
+		{ID: IDTab4, Context: ContextGlobal, Keys: []string{"alt+4"}, Help: "switch to session tab 4", Hidden: true},
+		{ID: IDTab5, Context: ContextGlobal, Keys: []string{"alt+5"}, Help: "switch to session tab 5", Hidden: true},
+		{ID: IDTab6, Context: ContextGlobal, Keys: []string{"alt+6"}, Help: "switch to session tab 6", Hidden: true},
+		{ID: IDTab7, Context: ContextGlobal, Keys: []string{"alt+7"}, Help: "switch to session tab 7", Hidden: true},
+		{ID: IDTab8, Context: ContextGlobal, Keys: []string{"alt+8"}, Help: "switch to session tab 8", Hidden: true},
+		{ID: IDTab9, Context: ContextGlobal, Keys: []string{"alt+9"}, Help: "switch to session tab 9", Hidden: true},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer

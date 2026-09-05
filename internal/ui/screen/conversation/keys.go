@@ -515,9 +515,13 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	// transcript - identical between the two constructions.
 	if s.embedded {
 		switch id {
-		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog, keymap.IDBlackboardDialog:
+		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog, keymap.IDBlackboardDialog,
+			keymap.IDTabPrev, keymap.IDTabNext, keymap.IDTab1, keymap.IDTab2, keymap.IDTab3, keymap.IDTab4, keymap.IDTab5, keymap.IDTab6, keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
 			return s, nil, true
 		}
+	}
+	if next, cmd, handled := s.tabGlobalAction(id); handled {
+		return next, cmd, true
 	}
 	switch id {
 	case keymap.IDThemeDialog:
