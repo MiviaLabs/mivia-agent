@@ -73,6 +73,8 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 	if !ok {
 		st = s.newSessionState(msg.conv)
 		s.sessions[msg.sessionID] = st
+		s.registerSession(msg.sessionID)
+		s.refreshTopbar()
 	}
 
 	for _, remaining := range events[1:] {

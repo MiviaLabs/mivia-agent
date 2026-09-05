@@ -226,8 +226,8 @@ func Default() []Binding {
 		// unbound everywhere and rule 1.1 permits function keys.
 		{ID: IDSettingsDialog, Context: ContextGlobal, Keys: []string{"f2"}, Help: "settings", Short: "settings"},
 		{ID: IDBlackboardDialog, Context: ContextGlobal, Keys: []string{"f3"}, Help: "blackboard & agent messages", Short: "blackboard"},
-		{ID: IDTabPrev, Context: ContextGlobal, Keys: []string{"f6", "alt+["}, Help: "switch to previous session tab", Short: "tab-prev"},
-		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"f7", "alt+]"}, Help: "switch to next session tab", Short: "tab-next"},
+		{ID: IDTabPrev, Context: ContextGlobal, Keys: []string{"f6"}, Help: "switch to previous session tab", Short: "tab-prev"},
+		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"f7"}, Help: "switch to next session tab", Short: "tab-next"},
 		{ID: IDTab1, Context: ContextGlobal, Keys: []string{"alt+1"}, Help: "switch to session tab 1", Hidden: true},
 		{ID: IDTab2, Context: ContextGlobal, Keys: []string{"alt+2"}, Help: "switch to session tab 2", Hidden: true},
 		{ID: IDTab3, Context: ContextGlobal, Keys: []string{"alt+3"}, Help: "switch to session tab 3", Hidden: true},
