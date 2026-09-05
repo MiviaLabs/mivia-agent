@@ -126,6 +126,34 @@ func TestRefuseUntrustedMCPTableDefaultsEmptyWorkspaceRootToDot(t *testing.T) {
 	}
 }
 
+// TestLoadPropagatesAMalformedUserMCPConfig covers Load's own
+// loadRuntimeMCPConfig error propagation: a malformed [mcp] table in the
+// TRUSTED user config path (not the --config path under test) must still
+// fail Load, since LoadTrustedMCPConfig always reads it regardless of which
+// config file the caller named.
+func TestLoadPropagatesAMalformedUserMCPConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	userConfigDir := filepath.Join(home, workspace.Namespace)
+	if err := os.MkdirAll(userConfigDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userConfigDir, "mivia.toml"), []byte("[mcp]\nenabled = \"not-a-bool\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "prod.toml")
+	if err := os.WriteFile(path, []byte(mcpBaseFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(LoadOptions{ConfigPath: path, WorkspaceRoot: t.TempDir()}); err == nil {
+		t.Fatal("Load accepted a malformed [mcp] table in the trusted user config")
+	}
+}
+
 // TestLoadIgnoresAnAbsentMCPTable keeps the guard scoped to configs that
 // actually declare one: an ordinary --config file must still load.
 func TestLoadIgnoresAnAbsentMCPTable(t *testing.T) {
