@@ -139,6 +139,30 @@ func TestCallToolErrorTextKeepsServerDetail(t *testing.T) {
 	}
 }
 
+// TestCallToolErrorTextMarksUnsupportedContent covers the non-text content
+// branch: a server that reports an error via ImageContent (or any content
+// type other than TextContent) must not be silently dropped - the caller
+// still needs to see that content was present, even though it cannot be
+// rendered as text.
+func TestCallToolErrorTextMarksUnsupportedContent(t *testing.T) {
+	got := callToolErrorText([]sdk.Content{
+		&sdk.ImageContent{Data: []byte{0xFF}, MIMEType: "image/png"},
+	})
+	if got != "[unsupported MCP result content]" {
+		t.Fatalf("callToolErrorText() = %q, want the unsupported-content marker", got)
+	}
+
+	// Mixed content: the text part is kept and joined with the marker for the
+	// unsupported part, so no information is lost from either.
+	mixed := callToolErrorText([]sdk.Content{
+		&sdk.TextContent{Text: "partial failure"},
+		&sdk.ImageContent{Data: []byte{0xFF}, MIMEType: "image/png"},
+	})
+	if mixed != "partial failure\n[unsupported MCP result content]" {
+		t.Fatalf("callToolErrorText() = %q, want text and marker joined", mixed)
+	}
+}
+
 func TestSanitizeToolMetadataRejectsDeepSchema(t *testing.T) {
 	value := map[string]any{}
 	root := value
