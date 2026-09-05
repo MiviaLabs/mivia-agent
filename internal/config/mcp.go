@@ -414,3 +414,54 @@ func validMCPID(id string) bool {
 func mcpProjectPath(root string) string {
 	return filepath.Clean(workspace.NamespacePath(root, "mivia.toml"))
 }
+
+// refuseUntrustedMCPTable fails a load whose selected config file declares
+// [mcp] from a path the MCP resolver does not read.
+//
+// MCP configuration is deliberately resolved from exactly two TRUSTED paths -
+// the user config and the workspace's own .mivia/mivia.toml - and never from
+// an arbitrary file named by --config or MIVIA_CONFIG. But config.File still
+// decodes a [mcp] table from whatever file it loads, and resolveLoaded then
+// overwrites it with the trusted result, so that table was parsed and thrown
+// away in silence.
+//
+// The silence is the defect, and it cuts both ways: the servers the operator
+// declared in the config they explicitly selected never start, while stdio
+// servers from ~/.mivia/mivia.toml and the workspace config - which launch
+// arbitrary local commands - start anyway, under a configuration the operator
+// did not name. Refusing is the honest answer: it cannot silently widen or
+// narrow the MCP authority set, and it tells the operator exactly which two
+// paths do carry [mcp].
+func refuseUntrustedMCPTable(file File, configPath, workspaceRoot string, found bool) error {
+	if !found || (!file.MCP.Enabled && len(file.MCP.Servers) == 0) {
+		return nil
+	}
+	if sameFilePath(configPath, UserConfigPath()) || isProjectConfigShape(configPath) {
+		return nil
+	}
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		root = "."
+	}
+	return fmt.Errorf(
+		"config %s: [mcp] is only read from %s or %s, so declaring it here would be silently ignored; move the [mcp] table to one of those files",
+		configPath, UserConfigPath(), workspace.NamespacePath(root, "mivia.toml"))
+}
+
+// isProjectConfigShape reports whether path has the workspace project-config
+// shape, <anything>/.mivia/mivia.toml.
+//
+// The test is the SHAPE, not equality with the resolved workspace path. A
+// project config is a project config wherever it sits; whether this process's
+// workspace root happens to point at that same directory is a separate
+// question, and answering it here would refuse the repo's own shipped
+// .mivia/mivia.toml whenever a caller loads it with a different (or empty)
+// workspace root - which every shipped-config test does.
+func isProjectConfigShape(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	return filepath.Base(clean) == "mivia.toml" &&
+		filepath.Base(filepath.Dir(clean)) == workspace.Namespace
+}

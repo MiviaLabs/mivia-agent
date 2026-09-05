@@ -86,6 +86,9 @@ func Load(opts LoadOptions) (*Resolved, error) {
 			root = cwd
 		}
 	}
+	if err := refuseUntrustedMCPTable(file, configPath, root, found); err != nil {
+		return nil, err
+	}
 	projectConfigFound := ProjectConfigExists(root)
 	memCfg, err := resolveMemoryConfig(file, configPath, root, projectConfigFound)
 	if err != nil {
