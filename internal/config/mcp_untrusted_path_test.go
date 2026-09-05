@@ -110,6 +110,22 @@ func TestLoadRefusesAnMCPTableFromADifferentProjectConfig(t *testing.T) {
 	}
 }
 
+// TestRefuseUntrustedMCPTableDefaultsEmptyWorkspaceRootToDot covers the
+// message-building fallback directly: every Load-level test passes a real
+// WorkspaceRoot, so root's own `if root == "" { root = "." }` default (used
+// only to name the trusted project-config path in the error text) was never
+// reached.
+func TestRefuseUntrustedMCPTableDefaultsEmptyWorkspaceRootToDot(t *testing.T) {
+	file := File{MCP: MCPConfig{Enabled: true}}
+	err := refuseUntrustedMCPTable(file, "/some/untrusted/prod.toml", "", true)
+	if err == nil {
+		t.Fatal("refuseUntrustedMCPTable accepted an untrusted path")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(workspace.Namespace, "mivia.toml")) {
+		t.Fatalf("error = %v, want it to name the project config path rooted at \".\"", err)
+	}
+}
+
 // TestLoadIgnoresAnAbsentMCPTable keeps the guard scoped to configs that
 // actually declare one: an ordinary --config file must still load.
 func TestLoadIgnoresAnAbsentMCPTable(t *testing.T) {
