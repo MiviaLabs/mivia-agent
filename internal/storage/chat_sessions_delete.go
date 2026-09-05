@@ -28,7 +28,7 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	count, liveID, err := s.deleteSessionSnapshotRow(ctx, principal, name)
+	count, err := s.deleteSessionSnapshotRow(ctx, principal, name)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 		if resolvedName, ok, err := s.resolveSnapshotNameBySessionID(ctx, principal, name); err != nil {
 			return err
 		} else if ok {
-			count, liveID, err = s.deleteSessionSnapshotRow(ctx, principal, resolvedName)
+			count, err = s.deleteSessionSnapshotRow(ctx, principal, resolvedName)
 			if err != nil {
 				return err
 			}
@@ -55,18 +55,6 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 	}
 	if count == 0 {
 		return s.deleteContextSessionOrOrphanedAdmission(ctx, principal, name)
-	}
-	if liveID != "" {
-		// The snapshot was a projection of a live session ("id is id"), and
-		// LoadSession serves that live row whenever no snapshot remains - so
-		// deleting the snapshot alone reported success and kept serving the
-		// conversation. Retire the live row through the same lifecycle the
-		// no-snapshot path uses, keyed by the row's STORED id (which diverges
-		// from the catalog name in legacy data). A snapshot with no live row
-		// behind it is already fully deleted.
-		if err := s.deleteCatalogContextSession(ctx, principal, liveID); err != nil && !errors.Is(err, contextstate.ErrSessionNotFound) {
-			return err
-		}
 	}
 	return nil
 }
@@ -115,7 +103,7 @@ func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, pr
 // separate commit: reclaiming the record here would durably destroy it before
 // the retention work is known to have landed, leaving a live session with no
 // admitted tool set.
-func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, string, error) {
+func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, error) {
 	var count int64
 	var liveID string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
@@ -134,6 +122,17 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		if err != nil {
 			return err
 		}
+		// Same transaction as the snapshot delete, matching the worktree
+		// twin: the projection's live row is what LoadSession falls back to
+		// once the snapshot is gone, so a crash between two separate commits
+		// left a "deleted" conversation still loadable, with its payloads
+		// unrevoked and no retention audit. A snapshot with no live row
+		// behind it is already fully deleted.
+		if liveID != "" {
+			if err := tombstoneContextSessionTx(ctx, tx, principal, liveID, contextstate.WorktreeInstance{}); err != nil && !errors.Is(err, contextstate.ErrSessionNotFound) {
+				return err
+			}
+		}
 		if count, err = result.RowsAffected(); err != nil || count == 0 {
 			return err
 		}
@@ -143,7 +142,7 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		_, err = tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name)
 		return err
 	})
-	return count, liveID, err
+	return count, err
 }
 
 // deleteCatalogContextSession applies the full retention lifecycle to a

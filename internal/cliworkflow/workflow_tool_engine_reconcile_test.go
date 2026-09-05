@@ -45,9 +45,9 @@ func TestSessionReconcileParkedRunsDelivers(t *testing.T) {
 	ApplyWorkflowStoreRoot(res, root)
 
 	var opts tools.DefaultOptions
-	// A non-nil event-bus provider marks production wiring and arms the
-	// parked-run sweep; the nil-provider test paths never sweep.
-	WireWorkflowToolOptions(&opts, root, res, func() *events.Bus { return nil }, false, nil)
+	// runSweep arms the parked-run sweep; the bus provider is independent of
+	// it now, so this test asks for the sweep explicitly.
+	WireWorkflowToolOptions(&opts, root, res, func() *events.Bus { return nil }, true, false, nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

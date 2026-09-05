@@ -115,7 +115,7 @@ func TestRefusedFullDiskToggleShowsConfirmedValue(t *testing.T) {
 	sec.SetTheme(th, theme.TierTrueColor) // triggers rebuild
 	sec.cursor = len(sec.rows) - 1        // the full-disk row
 
-	next, cmd := sec.commit()
+	next, cmd := sec.commit(1)
 	if cmd == nil {
 		t.Fatal("expected a save Cmd from committing the row")
 	}
@@ -257,4 +257,41 @@ func TestUnavailableGeneralSectionSaysSo(t *testing.T) {
 	if got := ansi.Strip(s.sections[0].View()); !strings.Contains(got, "unavailable") {
 		t.Errorf("expected the nil-store General section to say unavailable, got %q", got)
 	}
+}
+
+// TestApprovalRowNeverTransitsAutoApprove drives the real key path from the
+// prompting default to "deny". Every value the row commits is applied AND
+// persisted immediately (there is no preview step), and the runtime half now
+// fans out to every pooled session - so a cycle order that passes through
+// "always" grants blanket auto-approval to every running session, including
+// backgrounded and worktree ones, on the way to tightening the gate. An
+// operator interrupted mid-cycle is left there durably.
+func TestApprovalRowNeverTransitsAutoApprove(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyRight}) // focus detail
+	s = next.(Screen)
+	for i := 0; i < 5; i++ { // down to the approval row
+		next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
+	start := h.SettingsAdapters().General.General().ApprovalDefault
+	if start == "always" {
+		t.Fatalf("precondition: fixture starts at %q", start)
+	}
+	// Tighten with the backward key: the forward direction loosens, and the
+	// point of the strength ordering is that tightening never has to route
+	// through a weaker posture.
+	for i := 0; i < 3; i++ {
+		var cmd tea.Cmd
+		next, cmd = s.Update(tea.KeyPressMsg{Text: "-", Code: '-'})
+		s = awaitGeneralSave(t, next.(Screen), cmd)
+		got := h.SettingsAdapters().General.General().ApprovalDefault
+		if got == "always" {
+			t.Fatalf("cycling the approval row reached %q - auto-approve every tool call, applied to every pooled session and persisted, on the way from %q to deny", got, start)
+		}
+		if got == "deny" {
+			return
+		}
+	}
+	t.Fatalf("cycling never reached deny from %q", start)
 }

@@ -85,6 +85,14 @@ func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextsta
 			return err
 		}
 		k, err := loadWorktreeCatalogKeyTx(ctx, tx, p, i, "snapshot", n)
+		if errors.Is(err, contextstate.ErrSessionNotFound) {
+			// No snapshot: the turn-only shape, which is the NORMAL one for
+			// a worktree session and exactly what the loader's live arm
+			// serves. Returning here left it fully loadable and its payloads
+			// unrevoked while reporting "session not found" for a delete the
+			// user asked for. Retire the live row instead.
+			return tombstoneContextSessionTx(ctx, tx, p, n, i)
+		}
 		if err != nil {
 			return err
 		}

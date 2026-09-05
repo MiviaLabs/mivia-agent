@@ -155,7 +155,7 @@ func TestSessionEngineConfigPathUsesResolvedConfigPath(t *testing.T) {
 	opts := tools.DefaultOptions{Workspace: ws}
 	res.Subagents = config.SubagentConfig{StoreBackend: "sqlite", StorePath: filepath.Join(root, "custom.db")}
 	res.StorePathSet = true
-	WireWorkflowToolOptions(&opts, ws.Abs, res, nil, false, nil)
+	WireWorkflowToolOptions(&opts, ws.Abs, res, nil, false, false, nil)
 	if len(opts.WorkflowTools) == 0 {
 		t.Fatal("expected workflow tools")
 	}
@@ -276,7 +276,7 @@ func TestWireWorkflowToolOptionsUsesResolvedStorePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := tools.DefaultOptions{Workspace: ws}
-	WireWorkflowToolOptions(&opts, ws.Abs, res, nil, false, nil)
+	WireWorkflowToolOptions(&opts, ws.Abs, res, nil, false, false, nil)
 	if len(opts.WorkflowTools) == 0 {
 		t.Fatal("expected workflow tools to register")
 	}
