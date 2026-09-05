@@ -223,6 +223,30 @@ func TestHandleSessionMountedMsg_SendFailureRecordsErrorEvent(t *testing.T) {
 	}
 }
 
+// TestHandleSessionMountedMsg_InitializesNilSessionsMap covers mount.go:68-69
+// - the lazy s.sessions init. New() already constructs a non-nil map, so no
+// test built through it reaches this guard; forcing s.sessions back to nil
+// exercises the defensive path directly, the same way this file's nil-
+// receiver-style tests cover other constructor-guaranteed guards.
+func TestHandleSessionMountedMsg_InitializesNilSessionsMap(t *testing.T) {
+	th := testTheme()
+	primary := &fakeMountConv{id: "primary"}
+	s := New(th, theme.TierTrueColor, []theme.Theme{th}, primary, nil, 80, nil)
+	s.sessions = nil
+	s.mounting = map[string][]ports.RemoteInputEvent{
+		"bg-new": {{SessionID: "bg-new", Body: "hello"}},
+	}
+
+	bgConv := &fakeMountConv{id: "bg-new"}
+	next, _ := s.handleSessionMountedMsg(sessionMountedMsg{sessionID: "bg-new", conv: bgConv})
+	if next.sessions == nil {
+		t.Fatal("handleSessionMountedMsg did not initialize a nil sessions map")
+	}
+	if _, ok := next.sessions["bg-new"]; !ok {
+		t.Fatal("expected the new background session to be tracked after init")
+	}
+}
+
 // TestDroppedRemoteInputNotice_NoEvents covers mount.go:108-110 - the
 // no-events branch of droppedRemoteInputNotice, unreachable from
 // handleSessionMountedMsg (which never calls it with an empty slice) but
