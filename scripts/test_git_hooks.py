@@ -673,7 +673,11 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert "internal/chat/" in pre
     assert "internal/config/" in pre
     assert "internal/cliorchestrate/" in pre
+    assert "internal/storage/" in pre
     assert "TestTaskResultProducerConformance" in pre
+    # The session-catalog namespaces are two implementations of one contract;
+    # the conformance table is what makes a one-namespace fix fail loudly.
+    assert "TestCatalogNamespaces" in pre
     # Invariant summary must be in the quality line
     assert "INVARIANT_SUMMARY" in pre
     helper_call = 'run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }'
