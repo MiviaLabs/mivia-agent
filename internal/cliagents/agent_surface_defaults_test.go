@@ -97,3 +97,28 @@ func TestDispatcherOptsForSurfaceWithoutRemainderSpoolSeam(t *testing.T) {
 		t.Fatalf("RemainderSpool = %v, want the seam's spool", opts.RemainderSpool)
 	}
 }
+
+// TestBuildAgentScopedSurfaceRejectsUnavailableToolBase covers
+// buildAgentScopedSurface's entryBase==nil guard: a state with no ToolBase
+// and a session with no ToolBaseResolver leaves entryBase() nothing to
+// return.
+func TestBuildAgentScopedSurfaceRejectsUnavailableToolBase(t *testing.T) {
+	res := &config.Resolved{Model: "m", ProviderName: "p"}
+	sess := chat.NewSession(res, stubAgentCompleter{})
+	state := &AgentSessionState{AllowProjectSkills: false}
+	if _, err := buildAgentScopedSurface(sess, res, state, &agents.ResolvedAgent{Name: "dev"}); err == nil {
+		t.Fatal("buildAgentScopedSurface accepted a state with no available tool base")
+	}
+}
+
+// TestBuildWidenedWithRejectsUnavailableToolBase covers buildWidenedWith's
+// own entryBase==nil guard, same shape as buildAgentScopedSurface's but
+// reached only once SkillRegFull is already captured.
+func TestBuildWidenedWithRejectsUnavailableToolBase(t *testing.T) {
+	res := &config.Resolved{Model: "m", ProviderName: "p"}
+	sess := chat.NewSession(res, stubAgentCompleter{})
+	state := &AgentSessionState{SkillRegFull: skills.NewRegistry()}
+	if _, err := buildWidenedWith(sess, res, state, nil); err == nil {
+		t.Fatal("buildWidenedWith accepted a state with no available tool base")
+	}
+}
