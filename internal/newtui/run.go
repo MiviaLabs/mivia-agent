@@ -178,6 +178,11 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	// so a workflow run started with workflow_run showed the operator nothing
 	// after the tool call returned, however long the run went on.
 	screen.SetNotices(pool.Notices())
+	// pool.WorkflowStatus() is the replaceable liveness stream that keeps the
+	// status row honest between a step's start and its end. It is separate
+	// from Notices on purpose: heartbeats arrive every 15s per running step,
+	// and queuing them as advisories evicts the transitions worth reading.
+	screen.SetWorkflowStatus(pool.WorkflowStatus())
 	screen.SetSessionMounter(runner)
 	pool.StartBackgroundWatch(context.Background())
 

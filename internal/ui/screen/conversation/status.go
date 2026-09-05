@@ -6,6 +6,7 @@ package conversation
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -229,6 +230,14 @@ func (s Screen) statusText() string {
 	if v := s.statusline.View(s.now()); v != "" {
 		return v
 	}
+	// A workflow run outlives many turns and produces nothing between its
+	// step boundaries, so between turns the row says what it is doing and
+	// for how long. The turn narration above still wins while a turn is
+	// live: what the user just asked for is more urgent than a background
+	// run they started hours ago.
+	if line := s.workflowStatusText(); line != "" {
+		return line
+	}
 	// Narrow panel open: the transcript is hidden behind the list, so
 	// its scroll affordances would narrate something the user cannot
 	// see.
@@ -248,4 +257,49 @@ func (s Screen) statusText() string {
 			Render(fmt.Sprintf("%d earlier blocks dropped from this transcript", n))
 	}
 	return ""
+}
+
+// workflowStatusText renders the running workflow's liveness, or "" when no
+// run is executing.
+//
+// This is the answer to the one thing the workflow notice stream cannot say:
+// a step's start and its end are transitions and belong in the transcript,
+// but the hours BETWEEN them are one fact that stays true, and a record entry
+// per liveness tick would bury the transitions it sits among. So the span
+// lives here instead - one row, replaced in place, naming the run the
+// operator would pass to workflow_status or workflow_cancel.
+func (s Screen) workflowStatusText() string {
+	if !s.workflow.Active {
+		return ""
+	}
+	what := "running"
+	if step := strings.TrimSpace(s.workflow.Step); step != "" {
+		what = "on step " + step
+	}
+	line := "workflow " + s.workflow.Run + ": " + what
+	if age := workflowElapsed(s.now().Sub(s.workflow.Since)); age != "" {
+		line += " for " + age
+	}
+	return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(line)
+}
+
+// workflowElapsed renders how long the current state has held, in the
+// coarsest unit that is still informative.
+//
+// Seconds are shown only under a minute: past that, the number a person
+// watching a multi-hour run needs is the order of magnitude, and a
+// second-resolution counter on a status row is motion without information. A
+// negative or zero duration renders nothing rather than "0s" - a status the
+// clock cannot explain should not claim precision.
+func workflowElapsed(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return ""
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
 }

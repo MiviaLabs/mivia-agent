@@ -186,6 +186,10 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(planBlockValue(m.Theme, m.Tier, b))
 	case uievent.NoticeBody:
+		// Deliberately NOT flushPending, unlike every sibling arm here:
+		// text.end re-sends the whole answer, so committing the partial
+		// span would render it twice. See
+		// TestMidStreamNoticeDoesNotDuplicateTheAnswer.
 		return m.pushBlock(noticeBlockValue(b))
 	case uievent.HookBody:
 		m = m.flushPending()

@@ -29,19 +29,47 @@ func workflowNoticePool(t *testing.T) (*SessionPool, *events.Bus) {
 	return pool, bus
 }
 
-// awaitNotice reads one notice line, failing rather than hanging.
+// awaitNotice returns the next TRANSCRIPT line on the stream.
+//
+// The stream carries two things now: NoticeBody lines that become transcript
+// blocks, and WorkflowStatusBody values that only replace the status row. The
+// status events are skipped here rather than asserted against, because they
+// are the row's business - awaitStatus below is what reads those.
 func awaitNotice(t *testing.T, ch <-chan uievent.Event) string {
 	t.Helper()
-	select {
-	case ev := <-ch:
-		body, ok := ev.Body.(uievent.NoticeBody)
-		if !ok {
-			t.Fatalf("notice body = %T, want uievent.NoticeBody", ev.Body)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if _, ok := ev.Body.(uievent.WorkflowStatusBody); ok {
+				continue
+			}
+			body, ok := ev.Body.(uievent.NoticeBody)
+			if !ok {
+				t.Fatalf("notice body = %T, want uievent.NoticeBody", ev.Body)
+			}
+			return body.Text
+		case <-deadline:
+			t.Fatal("timed out waiting for a workflow notice")
+			return ""
 		}
-		return body.Text
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for a workflow notice")
-		return ""
+	}
+}
+
+// awaitStatus returns the next status-row value on the stream.
+func awaitStatus(t *testing.T, ch <-chan uievent.Event) uievent.WorkflowStatusBody {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if body, ok := ev.Body.(uievent.WorkflowStatusBody); ok {
+				return body
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for a workflow status")
+			return uievent.WorkflowStatusBody{}
+		}
 	}
 }
 
@@ -97,11 +125,13 @@ func TestWorkflowProgressReachesTheNoticeStream(t *testing.T) {
 }
 
 // TestWorkflowHeartbeatsDoNotReachTheNoticeStream pins the one kind that is
-// deliberately silent. The controller emits a step heartbeat per watchdog
-// tick (durableHeartbeatInterval, 15s), so a single overnight step would push
+// deliberately kept out of the record, and the buffer pressure behind that
+// decision. The controller emits a step heartbeat per watchdog tick
+// (durableHeartbeatInterval, 15s), so a single overnight step would push
 // thousands of identical "still running" lines into a transcript whose notice
-// buffer holds 16. Rendering them would not make a run more legible; it would
-// evict everything that carries information.
+// buffer holds 16 - evicting everything that carries information in order to
+// report that nothing had happened. Heartbeats drive the status row instead,
+// on their own replaceable stream (WorkflowStatus).
 func TestWorkflowHeartbeatsDoNotReachTheNoticeStream(t *testing.T) {
 	pool, bus := workflowNoticePool(t)
 	notices := pool.Notices()
@@ -193,4 +223,65 @@ func workflowKindsDeclaredInSource(t *testing.T) []events.Kind {
 		return true
 	})
 	return out
+}
+
+// TestHeartbeatsKeepTheStatusRowWithoutMovingItsClock pins the rule that
+// makes the elapsed time on the row mean anything.
+//
+// The controller emits a heartbeat every 15s for as long as a step runs. If
+// each one restarted Since, a step running for three hours would read "for
+// 0m" forever - motion with no information, and worse than silence because it
+// looks like progress. A heartbeat for the step already on the row must leave
+// the clock alone.
+func TestHeartbeatsKeepTheStatusRowWithoutMovingItsClock(t *testing.T) {
+	pool, bus := workflowNoticePool(t)
+	status := pool.WorkflowStatus()
+
+	bus.Publish(workflowEvent(events.KindWorkflowStepStarted, "build", ""))
+	started := awaitStatus(t, status)
+	if !started.Active || started.Step != "build" {
+		t.Fatalf("step start produced %+v, want an active row naming build", started)
+	}
+
+	for i := 0; i < 5; i++ {
+		bus.Publish(workflowEvent(events.KindWorkflowStepHeartbeat, "build", "running"))
+		beat := awaitStatus(t, status)
+		if !beat.Since.Equal(started.Since) {
+			t.Fatalf("heartbeat %d moved Since from %v to %v: the row would read 'for 0m' forever", i, started.Since, beat.Since)
+		}
+		if !beat.Active || beat.Step != "build" {
+			t.Fatalf("heartbeat %d produced %+v, want the same active step", i, beat)
+		}
+	}
+}
+
+// TestAQuietRunReportsAStepItNeverSawStart covers the resume case: a UI that
+// attaches to a run already past its first step sees heartbeats with no
+// preceding start. Reporting the step with a 15s-ago lower bound beats
+// reporting nothing, which is the failure the row exists to end.
+func TestAQuietRunReportsAStepItNeverSawStart(t *testing.T) {
+	pool, bus := workflowNoticePool(t)
+	status := pool.WorkflowStatus()
+
+	bus.Publish(workflowEvent(events.KindWorkflowStepHeartbeat, "review", "running"))
+	got := awaitStatus(t, status)
+	if !got.Active || got.Step != "review" {
+		t.Fatalf("an unheralded heartbeat produced %+v, want an active row naming review", got)
+	}
+}
+
+// TestAFinishedRunClearsTheStatus pins the terminal transition: the row must
+// stop claiming work is in progress.
+func TestAFinishedRunClearsTheStatus(t *testing.T) {
+	pool, bus := workflowNoticePool(t)
+	status := pool.WorkflowStatus()
+
+	bus.Publish(workflowEvent(events.KindWorkflowStepStarted, "build", ""))
+	awaitStatus(t, status)
+	bus.Publish(workflowEvent(events.KindWorkflowRunFinished, "", "succeeded"))
+
+	got := awaitStatus(t, status)
+	if got.Active {
+		t.Fatalf("a finished run left the status active: %+v", got)
+	}
 }

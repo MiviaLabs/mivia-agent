@@ -38,16 +38,67 @@ func (p *SessionPool) Notices() <-chan uievent.Event {
 // advisory line is a strictly smaller failure than wedging the uploader or
 // the pool lock behind it.
 func (p *SessionPool) pushNotice(text string) {
-	if p == nil || p.notices == nil || text == "" {
+	if text == "" {
 		return
 	}
-	ev := uievent.Event{
+	p.pushNoticeEvent(uievent.Event{
 		Kind: uievent.KindNotice,
 		At:   time.Now(),
 		Body: uievent.NoticeBody{Text: text},
+	})
+}
+
+// pushNoticeEvent publishes one already-built advisory event, under the same
+// lossy contract as pushNotice.
+//
+// The stream carries more than free text: workflow liveness travels as a
+// replaceable uievent.KindWorkflowStatus that the screen routes to its status
+// row instead of the transcript. Dropping one of those is harmless by
+// construction - each supersedes the last, and the next heartbeat re-states
+// it within the watchdog interval.
+func (p *SessionPool) pushNoticeEvent(ev uievent.Event) {
+	if p == nil || p.notices == nil {
+		return
 	}
 	select {
 	case p.notices <- ev:
 	default:
+	}
+}
+
+// WorkflowStatus is the replaceable workflow-liveness stream.
+//
+// Separate from Notices, and single-slot, because liveness is STATE rather
+// than a sequence of messages. The controller emits a heartbeat per running
+// step every 15 seconds; queuing those alongside advisories evicted the
+// transitions the operator needs to read, which is the same buffer pressure
+// that keeps heartbeats out of the transcript in the first place. Here an
+// unread value is simply superseded, so an idle or slow reader costs one
+// stale frame, never a lost notice.
+func (p *SessionPool) WorkflowStatus() <-chan uievent.Event {
+	return p.workflowStatusCh
+}
+
+// pushWorkflowStatus publishes the newest liveness value, replacing any
+// value the UI has not read yet.
+//
+// Replace, not drop: the newest status is the only correct one, so discarding
+// it in favour of a stale queued value would leave the row wrong until the
+// next heartbeat - up to a full watchdog interval of lying about what is
+// running.
+func (p *SessionPool) pushWorkflowStatus(ev uievent.Event) {
+	if p == nil || p.workflowStatusCh == nil {
+		return
+	}
+	for {
+		select {
+		case p.workflowStatusCh <- ev:
+			return
+		default:
+		}
+		select {
+		case <-p.workflowStatusCh: // drop the superseded value and retry
+		default: // a reader took it first; the next loop will send
+		}
 	}
 }
