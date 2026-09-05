@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -76,15 +77,17 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}
-	mcpConfig, mcpWarnings, err := loadRuntimeMCPConfig(opts.WorkspaceRoot)
-	if err != nil {
-		return nil, err
-	}
 	root := opts.WorkspaceRoot
 	if strings.TrimSpace(root) == "" {
-		if cwd, err := os.Getwd(); err == nil {
+		if isProjectConfigShape(configPath) {
+			root = filepath.Dir(filepath.Dir(filepath.Clean(configPath)))
+		} else if cwd, err := os.Getwd(); err == nil {
 			root = cwd
 		}
+	}
+	mcpConfig, mcpWarnings, err := loadRuntimeMCPConfig(root)
+	if err != nil {
+		return nil, err
 	}
 	if err := refuseUntrustedMCPTable(file, configPath, root, found); err != nil {
 		return nil, err

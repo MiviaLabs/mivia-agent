@@ -436,7 +436,7 @@ func refuseUntrustedMCPTable(file File, configPath, workspaceRoot string, found 
 	if !found || (!file.MCP.Enabled && len(file.MCP.Servers) == 0) {
 		return nil
 	}
-	if sameFilePath(configPath, UserConfigPath()) || isProjectConfigShape(configPath) {
+	if sameFilePath(configPath, UserConfigPath()) || sameFilePathAsWorkspaceConfig(configPath, workspaceRoot) {
 		return nil
 	}
 	root := strings.TrimSpace(workspaceRoot)
