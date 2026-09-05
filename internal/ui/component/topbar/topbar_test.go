@@ -482,6 +482,18 @@ func TestTabsDegradation(t *testing.T) {
 	mLong.SetActivity(3, 1)
 	mLong.SetTabs(tabs)
 	_ = mLong.View()
+
+	// planLayout's withActivity starts true only at width>=90, so the
+	// above width=85 case never reaches its own drop branch (already
+	// false from the start). Force the same overflow at width=90 - the
+	// narrowest width where withActivity begins true - so its
+	// `totalW > m.width && p.withActivity` drop actually fires.
+	mActivityDrop := New(th, theme.TierTrueColor, longInfo, usage, 90)
+	mActivityDrop.SetActivity(3, 1)
+	mActivityDrop.SetTabs(tabs)
+	if v := mActivityDrop.View(); ansi.StringWidth(v) > 90 {
+		t.Errorf("width 90 exceeded after the withActivity drop: actual %d\nview: %q", ansi.StringWidth(v), v)
+	}
 }
 
 func TestTabsHitTabSynchronizedWithView(t *testing.T) {
