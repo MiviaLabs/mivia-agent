@@ -60,6 +60,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		ctx, cancel := context.WithTimeout(context.Background(), chatsync.RecommendedStopTimeout)
 		defer cancel()
 		runner.Pool().ReleaseLeases(ctx)
+		runner.Pool().CloseAll()
 	}()
 
 	p := newTeaProgram(root)
