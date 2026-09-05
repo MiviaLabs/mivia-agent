@@ -1655,3 +1655,57 @@ of assertions over both catalog namespaces, and
 outside the contract. It runs at commit time for any change under
 `internal/storage/` (`scripts/git-hooks/pre-commit`). It does NOT cover the
 admission side tables, which are their own contract.
+
+## DC-42 A test suite reads the developer's own machine configuration, so its verdict depends on who runs it
+
+**Mechanism.** A configuration loader merges a USER-level layer that the caller
+cannot address. A test passes an explicit, isolated config path and believes it
+built a hermetic fixture, but the loader silently unions the developer's
+home-directory config on top. The suite then has two verdicts: one on a machine
+where that file is absent (CI, a fresh clone) and another on a machine where it
+is populated. Neither verdict is about the code.
+
+The failure is doubly misleading. The tests that break are the ones whose
+subject happens to intersect the leaked setting, so the failure LOOKS
+subject-specific - here, MCP pinning - and invites a fix to the subject. And
+because CI is clean, the suite is green in the only place anyone checks, so the
+failures read as "pre-existing and unrelated" and get routed around instead of
+diagnosed.
+
+**Evidence.** 2026-09-05: nineteen `internal/cliworkflow` tests failed on a
+developer machine with `~/.mivia/mivia.toml` declaring MCP servers, and passed
+under any other home. `config.Load` calls `LoadTrustedMCPConfig`, which reads
+`config.UserConfigPath()` regardless of `LoadOptions.ConfigPath`, so every
+fixture resolved `res.MCP.Enabled = true` while the ledger rows those same
+fixtures wrote pinned no `MCPConfigDigest`.
+`validateWorkflowMCPConfigDigest` then refused the resumes - correctly. The
+product check was right, the fixtures were right, and the whole defect was the
+shared environment. `internal/clichat` had already hit the destructive half of
+this class (tests writing into the real `~/.mivia/context.db`, leaving 57,077
+workspace ids behind) and had grown `testenv.IsolateHome` for it; the packages
+that had not adopted it were still exposed to the verdict half.
+
+**Probes.**
+- For any loader with a user/global layer, ask what an explicit path
+  actually overrides. "Explicit config path" and "hermetic" are different
+  claims, and a merge makes the first one true and the second false.
+- A test failure that reproduces for one person and not in CI is a
+  hermeticity report until proven otherwise. Bisect it against a clean `HOME`
+  BEFORE bisecting it against the code.
+- A failure blamed on a durable guard ("snapshot does not pin X") deserves the
+  question "what made X enabled in this test?" before the question "is the
+  guard too strict?".
+- Never relax a guard to make an environment-dependent suite pass. That
+  converts a test-harness defect into a production hole.
+
+**Gate.** `testenv.HomeIsolated()` plus a per-package assertion that calls it:
+`internal/cliworkflow/home_isolation_test.go` fails when `TestMain` stops
+isolating, and does so identically on every machine, because it asserts the
+isolation rather than any consequence of it. Its sibling test asserts the exact
+leaked seam - that a fixture-built `config.Load` resolves MCP off - so the
+class is pinned at the mechanism, not at one of its nineteen symptoms. This is
+NOT yet a repo-wide gate: `internal/agents`, `internal/chat`,
+`internal/cliagents`, `internal/cliorchestrate`, `internal/provider`, and
+`internal/uiadapter` resolve user configuration in tests without
+`testenv.IsolateHome` (some isolate `HOME` per test, which protects those tests
+only). They pass today; they are unprotected, not proven clean.

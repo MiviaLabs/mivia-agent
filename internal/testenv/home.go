@@ -6,12 +6,36 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // homeEnvVars are every variable workspace.UserHomeDir and the OS home
 // resolver consult. HOME wins on every platform mivia targets, but the
 // Windows pair is set too so one isolated binary behaves the same everywhere.
 var homeEnvVars = []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
+
+// HomeDirPrefix names the throwaway directories IsolateHome creates. It is
+// exported so a package can assert its own isolation (HomeIsolated) without
+// knowing what the developer's real home happens to be.
+const HomeDirPrefix = "mivia-test-home-"
+
+// HomeIsolated reports whether the process home currently resolves to a
+// throwaway directory installed by IsolateHome.
+//
+// A package asserts this to keep its results independent of the machine it
+// runs on. Ambient state does not only pollute a real home; it also DECIDES
+// test outcomes. internal/cliworkflow read the developer's own
+// ~/.mivia/mivia.toml through config.Load - which merges the user-level [mcp]
+// table regardless of an explicit ConfigPath - and 19 resume tests failed on
+// a machine with MCP servers configured while passing everywhere else. A
+// suite whose verdict depends on who runs it proves nothing.
+func HomeIsolated() bool {
+	home, ok := os.LookupEnv("HOME")
+	if !ok || home == "" {
+		return false
+	}
+	return strings.HasPrefix(filepath.Base(home), HomeDirPrefix)
+}
 
 // IsolateHome points the process at a throwaway home directory and returns a
 // cleanup function. Call it from TestMain, before m.Run.
@@ -26,7 +50,7 @@ var homeEnvVars = []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_H
 // The returned cleanup restores the previous environment and removes the
 // temporary directory. It is safe to call more than once.
 func IsolateHome() (cleanup func(), err error) {
-	dir, err := os.MkdirTemp("", "mivia-test-home-")
+	dir, err := os.MkdirTemp("", HomeDirPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create isolated home: %w", err)
 	}
