@@ -408,7 +408,11 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 			// press always hides an open sidebar. tab and esc are the
 			// keys that move focus without closing.
 			return s, nil, false
-		case keymap.IDThemeDialog, keymap.IDOpenPager:
+		case keymap.IDThemeDialog, keymap.IDOpenPager,
+			keymap.IDTabNext, keymap.IDTabPrev,
+			keymap.IDTab1, keymap.IDTab2, keymap.IDTab3,
+			keymap.IDTab4, keymap.IDTab5, keymap.IDTab6,
+			keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
 			// Still reachable: the conversation is on screen beside the
 			// panel, so its global surfaces stay one key away.
 			return s, nil, false

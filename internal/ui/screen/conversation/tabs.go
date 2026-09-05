@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 )
@@ -68,12 +69,20 @@ func (s Screen) switchToSessionID(id string) (app.Screen, tea.Cmd) {
 	}
 	if st, ok := s.sessions[id]; ok && st.conv != nil {
 		s.switchConversation(st.conv)
-		return s, tea.ClearScreen
+		cmds := []tea.Cmd{tea.ClearScreen}
+		if s.hasActiveSession() {
+			cmds = append(cmds, statusline.TickCmd())
+		}
+		return s, tea.Batch(cmds...)
 	}
 	if s.runner != nil {
 		out := s.runner.SelectSession(context.Background(), id)
 		next, outcomeCmd := s.applyCommandOutcome(out)
-		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+		cmds := []tea.Cmd{outcomeCmd, tea.ClearScreen}
+		if sc, ok := next.(Screen); ok && sc.hasActiveSession() {
+			cmds = append(cmds, statusline.TickCmd())
+		}
+		return next, tea.Batch(cmds...)
 	}
 	return s, nil
 }

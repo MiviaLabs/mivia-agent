@@ -65,14 +65,20 @@ func TestTabReview_TabExactIDPriority(t *testing.T) {
 func TestTabReview_ThreadsPreservedAcrossSwitch(t *testing.T) {
 	s, _, _, runner := setupTwoSessionScreen(t)
 
-	// In Session A, attach threads
+	// In Session A, attach threads registry and an open thread dialog
 	s.threads = fakeThreads{tag: "threads-A"}
+	openThreadScreen := s
+	s.thread = &openThreadScreen
+	s.threadID = "call-1"
 
 	// Switch to Session B
 	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
 	sB := next.(Screen)
-	if sB.threads != nil {
-		t.Fatalf("Session B should not inherit Session A threads, got %v", sB.threads)
+	if sB.threads == nil {
+		t.Fatalf("Session B should retain shared threads registry, got nil")
+	}
+	if sB.thread != nil || sB.threadID != "" {
+		t.Fatalf("Session B should close active thread dialog from Session A, got thread=%v threadID=%q", sB.thread, sB.threadID)
 	}
 
 	// Switch back to Session A
@@ -80,6 +86,9 @@ func TestTabReview_ThreadsPreservedAcrossSwitch(t *testing.T) {
 	sA := next.(Screen)
 	if ft, ok := sA.threads.(fakeThreads); !ok || ft.tag != "threads-A" {
 		t.Errorf("Session A threads should be restored, got %+v", sA.threads)
+	}
+	if sA.thread != nil || sA.threadID != "" {
+		t.Errorf("Thread dialog should remain dismissed after switch, got thread=%v threadID=%q", sA.thread, sA.threadID)
 	}
 }
 

@@ -111,6 +111,8 @@ func (s *Screen) snapshotSessionState() *sessionState {
 }
 
 func (s *Screen) dismissModals() {
+	s.closeThread()
+	s.hideComposer = false
 	s.modelPicker = nil
 	s.agentPicker = nil
 	s.sessionPicker = nil
@@ -133,7 +135,9 @@ func (s *Screen) applySessionState(st *sessionState) {
 	s.queue = st.queue
 	s.pendingForce = st.pendingForce
 	s.liveUsage = st.liveUsage
-	s.threads = st.threads
+	if st.threads != nil {
+		s.threads = st.threads
+	}
 }
 
 func (s *Screen) switchConversation(newConv ports.Conversation) {
@@ -165,17 +169,24 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	newID := s.convID()
 	s.registerSession(newID)
 
+	if cr, ok := s.runner.(interface{ Commands() []composer.Command }); ok {
+		s.commands = cr.Commands()
+	}
+
 	if st, ok := s.sessions[newID]; ok {
 		s.applySessionState(st)
+		s.composer.SetCommands(s.commands)
+		s.composer.SetMentions(s.mentions)
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
 		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
 		s.composer = composer.New(s.Theme, s.Tier, s.chatWidth())
+		s.composer.SetCommands(s.commands)
+		s.composer.SetMentions(s.mentions)
 		s.active = nil
 		s.queue = nil
 		s.pendingForce = nil
 		s.liveUsage = nil
-		s.threads = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)
 		s.approval.SetWidth(contentWidth(s.width))
@@ -244,6 +255,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 				if err == nil {
 					st.active = handle
 					st.statusline.Start("thinking", s.now())
+					s.refreshTopbar()
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
 				st.queue = append([]string{forced}, st.queue...)
@@ -261,6 +273,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 				if err == nil {
 					st.active = handle
 					st.statusline.Start("thinking", s.now())
+					s.refreshTopbar()
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
 				st.queue = append([]string{nextText}, st.queue...)
