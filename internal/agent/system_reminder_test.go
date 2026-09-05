@@ -326,6 +326,30 @@ func TestIsMutatingCommand(t *testing.T) {
 	}
 }
 
+// TestIsMutatingCommandFailsClosedToFalseOnMalformedOrEmptyArgs covers
+// isMutatingCommand's own error/empty branch: malformed JSON and a
+// well-formed but empty argv must both report false (an exploratory read),
+// not be mistaken for a mutation the loop-breaker would react to.
+func TestIsMutatingCommandFailsClosedToFalseOnMalformedOrEmptyArgs(t *testing.T) {
+	if got := isMutatingCommand([]byte("not json")); got != false {
+		t.Errorf("isMutatingCommand(malformed) = %v, want false", got)
+	}
+	raw, _ := json.Marshal(map[string]any{"argv": []string{}})
+	if got := isMutatingCommand(raw); got != false {
+		t.Errorf("isMutatingCommand(empty argv) = %v, want false", got)
+	}
+}
+
+// TestRecordProgressNilReceiverIsSafe covers recordProgress's nil-receiver
+// guard: a *sdkTurnState is nil whenever no turn state was wired for this
+// call site, and must return an empty reminder rather than panic.
+func TestRecordProgressNilReceiverIsSafe(t *testing.T) {
+	var s *sdkTurnState
+	if got := s.recordProgress(true, "run_command", nil, tools.Capability{}); got != "" {
+		t.Errorf("recordProgress on a nil state = %q, want empty", got)
+	}
+}
+
 // mockCapableTool exposes a custom Capability.
 type mockCapableTool struct {
 	name  string
