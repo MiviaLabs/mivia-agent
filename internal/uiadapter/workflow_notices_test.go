@@ -285,3 +285,59 @@ func TestAFinishedRunClearsTheStatus(t *testing.T) {
 		t.Fatalf("a finished run left the status active: %+v", got)
 	}
 }
+
+// TestWorkflowNoticeTextFallbacksAndRetryAnnotation covers the three
+// rendering branches workflowEvent's fixture never exercises: it always sets
+// run_id, a step in Metadata directly, and attempt=1. Real events can arrive
+// without any of those.
+func TestWorkflowNoticeTextFallbacksAndRetryAnnotation(t *testing.T) {
+	noRunID := events.Event{
+		Kind: events.KindWorkflowRunStarted, Timestamp: time.Now(), Name: "workflow",
+		Metadata: map[string]string{"attempt": "1"},
+	}
+	if got := workflowNoticeRun(noRunID); got != "run" {
+		t.Errorf("workflowNoticeRun with no run_id = %q, want the \"run\" placeholder", got)
+	}
+
+	stepFromAgentName := events.Event{
+		Kind: events.KindWorkflowStepStarted, Timestamp: time.Now(), Name: "workflow",
+		AgentName: "workflow:build", Metadata: map[string]string{"run_id": "wfr-1", "attempt": "1"},
+	}
+	if got := workflowNoticeStep(stepFromAgentName); got != "build" {
+		t.Errorf("workflowNoticeStep with no metadata step = %q, want %q from AgentName", got, "build")
+	}
+
+	noStepAtAll := events.Event{
+		Kind: events.KindWorkflowRunStarted, Timestamp: time.Now(), Name: "workflow",
+		Metadata: map[string]string{"run_id": "wfr-1", "attempt": "1"},
+	}
+	if got := workflowNoticeStep(noStepAtAll); got != "?" {
+		t.Errorf("workflowNoticeStep with no step anywhere = %q, want the %q placeholder", got, "?")
+	}
+
+	retried := events.Event{
+		Kind: events.KindWorkflowStepStarted, Timestamp: time.Now(), Name: "workflow",
+		AgentName: "workflow:build", Metadata: map[string]string{"run_id": "wfr-1", "step": "build", "attempt": "3"},
+	}
+	text := workflowNoticeText(retried)
+	if !strings.Contains(text, "(attempt 3)") {
+		t.Errorf("workflowNoticeText for a third attempt = %q, want it to carry the retry annotation", text)
+	}
+}
+
+// TestWatchWorkflowProgressLockedIsIdempotentPerBus covers the "already
+// subscribed" guard: registering the same bus twice must not create a
+// second subscription (and, by extension, must not double-deliver notices).
+func TestWatchWorkflowProgressLockedIsIdempotentPerBus(t *testing.T) {
+	pool, bus := workflowNoticePool(t)
+
+	pool.mu.Lock()
+	before := len(pool.workflowSubs)
+	pool.watchWorkflowProgressLocked(bus)
+	after := len(pool.workflowSubs)
+	pool.mu.Unlock()
+
+	if before != 1 || after != 1 {
+		t.Fatalf("workflowSubs count = %d before, %d after a repeat watch of the same bus; want 1, 1 (NewSessionPool already watches the seed's bus)", before, after)
+	}
+}
