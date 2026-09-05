@@ -270,6 +270,11 @@ type SyncSession struct {
 	doneCh  chan struct{}
 	eventCh chan events.Event
 
+	// statusMu guards currentStatus, which tracks the session's execution
+	// state for the heartbeat runner across turns.
+	statusMu      sync.Mutex
+	currentStatus string
+
 	// runnersMu guards the heartbeat and poller fields, which are created
 	// and started by the worker inside the deferred attach and stopped by
 	// Stop and the terminal latch from other goroutines. Each runner has
@@ -374,6 +379,7 @@ func newSyncSession(localID string, client *Client, outbox *Outbox, opts Session
 		health:         newSyncHealth(newStatusFileWriter(opts.OutboxDir)),
 		createParams:   params,
 		telemetry:      opts.Telemetry,
+		currentStatus:  "waiting_input",
 	}
 	s.running.Store(true)
 	s.appender = outbox
@@ -418,6 +424,14 @@ func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 	if !s.running.Load() {
 		return
 	}
+
+	switch ev.Kind {
+	case events.KindTurnStart:
+		s.SetStatus(ctx, "running")
+	case events.KindTurnEnd, events.KindError:
+		s.SetStatus(ctx, "waiting_input")
+	}
+
 	select {
 	case s.eventCh <- ev:
 	default:
@@ -473,6 +487,9 @@ func (s *SyncSession) Inputs() <-chan RemoteInput {
 // first event attaches there is no runner and nothing to send to: a status
 // is API traffic, and a session with no message produces none.
 func (s *SyncSession) SetStatus(ctx context.Context, status string) {
+	s.statusMu.Lock()
+	s.currentStatus = status
+	s.statusMu.Unlock()
 	if hb := s.statusRunner(); hb != nil {
 		hb.SetStatus(ctx, status)
 	}

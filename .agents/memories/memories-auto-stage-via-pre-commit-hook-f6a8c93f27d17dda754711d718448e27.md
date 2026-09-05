@@ -1,9 +1,13 @@
-# Memories auto-stage via pre-commit hook
+---
+id: memories_auto_stage_via_pre_commit_hook_f6a8c93f27d17dda754711d718448e27
+title: 'Memories auto-stage via pre-commit hook'
+content: 'Pre-commit now auto-stages .agents/memories changes into every commit.'
+importance: medium
+tags: [hooks, pre-commit, memories, git]
+updated: 2026-09-04
+---
 
-scope: project
-verdict: good
-tags: hooks, pre-commit, memories, git
-created: 2026-09-04
+# Memories auto-stage via pre-commit hook
 
 ## Summary
 Pre-commit now auto-stages .agents/memories changes (add/edit/delete) into every commit; commit aa06ddf3. Memories-only changes still need --allow-empty because git skips hooks with an empty index.

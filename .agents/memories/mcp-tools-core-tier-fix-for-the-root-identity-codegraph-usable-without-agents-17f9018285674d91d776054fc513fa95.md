@@ -1,9 +1,13 @@
-# MCP tools core-tier fix for the root identity (codegraph usable without agents)
+---
+id: mcp_tools_core_tier_fix_for_the_root_identity_codegraph_usable_without_agents_17f9018285674d91d776054fc513fa95
+title: 'MCP tools core-tier fix for the root identity (codegraph usable without agents)'
+content: 'Fixed global MCP servers being deferred behind load_tools for root identity.'
+importance: medium
+tags: [mcp, codegraph, tool-tiers, root-identity, load_tools, regression-test]
+updated: 2026-09-04
+---
 
-scope: project
-verdict: good
-tags: mcp, codegraph, tool-tiers, root-identity, load_tools, regression-test
-created: 2026-09-04
+# MCP tools core-tier fix for the root identity (codegraph usable without agents)
 
 ## Summary
 Fixed global (=true) MCP servers (e.g. codegraph) being deferred behind load_tools for the root/no-agent-selected identity, which made them effectively uncallsble: advertised but locked, and step-boundary publication can defer indefinitely. Now they are always core, callable turn one, with no agents required in .agents/agents.

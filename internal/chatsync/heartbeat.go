@@ -23,16 +23,24 @@ type HeartbeatRunner struct {
 	doneCh    chan struct{}
 }
 
-// NewHeartbeatRunner creates a HeartbeatRunner.
+// NewHeartbeatRunner creates a HeartbeatRunner with default status "waiting_input".
 func NewHeartbeatRunner(client *Client, sessionID string, interval time.Duration) *HeartbeatRunner {
+	return NewHeartbeatRunnerWithStatus(client, sessionID, interval, "waiting_input")
+}
+
+// NewHeartbeatRunnerWithStatus creates a HeartbeatRunner with the specified initial status.
+func NewHeartbeatRunnerWithStatus(client *Client, sessionID string, interval time.Duration, status string) *HeartbeatRunner {
 	if interval <= 0 {
 		interval = DefaultHeartbeatInterval
+	}
+	if status == "" {
+		status = "waiting_input"
 	}
 	return &HeartbeatRunner{
 		client:    client,
 		sessionID: sessionID,
 		interval:  interval,
-		status:    "running",
+		status:    status,
 		triggerCh: make(chan struct{}, 1),
 		stopCh:    make(chan struct{}),
 		doneCh:    make(chan struct{}),

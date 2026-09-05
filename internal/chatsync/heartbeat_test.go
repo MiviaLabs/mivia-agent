@@ -38,26 +38,26 @@ func TestHeartbeatPeriodicAndImmediateTransition(t *testing.T) {
 	// Verify initial heartbeat
 	time.Sleep(20 * time.Millisecond)
 	mu.Lock()
-	if len(receivedStatuses) == 0 || receivedStatuses[0] != "running" {
-		t.Fatalf("receivedStatuses = %v, want initial 'running'", receivedStatuses)
+	if len(receivedStatuses) == 0 || receivedStatuses[0] != "waiting_input" {
+		t.Fatalf("receivedStatuses = %v, want initial 'waiting_input'", receivedStatuses)
 	}
 	mu.Unlock()
 
 	// State transition triggers immediate heartbeat
-	runner.SetStatus(ctx, "waiting_input")
+	runner.SetStatus(ctx, "running")
 	time.Sleep(20 * time.Millisecond)
 	mu.Lock()
-	foundWaiting := false
+	foundRunning := false
 	for _, s := range receivedStatuses {
-		if s == "waiting_input" {
-			foundWaiting = true
+		if s == "running" {
+			foundRunning = true
 			break
 		}
 	}
 	mu.Unlock()
 
-	if !foundWaiting {
-		t.Errorf("expected 'waiting_input' in received statuses %v", receivedStatuses)
+	if !foundRunning {
+		t.Errorf("expected 'running' in received statuses %v", receivedStatuses)
 	}
 
 	runner.Stop(ctx)

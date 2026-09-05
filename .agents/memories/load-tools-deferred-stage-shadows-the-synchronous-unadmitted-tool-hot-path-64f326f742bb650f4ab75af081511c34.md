@@ -1,9 +1,13 @@
-# load_tools deferred stage shadows the synchronous unadmitted-tool hot path
+---
+id: load_tools_deferred_stage_shadows_the_synchronous_unadmitted_tool_hot_path_64f326f742bb650f4ab75af081511c34
+title: 'load_tools deferred stage shadows the synchronous unadmitted-tool hot path'
+content: 'The mivia agent loop hot-load path is shadowed whenever load_tools staged the tool and publication deferred.'
+importance: medium
+tags: [load_tools, admission, mcp, tool-surface, design-gap, staged-tools]
+updated: 2026-09-04
+---
 
-scope: project
-verdict: mixed
-tags: load_tools, admission, mcp, tool-surface, design-gap, staged-tools
-created: 2026-09-04
+# load_tools deferred stage shadows the synchronous unadmitted-tool hot path
 
 ## Summary
 The mivia agent loop already has a same-turn hot-load path (Options.UnadmittedToolHandler → serveUnadmittedTool → admitForExecution, sync execution with approval+budget), but it is shadowed whenever load_tools staged the tool and publication deferred: StagedToolMessage is checked first and returns the "retry next step" denial. Calling load_tools therefore yields a worse experience than calling the

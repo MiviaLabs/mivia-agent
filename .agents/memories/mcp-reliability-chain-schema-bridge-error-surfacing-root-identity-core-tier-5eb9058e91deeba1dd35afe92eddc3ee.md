@@ -1,9 +1,13 @@
-# MCP reliability chain: schema bridge, error surfacing, root-identity core tier
+---
+id: mcp_reliability_chain_schema_bridge_error_surfacing_root_identity_core_tier_5eb9058e91deeba1dd35afe92eddc3ee
+title: 'MCP reliability chain: schema bridge, error surfacing, root-identity core tier'
+content: 'Full chain making MCP tools (codegraph) actually usable in mivia.'
+importance: medium
+tags: [mcp, codegraph, reliability, error-visibility, schema-bridge, dc-9]
+updated: 2026-09-04
+---
 
-scope: project
-verdict: good
-tags: mcp, codegraph, reliability, error-visibility, schema-bridge, dc-9
-created: 2026-09-04
+# MCP reliability chain: schema bridge, error surfacing, root-identity core tier
 
 ## Summary
 Full chain making MCP tools (codegraph) actually usable in mivia: core-tier fix for the root identity, error text surfaced at every layer (validation, transport error, isError content), and the schema bridge no longer collapses description-bearing schemas to an empty object. All verified live in-session.
