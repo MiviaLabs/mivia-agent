@@ -63,6 +63,47 @@ func TestHeartbeatPeriodicAndImmediateTransition(t *testing.T) {
 	runner.Stop(ctx)
 }
 
+// TestNewHeartbeatRunnerWithStatus_EmptyStatusDefaultsToWaitingInput confirms
+// the empty-status guard: a caller that passes "" (rather than omitting the
+// argument via NewHeartbeatRunner) still gets the "waiting_input" default,
+// not an empty status sent to the server.
+func TestNewHeartbeatRunnerWithStatus_EmptyStatusDefaultsToWaitingInput(t *testing.T) {
+	var mu sync.Mutex
+	var receivedStatuses []string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		receivedStatuses = append(receivedStatuses, body["status"])
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: body["status"]})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	runner := NewHeartbeatRunnerWithStatus(client, "sess-hb-empty-status", 50*time.Millisecond, "")
+
+	if runner.status != "waiting_input" {
+		t.Fatalf("runner.status = %q, want %q", runner.status, "waiting_input")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	time.Sleep(20 * time.Millisecond)
+	runner.Stop(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(receivedStatuses) == 0 || receivedStatuses[0] != "waiting_input" {
+		t.Fatalf("receivedStatuses = %v, want first entry 'waiting_input'", receivedStatuses)
+	}
+}
+
 func TestHeartbeatRunner_StopIdempotentAndRespectsContext(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
