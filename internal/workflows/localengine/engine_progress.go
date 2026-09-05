@@ -65,10 +65,26 @@ func (s busProgressSink) Emit(e controller.ProgressEvent) {
 // kinds fall back to a heartbeat tick.
 func localProgressKind(k controller.ProgressKind) events.Kind {
 	switch k {
+	case controller.ProgressRunStarted:
+		return events.KindWorkflowRunStarted
+	case controller.ProgressStepStarted:
+		return events.KindWorkflowStepStarted
 	case controller.ProgressStepCompleted:
 		return events.KindWorkflowStepCompleted
-	case controller.ProgressRunFinished, controller.ProgressRunFailed:
+	case controller.ProgressStepHeartbeat:
+		return events.KindWorkflowStepHeartbeat
+	case controller.ProgressGateStarted:
+		return events.KindWorkflowGateResult
+	case controller.ProgressApprovalRequested:
+		return events.KindWorkflowApprovalRequested
+	case controller.ProgressRunFinished:
 		return events.KindWorkflowRunFinished
+	case controller.ProgressRunFailed:
+		return events.KindWorkflowRunFinished
+	case controller.ProgressPanelRefused:
+		return events.KindWorkflowStepCompleted
+	case controller.ProgressPanelMemberFailed:
+		return events.KindWorkflowStepCompleted
 	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused, controller.ProgressChunkScopeDropped:
 		return events.KindWorkflowDeliveryStage
 	default:

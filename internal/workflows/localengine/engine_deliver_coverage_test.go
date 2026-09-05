@@ -233,7 +233,7 @@ func TestCoverageBusProgressSinkMapsAndPublishesKinds(t *testing.T) {
 	})
 	sink.Emit(controller.ProgressEvent{Kind: controller.ProgressRunFinished, RunID: "wfr-bus", Detail: "succeeded"})
 	sink.Emit(controller.ProgressEvent{Kind: controller.ProgressRunFailed, RunID: "wfr-bus", Detail: "failed"})
-	sink.Emit(controller.ProgressEvent{Kind: controller.ProgressPanelRefused, RunID: "wfr-bus", StepID: "panel", Detail: "refused"})
+	sink.Emit(controller.ProgressEvent{Kind: controller.ProgressKind("unknown_kind"), RunID: "wfr-bus", StepID: "panel", Detail: "refused"})
 
 	bus.Flush()
 	got := collected.snapshot()
