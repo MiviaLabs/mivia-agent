@@ -108,6 +108,48 @@ func TestCommandRunner_SelectModel_ProviderRuntimePrefix(t *testing.T) {
 	}
 }
 
+// TestCommandRunner_SelectModel_RuntimeNameMatchesViaUnicodeCaseFold covers
+// resolveProviderAndModel's 1c runtime-map branch (runner_model.go:98-102),
+// which is otherwise shadowed by section 1b's near-identical runtime-prefix
+// loop (already covered by TestCommandRunner_SelectModel_ProviderRuntimePrefix
+// above): 1b compares via strings.ToLower on both sides, while 1c compares
+// the same strings via strings.EqualFold - and those two case-insensitive
+// comparisons disagree for U+017F LATIN SMALL LETTER LONG S ("ſ"), which
+// strings.ToLower leaves untouched (so 1b's HasPrefix on the lowered name
+// never matches "s/") but strings.EqualFold still folds into the same case
+// class as ASCII "s" (so 1c's EqualFold against the Cut-out "ſ" segment
+// does match). This is a real, reachable divergence between the two
+// lookups, not a fabricated one.
+func TestCommandRunner_SelectModel_RuntimeNameMatchesViaUnicodeCaseFold(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "other-provider",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"s": {
+				ProviderName: "s",
+				APIKey:       "sk-s-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "model-x"}},
+			},
+		},
+	}
+	// No catalog group named "s" or "ſ": sections 1 and 1c's catalog loop
+	// must both fail so resolution can only reach 1c's runtime-map check.
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "other-provider", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+	})
+	sess := chat.NewSession(res, nil)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "ſ/model-x")
+	if out.Err == "" {
+		t.Fatalf("expected a downstream switch error ('s' has no catalog entry), got success: %+v", out)
+	}
+	if !strings.Contains(out.Err, `"model-x" (s)`) {
+		t.Fatalf("error must name the runtime-matched provider \"s\" resolved via Unicode case fold, got %q", out.Err)
+	}
+}
+
 // TestCommandRunner_SelectModel_SlashNameMatchesCatalogProviderCaseInsensitively
 // covers resolveProviderAndModel's 1c catalog-lookup branch
 // (runner_model.go:93-97). Section 1's prefix loop builds its prefix from

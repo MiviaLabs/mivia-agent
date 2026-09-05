@@ -243,6 +243,11 @@ func (p *SessionPool) storedRouteLocked(id string) (BindFunc, string, error) {
 	}
 	principal, err := worktreeroute.Principal(root)
 	if err != nil {
+		// Not reachable deterministically in-process: Principal's only error
+		// paths are crypto/rand.Read failing (an OS-level entropy failure)
+		// and Principal.Validate's identifier-length bound, which the fixed
+		// literal owner strings ("worktree-routes", "local-user") and the
+		// always-short WorkspaceID digest never exceed.
 		return nil, "", nil
 	}
 	info, bound, err := store.WorktreeSessionBinding(context.Background(), principal, id)
