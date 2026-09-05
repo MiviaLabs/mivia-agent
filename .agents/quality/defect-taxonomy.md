@@ -1606,3 +1606,52 @@ is not a syntactic property. Several named forms do have gates.
 
 The forms with no gate stay a review probe. Say which is which rather than
 implying coverage that does not exist - which would itself be this class.
+
+## DC-41 One durable contract, two namespaces, only one implementing it
+
+**Mechanism.** A durable store exposes the same operation over two namespaces -
+a plain scope and a scoped one (per-tenant, per-worktree, per-instance) - as
+two functions rather than one parameterized function. A behaviour is then added
+to whichever namespace the reported failure came from, and the sibling keeps
+the old semantics. Both compile, both have tests, and each test only ever
+exercises its own namespace, so the divergence is invisible until a user lands
+on the wrong side of it.
+
+This is DC-13's "one operation, one path" in the persistence layer, and it is
+worse there: the two sides disagree about DATA, so the symptoms are a record
+that cannot be read, a record that cannot be deleted, and a record that comes
+back after deletion.
+
+**Evidence.** The 2026-09-05 worktree batch, four instances in one subsystem.
+`LoadWorktreeSession` had no live-row fallback while `LoadSession` had had one
+for years, so a worktree session that only ever completed turns - the normal
+TUI shape - failed every resume with "session not found" although its history
+was on disk. `resolveProjection`'s staleness rule, which stops a `/clear`ed
+conversation being resurrected from an older snapshot, existed only in the
+plain namespace. `DeleteWorktreeSessionSnapshot` returned before its tombstone
+for the turn-only shape, so that session was undeletable while reporting
+"session not found"; `DeleteSessionSnapshot` had the mirror hole for a live
+projection, reporting success while the conversation stayed loadable. Each was
+found and fixed one namespace at a time.
+
+**Probes.**
+- For each namespace-scoped function, name its sibling. If the pair is two
+  function bodies rather than one body taking the scope as a parameter, read
+  both and diff the behaviour, not the signature.
+- A reader that gained a fallback obliges every WRITER and DELETER of the same
+  rows to be re-read: what the reader can now serve, the deleter must now
+  retire.
+- A staleness or precedence rule expressed against a counter is a behaviour,
+  not a query detail - if one namespace has it, the other needs it.
+- The gate for this class is a conformance table over the namespaces, never
+  another per-namespace test: see
+  `internal/storage/session_catalog_conformance_test.go`, whose assertions are
+  shared and whose only per-row difference is the scope value.
+
+**Gate.** `internal/storage/session_catalog_conformance_test.go` runs one set
+of assertions over both catalog namespaces, and
+`TestEveryCatalogEntryPointIsClassified` fails when a new `Load*Session*` or
+`Delete*Session*` entry point is neither covered by the table nor recorded as
+outside the contract. It runs at commit time for any change under
+`internal/storage/` (`scripts/git-hooks/pre-commit`). It does NOT cover the
+admission side tables, which are their own contract.

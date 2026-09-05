@@ -364,6 +364,17 @@ if command -v go >/dev/null 2>&1; then
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/uikit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/uiadapter/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The session catalog has two namespaces - plain and managed-worktree - and
+  # every behaviour implemented for one and missed by the other in the
+  # 2026-09-05 batch was a reachable data bug: a worktree session that could
+  # not be resumed, a /clear'ed conversation resurrected from an older
+  # snapshot, a "deleted" session still fully loadable. The conformance table
+  # runs the same assertions over both namespaces, so a fix applied to one
+  # fails for the sibling instead of shipping half-done.
+  if echo "$STAGED" | grep -qE '^internal/storage/'; then
+    echo " → Running session-catalog namespace conformance tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestCatalogNamespaces|TestEveryCatalogEntryPointIsClassified' ./internal/storage/ -count=1 -timeout=90s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/config/'; then
     echo " → Running config invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s) || INV_FAIL=1
