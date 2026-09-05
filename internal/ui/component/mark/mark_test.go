@@ -118,6 +118,24 @@ func TestAutonomousStatesAreMonochromeAndWaitingIsWarning(t *testing.T) {
 	}
 }
 
+// TestNegativeFrameWrapsPhaseIntoRange covers Glyph's and renderPulse's own
+// `phase < 0` fix-up: Go's % operator returns a negative result for a
+// negative dividend, and nothing in this package clamps SetFrame's input, so
+// a negative frame (a wrapped counter, or a caller resetting frame with a
+// subtraction) must still resolve to a valid glyph rather than indexing the
+// pulse table with a value it never expects to see negative.
+func TestNegativeFrameWrapsPhaseIntoRange(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor, Thinking)
+	m.SetFrame(-1)
+	if g := m.Glyph(); g == 0 {
+		t.Fatal("Glyph() with a negative frame returned the zero rune")
+	}
+	if view := m.View(); view == "" {
+		t.Fatal("View() with a negative frame rendered nothing")
+	}
+}
+
 func loadTheme(t *testing.T) theme.Theme {
 	t.Helper()
 	themes, err := theme.Embedded()
