@@ -56,11 +56,6 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 	if wtDir == "" || p.res == nil || !p.toolsOn || sess == nil {
 		return ""
 	}
-	if p.registriesClosed {
-		sess.Tools = nil
-		sess.ToolBaseResolver = nil
-		return toolScopeRebuildFailedPrefix + ": session pool is shutting down"
-	}
 	canonical, cerr := worktreeroute.CanonicalDir(wtDir)
 	if cerr != nil {
 		return toolScopeNotResolved
@@ -87,16 +82,8 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 	p.mu.Lock()
 
 	if buildErr != nil {
-		// Fail closed: inherited tools point at the launch checkout.
-		sess.Tools = nil
-		sess.ToolBaseResolver = nil
+		// Keep inherited tools; the binding itself remains valid.
 		return toolScopeRebuildFailedPrefix + ": " + buildErr.Error()
-	}
-	if p.registriesClosed {
-		closeFn()
-		sess.Tools = nil
-		sess.ToolBaseResolver = nil
-		return toolScopeRebuildFailedPrefix + ": session pool is shutting down"
 	}
 	if p.regByRoot == nil {
 		p.regByRoot = map[string]*tools.Registry{}
@@ -137,16 +124,35 @@ func (p *SessionPool) adoptRegistry(sess *chat.Session, reg *tools.Registry) {
 // unknown and disables the skip rule. Callers hold p.mu.
 func (p *SessionPool) launchRootLocked() string {
 	if !p.launchRootDone {
-		p.launchRootDone = true
 		for _, existing := range p.sessions {
 			if existing.Tools == nil {
 				continue
 			}
 			p.launchRootVal = existing.Tools.WorkspaceRoot()
+			p.launchRootDone = true
 			break
 		}
 	}
 	return p.launchRootVal
+}
+
+// preferredInheritanceSessionLocked returns the launch session when the pool
+// also contains worktree-scoped sessions. Plain /new and /resume must inherit
+// the launch registry; map iteration order is not stable.
+func (p *SessionPool) preferredInheritanceSessionLocked() *chat.Session {
+	if launch := p.launchRootLocked(); launch != "" {
+		for _, sess := range p.sessions {
+			if sess != nil && sess.Tools != nil && samePath(sess.Tools.WorkspaceRoot(), launch) {
+				return sess
+			}
+		}
+	}
+	for _, sess := range p.sessions {
+		if sess != nil && sess.Tools != nil {
+			return sess
+		}
+	}
+	return nil
 }
 
 // anyMemberUnrestricted mirrors the --full-disk posture of the member

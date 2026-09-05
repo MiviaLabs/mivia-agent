@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -19,6 +20,7 @@ func TestBuildToolsForRoot_WorkspaceFailurePropagates(t *testing.T) {
 	prev := cliagents.WireWorkflowToolOptionsVar
 	cliagents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool,
+		ledger.LedgerRepository,
 	) {
 	}
 	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
