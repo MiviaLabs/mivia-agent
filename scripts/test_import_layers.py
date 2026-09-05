@@ -98,6 +98,18 @@ def test_conforming_tree_passes() -> None:
     assert problems == [], problems
 
 
+def test_stale_allow_row_fails() -> None:
+    mod = load_mod()
+    policy = base_policy(
+        mod,
+        edge_cap=5,
+        allow={"a": ["b", "c"]},
+    )
+    edges = {("a", "b")}
+    problems = mod.check(edges, policy)
+    assert any("stale allow entry" in p for p in problems), problems
+
+
 def test_malformed_policy_missing_edge_cap_fails_closed() -> None:
     mod = load_mod()
     with tempfile.TemporaryDirectory() as td:
@@ -181,6 +193,7 @@ def main() -> None:
     test_deny_listed_edge_fails_even_if_also_in_allow()
     test_edge_count_over_cap_fails_even_with_every_edge_allowed()
     test_conforming_tree_passes()
+    test_stale_allow_row_fails()
     test_malformed_policy_missing_edge_cap_fails_closed()
     test_malformed_policy_non_list_deny_fails_closed()
     test_malformed_policy_missing_allow_fails_closed()
