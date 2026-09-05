@@ -1760,6 +1760,54 @@ rather than ending it.
 `internal/events/event.go` - the declaration site, not a hand-kept list - and
 fails when a workflow kind reaches it with no entry in
 `workflowNoticePolicy`. Silence stays possible but must be recorded as a
-decision with a reason. It covers the workflow kinds only; the other event
-families have no equivalent gate, and `ports.Notices` itself is pinned only by
-`TestNoticeStreamReachesTheTranscript`, one test over one port.
+decision with a reason.
+
+Two further AST gates protect the ends of this pipeline:
+- `internal/cliworkflow/workflow_progress_kind_test.go`'s
+  `TestEveryProgressKindMapsToARenderedEventKind` parses
+  `internal/workflows/controller/progress.go` and proves every declared
+  `ProgressKind` maps to an event kind the notice policy renders.
+  `internal/workflows/localengine/engine_progress_kind_test.go` mirrors this
+  gate for the local engine.
+- `internal/newtui/app_streams_test.go`'s
+  `TestEveryPoolStreamIsWiredIntoTheScreen` proves every stream on
+  `ports.SessionPool` connects to a consumption site on the screen.
+
+**Lesson: AST vs. string search.** Never gate transport completeness with
+source text search or grep. Comments and variable names easily defeat string
+matches. A commented reference can satisfy a grep test while no executable call
+exists. Always parse the Go AST to inspect declared constants and call sites.
+
+## DC-44 Speculative or surrogate object cleanup destroys durable state reassigned to a live owner
+
+**Mechanism.** Code constructs a speculative or surrogate object to attempt a
+join, lookup, or reconciliation. The surrogate allocates or receives transient
+resources, such as a context lease or database lock.
+
+During execution, code detects an existing live instance. Code reassigns state
+or ownership between the surrogate and the live instance. A deferred cleanup
+path then runs on the surrogate (for example, `defer surrogate.Discard()` or
+`defer surrogate.Close()`).
+
+Because the surrogate still references the reassigned durable state, the cleanup
+path destroys or cancels the live instance's resources. The live instance fails
+unexpectedly.
+
+**Evidence.** 2026-09-05. In `internal/agent/session.go`, joining an existing
+session constructed a candidate session that held a context lease. When
+`JoinSession` found a matching live session, it reassigned the lease to that
+live session. However, the deferred `candidate.Close()` still executed. This
+cancelled the context lease of the live session while it ran active turns.
+
+**Probes.**
+- When code constructs a speculative object, check its cleanup paths.
+- Search for deferred calls to `Close`, `Discard`, or `Release` on candidate
+  objects.
+- Verify that state transfers clear the reference from the source object
+  before cleanup runs. For example, set `candidate.lease = nil` before discard.
+- Test concurrent operations during join or reconcile to ensure surrogate
+  cleanup does not affect the live instance.
+
+**Gate.** Add unit tests that assert ownership detachment. Verify that calling
+cleanup on a discarded candidate leaves the live instance's leases and durable
+handles open and valid.
