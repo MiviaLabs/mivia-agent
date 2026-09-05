@@ -225,17 +225,28 @@ def line_of_offset(data: bytes, offset: int) -> int:
     return data.count(b"\n", 0, offset) + 1
 
 
+# BUILD_FAILURE_MARKERS are the substrings `go test` itself prints in
+# stdout/stderr when a mutant fails to compile: "[build failed]" for the
+# package (or its test binary) failing to build, "[setup failed]" for a
+# package that fails to even load (e.g. an import cycle). Verified against
+# a real `go test` run on a deliberately broken file - confirmed neither
+# marker appears on an ordinary failing-test run, only on the two build/
+# load failure modes go test itself distinguishes that way.
+BUILD_FAILURE_MARKERS = ("[build failed]", "[setup failed]")
+
+
 def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
-    """run_mutant applies one mutation, builds, tests, and restores the
-    original bytes no matter how the run ends."""
+    """run_mutant applies one mutation, runs pkg's test target once, and
+    restores the original bytes no matter how the run ends.
+
+    A standalone `go build ./pkg` used to run before this test call. It was
+    redundant: compiling the test binary already fails a broken mutant the
+    same way, and `go test` marks that failure in its own output with
+    "[build failed]" or "[setup failed]" (see BUILD_FAILURE_MARKERS) - the
+    same discarded verdict a separate build step produced, for one fewer
+    compiler invocation per mutant."""
     site.path.write_bytes(apply_mutation(original, site))
     try:
-        build = subprocess.run(
-            ["go", "build", f"./{pkg}"], cwd=ROOT, capture_output=True, text=True
-        )
-        if build.returncode != 0:
-            print(f"discarded (build failed): {site.path.name}:{site.start} {site.kind}")
-            return classify(False, "pass")
         target = test_target(Path(pkg_dir), pkg)
         try:
             test = subprocess.run(
@@ -245,12 +256,135 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
                 text=True,
                 timeout=TEST_TIMEOUT_SECONDS,
             )
+            if test.returncode != 0 and any(
+                marker in test.stdout or marker in test.stderr
+                for marker in BUILD_FAILURE_MARKERS
+            ):
+                print(f"discarded (build failed): {site.path.name}:{site.start} {site.kind}")
+                return classify(False, "pass")
             outcome = "pass" if test.returncode == 0 else "fail"
         except subprocess.TimeoutExpired:
             outcome = "timeout"
         return classify(True, outcome)
     finally:
         site.path.write_bytes(original)
+
+
+# COVERAGE_BLOCK_RE matches one data line of a `go tool cover` profile:
+# "<file>:<startLine>.<startCol>,<endLine>.<endCol> <numStmt> <count>".
+# The leading "mode: <mode>" line and any blank line never match and are
+# skipped by the caller.
+COVERAGE_BLOCK_RE = re.compile(
+    r"^(?P<file>.+):(?P<start_line>\d+)\.\d+,(?P<end_line>\d+)\.\d+ \d+ (?P<count>\d+)$"
+)
+
+
+def module_path() -> str:
+    """module_path reads the module line from the repo's own go.mod, so
+    coverage_key can build the import-path form `go tool cover` profiles
+    key their per-file blocks by, without hardcoding the module name."""
+    for line in (ROOT / "go.mod").read_text().splitlines():
+        if line.startswith("module "):
+            return line.split(None, 1)[1].strip()
+    raise MutationError("go.mod: no module line found")
+
+
+def coverage_key(path: Path) -> str:
+    """coverage_key returns path's coverage-profile identifier: its
+    import path, matching the "<file>" field `go tool cover` profiles
+    use (always the module path plus the path relative to the repo
+    root, regardless of the OS path separator)."""
+    return f"{module_path()}/{path.relative_to(ROOT).as_posix()}"
+
+
+def parse_coverage_profile(text: str) -> dict[str, list[tuple[int, int, int]]]:
+    """parse_coverage_profile maps each covered file (by coverage_key's
+    import-path form) to its (startLine, endLine, count) blocks, from a
+    `go tool cover` profile's text. Unrecognized lines (the "mode:"
+    header, blanks) are skipped rather than raised on, since a profile's
+    exact line set is not this kit's contract to enforce."""
+    blocks: dict[str, list[tuple[int, int, int]]] = {}
+    for line in text.splitlines():
+        m = COVERAGE_BLOCK_RE.match(line)
+        if not m:
+            continue
+        blocks.setdefault(m.group("file"), []).append(
+            (int(m.group("start_line")), int(m.group("end_line")), int(m.group("count")))
+        )
+    return blocks
+
+
+def line_definitely_uncovered(blocks: list[tuple[int, int, int]], line_no: int) -> bool:
+    """line_definitely_uncovered reports whether every coverage block
+    overlapping line_no ran zero times.
+
+    Returns False - never skip - when no block overlaps the line at all:
+    an unmatched line is a profile gap (a generated file, a coverage
+    version mismatch, an off-by-one in a hand-rolled parse), not proof
+    the line is dead. Only a line every overlapping block agrees on as
+    zero-run is provably unreachable by every test in the target; a
+    mutation there can never be killed, so running the real build+test
+    for it is guaranteed to reproduce the same SURVIVED verdict this
+    returns immediately. This is the sole use of the coverage profile:
+    it can only skip a mutant whose outcome is already certain, never
+    guess at one whose outcome depends on running the tests."""
+    overlapping = [count for start, end, count in blocks if start <= line_no <= end]
+    if not overlapping:
+        return False
+    return all(count == 0 for count in overlapping)
+
+
+def compute_coverage_blocks(pkg: str, pkg_dir: Path) -> dict[str, list[tuple[int, int, int]]] | None:
+    """compute_coverage_blocks runs pkg's own test target once, unmutated,
+    with -coverpkg=./pkg so an external <pkg>_test target still attributes
+    coverage to the package under test, and returns its parsed per-file
+    blocks.
+
+    Returns None on any failure to produce a usable profile (a nonzero
+    exit, a missing or unreadable profile file, a timeout): every caller
+    treats None as "skip nothing", so a coverage-run problem only costs
+    the speedup, never a correctness risk - the sweep falls back to its
+    original always-run-the-mutant behaviour."""
+    target = test_target(pkg_dir, pkg)
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="mutation-cov-", suffix=".out", delete=False
+    )
+    cov_path = Path(tmp.name)
+    tmp.close()
+    try:
+        result = subprocess.run(
+            ["go", "test", f"-coverpkg=./{pkg}", f"-coverprofile={cov_path}", target],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=TEST_TIMEOUT_SECONDS * 4,
+        )
+        if result.returncode != 0 or not cov_path.exists():
+            return None
+        return parse_coverage_profile(cov_path.read_text())
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    finally:
+        try:
+            cov_path.unlink()
+        except OSError:
+            pass
+
+
+def site_is_dead_code(
+    site, line_no: int, coverage: dict[str, list[tuple[int, int, int]]] | None
+) -> bool:
+    """site_is_dead_code reports whether coverage proves line_no is never
+    executed by the test target the coverage profile was built for, so
+    running the real build+test for site is certain to report SURVIVED -
+    see line_definitely_uncovered. coverage=None (no usable profile)
+    always returns False: a caller must never skip on uncertainty."""
+    if coverage is None:
+        return False
+    blocks = coverage.get(coverage_key(site.path))
+    if blocks is None:
+        return False
+    return line_definitely_uncovered(blocks, line_no)
 
 
 def verify_restored(originals: dict[Path, bytes]) -> list[str]:
@@ -327,9 +461,18 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
                 pass
 
     atexit.register(restore_all)
+    coverage = compute_coverage_blocks(pkg, pkg_dir)
     killed = survived = discarded = 0
     try:
         for site in sites:
+            line_no = line_of_offset(originals[site.path], site.start)
+            if site_is_dead_code(site, line_no, coverage):
+                survived += 1
+                print(
+                    f"SURVIVED (no coverage, test skipped): {site.path.name}:{site.start} "
+                    f"{site.kind} {site.old!r} -> {site.new!r}"
+                )
+                continue
             outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
             if outcome == KILLED:
                 killed += 1
@@ -770,11 +913,21 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
 
     for pkg, sites_with_lines in pkg_sites.items():
         pkg_dir = ROOT / pkg
+        coverage = compute_coverage_blocks(pkg, pkg_dir)
         originals: dict[Path, bytes] = {}
         try:
             for site, line_no in sites_with_lines:
                 if site.path not in originals:
                     originals[site.path] = site.path.read_bytes()
+                if site_is_dead_code(site, line_no, coverage):
+                    total_survived += 1
+                    failed = True
+                    print(
+                        f"SURVIVED on diff line (no coverage, test skipped): "
+                        f"{site.path.name}:{line_no} {site.kind} {site.old!r} -> "
+                        f"{site.new!r} (missing test assertion)"
+                    )
+                    continue
                 outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
                 if outcome == KILLED:
                     total_killed += 1
