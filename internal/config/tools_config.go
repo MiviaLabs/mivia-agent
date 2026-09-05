@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // ToolsConfig configures tool execution policies.
@@ -472,4 +473,37 @@ func validateToolResultBudgets(tc ToolsConfig) error {
 			MinInspectRepositoryBytes, MaxInspectRepositoryBytesLimit, v)
 	}
 	return nil
+}
+
+// WorkspaceToolsConfig reads the [tools] section of root's own workspace
+// config (<root>/.mivia/mivia.toml) and resolves it through exactly the same
+// normalizer Load applies, so a per-root policy carries identical defaults
+// and validation to the launch one.
+//
+// found is false when the workspace has no config file of its own; the caller
+// then keeps the policy it already has. It exists because a session's tool
+// registry can be built for a root that is NOT the launch checkout - a git
+// worktree, on its own branch, with its own committed policy - and that root's
+// declared limits, allowlists and secret-path patterns are the ones its tools
+// must run under. Honoring it is gated by the caller on the operator's
+// [agents] load_workspace_config switch, the same gate that governs every
+// other workspace-provided value.
+func WorkspaceToolsConfig(root string) (ToolsConfig, bool, error) {
+	path := workspace.NamespacePath(root, "mivia.toml")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ToolsConfig{}, false, nil
+	}
+	if err != nil {
+		return ToolsConfig{}, false, fmt.Errorf("read workspace config %s: %w", path, err)
+	}
+	var file File
+	if err := decodeConfigInto(data, path, &file); err != nil {
+		return ToolsConfig{}, false, err
+	}
+	resolved := resolveToolsConfig(file.Tools)
+	if err := validateTools(resolved); err != nil {
+		return ToolsConfig{}, false, fmt.Errorf("workspace config %s: %w", path, err)
+	}
+	return resolved, true, nil
 }

@@ -76,8 +76,12 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 	// workflow started from a worktree session must publish progress on that
 	// session's bus and register its child runs against the repository the
 	// session's own inspect/cancel tools compare against.
-	wiring := cliagents.WorkflowSessionWiring{Bus: p.sessionBusProviderLocked(), SessionRepo: p.agentState.LedgerRepoValue()}
-	build := func(rootWorkspace, rootMemory string, fd bool, res *config.Resolved, w cliagents.WorkflowSessionWiring) (*tools.Registry, func(), error) {
+	wiring := cliagents.SessionRootWiring{
+		Bus:                 p.sessionBusProviderLocked(),
+		SessionRepo:         p.agentState.LedgerRepoValue(),
+		LoadWorkspaceConfig: p.workspaceConfigAllowedLocked(),
+	}
+	build := func(rootWorkspace, rootMemory string, fd bool, res *config.Resolved, w cliagents.SessionRootWiring) (*tools.Registry, func(), error) {
 		if cliagents.BuildToolsForRootHookForTest != nil {
 			return cliagents.BuildToolsForRootHookForTest(rootWorkspace, rootMemory, fd, res)
 		}
@@ -199,6 +203,17 @@ func (p *SessionPool) authoritativeFullDiskLocked() bool {
 		return launch.Tools.WorkspaceUnrestricted()
 	}
 	return false
+}
+
+// workspaceConfigAllowedLocked reports the operator's [agents]
+// load_workspace_config gate, which decides whether a rebuilt root may honor
+// its own committed config. Absent agent state is the fail-closed answer.
+// Callers hold p.mu.
+func (p *SessionPool) workspaceConfigAllowedLocked() bool {
+	if p.agentState == nil {
+		return false
+	}
+	return p.agentState.Global.LoadWorkspaceConfig
 }
 
 // sessionBusProviderLocked returns the pool's event bus provider. Every
