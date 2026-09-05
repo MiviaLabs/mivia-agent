@@ -71,3 +71,17 @@ func TestLocalPanelMemberFailureReachesTheOperator(t *testing.T) {
 		t.Fatalf("panel_member_failed maps to %q, want %q", got, events.KindWorkflowStepCompleted)
 	}
 }
+
+// TestLocalProgressStepHeartbeatMapsExplicitly pins the one kind that IS a
+// liveness tick: TestEveryProgressKindMappedInLocalEngine deliberately skips
+// ProgressStepHeartbeat because its expected mapping equals the same
+// fallback value the exhaustiveness check uses to catch an unmapped kind, so
+// that table never exercises this case on its own. Assert it directly so the
+// explicit case in localProgressKind (as opposed to an accidental fall
+// through to the default) actually runs.
+func TestLocalProgressStepHeartbeatMapsExplicitly(t *testing.T) {
+	got := localProgressKind(controller.ProgressStepHeartbeat)
+	if got != events.KindWorkflowStepHeartbeat {
+		t.Fatalf("step_heartbeat maps to %q, want %q", got, events.KindWorkflowStepHeartbeat)
+	}
+}
