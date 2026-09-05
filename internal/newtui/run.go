@@ -172,6 +172,12 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	// sole thing that ever turns one into a conv.Send call (item 1 of the
 	// steering design - see poolSyncOptions' comment for the full rationale).
 	screen.SetRemoteInputs(pool.RemoteInputs())
+	// pool.Notices() is the out-of-turn advisory stream (ports.Notices):
+	// chat-sync lifecycle lines, and every workflow progress transition
+	// (internal/uiadapter/workflow_notices.go). It had no reader here at all,
+	// so a workflow run started with workflow_run showed the operator nothing
+	// after the tool call returned, however long the run went on.
+	screen.SetNotices(pool.Notices())
 	screen.SetSessionMounter(runner)
 	pool.StartBackgroundWatch(context.Background())
 

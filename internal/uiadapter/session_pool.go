@@ -85,6 +85,12 @@ type SessionPool struct {
 	launchRootDone      bool
 	launchRootVal       string
 
+	// workflowSubs holds the pool's workflow-progress subscriptions, keyed by
+	// the bus they are registered on so arming is idempotent across the
+	// several places a session with a bus enters the pool. See
+	// workflow_notices.go.
+	workflowSubs map[*events.Bus]*events.Subscription
+
 	// resuming tracks GetOrCreateInDir calls in flight, keyed by the
 	// requested id, so a second caller for the SAME id joins the first
 	// instead of building an independent, orphaned twin. See resumeInFlight.
@@ -307,6 +313,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		threads:      NewSubagentThreads(),
 		notices:      make(chan uievent.Event, syncNoticeBuffer),
 		remoteInputs: make(chan ports.RemoteInputEvent, remoteInputBuffer),
+		workflowSubs: make(map[*events.Bus]*events.Subscription),
 	}
 	if initialSess != nil {
 		if res != nil {
@@ -321,6 +328,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 			pool.agentStates[id] = agentState
 		}
 		pool.attachSyncLocked(initialSess)
+		pool.watchWorkflowProgressLocked(initialSess.EventBus)
 	}
 	return pool
 }
@@ -504,6 +512,10 @@ func (p *SessionPool) publishEntryLocked(requested string, sess *chat.Session, c
 	p.sessions[requested] = sess
 	p.convs[requested] = conv
 	p.bindEntryStateLocked(requested, state)
+	// A pool built before its launch session had a bus (an embedding, or a
+	// test) still gets its workflow progress the moment a session carrying
+	// one is published. Idempotent per bus.
+	p.watchWorkflowProgressLocked(sess.EventBus)
 	if sess.SessionID != "" && sess.SessionID != requested {
 		p.sessions[sess.SessionID] = sess
 		p.convs[sess.SessionID] = conv

@@ -1709,3 +1709,57 @@ NOT yet a repo-wide gate: `internal/agents`, `internal/chat`,
 `internal/uiadapter` resolve user configuration in tests without
 `testenv.IsolateHome` (some isolate `HOME` per test, which protects those tests
 only). They pass today; they are unprotected, not proven clean.
+
+## DC-43 A signal is produced, transported, and declared as a port, and nothing at the far end reads it
+
+**Mechanism.** A pipeline is built end to first: producers publish, a bus or
+channel carries, a port declares the surface, and each layer is verified
+against the layer it hands to. Nobody verifies the last hop, because there is
+nothing after it to compare against. Every layer's own tests pass - the
+producer publishes, the bus delivers, the port returns a channel - and the
+feature is dead, because a channel with no reader is indistinguishable from a
+channel with a reader that has nothing to say.
+
+The failure mode is silence, which is also the correct output for an idle
+system. That is what lets it survive review: nobody notices an event that
+never renders, and the layer-by-layer tests all agree the plumbing is right.
+It is DC-16's mirror image - there, a live path had consumers and only some
+producers fed it; here every producer feeds a path that ends nowhere.
+
+**Evidence.** 2026-09-05. `internal/cliworkflow` published a lifecycle event
+onto the session bus for every workflow transition, and `internal/events`
+delivered them, and `events.MetricsAdapter` even listed the kinds - but the
+only `SubscribeAcross` call sites outside `internal/events` were the hub relay
+and `internal/chatsync`, and neither listed a workflow kind. A run started
+with `workflow_run` from the TUI showed one tool call and then nothing for its
+entire lifetime, so a multi-hour run was indistinguishable from a hung one.
+Fixing it uncovered the same defect one layer down: `ports.Notices` - the
+declared out-of-band advisory port, with a full doc comment stating the UI
+"reads it once, at startup" - had a producer in `internal/uiadapter` and NO
+reader anywhere in `internal/ui` or `internal/newtui`. Chat-sync lifecycle
+advisories had been going into that channel unread for as long as it existed.
+Subscribing to the workflow kinds alone would have moved the silence one layer
+rather than ending it.
+
+**Probes.**
+- For every published event kind, name the consumer. Not the port, not the
+  bus, not the adapter that could subscribe - the code that turns it into
+  something a person sees or a system acts on. "It goes on the bus" is a
+  transport claim, not a delivery one.
+- A port interface with a doc comment describing who reads it is evidence of
+  intent, never of a reader. Grep for the call site.
+- When you fix a missing consumer, check the layer you handed to. This class
+  clusters: the same review that let one last hop go unverified let the next
+  one go too.
+- Trace one real user-visible signal end to end through the layers at least
+  once per pipeline, in a test that fails if any single hop is removed. Every
+  per-layer test can pass while the pipeline delivers nothing.
+
+**Gate.** `internal/uiadapter/workflow_notices_test.go`'s
+`TestEveryWorkflowEventKindIsClassified` parses the `Kind` constants out of
+`internal/events/event.go` - the declaration site, not a hand-kept list - and
+fails when a workflow kind reaches it with no entry in
+`workflowNoticePolicy`. Silence stays possible but must be recorded as a
+decision with a reason. It covers the workflow kinds only; the other event
+families have no equivalent gate, and `ports.Notices` itself is pinned only by
+`TestNoticeStreamReachesTheTranscript`, one test over one port.

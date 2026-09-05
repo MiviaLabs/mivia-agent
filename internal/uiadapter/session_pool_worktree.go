@@ -264,6 +264,7 @@ func (p *SessionPool) refuseIfDrainedLocked() error {
 func (p *SessionPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.releaseWorkflowWatchesLocked()
 	for _, closeFn := range p.regCloses {
 		closeFn()
 	}
