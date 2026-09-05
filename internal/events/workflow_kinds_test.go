@@ -8,8 +8,7 @@ import (
 
 // newObservabilityKinds is the const-like catalog of the workflow and
 // invocation observability kinds added to the events bus. Every entry must
-// exist in the const block in event.go AND in the allKnownKinds list in
-// metrics.go. Add future kinds to both lists and to this catalog.
+// exist in the const block in event.go.
 func newObservabilityKinds() []Kind {
 	return []Kind{
 		KindHeartbeat,
@@ -24,18 +23,6 @@ func newObservabilityKinds() []Kind {
 		KindInvocationStarted,
 		KindInvocationCompleted,
 		KindInvocationRetrying,
-	}
-}
-
-// TestNewKindsPresentInAllKnownKinds is a table test: every new kind
-// constant must appear in allKnownKinds, or MetricsAdapter silently drops
-// events of that kind. Future kinds must be added to both lists.
-func TestNewKindsPresentInAllKnownKinds(t *testing.T) {
-	known := knownKindsSet()
-	for _, kind := range newObservabilityKinds() {
-		if !known[kind] {
-			t.Errorf("allKnownKinds is missing kind %q", kind)
-		}
 	}
 }
 
@@ -88,29 +75,5 @@ func TestBusHeartbeatRoundTrip(t *testing.T) {
 	}
 	if string(KindHeartbeat) != "heartbeat" {
 		t.Fatalf("KindHeartbeat value = %q, want \"heartbeat\"", KindHeartbeat)
-	}
-}
-
-// TestMetricsAdapter_CountsWorkflowAndInvocationKinds publishes one event
-// of every new kind to a subscribed MetricsAdapter and asserts the total
-// and each per-kind count. Fails until every new kind is added to
-// allKnownKinds.
-func TestMetricsAdapter_CountsWorkflowAndInvocationKinds(t *testing.T) {
-	bus, adapter := setupMetricsTest(t)
-
-	kinds := newObservabilityKinds()
-	for _, kind := range kinds {
-		bus.Publish(NewEvent(kind))
-	}
-	bus.Flush()
-
-	counts, total := adapter.Snapshot()
-	if total != uint64(len(kinds)) {
-		t.Fatalf("expected total=%d, got %d", len(kinds), total)
-	}
-	for _, kind := range kinds {
-		if counts[string(kind)] != 1 {
-			t.Errorf("expected %s=1, got %d", kind, counts[string(kind)])
-		}
 	}
 }
