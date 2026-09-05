@@ -87,11 +87,11 @@ func (t *grepTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search file contents with a regex. Returns path:line:text. Paginate with offset/limit."
+	return "Search file contents with a regex. Target specific identifiers or symbols rather than broad words. Scope with path or glob to avoid repository-wide scans. Returns path:line:text. Paginate with offset/limit."
 }
 func (t *grepTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"pattern":            map[string]any{"type": "string", "description": "Regular expression"},
+		"pattern":            map[string]any{"type": "string", "description": "Specific symbol identifier or regex (avoid broad words)"},
 		"path":               map[string]any{"type": "string", "description": "Relative file or directory to search (default \".\")"},
 		"glob":               map[string]any{"type": "string", "description": "Filename glob filter (e.g. *.py, *.ts)"},
 		"case_insensitive":   map[string]any{"type": "boolean", "description": "Match ignoring case (default false)"},
