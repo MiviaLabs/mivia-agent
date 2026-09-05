@@ -68,7 +68,7 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 		return ""
 	}
 
-	fullDisk := p.anyMemberUnrestricted()
+	fullDisk := p.authoritativeFullDiskLocked()
 
 	build := cliagents.BuildToolsForRoot
 	if cliagents.BuildToolsForRootHookForTest != nil {
@@ -95,6 +95,14 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 		closeFn() // discard our duplicate handles
 		p.adoptRegistry(sess, existing)
 		return ""
+	}
+	// Register this root's re-arm so a LATER Settings -> General toggle
+	// reaches it too, not only the launch root - and re-sync it to
+	// whatever the authoritative posture became while the build above ran
+	// unlocked, closing the race an operator toggle mid-build would
+	// otherwise leave this root on the wrong side of.
+	if p.agentState != nil {
+		p.agentState.SetFullDiskReArm(reg.SetWorkspaceUnrestricted)
 	}
 	p.regByRoot[canonical] = reg
 	p.regCloses = append(p.regCloses, closeFn)
@@ -155,15 +163,22 @@ func (p *SessionPool) preferredInheritanceSessionLocked() *chat.Session {
 	return nil
 }
 
-// anyMemberUnrestricted mirrors the --full-disk posture of the member
-// registries so rebuilt roots can neither silently widen nor silently
-// narrow.
-func (p *SessionPool) anyMemberUnrestricted() bool {
-	for _, existing := range p.sessions {
-		if existing.Tools == nil {
-			continue
-		}
-		return existing.Tools.WorkspaceUnrestricted()
+// authoritativeFullDiskLocked reports the full-disk posture a newly built
+// worktree registry should start with: the agentState's authoritative value
+// when the pool has one (kept current by ApplyFullDisk's fan-out, and by
+// each new root's own SetFullDiskReArm sync), or - for a pool built without
+// one (some embeddings/tests wire tools directly) - the pool's own launch
+// session, deterministically identified via preferredInheritanceSessionLocked,
+// never an arbitrary "first" entry visited by iterating the unordered
+// p.sessions map (bug-audit "new worktree posture depends on random map
+// iteration" - the defect the removed anyMemberUnrestricted had). Callers
+// hold p.mu.
+func (p *SessionPool) authoritativeFullDiskLocked() bool {
+	if p.agentState != nil {
+		return p.agentState.FullDiskOn()
+	}
+	if launch := p.preferredInheritanceSessionLocked(); launch != nil && launch.Tools != nil {
+		return launch.Tools.WorkspaceUnrestricted()
 	}
 	return false
 }

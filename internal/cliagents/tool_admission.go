@@ -15,10 +15,10 @@ func ApplyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan Tool
 	}
 	prompt, maxSteps := sess.AgentSettings()
 	prompt = promptWithDeferredIndex(prompt, plan)
+	// res is the pool's SHARED launch config; only the session's own
+	// AgentSettings track this session's active prompt (bug-audit "pooled
+	// worktree sessions share mutable agent state").
 	sess.SetAgentSettings(prompt, maxSteps, CoreMemoryBlockForState(state))
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 }
 
 // newSurfaceWidener returns the host-owned publisher for staged tool

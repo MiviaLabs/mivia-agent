@@ -94,6 +94,7 @@ func ScopedRegistry(src *Registry, opts ScopeOptions) *Registry {
 	if src == nil {
 		return out
 	}
+	out.workspace = src.workspaceRootPtr()
 	denied := MandatoryDenylistSet(opts.ExtraDenylist...)
 	operatorDenied := operatorDenialSet(opts.ExtraDenylist)
 	for _, t := range src.List() {

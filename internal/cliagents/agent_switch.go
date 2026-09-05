@@ -76,43 +76,160 @@ type AgentSessionState struct {
 	// MemoryConfig is the resolved [memory] section, read alongside Memory
 	// to build the core-tier injection block (coreMemoryBlock).
 	MemoryConfig config.MemoryConfig
-	// fullDiskReArm lifts or re-imposes workspace confinement on the LIVE
-	// session workspace root; wired by ConfigureChatWorkspace from the root
-	// the session's tools actually hold. The settings store calls it through
-	// ApplyFullDisk when the operator flips Settings -> General "full disk",
-	// so the change lands without a restart (bug-audit AR-4's sanctioned
-	// synchronized re-arm; Root.SetUnrestricted is atomic). Nil when tools
-	// are off or no chat workspace was configured - persistence-only then.
-	fullDiskReArm func(on bool)
+	// fullDisk is the shared, operator-wide full-disk posture and re-arm
+	// list. It is a POINTER so Fork gives every per-session state a private
+	// Selected/SkillScope/TierPlan (bug-audit "pooled worktree sessions
+	// share mutable agent state") while every fork still drives and
+	// observes the SAME confinement posture: full-disk access is an
+	// operator setting, not a per-session one, and toggling it from
+	// whichever session happens to be active must still reach every live
+	// worktree root (bug-audit "full-disk access does not reach active
+	// worktree registries"). Never nil after newFullDiskState.
+	fullDisk *fullDiskState
 }
 
-// SetFullDiskReArm registers the live confinement re-arm. Only
-// ConfigureChatWorkspace (the code that owns the session's workspace root)
-// may call it.
-func (s *AgentSessionState) SetFullDiskReArm(fn func(on bool)) {
+// fullDiskState is the operator-wide full-disk posture: every live
+// workspace root's confinement re-arm, and the authoritative on/off value.
+// Shared by pointer across every AgentSessionState Fork produces so an
+// operator toggle from any pooled session reaches every other one.
+type fullDiskState struct {
+	mu     sync.Mutex
+	on     bool
+	reArms []func(on bool)
+}
+
+func newFullDiskState() *fullDiskState {
+	return &fullDiskState{}
+}
+
+// fullDiskStateLocked returns this state's shared full-disk posture,
+// lazily initializing it. Most states are built as struct literals (tests,
+// startup wiring), not through a constructor, so fullDisk is nil until
+// first use; every accessor below routes through this instead of assuming
+// newFullDiskState already ran. Callers hold s.mu.
+func (s *AgentSessionState) fullDiskStateLocked() *fullDiskState {
+	if s.fullDisk == nil {
+		s.fullDisk = newFullDiskState()
+	}
+	return s.fullDisk
+}
+
+// seedFullDisk records the launch-time full-disk posture (the operator's
+// `--full-disk` flag or persisted [workspace_access] full_disk setting)
+// before any re-arm has registered, so the first SetFullDiskReArm call does
+// not stomp a "born unrestricted" root back to false. Only
+// ConfigureChatWorkspace, which knows that launch value, calls it.
+func (s *AgentSessionState) seedFullDisk(on bool) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.fullDiskReArm = fn
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	fd.on = on
+	fd.mu.Unlock()
 }
 
-// ApplyFullDisk drives the live re-arm, reporting whether one was wired.
-// Nil-receiver and nil-hook safe: without a chat workspace there is nothing
-// to re-arm and the setting stays persistence-only (next launch).
+// FullDiskOn reports the authoritative full-disk posture: the value ApplyFullDisk
+// last set, or the seeded launch value before any toggle. A newly built worktree
+// registry uses this - not a peer session's live value - to decide its own
+// initial posture, so worktree creation is deterministic regardless of
+// session-map iteration order.
+func (s *AgentSessionState) FullDiskOn() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	return fd.on
+}
+
+// SetFullDiskReArm registers one live confinement re-arm (ConfigureChatWorkspace
+// for the launch root, SessionPool for each worktree root it rebuilds) and
+// immediately synchronizes it to the current authoritative posture, so a root
+// joining after the operator already toggled full-disk access does not start
+// out of step.
+func (s *AgentSessionState) SetFullDiskReArm(fn func(on bool)) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.mu.Lock()
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	on := fd.on
+	fd.reArms = append(fd.reArms, fn)
+	fd.mu.Unlock()
+	fn(on)
+}
+
+// ApplyFullDisk drives every live re-arm, reporting whether at least one was
+// wired. Nil-receiver and empty-list safe: without a chat workspace there is
+// nothing to re-arm and the setting stays persistence-only (next launch).
 func (s *AgentSessionState) ApplyFullDisk(on bool) bool {
 	if s == nil {
 		return false
 	}
 	s.mu.Lock()
-	fn := s.fullDiskReArm
+	fd := s.fullDiskStateLocked()
 	s.mu.Unlock()
-	if fn == nil {
+	fd.mu.Lock()
+	fd.on = on
+	fns := append([]func(bool){}, fd.reArms...)
+	fd.mu.Unlock()
+	if len(fns) == 0 {
 		return false
 	}
-	fn(on)
+	for _, fn := range fns {
+		fn(on)
+	}
 	return true
+}
+
+// Fork returns a new AgentSessionState for one pooled session entry,
+// carrying this state's CURRENT selection and admission plan as that
+// entry's own private starting point. Every session-independent facility -
+// tool base, MCP manager, ledger, memory store, skill registry, workspace
+// root, and the operator-wide full-disk posture - is shared with the state
+// it forked from (the full-disk fields by shared pointer, so a toggle from
+// any fork still reaches every worktree root; see fullDiskState). Only
+// Selected, SkillScope, TierPlan, LastSchemaMass and the Baseline* fields
+// are private to the fork from this point on: a later /agent switch or
+// deferred-tool admission in ONE pooled session no longer rewrites another
+// session's policy through one shared pointer (bug-audit "pooled worktree
+// sessions share mutable agent state"). The fork never inherits
+// ownedLedgerStore - only the state that opened a durable ledger may close
+// it.
+func (s *AgentSessionState) Fork() *AgentSessionState {
+	if s == nil {
+		return &AgentSessionState{fullDisk: newFullDiskState()}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &AgentSessionState{
+		Global:             s.Global,
+		Selected:           s.Selected,
+		AllowProjectSkills: s.AllowProjectSkills,
+		Registry:           s.Registry,
+		WorkspaceRoot:      s.WorkspaceRoot,
+		ToolBase:           s.ToolBase,
+		MCPManager:         s.MCPManager,
+		SkillScope:         s.SkillScope,
+		TierPlan:           s.TierPlan,
+		SkillRegFull:       s.SkillRegFull,
+		LedgerRepo:         s.LedgerRepo,
+		LastSchemaMass:     s.LastSchemaMass,
+		BaselinePrompt:     s.BaselinePrompt,
+		BaselineMaxSteps:   s.BaselineMaxSteps,
+		BaselineCaptured:   s.BaselineCaptured,
+		Memory:             s.Memory,
+		MemoryConfig:       s.MemoryConfig,
+		fullDisk:           s.fullDiskStateLocked(),
+	}
 }
 
 // DisplayName is the status dialog's "agent" row: the locked, nil-safe read
@@ -294,17 +411,18 @@ func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	}
 	state.Selected = nil
 	if candidate == nil {
-		if res != nil {
-			res.SystemPrompt = state.BaselinePrompt
-		}
+		// The session's own AgentSettings carry the active prompt; res is
+		// the pool's SHARED launch config and must keep holding the
+		// original baseline for every future fresh entry, not this
+		// session's current selection (bug-audit "pooled worktree sessions
+		// share mutable agent state" - a /agent switch in one session
+		// silently rewrote the launch baseline every sibling and future
+		// /new session started from).
 		sess.SetAgentSettings(state.BaselinePrompt, state.BaselineMaxSteps, CoreMemoryBlockForState(state))
 		return nil
 	}
 	candidate.commitTo(state)
 	prompt := promptWithDeferredIndex(state.BaselinePrompt, state.TierPlan)
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 	commitAgentSwitchSurface(sess, res, state, candidate, config.RootAgentName, prompt, state.BaselineMaxSteps)
 	return nil
 }
@@ -373,16 +491,12 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 		candidate.commitTo(state)
 	}
 	if candidate == nil {
-		if res != nil {
-			res.SystemPrompt = prompt
-		}
+		// See restoreRootSurface's matching comment: res is the pool's
+		// SHARED launch config, never this session's private prompt.
 		sess.SetAgentSettings(prompt, maxSteps, CoreMemoryBlockForState(state))
 		return nil
 	}
 	prompt = promptWithDeferredIndex(prompt, state.TierPlan)
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 	commitAgentSwitchSurface(sess, res, state, candidate, sel.Name, prompt, maxSteps)
 	return nil
 }

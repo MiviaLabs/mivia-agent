@@ -162,10 +162,10 @@ func ApplySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected
 			maxSteps = *selected.MaxTurns
 		}
 	}
+	// res is the pool's SHARED launch config; only the session's own
+	// AgentSettings track this session's active prompt (bug-audit "pooled
+	// worktree sessions share mutable agent state").
 	sess.SetAgentSettings(prompt, maxSteps, CoreMemoryBlockForState(state))
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 }
 
 // CurrentAgentName implements current agent name.

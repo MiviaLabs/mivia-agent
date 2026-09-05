@@ -50,6 +50,7 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 	conv.SetSubagents(p.threads)
 	p.sessions[sess.SessionID] = sess
 	p.convs[sess.SessionID] = conv
+	p.registerForkedStateLocked(sess.SessionID)
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil
@@ -99,9 +100,15 @@ func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (po
 	conv.SetSubagents(p.threads)
 	p.sessions[id] = sess
 	p.convs[id] = conv
+	p.registerForkedStateLocked(id)
 	if sess.SessionID != "" && sess.SessionID != id {
 		p.sessions[sess.SessionID] = sess
 		p.convs[sess.SessionID] = conv
+		// Same entry under its second key, not a second fork - see the
+		// matching comment in GetOrCreate.
+		if state := p.agentStates[id]; state != nil {
+			p.agentStates[sess.SessionID] = state
+		}
 	}
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)

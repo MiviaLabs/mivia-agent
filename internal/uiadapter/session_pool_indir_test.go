@@ -212,20 +212,11 @@ func TestInDir_HelpersHandleNilToolsMembersAndNonGitRoots(t *testing.T) {
 	stubWorkflowWiring(t)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
 
-	// Empty pool: the unrestricted probe falls through to false.
-	empty := NewSessionPool(nil, res, nil, true)
-	if empty.anyMemberUnrestricted() {
-		t.Fatal("empty pool reported unrestricted")
-	}
-
 	// Members without registries are skipped, not dereferenced.
 	pool := NewSessionPool(nil, res, nil, true)
 	toolless := chat.NewSession(res, nil)
 	toolless.SessionID = "toolless"
 	pool.sessions[toolless.SessionID] = toolless
-	if pool.anyMemberUnrestricted() {
-		t.Fatal("nil-tools member reported unrestricted")
-	}
 	if got := pool.launchRootLocked(); got != "" {
 		t.Fatalf("launch root %q derived from a tool-less member", got)
 	}

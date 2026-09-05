@@ -163,11 +163,13 @@ func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		return func() {}, err
 	}
 	stashMemoryOnState(state, opts.Memory, res)
-	// Register the live confinement re-arm BEFORE the registry build so the
-	// operator's Settings -> General toggle can flip the very root the
-	// session's tools hold, without a restart. State is nil for some test
-	// harnesses; persistence-only then.
+	// Seed the authoritative posture from the launch value BEFORE
+	// registering the re-arm, so SetFullDiskReArm's immediate sync call
+	// re-applies the same value this root was just opened with instead of
+	// stomping a "born unrestricted" root back to false. State is nil for
+	// some test harnesses; persistence-only then.
 	if state != nil {
+		state.seedFullDisk(fullDisk)
 		state.SetFullDiskReArm(opts.Workspace.SetUnrestricted)
 	}
 	sess.Tools = registry

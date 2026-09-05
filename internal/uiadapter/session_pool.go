@@ -44,7 +44,16 @@ type SessionPool struct {
 	released   atomic.Bool
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
-	toolsOn    bool
+	// agentStates is the per-entry agent-selection state (Selected,
+	// SkillScope, TierPlan, Baseline*) for every pooled session, keyed by
+	// session ID. The launch entry is registered with agentState itself, not
+	// a fork of it; every later entry (CreateFresh, CreateFreshInDir,
+	// GetOrCreate, GetOrCreateInDir) gets agentState.Fork() so one session's
+	// /agent switch or deferred-tool admission cannot rewrite another
+	// pooled session's policy through a shared pointer (bug-audit "pooled
+	// worktree sessions share mutable agent state"). See AgentState.
+	agentStates map[string]*cliagents.AgentSessionState
+	toolsOn     bool
 	// threads is the one SubagentThreads registry shared by every
 	// Conversation the pool creates or resumes, so the activity panel's
 	// thread dialog (wired once, at startup, to this same instance) can
@@ -277,6 +286,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		busReleases:  make(map[string]func()),
 		res:          res,
 		agentState:   agentState,
+		agentStates:  make(map[string]*cliagents.AgentSessionState),
 		toolsOn:      toolsOn,
 		threads:      NewSubagentThreads(),
 		notices:      make(chan uievent.Event, syncNoticeBuffer),
@@ -291,6 +301,9 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		conv.SetSubagents(pool.threads)
 		pool.sessions[id] = initialSess
 		pool.convs[id] = conv
+		if agentState != nil {
+			pool.agentStates[id] = agentState
+		}
 		pool.attachSyncLocked(initialSess)
 	}
 	return pool
@@ -345,27 +358,12 @@ func inheritApprovalLocked(sess, existing *chat.Session, res *config.Resolved) {
 	}
 }
 
-// CreateFresh creates a brand-new session, inheriting runtime state (tools,
-// context store, context manager, event bus) from the first existing pool
-// member. It does NOT call Load — the session starts empty.
-// The new conversation is registered in the pool and returned.
-func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.res == nil {
-		return nil, fmt.Errorf("no config provided")
-	}
-
-	var comp provider.Completer
-	if p.res.ProviderName != "" {
-		comp, _ = provider.New(p.res)
-	}
-	sess := chat.NewSession(p.res, comp)
-	sess.UseTools = p.toolsOn
-
-	// Inherit runtime state from the first existing session.
-	var sibling *chat.Session
+// inheritRuntimeStateLocked copies tools, event bus, context store/manager,
+// and redaction policy from the pool's preferred inheritance sibling (see
+// preferredInheritanceSessionLocked) onto sess, a session CreateFresh or
+// GetOrCreate just constructed. Returns that sibling (nil if the pool has
+// none yet) for inheritApprovalLocked. Callers hold p.mu.
+func (p *SessionPool) inheritRuntimeStateLocked(sess *chat.Session) *chat.Session {
 	preferred := p.preferredInheritanceSessionLocked()
 	for _, existing := range p.sessions {
 		if preferred != nil && existing != preferred {
@@ -400,9 +398,31 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 		if store := existing.ContextStore(); store != nil {
 			_ = sess.SetContextStore(store)
 		}
-		sibling = existing
-		break
+		return existing
 	}
+	return nil
+}
+
+// CreateFresh creates a brand-new session, inheriting runtime state (tools,
+// context store, context manager, event bus) from the first existing pool
+// member. It does NOT call Load — the session starts empty.
+// The new conversation is registered in the pool and returned.
+func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.res == nil {
+		return nil, fmt.Errorf("no config provided")
+	}
+
+	var comp provider.Completer
+	if p.res.ProviderName != "" {
+		comp, _ = provider.New(p.res)
+	}
+	sess := chat.NewSession(p.res, comp)
+	sess.UseTools = p.toolsOn
+
+	sibling := p.inheritRuntimeStateLocked(sess)
 	inheritApprovalLocked(sess, sibling, p.res)
 
 	if p.agentState != nil && p.res != nil {
@@ -415,6 +435,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	id := sess.SessionID
 	p.sessions[id] = sess
 	p.convs[id] = conv
+	p.registerForkedStateLocked(id)
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil
@@ -440,39 +461,7 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	sess := chat.NewSession(p.res, comp)
 	sess.UseTools = p.toolsOn
 
-	// Inherit tools, event bus, and context store from existing session if set
-	var sibling *chat.Session
-	preferred := p.preferredInheritanceSessionLocked()
-	for _, existing := range p.sessions {
-		if preferred != nil && existing != preferred {
-			continue
-		}
-		if existing.Tools != nil {
-			sess.Tools = existing.Tools
-			sess.MaxToolResultChars = existing.MaxToolResultChars
-			sess.BatchResultBudgetBytes = existing.BatchResultBudgetBytes
-			sess.RefOnlyTools = existing.RefOnlyTools
-		}
-		if existing.EventBus != nil {
-			sess.EventBus = existing.EventBus
-		}
-		if mgr := existing.ContextManager(); mgr != nil {
-			origPrincipal := existing.ContextPrincipal()
-			if origPrincipal.IsBound() {
-				newPrincipal, err := contextstate.NewPrincipal(origPrincipal.WorkspaceID, sess.SessionID, origPrincipal.SubjectID)
-				if err == nil {
-					policy := existing.ContextPolicy()
-					_ = sess.SetContextManager(mgr, newPrincipal, policy)
-				}
-			}
-		}
-		sess.SetContextRedactionPolicy(existing.ContextRedactionPolicy())
-		if store := existing.ContextStore(); store != nil {
-			_ = sess.SetContextStore(store)
-		}
-		sibling = existing
-		break
-	}
+	sibling := p.inheritRuntimeStateLocked(sess)
 	inheritApprovalLocked(sess, sibling, p.res)
 
 	if p.agentState != nil && p.res != nil {
@@ -494,9 +483,16 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	conv.SetSubagents(p.threads)
 	p.sessions[sessionID] = sess
 	p.convs[sessionID] = conv
+	p.registerForkedStateLocked(sessionID)
 	if sess.SessionID != "" && sess.SessionID != sessionID {
 		p.sessions[sess.SessionID] = sess
 		p.convs[sess.SessionID] = conv
+		// Same entry under its second key, not a second fork: both ids name
+		// the same *chat.Session, and AgentState callers must resolve
+		// either one to the identical private state.
+		if state := p.agentStates[sessionID]; state != nil {
+			p.agentStates[sess.SessionID] = state
+		}
 	}
 	p.attachSyncLocked(sess)
 	return conv, nil
