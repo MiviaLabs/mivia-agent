@@ -25,7 +25,10 @@ const (
 	KindToolEnd        Kind = "tool.end"
 	KindPlan           Kind = "plan"   // to-do/plan checklist update
 	KindNotice         Kind = "notice" // free-text advisory line, e.g. context-usage warning
-	KindHook           Kind = "hook"   // a lifecycle hook fired for a tool call
+	// KindWorkflowStatus is replaceable liveness for the running workflow,
+	// for a status row - never the transcript. See WorkflowStatusBody.
+	KindWorkflowStatus Kind = "workflow.status"
+	KindHook           Kind = "hook" // a lifecycle hook fired for a tool call
 	KindUsage          Kind = "usage"
 	KindError          Kind = "error"
 	KindTurnEnd        Kind = "turn.end"
@@ -209,6 +212,30 @@ type NoticeBody struct {
 }
 
 func (NoticeBody) isBody() {}
+
+// WorkflowStatusBody is the Body for KindWorkflowStatus: the liveness of the
+// workflow run currently executing, for a persistent status row rather than
+// the transcript.
+//
+// This exists because a workflow step can run quietly for hours. Its start
+// and its end are state transitions and belong in the record as notices; the
+// span between them is not a sequence of events at all, it is one fact that
+// stays true and whose only changing part is how long it has been true. A
+// transcript entry per liveness tick would bury the record it is supposed to
+// make readable, so the span is carried as a REPLACEABLE status instead: each
+// event supersedes the last, and the renderer derives the elapsed time from
+// Since at draw time rather than being told it.
+//
+// Active false clears the row: the run reached a terminal state and there is
+// no longer anything running to report.
+type WorkflowStatusBody struct {
+	Run    string    `json:"run"`
+	Step   string    `json:"step"`
+	Since  time.Time `json:"since"`
+	Active bool      `json:"active"`
+}
+
+func (WorkflowStatusBody) isBody() {}
 
 // HookBody is the Body for KindHook: one lifecycle hook execution for a
 // tool call, with its program, event, tool, and the bounded/redacted input

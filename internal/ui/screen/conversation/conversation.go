@@ -75,6 +75,12 @@ type Screen struct {
 	// no channel means no out-of-turn advisories are rendered. Set via
 	// SetNotices, the same seam SetRemoteInputs uses. See notices.go.
 	notices <-chan uievent.Event
+	// workflowStatus is the replaceable liveness stream, separate from
+	// notices; workflow is the newest value read from it, drawn on the status
+	// row (status.go). The zero value means nothing is running and the row
+	// says nothing about workflows.
+	workflowStatus <-chan uievent.Event
+	workflow       uievent.WorkflowStatusBody
 
 	// mounter resolves untracked sessions on demand for remote steering.
 	mounter ports.SessionMounter
@@ -216,7 +222,9 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	return s
 }
 
-func (s Screen) Init() tea.Cmd { return tea.Batch(s.awaitRemoteInput(), s.awaitNotice()) }
+func (s Screen) Init() tea.Cmd {
+	return tea.Batch(s.awaitRemoteInput(), s.awaitNotice(), s.awaitWorkflowStatus())
+}
 
 // ViewFlags holds the alternate screen: the conversation is the cockpit.
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
@@ -508,6 +516,9 @@ func (s Screen) updateAsyncPortMsg(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
 		return next, cmd, true
 	case noticeMsg:
 		next, cmd := s.handleNotice(msg.event)
+		return next, cmd, true
+	case workflowStatusMsg:
+		next, cmd := s.handleWorkflowStatus(msg.event)
 		return next, cmd, true
 	case sessionMountedMsg:
 		next, cmd := s.handleSessionMountedMsg(msg)

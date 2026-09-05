@@ -78,6 +78,8 @@ func unmarshalBody(kind Kind, raw json.RawMessage) (Body, error) {
 		body = &PlanBody{}
 	case KindNotice:
 		body = &NoticeBody{}
+	case KindWorkflowStatus:
+		body = &WorkflowStatusBody{}
 	case KindHook:
 		body = &HookBody{}
 	case KindUsage:
@@ -119,6 +121,8 @@ func derefBody(body Body) Body {
 	case *PlanBody:
 		return *b
 	case *NoticeBody:
+		return *b
+	case *WorkflowStatusBody:
 		return *b
 	case *HookBody:
 		return *b

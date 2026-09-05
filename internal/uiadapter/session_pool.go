@@ -66,6 +66,11 @@ type SessionPool struct {
 	// notices is the pool-wide advisory stream (ports.Notices). It is
 	// created once, never closed, and written only through pushNotice.
 	notices chan uievent.Event
+	// workflowStatusCh carries replaceable workflow liveness, separately from
+	// notices. It must not share that queue: the controller emits a heartbeat
+	// per running step every 15s, and pushing those into the 16-slot advisory
+	// buffer evicted the transitions the operator actually needs to read.
+	workflowStatusCh chan uievent.Event
 
 	// remoteInputs is the pool-wide steering stream (ports.RemoteInputs).
 	// Created once, never closed, fed by one pumpRemoteInputs goroutine per
@@ -90,6 +95,12 @@ type SessionPool struct {
 	// several places a session with a bus enters the pool. See
 	// workflow_notices.go.
 	workflowSubs map[*events.Bus]*events.Subscription
+	// workflowStatus is the liveness of the run currently executing, folded
+	// from the same subscription and published as a replaceable status event.
+	// It owns its own lock (see workflowStatusTracker) and is deliberately
+	// NOT guarded by p.mu: the bus handler must never contend with a pool
+	// operation.
+	workflowStatus workflowStatusTracker
 
 	// resuming tracks GetOrCreateInDir calls in flight, keyed by the
 	// requested id, so a second caller for the SAME id joins the first
@@ -302,18 +313,19 @@ func (p *SessionPool) IsActive(id string) bool {
 // NewSessionPool constructs a SessionPool seeded with the initial session.
 func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cliagents.AgentSessionState, toolsOn bool) *SessionPool {
 	pool := &SessionPool{
-		sessions:     make(map[string]*chat.Session),
-		convs:        make(map[string]*Conversation),
-		syncSessions: make(map[string]*chatsync.SyncSession),
-		busReleases:  make(map[string]func()),
-		res:          res,
-		agentState:   agentState,
-		agentStates:  make(map[string]*cliagents.AgentSessionState),
-		toolsOn:      toolsOn,
-		threads:      NewSubagentThreads(),
-		notices:      make(chan uievent.Event, syncNoticeBuffer),
-		remoteInputs: make(chan ports.RemoteInputEvent, remoteInputBuffer),
-		workflowSubs: make(map[*events.Bus]*events.Subscription),
+		sessions:         make(map[string]*chat.Session),
+		convs:            make(map[string]*Conversation),
+		syncSessions:     make(map[string]*chatsync.SyncSession),
+		busReleases:      make(map[string]func()),
+		res:              res,
+		agentState:       agentState,
+		agentStates:      make(map[string]*cliagents.AgentSessionState),
+		toolsOn:          toolsOn,
+		threads:          NewSubagentThreads(),
+		notices:          make(chan uievent.Event, syncNoticeBuffer),
+		workflowStatusCh: make(chan uievent.Event, 1),
+		remoteInputs:     make(chan ports.RemoteInputEvent, remoteInputBuffer),
+		workflowSubs:     make(map[*events.Bus]*events.Subscription),
 	}
 	if initialSess != nil {
 		if res != nil {
