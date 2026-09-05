@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
@@ -146,7 +145,7 @@ func configureSessionWorkspace(sess *chat.Session, wsRoot string, useTools bool,
 		releaseSessionLedgerRepo(agentState)
 		return nil, err
 	}
-	stop, ok := cliagents.StartMemoryIndexReconciler(agentState.Memory, time.Duration(res.Memory.IndexRefreshIntervalSeconds)*time.Second)
+	stop, ok := cliagents.StartMemoryIndexReconciler(agentState.Memory, config.SaturatingSeconds(res.Memory.IndexRefreshIntervalSeconds))
 	if !ok {
 		return memClose, nil
 	}
