@@ -433,3 +433,59 @@ func TestComposeToolDescriptionBoundsWholeString(t *testing.T) {
 		t.Fatal("composeToolDescription() returned an empty description")
 	}
 }
+
+func TestBridgeSchemaAnnotationEveryBranch(t *testing.T) {
+	for _, key := range []string{"description", "format", "title"} {
+		if _, ok := bridgeSchemaAnnotation(key, "text"); !ok {
+			t.Errorf("bridgeSchemaAnnotation(%q, string) ok=false, want true", key)
+		}
+		if _, ok := bridgeSchemaAnnotation(key, 123); ok {
+			t.Errorf("bridgeSchemaAnnotation(%q, non-string) ok=true, want false", key)
+		}
+	}
+	for _, v := range []any{nil, true, "s", float64(1)} {
+		val, ok := bridgeSchemaAnnotation("default", v)
+		if !ok || val != v {
+			t.Errorf("bridgeSchemaAnnotation(default, %#v) = (%#v, %v), want (%#v, true)", v, val, ok, v)
+		}
+	}
+	// An unsupported default type (e.g. a map) is omitted (ok=true, nil
+	// value), never rejected - see the fail-open rule in the doc comment.
+	if val, ok := bridgeSchemaAnnotation("default", map[string]any{"x": 1}); !ok || val != nil {
+		t.Fatalf("bridgeSchemaAnnotation(default, map) = (%#v, %v), want (nil, true)", val, ok)
+	}
+	for _, key := range []string{"minimum", "maximum", "minLength", "maxLength"} {
+		if val, ok := bridgeSchemaAnnotation(key, float64(5)); !ok || val != float64(5) {
+			t.Errorf("bridgeSchemaAnnotation(%q, float64) = (%#v, %v), want (5, true)", key, val, ok)
+		}
+		if val, ok := bridgeSchemaAnnotation(key, "not a number"); !ok || val != nil {
+			t.Errorf("bridgeSchemaAnnotation(%q, non-float) = (%#v, %v), want (nil, true)", key, val, ok)
+		}
+	}
+	if val, ok := bridgeSchemaAnnotation("x-vendor-unknown", "anything"); !ok || val != nil {
+		t.Fatalf("bridgeSchemaAnnotation(unknown key) = (%#v, %v), want (nil, true)", val, ok)
+	}
+}
+
+func TestBridgeSchemaValuePropagatesMalformedAnnotation(t *testing.T) {
+	// "description" reaches the default case in bridgeSchemaValue's switch,
+	// and a non-string value makes bridgeSchemaAnnotation reject it -
+	// bridgeSchemaValue must propagate that as ok=false, not silently drop
+	// the key.
+	_, ok := bridgeSchemaValue(map[string]any{"description": 123}, 0)
+	if ok {
+		t.Fatal("bridgeSchemaValue accepted a schema with a malformed description annotation")
+	}
+}
+
+func TestBridgeSchemaValueInfersObjectTypeFromProperties(t *testing.T) {
+	out, ok := bridgeSchemaValue(map[string]any{
+		"properties": map[string]any{"name": map[string]any{"type": "string"}},
+	}, 0)
+	if !ok {
+		t.Fatal("bridgeSchemaValue rejected a schema with properties but no type")
+	}
+	if out["type"] != "object" {
+		t.Fatalf("out[type] = %v, want \"object\" inferred from properties", out["type"])
+	}
+}
