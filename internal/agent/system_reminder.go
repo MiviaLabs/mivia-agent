@@ -64,3 +64,16 @@ func LoopBreakerReminder(consecutiveFailures int) string {
 	}
 	return "Notice: 3 consecutive tool failures detected. Pause and re-evaluate the hypothesis before you run another tool call. Re-read the task description and state a simpler alternative hypothesis."
 }
+
+// DefaultExplorationThreshold is the number of consecutive read/search operations
+// before an anti-wandering reminder is injected.
+const DefaultExplorationThreshold = 10
+
+// ExplorationBreakerReminder generates an anti-wandering directive when too many
+// consecutive read/search operations occur without any file modification.
+func ExplorationBreakerReminder(consecutiveReads int) string {
+	if consecutiveReads < DefaultExplorationThreshold {
+		return ""
+	}
+	return fmt.Sprintf("Notice: %d consecutive read and search operations without file changes. Stop exploration now. Form a clear hypothesis and edit the code or report the result.", consecutiveReads)
+}
