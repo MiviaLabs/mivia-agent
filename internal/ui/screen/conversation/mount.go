@@ -39,7 +39,11 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 	}
 
 	if msg.err != nil || msg.conv == nil {
-		s.statusline.Notice(fmt.Sprintf("remote input for session %s failed to mount: %v", msg.sessionID, msg.err))
+		// The buffered inputs die with the failed mount, so the notice
+		// leads with them: reporting only the error left the user's remote
+		// message silently gone, and the status row is width-truncated, so
+		// what was lost has to come before why.
+		s.statusline.Notice(droppedRemoteInputNotice(msg.sessionID, msg.err, events))
 		return s, nil
 	}
 
@@ -91,4 +95,24 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 	st.active = handle
 	st.statusline.Start("thinking", s.now())
 	return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
+}
+
+// droppedRemoteInputNotice reports the remote inputs a failed mount
+// discarded, naming what was lost before why: the status row is truncated to
+// the terminal width, so a trailing detail is the part the user never sees.
+// The body is bounded because a remote message is arbitrary length.
+func droppedRemoteInputNotice(sessionID string, cause error, events []ports.RemoteInputEvent) string {
+	if len(events) == 0 {
+		return fmt.Sprintf("session %s failed to mount: %v", sessionID, cause)
+	}
+	body := events[0].Body
+	const maxQuoted = 80
+	if len(body) > maxQuoted {
+		body = body[:maxQuoted] + "..."
+	}
+	more := ""
+	if len(events) > 1 {
+		more = fmt.Sprintf(" (+%d more)", len(events)-1)
+	}
+	return fmt.Sprintf("remote input dropped for %s: %q%s - mount failed: %v", sessionID, body, more, cause)
 }

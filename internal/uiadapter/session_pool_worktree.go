@@ -6,9 +6,10 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/worktreeroute"
 )
 
 // BindFunc binds a new session and returns the validated worktree root.
@@ -24,12 +25,7 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 	if p.res == nil {
 		return nil, fmt.Errorf("no config provided")
 	}
-	var comp provider.Completer
-	if p.res.ProviderName != "" {
-		comp, _ = provider.New(p.res)
-	}
-	sess := chat.NewSession(p.res, comp)
-	sess.UseTools = p.toolsOn
+	sess := p.newEntrySessionLocked()
 	boundRoot := ""
 	if bind != nil {
 		var err error
@@ -38,15 +34,7 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 			return nil, fmt.Errorf("bind fresh session: %w", err)
 		}
 	}
-	p.inheritWorktreeSessionLocked(sess, false)
-	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
-		p.lastToolScopeNotice = notice
-	}
-	entryState := p.forkEntryStateLocked()
-	if entryState != nil {
-		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
-	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
+	entryState := p.wireEntryLocked(sess, boundRoot, dir, false)
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
 	p.sessions[sess.SessionID] = sess
@@ -75,16 +63,36 @@ type resumeInFlight struct {
 	err  error
 }
 
-func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (outConv ports.Conversation, outErr error) {
+// GetOrCreateInDir resolves or builds the pooled entry for id. bind is the
+// caller's worktree binding when it already has one (the /resume picker
+// carries the instance its row promised); a nil bind is resolved from the
+// STORE instead, so a bare id reaches the same bound session through this one
+// path - the UI's background Mount and the remote/chat-sync route have no
+// listing row, and before that resolution they took the plain loader, which
+// filters instance_id IS NULL and cannot see a worktree session at all.
+func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (ports.Conversation, error) {
+	conv, discarded, err := p.getOrCreateInDirLocking(id, bind, dir)
+	// Outside p.mu, per ReleaseContextLease's own lock contract: it joins the
+	// heartbeat goroutine and issues a store write with its own timeout, so
+	// releasing under the pool lock stalls every other pool operation behind
+	// it. A session wired to the context store but never published owns a
+	// heartbeat only this release stops.
+	if discarded != nil {
+		releaseSessionLease(context.Background(), discarded)
+	}
+	return conv, err
+}
+
+func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir string) (outConv ports.Conversation, discarded *chat.Session, outErr error) {
 	p.mu.Lock()
 	if existing, ok := p.convs[id]; ok {
 		p.mu.Unlock()
-		return existing, nil
+		return existing, nil, nil
 	}
 	if inFlight, ok := p.resuming[id]; ok {
 		p.mu.Unlock()
 		<-inFlight.done
-		return inFlight.conv, inFlight.err
+		return inFlight.conv, nil, inFlight.err
 	}
 	if p.resuming == nil {
 		p.resuming = make(map[string]*resumeInFlight)
@@ -98,23 +106,79 @@ func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (ou
 		close(inFlight.done)
 	}()
 	if p.res == nil {
-		return nil, fmt.Errorf("no config provided")
+		return nil, nil, fmt.Errorf("no config provided")
 	}
+	if bind == nil {
+		// Only a RESOLVED route replaces the caller's dir: an unbound
+		// session must keep the directory the caller asked for, or the
+		// per-root tool build below is skipped entirely.
+		storedBind, storedDir, err := p.storedRouteLocked(id)
+		if err != nil {
+			return nil, nil, err
+		}
+		if storedBind != nil {
+			bind, dir = storedBind, storedDir
+		}
+	}
+	sess := p.newEntrySessionLocked()
+	// A session wired to the context store owns a lease heartbeat that only
+	// ReleaseContextLease stops, so every exit that does NOT publish sess
+	// hands it back to the caller to release outside the lock: a failed Load
+	// leaked one goroutine and one renewing lease per attempt, and a lease
+	// renewed by a session nobody can reach blocks every later resume of
+	// that id.
+	published := false
+	defer func() {
+		if !published {
+			discarded = sess
+		}
+	}()
+	boundRoot := ""
+	if bind != nil {
+		var err error
+		boundRoot, err = bind(sess)
+		if err != nil {
+			return nil, nil, fmt.Errorf("bind session %q: %w", id, err)
+		}
+	}
+	entryState := p.wireEntryLocked(sess, boundRoot, dir, true)
+	if err := sess.Load(id); err != nil {
+		return nil, nil, err
+	}
+	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
+	sess.RefreshCalibrationAfterModelSwitch(context.Background())
+	if existing := p.liveEntryForResolvedLocked(id, sess); existing != nil {
+		return existing, nil, nil
+	}
+	conv := NewConversation(sess)
+	conv.SetSubagents(p.threads)
+	p.publishEntryLocked(id, sess, conv, entryState)
+	published = true
+	p.lastCreated = conv
+	p.attachSyncLocked(sess)
+	return conv, nil, nil
+}
+
+// newEntrySessionLocked builds the bare session every pooled entry starts
+// from. Callers hold p.mu.
+func (p *SessionPool) newEntrySessionLocked() *chat.Session {
 	var comp provider.Completer
 	if p.res.ProviderName != "" {
 		comp, _ = provider.New(p.res)
 	}
 	sess := chat.NewSession(p.res, comp)
 	sess.UseTools = p.toolsOn
-	boundRoot := ""
-	if bind != nil {
-		var err error
-		boundRoot, err = bind(sess)
-		if err != nil {
-			return nil, fmt.Errorf("bind session %q: %w", id, err)
-		}
-	}
-	p.inheritWorktreeSessionLocked(sess, true)
+	return sess
+}
+
+// wireEntryLocked applies the shared per-entry wiring: inherited runtime
+// state and approval posture, the per-root tool registry for boundRoot/dir,
+// and the entry's OWN forked agent state behind the two closures the runtime
+// invokes internally (deferred-tool widener, /model binding factory) - which
+// must never close over the pool's shared base. Returns that fork so the
+// caller registers it under the entry's key. Callers hold p.mu.
+func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string, withPolicies bool) *cliagents.AgentSessionState {
+	inheritApprovalLocked(sess, p.inheritEntryStateLocked(sess, withPolicies), p.res)
 	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
 		p.lastToolScopeNotice = notice
 	}
@@ -123,52 +187,41 @@ func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (ou
 		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
 	}
 	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
-	if err := sess.Load(id); err != nil {
-		return nil, err
-	}
-	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
-	sess.RefreshCalibrationAfterModelSwitch(context.Background())
-	if existing := p.liveEntryForResolvedLocked(id, sess); existing != nil {
-		return existing, nil
-	}
-	conv := NewConversation(sess)
-	conv.SetSubagents(p.threads)
-	p.publishEntryLocked(id, sess, conv, entryState)
-	p.lastCreated = conv
-	p.attachSyncLocked(sess)
-	return conv, nil
+	return entryState
 }
 
-func (p *SessionPool) inheritWorktreeSessionLocked(sess *chat.Session, withPolicies bool) {
-	for _, existing := range p.sessions {
-		if existing.Tools != nil {
-			sess.Tools = existing.Tools
-			sess.MaxToolResultChars = existing.MaxToolResultChars
-			sess.BatchResultBudgetBytes = existing.BatchResultBudgetBytes
-			sess.RefOnlyTools = existing.RefOnlyTools
-		}
-		if existing.EventBus != nil {
-			sess.EventBus = existing.EventBus
-		}
-		if mgr := existing.ContextManager(); mgr != nil {
-			principal := existing.ContextPrincipal()
-			if principal.IsBound() {
-				if next, err := contextstate.NewPrincipal(principal.WorkspaceID, sess.SessionID, principal.SubjectID); err == nil {
-					if withPolicies {
-						_ = sess.SetContextManager(mgr, next, existing.ContextPolicy())
-					} else {
-						_ = sess.SetContextManager(mgr, next)
-					}
-				}
-			}
-		}
-		sess.SetContextRedactionPolicy(existing.ContextRedactionPolicy())
-		if store := existing.ContextStore(); store != nil {
-			_ = sess.SetContextStore(store)
-		}
-		inheritApprovalLocked(sess, existing, p.res)
-		break
+// storedRouteLocked resolves the managed-worktree route a session id is
+// bound to from the store - the authoritative record, so a caller with only
+// an id gets the same binding the picker's row would have carried, and a
+// plain session gets (nil, "") and the plain path. A bound session whose
+// worktree is gone fails closed here rather than resuming detached from the
+// checkout it belongs to. Callers hold p.mu.
+func (p *SessionPool) storedRouteLocked(id string) (BindFunc, string, error) {
+	sess := p.preferredInheritanceSessionLocked()
+	if sess == nil {
+		return nil, "", nil
 	}
+	store, ok := sess.ContextStore().(*storage.SQLite)
+	if !ok || store == nil {
+		return nil, "", nil
+	}
+	root, err := worktreeroute.Root("")
+	if err != nil {
+		return nil, "", nil // not a repository: nothing can be worktree-bound
+	}
+	principal, err := worktreeroute.Principal(root)
+	if err != nil {
+		return nil, "", nil
+	}
+	info, bound, err := store.WorktreeSessionBinding(context.Background(), principal, id)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve worktree binding for session %q: %w", id, err)
+	}
+	if !bound {
+		return nil, "", nil
+	}
+	route := worktreeroute.Route{Worktree: info.Instance.Worktree, Dir: info.CanonicalPath, Instance: info.Instance}
+	return worktreeBindFunc(store, root, route), info.CanonicalPath, nil
 }
 
 // CloseAll releases memoized worktree registries.

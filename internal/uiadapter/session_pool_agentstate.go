@@ -5,7 +5,9 @@ package uiadapter
 // SessionPool.agentStates for why each pooled entry needs its own fork.
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
 // AgentState returns the per-entry agent-selection state for a pooled
@@ -61,4 +63,37 @@ func (p *SessionPool) EnsureAgentState(id string) *cliagents.AgentSessionState {
 	state := p.forkEntryStateLocked()
 	p.bindEntryStateLocked(id, state)
 	return state
+}
+
+// ApplyApprovalDefault re-arms the operator's approval posture on EVERY live
+// pooled session, not just the focused one. Approval mode is an operator
+// setting like full-disk access (see AgentSessionState.ApplyFullDisk's
+// fan-out): a background or worktree session that kept the looser posture
+// would go on executing tool calls - real edits and commands against a real
+// checkout - under a policy the operator believes they revoked, while the UI
+// shows the tightened value. Both the base and the live policy are set: the
+// base is what a later /yolo toggle returns to.
+func (p *SessionPool) ApplyApprovalDefault(mode string) {
+	normalized := config.NormalizeDefaultMode(mode)
+	if normalized == "" {
+		return
+	}
+	p.mu.Lock()
+	seen := make(map[*chat.Session]struct{}, len(p.sessions))
+	live := make([]*chat.Session, 0, len(p.sessions))
+	for _, sess := range p.sessions {
+		if sess == nil {
+			continue
+		}
+		if _, dup := seen[sess]; dup {
+			continue
+		}
+		seen[sess] = struct{}{}
+		live = append(live, sess)
+	}
+	p.mu.Unlock()
+	for _, sess := range live {
+		sess.SetBaseApprovalPolicy(normalized)
+		sess.SetApprovalPolicy(normalized)
+	}
 }

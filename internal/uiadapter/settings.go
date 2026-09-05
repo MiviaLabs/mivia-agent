@@ -18,6 +18,10 @@ type SettingsStore struct {
 	conv       *Conversation
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
+	// pool fans operator-wide runtime settings out to every live session.
+	// Nil for a settings store built without one (tests, one-shot commands),
+	// which then falls back to the active session alone.
+	pool *SessionPool
 
 	mu sync.Mutex
 
@@ -511,6 +515,25 @@ func (s *SettingsStore) applySetFullDiskAccess(on bool) error {
 	return nil
 }
 
+// applyApprovalDefault records the operator's approval posture and applies it
+// immediately, so "accept always" (and "deny") take effect without a restart -
+// the runtime half of the setting; persistence is UpdateGeneralConfig's. Every
+// POOLED session is re-armed, not just the focused one: an operator tightening
+// the gate means it everywhere, exactly as the full-disk toggle fans out.
+func (s *SettingsStore) applyApprovalDefault(mode string) {
+	s.general.ApprovalDefault = mode
+	if s.res != nil {
+		s.res.Approvals.DefaultMode = mode
+	}
+	if s.pool != nil {
+		s.pool.ApplyApprovalDefault(mode)
+		return
+	}
+	if s.sess != nil {
+		s.sess.SetApprovalPolicy(config.NormalizeDefaultMode(mode))
+	}
+}
+
 func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	var mouseNotifier func(bool)
 	switch v := e.(type) {
@@ -555,17 +578,7 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 			s.conv.SetScrollLines(v.N)
 		}
 	case ports.SetApprovalDefault:
-		s.general.ApprovalDefault = v.Mode
-		if s.res != nil {
-			s.res.Approvals.DefaultMode = v.Mode
-		}
-		// Apply immediately to the live session so "accept always" (and
-		// "deny") take effect without a restart - this is the runtime half
-		// of the setting; UpdateGeneralConfig below only persists it for
-		// the next launch/resume.
-		if s.sess != nil {
-			s.sess.SetApprovalPolicy(config.NormalizeDefaultMode(v.Mode))
-		}
+		s.applyApprovalDefault(v.Mode)
 	case ports.SetScreenReader:
 		s.general.ScreenReader = v.On
 	case ports.SetReducedMotion:

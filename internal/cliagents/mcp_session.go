@@ -92,3 +92,14 @@ func EnsureMCPServerTools(registry *tools.Registry, manager *mcp.Manager) func([
 		return composition.MergeMCPTools(registry, manager, ids)
 	}
 }
+
+// mcpToolEnsurerFor builds the per-surface EnsureMCPTools callback a rebuilt
+// dispatcher carries, or nil when this session has no MCP manager. It targets
+// the surface's AUTHORITY registry - the one a routed agent's tools are
+// scoped from - matching the attach-time wiring in internal/clichat.
+func mcpToolEnsurerFor(state *AgentSessionState, authority *tools.Registry) func([]string) error {
+	if state == nil || state.MCPManager == nil || authority == nil {
+		return nil
+	}
+	return EnsureMCPServerTools(authority, state.MCPManager)
+}

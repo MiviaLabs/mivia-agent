@@ -28,7 +28,7 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	count, err := s.deleteSessionSnapshotRow(ctx, principal, name)
+	count, liveID, err := s.deleteSessionSnapshotRow(ctx, principal, name)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 		if resolvedName, ok, err := s.resolveSnapshotNameBySessionID(ctx, principal, name); err != nil {
 			return err
 		} else if ok {
-			count, err = s.deleteSessionSnapshotRow(ctx, principal, resolvedName)
+			count, liveID, err = s.deleteSessionSnapshotRow(ctx, principal, resolvedName)
 			if err != nil {
 				return err
 			}
@@ -55,6 +55,18 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 	}
 	if count == 0 {
 		return s.deleteContextSessionOrOrphanedAdmission(ctx, principal, name)
+	}
+	if liveID != "" {
+		// The snapshot was a projection of a live session ("id is id"), and
+		// LoadSession serves that live row whenever no snapshot remains - so
+		// deleting the snapshot alone reported success and kept serving the
+		// conversation. Retire the live row through the same lifecycle the
+		// no-snapshot path uses, keyed by the row's STORED id (which diverges
+		// from the catalog name in legacy data). A snapshot with no live row
+		// behind it is already fully deleted.
+		if err := s.deleteCatalogContextSession(ctx, principal, liveID); err != nil && !errors.Is(err, contextstate.ErrSessionNotFound) {
+			return err
+		}
 	}
 	return nil
 }
@@ -103,11 +115,20 @@ func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, pr
 // separate commit: reclaiming the record here would durably destroy it before
 // the retention work is known to have landed, leaving a live session with no
 // admitted tool set.
-func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, error) {
+func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, string, error) {
 	var count int64
+	var liveID string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := rejectManagedCatalogKey(ctx, tx, principal, name); err != nil {
 			return err
+		}
+		var storedSessionID sql.NullString
+		switch err := tx.QueryRowContext(ctx, `SELECT session_id FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&storedSessionID); {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		default:
+			liveID = storedSessionID.String
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name)
 		if err != nil {
@@ -122,7 +143,7 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		_, err = tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name)
 		return err
 	})
-	return count, err
+	return count, liveID, err
 }
 
 // deleteCatalogContextSession applies the full retention lifecycle to a
@@ -134,55 +155,60 @@ func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal cont
 	if err != nil {
 		return err
 	}
-	var revision int
-	var instanceID sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT session_revision,instance_id FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&revision, &instanceID)
-	if err == sql.ErrNoRows {
-		_ = tx.Rollback()
-		return contextstate.ErrSessionNotFound
-	}
-	if err != nil {
+	if err := tombstoneContextSessionTx(ctx, tx, principal, sessionID, contextstate.WorktreeInstance{}); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
-	if err := requireWorktreeSessionBinding(contextSessionRow{InstanceID: instanceID}, contextstate.WorktreeInstance{}); err != nil {
-		_ = tx.Rollback()
+	return tx.Commit()
+}
+
+// tombstoneContextSessionTx applies the full retention lifecycle to a live
+// context session: tombstone the row, revoke its payloads, write the audit
+// and tombstone records, and reclaim its side-table rows. It is the ONE
+// implementation both delete paths use - the plain catalog delete and the
+// worktree one - so a session cannot be "deleted" in one namespace and stay
+// loadable in the other. instance selects the namespace: zero means the
+// plain (NULL-instance) row, and a bound row is refused there exactly as
+// before; a non-zero instance requires the row to carry that same instance.
+// Callers own the transaction and roll back on error.
+func tombstoneContextSessionTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) error {
+	var revision int
+	var instanceID sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT session_revision,instance_id FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&revision, &instanceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Absent live row. The caller decides: the no-snapshot path treats it
+		// as "nothing by that name", while a path that already removed a
+		// snapshot treats it as "nothing more to retire" and ignores it.
+		return contextstate.ErrSessionNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if err := requireWorktreeSessionBinding(contextSessionRow{InstanceID: instanceID}, instance); err != nil {
 		return err
 	}
 	auditID, err := newContextID("ctxaudit_")
 	if err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	created, expires := retentionWindow()
 	if _, err = tx.ExecContext(ctx, `UPDATE context_sessions SET tombstoned=1,session_revision=? WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, revision+1, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE context_payloads SET revoked=1,expires_at=? WHERE workspace_id=? AND subject_id=? AND session_id=? AND revoked=0`, expires, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO context_audits(audit_id,action,workspace_id,session_id,subject_id,revision,size,retention_class,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, auditID, string(contextstate.AuditDelete), principal.WorkspaceID, sessionID, principal.SubjectID, revision+1, 0, string(contextstate.RetentionCompliance), expires, created); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO context_tombstones(session_id,workspace_id,subject_id,revision,retention_class,expires_at,audit_id,created_at) VALUES(?,?,?,?,?,?,?,?)`, sessionID, principal.WorkspaceID, principal.SubjectID, revision+1, string(contextstate.RetentionCompliance), expires, auditID, created); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
+	_, err = tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, sessionID)
+	return err
 }
 
 func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextstate.Principal, names []string) error {
