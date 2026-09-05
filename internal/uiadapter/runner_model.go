@@ -34,6 +34,10 @@ func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
 // falls back to the session's current model in a single flat group
 // with no provider header.
 func (r *CommandRunner) availableModelsByProvider() []ports.ModelChoiceGroup {
+	// Defensive only: availableModelsByProvider has one caller, handleModel,
+	// which already returns early on r.res == nil (see the guard at the top
+	// of this file) before ever reaching this call - so this nil case is not
+	// reachable through the CommandRunner's public API today.
 	if r.res == nil {
 		return nil
 	}
