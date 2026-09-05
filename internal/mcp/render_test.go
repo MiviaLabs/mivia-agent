@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -246,6 +247,26 @@ func TestDiscoveredToolBoundsServerErrorLength(t *testing.T) {
 	}
 	if !strings.HasSuffix(err.Error(), "…[truncated]") {
 		t.Fatalf("Execute() error = %.80s..., want a truncation marker", err.Error())
+	}
+}
+
+// TestDiscoveredToolTruncatesOnARuneBoundary covers mcpCallErrText's own
+// backward-scan loop: the fixed 512-byte cut lands mid-rune whenever a
+// multi-byte character straddles that offset (an all-ASCII message, like the
+// test above, never exercises it - every byte is already a rune start). 511
+// ASCII bytes followed by a 3-byte '€' puts byte 512 inside that rune.
+func TestDiscoveredToolTruncatesOnARuneBoundary(t *testing.T) {
+	msg := strings.Repeat("x", 511) + "€" + strings.Repeat("y", 100)
+	tool := discoveredTool{remoteName: "result", client: errorMessageClient{msg}}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the server-owned failure surfaced")
+	}
+	if !strings.HasSuffix(err.Error(), "…[truncated]") {
+		t.Fatalf("Execute() error = %q, want a truncation marker", err.Error())
+	}
+	if !utf8.ValidString(err.Error()) {
+		t.Fatalf("Execute() error is not valid UTF-8, the cut landed inside a rune: %q", err.Error())
 	}
 }
 
