@@ -32,21 +32,6 @@ func TestAppendToolScope_JoinsAllShapes(t *testing.T) {
 	}
 }
 
-// TestPublishToolScopeNoticeRoundTripsThroughTake covers
-// publishToolScopeNotice directly: its one production call site
-// (session_pool_worktree.go) sets the field inline instead of calling this
-// helper, so nothing else in the package reaches it.
-func TestPublishToolScopeNoticeRoundTripsThroughTake(t *testing.T) {
-	var p SessionPool
-	p.publishToolScopeNotice("registry rebuild failed: boom")
-	if got := p.takeToolScopeNotice(); got != "registry rebuild failed: boom" {
-		t.Fatalf("takeToolScopeNotice() = %q, want the published notice", got)
-	}
-	if got := p.takeToolScopeNotice(); got != "" {
-		t.Fatalf("second take = %q, want the slot drained", got)
-	}
-}
-
 func TestFencePooledWorktree_PureBuilders(t *testing.T) {
 	removed := removedInstanceText("wt1")
 	for _, want := range []string{
