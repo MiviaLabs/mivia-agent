@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -11,8 +12,9 @@ import (
 
 type allSessionsCatalog struct {
 	contextstate.Store
-	all    []contextstate.SessionCatalogInfo
-	scoped []contextstate.SessionCatalogInfo
+	all     []contextstate.SessionCatalogInfo
+	scoped  []contextstate.SessionCatalogInfo
+	listErr error
 }
 
 func (c *allSessionsCatalog) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
@@ -31,6 +33,9 @@ func (c *allSessionsCatalog) LoadSession(context.Context, contextstate.Principal
 	return nil, contextstate.SessionCatalogInfo{}, nil
 }
 func (c *allSessionsCatalog) ListSessions(context.Context, contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
 	return c.all, nil
 }
 func (c *allSessionsCatalog) ListWorktreeSessions(context.Context, contextstate.Principal, contextstate.WorktreeInstance) ([]contextstate.SessionCatalogInfo, error) {
@@ -77,5 +82,38 @@ func TestListAllSessionsIncludesOtherWorktrees(t *testing.T) {
 	}
 	if len(infos) != 2 || infos[1].Name != "session-other" {
 		t.Fatalf("ListAllSessions = %+v, want current and other-worktree sessions", infos)
+	}
+}
+
+// TestListAllSessionsPropagatesCatalogError confirms ListAllSessions returns
+// the catalog's own ListSessions error verbatim (not swallowed and not
+// wrapped into a different message), rather than returning a zero-value
+// slice on failure.
+func TestListAllSessionsPropagatesCatalogError(t *testing.T) {
+	wantErr := errors.New("catalog unavailable")
+	catalog := &allSessionsCatalog{listErr: wantErr}
+	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: catalog},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(catalog); err != nil {
+		t.Fatal(err)
+	}
+
+	infos, err := sess.ListAllSessions()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ListAllSessions() error = %v, want %v", err, wantErr)
+	}
+	if infos != nil {
+		t.Fatalf("ListAllSessions() infos = %+v, want nil on error", infos)
 	}
 }
