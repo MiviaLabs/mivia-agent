@@ -49,6 +49,7 @@ func TestOpenSessionMakesNoAPIRequestUntilTheFirstEvent(t *testing.T) {
 
 	publishTestTurn(bus, "lazy-open-1", "turn:1")
 	waitForSeq(t, syncSess, 3)
+	waitForServerEventCount(t, fake, syncSess.SessionID(), 3)
 
 	if got := fake.CreateAttempts(); got != 1 {
 		t.Errorf("CreateAttempts = %d, want exactly 1: the first message attaches once", got)
@@ -56,6 +57,25 @@ func TestOpenSessionMakesNoAPIRequestUntilTheFirstEvent(t *testing.T) {
 	if got := len(fake.Events(syncSess.SessionID())); got != 3 {
 		t.Errorf("the attached session holds %d events, want 3", got)
 	}
+}
+
+// waitForServerEventCount polls the fake API's own event store, not the
+// session's local (projector-assigned) LastSeq: LastSeq advances as soon as
+// an event is queued locally, before the background uploader's HTTP round
+// trip lands it on the server, so a caller that only waits on LastSeq and
+// then immediately reads fake.Events races the upload - flaky exactly under
+// heavy scheduling contention (e.g. `go test ./...`), where the uploader
+// goroutine can be delayed well past the local assignment.
+func waitForServerEventCount(t *testing.T, fake *fakeAPI, id string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(fake.Events(id)) == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("server holds %d event(s) for %q, want %d within 3s", len(fake.Events(id)), id, want)
 }
 
 // TestStopBeforeTheFirstEventNeverTouchesTheAPI pins the shutdown half: a
