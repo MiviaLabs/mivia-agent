@@ -62,6 +62,13 @@ func (s *SyncSession) ensureAttached(ctx context.Context) error {
 	_ = s.opts.persistRemoteSessionID(att.SessionID)
 	s.health.noteOpen(s.outbox.UnflushedCount())
 
+	if att.ForkedFrom == "" {
+		if err := s.reconcileDangling(ctx); err != nil {
+			s.handleRemoteEnd(ctx, fmt.Sprintf("sync stopped: reconcile dangling events: %v", err))
+			return err
+		}
+	}
+
 	s.attached.Store(true)
 	s.startRunners(ctx, att.SessionID)
 	return nil
@@ -79,7 +86,13 @@ func (s *SyncSession) startRunners(ctx context.Context, remoteID string) {
 	if !s.running.Load() || s.remoteEnded.Load() {
 		return
 	}
-	s.heartbeat = NewHeartbeatRunner(s.client, remoteID, s.opts.HeartbeatPeriod)
+	s.statusMu.Lock()
+	status := s.currentStatus
+	if status == "" {
+		status = "waiting_input"
+	}
+	s.statusMu.Unlock()
+	s.heartbeat = NewHeartbeatRunnerWithStatus(s.client, remoteID, s.opts.HeartbeatPeriod, status)
 	s.heartbeat.Start(ctx)
 	if s.poller != nil {
 		s.poller.SetSessionID(remoteID)

@@ -1,9 +1,13 @@
-# chatsync lazy attach: remote session created on first message, not at CLI start
+---
+id: chatsync_lazy_attach_remote_session_created_on_first_message_not_at_cli_start_71a3cba28bc33a4769ffc31217b66c24
+title: 'chatsync lazy attach: remote session created on first message, not at CLI start'
+content: 'Chat sync now defers the remote attach (create/re-attach, heartbeat, input poller) to the session first event; OpenSession only arms local state.'
+importance: medium
+tags: [chatsync, lazy-attach, session, tdd, regression-test]
+updated: 2026-09-04
+---
 
-scope: project
-verdict: good
-tags: chatsync, lazy-attach, session, tdd, regression-test
-created: 2026-09-04
+# chatsync lazy attach: remote session created on first message, not at CLI start
 
 ## Summary
 Chat sync now defers the remote attach (create/re-attach, heartbeat, input poller) to the session's first event; OpenSession only arms local state. Implemented in internal/chatsync/session_attach.go (ensureAttached); both hosts (attachCLISync, SessionPool.attachSyncLocked) inherited the fix with no code changes.
