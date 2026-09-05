@@ -221,7 +221,58 @@ func (m Model) buildRight(prov, bar bool, pct int, hasPct bool) string {
 	return r
 }
 
-func (m Model) buildLeft(act, wordmark bool, avail int) string {
+type layoutPlan struct {
+	withActivity bool
+	withBar      bool
+	withProvider bool
+	withWordmark bool
+	right        string
+	left         string
+	startCol     int
+	availTabs    int
+}
+
+func (m Model) planLayout() layoutPlan {
+	pct, hasPct := m.ContextPercent()
+	p := layoutPlan{
+		withActivity: m.width >= 90,
+		withBar:      m.width >= 80,
+		withProvider: true,
+		withWordmark: true,
+	}
+
+	calc := func() int {
+		p.right = m.buildRight(p.withProvider, p.withBar, pct, hasPct)
+		rightW := ansi.StringWidth(p.right)
+		avail := m.width - rightW - 1
+		p.left, p.startCol = m.buildLeft(p.withActivity, p.withWordmark, avail)
+		p.availTabs = avail - p.startCol
+		return ansi.StringWidth(p.left) + 1 + rightW
+	}
+
+	totalW := calc()
+	if m.width > 0 {
+		if totalW > m.width && p.withActivity {
+			p.withActivity = false
+			totalW = calc()
+		}
+		if totalW > m.width && p.withBar {
+			p.withBar = false
+			totalW = calc()
+		}
+		if totalW > m.width && p.withProvider {
+			p.withProvider = false
+			totalW = calc()
+		}
+		if totalW > m.width && p.withWordmark && len(m.tabs) > 0 {
+			p.withWordmark = false
+			_ = calc()
+		}
+	}
+	return p
+}
+
+func (m Model) buildLeft(act, wordmark bool, avail int) (string, int) {
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
@@ -232,7 +283,7 @@ func (m Model) buildLeft(act, wordmark bool, avail int) string {
 				l += " " + a
 			}
 		}
-		return l
+		return l, 0
 	}
 
 	var brand string
@@ -246,46 +297,24 @@ func (m Model) buildLeft(act, wordmark bool, avail int) string {
 			brand += " " + a
 		}
 	}
-	availTabs := avail - ansi.StringWidth(brand) - 1
-	tabsStr := m.renderTabStrip(availTabs)
+	startCol := ansi.StringWidth(brand) + 1
+	availTabs := avail - startCol
+	tabsStr := m.renderTabStrip(availTabs, startCol)
 	if tabsStr == "" {
-		return brand
+		return brand, startCol
 	}
-	return brand + " " + tabsStr
+	return brand + " " + tabsStr, startCol
 }
 
 // View renders the top bar. The first row states the mark/wordmark on the
 // left, and model/provider/context share on the right. When breadcrumbs
 // are present, a second row renders the trail.
 func (m Model) View() string {
-	pct, hasPct := m.ContextPercent()
-	withProvider := true
-	withBar := m.width >= 80
-	withActivity := m.width >= 90
-	withWordmark := true
-
-	right := m.buildRight(withProvider, withBar, pct, hasPct)
-	left := m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
+	plan := m.planLayout()
+	left := plan.left
+	right := plan.right
 
 	if m.width > 0 {
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withActivity {
-			withActivity = false
-			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withBar {
-			withBar = false
-			right = m.buildRight(withProvider, withBar, pct, hasPct)
-			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withProvider {
-			withProvider = false
-			right = m.buildRight(withProvider, withBar, pct, hasPct)
-			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withWordmark && len(m.tabs) > 0 {
-			withWordmark = false
-			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
-		}
 		availLeft := m.width - ansi.StringWidth(right) - 1
 		if availLeft < ansi.StringWidth(left) {
 			if availLeft > 0 {

@@ -42,6 +42,23 @@ func (m Model) Tabs() []SessionTab {
 	return m.tabs
 }
 
+func (m Model) overflowLeftMarker() string {
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		return "< "
+	}
+	return "◂ "
+}
+
+func (m Model) overflowRightMarker(rem int) string {
+	if rem <= 0 {
+		return ""
+	}
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		return fmt.Sprintf(" > (+%d)", rem)
+	}
+	return fmt.Sprintf(" ▸ (+%d)", rem)
+}
+
 func (m Model) renderTab(t SessionTab, maxTitleLen int) string {
 	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
@@ -77,8 +94,15 @@ func (m Model) renderTab(t SessionTab, maxTitleLen int) string {
 	if title == "" {
 		title = t.ID
 	}
+	title = strings.ReplaceAll(title, "\r", " ")
+	title = strings.ReplaceAll(title, "\n", " ")
+
 	if maxTitleLen > 0 && ansi.StringWidth(title) > maxTitleLen {
-		title = ansi.Truncate(title, maxTitleLen, "…")
+		ellipsis := "…"
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			ellipsis = "..."
+		}
+		title = ansi.Truncate(title, maxTitleLen, ellipsis)
 	}
 
 	label := fmt.Sprintf("%d:%s", t.Index, title)
@@ -88,9 +112,9 @@ func (m Model) renderTab(t SessionTab, maxTitleLen int) string {
 	return border.Render(" ") + markStr + " " + subtle.Render(label) + border.Render(" ")
 }
 
-func (m Model) computeTabWindow(availWidth int) (startIdx, endIdx int, renderedTabs []string, tabBounds []TabBound, startColOffset int) {
+func (m Model) computeTabWindow(availWidth int, startColOffset int) (startIdx, endIdx int, renderedTabs []string, tabBounds []TabBound, startCol int) {
 	if len(m.tabs) == 0 || availWidth <= 0 {
-		return 0, 0, nil, nil, 0
+		return 0, 0, nil, nil, startColOffset
 	}
 
 	currIdx := 0
@@ -101,19 +125,6 @@ func (m Model) computeTabWindow(availWidth int) (startIdx, endIdx int, renderedT
 		}
 	}
 
-	// Determine starting column for tabs
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	brand := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-	startColOffset = ansi.StringWidth(brand) + 1
-
-	if m.width >= 90 {
-		if act := m.activityBadge(); act != "" {
-			startColOffset += ansi.StringWidth(act) + 1
-		}
-	}
-
-	// Try rendering all tabs with standard width
 	standardRendered := make([]string, len(m.tabs))
 	widths := make([]int, len(m.tabs))
 	totalWidth := 0
@@ -141,6 +152,10 @@ func (m Model) computeTabWindow(availWidth int) (startIdx, endIdx int, renderedT
 		return 0, len(m.tabs), standardRendered, bounds, startColOffset
 	}
 
+	if widths[currIdx] > availWidth {
+		return 0, 0, nil, nil, startColOffset
+	}
+
 	// Sliding window around currIdx
 	start, end := m.slideWindowRange(currIdx, widths, availWidth)
 
@@ -149,7 +164,7 @@ func (m Model) computeTabWindow(availWidth int) (startIdx, endIdx int, renderedT
 	col := startColOffset
 
 	if start > 0 {
-		col += 2 // "◂ "
+		col += ansi.StringWidth(m.overflowLeftMarker())
 	}
 
 	for i := start; i < end; i++ {
@@ -179,11 +194,12 @@ func (m Model) slideWindowRange(currIdx int, widths []int, availWidth int) (star
 			extra := widths[end] + 1
 			rightOverhead := 0
 			if end+1 < len(m.tabs) {
-				rightOverhead = 7 // " ▸ (+N)"
+				rem := len(m.tabs) - (end + 1)
+				rightOverhead = ansi.StringWidth(m.overflowRightMarker(rem))
 			}
 			leftOverhead := 0
 			if start > 0 {
-				leftOverhead = 2 // "◂ "
+				leftOverhead = ansi.StringWidth(m.overflowLeftMarker())
 			}
 			if used+extra+leftOverhead+rightOverhead <= availWidth {
 				used += extra
@@ -193,10 +209,14 @@ func (m Model) slideWindowRange(currIdx int, widths []int, availWidth int) (star
 		}
 		if start > 0 {
 			extra := widths[start-1] + 1
-			leftOverhead := 2
+			leftOverhead := 0
+			if start-1 > 0 {
+				leftOverhead = ansi.StringWidth(m.overflowLeftMarker())
+			}
 			rightOverhead := 0
 			if end < len(m.tabs) {
-				rightOverhead = 7
+				rem := len(m.tabs) - end
+				rightOverhead = ansi.StringWidth(m.overflowRightMarker(rem))
 			}
 			if used+extra+leftOverhead+rightOverhead <= availWidth {
 				used += extra
@@ -217,8 +237,8 @@ func (m Model) TabBounds(index int) (startCol, endCol int, ok bool) {
 	if index < 0 || index >= len(m.tabs) {
 		return 0, 0, false
 	}
-	avail := m.availTabWidth()
-	_, _, _, bounds, _ := m.computeTabWindow(avail)
+	plan := m.planLayout()
+	_, _, _, bounds, _ := m.computeTabWindow(plan.availTabs, plan.startCol)
 	targetID := m.tabs[index].ID
 	for _, b := range bounds {
 		if b.Tab.ID == targetID {
@@ -233,8 +253,8 @@ func (m Model) HitTab(clickCol int) (tab SessionTab, ok bool) {
 	if len(m.tabs) == 0 {
 		return SessionTab{}, false
 	}
-	avail := m.availTabWidth()
-	_, _, _, bounds, _ := m.computeTabWindow(avail)
+	plan := m.planLayout()
+	_, _, _, bounds, _ := m.computeTabWindow(plan.availTabs, plan.startCol)
 	for _, b := range bounds {
 		if clickCol >= b.StartCol && clickCol < b.EndCol {
 			return b.Tab, true
@@ -243,53 +263,14 @@ func (m Model) HitTab(clickCol int) (tab SessionTab, ok bool) {
 	return SessionTab{}, false
 }
 
-func (m Model) availTabWidth() int {
-	pct, hasPct := m.ContextPercent()
-	withProvider := true
-	withBar := m.width >= 80
-
-	buildRight := func(prov, bar bool) string {
-		if m.sessionHidden {
-			return ""
-		}
-		r := m.modelCapsule(prov)
-		if hasPct {
-			r += " " + m.contextBadge(pct, bar)
-		}
-		return r
-	}
-
-	right := buildRight(withProvider, withBar)
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	brand := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-
-	leftW := ansi.StringWidth(brand) + 1
-	if m.width >= 90 {
-		if act := m.activityBadge(); act != "" {
-			leftW += ansi.StringWidth(act) + 1
-		}
-	}
-
-	avail := m.width - leftW - ansi.StringWidth(right) - 1
-	if avail < 0 {
-		return 0
-	}
-	return avail
-}
-
-func (m Model) renderTabStrip(availWidth int) string {
-	start, end, renderedTabs, _, _ := m.computeTabWindow(availWidth)
+func (m Model) renderTabStrip(availWidth int, startCol int) string {
+	start, end, renderedTabs, _, _ := m.computeTabWindow(availWidth, startCol)
 	if len(renderedTabs) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	if start > 0 {
-		leftArrow := "◂ "
-		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			leftArrow = "< "
-		}
-		b.WriteString(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(leftArrow))
+		b.WriteString(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(m.overflowLeftMarker()))
 	}
 	for i, r := range renderedTabs {
 		if i > 0 {
@@ -298,12 +279,8 @@ func (m Model) renderTabStrip(availWidth int) string {
 		b.WriteString(r)
 	}
 	if end < len(m.tabs) {
-		remaining := len(m.tabs) - end
-		rightArrow := fmt.Sprintf(" ▸ (+%d)", remaining)
-		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			rightArrow = fmt.Sprintf(" > (+%d)", remaining)
-		}
-		b.WriteString(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(rightArrow))
+		rem := len(m.tabs) - end
+		b.WriteString(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(m.overflowRightMarker(rem)))
 	}
 	return b.String()
 }

@@ -133,6 +133,7 @@ func (s *Screen) applySessionState(st *sessionState) {
 	s.queue = st.queue
 	s.pendingForce = st.pendingForce
 	s.liveUsage = st.liveUsage
+	s.threads = st.threads
 }
 
 func (s *Screen) switchConversation(newConv ports.Conversation) {
@@ -174,6 +175,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.queue = nil
 		s.pendingForce = nil
 		s.liveUsage = nil
+		s.threads = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)
 		s.approval.SetWidth(contentWidth(s.width))

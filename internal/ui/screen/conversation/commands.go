@@ -59,13 +59,15 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 		if args == "prev" || args == "back" {
 			return s.switchTabRelative(-1)
 		}
-		if idx, err := strconv.Atoi(args); err == nil && idx >= 1 {
-			return s.switchToSessionIndex(idx - 1)
-		}
 		for _, id := range s.sessionOrder {
 			if strings.EqualFold(id, args) {
 				return s.switchToSessionID(id)
 			}
+		}
+		if idx, err := strconv.Atoi(args); err == nil && idx >= 1 && idx <= len(s.sessionOrder) {
+			return s.switchToSessionIndex(idx - 1)
+		}
+		for _, id := range s.sessionOrder {
 			if st, ok := s.sessions[id]; ok && st.conv != nil {
 				if strings.Contains(strings.ToLower(st.conv.Title()), strings.ToLower(args)) {
 					return s.switchToSessionID(id)

@@ -65,7 +65,7 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	if next, cmd, handled := s.handleModalClick(x, y, topGutter); handled {
 		return next, cmd
 	}
-	if y == topGutter {
+	if !s.embedded && y == topGutter {
 		clickCol := x - 1
 		if tab, ok := s.topbar.HitTab(clickCol); ok {
 			next, cmd := s.switchToSessionID(tab.ID)

@@ -368,7 +368,7 @@ func TestTabsEdgeCases(t *testing.T) {
 		t.Errorf("expected 1:s1 in ASCII view: %q", viewAscii)
 	}
 	// Long title truncation
-	if !strings.Contains(viewAscii, "…") {
+	if !strings.Contains(viewAscii, "...") {
 		t.Errorf("expected truncation ellipsis in ASCII view: %q", viewAscii)
 	}
 	// ASCII indicators
@@ -394,6 +394,9 @@ func TestTabsEdgeCases(t *testing.T) {
 	mAscii.SetTabs(nil)
 	if mAscii.Tabs() != nil {
 		t.Error("expected nil tabs after SetTabs(nil)")
+	}
+	if marker := mAscii.overflowRightMarker(0); marker != "" {
+		t.Errorf("expected empty string for overflowRightMarker(0), got %q", marker)
 	}
 }
 
@@ -479,4 +482,31 @@ func TestTabsDegradation(t *testing.T) {
 	mLong.SetActivity(3, 1)
 	mLong.SetTabs(tabs)
 	_ = mLong.View()
+}
+
+func TestTabsHitTabSynchronizedWithView(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 200_000}
+	usage := ports.Usage{InputTokens: 110_000, OutputTokens: 0}
+
+	tabs := []SessionTab{
+		{ID: "sess-1", Title: "tab1", Index: 1, IsCurrent: true},
+		{ID: "sess-2", Title: "tab2", Index: 2},
+	}
+
+	for _, w := range []int{57, 90, 100, 120} {
+		m := New(th, theme.TierTrueColor, info, usage, w)
+		m.SetActivity(2, 1)
+		m.SetTabs(tabs)
+
+		view := ansi.Strip(m.View())
+		s0, e0, ok := m.TabBounds(0)
+		if ok {
+			mid := (s0 + e0) / 2
+			tab, hit := m.HitTab(mid)
+			if !hit || tab.ID != "sess-1" {
+				t.Errorf("width %d: expected HitTab at %d to hit sess-1, got %+v (view: %q)", w, mid, tab, view)
+			}
+		}
+	}
 }
