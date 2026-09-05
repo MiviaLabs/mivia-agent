@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -363,5 +364,50 @@ func TestReleaseLeaseUnblocksImmediateReclaim(t *testing.T) {
 	}
 	if _, err := s.ReclaimSession(ctx, rival, owner.SessionID); err != nil {
 		t.Fatalf("post-release ReclaimSession = %v, want immediate success", err)
+	}
+}
+
+func TestReclaimWorktreeSessionRejectsAZeroInstance(t *testing.T) {
+	s, owner := openContextTestStore(t)
+	defer s.Close()
+	seedContextSession(t, s, owner)
+
+	if _, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, contextstate.WorktreeInstance{}); err == nil {
+		t.Fatal("ReclaimWorktreeSession accepted a zero worktree instance")
+	}
+}
+
+func TestReclaimWorktreeSessionPropagatesInactiveInstance(t *testing.T) {
+	s, owner := openContextTestStore(t)
+	defer s.Close()
+	seedContextSession(t, s, owner)
+
+	// No worktree_instances row exists for this instance at all, so
+	// requireActiveWorktreeTx's own SELECT finds nothing.
+	unregistered := contextstate.WorktreeInstance{Worktree: "wt-unregistered", ID: "wt_0000000000000000"}
+	_, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, unregistered)
+	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("ReclaimWorktreeSession with no matching worktree_instances row = %v, want ErrWorktreeDeleted", err)
+	}
+}
+
+func TestReclaimWorktreeSessionRejectsCrossInstanceBinding(t *testing.T) {
+	s, owner := openContextTestStore(t)
+	defer s.Close()
+
+	instanceA := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
+	instanceB := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_2222222222222222"}
+	seedLiveWorktreeSession(t, s, owner, instanceA, "opener")
+
+	worktreeDirB := filepath.Join(t.TempDir(), "worktrees", instanceB.Worktree)
+	if err := registerCleanupInstance(context.Background(), s, owner, instanceB, worktreeDirB); err != nil {
+		t.Fatalf("registerCleanupInstance instanceB: %v", err)
+	}
+
+	// The session is bound to instanceA; reclaiming it as instanceB must hit
+	// reclaimRowState's own instance-mismatch guard.
+	_, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, instanceB)
+	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("ReclaimWorktreeSession cross-instance binding = %v, want ErrWorktreeDeleted", err)
 	}
 }
