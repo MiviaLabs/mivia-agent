@@ -34,7 +34,7 @@ func (t *readFileTool) ResultBudgetBytes() int { return t.maxBytes }
 func (t *readFileTool) Name() string { return "read_file" }
 func (t *readFileTool) Description() string {
 	return "Read a text file by relative workspace path. " +
-		"Use offset+limit for large files or excerpts. Do not pass extra fields (content, encoding, etc.)."
+		"Target specific line ranges with offset+limit around cited symbols or functions. Avoid reading entire large files without an offset."
 }
 func (t *readFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

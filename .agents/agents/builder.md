@@ -53,6 +53,9 @@ the literal output that proves each one passed.
 - Editing files outside the plan's `## Scope` section. If you discover
   scope creep while implementing, stop and route back to the
   orchestrator with a new plan, not silent expansion.
+- Running broad exploratory searches or reading files outside the plan scope.
+  If the target implementation location is ambiguous, stop and report the
+  ambiguity to the orchestrator instead of exploring.
 - Adding dependencies the plan did not authorise.
 - Skipping tests with skip directives or annotations to make test suites
   pass. If a test is genuinely flaky, file a memory entry and ask the
