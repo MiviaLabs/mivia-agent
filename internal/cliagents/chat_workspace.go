@@ -110,16 +110,20 @@ func buildWorkflowToolOpts(root string, fullDisk bool, res *config.Resolved) (*t
 // (race-window replay, failure injection). Production leaves it nil.
 var BuildToolsForRootHookForTest func(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved) (*tools.Registry, func(), error)
 
-// WorkflowSessionWiring is the session-scoped half of a per-root registry
-// build: the event bus a workflow publishes progress on, and the ledger
-// repository its child runs are registered against. Both belong to the
-// SESSION, not to the root, so every root a session can run a workflow from
-// needs them - the launch checkout and each worktree the pool rebuilds.
-// Passing them as one value keeps the two build sites from drifting apart
-// field by field, which is how the worktree build came to pass nil for both.
-type WorkflowSessionWiring struct {
+// SessionRootWiring is the session-scoped half of a per-root registry build.
+// Bus and SessionRepo belong to the SESSION, not to the root, so every root a
+// session can run a workflow from needs them - the launch checkout and each
+// worktree the pool rebuilds. LoadWorkspaceConfig is the operator's [agents]
+// gate, which decides whether the ROOT's own committed policy is honored.
+// Passing them as one value keeps the build sites from drifting apart field
+// by field, which is how the worktree build came to pass nil for everything.
+type SessionRootWiring struct {
 	Bus         func() *events.Bus
 	SessionRepo ledger.LedgerRepository
+	// LoadWorkspaceConfig mirrors config.AgentsGlobal.LoadWorkspaceConfig:
+	// when false the operator has refused workspace-provided values, so a
+	// root's own config is ignored and the launch policy stands.
+	LoadWorkspaceConfig bool
 }
 
 // buildToolsForRootWired is the ONE wiring path both public entry points
@@ -149,13 +153,44 @@ func buildToolsForRootWired(rootWorkspace, rootMemory string, fullDisk bool, res
 // busProvider and sweep stay launch-side on purpose: parked-run recovery
 // belongs to the process's own workspace, not to every worktree root a
 // pool rebuilds for.
-func BuildToolsForRoot(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, wiring WorkflowSessionWiring) (*tools.Registry, func(), error) {
+func BuildToolsForRoot(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, wiring SessionRootWiring) (*tools.Registry, func(), error) {
 	// runSweep is false here and only here: parked-run recovery is the
 	// launch workspace's job (see the comment above). Progress publishing
 	// and child-run ownership are the SESSION's and travel with it to every
 	// root it can run a workflow from.
-	registry, _, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, res, wiring.Bus, false, true, wiring.SessionRepo)
+	// This root's OWN committed [tools] policy governs the tools that run in
+	// it. The pool reused the launch checkout's policy for every root, so a
+	// worktree on a branch that tightened (or loosened) its limits,
+	// allowlists or secret-path patterns still ran under the launch rules.
+	// Gated on the operator's workspace-config switch, exactly like every
+	// other workspace-provided value.
+	rooted, err := resolvedForRoot(rootWorkspace, res, wiring.LoadWorkspaceConfig)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	registry, _, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, rooted, wiring.Bus, false, true, wiring.SessionRepo)
 	return registry, closeFn, err
+}
+
+// resolvedForRoot returns res with the tools policy root itself declares,
+// when root carries its own workspace config and the operator's gate allows
+// it. The copy is shallow and touches ONLY Tools: provider, model, approvals
+// and every other session-level choice stay the operator's, since they belong
+// to the session rather than to a checkout.
+func resolvedForRoot(root string, res *config.Resolved, allowWorkspaceConfig bool) (*config.Resolved, error) {
+	if res == nil || !allowWorkspaceConfig {
+		return res, nil
+	}
+	tc, found, err := config.WorkspaceToolsConfig(root)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return res, nil
+	}
+	rooted := *res
+	rooted.Tools = tc
+	return &rooted, nil
 }
 
 func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *AgentSessionState, quiet bool, fullDisk bool, runRecoverySweep bool) (func(), error) {

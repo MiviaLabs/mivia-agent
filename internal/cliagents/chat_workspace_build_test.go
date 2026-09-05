@@ -25,7 +25,7 @@ func TestBuildToolsForRoot_WorkspaceFailurePropagates(t *testing.T) {
 	}
 	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
 
-	reg, closeFn, err := cliagents.BuildToolsForRoot(unusableRoot, t.TempDir(), false, &config.Resolved{}, cliagents.WorkflowSessionWiring{})
+	reg, closeFn, err := cliagents.BuildToolsForRoot(unusableRoot, t.TempDir(), false, &config.Resolved{}, cliagents.SessionRootWiring{})
 	if err == nil {
 		t.Fatal("expected workspace-open failure")
 	}
@@ -38,7 +38,7 @@ func TestBuildToolsForRoot_WorkspaceFailurePropagates(t *testing.T) {
 func TestBuildToolsForRoot_MemoryFailureAndHappyPath(t *testing.T) {
 	wsRoot := t.TempDir()
 	memRoot := filepath.Join(wsRoot, ".mivia") // parent exists; store opens/creates fine
-	happyReg, closeFn, err := cliagents.BuildToolsForRoot(wsRoot, memRoot, false, &config.Resolved{}, cliagents.WorkflowSessionWiring{})
+	happyReg, closeFn, err := cliagents.BuildToolsForRoot(wsRoot, memRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
 	if err != nil {
 		t.Fatalf("happy path: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestBuildToolsForRoot_MemoryFailureAndHappyPath(t *testing.T) {
 		}
 		return r
 	}, filepath.Join(wsRoot, ".mivia"))
-	_, _, merr := cliagents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, cliagents.WorkflowSessionWiring{})
+	_, _, merr := cliagents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
 	if merr == nil {
 		t.Fatal("expected memory wiring failure on an unusable path")
 	}
