@@ -234,3 +234,22 @@ func (s *Session) ReleaseContextLease(ctx context.Context) {
 	}
 	s.contextHeartbeat.release(ctx)
 }
+
+// StopContextLeaseHeartbeat stops this session's context-lease heartbeat
+// WITHOUT touching the durable lease. Same goroutine-join contract as
+// ReleaseContextLease (callers must not hold s.mu), minus the store write.
+//
+// This is for the one case where a session must be abandoned but its lease
+// row must NOT be cleared: a session built to resume an id that Load then
+// resolved to a session ALREADY live in this process. The built twin is
+// thrown away, but release() reads the LIVE principal - which Load has
+// already rewritten to the resolved id - so releasing it would clear the
+// lease of the live session that still owns that row, leaving a conversation
+// the user is actively using with a heartbeat that renews nothing and a row
+// any other process may immediately reclaim.
+func (s *Session) StopContextLeaseHeartbeat() {
+	if s.contextHeartbeat == nil {
+		return
+	}
+	s.contextHeartbeat.stop()
+}

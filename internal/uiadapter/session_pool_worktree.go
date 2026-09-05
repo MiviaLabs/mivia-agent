@@ -74,28 +74,36 @@ type resumeInFlight struct {
 // listing row, and before that resolution they took the plain loader, which
 // filters instance_id IS NULL and cannot see a worktree session at all.
 func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (ports.Conversation, error) {
-	conv, discarded, err := p.getOrCreateInDirLocking(id, bind, dir)
+	conv, discarded, keepLease, err := p.getOrCreateInDirLocking(id, bind, dir)
 	// Outside p.mu, per ReleaseContextLease's own lock contract: it joins the
 	// heartbeat goroutine and issues a store write with its own timeout, so
 	// releasing under the pool lock stalls every other pool operation behind
 	// it. A session wired to the context store but never published owns a
 	// heartbeat only this release stops.
+	//
+	// keepLease marks the one discard that must NOT write to the store: the
+	// twin resolved to a session already live here, which still owns that
+	// lease row. See getOrCreateInDirLocking's live-entry branch.
 	if discarded != nil {
-		releaseSessionLease(context.Background(), discarded)
+		if keepLease {
+			discarded.StopContextLeaseHeartbeat()
+		} else {
+			releaseSessionLease(context.Background(), discarded)
+		}
 	}
 	return conv, err
 }
 
-func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir string) (outConv ports.Conversation, discarded *chat.Session, outErr error) {
+func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir string) (outConv ports.Conversation, discarded *chat.Session, keepLease bool, outErr error) {
 	p.mu.Lock()
 	if existing, ok := p.convs[id]; ok {
 		p.mu.Unlock()
-		return existing, nil, nil
+		return existing, nil, false, nil
 	}
 	if inFlight, ok := p.resuming[id]; ok {
 		p.mu.Unlock()
 		<-inFlight.done
-		return inFlight.conv, nil, inFlight.err
+		return inFlight.conv, nil, false, inFlight.err
 	}
 	if p.resuming == nil {
 		p.resuming = make(map[string]*resumeInFlight)
@@ -109,19 +117,11 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 		close(inFlight.done)
 	}()
 	if p.res == nil {
-		return nil, nil, fmt.Errorf("no config provided")
+		return nil, nil, false, fmt.Errorf("no config provided")
 	}
-	if bind == nil {
-		// Only a RESOLVED route replaces the caller's dir: an unbound
-		// session must keep the directory the caller asked for, or the
-		// per-root tool build below is skipped entirely.
-		storedBind, storedDir, err := p.storedRouteLocked(id)
-		if err != nil {
-			return nil, nil, err
-		}
-		if storedBind != nil {
-			bind, dir = storedBind, storedDir
-		}
+	bind, dir, err := p.resolveEntryRouteLocked(id, bind, dir)
+	if err != nil {
+		return nil, nil, false, err
 	}
 	sess := p.newEntrySessionLocked()
 	// A session wired to the context store owns a lease heartbeat that only
@@ -141,20 +141,29 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 		var err error
 		boundRoot, err = bind(sess)
 		if err != nil {
-			return nil, nil, fmt.Errorf("bind session %q: %w", id, err)
+			return nil, nil, false, fmt.Errorf("bind session %q: %w", id, err)
 		}
 	}
 	entryState := p.wireEntryLocked(sess, boundRoot, dir, true)
 	if err := sess.Load(id); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	if err := p.refuseIfDrainedLocked(); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if existing := p.liveEntryForResolvedLocked(id, sess); existing != nil {
-		return existing, nil, nil
+		// keepLease: sess.Load resolved this build onto a session ALREADY
+		// live in this pool, so the durable context row now belongs to that
+		// live entry. The twin is thrown away, but its heartbeat's release
+		// reads the LIVE principal - which Load just rewrote to the resolved
+		// id - so the ordinary discard would clear the lease of the session
+		// the user is still using: its own RenewLease would then match no
+		// row for the rest of the process's life, and any other process
+		// could reclaim a conversation that is open on screen. Stop the
+		// twin's heartbeat; write nothing.
+		return existing, sess, true, nil
 	}
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
@@ -162,7 +171,7 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 	published = true
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
-	return conv, nil, nil
+	return conv, nil, false, nil
 }
 
 // newEntrySessionLocked builds the bare session every pooled entry starts
@@ -270,4 +279,24 @@ func (p *SessionPool) CloseAll() {
 	}
 	p.regCloses = nil
 	p.regByRoot = nil
+}
+
+// resolveEntryRouteLocked fills in the managed-worktree route for a caller
+// that supplied none, from the STORE - the authoritative record.
+//
+// Only a RESOLVED route replaces the caller's dir: an unbound session must
+// keep the directory the caller asked for, or the per-root tool build is
+// skipped entirely. Callers hold p.mu.
+func (p *SessionPool) resolveEntryRouteLocked(id string, bind BindFunc, dir string) (BindFunc, string, error) {
+	if bind != nil {
+		return bind, dir, nil
+	}
+	storedBind, storedDir, err := p.storedRouteLocked(id)
+	if err != nil {
+		return nil, "", err
+	}
+	if storedBind == nil {
+		return nil, dir, nil
+	}
+	return storedBind, storedDir, nil
 }
