@@ -59,9 +59,7 @@ func TestLoadRefusesAnMCPTableFromAnUntrustedConfigPath(t *testing.T) {
 }
 
 // TestLoadAcceptsAnMCPTableFromAProjectConfig keeps the guard from refusing
-// the shape it exists to protect. The test is the project-config SHAPE, not
-// equality with this process's resolved workspace root: every shipped-config
-// test loads .mivia/mivia.toml with an unrelated (or empty) root.
+// the workspace's own project config carrying [mcp].
 func TestLoadAcceptsAnMCPTableFromAProjectConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -77,8 +75,38 @@ func TestLoadAcceptsAnMCPTableFromAProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Load(LoadOptions{ConfigPath: path, WorkspaceRoot: t.TempDir()}); err != nil {
-		t.Fatalf("Load refused a project-shaped config carrying [mcp]: %v", err)
+	if _, err := Load(LoadOptions{ConfigPath: path, WorkspaceRoot: root}); err != nil {
+		t.Fatalf("Load refused a project config carrying [mcp] with matching WorkspaceRoot: %v", err)
+	}
+	if _, err := Load(LoadOptions{ConfigPath: path}); err != nil {
+		t.Fatalf("Load refused a project config carrying [mcp] with inferred WorkspaceRoot: %v", err)
+	}
+}
+
+// TestLoadRefusesAnMCPTableFromADifferentProjectConfig asserts that a project
+// config from a different checkout than WorkspaceRoot fails closed.
+func TestLoadRefusesAnMCPTableFromADifferentProjectConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	otherRoot := t.TempDir()
+	otherDir := filepath.Join(otherRoot, workspace.Namespace)
+	if err := os.MkdirAll(otherDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(otherDir, "mivia.toml")
+	if err := os.WriteFile(path, []byte(mcpTableFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	activeRoot := t.TempDir()
+	_, err := Load(LoadOptions{ConfigPath: path, WorkspaceRoot: activeRoot})
+	if err == nil {
+		t.Fatal("Load accepted an [mcp] table from a different checkout's config and silently discarded it")
+	}
+	if !strings.Contains(err.Error(), "[mcp] is only read from") {
+		t.Fatalf("got %v, want an error naming the two paths that do carry [mcp]", err)
 	}
 }
 
