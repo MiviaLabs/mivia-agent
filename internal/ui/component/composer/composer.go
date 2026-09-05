@@ -525,6 +525,11 @@ func (m Model) View() string {
 func (m Model) markCommandToken(body string, w int) string {
 	lines := strings.Split(body, "\n")
 	if len(lines) == 0 {
+		// Defensive only: strings.Split never returns an empty slice (even
+		// Split("", "\n") yields [""], len 1), so this branch is unreachable
+		// for any real body and is not covered by a test. Left in place as a
+		// guard against a future stdlib-contract change, not dead code to
+		// delete.
 		return body
 	}
 	total := ansi.StringWidth(lines[0])
