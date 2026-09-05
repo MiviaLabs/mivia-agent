@@ -57,7 +57,11 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *Ag
 	}
 	WarnSkillLoad(warnings)
 	skillReg = FilterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
-	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
+	entry := entryBase(sess, state)
+	if entry == nil {
+		return nil, fmt.Errorf("tool base is unavailable")
+	}
+	base := entry.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
 	plan := PlanToolTiers(base, selected, res)
 	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
 		selected: selected, base: base, skillReg: skillReg, plan: plan,
@@ -72,7 +76,11 @@ func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *AgentSess
 	if state.SkillRegFull == nil {
 		return nil, fmt.Errorf("tool admission: no skill registry captured for this binding")
 	}
-	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
+	entry := entryBase(sess, state)
+	if entry == nil {
+		return nil, fmt.Errorf("tool base is unavailable")
+	}
+	base := entry.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
 	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
 		selected: state.Selected, base: base, skillReg: state.SkillRegFull,
 		plan: state.TierPlan, admitted: admitted,

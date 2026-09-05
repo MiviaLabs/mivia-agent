@@ -71,7 +71,6 @@ type SessionPool struct {
 	regByRoot           map[string]*tools.Registry
 	regCloses           []func()
 	buildSer            sync.Mutex
-	registriesClosed    bool
 	lastCreated         *Conversation
 	lastToolScopeNotice string
 	launchRootDone      bool
@@ -367,7 +366,11 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 
 	// Inherit runtime state from the first existing session.
 	var sibling *chat.Session
+	preferred := p.preferredInheritanceSessionLocked()
 	for _, existing := range p.sessions {
+		if preferred != nil && existing != preferred {
+			continue
+		}
 		if existing.Tools != nil {
 			sess.Tools = existing.Tools
 			sess.MaxToolResultChars = existing.MaxToolResultChars
@@ -412,6 +415,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	id := sess.SessionID
 	p.sessions[id] = sess
 	p.convs[id] = conv
+	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil
 }
@@ -438,7 +442,11 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 
 	// Inherit tools, event bus, and context store from existing session if set
 	var sibling *chat.Session
+	preferred := p.preferredInheritanceSessionLocked()
 	for _, existing := range p.sessions {
+		if preferred != nil && existing != preferred {
+			continue
+		}
 		if existing.Tools != nil {
 			sess.Tools = existing.Tools
 			sess.MaxToolResultChars = existing.MaxToolResultChars

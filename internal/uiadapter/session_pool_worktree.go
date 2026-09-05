@@ -144,7 +144,6 @@ func (p *SessionPool) inheritWorktreeSessionLocked(sess *chat.Session, withPolic
 func (p *SessionPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.registriesClosed = true
 	for _, closeFn := range p.regCloses {
 		closeFn()
 	}
