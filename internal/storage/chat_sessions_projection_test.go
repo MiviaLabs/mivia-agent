@@ -227,3 +227,41 @@ func TestLiveContextSession_NoCompleteCheckpointServesEmptyPayload(t *testing.T)
 		t.Fatalf("payload = %s, want emptyContextPayload", payload)
 	}
 }
+
+// session_revision is the staleness proxy resolveProjection uses to decide
+// whether a snapshot was superseded. Only a CONTENT change supersedes it - a
+// clear or a commit. A binding advance (/model, a provider switch) bumps the
+// same counter while changing nothing about the conversation, so a snapshot
+// taken by a failed turn (adoptFailedTurnSnapshot, the only copy that turn's
+// history has) read as stale on the next resume and was silently discarded.
+func TestLoadSession_ModelSwitchDoesNotDiscardFailedTurnSnapshot(t *testing.T) {
+	ctx := context.Background()
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	binding := contextTestBinding(t)
+	ensureContextSession(t, s, principal, binding)
+	// The failed-turn shape: a snapshot projecting the live session, and no
+	// completed checkpoint behind it.
+	revision := uint64(0)
+	if err := s.SaveSession(ctx, principal, principal.SessionID, []byte(`[{"role":"user","content":"only-copy-of-this-turn"}]`), binding.Model, binding.Provider, 1, 1, 1,
+		contextstate.SessionSaveOptions{SessionID: principal.SessionID, SessionRevision: &revision}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	switchBinding := contextstate.AdvanceRequest{
+		OperationID: "select-1", Principal: principal, SessionID: principal.SessionID,
+		Expected:        contextstate.Revision{Session: 0, Durable: 0, Source: 0},
+		ExpectedBinding: binding, NewBinding: binding,
+		NewSession: 1, NewDurable: 1, NewSourceSequence: 0,
+		Reason: "select",
+	}
+	if err := s.Advance(ctx, switchBinding); err != nil {
+		t.Fatalf("Advance (model switch): %v", err)
+	}
+	payload, _, err := s.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if !bytes.Contains(payload, []byte("only-copy-of-this-turn")) {
+		t.Fatalf("payload = %s, want the failed turn's snapshot - a model switch superseded nothing", payload)
+	}
+}

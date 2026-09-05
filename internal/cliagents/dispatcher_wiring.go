@@ -38,7 +38,7 @@ var RemainderSpoolFromRegistryVar func(*tools.Registry) *remainder.Spool
 // without importing cli. The ledger repository is the owning session's
 // orchestration repo (AgentSessionState.LedgerRepo); nil keeps child-run
 // registration skipped.
-var WireWorkflowToolOptionsVar func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, ledger.LedgerRepository)
+var WireWorkflowToolOptionsVar func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository)
 
 // BuiltInSlashTokensVar is wired by internal/cli/cliagents_wiring.go to return
 // the set of reserved slash tokens from cli's builtInSlashCommands. Used by

@@ -52,7 +52,7 @@ func SessionEngineConfigPath(root string, res *config.Resolved) string {
 // falls back to the workspace project config. Returns nil when the workspace
 // has no .mivia/workflows/ or the service cannot be built.
 func workflowToolService(root string, res *config.Resolved) *workflowledger.Service {
-	return WorkflowToolServiceWithBus(root, res, nil, false, nil)
+	return WorkflowToolServiceWithBus(root, res, nil, false, false, nil)
 }
 
 // WorkflowToolServiceWithBus builds the service like workflowToolService and
@@ -70,7 +70,7 @@ func workflowToolService(root string, res *config.Resolved) *workflowledger.Serv
 // the instance the access gate compares. The engine stamps it on every child
 // run it registers. Nil (no session wiring) keeps child-run registration
 // skipped: fail-closed, one notice.
-func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) *workflowledger.Service {
+func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) *workflowledger.Service {
 	if !workflowledger.HasWorkflows(root) {
 		return nil
 	}
@@ -97,7 +97,13 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// claim, so it never races a live executor, and delivery refuses runs
 	// without an active policy. The one-shot sweep inherits the session's
 	// quiet flag so --quiet also silences its recovery notices.
-	if provider != nil {
+	// runSweep, NOT "provider != nil": the two were one flag, so wiring a
+	// session bus for progress also armed the recovery sweep. Parked-run
+	// recovery belongs to the process's own launch workspace, while progress
+	// publishing belongs to every root a session can run a workflow from -
+	// including each worktree root the pool rebuilds. Conflating them meant a
+	// worktree root had to take both or neither, and it took neither.
+	if runSweep {
 		go engine.ReconcileParkedRuns(context.Background(), quiet)
 		go engine.reconcileParkedRunsPeriodic(context.Background())
 	}
@@ -120,11 +126,11 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 // The parked-delivery sweep (see WorkflowToolServiceWithBus) already runs when
 // provider != nil, so no sweep is launched here. quiet (--quiet) is forwarded
 // to that sweep so the session-start recovery notices honor it.
-func WireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) {
+func WireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) {
 	if opts == nil {
 		return
 	}
-	svc := WorkflowToolServiceWithBus(root, res, provider, quiet, sessionRepo)
+	svc := WorkflowToolServiceWithBus(root, res, provider, runSweep, quiet, sessionRepo)
 	if svc == nil {
 		return
 	}

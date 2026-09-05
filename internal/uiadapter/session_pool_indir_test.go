@@ -45,7 +45,7 @@ func stubWorkflowWiring(t *testing.T) {
 	t.Helper()
 	prev := cliagents.WireWorkflowToolOptionsVar
 	cliagents.WireWorkflowToolOptionsVar = func(
-		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, ledger.LedgerRepository,
+		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository,
 	) {
 	}
 	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
@@ -283,7 +283,7 @@ func TestInDir_BuilderFailureKeepsInheritedTools(t *testing.T) {
 	prev := cliagents.WireWorkflowToolOptionsVar
 	cliagents.WireWorkflowToolOptionsVar = nil // fail loud behind the seam
 	cliagents.WireWorkflowToolOptionsVar = func(
-		d *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool, _ ledger.LedgerRepository,
+		d *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool, _ bool, _ ledger.LedgerRepository,
 	) {
 		d.Workspace = &workspace.Root{}
 	}

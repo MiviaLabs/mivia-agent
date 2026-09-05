@@ -174,3 +174,31 @@ func TestDeleteSessionSnapshotLeavesNothingLoadableForLiveProjection(t *testing.
 		t.Fatalf("load after delete = %v, want ErrSessionNotFound", err)
 	}
 }
+
+// The turn-only shape is the NORMAL one for a worktree session, and it is the
+// shape with no snapshot row and no catalog key. Deleting such a session used
+// to fail at the key lookup and return "session not found" before it ever
+// reached the tombstone, so the conversation stayed fully loadable and its
+// payloads were never revoked - a delete the user was told had failed, on the
+// only kind of session the loader's live arm exists to serve.
+func TestDeleteWorktreeSessionSnapshotTombstonesTurnOnlySession(t *testing.T) {
+	ctx := context.Background()
+	store, principal := openContextTestStore(t)
+	defer store.Close()
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	seedLiveWorktreeSession(t, store, principal, instance, "turn-only-content")
+
+	if err := store.DeleteWorktreeSessionSnapshot(ctx, principal, principal.SessionID, instance); err != nil {
+		t.Fatalf("delete a turn-only worktree session: %v", err)
+	}
+	if _, _, err := store.LoadWorktreeSession(ctx, principal, principal.SessionID, instance); !errors.Is(err, contextstate.ErrSessionNotFound) {
+		t.Fatalf("load after delete = %v, want ErrSessionNotFound", err)
+	}
+	var tombstoned int
+	if err := store.db.QueryRow(`SELECT tombstoned FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=?`, principal.WorkspaceID, principal.SubjectID, principal.SessionID).Scan(&tombstoned); err != nil {
+		t.Fatal(err)
+	}
+	if tombstoned != 1 {
+		t.Fatal("the live row was left untombstoned: payloads never revoked, no audit record")
+	}
+}

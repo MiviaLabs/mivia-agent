@@ -110,18 +110,30 @@ func buildWorkflowToolOpts(root string, fullDisk bool, res *config.Resolved) (*t
 // (race-window replay, failure injection). Production leaves it nil.
 var BuildToolsForRootHookForTest func(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved) (*tools.Registry, func(), error)
 
+// WorkflowSessionWiring is the session-scoped half of a per-root registry
+// build: the event bus a workflow publishes progress on, and the ledger
+// repository its child runs are registered against. Both belong to the
+// SESSION, not to the root, so every root a session can run a workflow from
+// needs them - the launch checkout and each worktree the pool rebuilds.
+// Passing them as one value keeps the two build sites from drifting apart
+// field by field, which is how the worktree build came to pass nil for both.
+type WorkflowSessionWiring struct {
+	Bus         func() *events.Bus
+	SessionRepo ledger.LedgerRepository
+}
+
 // buildToolsForRootWired is the ONE wiring path both public entry points
 // share: workflow options for rootWorkspace, workflow-var wiring, session
 // memory at rootMemory, then registry composition. Keeping a single body
 // stops the two callers drifting field by field (they did once).
 // composition.BuildRegistry cannot fail today (see its doc comment).
-func buildToolsForRootWired(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, busProvider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) (*tools.Registry, *tools.DefaultOptions, func(), error) {
+func buildToolsForRootWired(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, busProvider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) (*tools.Registry, *tools.DefaultOptions, func(), error) {
 	noClose := func() {}
 	opts, err := buildWorkflowToolOpts(rootWorkspace, fullDisk, res)
 	if err != nil {
 		return nil, nil, noClose, err
 	}
-	WireWorkflowToolOptionsVar(opts, opts.Workspace.Abs, res, busProvider, quiet, sessionRepo)
+	WireWorkflowToolOptionsVar(opts, opts.Workspace.Abs, res, busProvider, runSweep, quiet, sessionRepo)
 	if err := WireSessionMemory(opts, rootMemory, res); err != nil {
 		return nil, nil, noClose, err
 	}
@@ -137,8 +149,12 @@ func buildToolsForRootWired(rootWorkspace, rootMemory string, fullDisk bool, res
 // busProvider and sweep stay launch-side on purpose: parked-run recovery
 // belongs to the process's own workspace, not to every worktree root a
 // pool rebuilds for.
-func BuildToolsForRoot(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved) (*tools.Registry, func(), error) {
-	registry, _, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, res, nil, true, nil)
+func BuildToolsForRoot(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, wiring WorkflowSessionWiring) (*tools.Registry, func(), error) {
+	// runSweep is false here and only here: parked-run recovery is the
+	// launch workspace's job (see the comment above). Progress publishing
+	// and child-run ownership are the SESSION's and travel with it to every
+	// root it can run a workflow from.
+	registry, _, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, res, wiring.Bus, false, true, wiring.SessionRepo)
 	return registry, closeFn, err
 }
 
@@ -146,10 +162,10 @@ func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	if !useTools {
 		return func() {}, nil
 	}
-	var busProvider func() *events.Bus
-	if runRecoverySweep {
-		busProvider = func() *events.Bus { return sess.EventBus }
-	}
+	// The bus is wired whenever the session has one, so a workflow started
+	// here publishes progress; the recovery SWEEP is gated separately on
+	// runRecoverySweep, which only a genuine interactive launch sets.
+	busProvider := func() *events.Bus { return sess.EventBus }
 	// The session's ledger repo is the same value NewSessionDispatcher will
 	// receive, so the workflow engine stamps exactly the instance the
 	// session's orchestration tools carry. Nil (state without an adopted
@@ -158,7 +174,7 @@ func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	if state != nil {
 		sessionRepo = state.LedgerRepo
 	}
-	registry, opts, closeFn, err := buildToolsForRootWired(root, root, fullDisk, res, busProvider, quiet, sessionRepo)
+	registry, opts, closeFn, err := buildToolsForRootWired(root, root, fullDisk, res, busProvider, runRecoverySweep, quiet, sessionRepo)
 	if err != nil {
 		return func() {}, err
 	}

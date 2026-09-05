@@ -151,11 +151,17 @@ const (
 	IDSettingsProjectDefault ID = "settings-project-default"
 	IDSettingsClearOverride  ID = "settings-clear-override"
 	IDSettingsToggle         ID = "settings-toggle"
-	IDSettingsTrigger        ID = "settings-trigger"
-	IDSettingsFilter         ID = "settings-filter"
-	IDSettingsReveal         ID = "settings-reveal"
-	IDSettingsBack           ID = "settings-back"
-	IDSettingsHelp           ID = "settings-help"
+	// IDSettingsCycleBack steps a multi-value settings row to its PREVIOUS
+	// value. A forward-only cycler cannot reach a neighbour without applying
+	// everything in between, and these rows apply on the keypress - so for a
+	// strength-ordered row (approval default) the backward step is what lets
+	// an operator tighten without first applying a weaker posture.
+	IDSettingsCycleBack ID = "settings-cycle-back"
+	IDSettingsTrigger   ID = "settings-trigger"
+	IDSettingsFilter    ID = "settings-filter"
+	IDSettingsReveal    ID = "settings-reveal"
+	IDSettingsBack      ID = "settings-back"
+	IDSettingsHelp      ID = "settings-help"
 
 	// Blackboard & agent messaging center.
 	IDBlackboardDialog ID = "blackboard-dialog"
@@ -294,6 +300,7 @@ func settingsBindings() []Binding {
 		{ID: IDSettingsProjectDefault, Context: ContextSettings, Keys: []string{"p"}, Help: "make default for this project", Short: "project default"},
 		{ID: IDSettingsClearOverride, Context: ContextSettings, Keys: []string{"c"}, Help: "clear this project's default override", Short: "clear override"},
 		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled"},
+		{ID: IDSettingsCycleBack, Context: ContextSettings, Keys: []string{"-"}, Help: "previous value", Short: "prev"},
 		// Automations-only today: fires a manual run and opens a live
 		// watch on it. Harmless no-op on any other section (their
 		// handleKey switches do not have a "t" case).

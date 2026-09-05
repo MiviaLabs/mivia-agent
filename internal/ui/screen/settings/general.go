@@ -106,7 +106,17 @@ func (s *generalSection) rebuild() {
 	scrollF.SetChoices(scrollChoices, strconv.Itoa(v.ScrollLines))
 
 	approvalF := mk("approval default")
-	approvalF.SetChoices([]string{"once", "always", "deny"}, v.ApprovalDefault)
+	// Strength-ordered, and reachable in BOTH directions (see handleKey's
+	// left/h binding). Every commit applies and persists immediately - this
+	// section has no preview step - and the runtime half now fans out to
+	// every pooled session, so the old "once, always, deny" order made
+	// blanket auto-approval the only route from once to deny: it granted
+	// it to every running session, backgrounded and worktree ones included,
+	// and left an operator interrupted mid-cycle there durably. With the
+	// values in strength order and a backward key, every keypress applies
+	// exactly the neighbouring posture the operator moved toward, and no
+	// route passes through one weaker than both of its endpoints.
+	approvalF.SetChoices(approvalChoicesByStrength, v.ApprovalDefault)
 
 	srF := mk("screen reader")
 	srF.SetChoices([]string{"on", "off"}, boolChoice(v.ScreenReader))
@@ -198,17 +208,21 @@ func (s *generalSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 			s.cursor++
 		}
 	case "space", "enter":
-		return s.commit()
+		return s.commit(1)
+	case "-":
+		return s.commit(-1)
 	}
 	return s, nil
 }
 
-// commit cycles the highlighted row to its next value and applies it
-// immediately - see the type's own doc comment for why there is no
-// separate preview step.
-func (s *generalSection) commit() (section, tea.Cmd) {
+// commit cycles the highlighted row one step in delta's direction and
+// applies that value immediately - see the type's own doc comment for why
+// there is no separate preview step. delta is what lets a strength-ordered
+// row (approval default) be tightened without first applying a weaker
+// posture on the way.
+func (s *generalSection) commit(delta int) (section, tea.Cmd) {
 	row := &s.rows[s.cursor]
-	row.f.Cycle(1)
+	row.f.Cycle(delta)
 	edit := row.apply(row.f.Value())
 	handle, err := s.store.Apply(context.Background(), ports.ScopeUser, edit)
 	if err != nil {
@@ -217,6 +231,12 @@ func (s *generalSection) commit() (section, tea.Cmd) {
 	}
 	return s, awaitSave(handle)
 }
+
+// approvalChoicesByStrength orders the approval postures from strongest to
+// weakest. Anything that applies one of these values on every step must move
+// through them in this order, so an operator never applies a posture weaker
+// than both the one they left and the one they are heading for.
+var approvalChoicesByStrength = []string{"deny", "once", "always"}
 
 func (s *generalSection) View() string {
 	if s.store == nil {

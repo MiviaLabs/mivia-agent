@@ -95,7 +95,7 @@ func stubWorkflowWiring(t *testing.T) {
 	t.Helper()
 	prev := cliagents.WireWorkflowToolOptionsVar
 	cliagents.WireWorkflowToolOptionsVar = func(
-		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, ledger.LedgerRepository,
+		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository,
 	) {
 	}
 	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })

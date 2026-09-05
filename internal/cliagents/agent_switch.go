@@ -280,6 +280,13 @@ func (s *AgentSessionState) Context() AgentSessionContext {
 
 // ledgerRepo is the session-owned ledger repository for callers that do NOT
 // hold s.mu. Surface builds read the field directly under the lock.
+// LedgerRepoValue is the locked, nil-safe read of the session's ledger
+// repository, for callers outside this package that must hand it to a
+// per-root build (SessionPool's worktree registry adoption).
+func (s *AgentSessionState) LedgerRepoValue() ledger.LedgerRepository {
+	return s.ledgerRepo()
+}
+
 func (s *AgentSessionState) ledgerRepo() ledger.LedgerRepository {
 	if s == nil {
 		return nil

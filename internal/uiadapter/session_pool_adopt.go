@@ -12,6 +12,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/worktreeroute"
 )
@@ -70,14 +72,21 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 
 	fullDisk := p.authoritativeFullDiskLocked()
 
-	build := cliagents.BuildToolsForRoot
-	if cliagents.BuildToolsForRootHookForTest != nil {
-		build = cliagents.BuildToolsForRootHookForTest
+	// The session half of the workflow wiring travels to this root too: a
+	// workflow started from a worktree session must publish progress on that
+	// session's bus and register its child runs against the repository the
+	// session's own inspect/cancel tools compare against.
+	wiring := cliagents.WorkflowSessionWiring{Bus: p.sessionBusProviderLocked(), SessionRepo: p.agentState.LedgerRepoValue()}
+	build := func(rootWorkspace, rootMemory string, fd bool, res *config.Resolved, w cliagents.WorkflowSessionWiring) (*tools.Registry, func(), error) {
+		if cliagents.BuildToolsForRootHookForTest != nil {
+			return cliagents.BuildToolsForRootHookForTest(rootWorkspace, rootMemory, fd, res)
+		}
+		return cliagents.BuildToolsForRoot(rootWorkspace, rootMemory, fd, res, w)
 	}
 	p.mu.Unlock()
 	p.buildSer.Lock()
 	reg, closeFn, buildErr := build(
-		canonical, canonicalRepoRoot(canonical), fullDisk, p.res)
+		canonical, canonicalRepoRoot(canonical), fullDisk, p.res, wiring)
 	p.buildSer.Unlock()
 	p.mu.Lock()
 
@@ -190,6 +199,17 @@ func (p *SessionPool) authoritativeFullDiskLocked() bool {
 		return launch.Tools.WorkspaceUnrestricted()
 	}
 	return false
+}
+
+// sessionBusProviderLocked returns the pool's event bus provider. Every
+// pooled session inherits the launch session's bus (inheritEntryStateLocked),
+// so one provider is unambiguous for the whole pool. Callers hold p.mu.
+func (p *SessionPool) sessionBusProviderLocked() func() *events.Bus {
+	sess := p.preferredInheritanceSessionLocked()
+	if sess == nil {
+		return nil
+	}
+	return func() *events.Bus { return sess.EventBus }
 }
 
 // samePath compares two paths after cleaning.
