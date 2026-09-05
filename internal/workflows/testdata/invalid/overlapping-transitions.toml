@@ -10,12 +10,12 @@ kind = "human_gate"
 [[transitions]]
 from = "review"
 to = "approve"
-match = { status = "approved" }
+match = { status = "succeeded" }
 
 [[transitions]]
 from = "review"
 to = "reject"
-match = { status = "approved" }
+match = { status = "succeeded" }
 
 [[steps]]
 id = "approve"
@@ -28,9 +28,9 @@ kind = "human_gate"
 [[transitions]]
 from = "approve"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }
 
 [[transitions]]
 from = "reject"
 to = "failure"
-match = { status = "rejected" }
+match = { status = "succeeded" }

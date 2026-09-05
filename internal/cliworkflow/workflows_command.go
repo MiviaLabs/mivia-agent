@@ -97,6 +97,9 @@ func runWorkflowsShow(args []string, stdout, stderr io.Writer) error {
 	if found == nil {
 		return fmt.Errorf("workflows show: unknown workflow %q", name)
 	}
+	if found.Err != nil {
+		return fmt.Errorf("workflows show: %w", found.Err)
+	}
 
 	wf, _, err := definition.ParseWorkflowTOML(found.Raw, found.Name+".toml")
 	if err != nil {
@@ -158,6 +161,11 @@ func runWorkflowsValidate(args []string, stdout, stderr io.Writer) error {
 	hasError := false
 	for _, wf := range workflows {
 		if targetName != "" && wf.Name != targetName {
+			continue
+		}
+		if wf.Err != nil {
+			fmt.Fprint(stdout, definition.FormatWorkflowValidate(wf.Name, nil, wf.Err))
+			hasError = true
 			continue
 		}
 		parsed, _, err := definition.ParseWorkflowTOML(wf.Raw, wf.Name+".toml")
@@ -396,6 +404,9 @@ func runWorkflowsExplain(args []string, stdout, stderr io.Writer) error {
 	}
 	if found == nil {
 		return fmt.Errorf("workflows explain: unknown workflow %q", name)
+	}
+	if found.Err != nil {
+		return fmt.Errorf("workflows explain: %w", found.Err)
 	}
 
 	wf, _, err := definition.ParseWorkflowTOML(found.Raw, found.Name+".toml")

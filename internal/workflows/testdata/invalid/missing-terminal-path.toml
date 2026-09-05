@@ -10,7 +10,7 @@ kind = "human_gate"
 [[transitions]]
 from = "run"
 to = "wait"
-match = { status = "approved" }
+match = { status = "succeeded" }
 
 [[steps]]
 id = "wait"

@@ -165,10 +165,7 @@ func TestDiscoverWorkflows_SymlinkFileRejected(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	_, err := DiscoverWorkflows(tmp)
-	if err == nil {
-		t.Fatal("expected error for symlinked workflow file, got nil")
-	}
+	requireBrokenWorkflowIsIsolated(t, tmp, "linked", "symbolic link")
 }
 
 // --- openWorkflowsRoot error branches ---
@@ -275,13 +272,7 @@ func TestDiscoverWorkflows_NonRegularFile(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(wfDir, "a-pipe.toml"), 0o644); err != nil {
 		t.Skipf("mkfifo not supported: %v", err)
 	}
-	_, err := DiscoverWorkflows(tmp)
-	if err == nil {
-		t.Fatal("expected error for non-regular workflow file")
-	}
-	if !strings.Contains(err.Error(), "not a regular file") {
-		t.Errorf("error %q should mention not a regular file", err.Error())
-	}
+	requireBrokenWorkflowIsIsolated(t, tmp, "a-pipe", "not a regular file")
 }
 
 func TestDiscoverWorkflows_HardlinkedFile(t *testing.T) {
@@ -297,13 +288,9 @@ func TestDiscoverWorkflows_HardlinkedFile(t *testing.T) {
 	if err := os.Link(a, filepath.Join(wfDir, "b.toml")); err != nil {
 		t.Skipf("hard links not supported: %v", err)
 	}
-	_, err := DiscoverWorkflows(tmp)
-	if err == nil {
-		t.Fatal("expected error for workflow file with multiple links")
-	}
-	if !strings.Contains(err.Error(), "multiple links") {
-		t.Errorf("error %q should mention multiple links", err.Error())
-	}
+	// Both names point at one inode, so both are refused - but the directory
+	// still lists and a sibling stays usable.
+	requireBrokenWorkflowIsIsolated(t, tmp, "b", "multiple links")
 }
 
 func TestDiscoverWorkflows_UnreadableWorkflowFile(t *testing.T) {
@@ -320,9 +307,7 @@ func TestDiscoverWorkflows_UnreadableWorkflowFile(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(file, 0o600) })
-	if _, err := DiscoverWorkflows(tmp); err == nil {
-		t.Fatal("expected error for unreadable workflow file")
-	}
+	requireBrokenWorkflowIsIsolated(t, tmp, "a", "")
 }
 
 func TestDiscoverWorkflows_OversizedWorkflowFile(t *testing.T) {
@@ -338,13 +323,7 @@ func TestDiscoverWorkflows_OversizedWorkflowFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wfDir, "big.toml"), big, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	_, err := DiscoverWorkflows(tmp)
-	if err == nil {
-		t.Fatal("expected error for oversized workflow file")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("error %q should mention exceeds", err.Error())
-	}
+	requireBrokenWorkflowIsIsolated(t, tmp, "big", "exceeds")
 }
 
 // --- fileNlink type-assertion fallback ---
@@ -360,5 +339,52 @@ func TestFileNlink_NonStatType(t *testing.T) {
 	// to 0 (meaning "unknown"), which disables the nlink checks.
 	if got := fileNlink(nonSysFileInfo{}); got != 0 {
 		t.Errorf("fileNlink = %d, want 0", got)
+	}
+}
+
+// requireBrokenWorkflowIsIsolated states the discovery contract for a file
+// that cannot be used as a workflow: it is REPORTED, carrying its reason and
+// no bytes, and it does not take the rest of the directory down with it.
+//
+// Discovery used to return one error for the whole directory on the first bad
+// file, so a single symlinked, unreadable, or oversized definition disabled
+// `workflow run`, `workflows list`, and every unrelated workflow at once.
+func requireBrokenWorkflowIsIsolated(t *testing.T, workspaceRoot, brokenName, wantReason string) {
+	t.Helper()
+	// A healthy sibling proves the rest of the directory survives.
+	wfDir := workspace.NamespacePath(workspaceRoot, "workflows")
+	if err := os.WriteFile(filepath.Join(wfDir, "healthy.toml"), []byte("version = 1\n"), 0o644); err != nil {
+		t.Fatalf("write sibling: %v", err)
+	}
+
+	found, err := DiscoverWorkflows(workspaceRoot)
+	if err != nil {
+		t.Fatalf("DiscoverWorkflows returned a directory-wide error for one bad file: %v", err)
+	}
+	byName := map[string]DiscoveredWorkflow{}
+	for _, w := range found {
+		byName[w.Name] = w
+	}
+
+	broken, ok := byName[brokenName]
+	if !ok {
+		t.Fatalf("broken workflow %q was not reported at all; discovered %v", brokenName, byName)
+	}
+	if broken.Usable() {
+		t.Fatalf("broken workflow %q reported as usable", brokenName)
+	}
+	if len(broken.Raw) != 0 {
+		t.Errorf("broken workflow %q carries %d bytes; it must carry none", brokenName, len(broken.Raw))
+	}
+	if wantReason != "" && !strings.Contains(broken.Err.Error(), wantReason) {
+		t.Errorf("reason %q should mention %q", broken.Err, wantReason)
+	}
+
+	healthy, ok := byName["healthy"]
+	if !ok {
+		t.Fatal("the healthy sibling was not discovered: one bad file still takes the directory down")
+	}
+	if !healthy.Usable() || len(healthy.Raw) == 0 {
+		t.Fatalf("healthy sibling = %+v, want a usable entry with bytes", healthy)
 	}
 }

@@ -2,5 +2,15 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-TIMEOUT="${MIVIA_PRE_PUSH_TIMEOUT_SECONDS:-600}"
+# Measured on a 24-core dev machine with a warm Go build cache: the python
+# gates and their self-tests ~14s, semgrep ~4s, invariants ~5s, `go test ./...`
+# ~84s, vet/build/gofmt ~2s, and the mutation sweep of a broad (11-package)
+# diff ~211s - about 320s in total, or roughly double that on a cold cache.
+#
+# The old 600s ceiling sat inside that range, so a broad change hit the
+# supervisor mid-sweep and the push failed with a timeout rather than a
+# verdict. A gate that cannot finish enforces nothing, so the ceiling is set
+# above the real cost instead of trimming the gate. It is still a ceiling, not
+# a budget: it exists to kill a hung child, not to bound honest work.
+TIMEOUT="${MIVIA_PRE_PUSH_TIMEOUT_SECONDS:-1800}"
 exec "$ROOT/scripts/git-hooks/run_with_timeout" "$TIMEOUT" "$ROOT/scripts/git-hooks/pre-push" "$@"

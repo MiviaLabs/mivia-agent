@@ -1,0 +1,9 @@
+{
+  "denylist": [
+    {
+      "file": "worktree_lifecycle_lock.go",
+      "snippet": "0 || !info.Mode().IsRegular()",
+      "reason": "audited equivalent mutant: turning this '||' into '&&' changes no observable behaviour. The arms are (a) the path is a symlink and (b) the path is not a regular file, and lstat reports a symlink as BOTH, so the symlink case still rejects under '&&'. The only case '&&' lets past this pre-check is a non-symlink irregular path (a FIFO or a directory), which openWorktreeLifecycleLockFile then rejects with the same 'not a regular file' error - see TestLockWorktreeLifecycleRejectsNonRegularLockFile, which passes either way. The pre-check is deliberate defence in depth ahead of the open, so the redundancy is the point and the mutant is equivalent rather than uncaught."
+    }
+  ]
+}

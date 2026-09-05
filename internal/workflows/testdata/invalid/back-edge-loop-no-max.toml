@@ -14,15 +14,15 @@ kind = "human_gate"
 [[transitions]]
 from = "implement"
 to = "review"
-match = { status = "completed" }
+match = { status = "succeeded" }
 
 [[transitions]]
 from = "review"
 to = "implement"
-match = { status = "changes_requested" }
+match = { status = "succeeded" }
 loop = "review_repair"
 
 [[transitions]]
 from = "implement"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }

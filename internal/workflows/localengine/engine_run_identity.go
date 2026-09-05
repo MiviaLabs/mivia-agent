@@ -40,6 +40,12 @@ func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearC
 	// the engine so workflow_deliver resolves the run's real git directory.
 	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
 		cleanup = func() { e.removeFreshWorktree(identity) }
+		// Record the identity the doc comment above promises to record. It
+		// never was: recordWorktree's only caller was the RESUME path, so a
+		// fresh-start run always fell through deliveryGitCtx's fallback and
+		// re-derived the identity from the workspace root, discarding the
+		// admission-time MainRoot/Root/OriginBaseCommit pin.
+		e.recordWorktree(runID, identity)
 		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
 		if compiled.Delivery != nil && compiled.DeliveryActive() {
 			url, originBaseCommit, uerr := resolveOriginURL(ctx, e.admissionFetchTimeout(), identity, delivery.EffectiveBase(compiled, inputSnapshot))

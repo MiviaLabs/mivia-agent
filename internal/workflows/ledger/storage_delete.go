@@ -56,5 +56,9 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 		}
 	}
 	s.mu.Unlock()
+	// Release the per-run mutex too. Everything else this run held is gone by
+	// now, so keeping its lock forever was a pure leak in any long-lived
+	// process.
+	s.engine.ForgetRun(runID)
 	return nil
 }

@@ -1,12 +1,10 @@
-package cliworktree
+package vcs
 
 import (
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
 const worktreeLifecycleLockDir = "mivia-worktree-locks"
@@ -15,29 +13,29 @@ var openLifecycleGitRoot = os.OpenRoot
 var lstatLifecyclePath = func(root *os.Root, path string) (os.FileInfo, error) { return root.Lstat(path) }
 var mkdirLifecycleDir = func(root *os.Root, path string, mode os.FileMode) error { return root.Mkdir(path, mode) }
 
-type worktreeLifecycleLock struct {
+type WorktreeLifecycleLock struct {
 	file       *os.File
 	gitRoot    *os.Root
 	unlockFile func()
 }
 
-func (lock *worktreeLifecycleLock) Close() {
+func (lock *WorktreeLifecycleLock) Close() {
 	lock.unlockFile()
 	_ = lock.file.Close()
 	_ = lock.gitRoot.Close()
 }
 
-func (lock *worktreeLifecycleLock) File() *os.File {
+func (lock *WorktreeLifecycleLock) File() *os.File {
 	return lock.file
 }
 
 // LockWorktreeLifecycle implements lock worktree lifecycle.
-func LockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
-	sanitized, err := vcs.SanitizeName(name)
+func LockWorktreeLifecycle(root, name string) (*WorktreeLifecycleLock, error) {
+	sanitized, err := SanitizeName(name)
 	if err != nil {
 		return nil, err
 	}
-	commonDir, err := worktreeGitCommonDir(root)
+	commonDir, err := WorktreeGitCommonDir(root)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +63,7 @@ func LockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
 		return nil, err
 	}
 	closeRoot = false
-	return &worktreeLifecycleLock{file: file, gitRoot: gitRoot, unlockFile: unlockFile}, nil
+	return &WorktreeLifecycleLock{file: file, gitRoot: gitRoot, unlockFile: unlockFile}, nil
 }
 
 func ensureRegularLifecycleLockDir(root *os.Root) error {

@@ -37,6 +37,9 @@ var workflowNextStep = func(root string, run workflowledger.RunSnapshot) string 
 	if found == nil {
 		return ""
 	}
+	if found.Err != nil {
+		return ""
+	}
 	wf, _, err := definition.ParseWorkflowTOML(found.Raw, found.Name+".toml")
 	if err != nil {
 		return ""

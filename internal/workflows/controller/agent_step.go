@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -403,46 +403,104 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 	return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, ValidatedOutput: validated, EvidenceJSON: evidenceJSON, Status: result.Status}, nil
 }
 
+// toolCallTraceSource exposes the host-recorded tool-call trace for one task.
+// coordinator.Coordinator satisfies it; it is a narrow optional interface so a
+// host without the trace yields NO history rather than a different, weaker
+// source of truth.
+type toolCallTraceSource interface {
+	LoadTaskToolCalls(ctx context.Context, runID, taskID string) ([]subagents.ToolCallStep, error)
+}
+
+// fetchToolExecutionHistory returns what the child agent PROVABLY executed.
+//
+// The only admissible source is the host-recorded tool-call trace: the agent
+// loop's own tool_start/tool_end events, buffered by the coordinator and
+// stored at task completion. It used to read the run-message blackboard
+// instead, which the audited child writes itself through post_message. A child
+// could mint a passing record by posting a finding whose body decoded as a
+// ToolExecutionRecord with its own chosen exit_code, or simply a body starting
+// with "run_command:", which was credited a hardcoded exit 0. The other kind
+// it accepted, "tool_execution", had no producer anywhere in the tree, so
+// agent-authored findings were the sole input.
+//
+// An empty history is fail-CLOSED, not fail-open: Validate rejects every PASS
+// claim it cannot match against a recorded execution.
 func (r *CoordinatorRunner) fetchToolExecutionHistory(ctx context.Context, runID, taskID string) ([]evidencecheck.ToolExecutionRecord, error) {
 	if r.Coordinator == nil {
 		return nil, nil
 	}
-	summaries, err := r.Coordinator.ListRunMessages(ctx, runID, taskID)
+	source, ok := r.Coordinator.(toolCallTraceSource)
+	if !ok {
+		return nil, nil
+	}
+	steps, err := source.LoadTaskToolCalls(ctx, runID, taskID)
 	if err != nil {
 		return nil, err
 	}
+	return toolExecutionHistory(steps), nil
+}
+
+// toolExecutionHistory folds a task's recorded start/end steps into one record
+// per completed run_command call. A start with no matching end is dropped: an
+// unfinished command proves nothing.
+func toolExecutionHistory(steps []subagents.ToolCallStep) []evidencecheck.ToolExecutionRecord {
+	type pending struct {
+		argv []string
+		line string
+	}
+	open := make(map[string]pending)
 	var history []evidencecheck.ToolExecutionRecord
-	for _, s := range summaries {
-		if s.Kind == agentmsg.KindFinding || s.Kind == "tool_execution" {
-			msg, err := r.Coordinator.LoadMessageBody(ctx, s.ContentRef)
-			if err != nil {
+	for _, step := range steps {
+		if step.Name != "run_command" {
+			continue
+		}
+		switch step.Kind {
+		case "start":
+			var in struct {
+				Argv []string `json:"argv"`
+			}
+			if err := json.Unmarshal([]byte(step.Input), &in); err != nil || len(in.Argv) == 0 {
 				continue
 			}
-			var rec evidencecheck.ToolExecutionRecord
-			if err := json.Unmarshal([]byte(msg.Body), &rec); err == nil && (rec.ToolName != "" || len(rec.Argv) > 0 || rec.CommandLine != "") {
-				history = append(history, rec)
+			open[step.ToolCallID] = pending{argv: in.Argv, line: strings.Join(in.Argv, " ")}
+		case "end":
+			p, ok := open[step.ToolCallID]
+			if !ok {
 				continue
 			}
-			if strings.HasPrefix(s.Synopsis, "run_command:") {
-				cmd := strings.TrimSpace(strings.TrimPrefix(s.Synopsis, "run_command:"))
-				history = append(history, evidencecheck.ToolExecutionRecord{
-					ToolName:    "run_command",
-					CommandLine: cmd,
-					Argv:        strings.Fields(cmd),
-					ExitCode:    0,
-				})
-			} else if strings.HasPrefix(msg.Body, "run_command:") {
-				cmd := strings.TrimSpace(strings.TrimPrefix(msg.Body, "run_command:"))
-				history = append(history, evidencecheck.ToolExecutionRecord{
-					ToolName:    "run_command",
-					CommandLine: cmd,
-					Argv:        strings.Fields(cmd),
-					ExitCode:    0,
-				})
-			}
+			delete(open, step.ToolCallID)
+			history = append(history, evidencecheck.ToolExecutionRecord{
+				ToolName:    "run_command",
+				Argv:        p.argv,
+				CommandLine: p.line,
+				ExitCode:    recordedExitCode(step.Output),
+				Output:      step.Output,
+			})
 		}
 	}
-	return history, nil
+	return history
+}
+
+// recordedExitCode reads the exit status run_command writes into its own
+// output header ("exit=0", "exit=2", "exit=timeout", "exit=canceled",
+// "exit=error"). Anything it cannot read as a clean zero counts as a failure:
+// a claim must never pass because the status was unparseable.
+func recordedExitCode(output string) int {
+	const marker = "exit="
+	idx := strings.LastIndex(output, marker)
+	if idx < 0 {
+		return -1
+	}
+	rest := output[idx+len(marker):]
+	end := strings.IndexAny(rest, " \t\r\n")
+	if end >= 0 {
+		rest = rest[:end]
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(rest))
+	if err != nil {
+		return -1
+	}
+	return code
 }
 
 func validateRequest(spec AgentStepRequest) error {

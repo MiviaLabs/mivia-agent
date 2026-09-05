@@ -27,8 +27,21 @@ func verifyWorktreeAndRemote(ctx context.Context, git GitRunner, req Request, or
 	}
 
 	// 5. The admitted base commit must be an ancestor of HEAD.
-	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", req.BaseCommit, "HEAD"); err != nil {
+	//
+	// Exit 1 from --is-ancestor is git ANSWERING "no", not git failing, so it
+	// is a permanent refusal under the rule stated above - not a plain error.
+	// Read as a failure it fell through to OnFailure, which dispatched a
+	// repair agent against a rewritten history the agent cannot see, once per
+	// repair budget slot. Only a non-verdict failure (exit other than 0/1, a
+	// missing object, a hung git) stays recoverable.
+	ancestor, err := mergeBaseIsAncestor(ctx, git, req.GitCtx, req.BaseCommit, "HEAD")
+	if err != nil {
 		return "", fmt.Errorf("cannot verify base commit %s ancestry: %w", req.BaseCommit, err)
+	}
+	if !ancestor {
+		return "", &RefusalError{Reason: fmt.Sprintf(
+			"admitted base commit %s is no longer an ancestor of the worktree HEAD; the branch was rebased or reset after admission",
+			req.BaseCommit)}
 	}
 
 	// 6. (removed) The local refs/heads/<base> equality check was invalid in

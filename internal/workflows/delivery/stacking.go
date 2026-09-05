@@ -290,10 +290,15 @@ func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	return nil
 }
 
-// fileDiffSize is one file's measured added+deleted line count from a
-// `git diff --numstat` line.
+// fileDiffSize is one numstat record's measured added+deleted line count.
+//
+// paths holds every workspace-relative path the record covers - one for an
+// ordinary change, and TWO for a detected rename (the old path and the new
+// one). A rename is indivisible here: staging only half of it would leave a
+// commit that adds the new file without removing the old, so both paths move
+// together into the deferred set or neither does.
 type fileDiffSize struct {
-	path  string
+	paths []string
 	lines int
 }
 
@@ -303,11 +308,13 @@ type fileDiffSize struct {
 // largest-first moves the fewest files out of this delivery. It returns both
 // the deferred paths and the kept paths (deferred + kept == every changed
 // file), so the caller can verify the split keeps each file with its test
-// companion. It intentionally does not use --find-renames: a rename line's
-// "old => new" path is ambiguous to stage by exact path, and the selection
+// companion. A detected rename contributes BOTH of its real paths, which move
+// into the deferred set together - never half a rename. The selection
 // here only needs to be a good-enough estimate - checkChunkDiffSize
-// re-verifies the actual result with MeasureChunkDiffSize (which does use
-// --find-renames) before trusting it. At least one file always stays kept: a
+// re-verifies the actual result with MeasureChunkDiffSize before trusting it.
+// Both now measure with --find-renames, so the estimate and the verify agree;
+// they did not before, and a detected rename made verify reject every split
+// this produced. At least one file always stays kept: a
 // delivered commit with nothing in it defeats the purpose of a split (there
 // is no smaller PR left to review), so deferring literally every file is
 // refused, not attempted. This also naturally refuses a diff with only one
@@ -319,7 +326,8 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 		return nil, nil, fmt.Errorf("cannot stage the delivery diff for split measurement: %w", err)
 	}
 	out, err := git.Run(ctx, gc, "-c", "core.quotePath=false", "diff", "--cached",
-		"--no-ext-diff", "--no-textconv", "--numstat", "--ignore-all-space", baseCommit)
+		"--no-ext-diff", "--no-textconv", "--numstat", "-z",
+		"--find-renames", "--ignore-all-space", baseCommit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot measure per-file delivery diff sizes: %w", err)
 	}
@@ -342,7 +350,7 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 		if f.lines == 0 && i < len(files)-1 {
 			continue // deferring a zero-weight (binary/unmeasurable) file never helps
 		}
-		deferred = append(deferred, f.path)
+		deferred = append(deferred, f.paths...)
 		keptTotal -= f.lines
 	}
 	if keptTotal > hard {
@@ -350,7 +358,9 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 	}
 	keptSet := make(map[string]struct{}, len(files))
 	for _, f := range files {
-		keptSet[f.path] = struct{}{}
+		for _, p := range f.paths {
+			keptSet[p] = struct{}{}
+		}
 	}
 	for _, p := range deferred {
 		delete(keptSet, p)
@@ -454,21 +464,36 @@ func numstatSize(out string) (int, error) {
 	return total, nil
 }
 
-// numstatPerFile parses a plain (no --find-renames) `git diff --numstat`
-// output into one fileDiffSize per line, alongside the summed total. Same
-// parse rules as numstatSize (binary "-" contributes 0); a malformed line is
-// an error for the same fail-closed reason.
+// numstatPerFile parses NUL-terminated `git diff --numstat -z` output into one
+// fileDiffSize per record, alongside the summed total. Same count rules as
+// numstatSize (binary "-" contributes 0); a malformed record is an error for
+// the same fail-closed reason.
+//
+// -z is load-bearing, not a style choice. Rename detection is ON BY DEFAULT
+// (diff.renames), so the plain text format reports a renamed file as the
+// pseudo-path "old => new" - and worse, compacts a shared prefix into
+// "dir/{old => new}/file". Neither is a path: git cannot stage it, cannot
+// reset it, and silently IGNORES it as an exclude pathspec, which made every
+// split that touched a rename fail its own verify. Under -z git emits the two
+// real paths as their own NUL-terminated fields instead, so the record keeps
+// its accurate rename line count AND names files git can actually act on.
+//
+// Record shapes:
+//
+//	"added\tdeleted\tpath"     ordinary change, one path
+//	"added\tdeleted\t" + two following fields   rename or copy, old then new
 func numstatPerFile(out string) ([]fileDiffSize, int, error) {
 	var files []fileDiffSize
 	total := 0
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	records := strings.Split(out, "\x00")
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if strings.TrimSpace(record) == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 3)
+		fields := strings.SplitN(record, "\t", 3)
 		if len(fields) < 3 {
-			return nil, 0, fmt.Errorf("delivery diff size: cannot parse numstat line %q", line)
+			return nil, 0, fmt.Errorf("delivery diff size: cannot parse numstat record %q", record)
 		}
 		lines := 0
 		for _, field := range fields[:2] {
@@ -477,11 +502,28 @@ func numstatPerFile(out string) ([]fileDiffSize, int, error) {
 			}
 			n, err := strconv.Atoi(field)
 			if err != nil {
-				return nil, 0, fmt.Errorf("delivery diff size: cannot parse numstat count %q in line %q", field, line)
+				return nil, 0, fmt.Errorf("delivery diff size: cannot parse numstat count %q in record %q", field, record)
 			}
 			lines += n
 		}
-		files = append(files, fileDiffSize{path: fields[2], lines: lines})
+		var paths []string
+		if fields[2] != "" {
+			paths = []string{fields[2]}
+		} else {
+			// Rename or copy: the old and new paths follow as their own
+			// records. Both must be present, or the split would emit a
+			// half-named rename.
+			if i+2 >= len(records) {
+				return nil, 0, fmt.Errorf("delivery diff size: numstat rename record %q is missing its paths", record)
+			}
+			oldPath, newPath := records[i+1], records[i+2]
+			if oldPath == "" || newPath == "" {
+				return nil, 0, fmt.Errorf("delivery diff size: numstat rename record %q has an empty path", record)
+			}
+			paths = []string{oldPath, newPath}
+			i += 2
+		}
+		files = append(files, fileDiffSize{paths: paths, lines: lines})
 		total += lines
 	}
 	return files, total, nil

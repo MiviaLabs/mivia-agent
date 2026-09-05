@@ -161,6 +161,17 @@ func originBaseCommit(ctx context.Context, root, baseRef string) string {
 }
 
 func ensureWorktree(ctx context.Context, identity Identity) (Identity, error) {
+	// Take the SAME cross-process lifecycle lock `mivia worktree` takes.
+	// ensureMu alone is in-process, so an interactive `worktree remove` and a
+	// concurrent workflow run on the same name had no mutual exclusion at
+	// all: the flock-and-lease design that the interactive path relies on did
+	// not cover the engine. A lock failure is not fatal - a repository whose
+	// common dir cannot be opened for locking can still run a workflow - but
+	// when the lock is available it is held across create, validate and the
+	// cleanup remove.
+	if unlock, ok := lockWorktreeName(identity.MainRoot, identity.WorktreeName); ok {
+		defer unlock()
+	}
 	existing, err := workflowResolve(ctx, identity.MainRoot, identity.WorktreeName)
 	if err != nil {
 		return Identity{}, err
@@ -245,4 +256,22 @@ func validateWorktree(ctx context.Context, identity Identity) (Identity, error) 
 	identity.Root = worktree.Path
 	identity.Branch = wantBranch
 	return identity, nil
+}
+
+// lockWorktreeLifecycle is a seam so tests can observe the lock being taken.
+var lockWorktreeLifecycle = vcs.LockWorktreeLifecycle
+
+// lockWorktreeName takes the cross-process worktree lifecycle lock, reporting
+// ok=false when the repository cannot provide one. It never fails the caller:
+// the lock removes a race between concurrent lifecycle operations, and a
+// repository that cannot host it is no worse off than before it existed.
+func lockWorktreeName(mainRoot, name string) (func(), bool) {
+	if mainRoot == "" || name == "" {
+		return nil, false
+	}
+	lock, err := lockWorktreeLifecycle(mainRoot, name)
+	if err != nil {
+		return nil, false
+	}
+	return lock.Close, true
 }

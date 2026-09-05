@@ -195,6 +195,8 @@ func TestEngineStartCreatesRunWorktreeAndDelivers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireFreshStartPinnedIdentity(t, engine, started.RunID)
+
 	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := engine.Wait(waitCtx, started.RunID); err != nil {
@@ -794,5 +796,21 @@ func TestEngineDeliverReopensDeliveryFailedAndSucceeds(t *testing.T) {
 	// The push stage must have published the branch to the origin remote.
 	if out := runGitOutT(t, originURL, "show-ref", "--verify", "--hash", "refs/heads/wf/wt-test"); out == "" {
 		t.Fatal("branch wf/wt-test was not pushed to origin")
+	}
+}
+
+// requireFreshStartPinnedIdentity asserts a FRESH start recorded the run's git
+// identity, not only a resume. pinNewRunIdentity documents recording it and
+// did not - its only caller was the resume path - so delivery always fell
+// through to re-deriving the identity from the workspace root, discarding the
+// admission-time MainRoot/Root/OriginBaseCommit pin.
+func requireFreshStartPinnedIdentity(t *testing.T, engine *localengine.Engine, runID string) {
+	t.Helper()
+	identity, ok := engine.WorktreeIdentityForTest(runID)
+	if !ok {
+		t.Fatal("fresh start recorded no worktree identity; delivery cannot resolve the run's real git directory")
+	}
+	if identity.Root == "" || identity.MainRoot == "" || identity.WorktreeName == "" {
+		t.Fatalf("recorded identity = %+v, want Root, MainRoot and WorktreeName set", identity)
 	}
 }

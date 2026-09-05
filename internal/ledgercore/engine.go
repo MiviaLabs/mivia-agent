@@ -98,6 +98,27 @@ func (e *Engine) RunLock(runID string) *sync.Mutex {
 	return lock
 }
 
+// ForgetRun drops the per-run mutex for a deleted run.
+//
+// RunLock mints one mutex per run and nothing ever removed it, so a long-lived
+// session process accumulated one forever - including for runs it had already
+// deleted, whose projection, delivery sequences, and watermarks were all
+// released. Deleting a run is the one point where no operation on it can still
+// be in flight, so it is the safe place to release the lock too.
+func (e *Engine) ForgetRun(runID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.runLocks, runID)
+}
+
+// RunLockCount reports how many per-run mutexes are held. Test-only accounting
+// for the leak above.
+func (e *Engine) RunLockCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.runLocks)
+}
+
 // NextSequence generates and records the next monotonic sequence for runID.
 func (e *Engine) NextSequence(runID string) uint64 {
 	return e.watermarks.NextSequence(runID)

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
   contents: read
@@ -49,13 +49,23 @@ jobs:
       - name: Verify control surface and gates
         run: make verify
 
-  # Main only. These gates are slow, they do not gate a merge, and each one
-  # re-runs the whole repository test profile - so they run in separate
-  # parallel jobs rather than one job's sequential steps, one runner apiece,
-  # instead of stacking three full-suite runs on top of `make verify` on a
-  # single shared runner.
+  # Two tiers, keyed on where the change is going.
+  #
+  #   PR -> dev (and any other gated base): verify + commit-lint only. A
+  #   feature branch merges into dev many times a day; the fast gate keeps
+  #   that loop short, and dev is not what users install.
+  #
+  #   PR -> main, and push to main: everything below as well. main is the
+  #   release branch, so the slow gates must REFUSE the merge, not report
+  #   after it. Before this split they were push-only, which meant the race
+  #   detector, the bubblewrap sandbox profile, and the macOS and Windows
+  #   suites first ran on code that had already landed.
+  #
+  # Each gate re-runs the whole repository test profile, so they run as
+  # separate parallel jobs, one runner apiece, rather than stacking several
+  # full-suite runs on top of `make verify` on a single shared runner.
   verify-main-invariants:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -66,7 +76,7 @@ jobs:
         run: make invariants
 
   verify-main-race:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -77,7 +87,7 @@ jobs:
         run: make race
 
   verify-main-verifier-integration:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -92,7 +102,7 @@ jobs:
         run: make verifier-integration
 
   verify-macos:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -125,7 +135,7 @@ jobs:
           go build ./...
 
   verify-windows:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -194,7 +204,7 @@ jobs:
   # One job compiles every release target. A build takes seconds, but a runner
   # takes minutes to start. A loop is much faster than a matrix here.
   cross-compile:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

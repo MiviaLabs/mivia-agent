@@ -23,6 +23,23 @@ func guardDeferredSplitConsistency(ctx context.Context, git GitRunner, req Reque
 	if err != nil {
 		return err
 	}
+	// Every deferred path must actually be staged. `git reset -- <unstaged
+	// path>` exits 0, so a path that stages nothing slipped silently through
+	// the reset, the delivered commit was created, and only the LATER
+	// `git add` of the deferred set failed - after the split decision was
+	// durable. The resume path then re-ran the same failing add before its
+	// own path-set check could report the mismatch, so the run could not
+	// leave the state. allStaged is already in hand; checking membership here
+	// moves the refusal ahead of any commit.
+	staged := make(map[string]struct{}, len(allStaged))
+	for _, p := range allStaged {
+		staged[p] = struct{}{}
+	}
+	for _, d := range deferred {
+		if _, ok := staged[d]; !ok {
+			return &DiffSizeError{Reason: fmt.Sprintf("delivery: deferred_files names %q, which the delivery diff does not stage; deferred_files must list paths this change actually touches", d)}
+		}
+	}
 	if dPath, kPath := deferredSplitSeparatesCompanion(deferred, subtractPaths(allStaged, deferred)); kPath != "" {
 		return &DiffSizeError{Reason: fmt.Sprintf("delivery: deferred_files separates %s from its test companion %s; include both in the delivered commit or both in deferred_files so the delivered commit stays internally consistent (a delivered commit that fails its own tests cannot be published)", dPath, kPath)}
 	}

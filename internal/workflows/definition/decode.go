@@ -163,15 +163,34 @@ func validateTransition(index int, t *Transition, stepIDs map[string]bool) error
 	if !stepIDs[t.To] && !ReservedStepIDs[t.To] {
 		return fmt.Errorf("transition[%d]: to %q is not a declared step or terminal", index, t.To)
 	}
-	if strings.TrimSpace(t.Match.Status) == "" {
+	status := strings.TrimSpace(t.Match.Status)
+	if status == "" {
 		return fmt.Errorf("transition[%d]: match.status is required", index)
+	}
+	// The runtime only ever matches against these two values (linear_route.go
+	// routes a completed attempt with "succeeded" and a failed one with
+	// "failed"), so any other status is an edge that can never fire. Left
+	// unchecked, a natural typo like status = "success" compiled clean and
+	// then routed the final step's success to zero_match - the run failed
+	// having done all of its work.
+	if !ValidTransitionStatuses[status] {
+		return fmt.Errorf("transition[%d]: match.status %q is not one of %s", index, status, transitionStatusList())
 	}
 	return nil
 }
 
 func validateInputDef(name string, inp *InputDef) error {
-	if strings.TrimSpace(inp.Type) == "" {
+	typ := strings.TrimSpace(inp.Type)
+	if typ == "" {
 		return fmt.Errorf("input %q: type is required", name)
+	}
+	// ParseInputValue supports exactly this set and errors on anything else -
+	// but only once a value is actually supplied. Unchecked here, a typo like
+	// type = "int" validated clean and shipped, then failed EVERY run at
+	// admission for a required input, or silently never applied for an
+	// optional one.
+	if !ValidInputTypes[typ] {
+		return fmt.Errorf("input %q: type %q is not one of %s", name, typ, inputTypeList())
 	}
 	if inp.MaxBytes < 0 {
 		return fmt.Errorf("input %q: max_bytes must be >= 0 (got %d)", name, inp.MaxBytes)

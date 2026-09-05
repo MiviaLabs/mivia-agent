@@ -10,4 +10,4 @@ kind = "human_gate"
 [[transitions]]
 from = "success"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }

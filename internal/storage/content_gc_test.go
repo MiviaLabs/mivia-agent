@@ -18,6 +18,7 @@ import (
 )
 
 func TestPruneOrphanedContentRemovesOnlyUnreferencedWorkflowRefs(t *testing.T) {
+	withoutOrphanGrace(t)
 	s, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +79,7 @@ func assertContentRow(t *testing.T, s *SQLite, ref string, wantPresent bool, why
 }
 
 func TestPruneOrphanedContentIsIdempotent(t *testing.T) {
+	withoutOrphanGrace(t)
 	s, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -101,5 +103,41 @@ func TestPruneOrphanedContentIsIdempotent(t *testing.T) {
 	}
 	if second != 0 {
 		t.Fatalf("second pass removed = %d, want 0 (already pruned)", second)
+	}
+}
+
+// withoutOrphanGrace disables the GC grace window for a test, so the scan
+// logic can be asserted on freshly written blobs. Production keeps the window:
+// it is what protects a blob whose naming event has not landed yet.
+func withoutOrphanGrace(t *testing.T) {
+	t.Helper()
+	prev := orphanGraceInterval
+	orphanGraceInterval = "-0 seconds"
+	t.Cleanup(func() { orphanGraceInterval = prev })
+}
+
+// TestPruneOrphanedContentSparesRecentBlobs pins the grace window itself.
+// Producers store content BEFORE appending the event that names it, so a blob
+// written moments ago may simply be waiting for its event. Deleting it left a
+// durable event whose output_ref resolved to ErrContentNotFound.
+func TestPruneOrphanedContentSparesRecentBlobs(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ref := "sha256:" + "3333333333333333333333333333333333333333333333333333333333333333"
+	if err := store.PutContent(context.Background(), ref, []byte("just written")); err != nil {
+		t.Fatalf("StoreContent: %v", err)
+	}
+	removed, err := store.PruneOrphanedContent(context.Background())
+	if err != nil {
+		t.Fatalf("PruneOrphanedContent: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("removed = %d, want 0: a blob written seconds ago may still be awaiting its event", removed)
+	}
+	if _, err := store.GetContent(context.Background(), ref); err != nil {
+		t.Fatalf("LoadContent after GC: %v", err)
 	}
 }

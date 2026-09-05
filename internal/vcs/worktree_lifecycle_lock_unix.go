@@ -1,6 +1,6 @@
 //go:build unix
 
-package cliworktree
+package vcs
 
 import (
 	"fmt"

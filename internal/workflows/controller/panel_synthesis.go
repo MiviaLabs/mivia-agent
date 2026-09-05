@@ -31,6 +31,21 @@ type PanelFinalReport struct {
 	HostVerdict  string                   `json:"host_verdict"`
 	Dispositions []PanelSourceDisposition `json:"dispositions"`
 	Summary      string                   `json:"summary"`
+	// Degradation records that this verdict came from FEWER lenses than the
+	// panel declares, under failure_policy = "allow_partial". Without it the
+	// reduction left no durable trace at all: the shipped three-member
+	// review_panel could approve a change on one surviving member and the
+	// persisted report looked identical to a full-strength pass. Nil when
+	// every member reported.
+	Degradation *PanelDegradation `json:"degradation,omitempty"`
+}
+
+// PanelDegradation names the members that did not report, so a reader of the
+// persisted report can see how much of the review actually ran.
+type PanelDegradation struct {
+	AdmittedMembers int      `json:"admitted_members"`
+	ReportedMembers int      `json:"reported_members"`
+	MissingMembers  []string `json:"missing_members"`
 }
 
 // DecodeStrictPanelSynthesisOutput strictly decodes the synthesizer's
@@ -158,6 +173,43 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 // member results, the envelope is rebuilt from the persisted synthesis work
 // input (rebuildPanelSynthesisEnvelope) instead of from membersResult, so
 // AllCanonicalSourceKeys and HostVerdict stay host-derived (D10/D11).
+// panelDegradationFromEnvelope reports which ADMITTED members are absent from
+// the synthesis envelope, or nil when every one contributed.
+//
+// It reads durable state only - the attempt's admitted member list and the
+// host-authored envelope - so the live path and the synthesis_admitted resume
+// path record the same thing, and neither depends on in-memory results a
+// crash would have discarded.
+func panelDegradationFromEnvelope(attempt workflowledger.StepAttempt, envelope PanelSynthesisEnvelope) *PanelDegradation {
+	if attempt.PanelExecution == nil || len(attempt.PanelExecution.Members) == 0 {
+		return nil
+	}
+	// Read the envelope's MEMBER list, not its canonical source keys: a
+	// member that reviewed cleanly and raised no findings contributes no
+	// source keys at all, and counting keys would report that member as
+	// missing - inventing a degradation on a full-strength panel.
+	reported := make(map[string]bool)
+	for _, m := range envelope.Members {
+		if m.Provenance.MemberID != "" {
+			reported[m.Provenance.MemberID] = true
+		}
+	}
+	var missing []string
+	for _, m := range attempt.PanelExecution.Members {
+		if !reported[m.MemberID] {
+			missing = append(missing, m.MemberID)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return &PanelDegradation{
+		AdmittedMembers: len(attempt.PanelExecution.Members),
+		ReportedMembers: len(attempt.PanelExecution.Members) - len(missing),
+		MissingMembers:  missing,
+	}
+}
+
 func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator, membersResult PanelMembersResult) (workflowledger.RunSnapshot, bool, error) {
 	var envelopeStruct PanelSynthesisEnvelope
 	switch attempt.PanelExecution.Phase {
@@ -249,7 +301,12 @@ func (c *LinearController) settlePanelSynthesis(ctx context.Context, run workflo
 	if err != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)
 	}
-	final := PanelFinalReport{HostVerdict: envelopeStruct.HostVerdict, Dispositions: synthOut.Dispositions, Summary: synthOut.Summary}
+	final := PanelFinalReport{
+		HostVerdict:  envelopeStruct.HostVerdict,
+		Dispositions: synthOut.Dispositions,
+		Summary:      synthOut.Summary,
+		Degradation:  panelDegradationFromEnvelope(attempt, envelopeStruct),
+	}
 	output, err := json.Marshal(final)
 	if err != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)

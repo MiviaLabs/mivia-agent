@@ -26,10 +26,16 @@ import (
 // only reports the stall earlier than the cap would, with a cause that names
 // what happened instead of "loop exhausted".
 func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step definition.Step, route RouteDecision, output map[string]any) (bool, error) {
-	if step.Kind != "agent_gate" || route.Loop == "" {
+	// Panels count too. The guard used to accept only "agent_gate", which in
+	// the shipped feature-delivery workflow matches NOTHING: the sole active
+	// reviewer is review_panel, kind "agent_panel". A panel re-emitting the
+	// same findings every round therefore burned every iteration and died as
+	// "loop exhausted" - exactly the misattributed timeout this guard exists
+	// to replace with a named stall.
+	if (step.Kind != "agent_gate" && step.Kind != "agent_panel") || route.Loop == "" {
 		return false, nil
 	}
-	if verdict, _ := output["verdict"].(string); verdict != "changes_requested" {
+	if !reviewRequestedChanges(output) {
 		return false, nil
 	}
 	if route.MaxIterations == definition.UnlimitedIterations {
@@ -188,7 +194,12 @@ func findingIDSet(output map[string]any) map[string]bool {
 	set := make(map[string]bool)
 	raw, ok := output["findings"]
 	if !ok {
-		return set
+		// A panel persists a PanelFinalReport, which has no "findings" key at
+		// all - its per-finding identity lives in dispositions[].final_finding_id.
+		// Without this the set was always empty for a panel, so no two rounds
+		// ever compared equal and the guard could not fire even once its kind
+		// check allowed panels through.
+		return panelFindingIDSet(output)
 	}
 	items, ok := raw.([]any)
 	if !ok {
@@ -220,4 +231,41 @@ func equalStringSets(left, right map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+// reviewRequestedChanges reports whether a review output asks for another
+// round. An agent_gate states it as output.verdict; a panel states it as the
+// PanelFinalReport's host_verdict.
+func reviewRequestedChanges(output map[string]any) bool {
+	if verdict, _ := output["verdict"].(string); verdict == "changes_requested" {
+		return true
+	}
+	host, _ := output["host_verdict"].(string)
+	return host == "changes_requested"
+}
+
+// panelFindingIDSet extracts the normalized finding-id set from a
+// PanelFinalReport's dispositions. final_finding_id is the synthesized
+// identity a later round re-raises; finding_id is the member's own id and is
+// used only when the synthesizer left the final id blank.
+func panelFindingIDSet(output map[string]any) map[string]bool {
+	set := make(map[string]bool)
+	items, ok := output["dispositions"].([]any)
+	if !ok {
+		return set
+	}
+	for _, item := range items {
+		d, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := d["final_finding_id"].(string)
+		if id == "" {
+			id, _ = d["finding_id"].(string)
+		}
+		if id != "" {
+			set[normalizeFindingID(id)] = true
+		}
+	}
+	return set
 }

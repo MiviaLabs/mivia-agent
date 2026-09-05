@@ -423,9 +423,8 @@ func TestStorageRepository_StartedAtSurvivesRebuild(t *testing.T) {
 // ---------------------------------------------------------------------------
 // 25. Foreign (non-wfr-) run logs are never read during catch-up
 // ---------------------------------------------------------------------------
-func TestStorageRepository_ForeignRunNotRebuilt(t *testing.T) {
-	ctx := context.Background()
-	newWrapped := map[string]func(t *testing.T) (*StorageRepository, *countingStore, func()){
+func foreignRunRepoFactories() map[string]func(t *testing.T) (*StorageRepository, *countingStore, func()) {
+	return map[string]func(t *testing.T) (*StorageRepository, *countingStore, func()){
 		"memory": func(t *testing.T) (*StorageRepository, *countingStore, func()) {
 			cs := &countingStore{Store: storage.NewMemory()}
 			r := NewStorageRepository(cs)
@@ -443,8 +442,52 @@ func TestStorageRepository_ForeignRunNotRebuilt(t *testing.T) {
 			return r, cs, func() { _ = store.Close() }
 		},
 	}
+}
 
-	for name, newRepo := range newWrapped {
+// appendForeignEvents writes events for a run id outside the workflow
+// namespace, straight through the store, so catch-up has a foreign log to
+// consider. The namespace rule says a non-"wfr-" run can never hold wf events.
+func appendForeignEvents(t *testing.T, cs *countingStore, runID string, from, to int) {
+	t.Helper()
+	for i := from; i <= to; i++ {
+		ev := storage.Event{
+			ID:       fmt.Sprintf("se-%d", i),
+			RunID:    runID,
+			Sequence: i,
+			Kind:     "run_created",
+			Payload:  []byte("{}"),
+		}
+		if err := cs.Append(context.Background(), ev); err != nil {
+			t.Fatalf("append foreign event %d: %v", i, err)
+		}
+	}
+}
+
+// requireNoForeignLogRead runs one GetRun and asserts the foreign run's log
+// was not read while doing it.
+func requireNoForeignLogRead(t *testing.T, repo *StorageRepository, cs *countingStore, wfr, when string) {
+	t.Helper()
+	cs.eventsCalls = 0
+	if _, err := repo.GetRun(context.Background(), wfr); err != nil {
+		t.Fatalf("GetRun (%s): %v", when, err)
+	}
+	if cs.eventsCalls != 0 {
+		t.Fatalf("Events(runID) calls %s = %d, want 0 (the foreign run log must be skipped)", when, cs.eventsCalls)
+	}
+}
+
+// TestStorageRepository_ForeignRunNotRebuilt pins the namespace skip on EVERY
+// catch-up pass, not just the first.
+//
+// The guard also required Applied(runID) == 0, but skipping a run advances its
+// watermark - so the next event on that foreign run made the guard fall
+// through and this instance re-read and re-folded the whole foreign log. The
+// store is shared with the coordinator and chat, so an active chat session
+// made every workflow read pay for that session's entire history.
+func TestStorageRepository_ForeignRunNotRebuilt(t *testing.T) {
+	ctx := context.Background()
+	const foreign = "run-foreign-1"
+	for name, newRepo := range foreignRunRepoFactories() {
 		t.Run(name, func(t *testing.T) {
 			repo, cs, done := newRepo(t)
 			defer done()
@@ -452,40 +495,14 @@ func TestStorageRepository_ForeignRunNotRebuilt(t *testing.T) {
 			wfr := runID(t, "wfr")
 			snap, json := newRun(t, wfr)
 			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+			appendForeignEvents(t, cs, foreign, 1, 50)
 
-			// Append 50 events for a FOREIGN coordinator run directly via the
-			// store (no wfr- prefix): the namespace rule says it can never
-			// hold wf events. Append rejects empty payloads only, "{}" is
-			// fine.
-			for i := 1; i <= 50; i++ {
-				ev := storage.Event{
-					ID:       fmt.Sprintf("se-%d", i),
-					RunID:    "run-foreign-1",
-					Sequence: i,
-					Kind:     "run_created",
-					Payload:  []byte("{}"),
-				}
-				if err := cs.Append(ctx, ev); err != nil {
-					t.Fatalf("append foreign event %d: %v", i, err)
-				}
-			}
+			// CreateRun's own rebase read the wfr- run's (empty) log, so the
+			// helper resets the counter before each pass.
+			requireNoForeignLogRead(t, repo, cs, wfr, "on the first pass")
 
-			// CreateRun's own rebase read the wfr- run's (empty) log; reset
-			// so the assertion below counts ONLY what GetRun triggers.
-			cs.eventsCalls = 0
-
-			// GetRun must not read the foreign run's log: only the Changes
-			// probe runs, the foreign log is skipped entirely.
-			got, err := repo.GetRun(ctx, wfr)
-			if err != nil {
-				t.Fatalf("GetRun: %v", err)
-			}
-			if got.RunID != wfr {
-				t.Fatalf("GetRun.RunID = %q, want %q", got.RunID, wfr)
-			}
-			if cs.eventsCalls != 0 {
-				t.Fatalf("Events(runID) calls during GetRun = %d, want 0 (foreign run log must be skipped)", cs.eventsCalls)
-			}
+			appendForeignEvents(t, cs, foreign, 51, 51)
+			requireNoForeignLogRead(t, repo, cs, wfr, "on the second pass")
 
 			// The foreign run must not leak into the workflow view.
 			runs, err := repo.ListRuns(ctx)
@@ -493,7 +510,7 @@ func TestStorageRepository_ForeignRunNotRebuilt(t *testing.T) {
 				t.Fatalf("ListRuns: %v", err)
 			}
 			for _, r := range runs {
-				if r.RunID == "run-foreign-1" {
+				if r.RunID == foreign {
 					t.Fatalf("ListRuns exposes foreign run %q", r.RunID)
 				}
 			}
