@@ -253,3 +253,39 @@ func TestDeleteReportsAFailedCommit(t *testing.T) {
 		t.Errorf("a failed commit left %d tombstone rows behind", tombs)
 	}
 }
+
+// TestDeleteSessionSnapshotRowPropagatesANonNotFoundTombstoneError covers
+// deleteSessionSnapshotRow's own tombstoneContextSessionTx error check
+// (chat_sessions_delete.go:132-134): the live row behind a plain (non-
+// worktree) snapshot is bound to a worktree instance, so
+// requireWorktreeSessionBinding refuses the plain-namespace tombstone with
+// ErrWorktreeDeleted - a real error distinct from ErrSessionNotFound, which
+// this function must not swallow.
+func TestDeleteSessionSnapshotRowPropagatesANonNotFoundTombstoneError(t *testing.T) {
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	ctx := context.Background()
+
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
+	seedLiveWorktreeSession(t, s, principal, instance, "opener")
+
+	// A plain (instance_id NULL) snapshot row whose session_id points at the
+	// worktree-bound live session above - the legacy/diverged shape this
+	// whole file's helper (seedSnapshotWithDivergedSessionID) already models,
+	// just pointed at a worktree-bound row instead of a missing one.
+	if err := s.SaveSession(ctx, principal, "plain-snapshot", []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
+		t.Fatalf("seed plain snapshot: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE chat_sessions SET session_id=? WHERE workspace_id=? AND subject_id=? AND name=?`,
+		principal.SessionID, principal.WorkspaceID, principal.SubjectID, "plain-snapshot"); err != nil {
+		t.Fatalf("point snapshot at the worktree-bound session: %v", err)
+	}
+
+	_, err := s.deleteSessionSnapshotRow(ctx, principal, "plain-snapshot")
+	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("deleteSessionSnapshotRow = %v, want ErrWorktreeDeleted from the binding mismatch", err)
+	}
+	if n := countSnapshots(t, s, principal); n != 1 {
+		t.Errorf("%d snapshots survived a failed delete, want 1 (rolled back)", n)
+	}
+}
