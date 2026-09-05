@@ -60,12 +60,42 @@ func (p *SessionPool) GetOrCreateBound(id string, bind BindFunc) (ports.Conversa
 	return p.GetOrCreateInDir(id, bind, "")
 }
 
-func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (ports.Conversation, error) {
+// resumeInFlight lets a second GetOrCreateInDir call for the same id join the
+// first instead of building its own independent Session/Conversation for
+// it. adoptWorktreeToolsLocked releases p.mu around its slow registry build
+// (compute-then-adopt), so a racing caller can pass the initial p.convs[id]
+// check before the first caller has published - without this, both callers
+// built and returned DIFFERENT conversations for the identical id, and
+// whichever published last silently won the map slot while the other kept
+// serving its orphaned twin.
+type resumeInFlight struct {
+	done chan struct{}
+	conv ports.Conversation
+	err  error
+}
+
+func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (outConv ports.Conversation, outErr error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if conv, ok := p.convs[id]; ok {
-		return conv, nil
+	if existing, ok := p.convs[id]; ok {
+		p.mu.Unlock()
+		return existing, nil
 	}
+	if inFlight, ok := p.resuming[id]; ok {
+		p.mu.Unlock()
+		<-inFlight.done
+		return inFlight.conv, inFlight.err
+	}
+	if p.resuming == nil {
+		p.resuming = make(map[string]*resumeInFlight)
+	}
+	inFlight := &resumeInFlight{done: make(chan struct{})}
+	p.resuming[id] = inFlight
+	defer p.mu.Unlock()
+	defer func() {
+		delete(p.resuming, id)
+		inFlight.conv, inFlight.err = outConv, outErr
+		close(inFlight.done)
+	}()
 	if p.res == nil {
 		return nil, fmt.Errorf("no config provided")
 	}

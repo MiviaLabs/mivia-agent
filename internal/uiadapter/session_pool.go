@@ -84,6 +84,11 @@ type SessionPool struct {
 	lastToolScopeNotice string
 	launchRootDone      bool
 	launchRootVal       string
+
+	// resuming tracks GetOrCreateInDir calls in flight, keyed by the
+	// requested id, so a second caller for the SAME id joins the first
+	// instead of building an independent, orphaned twin. See resumeInFlight.
+	resuming map[string]*resumeInFlight
 }
 
 // AuthorUserIDProvider resolves the CLI's own authenticated principal for

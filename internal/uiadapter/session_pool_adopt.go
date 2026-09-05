@@ -120,9 +120,18 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 // resolver()), while sharing the pointer would leak growth across
 // same-root siblings. chat_repl.go installs the same stable-pointer
 // pattern for the CLI attach path.
+//
+// ToolBaseResolver hands the deferred-tool path this PRE-scope base, which
+// the operator's mandatory denylist has not been applied to - every other
+// layer refuses a denied name, so ToolDenylist is what closes this one door
+// (mirrors chat_repl.go's scopeAttachedToolSurface, which sets it alongside
+// its own ToolBaseResolver for the same reason).
 func (p *SessionPool) adoptRegistry(sess *chat.Session, reg *tools.Registry) {
 	base := reg.Clone()
 	sess.ToolBaseResolver = func() *tools.Registry { return base }
+	if p.agentState != nil {
+		sess.ToolDenylist = p.agentState.Global.MandatoryToolDenylistAdditions
+	}
 	sess.Tools = reg
 	sess.RefreshPrefixIdentity()
 }
