@@ -37,11 +37,3 @@ func appendToolScope(notice, toolScope string) string {
 	}
 	return notice + " " + toolScope
 }
-
-// publishToolScopeNotice stores an adoption warning for immediate drainage;
-// every creator call overwrites the slot, so nothing leaks across turns.
-func (p *SessionPool) publishToolScopeNotice(notice string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.lastToolScopeNotice = notice
-}
