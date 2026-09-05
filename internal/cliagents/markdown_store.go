@@ -254,6 +254,7 @@ func (s *markdownStore) Delete(ctx context.Context, id string) error {
 		return memory.ErrEntryNotFound
 	}
 	if err != nil {
+		// Not diff-covered: this non-NotFound Index error needs the shared *storage.SQLite to fail between the refresh above and this call; not forceable deterministically in-process without a test-only failure-injection seam.
 		return err
 	}
 	if err := s.cfg.Source.Delete(ctx, doc.SourcePath); err != nil {

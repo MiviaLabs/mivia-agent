@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -564,5 +565,48 @@ func TestMarkdownStoreDeletePropagatesPostDeleteResyncFailure(t *testing.T) {
 	fault.armScanErrAfterNextDelete(memory.ScopeProject, errors.New("injected post-delete resync failure"))
 	if err := s.Delete(context.Background(), result.ID); err == nil {
 		t.Fatal("Delete did not propagate a post-delete resync failure")
+	}
+}
+
+// TestMarkdownStoreRefreshWrapsIndexSyncFailure pins refresh's own index-write
+// error branch: unlike the faultSource tests above (which poison the
+// Markdown scan), the Markdown source here scans cleanly and only the
+// derived SQLite index has failed. That must surface as the distinct
+// ErrMarkdownIndexStale sentinel, not a generic error, since a stale index
+// after a successful Markdown write is a different operator-facing failure
+// mode (the fact is durably saved; only its searchable copy lagged).
+func TestMarkdownStoreRefreshWrapsIndexSyncFailure(t *testing.T) {
+	s, _ := newFaultStore(t, false, false)
+	if err := s.cfg.Index.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entry := memory.Entry{Title: "x", Scope: memory.ScopeProject, Verdict: memory.VerdictGood, Summary: "s", Why: "w"}
+	_, err := s.Save(context.Background(), entry)
+	if err == nil {
+		t.Fatal("Save on a closed index must fail")
+	}
+	if !errors.Is(err, ErrMarkdownIndexStale) {
+		t.Fatalf("Save(closed index) error = %v, want it to wrap ErrMarkdownIndexStale", err)
+	}
+}
+
+// TestMarkdownStoreCoreEntriesPropagatesIndexQueryFailure pins CoreEntries'
+// own index-query error branch, distinct from
+// TestMarkdownStoreCoreEntriesPropagatesRefreshFailure above (which poisons
+// the pre-read Markdown rescan). Here the scope is marked fresh, as a live
+// reconciler would after a real sync, so refreshForRead skips its own
+// rescan and the query error comes from CoreMemoryIndexEntries itself.
+func TestMarkdownStoreCoreEntriesPropagatesIndexQueryFailure(t *testing.T) {
+	s, _ := newFaultStore(t, false, false)
+	s.mu.Lock()
+	s.reconcilerAttached = true
+	s.fallback = time.Hour
+	s.lastSync = map[memory.Scope]time.Time{memory.ScopeProject: time.Now()}
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.CoreEntries(ctx, memory.ScopeProject); err == nil {
+		t.Fatal("CoreEntries did not propagate the index query failure")
 	}
 }

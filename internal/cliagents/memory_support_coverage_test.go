@@ -69,6 +69,35 @@ func TestOpenMemoryStoreWithReadOnly_UnsupportedBackend(t *testing.T) {
 	}
 }
 
+// TestOpenMemoryStoreWithReadOnly_AbsRootFails covers
+// openMarkdownMemoryStore's filepath.Abs error branch: filepath.Abs on a
+// relative path calls os.Getwd, which fails once the process's working
+// directory has been removed out from under it. That is the only
+// deterministic, in-process way to make filepath.Abs itself fail (a bad
+// root string alone never does - Abs only rejects a relative path it cannot
+// resolve against cwd).
+func TestOpenMemoryStoreWithReadOnly_AbsRootFails(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := t.TempDir()
+	if err := os.Chdir(gone); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	_, err = OpenMemoryStoreWithReadOnly("relative-root", config.MemoryConfig{StoreBackend: memory.BackendMarkdown}, false)
+	if err == nil {
+		t.Fatal("OpenMemoryStoreWithReadOnly: expected error when cwd is unresolvable, got nil")
+	}
+	if !strings.Contains(err.Error(), "memory project root") {
+		t.Fatalf("error = %v, want wrapped memory project root error", err)
+	}
+}
+
 // TestOpenMemoryStoreWithReadOnly_MissingHomeWithOrgID covers
 // openMarkdownMemoryStore's guard against an unresolvable global memory
 // directory: an empty HOME makes workspace.GlobalMemoryDir return "", which
