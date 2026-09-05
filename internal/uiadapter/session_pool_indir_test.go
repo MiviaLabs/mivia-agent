@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/MiviaLabs/mivia-agent/internal/worktreeroute"
 )
+
+// result is one racer's outcome in the concurrent-resume tests.
+type result struct {
+	conv ports.Conversation
+	err  error
+}
 
 type noopTool struct{}
 
@@ -626,40 +633,59 @@ func TestInDir_AdoptedSessionCarriesPrivateBaseResolver(t *testing.T) {
 // conversation - loading a duplicate session would overwrite the map
 // entries and orphan the winner outside ReleaseLeases' reach (the exact
 // leaked-lease failure that function exists to prevent). Run under -race.
-func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
-	stubWorkflowWiring(t)
-	dir := t.TempDir()
-	wtDir := filepath.Join(dir, "wt")
+// awaitResume bounds a racer's result so a deadlock or a never-started build
+// fails the test with a reason rather than hanging the package.
+func awaitResume(t *testing.T, ch <-chan result) result {
+	t.Helper()
+	select {
+	case r := <-ch:
+		return r
+	case <-time.After(10 * time.Second):
+		t.Fatal("a concurrent resume never returned")
+		return result{}
+	}
+}
+
+// seedSameIDRaceFixture builds the worktree dir and the saved session two
+// racers will both resume. Both sessions share one context-catalog store:
+// Save needs it to persist "race-target", and seed needs the SAME store bound
+// so the pool entry GetOrCreateInDir builds for that id can find it again
+// (inheritEntryStateLocked carries seed's ContextStore/ContextManager onto the
+// new session before it calls Load).
+func seedSameIDRaceFixture(t *testing.T) (*chat.Session, *config.Resolved, string) {
+	t.Helper()
+	wtDir := filepath.Join(t.TempDir(), "wt")
 	if err := os.MkdirAll(wtDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-
 	res := &config.Resolved{ProviderName: "fake", Model: "test-model"}
-	// Both sessions share one context-catalog store: Save below needs it to
-	// persist "race-target", and seed needs the SAME store bound so the
-	// pool entry GetOrCreateInDir builds for that id can find it again
-	// (inheritRuntimeStateLocked carries seed's ContextStore/ContextManager
-	// onto the new session before it calls Load).
 	store := approvalTestStore(t)
 	seed := contextBoundSession(t, res, store, "seed")
 	seed.UseTools = true
 	seed.Tools = tools.NewRegistry()
-
 	saved := contextBoundSession(t, res, store, "race-target")
 	if err := saved.Save("race-target"); err != nil {
 		t.Fatalf("seed saved session: %v", err)
 	}
+	return seed, res, wtDir
+}
+
+func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
+	stubWorkflowWiring(t)
+	seed, res, wtDir := seedSameIDRaceFixture(t)
 
 	pool := NewSessionPool(seed, res, nil, true)
 	t.Cleanup(pool.CloseAll)
 
 	firstBuild := make(chan struct{})   // closed when goroutine A is inside the builder
 	releaseBuild := make(chan struct{}) // closed when A may finish building
-	builds := 0
+	var builds atomic.Int32
 	prevHook := cliagents.BuildToolsForRootHookForTest
 	cliagents.BuildToolsForRootHookForTest = func(string, string, bool, *config.Resolved) (*tools.Registry, func(), error) {
-		builds++
-		if builds == 1 {
+		// atomic: two racers reach this hook, and the assertion does not
+		// need a data race to make its point.
+		n := builds.Add(1)
+		if n == 1 {
 			close(firstBuild)
 			<-releaseBuild
 		}
@@ -667,16 +693,20 @@ func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
 	}
 	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prevHook })
 
-	type result struct {
-		conv ports.Conversation
-		err  error
-	}
 	resA := make(chan result, 1)
 	go func() {
 		conv, err := pool.GetOrCreateInDir("race-target", nil, wtDir)
 		resA <- result{conv, err}
 	}()
-	<-firstBuild // A holds buildSer inside the builder; p.mu is free
+	// Bounded: if the builder is never reached (a regression that skips the
+	// per-root build entirely - one such change hung this package for the
+	// full 600s package timeout), fail with the reason instead of blocking.
+	select {
+	case <-firstBuild: // A holds buildSer inside the builder; p.mu is free
+	case <-time.After(10 * time.Second):
+		close(releaseBuild)
+		t.Fatal("no worktree registry build was ever started: the resume never reached adoptWorktreeToolsLocked")
+	}
 
 	resB := make(chan result, 1)
 	go func() {
@@ -690,8 +720,7 @@ func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	close(releaseBuild)
 
-	a := <-resA
-	b := <-resB
+	a, b := awaitResume(t, resA), awaitResume(t, resB)
 	if a.err != nil || b.err != nil {
 		t.Fatalf("concurrent resumes errored: A=%v B=%v", a.err, b.err)
 	}

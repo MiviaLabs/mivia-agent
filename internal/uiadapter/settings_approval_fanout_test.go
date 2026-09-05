@@ -31,8 +31,16 @@ func TestApprovalDefaultReachesEveryPooledSession(t *testing.T) {
 	}
 	backgroundSess := background.(*Conversation).Session()
 
+	// Wired the way production does it (CommandRunner.SetSettingsStore), not
+	// by reaching into the field: a store built without a runner has a nil
+	// pool and silently degrades to the focused session alone, which is the
+	// original defect and what assigning the field directly hides.
+	runner := NewCommandRunnerWithPool(launch, pool, res, state)
 	store2 := NewSettingsStore(launch, res, state)
-	store2.pool = pool
+	runner.SetSettingsStore(store2)
+	if store2.pool == nil {
+		t.Fatal("SetSettingsStore did not hand the store its pool: the fan-out degrades to the active session")
+	}
 	handle, err := store2.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetApprovalDefault{Mode: "deny"})
 	if err != nil {
 		t.Fatal(err)

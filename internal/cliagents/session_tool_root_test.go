@@ -39,6 +39,10 @@ func TestWorktreeSurfaceHooksUseEntryRoot(t *testing.T) {
 	}
 	for _, path := range []string{"agent", "admission", "model", "unscoped_model"} {
 		t.Run(path, func(t *testing.T) {
+			// Reset per subtest: shared across them, a path that stops
+			// building a dispatcher at all still "passes" on the previous
+			// subtest's value - which is exactly the regression shape.
+			gotRoot = ""
 			var err error
 			switch path {
 			case "agent":
@@ -52,6 +56,9 @@ func TestWorktreeSurfaceHooksUseEntryRoot(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if gotRoot == "" {
+				t.Fatalf("%s never rebuilt a dispatcher, so this path pins nothing", path)
 			}
 			if gotRoot != worktree {
 				t.Fatalf("hook root = %q, want active worktree %q", gotRoot, worktree)
