@@ -155,3 +155,29 @@ func TestWorkflowStatusReaderDisabledWithoutAChannel(t *testing.T) {
 		t.Fatal("awaitWorkflowStatus armed a reader with no channel set")
 	}
 }
+
+// TestAwaitWorkflowStatusCmdDeliversAndSignalsClose exercises
+// awaitWorkflowStatus's returned tea.Cmd directly - the prior tests only
+// checked whether a Cmd was armed, never ran the closure that actually reads
+// the channel.
+func TestAwaitWorkflowStatusCmdDeliversAndSignalsClose(t *testing.T) {
+	ch := make(chan uievent.Event, 1)
+	s := newTestScreen(t)
+	s.SetWorkflowStatus(ch)
+
+	ev := workflowStatusEvent("wfr-1", "build", time.Now(), true)
+	ch <- ev
+	msg := s.awaitWorkflowStatus()()
+	got, ok := msg.(workflowStatusMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want workflowStatusMsg", msg)
+	}
+	if got.event.Body != ev.Body {
+		t.Fatalf("delivered event = %+v, want %+v", got.event, ev)
+	}
+
+	close(ch)
+	if msg := s.awaitWorkflowStatus()(); msg != nil {
+		t.Fatalf("msg from a closed channel = %#v, want nil", msg)
+	}
+}

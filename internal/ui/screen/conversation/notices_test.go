@@ -74,6 +74,31 @@ func TestNoticeReaderDisabledWithoutAChannel(t *testing.T) {
 	}
 }
 
+// TestAwaitNoticeCmdDeliversAndSignalsClose exercises awaitNotice's returned
+// tea.Cmd directly - the prior tests only checked whether a Cmd was armed,
+// never ran the closure that actually reads the channel.
+func TestAwaitNoticeCmdDeliversAndSignalsClose(t *testing.T) {
+	ch := make(chan uievent.Event, 1)
+	s := newTestScreen(t)
+	s.SetNotices(ch)
+
+	ev := noticeEvent("delivered")
+	ch <- ev
+	msg := s.awaitNotice()()
+	got, ok := msg.(noticeMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want noticeMsg", msg)
+	}
+	if got.event.Body != ev.Body {
+		t.Fatalf("delivered event = %+v, want %+v", got.event, ev)
+	}
+
+	close(ch)
+	if msg := s.awaitNotice()(); msg != nil {
+		t.Fatalf("msg from a closed channel = %#v, want nil", msg)
+	}
+}
+
 // newTestScreen builds a Screen with no conversation wiring: nothing here
 // sends a turn, so the transcript and the notice reader are all that matter.
 func newTestScreen(t *testing.T) Screen {
