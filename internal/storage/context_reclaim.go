@@ -44,6 +44,23 @@ const sessionLeaseTTL = 2 * time.Minute
 // A third process reclaiming within the sub-heartbeat window can still succeed,
 // returning ErrPrincipalMismatch on the loser's next write instead of silent eviction.
 func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Principal, sessionID string) (contextstate.Snapshot, error) {
+	return s.reclaimSession(ctx, principal, sessionID, contextstate.WorktreeInstance{})
+}
+
+// ReclaimWorktreeSession is ReclaimSession for a row bound to instance: the
+// caller has already re-bound that instance (StartInRoute before Load), so it
+// is the legitimate owner. Every guard ReclaimSession applies still applies;
+// the only difference is which namespace the row must live in. An instance
+// mismatch (or a plain row) is refused exactly as ReclaimSession refuses a
+// bound one.
+func (s *SQLite) ReclaimWorktreeSession(ctx context.Context, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+	if err := instance.Validate(); err != nil || instance.IsZero() {
+		return contextstate.Snapshot{}, fmt.Errorf("%w: invalid worktree instance", contextstate.ErrInvalidDTO)
+	}
+	return s.reclaimSession(ctx, principal, sessionID, instance)
+}
+
+func (s *SQLite) reclaimSession(ctx context.Context, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
 	if err := principal.Validate(); err != nil {
 		return contextstate.Snapshot{}, err
 	}
@@ -58,7 +75,13 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	if err != nil {
 		return contextstate.Snapshot{}, err
 	}
-	leaseAt, leaseHolder, err := reclaimRowState(ctx, tx, principal, sessionID)
+	if !instance.IsZero() {
+		if err := requireActiveWorktreeTx(ctx, tx, principal, instance); err != nil {
+			_ = tx.Rollback()
+			return contextstate.Snapshot{}, err
+		}
+	}
+	leaseAt, leaseHolder, err := reclaimRowState(ctx, tx, principal, sessionID, instance)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -79,7 +102,7 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	// UPDATE's predicate evaluates against. That is what makes the zero-rows
 	// disambiguation below correct instead of racy. See the doc comment above
 	// for why this UPDATE never writes lease_at.
-	result, err := tx.ExecContext(ctx, `UPDATE context_sessions SET capability_digest=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL AND (lease_at IS NULL OR lease_at < ?)`, principal.CapabilityDigest(), principal.WorkspaceID, sessionID, principal.SubjectID, staleCutoff)
+	result, err := tx.ExecContext(ctx, `UPDATE context_sessions SET capability_digest=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS ? AND (lease_at IS NULL OR lease_at < ?)`, principal.CapabilityDigest(), principal.WorkspaceID, sessionID, principal.SubjectID, nullableText(instance.ID), staleCutoff)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -104,7 +127,7 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 		}
 		return contextstate.Snapshot{}, err
 	}
-	snapshot, err := loadContextTx(ctx, tx, principal, sessionID, contextstate.WorktreeInstance{})
+	snapshot, err := loadContextTx(ctx, tx, principal, sessionID, instance)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -116,7 +139,7 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 // existence, subject ownership, tombstone, and the managed-worktree
 // rejection. It returns the row's lease state for the caller's takeover
 // decision; the caller owns the transaction and rolls back on any error.
-func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string) (sql.NullInt64, sql.NullString, error) {
+func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (sql.NullInt64, sql.NullString, error) {
 	var subjectID string
 	var tombstoned int
 	var instanceID sql.NullString
@@ -135,8 +158,11 @@ func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Pri
 	if tombstoned != 0 {
 		return leaseAt, leaseHolder, contextstate.ErrSessionTombstoned
 	}
-	if instanceID.Valid {
+	if instance.IsZero() && instanceID.Valid {
 		return leaseAt, leaseHolder, fmt.Errorf("%w: managed worktree sessions cannot be reclaimed", contextstate.ErrInvalidDTO)
+	}
+	if !instance.IsZero() && (!instanceID.Valid || instanceID.String != instance.ID) {
+		return leaseAt, leaseHolder, contextstate.ErrWorktreeDeleted
 	}
 	return leaseAt, leaseHolder, nil
 }

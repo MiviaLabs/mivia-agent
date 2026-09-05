@@ -138,6 +138,17 @@ type SessionReclaimer interface {
 	ReclaimSession(context.Context, Principal, string) (Snapshot, error)
 }
 
+// WorktreeSessionReclaimer is SessionReclaimer for a session bound to a
+// managed worktree instance. ReclaimSession refuses instance-bound rows on
+// purpose (an unbound reader must never take over a worktree session); a
+// resuming process that has re-bound the SAME instance first (StartInRoute
+// before Load) is the legitimate owner and reclaims through this surface.
+// Without it a resumed worktree session never reclaimed at all and its next
+// turn silently forked into a second context session.
+type WorktreeSessionReclaimer interface {
+	ReclaimWorktreeSession(context.Context, Principal, string, WorktreeInstance) (Snapshot, error)
+}
+
 // SessionLeaseRenewer is the optional surface a live process uses to prove to
 // ReclaimSession that it is still actively working a session, so a second
 // process resuming the same session id cannot silently evict it mid-turn.

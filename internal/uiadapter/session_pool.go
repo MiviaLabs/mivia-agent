@@ -133,6 +133,17 @@ func (c fallbackCompleter) ChatTurn(context.Context, provider.Request) (*provide
 	return nil, fmt.Errorf("provider %q has no active client: cannot dispatch", c.providerName)
 }
 
+// newSurfaceWidenerVar and buildModelBindingVar are the two host-owned
+// closures the runtime invokes INTERNALLY on a pooled session (deferred-tool
+// admission and /model rebuilds). They are vars so a test can record which
+// *AgentSessionState each pooled session was wired to: that state must be the
+// session's own fork, never the pool's shared base (bug-audit "widener and
+// binding factory bound to the shared base state").
+var (
+	newSurfaceWidenerVar = cliagents.NewSurfaceWidener
+	buildModelBindingVar = cliagents.BuildModelBinding
+)
+
 func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) func(string, string) (chat.ModelBinding, error) {
 	return func(providerName, model string) (chat.ModelBinding, error) {
 		if providerName == "" && res != nil {
@@ -141,7 +152,7 @@ func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *clia
 		if model == "" && res != nil {
 			model = res.Model
 		}
-		binding, err := cliagents.BuildModelBinding(sess, res, ".", providerName, model, state)
+		binding, err := buildModelBindingVar(sess, res, ".", providerName, model, state)
 		if err == nil {
 			return binding, nil
 		}
@@ -150,7 +161,7 @@ func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *clia
 		// For an explicit switch (not loading), fail closed and return the error.
 		if sess != nil && sess.IsLoading() {
 			if res != nil && (providerName != res.ProviderName || model != res.Model) {
-				if b, err2 := cliagents.BuildModelBinding(sess, res, ".", res.ProviderName, res.Model, state); err2 == nil {
+				if b, err2 := buildModelBindingVar(sess, res, ".", res.ProviderName, res.Model, state); err2 == nil {
 					return b, nil
 				}
 			}
@@ -430,17 +441,18 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	sibling := p.inheritRuntimeStateLocked(sess)
 	inheritApprovalLocked(sess, sibling, p.res)
 
-	if p.agentState != nil && p.res != nil {
-		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
+	entryState := p.forkEntryStateLocked()
+	if entryState != nil && p.res != nil {
+		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
 	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
+	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
 
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
 	id := sess.SessionID
 	p.sessions[id] = sess
 	p.convs[id] = conv
-	p.registerForkedStateLocked(id)
+	p.bindEntryStateLocked(id, entryState)
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil
@@ -469,10 +481,11 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	sibling := p.inheritRuntimeStateLocked(sess)
 	inheritApprovalLocked(sess, sibling, p.res)
 
-	if p.agentState != nil && p.res != nil {
-		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
+	entryState := p.forkEntryStateLocked()
+	if entryState != nil && p.res != nil {
+		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
 	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
+	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
 
 	if err := sess.Load(sessionID); err != nil {
 		return nil, err
@@ -484,23 +497,44 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	// doc comment for what a stale seed does to the context gauge.
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 
+	if existing := p.liveEntryForResolvedLocked(sessionID, sess); existing != nil {
+		return existing, nil
+	}
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
-	p.sessions[sessionID] = sess
-	p.convs[sessionID] = conv
-	p.registerForkedStateLocked(sessionID)
-	if sess.SessionID != "" && sess.SessionID != sessionID {
-		p.sessions[sess.SessionID] = sess
-		p.convs[sess.SessionID] = conv
-		// Same entry under its second key, not a second fork: both ids name
-		// the same *chat.Session, and AgentState callers must resolve
-		// either one to the identical private state.
-		if state := p.agentStates[sessionID]; state != nil {
-			p.agentStates[sess.SessionID] = state
-		}
-	}
+	p.publishEntryLocked(sessionID, sess, conv, entryState)
 	p.attachSyncLocked(sess)
 	return conv, nil
+}
+
+// liveEntryForResolvedLocked reports the live entry, if any, already
+// registered under the id Load resolved the session to when that differs
+// from the id the caller asked for (sanitization, or a projection that
+// resolved to its live identity). Publishing a second Session/Conversation
+// under that key would clobber the live one: it stays reachable from the
+// UI that holds it but not from the pool, its lease never releases, and two
+// divergent copies of one persisted session both save. The caller returns
+// the existing entry instead. Callers hold p.mu.
+func (p *SessionPool) liveEntryForResolvedLocked(requested string, sess *chat.Session) *Conversation {
+	if sess.SessionID == "" || sess.SessionID == requested {
+		return nil
+	}
+	return p.convs[sess.SessionID]
+}
+
+// publishEntryLocked registers a just-built entry under the requested id
+// and, when Load resolved the session to a different id, under that id too -
+// the same entry and the same private state under both keys, never a
+// second fork. Callers hold p.mu and have checked liveEntryForResolvedLocked.
+func (p *SessionPool) publishEntryLocked(requested string, sess *chat.Session, conv *Conversation, state *cliagents.AgentSessionState) {
+	p.sessions[requested] = sess
+	p.convs[requested] = conv
+	p.bindEntryStateLocked(requested, state)
+	if sess.SessionID != "" && sess.SessionID != requested {
+		p.sessions[sess.SessionID] = sess
+		p.convs[sess.SessionID] = conv
+		p.bindEntryStateLocked(sess.SessionID, state)
+	}
 }
 
 // attachSyncLocked starts chat sync for one pooled session.
