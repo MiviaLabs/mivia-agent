@@ -244,6 +244,12 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 		})
 	}
 	body := appendHookContext(capped, hookContext)
+	if d.turn != nil {
+		failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
+		if reminder := d.turn.recordFailure(failed); reminder != "" {
+			body = AppendSystemReminder(body, reminder)
+		}
+	}
 	d.recordToolEventOutcome(callKey, args, body, r.Err, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
 }

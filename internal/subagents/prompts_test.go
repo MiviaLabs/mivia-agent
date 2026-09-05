@@ -107,3 +107,22 @@ func TestMessagingProtocolPromptTeachesChainAskAndHeartbeatBudget(t *testing.T) 
 		}
 	}
 }
+
+func TestMultiStepSystemPromptDisciplineLines(t *testing.T) {
+	for _, want := range []string{
+		"falsifiable hypothesis",
+		"Stop when done",
+		"do not issue variations",
+	} {
+		if !strings.Contains(MultiStepSystemPrompt, want) {
+			t.Errorf("MultiStepSystemPrompt missing discipline line %q", want)
+		}
+	}
+	banned := []string{"golang", "go.mod", "make ", "cmd/mivia", "internal/", "rust", "python", "node.js", "typescript"}
+	lower := strings.ToLower(MultiStepSystemPrompt)
+	for _, b := range banned {
+		if strings.Contains(lower, b) {
+			t.Fatalf("MultiStepSystemPrompt contains project/language-specific term %q", b)
+		}
+	}
+}
