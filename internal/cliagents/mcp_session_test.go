@@ -184,6 +184,45 @@ func TestSetupSessionMCPToolsSkipsNonGlobalServersWithNoAgentSelected(t *testing
 	}
 }
 
+// TestEnsureRootMCPToolsNilStateIsNoOp confirms ensureRootMCPTools tolerates
+// a nil AgentSessionState (a tools-off session, or a caller with no agent
+// state) as a documented no-op rather than a nil-pointer panic on
+// state.ToolBase / state.MCPManager.
+func TestEnsureRootMCPToolsNilStateIsNoOp(t *testing.T) {
+	res := serverConfig()
+	if err := ensureRootMCPTools(nil, &res, nil); err != nil {
+		t.Fatalf("ensureRootMCPTools(nil state) error = %v, want nil no-op", err)
+	}
+}
+
+// TestEnsureRootMCPToolsMergesGlobalServers is the positive twin: with a
+// real state, ensureRootMCPTools must merge every configured GLOBAL MCP
+// server into the tool base, mirroring
+// TestSetupSessionMCPToolsAttachesGlobalServersWithNoAgentSelected but via
+// the agent-switch merge path instead of initial session setup.
+func TestEnsureRootMCPToolsMergesGlobalServers(t *testing.T) {
+	t.Setenv("MIVIA_CLI_MCP_HELPER", "1")
+	res := serverConfig()
+	res.MCP.Servers[0].Global = true
+	registry := tools.NewRegistry()
+	manager, cleanup, err := SetupSessionMCPTools(registry, &res, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	// Fresh registry standing in for a restored root surface that has not
+	// yet seen this global server merged in.
+	fresh := tools.NewRegistry()
+	state := &AgentSessionState{ToolBase: fresh, MCPManager: manager}
+	if err := ensureRootMCPTools(nil, &res, state); err != nil {
+		t.Fatalf("ensureRootMCPTools() error = %v", err)
+	}
+	if _, ok := fresh.Get("mcp__repo__x6563686f"); !ok {
+		t.Fatal("ensureRootMCPTools() did not merge the global server's tools into the tool base")
+	}
+}
+
 // TestSelectedOrGlobalMCPServers pins the selection rule directly: a selected
 // agent's own scope wins outright (even when empty, which must NOT fall back
 // to the global set - an agent that explicitly names no servers gets none);

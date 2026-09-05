@@ -70,6 +70,46 @@ func TestRestoreRootSurfaceMergesGlobalMCPIntoEntryBase(t *testing.T) {
 	}
 }
 
+// Restoring the root surface must wrap and surface a failure merging the
+// configured global MCP servers, not swallow it: the manager here was built
+// before "ghost" was added to the resolved config's global server set, so
+// ensureRootMCPTools's merge cannot know about it and EnsureServers refuses
+// the unknown ID. ApplySessionAgent must fail with that error wrapped as
+// "MCP tools: ...", the restoreRootSurface branch a healthy merge never
+// exercises.
+func TestRestoreRootSurfaceWrapsMCPMergeFailure(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	manager, mcpCleanup, err := composition.AttachMCPServers(fixture.state.ToolBase, config.MCPConfig{Enabled: true}, nil, nil)
+	if err != nil {
+		t.Fatalf("attach empty MCP manager: %v", err)
+	}
+	defer mcpCleanup()
+	fixture.state.MCPManager = manager
+
+	narrow := agents.ResolvedAgent{
+		Name: "narrow", SystemPrompt: "N",
+		EffectiveTools: []string{"read_file", "grep"},
+		CoreTools:      corePtr("read_file"),
+	}
+	if err := fixture.state.Registry.Publish(narrow); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
+		t.Fatalf("switch to narrow: %v", err)
+	}
+	// Only now does the resolved config gain a global server the
+	// already-built manager was never told about.
+	fixture.res.MCP = config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
+		ID: "ghost", Transport: "stdio", Command: "true", Global: true,
+	}}}
+
+	err = ApplySessionAgent(fixture.sess, fixture.res, fixture.state, config.RootAgentName, false)
+	if err == nil || !strings.Contains(err.Error(), "MCP tools:") {
+		t.Fatalf("restore root = %v, want a wrapped \"MCP tools:\" error", err)
+	}
+}
+
 // The /agent "disabled tools omitted" warning must be judged against the
 // registry the switch actually builds from (entryBase), not the shared launch
 // base: a tool the worktree entry offers is not disabled there.
