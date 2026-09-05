@@ -237,11 +237,19 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		SharedSQLite:              contextWiring.SharedSQLite,
 		ContextPreparationManager: contextWiring.Preparation,
 		ContextPreparationInput:   contextWiring.PreparationInput,
-		SkillReg:                  skillReg,
-		SkillScope:                skillScope,
-		AgentRegistry:             state.Registry,
-		DeferredTools:             plan.Candidates,
-		Session:                   sess,
+		// Re-supplied on EVERY rebuild, against THIS surface's authority
+		// registry. A delegated task agent's own MCP servers are merged
+		// through it just before the child registry is scoped, and the
+		// consumer fails OPEN when it is nil - so dropping it on a rebuild
+		// silently stripped every later delegation of its MCP tools with no
+		// error and no notice. Nil only when the session has no MCP manager,
+		// which is the genuine "MCP disabled" case.
+		EnsureMCPTools: mcpToolEnsurerFor(state, authority),
+		SkillReg:       skillReg,
+		SkillScope:     skillScope,
+		AgentRegistry:  state.Registry,
+		DeferredTools:  plan.Candidates,
+		Session:        sess,
 		// This session already handed out truncated-output refs against the
 		// spool the live surface holds. Reuse it so the republication below is
 		// an identity re-publish rather than a revocation.

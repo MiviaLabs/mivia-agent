@@ -380,6 +380,19 @@ func inheritApprovalLocked(sess, existing *chat.Session, res *config.Resolved) {
 // GetOrCreate just constructed. Returns that sibling (nil if the pool has
 // none yet) for inheritApprovalLocked. Callers hold p.mu.
 func (p *SessionPool) inheritRuntimeStateLocked(sess *chat.Session) *chat.Session {
+	return p.inheritEntryStateLocked(sess, true)
+}
+
+// inheritEntryStateLocked is the ONE inheritance path every pooled entry
+// takes - plain or worktree-bound, fresh or resumed. The source is always
+// preferredInheritanceSessionLocked (the launch member when one is known),
+// never an arbitrary p.sessions map entry: a rebuild that later fails keeps
+// what it inherited, and inheriting a random member handed a worktree
+// session ANOTHER worktree's registry, so its file and command tools ran in
+// the wrong checkout while the notice said tools stayed on the launch one.
+// withPolicies carries the sibling's context policy onto the new session;
+// only the worktree /new path omits it.
+func (p *SessionPool) inheritEntryStateLocked(sess *chat.Session, withPolicies bool) *chat.Session {
 	preferred := p.preferredInheritanceSessionLocked()
 	for _, existing := range p.sessions {
 		if preferred != nil && existing != preferred {
@@ -399,7 +412,11 @@ func (p *SessionPool) inheritRuntimeStateLocked(sess *chat.Session) *chat.Sessio
 			if origPrincipal.IsBound() {
 				newPrincipal, err := contextstate.NewPrincipal(origPrincipal.WorkspaceID, sess.SessionID, origPrincipal.SubjectID)
 				if err == nil {
-					_ = sess.SetContextManager(mgr, newPrincipal, existing.ContextPolicy())
+					if withPolicies {
+						_ = sess.SetContextManager(mgr, newPrincipal, existing.ContextPolicy())
+					} else {
+						_ = sess.SetContextManager(mgr, newPrincipal)
+					}
 				}
 			}
 		}
@@ -461,50 +478,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 // GetOrCreate retrieves an active conversation or instantiates a new session
 // loaded from the persisted session store.
 func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if conv, ok := p.convs[sessionID]; ok {
-		return conv, nil
-	}
-
-	if p.res == nil {
-		return nil, fmt.Errorf("no config provided")
-	}
-	var comp provider.Completer
-	if p.res != nil && p.res.ProviderName != "" {
-		comp, _ = provider.New(p.res)
-	}
-	sess := chat.NewSession(p.res, comp)
-	sess.UseTools = p.toolsOn
-
-	sibling := p.inheritRuntimeStateLocked(sess)
-	inheritApprovalLocked(sess, sibling, p.res)
-
-	entryState := p.forkEntryStateLocked()
-	if entryState != nil && p.res != nil {
-		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
-	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
-
-	if err := sess.Load(sessionID); err != nil {
-		return nil, err
-	}
-	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
-	// Same reasoning as the summarizer refresh above: enableSessionContext
-	// seeded token-estimate calibration once, before Load published this
-	// session's real saved binding. See RefreshCalibrationAfterModelSwitch's
-	// doc comment for what a stale seed does to the context gauge.
-	sess.RefreshCalibrationAfterModelSwitch(context.Background())
-
-	if existing := p.liveEntryForResolvedLocked(sessionID, sess); existing != nil {
-		return existing, nil
-	}
-	conv := NewConversation(sess)
-	conv.SetSubagents(p.threads)
-	p.publishEntryLocked(sessionID, sess, conv, entryState)
-	p.attachSyncLocked(sess)
-	return conv, nil
+	return p.GetOrCreateInDir(sessionID, nil, "")
 }
 
 // liveEntryForResolvedLocked reports the live entry, if any, already

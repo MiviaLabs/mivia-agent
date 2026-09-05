@@ -87,6 +87,12 @@ func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config
 func (r *CommandRunner) SetSettingsStore(s *SettingsStore) {
 	if r != nil {
 		r.settingsStore = s
+		// The store fans operator-wide runtime settings (approval posture)
+		// across every pooled session, so it needs the same pool the runner
+		// switches sessions through.
+		if s != nil {
+			s.pool = r.pool
+		}
 	}
 }
 

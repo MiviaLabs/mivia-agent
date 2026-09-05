@@ -87,20 +87,7 @@ func (r *CommandRunner) worktreeSessionOutcome(ctx context.Context, summary port
 	// is not always summary.WorktreeDir: a session saved in a worktree
 	// SUBDIRECTORY must still get tools that see the whole worktree, the
 	// way the REPL scopes them. See BindFunc.
-	bind := func(newSess *chat.Session) (string, error) {
-		bound, err := worktreeroute.StartInRoute(ctx, newSess, store, root, route)
-		if err != nil {
-			return "", err
-		}
-		// Physical-identity check the DB row cannot make: the on-disk
-		// marker must name the exact instance just bound (REPL parity;
-		// catches a worktree removed and recreated out-of-band at the
-		// same path while the row stayed active).
-		if err := cliagents.VerifyWorktreeMarker(bound.Dir, bound.Instance); err != nil {
-			return "", err
-		}
-		return bound.Dir, nil
-	}
+	bind := worktreeBindFunc(store, root, route)
 
 	var conv ports.Conversation
 	if fresh {
@@ -127,6 +114,28 @@ func (r *CommandRunner) worktreeSessionOutcome(ctx context.Context, summary port
 		Conversation:    conv,
 		ClearTranscript: true,
 		Notice:          appendToolScope(fmt.Sprintf("%s session in worktree %s.", label, summary.Worktree), toolScope),
+	}
+}
+
+// worktreeBindFunc is the ONE worktree binding used by every entry point:
+// the picker's row-carried route and the store-resolved route a bare id
+// gets (SessionPool.storedRouteLocked). It validates the live instance and
+// then makes the physical-identity check the DB row cannot - the on-disk
+// marker must name the exact instance just bound (REPL parity; catches a
+// worktree removed and recreated out-of-band at the same path while the row
+// stayed active). The returned root is the worktree ROOT the binding
+// validated, which is not always the requested dir: a session saved in a
+// worktree SUBDIRECTORY must still get tools that see the whole worktree.
+func worktreeBindFunc(store *storage.SQLite, root string, route worktreeroute.Route) BindFunc {
+	return func(newSess *chat.Session) (string, error) {
+		bound, err := worktreeroute.StartInRoute(context.Background(), newSess, store, root, route)
+		if err != nil {
+			return "", err
+		}
+		if err := cliagents.VerifyWorktreeMarker(bound.Dir, bound.Instance); err != nil {
+			return "", err
+		}
+		return bound.Dir, nil
 	}
 }
 

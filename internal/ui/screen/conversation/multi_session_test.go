@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -518,3 +519,56 @@ func TestMultiSession_QueueIsolationAcrossSessions(t *testing.T) {
 		t.Errorf("expected restored queue on Session A = [\"Queued on A\"], got %v", s.queue)
 	}
 }
+
+// liveUsage is one turn's provider-reported accounting, so it belongs to that
+// turn's session. Held on the Screen and never carried in sessionState, a
+// reading from session A's running turn kept overriding the top bar after a
+// switch: session B showed A's context fill and A's spend, and A's TurnEnd
+// arrives on the background path which cannot clear the screen-global field -
+// so a session the user never sent a turn to never corrects itself.
+func TestMultiSession_LiveUsageDoesNotFollowTheSwitch(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	next, _ := s.Update(uievent.EventMsg{SessionID: "sess-A", Event: uievent.Event{
+		Kind:   uievent.KindUsage,
+		TurnID: "turn-sess-A",
+		Body:   uievent.UsageBody{InputTokens: 123456, CostUSD: 9.99},
+	}})
+	s = next.(Screen)
+	if s.liveUsage == nil {
+		t.Fatal("precondition: session A's usage event was not recorded")
+	}
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+	if got := s.topbar.Usage().InputTokens; got == 123456 {
+		t.Errorf("session B's top bar reports session A's %d input tokens", got)
+	}
+	if got := s.topbar.Usage().CostUSD; got == 9.99 {
+		t.Errorf("session B's top bar reports session A's $%.2f spend", got)
+	}
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+	if got := s.topbar.Usage().InputTokens; got != 123456 {
+		t.Errorf("switching back to A lost its own live usage: got %d, want 123456", got)
+	}
+}
+
+// A remote input for an unmounted session is buffered while the mount runs.
+// When the mount fails the buffer was discarded with a notice that named only
+// the error, so the user's message vanished with no way to see what was lost.
+func TestRemoteInputMountFailureReportsTheDroppedInput(t *testing.T) {
+	s, _, _, _ := setupTwoSessionScreen(t)
+	s.mounting = map[string][]ports.RemoteInputEvent{
+		"sess-gone": {{SessionID: "sess-gone", Body: "please run the migration"}},
+	}
+	next, _ := s.Update(sessionMountedMsg{sessionID: "sess-gone", err: errMountFailed})
+	s = next.(Screen)
+	view := s.View()
+	if !strings.Contains(view, "please run the migration") {
+		t.Errorf("the dropped remote input is not reported anywhere the user can see it:\n%s", view)
+	}
+}
+
+var errMountFailed = errors.New("worktree was removed")

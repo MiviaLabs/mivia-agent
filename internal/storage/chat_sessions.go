@@ -154,7 +154,7 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 		// No snapshot row: the live context session is the only source,
 		// exactly as the arm2/--session fallback served it (empty payload
 		// included).
-		live, livePayload, hasLive, _, err := s.loadLiveContextSession(ctx, principal, name)
+		live, livePayload, hasLive, _, err := s.loadLiveContextSession(ctx, s.db, principal, name, contextstate.WorktreeInstance{})
 		if err != nil {
 			return nil, contextstate.SessionCatalogInfo{}, err
 		}
@@ -172,7 +172,7 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 		// id - never a shadow, never a takeover.
 		return append([]byte(nil), payload...), info, nil
 	}
-	return s.resolveProjection(ctx, principal, catalogSessionID, payload, info, snapshotRevision)
+	return s.resolveProjection(ctx, s.db, principal, catalogSessionID, payload, info, snapshotRevision, contextstate.WorktreeInstance{})
 }
 
 // resolveProjection decides whether a chat_sessions projection row (name is a
@@ -195,8 +195,8 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 // and the live (possibly empty) state wins. A NULL snapshotRevision (a row
 // saved before this column existed) can't be reasoned about this way, so it
 // keeps today's conservative default: prefer the live state.
-func (s *SQLite) resolveProjection(ctx context.Context, principal contextstate.Principal, catalogSessionID string, payload []byte, info contextstate.SessionCatalogInfo, snapshotRevision sql.NullInt64) ([]byte, contextstate.SessionCatalogInfo, error) {
-	live, livePayload, hasLive, liveRevision, err := s.loadLiveContextSession(ctx, principal, catalogSessionID)
+func (s *SQLite) resolveProjection(ctx context.Context, q rowQuerier, principal contextstate.Principal, catalogSessionID string, payload []byte, info contextstate.SessionCatalogInfo, snapshotRevision sql.NullInt64, instance contextstate.WorktreeInstance) ([]byte, contextstate.SessionCatalogInfo, error) {
+	live, livePayload, hasLive, liveRevision, err := s.loadLiveContextSession(ctx, q, principal, catalogSessionID, instance)
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
@@ -245,7 +245,7 @@ var emptyContextPayload = []byte("[]")
 // would resurrect a conversation the user explicitly cleared on the very next
 // resume. Bug audit caught this as a real regression before it shipped; see
 // git history for the reverted fallback and its test coverage.
-const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),cs.session_revision FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`
+const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),cs.session_revision FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS ?`
 
 // loadLiveContextSession returns the live context session row behind name.
 // found is false when no live row exists (a plain named snapshot, or a session
@@ -254,12 +254,20 @@ const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.mod
 // no completed checkpoint, and the caller decides whether that is usable.
 // revision is the live session's current session_revision, for
 // resolveProjection's staleness comparison.
-func (s *SQLite) loadLiveContextSession(ctx context.Context, principal contextstate.Principal, name string) (contextstate.SessionCatalogInfo, []byte, bool, uint64, error) {
+// rowQuerier is what the live-session read needs: *sql.DB for the plain
+// path, *sql.Tx for the worktree path, whose instance checks run inside one
+// transaction. It exists so both namespaces share ONE loader and ONE
+// staleness rule instead of drifting copies.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (s *SQLite) loadLiveContextSession(ctx context.Context, q rowQuerier, principal contextstate.Principal, name string, instance contextstate.WorktreeInstance) (contextstate.SessionCatalogInfo, []byte, bool, uint64, error) {
 	var payload []byte
 	var info contextstate.SessionCatalogInfo
 	var sourceCount int
 	var revision uint64
-	err := s.db.QueryRowContext(ctx, liveContextSessionSQL, emptyContextPayload, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree, &revision)
+	err := q.QueryRowContext(ctx, liveContextSessionSQL, emptyContextPayload, principal.WorkspaceID, principal.SubjectID, name, nullableText(instance.ID)).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return contextstate.SessionCatalogInfo{}, nil, false, 0, nil
 	}
@@ -270,6 +278,7 @@ func (s *SQLite) loadLiveContextSession(ctx context.Context, principal contextst
 	info.MessageCount = sourceCount
 	info.TurnCount = sourceCount
 	info.TokenCount = 0
+	info.WorktreeInstance = instance
 	return info, payload, true, revision, nil
 }
 

@@ -31,6 +31,12 @@ type sessionState struct {
 	threads      ports.SubagentThreads
 	queue        []string
 	pendingForce *string
+	// liveUsage is this session's own in-flight turn accounting. It is
+	// per-session state like everything above: held only on the Screen, one
+	// session's reading overrode the top bar for whichever session the user
+	// switched to, and the owning session's TurnEnd - delivered on the
+	// background path - could never clear it.
+	liveUsage *ports.Usage
 }
 
 func (st *sessionState) handleTurnEvent(ev uievent.Event) {
@@ -75,6 +81,28 @@ func (s Screen) convID() string {
 	return s.conv.ID()
 }
 
+// snapshotSessionState captures everything belonging to the session being
+// switched away from, so it resumes exactly as it was left. Every field here
+// is per-session: one held on the Screen instead leaks into whichever
+// session the user switches to (liveUsage did exactly that).
+func (s *Screen) snapshotSessionState() *sessionState {
+	return &sessionState{
+		conv:         s.conv,
+		transcript:   s.transcript,
+		active:       s.active,
+		statusline:   s.statusline,
+		approval:     s.approval,
+		history:      s.history,
+		queueOverlay: s.queueOverlay,
+		blackboard:   s.blackboard,
+		panel:        s.panel,
+		threads:      s.threads,
+		queue:        s.queue,
+		pendingForce: s.pendingForce,
+		liveUsage:    s.liveUsage,
+	}
+}
+
 func (s *Screen) switchConversation(newConv ports.Conversation) {
 	if newConv == nil {
 		return
@@ -95,21 +123,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 
 	// Save current session state
 	if s.conv != nil {
-		oldID := s.convID()
-		s.sessions[oldID] = &sessionState{
-			conv:         s.conv,
-			transcript:   s.transcript,
-			active:       s.active,
-			statusline:   s.statusline,
-			approval:     s.approval,
-			history:      s.history,
-			queueOverlay: s.queueOverlay,
-			blackboard:   s.blackboard,
-			panel:        s.panel,
-			threads:      s.threads,
-			queue:        s.queue,
-			pendingForce: s.pendingForce,
-		}
+		s.sessions[s.convID()] = s.snapshotSessionState()
 	}
 
 	s.conv = newConv
@@ -126,12 +140,14 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.panel = st.panel
 		s.queue = st.queue
 		s.pendingForce = st.pendingForce
+		s.liveUsage = st.liveUsage
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
 		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
 		s.active = nil
 		s.queue = nil
 		s.pendingForce = nil
+		s.liveUsage = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)
 		s.approval.SetWidth(contentWidth(s.width))
@@ -145,6 +161,17 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.LoadHistory(newConv.History())
 	}
 
+	// The top bar keeps the last usage reading it was handed, and
+	// refreshTopbar deliberately falls back to it when the incoming session
+	// has not priced a turn yet ("the last composition the bar held is the
+	// best one available"). That fallback is only sound WITHIN one session,
+	// so the bar is re-seeded from the session being switched to - its own
+	// live reading, or nothing - before the refresh consults it.
+	seed := ports.Usage{}
+	if s.liveUsage != nil {
+		seed = *s.liveUsage
+	}
+	s.topbar.SetUsage(seed)
 	s.refreshTopbar()
 	s.reflow()
 }
