@@ -39,7 +39,9 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 		}
 	}
 	p.inheritWorktreeSessionLocked(sess, false)
-	p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir))
+	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
+		p.lastToolScopeNotice = notice
+	}
 	if p.agentState != nil {
 		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
 	}
@@ -81,7 +83,9 @@ func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (po
 		}
 	}
 	p.inheritWorktreeSessionLocked(sess, true)
-	p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir))
+	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
+		p.lastToolScopeNotice = notice
+	}
 	if p.agentState != nil {
 		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
 	}
@@ -140,6 +144,7 @@ func (p *SessionPool) inheritWorktreeSessionLocked(sess *chat.Session, withPolic
 func (p *SessionPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.registriesClosed = true
 	for _, closeFn := range p.regCloses {
 		closeFn()
 	}

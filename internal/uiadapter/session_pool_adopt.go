@@ -56,6 +56,11 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 	if wtDir == "" || p.res == nil || !p.toolsOn || sess == nil {
 		return ""
 	}
+	if p.registriesClosed {
+		sess.Tools = nil
+		sess.ToolBaseResolver = nil
+		return toolScopeRebuildFailedPrefix + ": session pool is shutting down"
+	}
 	canonical, cerr := worktreeroute.CanonicalDir(wtDir)
 	if cerr != nil {
 		return toolScopeNotResolved
@@ -82,8 +87,16 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 	p.mu.Lock()
 
 	if buildErr != nil {
-		// Keep inherited tools; the binding itself remains valid.
+		// Fail closed: inherited tools point at the launch checkout.
+		sess.Tools = nil
+		sess.ToolBaseResolver = nil
 		return toolScopeRebuildFailedPrefix + ": " + buildErr.Error()
+	}
+	if p.registriesClosed {
+		closeFn()
+		sess.Tools = nil
+		sess.ToolBaseResolver = nil
+		return toolScopeRebuildFailedPrefix + ": session pool is shutting down"
 	}
 	if p.regByRoot == nil {
 		p.regByRoot = map[string]*tools.Registry{}

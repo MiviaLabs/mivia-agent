@@ -71,6 +71,7 @@ type SessionPool struct {
 	regByRoot           map[string]*tools.Registry
 	regCloses           []func()
 	buildSer            sync.Mutex
+	registriesClosed    bool
 	lastCreated         *Conversation
 	lastToolScopeNotice string
 	launchRootDone      bool
