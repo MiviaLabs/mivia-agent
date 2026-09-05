@@ -138,8 +138,23 @@ type sdkTurnState struct {
 	// reaches either path identically. Entries are removed on call
 	// completion (deferred alongside the timeout cancel) so the map
 	// never outlives the calls it tracks.
-	cancelMu sync.Mutex
-	cancels  map[string]context.CancelFunc
+	cancelMu            sync.Mutex
+	cancels             map[string]context.CancelFunc
+	consecutiveFailures atomic.Int64
+}
+
+// recordFailure tracks consecutive tool failures and returns an anti-loop system
+// reminder if a failure spiral (>= 3 consecutive failures) is detected.
+func (s *sdkTurnState) recordFailure(failed bool) string {
+	if s == nil {
+		return ""
+	}
+	if failed {
+		count := s.consecutiveFailures.Add(1)
+		return LoopBreakerReminder(int(count))
+	}
+	s.consecutiveFailures.Store(0)
+	return ""
 }
 
 // registerCancel installs the CancelFunc for an in-flight call. A
