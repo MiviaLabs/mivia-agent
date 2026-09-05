@@ -217,6 +217,60 @@ def test_classify_matrix() -> None:
     assert cm.classify(True, "pass") == cm.SURVIVED
 
 
+def test_build_failure_markers_present_only_on_build_or_setup_failure() -> None:
+    # Locked against a real `go test` run on a deliberately broken file:
+    # "FAIL\tmvtest [build failed]" on a compile error, no marker on an
+    # ordinary failing-test run ("--- FAIL: TestAdd ... FAIL\tmvtest ...").
+    build_failed_output = "# mvtest [mvtest.test]\n./x.go:4:13: invalid operation\nFAIL\tmvtest [build failed]\nFAIL\n"
+    test_failed_output = "--- FAIL: TestAdd (0.00s)\n    x_test.go:7: bad\nFAIL\nFAIL\tmvtest\t0.001s\nFAIL\n"
+    assert any(m in build_failed_output for m in cm.BUILD_FAILURE_MARKERS)
+    assert not any(m in test_failed_output for m in cm.BUILD_FAILURE_MARKERS)
+
+
+def test_parse_coverage_profile_reads_blocks_keyed_by_file() -> None:
+    profile = (
+        "mode: set\n"
+        "mvtest/x.go:3.24,5.2 1 1\n"
+        "mvtest/x.go:7.24,9.2 1 0\n"
+    )
+    blocks = cm.parse_coverage_profile(profile)
+    assert blocks == {"mvtest/x.go": [(3, 5, 1), (7, 9, 0)]}
+    # A "mode:" header or a blank line must never be mistaken for a block.
+    assert cm.parse_coverage_profile("mode: count\n\n") == {}
+
+
+def test_line_definitely_uncovered_only_when_every_overlapping_block_is_zero() -> None:
+    blocks = [(3, 5, 1), (7, 9, 0), (10, 12, 0)]
+    # Covered block: a mutation here could still be killed - never skip.
+    assert cm.line_definitely_uncovered(blocks, 4) is False
+    # Uncovered block: every overlapping block ran zero times.
+    assert cm.line_definitely_uncovered(blocks, 8) is True
+    # No block claims this line at all: a profile gap, not proof of dead
+    # code - must never skip on that uncertainty.
+    assert cm.line_definitely_uncovered(blocks, 20) is False
+
+
+def test_coverage_key_matches_go_tool_cover_profile_file_field() -> None:
+    module = cm.module_path()
+    path = ROOT / "internal" / "config" / "load.go"
+    assert cm.coverage_key(path) == f"{module}/internal/config/load.go"
+
+
+def test_site_is_dead_code_never_skips_on_a_missing_or_absent_profile() -> None:
+    class FakeSite:
+        path = ROOT / "internal" / "config" / "load.go"
+
+    site = FakeSite()
+    # No profile at all (coverage computation failed) - never skip.
+    assert cm.site_is_dead_code(site, 1, None) is False
+    # A profile that never mentions this file - never skip.
+    assert cm.site_is_dead_code(site, 1, {}) is False
+    # A profile that does cover this file, with the line proven dead.
+    key = cm.coverage_key(site.path)
+    assert cm.site_is_dead_code(site, 8, {key: [(7, 9, 0)]}) is True
+    assert cm.site_is_dead_code(site, 4, {key: [(3, 5, 1)]}) is False
+
+
 def test_denylist_path_maps_nested_packages_to_flat_filenames() -> None:
     p = cm.denylist_path("internal/cli", Path("/tmp/does-not-matter"))
     assert p.name == "internal_cli.json", p
