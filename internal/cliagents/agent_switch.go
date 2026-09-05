@@ -398,7 +398,7 @@ func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 		state.Selected = nil
 		return nil
 	}
-	if err := ensureRootMCPTools(res, state); err != nil {
+	if err := ensureRootMCPTools(sess, res, state); err != nil {
 		return fmt.Errorf("MCP tools: %w", err)
 	}
 	var candidate *agentSurface
@@ -480,7 +480,7 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 		if err != nil {
 			return err
 		}
-		WarnDisabledAgentTools(&selected, DisabledForAgent(&selected, state.ToolBase))
+		WarnDisabledAgentTools(&selected, DisabledForAgent(&selected, entryBase(sess, state)))
 		warnAdvertisedToolsTruncated(&selected, candidate.advertisedDropped)
 	}
 	// Commit selection and every session-owned surface only after all candidate

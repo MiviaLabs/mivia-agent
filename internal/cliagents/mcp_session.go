@@ -73,11 +73,15 @@ func ensureSelectedMCPTools(sess *chat.Session, state *AgentSessionState, select
 // ensureSelectedMCPTools with cfg's global server set instead of one agent's
 // scope. A nil state (tools-off session, or a caller with no agent state) is
 // a no-op, matching ensureSelectedMCPTools.
-func ensureRootMCPTools(res *config.Resolved, state *AgentSessionState) error {
+func ensureRootMCPTools(sess *chat.Session, res *config.Resolved, state *AgentSessionState) error {
 	if state == nil {
 		return nil
 	}
-	return composition.MergeMCPTools(state.ToolBase, state.MCPManager, SessionMCPConfig(res).GlobalServerIDs())
+	// entryBase, not state.ToolBase: a pool-adopted worktree entry rebuilds
+	// its surface from its own resolver base, so merging into the shared
+	// launch base "succeeded" while the restored root surface never saw the
+	// global server's tools.
+	return composition.MergeMCPTools(entryBase(sess, state), state.MCPManager, SessionMCPConfig(res).GlobalServerIDs())
 }
 
 func EnsureMCPServerTools(registry *tools.Registry, manager *mcp.Manager) func([]string) error {

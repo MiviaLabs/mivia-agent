@@ -38,9 +38,20 @@ var _ contextstate.SessionCatalog = (*SQLite)(nil)
 // alongside a stamped sessionID - a plain named copy never reaches
 // resolveProjection, so its revision would never be read anyway.
 func resolveSnapshotProjectionIdentity(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, name string, opts contextstate.SessionSaveOptions) (sessionID string, sessionRevision any, err error) {
-	if opts.WorktreeInstance.IsZero() && opts.SessionID != "" && opts.SessionID == name {
+	if opts.SessionID != "" && opts.SessionID == name {
+		// The projection keeps its live identity only when a live row exists
+		// in the SAME namespace: the plain (NULL-instance) one for a plain
+		// save, the bound instance's for a worktree save. A worktree snapshot
+		// that dropped its id here came back from LoadWorktreeSession with
+		// no SessionID, so the resumed session never reclaimed and its next
+		// turn forked a second context_sessions row.
 		var one int
-		err := tx.QueryRowContext(ctx, `SELECT 1 FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, opts.SessionID).Scan(&one)
+		var err error
+		if opts.WorktreeInstance.IsZero() {
+			err = tx.QueryRowContext(ctx, `SELECT 1 FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, opts.SessionID).Scan(&one)
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT 1 FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, opts.SessionID, opts.WorktreeInstance.ID).Scan(&one)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			sessionID = ""
 		} else if err != nil {

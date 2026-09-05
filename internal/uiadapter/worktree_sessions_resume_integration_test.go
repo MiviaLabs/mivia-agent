@@ -349,3 +349,99 @@ func TestResumeInWorktree_InstanceRowsFailClosedForUnboundReader(t *testing.T) {
 		t.Fatalf("unbound reader cannot see its own NULL-instance row: %v", err)
 	}
 }
+
+// seedTurnOnlyWorktreeSession is seedBoundWorktreeSession WITHOUT the save:
+// the normal TUI shape, where a worktree session only ever completes turns
+// (no /save, no /clear) and so has a live context row bound to the instance
+// but no snapshot at all.
+func seedTurnOnlyWorktreeSession(t *testing.T, store *storage.SQLite, mainDir, canonicalWt string, res *config.Resolved) string {
+	t.Helper()
+	compWT := &scriptedCompleter{turns: []provider.Response{assistantResponse("wt answer one")}}
+	bound := chat.NewSession(res, compWT)
+	bound.SessionID = "session-wt-turn-only"
+	withTools(bound)
+	if _, err := worktreeroute.StartInRoute(context.Background(), bound, store, mainDir,
+		worktreeroute.Route{Worktree: "wt1", Dir: canonicalWt}); err != nil {
+		t.Fatalf("bind seed session: %v", err)
+	}
+	installCtx(t, bound, store, mainDir)
+	turn(t, uiadapter.NewConversation(bound), "wt turn one")
+	return bound.SessionID
+}
+
+// The reported live defect: after a restart, the /resume picker lists the
+// turn-only worktree session as instance-bound, and picking it failed with
+// `load session "...": session not found` although the instance is active
+// and the history is on disk. Resume must restore the history, and a later
+// turn must commit under the SAME session (no silent fork into a second
+// context session).
+func TestResumeInWorktree_TurnOnlySessionFromListingRestoresHistory(t *testing.T) {
+	fx := worktreeCatalogFixtureNoClose(t)
+	store1, mainDir, canonicalWt, dbPath := fx.Store, fx.MainDir, fx.WorktreeDir, fx.DBPath
+	gitInitTempRepo(t, mainDir)
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	seedID := seedTurnOnlyWorktreeSession(t, store1, mainDir, canonicalWt, res)
+	store1.Close()
+
+	store2, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { store2.Close() })
+	restart := chat.NewSession(res, &nullCompleter{})
+	restart.SessionID = "session-main-restart"
+	withTools(restart)
+	installCtx(t, restart, store2, mainDir)
+	pool := uiadapter.NewSessionPool(restart, res, nil, false)
+	runner := uiadapter.NewCommandRunnerWithPool(restart, pool, res, nil)
+	t.Chdir(mainDir)
+
+	listing := runner.Run(context.Background(), "resume", "")
+	if listing.Err != "" {
+		t.Fatalf("/resume listing: %s", listing.Err)
+	}
+	var row ports.SessionSummary
+	for _, s := range listing.SessionChoices {
+		if s.ID == seedID {
+			row = s
+		}
+	}
+	if row.ID == "" || !row.WorktreeBound() {
+		t.Fatalf("listing does not offer the turn-only worktree session as instance-bound: %+v", listing.SessionChoices)
+	}
+	sessionsBefore := len(listing.SessionChoices)
+
+	out := runner.SelectSession(context.Background(), row.ID)
+	if out.Err != "" {
+		t.Fatalf("resume from listing: %s", out.Err)
+	}
+	var hist []string
+	for _, m := range out.Conversation.History() {
+		hist = append(hist, m.Text)
+	}
+	joined := strings.Join(hist, "\n")
+	for _, want := range []string{"wt turn one", "wt answer one"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("restored history missing %q:\n%s", want, joined)
+		}
+	}
+	resumed := pool.Session(row.ID)
+	if resumed == nil {
+		t.Fatal("pooled session vanished behind the resumed conversation")
+	}
+	if resumed.SessionID != seedID {
+		t.Fatalf("resumed session id = %q, want the listed %q (a fresh id means the load never reclaimed and the next turn forks)", resumed.SessionID, seedID)
+	}
+	if err := resumed.SwitchBinding(chat.ModelBinding{ProviderName: "fake", Model: "m1",
+		Completer: &scriptedCompleter{turns: []provider.Response{assistantResponse("post-resume reply")}}}); err != nil {
+		t.Fatalf("rebind resumed session offline: %v", err)
+	}
+	turn(t, out.Conversation, "post-resume turn")
+	after := runner.Run(context.Background(), "resume", "")
+	if after.Err != "" {
+		t.Fatalf("/resume listing after turn: %s", after.Err)
+	}
+	if len(after.SessionChoices) != sessionsBefore {
+		t.Fatalf("a post-resume turn forked a new session: %d rows, want %d", len(after.SessionChoices), sessionsBefore)
+	}
+}

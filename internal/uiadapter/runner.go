@@ -103,7 +103,7 @@ func (r *CommandRunner) SetActiveSession(sess *chat.Session) {
 	if r != nil {
 		r.sess = sess
 		if r.pool != nil && sess != nil {
-			if state := r.pool.AgentState(sess.SessionID); state != nil {
+			if state := r.pool.EnsureAgentState(sess.SessionID); state != nil {
 				r.agentState = state
 			}
 		}

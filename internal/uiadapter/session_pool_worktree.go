@@ -42,15 +42,16 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
 		p.lastToolScopeNotice = notice
 	}
-	if p.agentState != nil {
-		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
+	entryState := p.forkEntryStateLocked()
+	if entryState != nil {
+		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
 	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
+	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
 	p.sessions[sess.SessionID] = sess
 	p.convs[sess.SessionID] = conv
-	p.registerForkedStateLocked(sess.SessionID)
+	p.bindEntryStateLocked(sess.SessionID, entryState)
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil
@@ -117,29 +118,22 @@ func (p *SessionPool) GetOrCreateInDir(id string, bind BindFunc, dir string) (ou
 	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
 		p.lastToolScopeNotice = notice
 	}
-	if p.agentState != nil {
-		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
+	entryState := p.forkEntryStateLocked()
+	if entryState != nil {
+		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
 	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
+	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
 	if err := sess.Load(id); err != nil {
 		return nil, err
 	}
 	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
+	if existing := p.liveEntryForResolvedLocked(id, sess); existing != nil {
+		return existing, nil
+	}
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
-	p.sessions[id] = sess
-	p.convs[id] = conv
-	p.registerForkedStateLocked(id)
-	if sess.SessionID != "" && sess.SessionID != id {
-		p.sessions[sess.SessionID] = sess
-		p.convs[sess.SessionID] = conv
-		// Same entry under its second key, not a second fork - see the
-		// matching comment in GetOrCreate.
-		if state := p.agentStates[id]; state != nil {
-			p.agentStates[sess.SessionID] = state
-		}
-	}
+	p.publishEntryLocked(id, sess, conv, entryState)
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil

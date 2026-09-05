@@ -334,16 +334,31 @@ func (s *Session) reclaimContextSession(sessionID string) (contextstate.BindingR
 	store := s.contextStore
 	workspaceID, subjectID := s.contextPrincipal.WorkspaceID, s.contextPrincipal.SubjectID
 	oldSessionID := s.SessionID
+	instance := s.contextWorktree
 	s.mu.RUnlock()
-	reclaimer, ok := store.(contextstate.SessionReclaimer)
-	if !ok {
-		return contextstate.BindingRevision{}, fmt.Errorf("context store does not support resuming a live session")
-	}
 	principal, err := contextstate.NewPrincipal(workspaceID, sessionID, subjectID)
 	if err != nil {
 		return contextstate.BindingRevision{}, err
 	}
-	snapshot, err := reclaimer.ReclaimSession(context.Background(), principal, sessionID)
+	var snapshot contextstate.Snapshot
+	if !instance.IsZero() {
+		// Bound to a managed worktree (StartInRoute ran before Load): take
+		// over the instance-scoped row. The plain reclaimer refuses it on
+		// purpose, and skipping the reclaim - what happened before this
+		// path existed - left the resumed session on a fresh id whose next
+		// turn forked a second context session.
+		reclaimer, ok := store.(contextstate.WorktreeSessionReclaimer)
+		if !ok {
+			return contextstate.BindingRevision{}, fmt.Errorf("context store does not support resuming a live worktree session")
+		}
+		snapshot, err = reclaimer.ReclaimWorktreeSession(context.Background(), principal, sessionID, instance)
+	} else {
+		reclaimer, ok := store.(contextstate.SessionReclaimer)
+		if !ok {
+			return contextstate.BindingRevision{}, fmt.Errorf("context store does not support resuming a live session")
+		}
+		snapshot, err = reclaimer.ReclaimSession(context.Background(), principal, sessionID)
+	}
 	if err != nil {
 		return contextstate.BindingRevision{}, err
 	}

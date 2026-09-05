@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
@@ -21,12 +23,31 @@ func (s *SQLite) LoadWorktreeSession(ctx context.Context, p contextstate.Princip
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
 	key, err := loadWorktreeCatalogKeyTx(ctx, tx, p, i, "snapshot", n)
+	if errors.Is(err, contextstate.ErrSessionNotFound) {
+		// No snapshot row under this instance. A worktree session that only
+		// ever completed turns (never /save, never /clear - the normal TUI
+		// case) has exactly that shape: a live context_sessions row bound to
+		// the instance, plus checkpoints, and nothing in chat_sessions. Serve
+		// the live checkpoint, as the plain LoadSession does for plain
+		// sessions; without this every such session in the /resume picker
+		// fails with "session not found" although its instance is active
+		// and its history is on disk.
+		live, payload, found, lerr := loadLiveWorktreeContextSessionTx(ctx, tx, p, n, i)
+		if lerr != nil {
+			return nil, contextstate.SessionCatalogInfo{}, lerr
+		}
+		if !found {
+			return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
+		}
+		return payload, live, tx.Commit()
+	}
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
 	var b []byte
 	var out contextstate.SessionCatalogInfo
-	err = tx.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID).Scan(&out.Name, &out.Model, &out.Provider, &b, &out.CreatedAt, &out.UpdatedAt, &out.TurnCount, &out.TokenCount, &out.MessageCount, &out.Dir, &out.Worktree)
+	var catalogSessionID string
+	err = tx.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(c.session_id,''),COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID).Scan(&out.Name, &out.Model, &out.Provider, &b, &out.CreatedAt, &out.UpdatedAt, &out.TurnCount, &out.TokenCount, &out.MessageCount, &catalogSessionID, &out.Dir, &out.Worktree)
 	if err == sql.ErrNoRows {
 		return nil, out, contextstate.ErrSessionNotFound
 	}
@@ -35,7 +56,51 @@ func (s *SQLite) LoadWorktreeSession(ctx context.Context, p contextstate.Princip
 	}
 	out.Name = n
 	out.WorktreeInstance = i
+	if catalogSessionID != "" {
+		// "id is id": a projection of the live session keeps its identity so
+		// loadContextCatalog reclaims it instead of minting a fresh id and
+		// forking the next turn into a second context_sessions row. A live
+		// checkpoint, when one exists, outranks the unverified snapshot bytes
+		// exactly as resolveProjection decides for plain sessions.
+		live, payload, found, lerr := loadLiveWorktreeContextSessionTx(ctx, tx, p, catalogSessionID, i)
+		if lerr != nil {
+			return nil, out, lerr
+		}
+		if found && len(payload) > len(emptyContextPayload) {
+			return payload, live, tx.Commit()
+		}
+		out.SessionID = catalogSessionID
+	}
 	return append([]byte(nil), b...), out, tx.Commit()
+}
+
+// liveWorktreeContextSessionSQL is liveContextSessionSQL scoped to ONE
+// worktree instance instead of the plain (NULL-instance) namespace. The two
+// stay parallel on purpose: the plain loader must keep refusing an
+// instance-bound row (fail closed for an unbound reader), and this one must
+// refuse every other instance's row.
+const liveWorktreeContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id=?`
+
+// loadLiveWorktreeContextSessionTx is loadLiveContextSession for a row bound
+// to instance, inside the caller's transaction (after requireActiveWorktreeTx,
+// so the instance is known active). found is false when no live row is bound
+// to that instance under that id.
+func loadLiveWorktreeContextSessionTx(ctx context.Context, tx *sql.Tx, p contextstate.Principal, name string, i contextstate.WorktreeInstance) (contextstate.SessionCatalogInfo, []byte, bool, error) {
+	var payload []byte
+	var info contextstate.SessionCatalogInfo
+	var sourceCount int
+	err := tx.QueryRowContext(ctx, liveWorktreeContextSessionSQL, emptyContextPayload, p.WorkspaceID, p.SubjectID, name, i.ID).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
+	if errors.Is(err, sql.ErrNoRows) {
+		return contextstate.SessionCatalogInfo{}, nil, false, nil
+	}
+	if err != nil {
+		return contextstate.SessionCatalogInfo{}, nil, false, err
+	}
+	info.Name = info.SessionID
+	info.MessageCount = sourceCount
+	info.TurnCount = sourceCount
+	info.WorktreeInstance = i
+	return info, payload, true, nil
 }
 
 func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextstate.Principal, n string, i contextstate.WorktreeInstance) error {
