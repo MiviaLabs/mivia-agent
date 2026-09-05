@@ -36,6 +36,7 @@ type Model struct {
 	width       int
 	filesCount  int
 	agentsCount int
+	tabs        []SessionTab
 	// sessionHidden drops the model capsule and the context badge from
 	// the right side. The activity sidebar shows both in its own
 	// sections while it is open, so the bar does not say them twice
@@ -209,46 +210,81 @@ func (m Model) activityBadge() string {
 
 // View renders the top bar. The first row states the mark/wordmark on the
 // left, and model/provider/context share on the right. When breadcrumbs
+func (m Model) buildRight(prov, bar bool, pct int, hasPct bool) string {
+	if m.sessionHidden {
+		return ""
+	}
+	r := m.modelCapsule(prov)
+	if hasPct {
+		r += " " + m.contextBadge(pct, bar)
+	}
+	return r
+}
+
+func (m Model) buildLeft(act, wordmark bool, avail int) string {
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
+
+	if len(m.tabs) == 0 {
+		l := m.mark.View() + subtle.Render("  ") + m.titleView()
+		if act {
+			if a := m.activityBadge(); a != "" {
+				l += " " + a
+			}
+		}
+		return l
+	}
+
+	var brand string
+	if wordmark {
+		brand = m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+	} else {
+		brand = m.mark.View()
+	}
+	if act {
+		if a := m.activityBadge(); a != "" {
+			brand += " " + a
+		}
+	}
+	availTabs := avail - ansi.StringWidth(brand) - 1
+	tabsStr := m.renderTabStrip(availTabs)
+	if tabsStr == "" {
+		return brand
+	}
+	return brand + " " + tabsStr
+}
+
+// View renders the top bar. The first row states the mark/wordmark on the
+// left, and model/provider/context share on the right. When breadcrumbs
 // are present, a second row renders the trail.
 func (m Model) View() string {
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-
 	pct, hasPct := m.ContextPercent()
 	withProvider := true
 	withBar := m.width >= 80
 	withActivity := m.width >= 90
+	withWordmark := true
 
-	left := m.mark.View() + subtle.Render("  ") + m.titleView()
-	if withActivity {
-		if act := m.activityBadge(); act != "" {
-			left += " " + act
-		}
-	}
-
-	buildRight := func(prov, bar bool) string {
-		if m.sessionHidden {
-			return ""
-		}
-		r := m.modelCapsule(prov)
-		if hasPct {
-			r += " " + m.contextBadge(pct, bar)
-		}
-		return r
-	}
-
-	right := buildRight(withProvider, withBar)
+	right := m.buildRight(withProvider, withBar, pct, hasPct)
+	left := m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
 
 	if m.width > 0 {
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			left = m.mark.View() + subtle.Render("  ") + m.titleView()
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withActivity {
+			withActivity = false
+			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
 		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withBar {
 			withBar = false
-			right = buildRight(withProvider, withBar)
+			right = m.buildRight(withProvider, withBar, pct, hasPct)
+			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
 		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withProvider {
 			withProvider = false
-			right = buildRight(withProvider, withBar)
+			right = m.buildRight(withProvider, withBar, pct, hasPct)
+			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
+		}
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width && withWordmark && len(m.tabs) > 0 {
+			withWordmark = false
+			left = m.buildLeft(withActivity, withWordmark, m.width-ansi.StringWidth(right)-1)
 		}
 		availLeft := m.width - ansi.StringWidth(right) - 1
 		if availLeft < ansi.StringWidth(left) {

@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -50,6 +51,28 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	}
 	if name == "blackboard" || name == "messages" {
 		return s.openBlackboard(), nil
+	}
+	if name == "tab" {
+		if args == "" || args == "next" {
+			return s.switchTabRelative(1)
+		}
+		if args == "prev" || args == "back" {
+			return s.switchTabRelative(-1)
+		}
+		if idx, err := strconv.Atoi(args); err == nil && idx >= 1 {
+			return s.switchToSessionIndex(idx - 1)
+		}
+		for _, id := range s.sessionOrder {
+			if strings.EqualFold(id, args) {
+				return s.switchToSessionID(id)
+			}
+			if st, ok := s.sessions[id]; ok && st.conv != nil {
+				if strings.Contains(strings.ToLower(st.conv.Title()), strings.ToLower(args)) {
+					return s.switchToSessionID(id)
+				}
+			}
+		}
+		return s.withError("no session matching /tab " + args), nil
 	}
 	if s.runner == nil {
 		if name == "queue" {
@@ -382,6 +405,7 @@ func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
 				"/compact - compact current conversation context",
 				"/cost - view session spending and token stats",
 				"/context - check context capacity usage",
+				"/tab - switch session tab (next, prev, or number)",
 				"/help - show full keymap",
 				"/login - sign in to your mivia account",
 			},

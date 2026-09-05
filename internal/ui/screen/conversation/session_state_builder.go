@@ -3,6 +3,7 @@ package conversation
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/queue"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
@@ -15,6 +16,7 @@ func (s Screen) newSessionState(conv ports.Conversation) *sessionState {
 	st := &sessionState{
 		conv:         conv,
 		transcript:   transcript.New(s.Theme, s.Tier),
+		composer:     composer.New(s.Theme, s.Tier, s.chatWidth()),
 		statusline:   statusline.New(s.Theme, s.Tier),
 		approval:     approval.New(s.Theme, s.Tier),
 		history:      history.New(s.Theme, s.Tier),
