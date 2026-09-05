@@ -221,8 +221,7 @@ flowchart TD
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
 | `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
-| `MetricsAdapter` | `internal/events` | Per-kind event counts and handler timing |
-| `Diagnostics` | `internal/cli` | ListRuns, ActiveHandles, MetricsSnapshot (privacy-safe operator views) |
+| `Diagnostics` | `internal/cli` | ListRuns, ActiveHandles (privacy-safe operator views) |
 | `OutputFormatter` | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
 | `SettingsScreen` | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
