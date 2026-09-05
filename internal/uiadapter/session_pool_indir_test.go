@@ -634,14 +634,18 @@ func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := &config.Resolved{Model: "test-model"}
-	seed := chat.NewSession(res, nil)
-	seed.SessionID = "seed"
+	res := &config.Resolved{ProviderName: "fake", Model: "test-model"}
+	// Both sessions share one context-catalog store: Save below needs it to
+	// persist "race-target", and seed needs the SAME store bound so the
+	// pool entry GetOrCreateInDir builds for that id can find it again
+	// (inheritRuntimeStateLocked carries seed's ContextStore/ContextManager
+	// onto the new session before it calls Load).
+	store := approvalTestStore(t)
+	seed := contextBoundSession(t, res, store, "seed")
 	seed.UseTools = true
 	seed.Tools = tools.NewRegistry()
 
-	saved := chat.NewSession(res, nil)
-	saved.SessionID = "race-target"
+	saved := contextBoundSession(t, res, store, "race-target")
 	if err := saved.Save("race-target"); err != nil {
 		t.Fatalf("seed saved session: %v", err)
 	}
