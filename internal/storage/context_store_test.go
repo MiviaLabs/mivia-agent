@@ -129,6 +129,48 @@ func TestAdvanceUpdatesHeadWithCAS(t *testing.T) {
 	}
 }
 
+// TestAdvancePropagatesRestampProjectionFailure covers Advance's own
+// restampProjectionForBindingAdvance error check: a binding advance
+// (ClearActive: false, so the restamp UPDATE actually runs) whose chat_sessions
+// UPDATE is blocked by a trigger must fail the whole Advance, not commit a
+// context head that has moved out of step with the projection that mirrors
+// it.
+func TestAdvancePropagatesRestampProjectionFailure(t *testing.T) {
+	ctx := context.Background()
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	binding := contextTestBinding(t)
+	ensureContextSession(t, s, principal, binding)
+	commit := contextCommitRequest(t, principal, contextstate.Revision{}, binding, "commit-1", "first")
+	if err := s.Commit(ctx, commit); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	seedRevision := uint64(1)
+	if err := s.SaveSession(ctx, principal, principal.SessionID, []byte(`[{}]`), binding.Provider, binding.Model, 1, 1, 1, contextstate.SessionSaveOptions{SessionID: principal.SessionID, SessionRevision: &seedRevision}); err != nil {
+		t.Fatalf("seed chat_sessions snapshot: %v", err)
+	}
+	mustCoverageTrigger(t, s, `CREATE TRIGGER block_chat_sessions_restamp BEFORE UPDATE ON chat_sessions BEGIN SELECT RAISE(ABORT,'injected restamp failure'); END`)
+
+	newBinding := binding
+	newBinding.Generation++
+	advance := contextstate.AdvanceRequest{
+		OperationID: "advance-restamp-1", Principal: principal, SessionID: principal.SessionID,
+		Expected: contextstate.Revision{Session: 1, Durable: 1, Source: 1}, ExpectedBinding: binding,
+		NewSession: 2, NewDurable: 2, NewSourceSequence: 1, NewBinding: newBinding,
+		ClearActive: false, Reason: "model switch",
+	}
+	if err := s.Advance(ctx, advance); err == nil {
+		t.Fatal("Advance accepted a binding switch despite the projection restamp failing")
+	}
+	snapshot, err := s.Load(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("load after failed advance: %v", err)
+	}
+	if snapshot.Revision.Session != 1 {
+		t.Fatalf("session_revision = %d after a rolled-back advance, want 1 (unchanged)", snapshot.Revision.Session)
+	}
+}
+
 func TestRecoverySelectsCommittedPointer(t *testing.T) {
 	ctx := context.Background()
 	s, principal := openContextTestStore(t)
