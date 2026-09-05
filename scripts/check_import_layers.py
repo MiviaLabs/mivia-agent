@@ -189,6 +189,14 @@ def check(edges: set[tuple[str, str]], policy: dict[str, Any]) -> list[str]:
                 "declare it before the code lands"
             )
 
+    for frm, targets in sorted(allow.items()):
+        for to in sorted(targets):
+            if (frm, to) not in edges:
+                problems.append(
+                    f"{frm} -> {to}: declared in 'allow' but not present in code (stale allow entry); "
+                    "remove it or regenerate with --generate"
+                )
+
     edge_cap = policy["edgeCap"]
     if len(edges) > edge_cap:
         problems.append(
