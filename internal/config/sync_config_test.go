@@ -186,6 +186,26 @@ func validToolsForSyncTest() ToolsConfig {
 	return ToolsConfig{MaxInspectRepositoryBytes: 64 << 10, MaxTavilyResponseBytes: 4 << 20}
 }
 
+// TestSyncConfigBackgroundWatchMaxCustomValuePreserved covers the positive
+// branch of the BackgroundWatchMax default: a configured value greater than
+// zero must be carried through as-is rather than overwritten by the built-in
+// default of 8.
+func TestSyncConfigBackgroundWatchMaxCustomValuePreserved(t *testing.T) {
+	cfg := resolveSyncConfig(SyncConfig{BackgroundWatchMax: 3})
+	if cfg.BackgroundWatchMax != 3 {
+		t.Errorf("BackgroundWatchMax = %d, want 3 (configured value should be preserved, not defaulted)", cfg.BackgroundWatchMax)
+	}
+}
+
+// TestSyncConfigBackgroundWatchMaxDefaultsToEight covers the else branch: an
+// absent (zero-value) BackgroundWatchMax falls back to the built-in default.
+func TestSyncConfigBackgroundWatchMaxDefaultsToEight(t *testing.T) {
+	cfg := resolveSyncConfig(SyncConfig{})
+	if cfg.BackgroundWatchMax != 8 {
+		t.Errorf("BackgroundWatchMax = %d, want 8 (default)", cfg.BackgroundWatchMax)
+	}
+}
+
 // TestStreamingDefaultsOnWhenSyncIsOn pins the rule that remote sync streams
 // the session IN FULL unless the user says otherwise. include_thinking and
 // include_tool_io were plain bools, so an absent key read as OFF: every user
