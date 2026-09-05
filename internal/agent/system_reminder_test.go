@@ -275,3 +275,146 @@ func TestDispatcherShim_RunCommandExitCodeFailures_AppendsLoopBreaker(t *testing
 		t.Errorf("call 3 missing consecutive tool failures text: %s", str3)
 	}
 }
+
+func TestExplorationBreakerReminder(t *testing.T) {
+	if got := ExplorationBreakerReminder(0); got != "" {
+		t.Errorf("ExplorationBreakerReminder(0) = %q, want empty", got)
+	}
+	if got := ExplorationBreakerReminder(DefaultExplorationThreshold - 1); got != "" {
+		t.Errorf("ExplorationBreakerReminder(9) = %q, want empty", got)
+	}
+	breaker := ExplorationBreakerReminder(DefaultExplorationThreshold)
+	if breaker == "" {
+		t.Fatal("ExplorationBreakerReminder(10) must return non-empty reminder")
+	}
+	for _, want := range []string{"10 consecutive read and search operations", "Stop exploration now", "Form a clear hypothesis"} {
+		if !strings.Contains(breaker, want) {
+			t.Errorf("ExplorationBreakerReminder missing %q in %q", want, breaker)
+		}
+	}
+
+	banned := []string{"golang", "go.mod", "make ", "cmd/mivia", "internal/", "rust", "python", "node.js", "typescript"}
+	lower := strings.ToLower(breaker)
+	for _, b := range banned {
+		if strings.Contains(lower, b) {
+			t.Fatalf("ExplorationBreakerReminder contains language-specific term %q", b)
+		}
+	}
+}
+
+func TestIsMutatingCommand(t *testing.T) {
+	cases := []struct {
+		argv     []string
+		mutating bool
+	}{
+		{[]string{"git", "log", "-n", "5"}, false},
+		{[]string{"git", "diff", "HEAD~1"}, false},
+		{[]string{"git", "status"}, false},
+		{[]string{"cat", "main.go"}, false},
+		{[]string{"grep", "pattern", "file.txt"}, false},
+		{[]string{"git", "commit", "-m", "fix"}, true},
+		{[]string{"git", "checkout", "-b", "feat"}, true},
+		{[]string{"go", "test", "./..."}, true},
+		{[]string{"pnpm", "test"}, true},
+		{[]string{"make", "build"}, true},
+	}
+	for _, tc := range cases {
+		raw, _ := json.Marshal(map[string]any{"argv": tc.argv})
+		if got := isMutatingCommand(raw); got != tc.mutating {
+			t.Errorf("isMutatingCommand(%v) = %v, want %v", tc.argv, got, tc.mutating)
+		}
+	}
+}
+
+// mockCapableTool exposes a custom Capability.
+type mockCapableTool struct {
+	name  string
+	class tools.ExecutionClass
+}
+
+func (m *mockCapableTool) Name() string               { return m.name }
+func (m *mockCapableTool) Description() string        { return "mock capable tool" }
+func (m *mockCapableTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (m *mockCapableTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: m.class}
+}
+func (m *mockCapableTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "ok", nil
+}
+
+func TestDispatcherShim_ConsecutiveReads_AppendsExplorationBreaker(t *testing.T) {
+	readTool := &mockCapableTool{name: "test-read", class: tools.ExecutionRead}
+	writeTool := &mockCapableTool{name: "test-write", class: tools.ExecutionWrite}
+
+	reg := tools.NewRegistry()
+	reg.Register(readTool)
+	reg.Register(writeTool)
+
+	dispatcher, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(dispatcher.Close)
+
+	turn := newSDKTurnState()
+	readShim := &dispatcherShim{
+		inner: &sdkToolForName{name: "test-read"},
+		cli:   readTool,
+		opts:  Options{Dispatcher: dispatcher, SessionID: "s"},
+		turn:  turn,
+	}
+	writeShim := &dispatcherShim{
+		inner: &sdkToolForName{name: "test-write"},
+		cli:   writeTool,
+		opts:  Options{Dispatcher: dispatcher, SessionID: "s"},
+		turn:  turn,
+	}
+
+	ctx := context.Background()
+	in := sdktools.InOut{Value: map[string]any{}}
+
+	// 9 read calls: no reminder.
+	for i := 1; i <= 9; i++ {
+		out, err := readShim.Run(ctx, in)
+		if err != nil {
+			t.Fatalf("call %d error: %v", i, err)
+		}
+		str := out.Value.(string)
+		if strings.Contains(str, systemReminderOpenTag) {
+			t.Errorf("read call %d unexpectedly has system reminder: %s", i, str)
+		}
+	}
+
+	// 10th read call: exploration breaker triggered.
+	out10, err := readShim.Run(ctx, in)
+	if err != nil {
+		t.Fatalf("call 10 error: %v", err)
+	}
+	str10 := out10.Value.(string)
+	if !strings.Contains(str10, systemReminderOpenTag) {
+		t.Fatalf("call 10 must trigger exploration breaker, got: %s", str10)
+	}
+	if !strings.Contains(str10, "10 consecutive read and search operations") {
+		t.Errorf("call 10 missing consecutive reads text: %s", str10)
+	}
+
+	// 1 write call: resets counter.
+	outWrite, err := writeShim.Run(ctx, in)
+	if err != nil {
+		t.Fatalf("write call error: %v", err)
+	}
+	strWrite := outWrite.Value.(string)
+	if strings.Contains(strWrite, systemReminderOpenTag) {
+		t.Errorf("write call unexpectedly has system reminder: %s", strWrite)
+	}
+
+	// 1st read call after write: no reminder.
+	outAfter, err := readShim.Run(ctx, in)
+	if err != nil {
+		t.Fatalf("read call after write error: %v", err)
+	}
+	strAfter := outAfter.Value.(string)
+	if strings.Contains(strAfter, systemReminderOpenTag) {
+		t.Errorf("read call after reset unexpectedly has system reminder: %s", strAfter)
+	}
+}

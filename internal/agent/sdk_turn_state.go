@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // pass1Map hands pass-1 resultParts from the dispatcher shim
@@ -141,11 +143,45 @@ type sdkTurnState struct {
 	cancelMu            sync.Mutex
 	cancels             map[string]context.CancelFunc
 	consecutiveFailures atomic.Int64
+	consecutiveReads    atomic.Int64
+}
+
+// isMutatingCommand reports whether a shell execution command represents a state
+// mutation, build, or test run rather than an exploratory read.
+func isMutatingCommand(args []byte) bool {
+	var payload struct {
+		Argv []string `json:"argv"`
+	}
+	if err := json.Unmarshal(args, &payload); err != nil || len(payload.Argv) == 0 {
+		return false
+	}
+	cmd := payload.Argv[0]
+	switch cmd {
+	case "git":
+		if len(payload.Argv) > 1 {
+			sub := payload.Argv[1]
+			switch sub {
+			case "log", "diff", "show", "status", "branch", "rev-parse", "cat-file":
+				return false
+			}
+		}
+		return true
+	case "cat", "ls", "head", "tail", "grep", "rg", "ag", "fd", "find", "wc", "file", "which", "echo", "pwd":
+		return false
+	default:
+		return true
+	}
 }
 
 // recordFailure tracks consecutive tool failures and returns an anti-loop system
 // reminder if a failure spiral (>= 3 consecutive failures) is detected.
 func (s *sdkTurnState) recordFailure(failed bool) string {
+	return s.recordProgress(failed, "", nil, tools.Capability{Class: tools.ExecutionWrite})
+}
+
+// recordProgress tracks tool execution outcome and progress to detect
+// failure spirals or semantic exploration loops.
+func (s *sdkTurnState) recordProgress(failed bool, toolName string, args []byte, capability tools.Capability) string {
 	if s == nil {
 		return ""
 	}
@@ -154,7 +190,15 @@ func (s *sdkTurnState) recordFailure(failed bool) string {
 		return LoopBreakerReminder(int(count))
 	}
 	s.consecutiveFailures.Store(0)
-	return ""
+
+	// Tool succeeded. Check whether it modified state or performed an exploration read.
+	if capability.Class == tools.ExecutionWrite || (toolName == tools.RunCommandToolName && isMutatingCommand(args)) {
+		s.consecutiveReads.Store(0)
+		return ""
+	}
+
+	reads := s.consecutiveReads.Add(1)
+	return ExplorationBreakerReminder(int(reads))
 }
 
 // registerCancel installs the CancelFunc for an in-flight call. A

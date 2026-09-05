@@ -246,7 +246,7 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 	body := appendHookContext(capped, hookContext)
 	if d.turn != nil {
 		failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
-		if reminder := d.turn.recordFailure(failed); reminder != "" {
+		if reminder := d.turn.recordProgress(failed, d.inner.Name(), args, capability); reminder != "" {
 			body = AppendSystemReminder(body, reminder)
 		}
 	}
