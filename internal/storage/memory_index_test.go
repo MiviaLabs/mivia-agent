@@ -183,3 +183,174 @@ func TestSyncMemoryIndexRemovesOldIDForChangedSource(t *testing.T) {
 		t.Fatalf("rows after source update = %d, want 1", count)
 	}
 }
+
+func TestSyncMemoryIndexRejectsInvalidTopLevelScope(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SyncMemoryIndex(context.Background(), "bogus", "repo", "", nil); err == nil {
+		t.Fatal("SyncMemoryIndex accepted an invalid top-level scope")
+	}
+}
+
+func TestSyncMemoryIndexPropagatesInvalidOrgIDNormalization(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SyncMemoryIndex(context.Background(), "org", "", "/leading-slash", nil); err == nil {
+		t.Fatal("SyncMemoryIndex accepted an org_id normalizeMemoryOrgID rejects")
+	}
+}
+
+func TestNormalizeMemoryOrgIDRejectsFormatAndCharacterViolations(t *testing.T) {
+	for _, bad := range []string{"", "/leading", "trailing/", "has..dots"} {
+		if _, err := normalizeMemoryOrgID(bad); err == nil {
+			t.Errorf("normalizeMemoryOrgID(%q) accepted an invalid format", bad)
+		}
+	}
+	if _, err := normalizeMemoryOrgID("has space"); err == nil {
+		t.Fatal("normalizeMemoryOrgID accepted an unsupported character")
+	}
+}
+
+func TestSyncMemoryIndexPropagatesLoadScopeStateErrors(t *testing.T) {
+	t.Run("memory_sources query fails", func(t *testing.T) {
+		store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		if _, err := store.db.Exec(`DROP TABLE memory_sources`); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", nil); err == nil {
+			t.Fatal("SyncMemoryIndex did not propagate a broken memory_sources table")
+		}
+	})
+	t.Run("memory_entries query fails", func(t *testing.T) {
+		store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		if _, err := store.db.Exec(`DROP TABLE memory_entries`); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", nil); err == nil {
+			t.Fatal("SyncMemoryIndex did not propagate a broken memory_entries table")
+		}
+	})
+}
+
+func TestSyncMemoryIndexRejectsInvalidDocScope(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	docs := []MemoryIndexDocument{{ID: "x", Scope: "bogus", ProjectID: "repo", SourcePath: "/x.md", SourceHash: "h", Verdict: "good", Content: "x"}}
+	if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", docs); err == nil {
+		t.Fatal("SyncMemoryIndex accepted a document with an unrecognized scope")
+	}
+}
+
+func TestSyncMemoryIndexRejectsDocScopeNotMatchingScan(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	docs := []MemoryIndexDocument{{ID: "x", Scope: "org", OrgID: "acme", SourcePath: "/x.md", SourceHash: "h", Verdict: "good", Content: "x"}}
+	if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", docs); err == nil {
+		t.Fatal("SyncMemoryIndex accepted an org-scoped document in a project scan")
+	}
+}
+
+func TestSyncMemoryIndexRejectsOrgDocMismatch(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	docs := []MemoryIndexDocument{{ID: "x", Scope: "org", OrgID: "other-org", SourcePath: "/x.md", SourceHash: "h", Verdict: "good", Content: "x"}}
+	if err := store.SyncMemoryIndex(context.Background(), "org", "", "acme", docs); err == nil {
+		t.Fatal("SyncMemoryIndex accepted a document whose org_id does not match the scan")
+	}
+}
+
+func TestSyncMemoryIndexRejectsMissingIDOrSourcePath(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, doc := range []MemoryIndexDocument{
+		{ID: "", Scope: "project", ProjectID: "repo", SourcePath: "/x.md", SourceHash: "h", Verdict: "good", Content: "x"},
+		{ID: "x", Scope: "project", ProjectID: "repo", SourcePath: "", SourceHash: "h", Verdict: "good", Content: "x"},
+	} {
+		if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", []MemoryIndexDocument{doc}); err == nil {
+			t.Errorf("SyncMemoryIndex accepted a document with an empty id or source_path: %+v", doc)
+		}
+	}
+}
+
+func TestSyncMemoryIndexRejectsDuplicateSourcePath(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	docs := []MemoryIndexDocument{
+		{ID: "one", Scope: "project", ProjectID: "repo", SourcePath: "/same.md", SourceHash: "h1", Verdict: "good", Content: "one"},
+		{ID: "two", Scope: "project", ProjectID: "repo", SourcePath: "/same.md", SourceHash: "h2", Verdict: "good", Content: "two"},
+	}
+	err = store.SyncMemoryIndex(context.Background(), "project", "repo", "", docs)
+	if err == nil {
+		t.Fatal("SyncMemoryIndex accepted two documents (different IDs) at the same source_path")
+	}
+	if !strings.Contains(err.Error(), "duplicate memory index source") {
+		t.Fatalf("error = %v, want duplicate source validation", err)
+	}
+}
+
+func TestSyncMemoryIndexRejectsMissingScopeIdentity(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SyncMemoryIndex(context.Background(), "project", "", "", nil); err == nil {
+		t.Fatal("SyncMemoryIndex accepted a project scan with no project_id")
+	}
+	if err := store.SyncMemoryIndex(context.Background(), "org", "", "", nil); err == nil {
+		t.Fatal("SyncMemoryIndex accepted an organization scan with no org_id")
+	}
+}
+
+// TestSyncMemoryIndexPropagatesUpsertCheckConstraintViolation forces
+// upsertMemoryIndexDocument's UPDATE to violate memory_entries' own
+// `CHECK(verdict IN ('good','bad','mixed','neutral'))` constraint
+// (context_schema_v16.go): the first sync creates the row normally, and the
+// second sync rewrites it with an out-of-range Verdict and a changed
+// SourceHash (so memoryIndexDocUnchanged's skip does not short-circuit the
+// upsert). The resulting SQL error must surface through both
+// upsertMemoryIndexDocument and syncMemoryIndexOnce's own propagation.
+func TestSyncMemoryIndexPropagatesUpsertCheckConstraintViolation(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	doc := MemoryIndexDocument{ID: "x", Scope: "project", ProjectID: "repo", SourcePath: "/x.md", SourceHash: "h1", Verdict: "good", Content: "x"}
+	if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", []MemoryIndexDocument{doc}); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	doc.SourceHash, doc.Verdict = "h2", "bogus-verdict"
+	if err := store.SyncMemoryIndex(context.Background(), "project", "repo", "", []MemoryIndexDocument{doc}); err == nil {
+		t.Fatal("SyncMemoryIndex accepted a verdict the memory_entries CHECK constraint rejects")
+	}
+}
