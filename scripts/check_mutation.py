@@ -20,8 +20,10 @@ from __future__ import annotations
 import argparse
 import atexit
 import json
+import os
 import re
 import signal
+import concurrent.futures
 import subprocess
 import sys
 import tempfile
@@ -250,7 +252,14 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
         target = test_target(Path(pkg_dir), pkg)
         try:
             test = subprocess.run(
-                ["go", "test", target],
+                # -failfast: a mutant is KILLED the moment one test fails, so
+                # running the rest of the package's suite after that proves
+                # nothing and costs a full suite per mutant. On a package whose
+                # suite takes a minute, that was the difference between a sweep
+                # that finishes and one the pre-push supervisor kills. It does
+                # not change a verdict: the exit code still says pass or fail,
+                # and a SURVIVED mutant runs every test either way.
+                ["go", "test", "-failfast", target],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -850,6 +859,69 @@ def deleted_lines_counter(diff_args: list[str], rel_paths: list[str]) -> Counter
     return parse_deleted_lines(r.stdout)
 
 
+def mutation_sweep_workers(package_count: int) -> int:
+    """mutation_sweep_workers bounds how many package sweeps run at once.
+
+    Each worker holds one `go test` subprocess, so the cap is about memory and
+    CPU, not correctness: one worker reproduces the old serial behaviour
+    exactly. MIVIA_MUTATION_WORKERS overrides it (1 forces serial, which is
+    what to reach for when diagnosing a sweep result)."""
+    if package_count <= 1:
+        return 1
+    override = os.environ.get("MIVIA_MUTATION_WORKERS", "").strip()
+    if override:
+        try:
+            n = int(override)
+        except ValueError:
+            n = 0
+        if n >= 1:
+            return min(n, package_count)
+    return max(1, min(4, package_count))
+
+
+def sweep_one_package(pkg: str, sites_with_lines: list) -> tuple[int, int, int, list[str]]:
+    """sweep_one_package runs every mutation site of ONE package and returns
+    its counts plus the report lines, instead of printing them.
+
+    Returning the lines is what lets the caller sweep packages concurrently and
+    still print one stable, package-ordered report. The originals map and its
+    restore stay inside this call, so a worker restores exactly the files it
+    mutated even when another worker fails."""
+    pkg_dir = ROOT / pkg
+    coverage = compute_coverage_blocks(pkg, pkg_dir)
+    originals: dict[Path, bytes] = {}
+    killed = survived = discarded = 0
+    lines: list[str] = []
+    try:
+        for site, line_no in sites_with_lines:
+            if site.path not in originals:
+                originals[site.path] = site.path.read_bytes()
+            if site_is_dead_code(site, line_no, coverage):
+                survived += 1
+                lines.append(
+                    f"SURVIVED on diff line (no coverage, test skipped): "
+                    f"{site.path.name}:{line_no} {site.kind} {site.old!r} -> "
+                    f"{site.new!r} (missing test assertion)"
+                )
+                continue
+            outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
+            if outcome == KILLED:
+                killed += 1
+            elif outcome == SURVIVED:
+                survived += 1
+                lines.append(
+                    f"SURVIVED on diff line: {site.path.name}:{line_no} "
+                    f"{site.kind} {site.old!r} -> {site.new!r} (missing test assertion)"
+                )
+            else:
+                discarded += 1
+    finally:
+        # This is the path the pre-commit hook runs, so it is the one that can
+        # hand a mutant to `git add`. See verify_restored.
+        restore_and_verify(originals)
+    return killed, survived, discarded, lines
+
+
 def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
     """sweep_diff runs mutants on every changed line of the diff, per package,
     and returns (stats, failed). Sites on verbatim-moved lines - the same
@@ -911,39 +983,43 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
     total_killed = total_survived = total_discarded = 0
     failed = False
 
-    for pkg, sites_with_lines in pkg_sites.items():
-        pkg_dir = ROOT / pkg
-        coverage = compute_coverage_blocks(pkg, pkg_dir)
-        originals: dict[Path, bytes] = {}
-        try:
-            for site, line_no in sites_with_lines:
-                if site.path not in originals:
-                    originals[site.path] = site.path.read_bytes()
-                if site_is_dead_code(site, line_no, coverage):
-                    total_survived += 1
-                    failed = True
-                    print(
-                        f"SURVIVED on diff line (no coverage, test skipped): "
-                        f"{site.path.name}:{line_no} {site.kind} {site.old!r} -> "
-                        f"{site.new!r} (missing test assertion)"
-                    )
-                    continue
-                outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
-                if outcome == KILLED:
-                    total_killed += 1
-                elif outcome == SURVIVED:
-                    total_survived += 1
-                    failed = True
-                    print(
-                        f"SURVIVED on diff line: {site.path.name}:{line_no} "
-                        f"{site.kind} {site.old!r} -> {site.new!r} (missing test assertion)"
-                    )
-                else:
-                    total_discarded += 1
-        finally:
-            # This is the path the pre-commit hook runs, so it is the one
-            # that can hand a mutant to `git add`. See verify_restored.
-            restore_and_verify(originals)
+    # One package at a time was the whole cost of this gate. Each mutant runs
+    # its package's test target once, so a broad diff cost
+    # sum-over-packages(sites x suite), which on this repo reached hours and
+    # the pre-push supervisor killed it - a gate that cannot finish enforces
+    # nothing. Packages are swept CONCURRENTLY instead.
+    #
+    # Safe because a package sweep only ever mutates files under its OWN
+    # directory, and each worker keeps its own originals map and restores it
+    # in its own finally - the same restore contract as the serial loop, per
+    # package rather than globally. Threads (not processes) because every unit
+    # of work is a blocking `go test` subprocess, and the Go build cache is
+    # already concurrency-safe.
+    results = [None] * len(pkg_sites)
+    items = list(pkg_sites.items())
+    max_workers = mutation_sweep_workers(len(items))
+    if max_workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(sweep_one_package, pkg, sites): idx
+                for idx, (pkg, sites) in enumerate(items)
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                results[futures[fut]] = fut.result()
+    else:
+        for idx, (pkg, sites) in enumerate(items):
+            results[idx] = sweep_one_package(pkg, sites)
+
+    # Print in a STABLE package order, not completion order, so the report
+    # reads the same whatever the scheduler did.
+    for killed, survived, discarded, lines in results:
+        total_killed += killed
+        total_survived += survived
+        total_discarded += discarded
+        if survived:
+            failed = True
+        for line in lines:
+            print(line)
 
     total = total_killed + total_survived
     rate = 100.0 * total_killed / total if total else 100.0

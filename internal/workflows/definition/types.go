@@ -1,5 +1,10 @@
 package definition
 
+import (
+	"sort"
+	"strings"
+)
+
 // WorkflowFile is the on-disk TOML shape for a workflow definition.
 type WorkflowFile struct {
 	Version     int                 `toml:"version" json:"version,omitempty"`
@@ -430,7 +435,18 @@ type DiscoveredWorkflow struct {
 	Name string
 	Path string
 	Raw  []byte
+	// Err is non-nil when the file is present but unusable as a workflow: a
+	// symlink, a hardlink, a non-regular file, one over MaxWorkflowFileBytes,
+	// or one that cannot be read. Such an entry is still LISTED, with Raw
+	// empty, so the operator sees which definition is broken and why - but it
+	// must never be parsed or run. Discovery used to fail the whole directory
+	// on the first such file, which took down `workflow run`, `workflows
+	// list`, and every unrelated workflow along with it.
+	Err error
 }
+
+// Usable reports whether the discovered file can be parsed and run.
+func (w DiscoveredWorkflow) Usable() bool { return w.Err == nil }
 
 // ValidStepKinds enumerates the allowed step kind values.
 var ValidStepKinds = map[string]bool{
@@ -460,3 +476,36 @@ const MaxInputBytes = 1048576
 // MaxEvidenceBindingBytes is the maximum bytes of a prior step output bound
 // into a later step context.
 const MaxEvidenceBindingBytes = 32 << 10
+
+// ValidTransitionStatuses enumerates the attempt statuses a transition may
+// match. The controller routes a completed attempt with "succeeded" and a
+// failed one with "failed"; no other value can ever fire.
+var ValidTransitionStatuses = map[string]bool{
+	"succeeded": true,
+	"failed":    true,
+}
+
+// ValidInputTypes enumerates the input types ParseInputValue can decode.
+var ValidInputTypes = map[string]bool{
+	"string":  true,
+	"boolean": true,
+	"integer": true,
+	"number":  true,
+	"object":  true,
+	"array":   true,
+}
+
+// transitionStatusList renders ValidTransitionStatuses for an error message.
+func transitionStatusList() string { return sortedKeyList(ValidTransitionStatuses) }
+
+// inputTypeList renders ValidInputTypes for an error message.
+func inputTypeList() string { return sortedKeyList(ValidInputTypes) }
+
+func sortedKeyList(set map[string]bool) string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
+}

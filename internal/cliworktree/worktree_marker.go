@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -144,23 +144,10 @@ func ensureWorktreeMarkerExcluded(root string) error {
 	return updateWorktreeMarkerExclude(gitRoot, filepath.Join("info", "exclude"))
 }
 
+// worktreeGitCommonDir delegates to the vcs implementation, which the
+// workflow engine also needs for the lifecycle lock.
 func worktreeGitCommonDir(root string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
-	cmd.WaitDelay = worktreeMarkerWaitDelay
-	cmd.Dir = root
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("resolve Git common directory: %w", err)
-	}
-	commonDir := strings.TrimSpace(string(output))
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(root, commonDir)
-	}
-	commonDir, err = filepath.EvalSymlinks(filepath.Clean(commonDir))
-	if err != nil {
-		return "", fmt.Errorf("resolve Git common directory: %w", err)
-	}
-	return commonDir, nil
+	return vcs.WorktreeGitCommonDir(root)
 }
 
 func ensureRegularGitInfoDir(root *os.Root) error {

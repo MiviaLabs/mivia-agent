@@ -1,6 +1,6 @@
 //go:build windows
 
-package cliworktree
+package vcs
 
 import (
 	"fmt"

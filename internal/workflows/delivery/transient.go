@@ -90,3 +90,35 @@ func IsPermanentMergeError(err error) bool {
 	}
 	return false
 }
+
+// remotePushRejectionPhrases identify a push that ORIGIN refused, as opposed
+// to one the repository's own pre-push hook declined. The two need different
+// repair advice: a hook rejection is about the delivered tree and the agent
+// can fix it in the worktree, while a remote rejection is about the state of
+// the remote ref or the credential and no worktree edit reaches it.
+var remotePushRejectionPhrases = []string{
+	"non-fast-forward",                       // remote ref moved since the base was admitted
+	"[rejected]",                             // git's own rejection marker
+	"[remote rejected]",                      // a server-side hook declined
+	"fetch first",                            // git's advice for a stale ref
+	"permission denied",                      // credential lacks push rights
+	"authentication failed",                  // credential rejected
+	"could not read from remote repository",  // unreachable or unauthorized
+	"repository not found",                   // remote deleted or renamed
+	"does not appear to be a git repository", // remote URL is wrong
+}
+
+// isRemotePushRejection reports whether err is a push failure that origin (or
+// its server-side hooks) refused, rather than a local pre-push hook decline.
+func isRemotePushRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, phrase := range remotePushRejectionPhrases {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
+	}
+	return false
+}

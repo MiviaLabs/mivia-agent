@@ -128,12 +128,20 @@ func verifierGoToolchain() (string, string, error) {
 		goName = "go.exe"
 	}
 	goPath := filepath.Join(root, "bin", goName)
+	// Check err BEFORE reading info: os.Stat returns a nil FileInfo with its
+	// error, so a GOROOT that exists without a bin/go used to panic here
+	// rather than report a host failure - and no caller on the evidence-gate
+	// path recovers, so the panic took the whole process down mid-run.
 	info, err := os.Stat(goPath)
-	executable := info.Mode().IsRegular() && info.Mode()&0o111 != 0
-	if runtime.GOOS == "windows" {
-		executable = err == nil && info.Mode().IsRegular()
+	if err != nil {
+		return "", "", fmt.Errorf("resolve verifier Go executable")
 	}
-	if err != nil || !executable {
+	executable := info.Mode().IsRegular()
+	if runtime.GOOS != "windows" {
+		// Windows Stat reports no execute bit, so the x-bit check is unix-only.
+		executable = executable && info.Mode()&0o111 != 0
+	}
+	if !executable {
 		return "", "", fmt.Errorf("resolve verifier Go executable")
 	}
 	return goPath, root, nil
@@ -207,12 +215,21 @@ func boundedDiagnostic(output []byte) string {
 }
 
 func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, exePath, buildCacheRoot string, goEnv bool, args ...string) []string {
+	// /usr and /bin are REQUIRED: the sandbox sets PATH=/usr/bin:/bin, so a
+	// host without them can run nothing and the hard bind is the honest
+	// failure. /lib and /lib64 are TOLERANT: bwrap treats a missing --ro-bind
+	// source as a hard error, and plenty of Linux hosts legitimately have no
+	// /lib64 (arm64 Debian and Ubuntu, Alpine and musl, minimal containers).
+	// An unconditional bind there failed EVERY evidence gate on those hosts,
+	// and because bwrap's own stderr classifies host-class the failure came
+	// back non-repairable - the run stalled with no path forward. On a host
+	// that does have them, --ro-bind-try binds exactly as before.
 	result := []string{
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/bin", "/bin",
-		"--ro-bind", "/lib", "/lib",
-		"--ro-bind", "/lib64", "/lib64",
+		"--ro-bind-try", "/lib", "/lib",
+		"--ro-bind-try", "/lib64", "/lib64",
 	}
 	if goEnv {
 		if !strings.HasPrefix(goRoot, "/usr/") && goRoot != "/usr" {

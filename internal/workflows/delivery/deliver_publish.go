@@ -57,20 +57,38 @@ func pushDeliveryBranch(ctx context.Context, repo ledger.Repository, git GitRunn
 		if attempt == maxPushAttempts {
 			break
 		}
+		// Retry the transient classes this loop exists for - a transport fault
+		// or a killed hook process (OOM) - but stop at a rejection origin will
+		// give again. Retrying unconditionally spent the whole backoff budget
+		// on failures no retry can fix (a non-fast-forward ref, a revoked
+		// token) and delayed the repair route by that much for nothing.
+		if isRemotePushRejection(err) {
+			break
+		}
 		if werr := waitCtx(ctx, pushRetryDelay(attempt)); werr != nil {
 			return werr
 		}
 	}
 	if err != nil {
-		// The inventory MUST lead the recorded text: markFailed stores at
-		// most maxErrorBytes and truncates from the end, so a long hook
-		// rejection must not push the diagnostic out of the repair hint.
-		// The two-tree divergence (delivered commit vs worktree, e.g. after
-		// the automatic split deferred a file's tests) is exactly the class
-		// of failure a repair agent cannot see in the hook output alone.
-		wrapped := fmt.Errorf("pre-push hook rejection: %w", err)
-		if hint := deliveryInventoryHint(ctx, git, req, existing); hint != "" {
-			wrapped = fmt.Errorf("delivery commit inventory:\n%s\n\n%s", hint, wrapped)
+		// Name what actually failed. Every push failure used to be recorded
+		// as a hook rejection, so RepairHint handed the agent tree-divergence
+		// advice for remote-state problems (a rebased base, a revoked token)
+		// that no worktree edit can fix.
+		var wrapped error
+		if isRemotePushRejection(err) {
+			wrapped = fmt.Errorf("origin rejected the push: %w", err)
+		} else {
+			// The inventory MUST lead the recorded text: markFailed stores at
+			// most maxErrorBytes and truncates from the end, so a long hook
+			// rejection must not push the diagnostic out of the repair hint.
+			// The two-tree divergence (delivered commit vs worktree, e.g.
+			// after the automatic split deferred a file's tests) is exactly
+			// the class of failure a repair agent cannot see in the hook
+			// output alone - and it only applies when a hook is what refused.
+			wrapped = fmt.Errorf("pre-push hook rejection: %w", err)
+			if hint := deliveryInventoryHint(ctx, git, req, existing); hint != "" {
+				wrapped = fmt.Errorf("delivery commit inventory:\n%s\n\n%s", hint, wrapped)
+			}
 		}
 		markFailed(ctx, repo, key, req, wrapped)
 		req.stage("failed", wrapped.Error())

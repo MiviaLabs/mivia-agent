@@ -166,7 +166,7 @@ func TestLifecycleLockCoverageFilesystemFailures(t *testing.T) {
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(repo, common)
 	}
-	lockDir := filepath.Join(common, worktreeLifecycleLockDir)
+	lockDir := filepath.Join(common, "mivia-worktree-locks")
 	if err := os.WriteFile(lockDir, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}

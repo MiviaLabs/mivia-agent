@@ -523,7 +523,6 @@
       "internal/workspace"
     ],
     "internal/workflows/controller": [
-      "internal/agentmsg",
       "internal/agents",
       "internal/config",
       "internal/coordinator",

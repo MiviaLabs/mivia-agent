@@ -65,6 +65,13 @@ func PrepareWorkflowRun(name, root, configPath string, rawInputs []string) (*Pre
 		closeFn()
 		return nil, fmt.Errorf("workflow %q was not found", name)
 	}
+	// A discovered-but-unusable file (symlink, oversize, unreadable) carries
+	// its reason and no bytes; parsing it would report a confusing TOML error
+	// instead of the real one.
+	if found.Err != nil {
+		closeFn()
+		return nil, found.Err
+	}
 	wf, _, err := definition.ParseWorkflowTOML(found.Raw, found.Name+".toml")
 	if err != nil {
 		closeFn()

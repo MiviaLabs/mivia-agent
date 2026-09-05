@@ -258,9 +258,13 @@ func invocationInputsMatchRun(repo workflowledger.Repository, runID string, inpu
 	if err != nil {
 		return false, err
 	}
-	strInputs := make(map[string]string, len(inputs))
-	for k, v := range inputs {
-		strInputs[k] = fmt.Sprint(v)
+	// Compare with the SAME encoding admission used. fmt.Sprint renders an
+	// object as "map[a:b]" where admission stored {"a":"b"}, so an identical
+	// retry looked like a different request and the run became unreachable
+	// under its own invocation key.
+	strInputs, err := invocationInputSnapshot(inputs)
+	if err != nil {
+		return false, err
 	}
 	return run.InputDigest == workflowledger.InputDigest(strInputs), nil
 }
@@ -386,22 +390,58 @@ func claimForCancel(ctx context.Context, repo workflowledger.Repository, runID, 
 	return nil
 }
 
+// encodeWorkflowInputValue renders one input value the way admission records
+// it: a string passes through, anything else becomes its JSON encoding. It is
+// the SINGLE definition of that encoding - invocationInputSnapshot uses it too,
+// so a keyed retry compares like with like.
+func encodeWorkflowInputValue(key string, v any) (string, error) {
+	if s, ok := v.(string); ok {
+		return s, nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("workflow input %q: encode JSON: %w", key, err)
+	}
+	return string(raw), nil
+}
+
 func inputsToRawFlags(inputs map[string]any) ([]string, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
 	out := make([]string, 0, len(inputs))
 	for k, v := range inputs {
-		switch x := v.(type) {
-		case string:
-			out = append(out, k+"="+x)
-		default:
-			raw, err := json.Marshal(x)
-			if err != nil {
-				return nil, fmt.Errorf("workflow input %q: encode JSON: %w", k, err)
-			}
-			out = append(out, k+"="+string(raw))
+		// Refuse a key that would change meaning on the way back in.
+		// parseWorkflowInputs splits each flag on its FIRST "=", so a key
+		// carrying one ("task=INJECTED") re-binds to a different declared
+		// input ("task") with attacker-chosen content, and two such keys for
+		// the same target admit a value chosen by Go's map iteration order.
+		// The tool schema allows arbitrary keys here, so this is reachable.
+		if strings.TrimSpace(k) == "" {
+			return nil, fmt.Errorf("workflow input name must not be blank")
 		}
+		if strings.Contains(k, "=") {
+			return nil, fmt.Errorf("workflow input name %q must not contain '='", k)
+		}
+		encoded, err := encodeWorkflowInputValue(k, v)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, k+"="+encoded)
+	}
+	return out, nil
+}
+
+// invocationInputSnapshot renders requested inputs into the same string
+// snapshot admission recorded, so InputDigest over the two agrees.
+func invocationInputSnapshot(inputs map[string]any) (map[string]string, error) {
+	out := make(map[string]string, len(inputs))
+	for k, v := range inputs {
+		encoded, err := encodeWorkflowInputValue(k, v)
+		if err != nil {
+			return nil, err
+		}
+		out[k] = encoded
 	}
 	return out, nil
 }
