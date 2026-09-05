@@ -139,10 +139,6 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *Agent
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	root := state.WorkspaceRoot
-	if root == "" {
-		root = "."
-	}
 	// Start from the pre-scope base so switching to a wider agent regains tools.
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
 	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
@@ -160,7 +156,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *Agent
 	var dispatcher *runtime.Dispatcher
 	if NewSessionDispatcherVar != nil {
 		var err error
-		dispatcher, err = NewSessionDispatcherVar(dispatcherOptsForSurface(sess, res, state, binding, registry, authority, skillReg, skillScope, plan, root))
+		dispatcher, err = NewSessionDispatcherVar(dispatcherOptsForSurface(sess, res, state, binding, registry, authority, skillReg, skillScope, plan, sessionToolRoot(sess, state.WorkspaceRoot)))
 		if err != nil {
 			return nil, fmt.Errorf("dispatcher: %w", err)
 		}

@@ -83,27 +83,65 @@ type Registry struct {
 	order []Tool
 	by    map[string]Tool
 
-	// Workspace metadata for registries built by NewDefaultRegistry.
-	// Hand-assembled registries leave both empty, and the accessors report
-	// that as "unknown" rather than an implied confinement root.
-	workspaceRoot         string
-	workspaceUnrestricted bool
+	// workspace is the live confinement root this registry resolves
+	// relative paths against, for registries built by NewDefaultRegistry.
+	// It is a POINTER, not a name/bool snapshot, and every derivation
+	// (Clone, CloneForGeneration(Excluding), ScopedRegistry(WithTail))
+	// carries the same pointer forward: WorkspaceRoot/WorkspaceUnrestricted
+	// then read the operator's live Settings -> General full-disk toggle
+	// through it instead of freezing the value construction saw (bug-audit
+	// findings "full-disk access does not reach active worktree registries"
+	// / "new worktree posture depends on random map iteration"). Hand-assembled
+	// registries leave this nil, and the accessors report that as "unknown"
+	// rather than an implied confinement root.
+	workspace *workspace.Root
+}
+
+// workspaceRootPtr returns the live workspace this registry was built or
+// derived from, nil for a hand-assembled registry. Callers deriving a new
+// registry from this one carry the pointer forward so the derivation stays
+// live too.
+func (r *Registry) workspaceRootPtr() *workspace.Root {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.workspace
 }
 
 // WorkspaceRoot reports the absolute root this registry resolves relative
 // paths against; empty for hand-assembled registries.
 func (r *Registry) WorkspaceRoot() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.workspaceRoot
+	ws := r.workspaceRootPtr()
+	if ws == nil {
+		return ""
+	}
+	return ws.Abs
 }
 
 // WorkspaceUnrestricted reports whether the registry may escape its root
-// (--full-disk); false for hand-assembled registries.
+// (--full-disk); false for hand-assembled registries. Reads the live root,
+// so it reflects a Settings -> General toggle applied after construction.
 func (r *Registry) WorkspaceUnrestricted() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.workspaceUnrestricted
+	ws := r.workspaceRootPtr()
+	if ws == nil {
+		return false
+	}
+	return ws.Unrestricted()
+}
+
+// SetWorkspaceUnrestricted re-arms the live confinement root this registry
+// was built or derived from. Every registry sharing that root (clones,
+// scopes, generations) observes the change immediately through
+// WorkspaceUnrestricted, since they all read the same *workspace.Root. No-op
+// for a hand-assembled registry with no workspace.
+func (r *Registry) SetWorkspaceUnrestricted(on bool) {
+	ws := r.workspaceRootPtr()
+	if ws == nil {
+		return
+	}
+	ws.SetUnrestricted(on)
 }
 
 // NewRegistry builds an empty registry.
@@ -119,6 +157,7 @@ func (r *Registry) Clone() *Registry {
 		return nil
 	}
 	out := NewRegistry()
+	out.workspace = r.workspaceRootPtr()
 	for _, tool := range r.List() {
 		out.Register(tool)
 	}
@@ -143,6 +182,7 @@ func (r *Registry) CloneForGenerationExcluding(excludedNames ...string) *Registr
 		excluded[name] = struct{}{}
 	}
 	out := NewRegistry()
+	out.workspace = r.workspaceRootPtr()
 	for _, tool := range r.List() {
 		if _, privileged := tool.(PrivilegedTool); privileged {
 			continue
