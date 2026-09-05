@@ -173,6 +173,16 @@ func TestDeleteSessionSnapshotLeavesNothingLoadableForLiveProjection(t *testing.
 	if _, _, err := store.LoadSession(ctx, principal, principal.SessionID); !errors.Is(err, contextstate.ErrSessionNotFound) {
 		t.Fatalf("load after delete = %v, want ErrSessionNotFound", err)
 	}
+	// Not just unloadable: the retention lifecycle must actually run, or
+	// payloads stay unrevoked with no audit record for a delete the user
+	// was told succeeded.
+	var tombstoned int
+	if err := store.db.QueryRow(`SELECT tombstoned FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=?`, principal.WorkspaceID, principal.SubjectID, principal.SessionID).Scan(&tombstoned); err != nil {
+		t.Fatal(err)
+	}
+	if tombstoned != 1 {
+		t.Fatal("the live row was left untombstoned")
+	}
 }
 
 // The turn-only shape is the NORMAL one for a worktree session, and it is the

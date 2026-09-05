@@ -35,6 +35,9 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 		}
 	}
 	entryState := p.wireEntryLocked(sess, boundRoot, dir, false)
+	if err := p.refuseIfDrainedLocked(); err != nil {
+		return nil, err
+	}
 	conv := NewConversation(sess)
 	conv.SetSubagents(p.threads)
 	p.sessions[sess.SessionID] = sess
@@ -147,6 +150,9 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 	}
 	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
+	if err := p.refuseIfDrainedLocked(); err != nil {
+		return nil, nil, err
+	}
 	if existing := p.liveEntryForResolvedLocked(id, sess); existing != nil {
 		return existing, nil, nil
 	}
@@ -190,6 +196,27 @@ func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string,
 	return entryState
 }
 
+// contextStoreLocked returns the repository store any pooled member is bound
+// to. It deliberately does NOT go through preferredInheritanceSessionLocked,
+// which only ever returns a member carrying a tool REGISTRY: the binding is
+// recorded in the store, and the store is installed independently of tools,
+// so resolving it through the tool-scoped donor made every bare-id resume
+// fall back to the plain loader whenever tools were off (--no-tools) - the
+// very failure this resolution exists to prevent. Every pooled session
+// inherits the same store, so the first bound member is authoritative.
+// Callers hold p.mu.
+func (p *SessionPool) contextStoreLocked() *storage.SQLite {
+	for _, sess := range p.sessions {
+		if sess == nil {
+			continue
+		}
+		if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+			return store
+		}
+	}
+	return nil
+}
+
 // storedRouteLocked resolves the managed-worktree route a session id is
 // bound to from the store - the authoritative record, so a caller with only
 // an id gets the same binding the picker's row would have carried, and a
@@ -197,12 +224,8 @@ func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string,
 // worktree is gone fails closed here rather than resuming detached from the
 // checkout it belongs to. Callers hold p.mu.
 func (p *SessionPool) storedRouteLocked(id string) (BindFunc, string, error) {
-	sess := p.preferredInheritanceSessionLocked()
-	if sess == nil {
-		return nil, "", nil
-	}
-	store, ok := sess.ContextStore().(*storage.SQLite)
-	if !ok || store == nil {
+	store := p.contextStoreLocked()
+	if store == nil {
 		return nil, "", nil
 	}
 	root, err := worktreeroute.Root("")
@@ -222,6 +245,19 @@ func (p *SessionPool) storedRouteLocked(id string) (BindFunc, string, error) {
 	}
 	route := worktreeroute.Route{Worktree: info.Instance.Worktree, Dir: info.CanonicalPath, Instance: info.Instance}
 	return worktreeBindFunc(store, root, route), info.CanonicalPath, nil
+}
+
+// refuseIfDrainedLocked stops a build that finished after the pool was
+// drained from publishing. wireEntryLocked releases p.mu around its registry
+// build, so ReleaseLeases can latch and drain inside that window; a session
+// published afterwards was never in the snapshot it drained, so nothing ever
+// stops its lease heartbeat and the next process's resume of that id is
+// refused as "live in another process" for the full TTL. Callers hold p.mu.
+func (p *SessionPool) refuseIfDrainedLocked() error {
+	if p.released.Load() {
+		return fmt.Errorf("session pool is shutting down")
+	}
+	return nil
 }
 
 // CloseAll releases memoized worktree registries.

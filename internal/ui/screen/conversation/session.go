@@ -52,9 +52,11 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		st.approval.Resolve(b.ToolCallID)
 		st.statusline.SetLabel("running")
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
-		if isSubagentTool(b.Name) || (st.threads != nil && isThreadRegistered(st.threads, b.ToolCallID)) {
-			st.panel.observeAgentStart(b.ToolCallID, b.Name)
-		}
+		// The SAME helpers the foreground path uses. Hand-rolled copies
+		// here dropped a dispatch group's per-task rows and every
+		// blackboard message a backgrounded session raised.
+		observeToolStartInto(&st.panel, st.threads, b)
+		recordBlackboardToolInto(&st.blackboard, b.Name, b.Args)
 	case uievent.ToolOutputBody:
 		if b.Progress != nil {
 			st.panel.observeAgent(b.ToolCallID, b.Progress)
@@ -62,15 +64,17 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 	case uievent.ToolEndBody:
 		st.approval.Resolve(b.ToolCallID)
 		st.statusline.SetLabel("thinking")
-		st.panel.observeAgentEnd(b.ToolCallID, b.OK)
-		if b.Diff != nil {
-			st.panel.appendLive(*b.Diff)
-		}
+		observeToolEndInto(&st.panel, b)
 	case uievent.UsageBody:
 		st.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
 		st.approval.ClearAll()
 		st.panel.reconcileTerminal(b.Reason)
+		// The turn is over, so this session's committed estimate is
+		// authoritative again - exactly as on the foreground path. Left
+		// set, the snapshotted reading overrode the top bar the moment the
+		// user switched back, and nothing else could ever clear it.
+		st.liveUsage = nil
 	}
 }
 

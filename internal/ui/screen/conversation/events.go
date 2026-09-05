@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -227,10 +228,16 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 // otherwise the panel and the top-bar agent count would only ever show the
 // call, not the subagents it dispatched.
 func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
-	if !isSubagentTool(b.Name) && !(s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
+	observeToolStartInto(&s.panel, s.threads, b)
+}
+
+// observeToolStartInto is the shared body, so the background path fans a
+// dispatch group into per-task rows exactly as the foreground one does.
+func observeToolStartInto(p *panel, threads ports.SubagentThreads, b uievent.ToolStartBody) {
+	if !isSubagentTool(b.Name) && !(threads != nil && isThreadRegistered(threads, b.ToolCallID)) {
 		return
 	}
-	if s.panel.isDispatchGroup(b.ToolCallID) {
+	if p.isDispatchGroup(b.ToolCallID) {
 		// The agent loop emits two tool.start events per call - "queued"
 		// (internal/agent/sdk_tool_events.go, Args populated) then
 		// "running" (sdk_dispatcher_shim.go's dispatcherShim.Run, which
@@ -241,10 +248,10 @@ func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
 		return
 	}
 	if ids, names := dispatchTaskIDsAndNames(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
-		s.panel.observeAgentGroupStart(b.ToolCallID, ids, names)
+		p.observeAgentGroupStart(b.ToolCallID, ids, names)
 	} else {
 		name := extractAgentDisplayName(b.Name, b.Args)
-		s.panel.observeAgentStart(b.ToolCallID, name)
+		p.observeAgentStart(b.ToolCallID, name)
 	}
 }
 
@@ -262,17 +269,25 @@ func extractAgentDisplayName(toolName string, args map[string]any) string {
 // dispatched task's own terminal status from the call's JSON result,
 // instead of collapsing every task to the same aggregate ok/failed value.
 func (s *Screen) observeToolEnd(b uievent.ToolEndBody) {
-	if s.panel.isDispatchGroup(b.ToolCallID) {
-		s.panel.observeAgentGroupEnd(b.ToolCallID, parseDispatchTaskStatuses(b.Result), b.OK)
+	observeToolEndInto(&s.panel, b)
+}
+
+// observeToolEndInto is the shared body. The background path used to call
+// observeAgentEnd directly, which matches by row id and therefore never
+// matched a dispatch group's "callID:taskID" rows - so a group that finished
+// while its session was backgrounded left every task row running.
+func observeToolEndInto(p *panel, b uievent.ToolEndBody) {
+	if p.isDispatchGroup(b.ToolCallID) {
+		p.observeAgentGroupEnd(b.ToolCallID, parseDispatchTaskStatuses(b.Result), b.OK)
 	} else {
-		s.panel.observeAgentEnd(b.ToolCallID, b.OK)
+		p.observeAgentEnd(b.ToolCallID, b.OK)
 	}
 	if b.Diff != nil {
 		// The panel's data, fed live: every completed edit appears as a
 		// touched file the moment it happens, exactly as the transcript
 		// renders it. Deletions carry no diff in the event vocabulary, so
 		// only edits and creations record here.
-		s.panel.appendLive(*b.Diff)
+		p.appendLive(*b.Diff)
 	}
 }
 
@@ -420,6 +435,13 @@ func parseDispatchTaskStatuses(result string) map[string]string {
 }
 
 func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
+	recordBlackboardToolInto(&s.blackboard, name, args)
+}
+
+// recordBlackboardToolInto is the shared body: the FOREGROUND handler used to
+// own it, so a message or finding raised by a backgrounded session was
+// dropped with no gap marker. Both paths call this now.
+func recordBlackboardToolInto(bb *blackboard.Model, name string, args map[string]any) {
 	if len(args) == 0 {
 		return
 	}
@@ -435,13 +457,13 @@ func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
 					refs = append(refs, fmt.Sprint(r))
 				}
 			}
-			s.blackboard.AddFinding("subagent", body, refs)
+			bb.AddFinding("subagent", body, refs)
 		} else if kind != "" && body != "" {
 			toRole := getStringVal(args, "to_role")
 			if toRole == "" {
 				toRole = "orchestrator"
 			}
-			s.blackboard.AddMessage("subagent", toRole, kind, body)
+			bb.AddMessage("subagent", toRole, kind, body)
 		}
 	case "send_to_task":
 		action := getStringVal(args, "action")
@@ -451,7 +473,7 @@ func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
 			action = "steer"
 		}
 		if body != "" {
-			s.blackboard.AddMessage("orchestrator", taskID, action, body)
+			bb.AddMessage("orchestrator", taskID, action, body)
 		}
 	case "send_message":
 		recipient := getStringVal(args, "Recipient")
@@ -463,7 +485,7 @@ func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
 			msg = getStringVal(args, "message")
 		}
 		if msg != "" {
-			s.blackboard.AddMessage("orchestrator", recipient, "message", msg)
+			bb.AddMessage("orchestrator", recipient, "message", msg)
 		}
 	}
 }

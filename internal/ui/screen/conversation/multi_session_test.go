@@ -572,3 +572,70 @@ func TestRemoteInputMountFailureReportsTheDroppedInput(t *testing.T) {
 }
 
 var errMountFailed = errors.New("worktree was removed")
+
+// backgroundEvent feeds one event for a session that is NOT in the
+// foreground, i.e. through sessionState.handleTurnEvent.
+func backgroundEvent(t *testing.T, s Screen, sessionID string, body uievent.Body) Screen {
+	t.Helper()
+	next, _ := s.Update(uievent.EventMsg{SessionID: sessionID, Event: uievent.Event{TurnID: "turn-" + sessionID, Body: body}})
+	return next.(Screen)
+}
+
+// The background handler is a partial copy of the foreground one, and every
+// case it omits is state the owning session never recovers. Its TurnEnd left
+// the snapshotted liveUsage set, so switching back showed a stale mid-turn
+// reading (the very symptom the per-session enrolment was meant to remove);
+// its ToolEnd matched dispatch rows by call id, which never matches the
+// "callID:taskID" rows a dispatch group registers, so finished subagents
+// stayed "running"; and its ToolStart recorded nothing on the blackboard, so
+// cross-agent messages and findings raised while backgrounded were lost.
+func TestMultiSession_BackgroundPathKeepsSessionStateWhole(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	const call = "tc-dispatch"
+	args := map[string]any{"tasks": []any{map[string]any{"id": "t1", "agent": "alpha"}}}
+
+	next, _ := s.Update(uievent.EventMsg{SessionID: "sess-A", Event: uievent.Event{
+		Kind: uievent.KindUsage, TurnID: "turn-sess-A",
+		Body: uievent.UsageBody{InputTokens: 4242, CostUSD: 1.25},
+	}})
+	s = next.(Screen)
+	next, _ = s.Update(uievent.EventMsg{SessionID: "sess-A", Event: uievent.Event{
+		Kind: uievent.KindToolStart, TurnID: "turn-sess-A",
+		Body: uievent.ToolStartBody{ToolCallID: call, Name: "dispatch_tasks", Args: args},
+	}})
+	s = next.(Screen)
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Everything below reaches session A through the BACKGROUND path.
+	s = backgroundEvent(t, s, "sess-A", uievent.ToolStartBody{ToolCallID: "tc-msg", Name: "post_message",
+		Args: map[string]any{"kind": "finding", "body": "a finding raised while backgrounded"}})
+	s = backgroundEvent(t, s, "sess-A", uievent.ToolEndBody{ToolCallID: call, OK: true,
+		Result: `{"tasks":[{"id":"t1","status":"succeeded"}]}`})
+
+	// Asserted BEFORE TurnEnd on purpose: reconcileTerminal stamps every
+	// non-terminal row with the TURN's reason, which masks a group whose
+	// rows were never resolved from the call's own result.
+	for _, row := range s.sessions["sess-A"].panel.agents {
+		if row.Status != "succeeded" {
+			t.Errorf("dispatch row %q = %q after its call ended, want the per-task status from the result", row.ID, row.Status)
+		}
+	}
+
+	s = backgroundEvent(t, s, "sess-A", uievent.TurnEndBody{Reason: "completed"})
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	if s.liveUsage != nil {
+		t.Errorf("session A's own TurnEnd did not clear its live usage: %+v", *s.liveUsage)
+	}
+	if got := s.topbar.Usage().InputTokens; got == 4242 {
+		t.Errorf("top bar still reports the mid-turn reading %d after the turn ended", got)
+	}
+	if n := s.blackboard.FindingsCount(); n == 0 {
+		t.Error("a finding posted while the session was backgrounded was dropped")
+	}
+
+}
