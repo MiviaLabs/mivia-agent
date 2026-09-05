@@ -748,3 +748,23 @@ func setupTestWS(t *testing.T) *workspace.Root {
 	}
 	return ws
 }
+
+func TestRegistryWorkspaceAccessorsOnNilReceiverAndHandAssembledRegistry(t *testing.T) {
+	var nilReg *Registry
+	if got := nilReg.WorkspaceRoot(); got != "" {
+		t.Fatalf("nil Registry.WorkspaceRoot() = %q, want empty", got)
+	}
+	if got := nilReg.WorkspaceUnrestricted(); got != false {
+		t.Fatalf("nil Registry.WorkspaceUnrestricted() = %v, want false", got)
+	}
+	nilReg.SetWorkspaceUnrestricted(true) // must not panic
+
+	hand := NewRegistry()
+	if got := hand.WorkspaceRoot(); got != "" {
+		t.Fatalf("hand-assembled Registry.WorkspaceRoot() = %q, want empty", got)
+	}
+	hand.SetWorkspaceUnrestricted(true) // no-op, must not panic
+	if got := hand.WorkspaceUnrestricted(); got != false {
+		t.Fatalf("hand-assembled Registry.WorkspaceUnrestricted() after SetWorkspaceUnrestricted = %v, want still false", got)
+	}
+}
