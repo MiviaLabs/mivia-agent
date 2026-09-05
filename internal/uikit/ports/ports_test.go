@@ -429,6 +429,30 @@ func TestScaleFieldsRefusesNonsense(t *testing.T) {
 	}
 }
 
+// TestGeneralEditVariantsSatisfyTheClosedUnion exercises isGeneralEdit() on
+// every concrete GeneralEdit implementation, mirroring uievent's
+// TestAllBodyTypesSatisfyBody. SetFullDiskAccess in particular is not
+// constructed anywhere else in this package's tests - only the settings
+// screen (a different package) builds one - so without this the marker
+// method's body for that variant never runs under `go test ./internal/uikit/...`.
+func TestGeneralEditVariantsSatisfyTheClosedUnion(t *testing.T) {
+	edits := []GeneralEdit{
+		SetTheme{Name: "dark"},
+		SetMouse{On: true},
+		SetShowReasoning{On: true},
+		SetShowIterationNotices{On: true},
+		SetShowPromptCacheNotices{On: true},
+		SetScrollLines{N: 10},
+		SetApprovalDefault{Mode: "auto"},
+		SetScreenReader{On: true},
+		SetReducedMotion{On: true},
+		SetFullDiskAccess{On: true},
+	}
+	for _, e := range edits {
+		e.isGeneralEdit() // must not panic; the assertion is that this compiles and runs
+	}
+}
+
 // TestSessionSummaryWorktreeBound is the routing-predicate table both the
 // picker dispatch and the typed-/resume router build on. Every arm matters:
 // a drifted copy of this predicate is how legacy instance-less rows were
