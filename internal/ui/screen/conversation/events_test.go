@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -98,5 +100,53 @@ func TestObserveToolStart_DuplicateEmissionDoesNotStrayFromTheGroup(t *testing.T
 		if a.ID == "call_b8875f23faac7c36" {
 			t.Errorf("stray row for the raw call id leaked into the panel: %+v", a)
 		}
+	}
+}
+
+// TestSendWhileCompactingRefreshesAnOpenQueueOverlay covers send()'s
+// queueOverlay.SetItems call inside the compaction-queue branch: with the
+// overlay already open, a newly queued message must appear in it
+// immediately, not only the next time the overlay is opened.
+func TestSendWhileCompactingRefreshesAnOpenQueueOverlay(t *testing.T) {
+	s := sized(t, 2)
+	s.compaction = compactionTestHandle{events: make(chan ports.CompactionEvent)}
+	s = typeText(t, s, "queued while compacting")
+	s = s.openQueue()
+	if !s.queueOverlay.Active() {
+		t.Fatal("precondition: queue overlay must be active")
+	}
+
+	next, _ := s.send()
+	got := next.(Screen)
+
+	found := false
+	for _, item := range got.queueOverlay.Items() {
+		if strings.Contains(item, "queued while compacting") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("open queue overlay was not refreshed with the newly queued message: %+v", got.queueOverlay.Items())
+	}
+}
+
+// TestRecordBlackboardToolIntoGenericMessageAndSendMessage covers the two
+// AddMessage call sites recordBlackboardToolInto never reached before: the
+// post_message "generic message" branch (kind != "finding") and the
+// send_message case.
+func TestRecordBlackboardToolIntoGenericMessageAndSendMessage(t *testing.T) {
+	var bb blackboard.Model
+	recordBlackboardToolInto(&bb, "post_message", map[string]any{
+		"kind": "status", "body": "build started", "to_role": "reviewer",
+	})
+	if bb.MessagesCount() != 1 {
+		t.Fatalf("post_message generic-message branch: MessagesCount() = %d, want 1", bb.MessagesCount())
+	}
+
+	recordBlackboardToolInto(&bb, "send_message", map[string]any{
+		"Recipient": "orchestrator", "Message": "status update",
+	})
+	if bb.MessagesCount() != 2 {
+		t.Fatalf("send_message branch: MessagesCount() = %d, want 2", bb.MessagesCount())
 	}
 }
