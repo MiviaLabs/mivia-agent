@@ -236,6 +236,16 @@ func TestSetUserFullDiskAccessRefusesCwdAsWorkspace(t *testing.T) {
 	}
 }
 
+func TestFullDiskAccessWithNoResolvableHomeDirectory(t *testing.T) {
+	t.Setenv("HOME", "")
+	if got := UserFullDiskAccessForWorkspace(""); got != false {
+		t.Fatalf("UserFullDiskAccessForWorkspace with no HOME = %v, want false (fail-closed)", got)
+	}
+	if err := SetUserFullDiskAccess("", true); err == nil {
+		t.Fatal("SetUserFullDiskAccess accepted a call with no resolvable home directory")
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
 }
