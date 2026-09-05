@@ -310,3 +310,13 @@ func TestStatusLineSafetyPillsAndTelemetry(t *testing.T) {
 		t.Errorf("got %q, want [AUTO] pill in ASCII mode", gotAuto)
 	}
 }
+
+func TestMarkViewAndMarkGlyphDelegateToTheMark(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	if got := m.MarkView(); got != m.Mark().View() {
+		t.Errorf("MarkView() = %q, want it to match Mark().View() = %q", got, m.Mark().View())
+	}
+	if got := m.MarkGlyph(); got != m.Mark().Glyph() {
+		t.Errorf("MarkGlyph() = %q, want it to match Mark().Glyph() = %q", got, m.Mark().Glyph())
+	}
+}
