@@ -46,6 +46,8 @@ func (s workflowBusProgressSink) Emit(e controller.ProgressEvent) {
 // completed kinds with the cause in Detail.
 func workflowProgressKind(k controller.ProgressKind) events.Kind {
 	switch k {
+	case controller.ProgressRunStarted:
+		return events.KindWorkflowRunStarted
 	case controller.ProgressStepStarted:
 		return events.KindWorkflowStepStarted
 	case controller.ProgressStepCompleted:
@@ -61,6 +63,15 @@ func workflowProgressKind(k controller.ProgressKind) events.Kind {
 	case controller.ProgressRunFailed:
 		return events.KindWorkflowRunFinished
 	case controller.ProgressPanelRefused:
+		return events.KindWorkflowStepCompleted
+	case controller.ProgressPanelMemberFailed:
+		// A panel member that failed under allow_partial is a state change
+		// the operator may need to act on: the panel synthesizes from fewer
+		// reviewers than the workflow declares, and the step still settles
+		// succeeded. Reusing the completed kind with the cause in Detail is
+		// the ProgressPanelRefused precedent. Falling through to the default
+		// below sent it as a heartbeat, which the TUI notice bridge silences
+		// by design - so a degraded review reached the operator as nothing.
 		return events.KindWorkflowStepCompleted
 	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused, controller.ProgressChunkScopeDropped:
 		return events.KindWorkflowDeliveryStage

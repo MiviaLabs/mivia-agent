@@ -280,6 +280,17 @@ func (e *sessionWorkflowEngine) LaunchStartedWorkflow(ctx context.Context, prepa
 	releaseExecution := finishExecution
 	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() { built.Dispatcher.Close(); prepared.CloseFn() }}
 	e.mu.Unlock()
+	// Say the run started before the goroutine does anything slow. Until
+	// this existed, events.KindWorkflowRunStarted had no producer at all: the
+	// notice policy rendered a line nothing could emit, and the whole window
+	// between admission and the first step attempt - the window in which a
+	// run that never gets going stays stuck - reported nothing to anyone.
+	if sink := e.workflowProgressSink(); sink != nil {
+		sink.Emit(controller.ProgressEvent{
+			Kind: controller.ProgressRunStarted, RunID: runID,
+			Detail: workflow, Timestamp: time.Now(),
+		})
+	}
 	go func() {
 		SessionAutoDeliveryRepairLoopFunc(runCtx, prepared.Repo, prepared.Root, prepared.Res, prepared.Store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return controller.RunWithCancelReconciliationRetry(ctx, built.Controller.Run)
