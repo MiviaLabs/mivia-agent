@@ -68,3 +68,34 @@ func TestIsolateHomeCleanupIsIdempotent(t *testing.T) {
 	cleanup()
 	cleanup()
 }
+
+// TestHomeIsolatedTracksIsolation proves the assertion packages use to pin
+// their own hermeticity actually distinguishes the two states. Without this,
+// a package could "assert isolation" against a predicate that is always true
+// and learn nothing.
+func TestHomeIsolatedTracksIsolation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if HomeIsolated() {
+		t.Fatal("HomeIsolated() = true for an ordinary temp dir, want false")
+	}
+	cleanup, err := IsolateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HomeIsolated() {
+		t.Fatalf("HomeIsolated() = false inside IsolateHome, HOME = %q", os.Getenv("HOME"))
+	}
+	cleanup()
+	if HomeIsolated() {
+		t.Fatal("HomeIsolated() = true after cleanup restored the real home")
+	}
+}
+
+// TestHomeIsolatedFalseWithoutHome pins the unset/empty case: an absent HOME
+// means the OS resolver decides, which is the developer's real home.
+func TestHomeIsolatedFalseWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if HomeIsolated() {
+		t.Fatal("HomeIsolated() = true with an empty HOME")
+	}
+}

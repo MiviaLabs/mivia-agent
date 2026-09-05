@@ -29,6 +29,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -38,9 +39,28 @@ import (
 
 func TestMain(m *testing.M) {
 	gittest.DisableDetachedMaintenance()
+	// Isolate the home directory before anything resolves configuration.
+	// config.Load merges the USER-level [mcp] table (LoadTrustedMCPConfig
+	// reads config.UserConfigPath) into every resolved config, even behind an
+	// explicit ConfigPath - so on a developer machine with MCP servers
+	// configured, every fixture here got res.MCP.Enabled = true while its
+	// ledger rows pinned no digest, and validateWorkflowMCPConfigDigest
+	// correctly refused 19 resumes. The suite also writes through
+	// workspace.GlobalContextStorePath. See internal/testenv, and
+	// home_isolation_test.go for the assertion that keeps this call here.
+	restoreHome, err := testenv.IsolateHome()
+	if err != nil {
+		// Continuing unprotected would both write into the real home and
+		// let ambient configuration decide test outcomes.
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		os.Exit(1)
+	}
 	wireTestSeams()
 	cliagents.WireWorkflowToolOptionsVar = WireWorkflowToolOptions
-	os.Exit(m.Run())
+	// os.Exit skips deferred calls, so restore explicitly before exiting.
+	code := m.Run()
+	restoreHome()
+	os.Exit(code)
 }
 
 // wireTestSeams installs every cli-backed seam default that does not need
