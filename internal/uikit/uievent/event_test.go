@@ -20,6 +20,7 @@ func TestAllBodyTypesSatisfyBody(t *testing.T) {
 		ToolEndBody{},
 		PlanBody{},
 		NoticeBody{},
+		WorkflowStatusBody{},
 		HookBody{},
 		UsageBody{},
 		ErrorBody{},
