@@ -100,3 +100,12 @@ func TestWithMCPServerToolsAlwaysCoreDoesNotMutateTheConfiguredCoreSlice(t *test
 		t.Fatalf("backing = %v, the original core slice must not be mutated", backing)
 	}
 }
+
+// TestIdentityMCPServerScopeWithNoAgentAndNoConfig covers the root-identity,
+// nil-config fallback: no test elsewhere calls identityMCPServerScope with
+// both selected and res nil.
+func TestIdentityMCPServerScopeWithNoAgentAndNoConfig(t *testing.T) {
+	if got := identityMCPServerScope(nil, nil); got != nil {
+		t.Fatalf("identityMCPServerScope(nil, nil) = %v, want nil", got)
+	}
+}
