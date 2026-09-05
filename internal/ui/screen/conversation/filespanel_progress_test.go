@@ -410,3 +410,20 @@ func TestObserveAgentHistory_UpdatesRunningAgent(t *testing.T) {
 		t.Errorf("status = %q, want completed", p.agents[0].Status)
 	}
 }
+
+// TestSubagentMarkEveryStatusBranch covers subagentMark's remaining status
+// cases: "running" and "stalled" already have dedicated coverage elsewhere
+// (agent_stall_test.go, TestObserveAgentHistory_...), but "thinking", every
+// name in the failed/error/interrupted/timed_out group, "cancelled"/
+// "canceled", and the default (unknown status) case were never exercised.
+func TestSubagentMarkEveryStatusBranch(t *testing.T) {
+	s := newTestScreen(t)
+	for _, status := range []string{
+		"thinking", "failed", "error", "interrupted", "timed_out",
+		"completed", "done", "cancelled", "canceled", "unknown-status",
+	} {
+		if got := s.subagentMark(status); got == "" {
+			t.Errorf("subagentMark(%q) = empty string, want a rendered glyph", status)
+		}
+	}
+}
