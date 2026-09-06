@@ -7,15 +7,13 @@ package uiadapter
 import (
 	"sync"
 	"testing"
-
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 )
 
 // withRouteRegistrar installs reg for one test and restores whatever was
 // there before. The var is package-level process state, so every test that
 // touches it must restore it; no test here may run in parallel with
 // another that does.
-func withRouteRegistrar(t *testing.T, reg func(sink func(coordinator.Coordinator, string, string, string))) {
+func withRouteRegistrar(t *testing.T, reg func(sink func(SubagentTaskCoordinator, string, string, string))) {
 	t.Helper()
 	prev := SubagentTaskRouteRegistrar
 	SubagentTaskRouteRegistrar = reg
@@ -28,8 +26,8 @@ func withRouteRegistrar(t *testing.T, reg func(sink func(coordinator.Coordinator
 // pushed through it resolves for CancelSubagentTask.
 func TestNewSubagentThreads_HandsItsRouteSinkToTheRegistrar(t *testing.T) {
 	var mu sync.Mutex
-	var sink func(coordinator.Coordinator, string, string, string)
-	withRouteRegistrar(t, func(s func(coordinator.Coordinator, string, string, string)) {
+	var sink func(SubagentTaskCoordinator, string, string, string)
+	withRouteRegistrar(t, func(s func(SubagentTaskCoordinator, string, string, string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		sink = s

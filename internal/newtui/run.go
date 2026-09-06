@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -32,8 +33,16 @@ func registerSubagentProgress() {
 	// publishes its (coordinator, runID, taskID) identities into, and what
 	// Screen.cancelSelectedSubagentTask (and the thread dialog's
 	// per-tool-call cancel) resolve the highlighted row through. Set before
-	// buildApp, which is where NewSubagentThreads actually runs.
-	uiadapter.SubagentTaskRouteRegistrar = cli.SetSubagentTaskRouteSink
+	// buildApp, which is where NewSubagentThreads actually runs. The
+	// adapter narrows each published coordinator.Coordinator to the
+	// SubagentTaskCoordinator subset the route table stores, because the
+	// dispatch side's sink type is not assignable to the UI-side one
+	// directly (func parameter types must match exactly).
+	uiadapter.SubagentTaskRouteRegistrar = func(sink func(coord uiadapter.SubagentTaskCoordinator, callID, runID, taskID string)) {
+		cli.SetSubagentTaskRouteSink(func(coord coordinator.Coordinator, callID, runID, taskID string) {
+			sink(coord, callID, runID, taskID)
+		})
+	}
 }
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.
