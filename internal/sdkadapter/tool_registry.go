@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
@@ -249,20 +250,22 @@ func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry
 // unadmitted) run first; if those pass, the approval gate runs
 // before the inner CLI tool. Layering order matters - a staged
 // tool never reaches the approval gate.
-// regOpts (for example sdktools.WithDefaultRunTimeout) are forwarded
-// verbatim to the SDK's New, so the registry-wide run-timeout backstop
-// is the caller's choice rather than the SDK's hardcoded default.
-func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates, regOpts ...sdktools.Option) (*sdktools.Registry, error) {
+// regOpts (the registry-wide run-timeout backstop) are forwarded to
+// each converted tool's ExecutionProfile, because the SDK's New no
+// longer takes registry options: a no-profile tool is bounded at the
+// caller's chosen value instead of the SDK's hardcoded DefaultRunTimeout,
+// and the caller's choice rather than the SDK's default governs.
+func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates, runTimeout ...time.Duration) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
 	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
 		!NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
-		return ConvertToolRegistry(cliReg, regOpts...)
+		return ConvertToolRegistry(cliReg, runTimeout...)
 	}
-	sdkReg := sdktools.New(regOpts...)
+	sdkReg := sdktools.New()
 	for _, t := range cliReg.List() {
-		inner, err := newSDKToolAdapter(t)
+		inner, err := newSDKToolAdapter(t, firstRunTimeout(runTimeout))
 		if err != nil {
 			return nil, err
 		}
@@ -279,8 +282,9 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 // arguments the CLI's Execute expects, and wraps the CLI's string
 // result in the SDK's Out.
 type sdkToolAdapter struct {
-	cli    tools.Tool
-	schema []byte
+	cli        tools.Tool
+	schema     []byte
+	runTimeout time.Duration
 }
 
 // Compile-time assertions: the adapter satisfies the SDK interfaces.
@@ -297,11 +301,22 @@ var _ sdktools.ProfiledTool = (*sdkToolAdapter)(nil)
 // registry-wide default (from CLI config) applies. The nil args
 // mirror capableToolBridge: the SDK interface is static, so the
 // bridge reads the zero-payload capability shape.
+// runTimeout applies only to tools whose resolved profile Timeout is
+// zero ("undeclared"): a positive value is the registry-wide bound, a
+// negative value maps to the SDK's TimeoutNone (never cap), and zero
+// leaves the tool undeclared so the SDK's own DefaultRunTimeout (10
+// minutes) applies. The SDK no longer takes a registry-wide option
+// (tools.New lost its functional options), so the bound rides each
+// tool's ExecutionProfile instead.
 func (s *sdkToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
+	p := sdktools.ExecutionProfile{}
 	if capable, ok := s.cli.(tools.CapableTool); ok {
-		return CapabilityToExecutionProfile(capable.Capability(nil))
+		p = CapabilityToExecutionProfile(capable.Capability(nil))
 	}
-	return sdktools.ExecutionProfile{}
+	if p.Timeout == 0 {
+		p.Timeout = s.runTimeout
+	}
+	return p
 }
 
 // newSDKToolAdapter wraps one CLI tool, publishing its parameter
@@ -320,15 +335,15 @@ func (s *sdkToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
 // The returned value satisfies sdktools.SchemaTool too, so a caller can use
 // it for both fields of a dispatcher shim.
 func ConvertTool(t tools.Tool) (*sdkToolAdapter, error) {
-	return newSDKToolAdapter(t)
+	return newSDKToolAdapter(t, 0)
 }
 
-func newSDKToolAdapter(t tools.Tool) (*sdkToolAdapter, error) {
+func newSDKToolAdapter(t tools.Tool, runTimeout time.Duration) (*sdkToolAdapter, error) {
 	schema, err := json.Marshal(t.Parameters())
 	if err != nil {
 		return nil, fmt.Errorf("sdkadapter: tool %q: marshal parameters: %w", t.Name(), err)
 	}
-	return &sdkToolAdapter{cli: t, schema: relaxTopLevelAdditionalProperties(schema)}, nil
+	return &sdkToolAdapter{cli: t, schema: relaxTopLevelAdditionalProperties(schema), runTimeout: runTimeout}, nil
 }
 
 // relaxTopLevelAdditionalProperties strips a top-level
@@ -401,19 +416,20 @@ func (s *sdkToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 // errors (blank name, duplicate name) wrap with the offending tool's
 // name so the operator can find the duplicate.
 //
-// regOpts (for example sdktools.WithDefaultRunTimeout) are forwarded
-// verbatim to the SDK's New. Without an explicit run-timeout option the
-// SDK bounds every no-profile tool at its hardcoded DefaultRunTimeout
-// (10 minutes); callers that arm their own per-call deadlines pass
-// sdktools.WithDefaultRunTimeout(sdktools.TimeoutNone) to keep the SDK
-// backstop from being tighter than their declared budgets.
-func ConvertToolRegistry(cliReg *tools.Registry, regOpts ...sdktools.Option) (*sdktools.Registry, error) {
+// runTimeout (the registry-wide run-timeout backstop) reaches the SDK
+// through each converted tool's ExecutionProfile, because the SDK's New
+// no longer takes registry options. Without an explicit run-timeout
+// value the SDK bounds every no-profile tool at its hardcoded
+// DefaultRunTimeout (10 minutes); callers that arm their own per-call
+// deadlines pass sdktools.TimeoutNone to keep the SDK backstop from
+// being tighter than their declared budgets.
+func ConvertToolRegistry(cliReg *tools.Registry, runTimeout ...time.Duration) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
-	sdkReg := sdktools.New(regOpts...)
+	sdkReg := sdktools.New()
 	for _, t := range cliReg.List() {
-		wrapped, err := newSDKToolAdapter(t)
+		wrapped, err := newSDKToolAdapter(t, firstRunTimeout(runTimeout))
 		if err != nil {
 			return nil, err
 		}
@@ -422,4 +438,13 @@ func ConvertToolRegistry(cliReg *tools.Registry, regOpts ...sdktools.Option) (*s
 		}
 	}
 	return sdkReg, nil
+}
+
+// firstRunTimeout resolves the optional run-timeout override: absent
+// or empty means "no override", so the SDK's DefaultRunTimeout governs.
+func firstRunTimeout(runTimeout []time.Duration) time.Duration {
+	if len(runTimeout) == 0 {
+		return 0
+	}
+	return runTimeout[0]
 }

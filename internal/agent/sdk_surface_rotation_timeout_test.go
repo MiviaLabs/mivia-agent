@@ -29,7 +29,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -40,17 +39,19 @@ import (
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
-// registryDefaultRunTimeout reads the SDK registry's unexported
-// configured default via reflection. The SDK exports no accessor; the
-// numeric read (Value.Int) is legal on an unexported field, unlike
-// Interface().
+// registryDefaultRunTimeout reads the rotated registry's effective
+// run-timeout backstop from a profile-less tool's OUTERMOST registered
+// value. The SDK no longer carries a registry-wide defaultRunTimeout
+// field (tools.New lost its functional options), so the backstop now
+// rides each converted tool's ExecutionProfile.Timeout; a profile-less
+// tool is the faithful stand-in for "the registry default".
 func registryDefaultRunTimeout(t *testing.T, reg *sdktools.Registry) time.Duration {
 	t.Helper()
-	rv := reflect.ValueOf(reg).Elem().FieldByName("defaultRunTimeout")
-	if !rv.IsValid() {
-		t.Fatal("sdktools.Registry has no defaultRunTimeout field; update this test to the SDK's current shape")
+	registered, ok := reg.Get("read_file")
+	if !ok {
+		t.Fatal("read_file missing from the rotated registry; update this probe to a profile-less tool")
 	}
-	return time.Duration(rv.Int())
+	return sdktools.ExecutionProfileOf(registered).Timeout
 }
 
 // rotatedSurfaceFixture builds the real seam: turn-start options via

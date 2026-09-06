@@ -235,7 +235,7 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 	if opts.ToolRunTimeout > 0 {
 		runTimeout = opts.ToolRunTimeout
 	}
-	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg, sdktools.WithDefaultRunTimeout(runTimeout))
+	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg, runTimeout)
 	if err != nil {
 		return nil, err
 	}

@@ -65,12 +65,19 @@ func (d *dispatcherShim) Name() string { return d.inner.Name() }
 // A verbatim SDK bound would expire at the same instant and win the
 // race, replacing that envelope with a bare ErrRunTimeout - and a
 // static profile can never see a per-call raise, so it would also
-// kill budgets the shim legitimately extended. An undeclared (zero)
-// Timeout passes through, so the [tools] tool_run_timeout_seconds
-// registry default still backstops profile-less tools.
+// kill budgets the shim legitimately extended.
+//
+// Positivity alone cannot tell a declared budget from the converter's
+// registry-wide run-timeout backstop (the SDK's New no longer takes a
+// registry default, so ConvertToolRegistry publishes that backstop in
+// the adapter's profile for tools with no declared Timeout). The
+// decision therefore consults the CLI tool directly: only a declared
+// CLI Capability.Timeout is suppressed; a profile-less tool keeps the
+// inner value, so the [tools] tool_run_timeout_seconds backstop (or
+// TimeoutNone when unset) still governs it.
 func (d *dispatcherShim) ExecutionProfile() sdktools.ExecutionProfile {
 	p := sdktools.ExecutionProfileOf(d.inner)
-	if p.Timeout > 0 {
+	if capable, ok := d.cli.(tools.CapableTool); ok && capable.Capability(nil).Timeout > 0 {
 		p.Timeout = sdktools.TimeoutNone
 	}
 	return p

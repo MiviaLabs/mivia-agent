@@ -127,7 +127,7 @@ func TestConvertedRegistryToolWithoutCapabilityReportsZeroTimeout(t *testing.T) 
 func TestConvertToolRegistryForwardsRunTimeoutOption(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&blockingCLITool{name: "slow_tool", block: 2 * time.Second})
-	sdkReg, err := ConvertToolRegistry(reg, sdktools.WithDefaultRunTimeout(150*time.Millisecond))
+	sdkReg, err := ConvertToolRegistry(reg, 150*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestConvertToolRegistryForwardsRunTimeoutOption(t *testing.T) {
 func TestConvertToolRegistryTimeoutNoneUncaps(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&blockingCLITool{name: "slow_tool", block: 300 * time.Millisecond})
-	sdkReg, err := ConvertToolRegistry(reg, sdktools.WithDefaultRunTimeout(sdktools.TimeoutNone))
+	sdkReg, err := ConvertToolRegistry(reg, sdktools.TimeoutNone)
 	if err != nil {
 		t.Fatal(err)
 	}
