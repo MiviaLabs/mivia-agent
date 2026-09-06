@@ -62,8 +62,8 @@ func executeWorkflowCleanup(runID, root, configPath string, stdout, stderr io.Wr
 	// remove and the branch delete. Cleanup used to run unlocked, so it could
 	// interleave with `mivia worktree remove` or a live workflow admission on
 	// the same name.
-	if lock, lockErr := vcs.LockWorktreeLifecycle(mainRoot, name); lockErr == nil {
-		defer lock.Close()
+	if release, held := lockCleanupWorktree(mainRoot, name); held {
+		defer release()
 	}
 	existing, err := workflowCleanupResolve(ctx, mainRoot, name)
 	if err != nil {
