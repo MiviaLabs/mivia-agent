@@ -70,6 +70,67 @@ func TestMarkdownSourceScansProtocolMemory(t *testing.T) {
 	}
 }
 
+func TestMarkdownSourceDefaultsProjectMemoryWithoutScope(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("---\nid: no_scope\ntitle: No scope\nsummary: Keep this fact.\nimportance: high\ntags: [ops]\n---\n\nBody.\n")
+	if err := os.WriteFile(filepath.Join(dir, "no-scope.md"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs, err := source.Scan(context.Background(), ScopeProject)
+	if err != nil {
+		t.Fatalf("Scan rejected a project memory without a scope field: %v", err)
+	}
+	if len(docs) != 1 || docs[0].Entry.Scope != ScopeProject {
+		t.Fatalf("docs = %#v, want one project-scoped document", docs)
+	}
+}
+
+func TestMarkdownSourceRejectsMissingScopeInOrgDirectory(t *testing.T) {
+	root := t.TempDir()
+	org := filepath.Join(t.TempDir(), "org")
+	source, err := NewMarkdownSource(root, org, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(org, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("---\nid: no_scope\ntitle: No scope\nsummary: Keep this fact.\n---\n\nBody.\n")
+	if err := os.WriteFile(filepath.Join(org, "no-scope.md"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Scan(context.Background(), ScopeOrg); err == nil {
+		t.Fatal("Scan accepted an org memory without a scope field")
+	}
+}
+
+func TestMarkdownSourceRejectsScopeMismatch(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("---\nid: org_in_project\ntitle: Org in project\nscope: org\nsummary: Keep this fact.\n---\n\nBody.\n")
+	if err := os.WriteFile(filepath.Join(dir, "org-in-project.md"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Scan(context.Background(), ScopeProject); err == nil {
+		t.Fatal("Scan accepted a project-directory memory that declares org scope")
+	}
+}
+
 func TestMarkdownSourceSeparatesProjectAndOrgFiles(t *testing.T) {
 	project, org := t.TempDir(), filepath.Join(t.TempDir(), "org-memories")
 	source, err := NewMarkdownSource(project, org, "acme")

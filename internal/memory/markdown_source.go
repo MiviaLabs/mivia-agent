@@ -136,6 +136,11 @@ func (s MarkdownSource) Scan(ctx context.Context, scope Scope) ([]MarkdownDocume
 				docs = append(docs, doc)
 				continue
 			}
+			// A memory under the project directory is project-scoped by
+			// definition, so an omitted scope field is not an error there.
+			if scope == ScopeProject {
+				e.Scope = ScopeProject
+			}
 		}
 		if e.Scope != scope {
 			return nil, fmt.Errorf("memory %s declares scope %q, want %q", path, e.Scope, scope)
