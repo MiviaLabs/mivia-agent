@@ -55,7 +55,7 @@ func TestLoadWithoutAutoBootstrapLeavesConfigMissing(t *testing.T) {
 	isolateHomeAndConfigEnv(t)
 
 	_, err := Load(LoadOptions{AllowMissingConfig: true})
-	if err == nil || !strings.Contains(err.Error(), "models must be non-empty") {
+	if err == nil || !strings.Contains(err.Error(), "is not configured") {
 		t.Fatalf("err = %v, want the no-provider-configured error", err)
 	}
 	if _, statErr := os.Stat(UserConfigPath()); !os.IsNotExist(statErr) {

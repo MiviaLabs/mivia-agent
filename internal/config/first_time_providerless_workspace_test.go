@@ -133,7 +133,7 @@ func TestNoBootstrapNonChatCallerKeepsLegacyError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected the legacy provider error without AutoBootstrapUserConfig")
 	}
-	if !strings.Contains(err.Error(), "models must be non-empty") {
+	if !strings.Contains(err.Error(), "is not configured") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

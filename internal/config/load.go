@@ -370,7 +370,10 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, strin
 	if !ok {
 		return "", ProviderConfig{}, "", fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
 	}
-	pc := file.Providers[name]
+	pc, ok := file.Providers[name]
+	if !ok {
+		return "", ProviderConfig{}, "", fmt.Errorf("provider %q is not configured: no [providers.%s] section in the active config (declare it there or in ~/.mivia/mivia.toml; run 'mivia setup')", name, name)
+	}
 	if len(pc.Models) == 0 {
 		return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: models must be non-empty", name)
 	}
@@ -598,6 +601,15 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 		if err := decodeConfigInto(overlayData, overlayPath, &file); err != nil {
 			return File{}, path, false, err
 		}
+	}
+
+	// mergeProviderFallback layers ~/.mivia/mivia.toml's [provider]/
+	// [providers.*] underneath whatever the base config (+ workspace overlay
+	// above) already declared, so the user-level catalog/credentials remain
+	// available even when an explicit --config/$MIVIA_CONFIG or a provider-
+	// less workspace file was selected as the base. See its own doc comment.
+	if err := mergeProviderFallback(&file, path); err != nil {
+		return File{}, path, false, err
 	}
 
 	// [verifiers] deliberately does NOT layer: evidence-gate profiles are the
