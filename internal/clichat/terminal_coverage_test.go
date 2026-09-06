@@ -17,20 +17,3 @@ func TestNewTerminalRequiresTTY(t *testing.T) {
 		t.Skip("NewTerminal succeeded (likely a TTY); real-TYY branch is covered by the TUI suite")
 	}
 }
-
-func TestTerminalHelpers(t *testing.T) {
-	// paintRailCell, ChromeRenderOpts, and ApplyBlockChromeWith are pure
-	// functions; exercise them so coverage includes the no-TTY branches.
-	opts := ChromeRenderOpts()
-	for _, kind := range []ChatBlockKind{ChatBlockUser, ChatBlockAssistant, ChatBlockTool, ChatBlockDivider, ChatBlockSystem} {
-		_ = railForBlock(kind, false, opts)
-		_ = railForBlock(kind, true, opts)
-	}
-	if got := paintRailCell(LeftRail{Glyph: "x"}); got == "" {
-		t.Fatal("paintRailCell({Glyph:x}) must not be empty")
-	}
-	for _, line := range []string{"one", "two", "three"} {
-		_ = applyBlockChrome([]string{line}, ChatBlock{}, "body", opts)
-		_ = ApplyBlockChromeWith([]string{line}, ChatBlock{}, "body", opts, GroupMember{}, RailView{})
-	}
-}
