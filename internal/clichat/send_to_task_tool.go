@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
@@ -151,7 +150,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
-	delivered, err := record.GetCoordinator().(coordinator.Coordinator).SendToTask(ctx, record.GetHandle(), targetID, msg)
+	delivered, err := record.GetCoordinator().(chatCoordinator).SendToTask(ctx, record.GetHandle(), targetID, msg)
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +196,7 @@ func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record cliorchest
 			results[taskID] = perTaskResult{Error: err.Error()}
 			continue
 		}
-		delivered, err := record.GetCoordinator().(coordinator.Coordinator).SendToTask(ctx, record.GetHandle(), targetID, msg)
+		delivered, err := record.GetCoordinator().(chatCoordinator).SendToTask(ctx, record.GetHandle(), targetID, msg)
 		if err != nil {
 			results[taskID] = perTaskResult{Error: err.Error()}
 			continue
