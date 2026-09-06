@@ -14,9 +14,12 @@ import (
 	"strings"
 )
 
-// fakeCoordinatorForResume implements coordinator.Coordinator for testing.
+// fakeCoordinatorForResume implements the coordinator surface the resume
+// paths touch for testing. The embedded cliorchestrate.OrchestrationCoordinator
+// fills the members these tests never call; only the overrides below carry
+// behavior.
 type fakeCoordinatorForResume struct {
-	coordinator.Coordinator
+	cliorchestrate.OrchestrationCoordinator
 	resumeFunc      func(ctx context.Context, runID string) (*coordinator.RunHandle, error)
 	listInterrupted func(ctx context.Context) ([]coordinator.RecoveredRun, error)
 	subscribeFn     func(fn coordinator.LifecycleSubscriber) func()
