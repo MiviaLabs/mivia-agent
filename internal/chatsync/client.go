@@ -131,11 +131,21 @@ func (e *BadRequestError) Is(target error) bool {
 // The check is on the message because the API returns no machine-readable code
 // for it - the live guard probe pins only that the message names the sequence
 // (internal/chatsync/live_guards_test.go, "a forward sequence gap is
-// rejected"). It is deliberately a NECESSARY, not a sufficient, condition: the
-// caller must still re-read the session and confirm the server's mark actually
-// moves the batch, because a message match alone would rebase on a client bug.
+// rejected"). It matches both recoverable shapes: the gap wording
+// ("sequence gap: ...") and the in-batch wording ("Non-contiguous batch:
+// events[1] has seq 2494, expected 2493"). Schema-validation messages name no
+// sequence and stay poison.
+//
+// It is deliberately a NECESSARY, not a sufficient, condition: the caller must
+// still re-read the session and confirm the server's mark actually moves the
+// batch, because a message match alone would rebase on a client bug. The
+// bounded-fork tradeoff stands: one rebase at an unmoved mark is followed by
+// the loop guard, so a complaint that no rebase can fix forks at most
+// maxNoProgressRecoveries times before sync stops.
 func (e *BadRequestError) IsSequenceComplaint() bool {
-	return strings.Contains(strings.ToLower(e.Message), "sequence")
+	lower := strings.ToLower(e.Message)
+	return strings.Contains(lower, "sequence") ||
+		strings.Contains(lower, "non-contiguous batch")
 }
 
 // CreateSessionParams defines the request payload for registering a new chat session.
@@ -416,7 +426,7 @@ func (c *Client) buildRequest(ctx context.Context, method, path string, reqBody 
 func (c *Client) AuthLost() bool { return c.authLost.Load() }
 
 func parseErrorResponse(resp *http.Response) error {
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, readErr := io.ReadAll(resp.Body)
 	var errEnv ErrorEnvelope
 	_ = json.Unmarshal(respBytes, &errEnv)
 
@@ -425,7 +435,7 @@ func parseErrorResponse(resp *http.Response) error {
 		msg = errEnv.Error
 	}
 	if msg == "" {
-		msg = string(respBytes)
+		msg = errorBodySnippet(respBytes, readErr)
 	}
 
 	switch resp.StatusCode {

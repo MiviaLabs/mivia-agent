@@ -22,7 +22,9 @@ const noGapBase = int64(-1)
 //
 // A non-sequence 400 reaching here is poison; flushNow already routes it
 // through classifyFlushError's outcomeStop, so this branch is the guard for
-// a direct caller. An oversize 400 and every other 400 are poison. The body
+// a direct caller. The recoverable shapes are the two sequence complaints -
+// "sequence gap" and "Non-contiguous batch" - and everything else, including
+// an oversize 400, is poison. The body
 // is already durable in the outbox and byte-identical on every replay, so a
 // retry resubmits a
 // request the server has already judged malformed, on the flush ticker, for as
