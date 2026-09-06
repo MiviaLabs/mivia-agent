@@ -545,3 +545,74 @@ func TestCoordinator_ValidateTasksRejectsDuplicateID(t *testing.T) {
 		t.Fatal("expected error for duplicate task ID")
 	}
 }
+
+type blockingGetRunRepo struct {
+	ledger.LedgerRepository
+	getRunStarted chan struct{}
+	getRunBlock   chan struct{}
+}
+
+func (b *blockingGetRunRepo) GetRun(ctx context.Context, runID string) (ledger.RunSnapshot, error) {
+	select {
+	case b.getRunStarted <- struct{}{}:
+	default:
+	}
+	select {
+	case <-b.getRunBlock:
+	case <-ctx.Done():
+		return ledger.RunSnapshot{}, ctx.Err()
+	}
+	return b.LedgerRepository.GetRun(ctx, runID)
+}
+
+func TestCoordinator_SlowGetRunDoesNotBlockRLockReader(t *testing.T) {
+	memRepo := ledger.NewMemoryLedgerRepository()
+	blockRepo := &blockingGetRunRepo{
+		LedgerRepository: memRepo,
+		getRunStarted:    make(chan struct{}, 1),
+		getRunBlock:      make(chan struct{}),
+	}
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	c := New(blockRepo, p)
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "test"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait until DAG execution reaches GetRun and enters it
+	select {
+	case <-blockRepo.getRunStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for GetRun to be called")
+	}
+
+	// While GetRun is blocking in repo, concurrent RLock reader must not stall
+	rlockDone := make(chan bool, 1)
+	go func() {
+		rlockDone <- h.LocalActor()
+	}()
+
+	select {
+	case val := <-rlockDone:
+		if !val {
+			t.Fatal("expected LocalActor to be true")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("RLock reader blocked while repo.GetRun was in flight")
+	}
+
+	// Unblock repo GetRun and complete the run
+	close(blockRepo.getRunBlock)
+	res, err := c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatalf("join failed: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res.Results))
+	}
+}
