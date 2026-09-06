@@ -56,7 +56,7 @@ func humanDeliveryWorkflow(t *testing.T, withDelivery bool) *definition.Compiled
 	return compiled
 }
 
-func newDeliveryController(t *testing.T, repo workflowledger.Repository, runner AgentStepRunner, withDelivery bool, runID string) *LinearController {
+func newDeliveryController(t *testing.T, repo LedgerRepository, runner AgentStepRunner, withDelivery bool, runID string) *LinearController {
 	t.Helper()
 	ctrl, err := NewLinearController(repo, runner, deliveryWorkflow(t, withDelivery), map[string]StepRuntime{
 		"one": {Agent: agents.ResolvedAgent{Name: "worker"}},

@@ -99,7 +99,7 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 // alone discards every task that had already finished - the loss INV-AG-21
 // forbids. The work is in the ledger, so read it back rather than throwing
 // it away.
-func joinFailureFallback(c coordinator.Coordinator, handle *coordinator.RunHandle, isNew bool, err error) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+func joinFailureFallback(c OrchestrationCoordinator, handle *coordinator.RunHandle, isNew bool, err error) (ledger.RunSnapshot, *coordinator.RunResult, error) {
 	if isNew {
 		go cancelOrphanedRun(c, handle)
 	}
@@ -116,7 +116,7 @@ func joinFailureFallback(c coordinator.Coordinator, handle *coordinator.RunHandl
 // own goroutine with its own bounded, Background()-rooted context, since
 // the caller's own context is already dead and RunThroughCoordinator has
 // already returned to a caller that stopped waiting.
-func cancelOrphanedRun(c coordinator.Coordinator, handle *coordinator.RunHandle) {
+func cancelOrphanedRun(c OrchestrationCoordinator, handle *coordinator.RunHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanedRunCancelTimeout)
 	defer cancel()
 	_ = c.Cancel(ctx, handle)
@@ -223,7 +223,7 @@ func normalizedDispatchWait(mode, taskID string) (string, error) {
 	return normalizedSpawnWait(mode, taskID)
 }
 
-func waitForSpawnResult(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string, initial ledger.RunSnapshot) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+func waitForSpawnResult(ctx context.Context, c OrchestrationCoordinator, handle *coordinator.RunHandle, mode, taskID string, initial ledger.RunSnapshot) (ledger.RunSnapshot, *coordinator.RunResult, error) {
 	if mode == "run" {
 		result, err := c.Join(ctx, handle)
 		if err != nil {
@@ -238,7 +238,7 @@ func waitForSpawnResult(ctx context.Context, c coordinator.Coordinator, handle *
 	return initial, nil, nil
 }
 
-func waitForSpawn(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string) (ledger.RunSnapshot, error) {
+func waitForSpawn(ctx context.Context, c OrchestrationCoordinator, handle *coordinator.RunHandle, mode, taskID string) (ledger.RunSnapshot, error) {
 	if mode == "run" {
 		if _, err := c.Join(ctx, handle); err != nil {
 			return ledger.RunSnapshot{}, fmt.Errorf("wait for run: %w", err)
@@ -363,7 +363,7 @@ func taskSummaries(tasks []ledger.TaskSnapshot) []map[string]any {
 	return out
 }
 
-func waitForTask(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, taskID string) error {
+func waitForTask(ctx context.Context, c OrchestrationCoordinator, handle *coordinator.RunHandle, taskID string) error {
 	for {
 		snap, err := c.Inspect(ctx, handle)
 		if err != nil {

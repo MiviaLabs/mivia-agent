@@ -280,7 +280,7 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 // result budget, halve the page once and rebuild it before returning. Bounded
 // (at most one shrink, never fail-closed on framing); the tool's encodeJSON
 // remains the outer fail-closed guard.
-func (s *Service) inspectWithinBudget(ctx context.Context, repo Repository, runID string, attempt StepAttempt, offset, limit int) (InspectView, error) {
+func (s *Service) inspectWithinBudget(ctx context.Context, repo viewRepository, runID string, attempt StepAttempt, offset, limit int) (InspectView, error) {
 	view, err := buildInspectView(ctx, repo, runID, attempt, offset, limit)
 	if err != nil {
 		return InspectView{}, err
@@ -395,7 +395,7 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 // active step, or the zero time when the run has no attempts on that step
 // yet or the ledger read fails - a list view degrades to "no heartbeat
 // column" rather than failing the whole listing over one run's read.
-func activeStepHeartbeat(ctx context.Context, repo Repository, runID, activeStepID string) time.Time {
+func activeStepHeartbeat(ctx context.Context, repo viewRepository, runID, activeStepID string) time.Time {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return time.Time{}

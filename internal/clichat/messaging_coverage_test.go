@@ -18,7 +18,7 @@ import (
 // setupPostMessageEnv seeds a live run/task and wires the dispatcher→coord map
 // so postMessageTool.Execute hits the real tool path (not just coordinator APIs).
 func setupPostMessageEnv(t *testing.T, cfg config.SubagentConfig) (
-	*postMessageTool, coordinator.Coordinator, ledger.LedgerRepository, string, string, context.Context,
+	*postMessageTool, *coordinator.Coordinator, ledger.LedgerRepository, string, string, context.Context,
 ) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()

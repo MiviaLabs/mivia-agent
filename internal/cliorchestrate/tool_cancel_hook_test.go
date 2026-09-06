@@ -17,14 +17,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// fakeCancelCoordinator is a minimal coordinator.Coordinator test double
+// fakeCancelCoordinator is a minimal coordinator test double
 // that records RegisterSubagentToolCanceler calls. It embeds a nil
-// coordinator.Coordinator so it satisfies the (large) interface without
+// *coordinator.Coordinator so it satisfies the orchestration interface without
 // implementing every method - any method other than
 // RegisterSubagentToolCanceler panics if called, which ToolCancelReadyHook
 // never does.
 type fakeCancelCoordinator struct {
-	coordinator.Coordinator
+	*coordinator.Coordinator
 
 	mu       sync.Mutex
 	calls    int
@@ -69,7 +69,7 @@ func TestToolCancelReadyHook_NoCoordinatorRegisteredIsNoop(t *testing.T) {
 
 // TestToolCancelReadyHook_WrongTypeInMapIsNoop proves the hook is a clean
 // no-op when d's entry in the coordinators map exists but does not hold a
-// coordinator.Coordinator (a corrupted or foreign value). Isolates the
+// a *coordinator.Coordinator (a corrupted or foreign value). Isolates the
 // `!ok` leg of the type-assertion guard (tool_cancel_hook.go:40): a mutant
 // that drops the `!` would fall through with a nil coord interface and
 // panic on the eventual RegisterSubagentToolCanceler call.

@@ -33,7 +33,7 @@ const LifecycleKindTaskAskDeclined = "task_ask_declined"
 // Ordering is persist-then-announce: content store → AppendEvent → emit.
 // Content is pinned via StoreContent (never reclaimed), so a task_message
 // event's content_ref always resolves (INV-AG-10 pinning decision).
-func (c *coordinator) PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error {
+func (c *Coordinator) PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error {
 	if runID == "" {
 		return fmt.Errorf("post task message: run_id is required")
 	}

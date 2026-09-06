@@ -31,7 +31,7 @@ func retryState(taskID string, states map[string]*RetryState, policy RetryPolicy
 // schema violation, a genuine bug in the task) fails identically on every
 // attempt, so retrying it only spends budget and delays a result the caller
 // could have had immediately.
-func (c *coordinator) shouldRetryTask(h *RunHandle, status string, err error, taskID string, states map[string]*RetryState) bool {
+func (c *Coordinator) shouldRetryTask(h *RunHandle, status string, err error, taskID string, states map[string]*RetryState) bool {
 	if h.policy().IsZero() || h.policy().MaxRetries <= 0 {
 		return false
 	}

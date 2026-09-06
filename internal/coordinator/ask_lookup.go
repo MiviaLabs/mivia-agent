@@ -9,7 +9,7 @@ import (
 // (queued, running, awaiting_input, retry_pending, cancel_requested, …).
 // Queued same-role targets must be found so peer asks deliver via mailbox
 // instead of referral-as-spawn (plan 53.04: parent panel with detached siblings).
-func (c *coordinator) FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error) {
+func (c *Coordinator) FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error) {
 	if role == "" {
 		return "", false, nil
 	}
@@ -29,7 +29,7 @@ func (c *coordinator) FindLiveTaskByRole(ctx context.Context, runID, role string
 }
 
 // HandleForRun returns the active RunHandle for runID, if still registered.
-func (c *coordinator) HandleForRun(runID string) *RunHandle {
+func (c *Coordinator) HandleForRun(runID string) *RunHandle {
 	if runID == "" {
 		return nil
 	}

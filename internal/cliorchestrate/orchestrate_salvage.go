@@ -26,7 +26,7 @@ const salvageReadTimeout = 5 * time.Second
 // handle (isNew=false) belongs to another caller and keeps running there.
 // The handle registered above stays reachable through inspect_agents,
 // join_run, and cancel_run in both cases.
-func salvageUnjoinedRun(c coordinator.Coordinator, handle *coordinator.RunHandle, joinErr error) *coordinator.RunResult {
+func salvageUnjoinedRun(c OrchestrationCoordinator, handle *coordinator.RunHandle, joinErr error) *coordinator.RunResult {
 	if !errors.Is(joinErr, context.DeadlineExceeded) && !errors.Is(joinErr, context.Canceled) {
 		return nil
 	}

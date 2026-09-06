@@ -200,7 +200,7 @@ func steerPingCall() provider.ToolCall {
 // MailboxAccess bundle (drain + interrupt + pending) that applyMailboxAccess
 // turns into the steer watcher wiring. Returns the coordinator, run handle,
 // runID, and taskID.
-func spawnSteerInterruptChild(t *testing.T, comp *steerInterruptCompleter) (coordinator.Coordinator, *coordinator.RunHandle, string, string) {
+func spawnSteerInterruptChild(t *testing.T, comp *steerInterruptCompleter) (*coordinator.Coordinator, *coordinator.RunHandle, string, string) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -231,7 +231,7 @@ func spawnSteerInterruptChild(t *testing.T, comp *steerInterruptCompleter) (coor
 }
 
 // sendSteer enqueues a parent steer via SendToTask and returns delivered.
-func sendSteer(t *testing.T, coord coordinator.Coordinator, handle *coordinator.RunHandle, runID, taskID, id, body string, interrupt bool) bool {
+func sendSteer(t *testing.T, coord *coordinator.Coordinator, handle *coordinator.RunHandle, runID, taskID, id, body string, interrupt bool) bool {
 	t.Helper()
 	msg, err := agentmsg.NewMessage(runID, agentmsg.KindSteer,
 		agentmsg.Party{Role: agentmsg.ParentSentinel},

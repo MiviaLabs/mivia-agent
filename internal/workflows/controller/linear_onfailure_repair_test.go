@@ -66,7 +66,7 @@ func compileOnFailureWorkflow(t *testing.T, loopBack bool) *definition.CompiledW
 	return compiled
 }
 
-func newOnFailureRepairController(t *testing.T, runner AgentStepRunner, wf *definition.CompiledWorkflow, runID string) (*LinearController, workflowledger.Repository) {
+func newOnFailureRepairController(t *testing.T, runner AgentStepRunner, wf *definition.CompiledWorkflow, runID string) (*LinearController, LedgerRepository) {
 	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{

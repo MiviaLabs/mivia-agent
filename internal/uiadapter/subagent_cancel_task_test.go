@@ -19,12 +19,12 @@ func (f invoker) Invoke(ctx context.Context, req runtime.Request) (json.RawMessa
 
 // newTestCoordinatorRun spawns a real coordinator run with one task that
 // blocks on ctx.Done(), returning the coordinator, the run handle, and the
-// task's own ID. A real coordinator.Coordinator (in-memory ledger, no test
-// double for the interface) is used because uiadapter has no existing
+// task's own ID. A real coordinator (in-memory ledger, no test double for
+// the interface) is used because uiadapter has no existing
 // coordinator-faking convention of its own (there is nothing else in this
 // package to follow) and the interface is large enough that a hand-written
 // fake would drift from its real contract.
-func newTestCoordinatorRun(t *testing.T) (coordinator.Coordinator, *coordinator.RunHandle, string, <-chan struct{}) {
+func newTestCoordinatorRun(t *testing.T) (*coordinator.Coordinator, *coordinator.RunHandle, string, <-chan struct{}) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -48,7 +48,7 @@ func newTestCoordinatorRun(t *testing.T) (coordinator.Coordinator, *coordinator.
 
 // TestSubagentThreads_CancelSubagentTask_ForwardsToCoordinator proves
 // CancelSubagentTask resolves a registered callID to its coordinator
-// run/task identity and forwards to coordinator.Coordinator.CancelTask,
+// run/task identity and forwards to SubagentTaskCoordinator.CancelTask,
 // leaving the task canceled in the ledger.
 func TestSubagentThreads_CancelSubagentTask_ForwardsToCoordinator(t *testing.T) {
 	c, h, taskID, started := newTestCoordinatorRun(t)

@@ -42,7 +42,7 @@ func waitCtx(ctx context.Context, d time.Duration) error {
 // DiffRef is this attempt's deterministic diff snapshot. A known PR identity
 // from a previous attempt is carried over so the durable pushed record never
 // ERASES it.
-func pushDeliveryBranch(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, head, treeSHA, diffRef string, existing ledger.DeliveryRecord) error {
+func pushDeliveryBranch(ctx context.Context, repo LedgerRepository, git GitRunner, req Request, key, head, treeSHA, diffRef string, existing ledger.DeliveryRecord) error {
 	// 12. Push the branch to origin, retrying transport-class failures with a
 	// bounded backoff so a transient kill (OOM, network) does not strand the
 	// run at delivery_pending with no automatic recovery.
@@ -112,7 +112,7 @@ func pushDeliveryBranch(ctx context.Context, repo ledger.Repository, git GitRunn
 // TOCTOU: the PR's actual base must still contain the admitted origin base
 // commit. It returns the PR identity for the durable records. title and body
 // are the pre-validated PR metadata from the delivery request.
-func findOrCreateAndVerifyPR(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, originBase string, existing ledger.DeliveryRecord, title, body string) (string, string, error) {
+func findOrCreateAndVerifyPR(ctx context.Context, repo LedgerRepository, git GitRunner, pr PRClient, req Request, key, repoSlug, originBase string, existing ledger.DeliveryRecord, title, body string) (string, string, error) {
 	// 14-15. Find or create the PR (ownership-aware reuse).
 	req.stage("pr", "find or create the pull request")
 	ref, err := findOrCreatePR(ctx, repo, pr, req, key, repoSlug, existing, title, body)

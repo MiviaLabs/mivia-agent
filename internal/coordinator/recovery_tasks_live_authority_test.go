@@ -30,7 +30,7 @@ func TestTasksFromSnapshotsPlainHandlerWithLiveAuthority(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(dispatcher, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
 
 	snaps := []ledger.TaskSnapshot{{
 		RunID: "r1", TaskID: "task-panel", HandlerName: "worker",

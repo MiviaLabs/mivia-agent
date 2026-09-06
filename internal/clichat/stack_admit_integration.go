@@ -22,7 +22,7 @@ func integrationRunInputs(planInputs map[string]string, prBase string) (map[stri
 // other case (not a stacking plan run, single/no_bug, a malformed decompose
 // output, or a lookup failure) - callers must treat a lookup failure as "not
 // applicable", never as a refusal or a false "undriven" diagnostic.
-func stackDecomposedChunks(ctx context.Context, repo workflowledger.Repository, runID string) (chunks int, ok bool) {
+func stackDecomposedChunks(ctx context.Context, repo delivery.LedgerRepository, runID string) (chunks int, ok bool) {
 	return delivery.DecomposedChunks(ctx, repo, runID)
 }
 

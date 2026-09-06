@@ -94,7 +94,7 @@ func (h *RunHandle) waitReferrals() {
 // its terminal referral wait (the DAG finished and waitReferrals settled), the
 // task runs synchronously so its terminal side effects complete before
 // SpawnReferral returns.
-func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error) {
+func (c *Coordinator) SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error) {
 	if runID == "" {
 		return "", fmt.Errorf("spawn referral: run_id required")
 	}
@@ -161,7 +161,7 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 	return taskID, nil
 }
 
-func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx context.Context) {
+func (c *Coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx context.Context) {
 	if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err != nil {
 		_ = c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusFailed))
 		h.MarkTaskMailboxTerminal(task.ID)
@@ -206,7 +206,7 @@ type ReferralSpawnMeta struct {
 // SpawnReferralFromAsk builds a referral task from a persisted ask and starts it.
 // Input is a JSON string prompt (production multi_step/oneshot handlers require
 // string input, not an object). The ask_id is embedded so the target can answer.
-func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message, meta ...ReferralSpawnMeta) (taskID string, err error) {
+func (c *Coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message, meta ...ReferralSpawnMeta) (taskID string, err error) {
 	// Prompt shape matches live inject framing so models see the same ask_id field.
 	prompt := "ask_id: " + ask.ID + "\n" + strings.TrimSpace(ask.Body)
 	if strings.TrimSpace(ask.Body) == "" {
@@ -233,7 +233,7 @@ func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole st
 }
 
 // referralAsk binds spawned task IDs to open ask IDs so a failed referral can CloseAsk.
-func (c *coordinator) bindReferralAsk(taskID, askID string) {
+func (c *Coordinator) bindReferralAsk(taskID, askID string) {
 	if taskID == "" || askID == "" {
 		return
 	}
@@ -243,7 +243,7 @@ func (c *coordinator) bindReferralAsk(taskID, askID string) {
 	reg.mu.Unlock()
 }
 
-func (c *coordinator) takeReferralAsk(taskID string) string {
+func (c *Coordinator) takeReferralAsk(taskID string) string {
 	if c.asks == nil || taskID == "" {
 		return ""
 	}

@@ -15,7 +15,7 @@ import (
 // floorCoordinatorAndSnapshot builds a coordinator whose pool has no timeout
 // ceiling configured and a single non-terminal task snapshot carrying the
 // given persisted Timeout.
-func floorCoordinatorAndSnapshot(t *testing.T, poolTimeout, snapTimeout time.Duration) (Coordinator, ledger.TaskSnapshot) {
+func floorCoordinatorAndSnapshot(t *testing.T, poolTimeout, snapTimeout time.Duration) (*Coordinator, ledger.TaskSnapshot) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -41,7 +41,7 @@ func floorCoordinatorAndSnapshot(t *testing.T, poolTimeout, snapTimeout time.Dur
 // safety floor instead, or the resumed execution would be unbounded.
 func TestTasksFromSnapshotsAppliesTimeoutFloor(t *testing.T) {
 	c, snap := floorCoordinatorAndSnapshot(t, 0, 0)
-	tasks, _, err := c.(*coordinator).tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
+	tasks, _, err := c.tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestTasksFromSnapshotsAppliesTimeoutFloor(t *testing.T) {
 // that already carries a finite budget.
 func TestTasksFromSnapshotsKeepsPositiveTimeout(t *testing.T) {
 	c, snap := floorCoordinatorAndSnapshot(t, 0, 30*time.Second)
-	tasks, _, err := c.(*coordinator).tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
+	tasks, _, err := c.tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestTasksFromSnapshotsKeepsPositiveTimeout(t *testing.T) {
 // pool policy allows must not raise the ceiling.
 func TestTasksFromSnapshotsClampsTimeoutToPoolCeiling(t *testing.T) {
 	c, snap := floorCoordinatorAndSnapshot(t, time.Minute, 2*time.Minute)
-	tasks, _, err := c.(*coordinator).tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
+	tasks, _, err := c.tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
 	if err != nil {
 		t.Fatal(err)
 	}

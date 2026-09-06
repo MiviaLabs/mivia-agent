@@ -531,10 +531,10 @@ func TestHandleSlashSessionsBranches(t *testing.T) {
 	}
 }
 
-// resumeCoordinatorFake implements just enough of coordinator.Coordinator for
+// resumeCoordinatorFake implements the resume subset of the coordinator for
 // the /resume slash paths.
 type resumeCoordinatorFake struct {
-	coordinator.Coordinator
+	chatCoordinator
 }
 
 func (resumeCoordinatorFake) ListInterruptedRuns(ctx context.Context) ([]coordinator.RecoveredRun, error) {

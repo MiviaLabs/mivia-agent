@@ -67,10 +67,10 @@ func TestRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing.T) {
 }
 
 // TestCoordinatorRegisterSubagentToolCanceler_NilReceiverIsNoop isolates
-// the `c == nil` leg of (*coordinator).RegisterSubagentToolCanceler's
-// guard: calling it on a nil *coordinator must not panic.
+// the `c == nil` leg of (*Coordinator).RegisterSubagentToolCanceler's
+// guard: calling it on a nil *Coordinator must not panic.
 func TestCoordinatorRegisterSubagentToolCanceler_NilReceiverIsNoop(t *testing.T) {
-	var c *coordinator
+	var c *Coordinator
 	c.RegisterSubagentToolCanceler("run-1", "task-1", agent.ToolCanceler(validTestCanceler)) // must not panic
 }
 
@@ -88,7 +88,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_NilReceiverIsNoop(t *testing.T)
 // seeded handle, and the registration would land in it instead of being
 // dropped.
 func TestCoordinatorRegisterSubagentToolCanceler_EmptyRunIDIsNoop(t *testing.T) {
-	c := &coordinator{handlesByRun: map[string]*RunHandle{}}
+	c := &Coordinator{handlesByRun: map[string]*RunHandle{}}
 	seeded := &RunHandle{runID: "", owner: c}
 	c.handlesByRun[""] = seeded
 
@@ -104,7 +104,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_EmptyRunIDIsNoop(t *testing.T) 
 // and a non-empty runID that resolves to a live handle actually registers
 // the canceler on that handle.
 func TestCoordinatorRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing.T) {
-	c := &coordinator{handlesByRun: map[string]*RunHandle{}}
+	c := &Coordinator{handlesByRun: map[string]*RunHandle{}}
 	h := &RunHandle{runID: "run-1", owner: c}
 	c.handlesByRun["run-1"] = h
 
@@ -128,7 +128,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing
 func TestCancelSubagentToolCall_RegisteredNilCancelerIsSafeNoop(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	pool := subagents.New(nil, subagents.Policy{Workers: 1})
-	c := New(repo, pool).(*coordinator)
+	c := New(repo, pool)
 
 	h := &RunHandle{runID: "run-1", owner: c, done: make(chan struct{}), cancelDone: make(chan struct{})}
 	h.subagentToolCancelMu.Lock()

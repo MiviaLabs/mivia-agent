@@ -25,7 +25,7 @@ func TestEnsureNonInteractiveParentDeclinesParkImmediately(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 
 	var (
-		coord        Coordinator
+		coord        *Coordinator
 		parkErr      error
 		gotBody      string
 		gotImmediate bool
@@ -106,7 +106,7 @@ func TestParkQuestionWithoutNonInteractiveParentStillParks(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 
 	var (
-		coord         Coordinator
+		coord         *Coordinator
 		handlerErr    error
 		pendingAtPark int
 		gotAnswer     string

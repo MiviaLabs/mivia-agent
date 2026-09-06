@@ -21,7 +21,7 @@ const retryRequeueProbeInterval = time.Second
 // moves retry_pending -> queued, the task_retry_queued event is appended and
 // emitted, and the task re-enters the pending set so collectReady can pick it
 // up again.
-func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time) error {
+func (c *Coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time) error {
 	var runErr error
 	for taskID, requeueAt := range queue {
 		if c.nowLocked().Before(requeueAt) {

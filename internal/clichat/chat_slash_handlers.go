@@ -362,7 +362,12 @@ func handleSlashResume(cmd string, fields []string, term *Terminal) (bool, bool,
 		return true, false, nil
 	}
 	d := cliorchestrate.FindDispatcher()
-	_, err := cliorchestrate.ResumeRun(context.Background(), c, d, runID, nil)
+	oc, ok := c.(cliorchestrate.OrchestrationCoordinator)
+	if !ok {
+		term.WriteString("\nno active orchestration runs")
+		return true, false, nil
+	}
+	_, err := cliorchestrate.ResumeRun(context.Background(), oc, d, runID, nil)
 	if err != nil {
 		term.WriteString(fmt.Sprintf("\n%v", cliorchestrate.FormatResumeError(err, runID)))
 		return true, false, nil

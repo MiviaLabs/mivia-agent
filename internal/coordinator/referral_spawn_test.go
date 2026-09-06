@@ -16,7 +16,7 @@ import (
 )
 
 func TestSpawnReferralValidation(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	if _, err := c.SpawnReferral(context.Background(), "", subagents.Task{Name: "x"}, ""); err == nil {
 		t.Fatal("empty run id")
 	}
@@ -98,7 +98,7 @@ func TestRunReferralTaskNilBaseCtx(t *testing.T) {
 	_ = d.Register(runtime.Subagent, "w", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	}))
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "p1", Name: "w", AgentName: "w", Timeout: 2 * time.Second},
 	}, "")
@@ -119,7 +119,7 @@ func TestRunReferralTaskNilBaseCtx(t *testing.T) {
 }
 
 func TestTryRegisterAskQuota(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	if !c.TryRegisterAsk("r", "t", "a", "m1", nil, 1) {
 		t.Fatal("first")
 	}
@@ -136,7 +136,7 @@ func TestTryRegisterAskQuota(t *testing.T) {
 }
 
 func TestAskRegistryNilPaths(t *testing.T) {
-	c := &coordinator{} // asks nil
+	c := &Coordinator{} // asks nil
 	if c.AsksUsedByTask("r", "t") != 0 {
 		t.Fatal()
 	}
@@ -162,14 +162,14 @@ func TestAskRegistryNilPaths(t *testing.T) {
 		t.Fatal()
 	}
 	// TryInc default max
-	c2 := &coordinator{}
+	c2 := &Coordinator{}
 	if !c2.TryIncReferralSpawn("r", 0) {
 		t.Fatal()
 	}
 }
 
 func TestHandleForRunEmptyAndRunIDNil(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	if c.HandleForRun("") != nil {
 		t.Fatal()
 	}
@@ -190,7 +190,7 @@ func TestHandleForRunEmptyAndRunIDNil(t *testing.T) {
 }
 
 func TestMailboxSendNilHandle(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	ok, err := c.MailboxSend(nil, "t", agentmsg.Message{})
 	if ok || err != nil {
 		t.Fatalf("%v %v", ok, err)
@@ -230,7 +230,7 @@ func TestRunReferralTaskTransitionFail(t *testing.T) {
 	_ = d.Register(runtime.Subagent, "w", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	}))
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	// Finished parent task so Join is idle; use handle only as mailbox/owner context.
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "p1", Name: "w", AgentName: "w", Timeout: 2 * time.Second},
@@ -275,7 +275,7 @@ func TestPoolContextNilSafe(t *testing.T) {
 }
 
 func TestBindReferralAskEmptyNoop(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	c.bindReferralAsk("", "a")
 	c.bindReferralAsk("t", "")
 	c.bindReferralAsk("t1", "ask1")
@@ -293,7 +293,7 @@ func TestBindReferralAskEmptyNoop(t *testing.T) {
 		t.Fatal(got)
 	}
 	// Nil asks / empty task id
-	bare := &coordinator{}
+	bare := &Coordinator{}
 	if bare.takeReferralAsk("x") != "" {
 		t.Fatal()
 	}
@@ -423,7 +423,7 @@ func TestSpawnReferralFromAskBoundsTimeout(t *testing.T) {
 }
 
 func TestUnclaimWhenAlreadyOpen(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	c.RegisterAsk("r", "t", "a", "m", nil)
 	// Force answered+open inconsistency path: claim then re-open manually via Unclaim when open already
 	// First claim then unclaim puts open again; second unclaim after Register while open hits open branch.

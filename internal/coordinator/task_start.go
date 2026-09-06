@@ -13,7 +13,7 @@ import (
 // that context's CancelFunc on the run handle. This is the sole write site
 // for RunHandle.taskCancels: without it there is no per-task CancelFunc for
 // CancelTask (cancel_task.go) to invoke, only the run-wide one Cancel uses.
-func (c *coordinator) onTaskStart(ctx context.Context, t subagents.Task, cancel context.CancelFunc) {
+func (c *Coordinator) onTaskStart(ctx context.Context, t subagents.Task, cancel context.CancelFunc) {
 	if c == nil {
 		return
 	}
@@ -53,7 +53,7 @@ func (c *coordinator) onTaskStart(ctx context.Context, t subagents.Task, cancel 
 // "claimed for cancellation". Every guard fails open (run the task): an
 // unstamped context, an unknown run, or an unreadable ledger must never
 // silently skip real work.
-func (c *coordinator) shouldSkipCanceledTask(ctx context.Context, _ subagents.Task) bool {
+func (c *Coordinator) shouldSkipCanceledTask(ctx context.Context, _ subagents.Task) bool {
 	if c == nil {
 		return false
 	}

@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func newIdempotencyCoordinator(repo ledger.LedgerRepository) Coordinator {
+func newIdempotencyCoordinator(repo ledger.LedgerRepository) *Coordinator {
 	dispatcher := runtime.New(runtime.Policy{})
 	if err := dispatcher.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
 		panic(err)

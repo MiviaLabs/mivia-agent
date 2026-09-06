@@ -10,7 +10,7 @@ import (
 // TestSubagentThreads_CancelSubagentToolCall_ForwardsToCoordinator proves
 // CancelSubagentToolCall resolves a registered callID to its coordinator
 // run/task identity and forwards to
-// coordinator.Coordinator.CancelSubagentToolCall, invoking the exact
+// coordinator's CancelSubagentToolCall, invoking the exact
 // ToolCanceler the task registered for that (runID, taskID) pair - and NOT
 // canceling the task itself: the ledger status stays untouched by this
 // call. The task's own OnToolCancelReady hook firing end to end (against a

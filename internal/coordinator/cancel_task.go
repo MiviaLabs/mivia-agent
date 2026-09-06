@@ -53,7 +53,7 @@ var ErrTaskCancelNotStopped = errors.New("task did not stop within the cancel wa
 // ErrTaskCancelNotStopped means the request is durably recorded but the task
 // did not stop within taskCancelWaitBudget, so nothing terminal was written.
 // Any other error is a failure of the cancel itself.
-func (c *coordinator) CancelTask(ctx context.Context, h *RunHandle, taskID string) error {
+func (c *Coordinator) CancelTask(ctx context.Context, h *RunHandle, taskID string) error {
 	if err := c.validateHandle(h); err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (c *coordinator) CancelTask(ctx context.Context, h *RunHandle, taskID strin
 // settled=true when the task is already terminal (nothing more to do) and
 // settled=false with a nil error once cancel_requested is durably recorded
 // (by this call, or a concurrent one that raced ahead).
-func (c *coordinator) requestSingleTaskCancel(ctx context.Context, h *RunHandle, taskID string) (settled bool, err error) {
+func (c *Coordinator) requestSingleTaskCancel(ctx context.Context, h *RunHandle, taskID string) (settled bool, err error) {
 	for {
 		snap, err := c.repo.GetTask(ctx, h.runID, taskID)
 		if err != nil {
@@ -165,7 +165,7 @@ func (c *coordinator) requestSingleTaskCancel(ctx context.Context, h *RunHandle,
 // cancel_requested/canceled) guarantees this is the only path that ever
 // finalizes a task this call put into cancel_requested, so there is no race
 // with the pool worker's own early-CAS fence.
-func (c *coordinator) finalizeSingleTaskCancel(h *RunHandle, taskID string) error {
+func (c *Coordinator) finalizeSingleTaskCancel(h *RunHandle, taskID string) error {
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	deadline := time.Now().Add(taskCancelWaitBudget)

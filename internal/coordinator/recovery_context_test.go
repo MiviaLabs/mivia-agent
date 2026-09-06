@@ -30,7 +30,7 @@ func (r *slowLoadContentRepo) LoadContent(ctx context.Context, ref string) ([]by
 // TestTerminalTaskResultLeaksContext verifies that the coordinator method
 // terminalTaskResult does NOT leak context.Background() into LoadContent.
 //
-// Before the fix, (c *coordinator) terminalTaskResult in recovery_output.go
+// Before the fix, (c *Coordinator) terminalTaskResult in recovery_output.go
 // shadowed the package-level terminalTaskResult in recovery.go and called
 // LoadContent(context.Background(), snap.OutputRef), which bypassed the
 // caller's context deadline/cancellation.
@@ -71,7 +71,7 @@ func TestTerminalTaskResultLeaksContext(t *testing.T) {
 	})
 
 	// Build a coordinator (pool can be nil; terminalTaskResult doesn't use it).
-	c := &coordinator{repo: slowRepo}
+	c := &Coordinator{repo: slowRepo}
 
 	snap := ledger.TaskSnapshot{
 		RunID:     runID,

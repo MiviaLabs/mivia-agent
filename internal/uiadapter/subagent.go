@@ -18,7 +18,7 @@ import (
 // subagentTaskRoute is the coordinator identity backing one registered
 // callID: the coordinator that dispatched it, the run it belongs to, and
 // its own task ID within that run - everything CancelSubagentTask needs to
-// reach coordinator.Coordinator.CancelTask.
+// reach SubagentTaskCoordinator.CancelTask.
 //
 // The coordinator is per-route, not one field on the registry, because ONE
 // SubagentThreads is shared by every pooled session (see SessionPool) while
@@ -29,8 +29,22 @@ import (
 // and surface as the misleading "run is no longer active". Carrying it here
 // costs nothing: the registering caller dispatched the task and therefore
 // knows exactly which coordinator owns it.
+// SubagentTaskCoordinator is this package's consumer-side view of a
+// coordinator: only the three members CancelSubagentTask and
+// CancelSubagentToolCall need to resolve a registered callID to a live
+// run/task and stop it. The full coordinator carries far more; this package
+// depends on the subset, not the fat interface.
+type SubagentTaskCoordinator interface {
+	HandleForRun(runID string) *coordinator.RunHandle
+	CancelTask(ctx context.Context, h *coordinator.RunHandle, taskID string) error
+	CancelSubagentToolCall(ctx context.Context, h *coordinator.RunHandle, taskID, callID string) (bool, error)
+}
+
+// Compile-time check that the real coordinator satisfies this subset.
+var _ SubagentTaskCoordinator = (*coordinator.Coordinator)(nil)
+
 type subagentTaskRoute struct {
-	coord  coordinator.Coordinator
+	coord  SubagentTaskCoordinator
 	runID  string
 	taskID string
 }
@@ -42,7 +56,7 @@ type SubagentThreads struct {
 	threads map[string]ports.Conversation
 	// routes maps a registered callID to the coordinator run/task identity
 	// backing it (see RegisterTaskRoute), so CancelSubagentTask can resolve
-	// a UI-facing callID down to what coordinator.Coordinator.CancelTask
+	// a UI-facing callID down to what SubagentTaskCoordinator.CancelTask
 	// needs. A callID with no route (never registered by a caller that knew
 	// the coordinator identity) cannot be canceled through this path.
 	routes map[string]subagentTaskRoute
@@ -63,7 +77,7 @@ type SubagentThreads struct {
 // indirection shape, and for the same reason - internal/uiadapter must
 // never import internal/cli* (INV-TUI-29). Only internal/newtui, which
 // imports both, wires this at startup.
-var SubagentTaskRouteRegistrar func(sink func(coord coordinator.Coordinator, callID, runID, taskID string))
+var SubagentTaskRouteRegistrar func(sink func(coord SubagentTaskCoordinator, callID, runID, taskID string))
 
 // Compile-time check that SubagentThreads satisfies ports.SubagentThreads.
 var _ ports.SubagentThreads = (*SubagentThreads)(nil)
@@ -101,7 +115,7 @@ func (s *SubagentThreads) RegisterThread(callID string, conv ports.Conversation)
 // A nil coord is recorded as-is rather than rejected: resolveTaskRoute
 // turns it into a clear "no coordinator wired" error, which is more
 // diagnosable than a route that silently never existed.
-func (s *SubagentThreads) RegisterTaskRoute(coord coordinator.Coordinator, callID, runID, taskID string) {
+func (s *SubagentThreads) RegisterTaskRoute(coord SubagentTaskCoordinator, callID, runID, taskID string) {
 	if callID == "" || runID == "" || taskID == "" {
 		return
 	}
@@ -159,7 +173,7 @@ func (s *SubagentThreads) CancelSubagentToolCall(callID, toolCallID string) (boo
 // error means "no route registered for this callID" (a safe no-op for the
 // caller); a non-nil error means a route WAS found but the coordinator
 // itself could not serve it.
-func (s *SubagentThreads) resolveTaskRoute(callID string) (coordinator.Coordinator, *coordinator.RunHandle, string, error) {
+func (s *SubagentThreads) resolveTaskRoute(callID string) (SubagentTaskCoordinator, *coordinator.RunHandle, string, error) {
 	s.mu.Lock()
 	route, ok := s.routes[callID]
 	s.mu.Unlock()

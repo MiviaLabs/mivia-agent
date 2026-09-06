@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -59,11 +60,11 @@ type RouteDecision struct {
 
 // RecordStepResult writes the child identity and bounded evidence selection to
 // one workflow attempt. The controller calls it after attempt admission.
-func RecordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
+func RecordStepResult(ctx context.Context, repo LedgerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
 	return recordStepResult(ctx, repo, attempt, result, status, RouteDecision{})
 }
 
-func recordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
+func recordStepResult(ctx context.Context, repo LedgerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
@@ -98,7 +99,7 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 
 // CompleteExistingStepResult completes an attempt that the controller already
 // recorded before an interruption. The stable child key prevents re-dispatch.
-func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
+func CompleteExistingStepResult(ctx context.Context, repo LedgerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
@@ -198,9 +199,33 @@ type AgentStepResult struct {
 	ErrorRef string
 }
 
+// stepCoordinator is this package's consumer-side view of a coordinator:
+// ensure (plain, single-task, terminal), inspect, join, and cancel child
+// runs - for both linear steps and panel children (the panel child subset is
+// workflowledger.PanelChildCoordinator). The full coordinator carries far
+// more; the controller depends on the subset, not the fat interface. The
+// real coordinator type satisfies it.
+type stepCoordinator interface {
+	EnsureRun(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	EnsureSingleTaskRun(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	EnsureTerminalSingleTaskRun(ctx context.Context, req coordinator.EnsureRunRequest, status ledger.TaskStatus) (*coordinator.RunHandle, error)
+	JoinAsRecovered(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	Inspect(ctx context.Context, h *coordinator.RunHandle) (ledger.RunSnapshot, error)
+	Join(ctx context.Context, h *coordinator.RunHandle) (*coordinator.RunResult, error)
+	Cancel(ctx context.Context, h *coordinator.RunHandle) error
+}
+
+// Compile-time checks that the real coordinator satisfies the step subset,
+// and that the step subset covers the panel child subset the panel step path
+// hands to workflowledger.NewPanelCoordinator.
+var (
+	_ stepCoordinator                      = (*coordinator.Coordinator)(nil)
+	_ workflowledger.PanelChildCoordinator = (stepCoordinator)(nil)
+)
+
 // CoordinatorRunner is the production implementation of AgentStepRunner.
 type CoordinatorRunner struct {
-	Coordinator coordinator.Coordinator
+	Coordinator stepCoordinator
 	// JoinWatchdog bounds a coordinator join from the controller side. The
 	// coordinator's own Join (internal/coordinator/coordinator.go) waits on
 	// the child run's done channel with no bound of its own, so a child that
@@ -234,7 +259,7 @@ func (r *CoordinatorRunner) SetProgressEmitter(emitter func(ProgressEvent)) {
 var _ AgentStepRunner = (*CoordinatorRunner)(nil)
 
 // NewCoordinatorRunner creates a workflow step adapter.
-func NewCoordinatorRunner(c coordinator.Coordinator) *CoordinatorRunner {
+func NewCoordinatorRunner(c stepCoordinator) *CoordinatorRunner {
 	return &CoordinatorRunner{Coordinator: c}
 }
 
@@ -404,7 +429,7 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 }
 
 // toolCallTraceSource exposes the host-recorded tool-call trace for one task.
-// coordinator.Coordinator satisfies it; it is a narrow optional interface so a
+// *coordinator.Coordinator satisfies it; it is a narrow optional interface so a
 // host without the trace yields NO history rather than a different, weaker
 // source of truth.
 type toolCallTraceSource interface {

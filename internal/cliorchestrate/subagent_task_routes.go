@@ -3,7 +3,6 @@ package cliorchestrate
 import (
 	"sync/atomic"
 
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -19,14 +18,14 @@ import (
 // goroutine. The nil zero value - every process that never runs the TUI, so
 // headless one-shot runs and tests - makes registerSubagentTaskRoutes a
 // clean no-op rather than a panic.
-var subagentTaskRouteSink atomic.Pointer[func(coord coordinator.Coordinator, callID, runID, taskID string)]
+var subagentTaskRouteSink atomic.Pointer[func(coord OrchestrationCoordinator, callID, runID, taskID string)]
 
 // SetSubagentTaskRouteSink installs the sink every later dispatch publishes
 // its spawned tasks' coordinator routes into. A nil argument removes the
 // sink (stored as a nil pointer, never as a pointer to a nil func, so the
 // publish path needs exactly one guard). Safe to call at any time from any
 // goroutine; the last call wins.
-func SetSubagentTaskRouteSink(fn func(coord coordinator.Coordinator, callID, runID, taskID string)) {
+func SetSubagentTaskRouteSink(fn func(coord OrchestrationCoordinator, callID, runID, taskID string)) {
 	if fn == nil {
 		subagentTaskRouteSink.Store(nil)
 		return
@@ -52,7 +51,7 @@ func SetSubagentTaskRouteSink(fn func(coord coordinator.Coordinator, callID, run
 // The coordinator travels per route because it is created lazily per session on
 // first dispatch (InitCoordinator) and cannot be installed at TUI-build time,
 // while the UI route table is shared across pooled sessions.
-func registerSubagentTaskRoutes(c coordinator.Coordinator, runID string, tasks []subagents.Task) {
+func registerSubagentTaskRoutes(c OrchestrationCoordinator, runID string, tasks []subagents.Task) {
 	p := subagentTaskRouteSink.Load()
 	if p == nil {
 		return

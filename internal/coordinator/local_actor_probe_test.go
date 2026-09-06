@@ -47,7 +47,7 @@ func TestEnsureRunRepairedZeroTaskAdmissionReportsLocalActor(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	c := New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1}))
 
 	h, err := c.EnsureRun(ctx, EnsureRunRequest{RunID: runID, Tasks: []subagents.Task{task}, IdempotencyKey: "step"})
 	if err != nil {

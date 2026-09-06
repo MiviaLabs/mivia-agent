@@ -26,7 +26,7 @@ import (
 // closed - the shape of a real tool that does not honour cancellation.
 type stubbornRun struct {
 	repo    ledger.LedgerRepository
-	coord   *coordinator
+	coord   *Coordinator
 	h       *RunHandle
 	release chan struct{}
 	running *atomic.Bool
@@ -55,7 +55,7 @@ func spawnStubbornRun(t *testing.T) stubbornRun {
 		t.Fatal(err)
 	}
 	<-started
-	return stubbornRun{repo: repo, coord: c.(*coordinator), h: h, release: release, running: &running}
+	return stubbornRun{repo: repo, coord: c, h: h, release: release, running: &running}
 }
 
 // TestCancelTaskWaitBudgetExpiryReportsStillRunning is the Root B
@@ -143,7 +143,7 @@ func TestCancelTaskStoppingTaskStillFinalizes(t *testing.T) {
 	}
 	<-started
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "t1"); err != nil {

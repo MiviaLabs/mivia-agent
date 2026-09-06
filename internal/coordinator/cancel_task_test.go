@@ -20,7 +20,7 @@ import (
 // of the test itself to keep it under the per-function line budget.
 type siblingCancelRun struct {
 	repo            ledger.LedgerRepository
-	coord           *coordinator
+	coord           *Coordinator
 	h               *RunHandle
 	releaseSurvivor chan struct{}
 }
@@ -66,7 +66,7 @@ func spawnSiblingCancelRun(t *testing.T) siblingCancelRun {
 	<-victimStarted
 	<-survivorStarted
 
-	return siblingCancelRun{repo: repo, coord: c.(*coordinator), h: h, releaseSurvivor: releaseSurvivor}
+	return siblingCancelRun{repo: repo, coord: c, h: h, releaseSurvivor: releaseSurvivor}
 }
 
 // TestCancelTaskDoesNotAffectSiblings is the central regression test for
@@ -143,7 +143,7 @@ func TestCancelTaskAlreadyTerminalIsNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "t1"); err != nil {
@@ -178,7 +178,7 @@ func TestCancelTaskUnknownTaskID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err = coord.CancelTask(ctx, h, "does-not-exist")
@@ -216,7 +216,7 @@ func TestCancelTaskRecoveredRunRefuses(t *testing.T) {
 		owner: h.owner, recovered: true,
 	}
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err = coord.CancelTask(ctx, recovered, "t1")
@@ -288,7 +288,7 @@ func TestRequestSingleTaskCancelRetriesOnConflict(t *testing.T) {
 	}
 	<-started
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "t1"); err != nil {
@@ -349,7 +349,7 @@ func TestCancelTaskNilCancelFuncSkipsInvoke(t *testing.T) {
 	// registerTaskCancel's own contract never produces on the shipped path.
 	h.registerTaskCancel("t1", nil)
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "t1"); err != nil {
@@ -414,7 +414,7 @@ func TestCancelTaskQueuedNeverDispatchedSucceeds(t *testing.T) {
 		t.Fatalf("test invalid: wave2 status = %q, want queued (its dependency wave1 must still be running)", snap.Status)
 	}
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "wave2"); err != nil {
@@ -468,7 +468,7 @@ func TestCancelTaskAwaitingInputSucceeds(t *testing.T) {
 		t.Fatalf("test setup: force awaiting_input: %v", err)
 	}
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "t1"); err != nil {
@@ -513,7 +513,7 @@ func TestFinalizeSingleTaskCancelUnexpectedStatusBailsOut(t *testing.T) {
 	}
 	<-started
 
-	coord := c.(*coordinator)
+	coord := c
 	if err := coord.finalizeSingleTaskCancel(h, "t1"); err != nil {
 		t.Fatalf("finalizeSingleTaskCancel on an unexpected non-terminal status should bail out cleanly, got: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestFinalizeSingleTaskCancelRetriesOnConflict(t *testing.T) {
 	<-victimStarted
 	<-survivorStarted
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, "victim"); err != nil {
@@ -693,7 +693,7 @@ func TestFinalizeSingleTaskCancelNonConflictErrorSurfaces(t *testing.T) {
 	<-victimStarted
 	<-survivorStarted
 
-	coord := c.(*coordinator)
+	coord := c
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err = coord.CancelTask(ctx, h, "victim")

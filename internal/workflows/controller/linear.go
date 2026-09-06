@@ -58,7 +58,7 @@ type Admission struct {
 // LinearController advances a workflow one active step at a time.
 // Phase 4 supports agent, agent_gate, evidence_gate, human_gate, and loops.
 type LinearController struct {
-	Repo           workflowledger.Repository
+	Repo           LedgerRepository
 	Runner         AgentStepRunner
 	Workflow       *definition.CompiledWorkflow
 	Steps          map[string]StepRuntime
@@ -96,7 +96,7 @@ type LinearController struct {
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
-func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner, wf *definition.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any, runID string, snapshot []byte) (*LinearController, error) {
+func NewLinearController(repo LedgerRepository, runner AgentStepRunner, wf *definition.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any, runID string, snapshot []byte) (*LinearController, error) {
 	if repo == nil || runner == nil || wf == nil {
 		return nil, fmt.Errorf("linear controller dependencies are incomplete")
 	}

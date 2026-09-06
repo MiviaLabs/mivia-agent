@@ -50,7 +50,7 @@ func singleCoordinatorSlowPanelFixture(t *testing.T, listTasksDelay time.Duratio
 	return admitSlowPanelSecurityMemberAndReachCancelPending(t, ctrl, repo, step, coord)
 }
 
-func newSingleCoordinatorSlowPanelController(t *testing.T, listTasksDelay time.Duration) (*LinearController, workflowledger.Repository, definition.Step, coordinator.Coordinator) {
+func newSingleCoordinatorSlowPanelController(t *testing.T, listTasksDelay time.Duration) (*LinearController, workflowledger.Repository, definition.Step, *coordinator.Coordinator) {
 	t.Helper()
 	step := definition.Step{
 		ID: "review", Kind: "agent_panel", Agent: "review-synthesizer", Skill: "review-synthesis",
@@ -108,7 +108,7 @@ func newSingleCoordinatorSlowPanelController(t *testing.T, listTasksDelay time.D
 // (so its cancel path is live, not recovered), then durably advances the
 // attempt's panel phase to cancel_pending - the state
 // reconcilePanelCancelPending expects to resume from.
-func admitSlowPanelSecurityMemberAndReachCancelPending(t *testing.T, ctrl *LinearController, repo workflowledger.Repository, step definition.Step, coord coordinator.Coordinator) (*LinearController, workflowledger.Repository, workflowledger.StepAttempt, context.Context) {
+func admitSlowPanelSecurityMemberAndReachCancelPending(t *testing.T, ctrl *LinearController, repo workflowledger.Repository, step definition.Step, coord *coordinator.Coordinator) (*LinearController, workflowledger.Repository, workflowledger.StepAttempt, context.Context) {
 	t.Helper()
 	ctx := workflowledger.ContextWithClaimHolder(context.Background(), ctrl.Holder)
 	if err := repo.ClaimRun(ctx, ctrl.RunID, ctrl.Holder); err != nil {

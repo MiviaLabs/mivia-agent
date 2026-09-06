@@ -19,7 +19,7 @@ import (
 // accessible to the "session" caller. The parked-asker fixture is the live run
 // itself: the test parks a question on the run's task via the coordinator
 // before inspecting.
-func spawnInspectRun(t *testing.T) (*runtime.Dispatcher, coordinator.Coordinator, ledger.LedgerRepository, *coordinator.RunHandle, ledger.RunSnapshot) {
+func spawnInspectRun(t *testing.T) (*runtime.Dispatcher, *coordinator.Coordinator, ledger.LedgerRepository, *coordinator.RunHandle, ledger.RunSnapshot) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	dispatcher := runtime.New(runtime.Policy{})

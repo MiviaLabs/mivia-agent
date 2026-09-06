@@ -494,7 +494,7 @@ func TestSendToTaskUnclaimOnPostFail(t *testing.T) {
 // closeOnAppendRepo seals an ask during AppendEvent (after durable content store).
 type closeOnAppendRepo struct {
 	ledger.LedgerRepository
-	c     Coordinator
+	c     *Coordinator
 	askID string
 }
 

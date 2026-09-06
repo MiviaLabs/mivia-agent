@@ -24,7 +24,7 @@ func (f panelCancelHandlerFunc) Invoke(ctx context.Context, req runtime.Request)
 // panelCancelFixture builds a real PanelCoordinator over a real coordinator
 // and an admitted 2-member panel attempt in members_admitted phase, ready
 // for a test to drive toward cancel_pending.
-func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *StorageRepository, coordinator.Coordinator, string, StepAttempt) {
+func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *StorageRepository, *coordinator.Coordinator, string, StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
 	// The pool routes by task.Name (validPanelTask sets TaskName to the
@@ -265,7 +265,7 @@ func TestCancelOrTombstoneMember_SlowWorkerReportsPendingNotBlocked(t *testing.T
 	}
 }
 
-// joinAsRecoveredRaceCoordinator wraps a real coordinator.Coordinator and, the
+// joinAsRecoveredRaceCoordinator wraps a real coordinator and, the
 // first time its JoinAsRecovered observes ledger.ErrNotFound (member never
 // admitted yet), synchronously runs a caller-supplied hook before returning.
 // This deterministically reproduces the exact race window inside
@@ -275,13 +275,13 @@ func TestCancelOrTombstoneMember_SlowWorkerReportsPendingNotBlocked(t *testing.T
 // win admission for the same idempotency key in that gap, every run, with no
 // goroutines or timing luck required.
 type joinAsRecoveredRaceCoordinator struct {
-	coordinator.Coordinator
+	PanelChildCoordinator
 	once sync.Once
 	hook func()
 }
 
 func (r *joinAsRecoveredRaceCoordinator) JoinAsRecovered(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error) {
-	h, err := r.Coordinator.JoinAsRecovered(ctx, req)
+	h, err := r.PanelChildCoordinator.JoinAsRecovered(ctx, req)
 	if errors.Is(err, coordledger.ErrNotFound) {
 		r.once.Do(r.hook)
 	}
@@ -305,7 +305,7 @@ func (r *joinAsRecoveredRaceCoordinator) JoinAsRecovered(ctx context.Context, re
 // instances sharing one durable ledger (a stale forward dispatcher and the
 // canceler), plus an admitted 2-member panel attempt, for tests that need to
 // race a concurrent forward admission against a cancel call.
-func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner coordinator.Coordinator, repo *StorageRepository, run string, attempt StepAttempt) {
+func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner *coordinator.Coordinator, repo *StorageRepository, run string, attempt StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
 	for _, name := range []string{"member-0", "member-1", "synthesis"} {
@@ -352,7 +352,7 @@ func TestCancelOrTombstoneMember_ConcurrentAdmissionWinnerIsNotFalselyTerminal(t
 	})
 	forwardDispatcher, cancelerInner, repo, run, attempt := concurrentAdmissionRaceFixture(t, handler)
 
-	raceCoord := &joinAsRecoveredRaceCoordinator{Coordinator: cancelerInner}
+	raceCoord := &joinAsRecoveredRaceCoordinator{PanelChildCoordinator: cancelerInner}
 	panel := NewPanelCoordinator(run, raceCoord, repo)
 
 	member := attempt.PanelExecution.Members[0]

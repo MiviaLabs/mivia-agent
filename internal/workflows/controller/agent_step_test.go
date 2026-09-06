@@ -25,7 +25,7 @@ type stepHandler struct {
 }
 
 type inspectingCoordinator struct {
-	coordinator.Coordinator
+	stepCoordinator
 	ensure       coordinator.EnsureRunRequest
 	badRunID     bool
 	badTask      bool
@@ -42,14 +42,14 @@ func (c *inspectingCoordinator) EnsureRun(ctx context.Context, req coordinator.E
 	if c.rewriteRunID {
 		req.RunID = coordinator.NewRunID()
 	}
-	return c.Coordinator.EnsureRun(ctx, req)
+	return c.stepCoordinator.EnsureRun(ctx, req)
 }
 
 func (c *inspectingCoordinator) Inspect(ctx context.Context, handle *coordinator.RunHandle) (ledger.RunSnapshot, error) {
 	if c.inspectErr != nil {
 		return ledger.RunSnapshot{}, c.inspectErr
 	}
-	snap, err := c.Coordinator.Inspect(ctx, handle)
+	snap, err := c.stepCoordinator.Inspect(ctx, handle)
 	if c.badRunID {
 		snap.RunID = coordinator.NewRunID()
 	}
@@ -67,9 +67,9 @@ func TestCoordinatorRunnerSurfacesCoordinatorBoundaryErrors(t *testing.T) {
 		coord *inspectingCoordinator
 		want  string
 	}{
-		{name: "ensure", coord: &inspectingCoordinator{Coordinator: base, ensureErr: sentinel}, want: sentinel.Error()},
-		{name: "returned run identity", coord: &inspectingCoordinator{Coordinator: base, rewriteRunID: true}, want: "coordinator returned run"},
-		{name: "inspect", coord: &inspectingCoordinator{Coordinator: base, inspectErr: sentinel}, want: sentinel.Error()},
+		{name: "ensure", coord: &inspectingCoordinator{stepCoordinator: base, ensureErr: sentinel}, want: sentinel.Error()},
+		{name: "returned run identity", coord: &inspectingCoordinator{stepCoordinator: base, rewriteRunID: true}, want: "coordinator returned run"},
+		{name: "inspect", coord: &inspectingCoordinator{stepCoordinator: base, inspectErr: sentinel}, want: sentinel.Error()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := validStepRequest()
@@ -172,7 +172,7 @@ func TestCoordinatorRunnerPropagatesRoutingAndLimits(t *testing.T) {
 
 func TestCoordinatorRunnerPropagatesExplicitForceResume(t *testing.T) {
 	base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
-	observed := &inspectingCoordinator{Coordinator: base}
+	observed := &inspectingCoordinator{stepCoordinator: base}
 	runner := NewCoordinatorRunner(observed)
 	spec := validStepRequest()
 	spec.ForceResume = true
@@ -195,7 +195,7 @@ func TestCoordinatorRunnerRejectsInspectedIdentityMismatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
-			observed := &inspectingCoordinator{Coordinator: base, badRunID: tc.badRunID, badTask: tc.badTask}
+			observed := &inspectingCoordinator{stepCoordinator: base, badRunID: tc.badRunID, badTask: tc.badTask}
 			_, err := NewCoordinatorRunner(observed).RunStep(context.Background(), validStepRequest())
 			if err == nil {
 				t.Fatal("identity mismatch was accepted")
@@ -418,7 +418,7 @@ func TestCoordinatorRunner_EvidenceCrossCheck(t *testing.T) {
 // command, exactly as a child agent can through post_message. It is the spoof
 // the evidence gate must refuse: the child is authoring its own audit trail.
 type evidencePostingHandler struct {
-	coord coordinator.Coordinator
+	coord *coordinator.Coordinator
 	runID string
 	out   json.RawMessage
 }

@@ -48,7 +48,7 @@ func (h *barrierProbeHandler) Invoke(ctx context.Context, _ runtime.Request) (js
 	}
 }
 
-type probeMembers struct{ c coordinator.Coordinator }
+type probeMembers struct{ c *coordinator.Coordinator }
 
 func (p probeMembers) MemberNeedsActorPermit(context.Context, string, string) (bool, error) {
 	return true, nil

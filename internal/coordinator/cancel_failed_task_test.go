@@ -24,7 +24,7 @@ type cancelRaceOutcome struct {
 // runCancelFailedRaceOnce spawns a failing task and cancels immediately, on a
 // separate goroutine so Cancel's reconcileCancellation CAS races the pool's
 // failure result and processResults' retry transition (no sleep-based pacing).
-func runCancelFailedRaceOnce(c Coordinator) cancelRaceOutcome {
+func runCancelFailedRaceOnce(c *Coordinator) cancelRaceOutcome {
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "t1", Name: "alwaysfail"},
 	}, "")

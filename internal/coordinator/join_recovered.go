@@ -14,7 +14,7 @@ import (
 // obtains a handle this way, then calls Cancel on it: the recovered path
 // (cancelRecovered) refuses to act on a task whose persisted status looks
 // nonterminal with no verifiable live owner, rather than guessing.
-func (c *coordinator) JoinAsRecovered(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
+func (c *Coordinator) JoinAsRecovered(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
 	if len(req.Tasks) != 1 {
 		return nil, fmt.Errorf("join as recovered: want one task")
 	}

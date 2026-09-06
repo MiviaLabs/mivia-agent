@@ -103,7 +103,7 @@ func TestBlockedTaskEmitsSingleTaskBlockedEvent(t *testing.T) {
 func TestDirectFinalizeBlockedEmitsSingleTaskBlockedEvent(t *testing.T) {
 	ctx := context.Background()
 	repo := ledger.NewMemoryLedgerRepository()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "direct-blocked-finalize"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)

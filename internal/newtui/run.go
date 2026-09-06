@@ -32,8 +32,22 @@ func registerSubagentProgress() {
 	// publishes its (coordinator, runID, taskID) identities into, and what
 	// Screen.cancelSelectedSubagentTask (and the thread dialog's
 	// per-tool-call cancel) resolve the highlighted row through. Set before
-	// buildApp, which is where NewSubagentThreads actually runs.
-	uiadapter.SubagentTaskRouteRegistrar = cli.SetSubagentTaskRouteSink
+	// buildApp, which is where NewSubagentThreads actually runs. The
+	// adapter narrows each published coordinator to the
+	// SubagentTaskCoordinator subset the route table stores, because the
+	// dispatch side's sink type is not assignable to the UI-side one
+	// directly (func parameter types must match exactly).
+	uiadapter.SubagentTaskRouteRegistrar = func(sink func(coord uiadapter.SubagentTaskCoordinator, callID, runID, taskID string)) {
+		cli.SetSubagentTaskRouteSink(func(coord cli.OrchestrationCoordinator, callID, runID, taskID string) {
+			// The dispatch side publishes its narrow orchestration view; the
+			// route table stores the UI-cancel subset. The live value is the
+			// real coordinator, which carries both, so the widening
+			// assertion holds everywhere a route is actually published.
+			if c, ok := coord.(uiadapter.SubagentTaskCoordinator); ok {
+				sink(c, callID, runID, taskID)
+			}
+		})
+	}
 }
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.

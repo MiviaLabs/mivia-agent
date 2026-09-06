@@ -371,7 +371,7 @@ func workflowOwnerSessionID(ctx context.Context) string {
 // standard tools keep answering "unknown run_id" for the run's children - a
 // run registered under no session repo could never be inspected or canceled
 // by anyone.
-func workflowChildRunRegistrar(d *runtime.Dispatcher, coord coordinator.Coordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
+func workflowChildRunRegistrar(d *runtime.Dispatcher, coord cliorchestrate.OrchestrationCoordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
 	if strings.TrimSpace(ownerSessionID) == "" || sessionRepo == nil {
 		log.Printf("workflow: child run registration skipped: no owning session or session ledger repo")
 		return nil

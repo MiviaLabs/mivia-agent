@@ -14,7 +14,7 @@ import (
 // responderTask without sending it: the caller pins the MailboxSend itself so
 // the send-between-record window is exercised deterministically. Returns the
 // built ask, the parked answer channel and the unpark handle.
-func parkAskForTerminalRace(t *testing.T, c Coordinator, runID, askerTask, responderTask, askID string) (agentmsg.Message, <-chan string, func()) {
+func parkAskForTerminalRace(t *testing.T, c *Coordinator, runID, askerTask, responderTask, askID string) (agentmsg.Message, <-chan string, func()) {
 	t.Helper()
 	ask, err := agentmsg.NewMessage(runID, agentmsg.KindAsk,
 		agentmsg.Party{TaskID: askerTask, Role: "asker"},
@@ -67,7 +67,7 @@ func waitForMailboxTerminal(t *testing.T, marked chan struct{}) {
 
 // assertDeclinedAskUnblocksAsker asserts a parked asker received exactly the
 // terminal decline sentinel, the ask is sealed, and byTarget is pruned.
-func assertDeclinedAskUnblocksAsker(t *testing.T, c Coordinator, coord *coordinator, runID, askID, responderTask string, answerCh <-chan string) {
+func assertDeclinedAskUnblocksAsker(t *testing.T, c *Coordinator, runID, askID, responderTask string, answerCh <-chan string) {
 	t.Helper()
 	want := agentmsg.AskDeclinePrefix + agentmsg.DeclineReasonResponderTerminal
 	select {
@@ -81,14 +81,14 @@ func assertDeclinedAskUnblocksAsker(t *testing.T, c Coordinator, coord *coordina
 	if !c.IsAskAnswered(askID) {
 		t.Fatal("declined ask must be sealed")
 	}
-	if got := coord.asksTargeting(runID, responderTask); len(got) != 0 {
+	if got := c.asksTargeting(runID, responderTask); len(got) != 0 {
 		t.Fatalf("asksTargeting = %v, want empty", got)
 	}
 }
 
 // registerParkRacingAsk builds, registers (no quota) and parks one racing-race
 // ask, returning the message for MailboxSend plus the park channel and unpark.
-func registerParkRacingAsk(t *testing.T, c Coordinator, runID, askerTask, askID string) (agentmsg.Message, <-chan string, func()) {
+func registerParkRacingAsk(t *testing.T, c *Coordinator, runID, askerTask, askID string) (agentmsg.Message, <-chan string, func()) {
 	t.Helper()
 	ask, err := agentmsg.NewMessage(runID, agentmsg.KindAsk,
 		agentmsg.Party{TaskID: askerTask, Role: "asker"},
@@ -136,7 +136,7 @@ func runTaskToTerminalAsync(ctx context.Context, repo ledger.LedgerRepository, h
 // (sealed), an undelivered ask (already closed by the caller) must not unblock
 // at all, and byTarget must be pruned either way. unpark is retired before any
 // failure so the park registry never leaks from a failed iteration.
-func assertRacingDeclineOutcome(t *testing.T, c Coordinator, coord *coordinator, runID, responderTask, askID string, answerCh <-chan string, unpark func(), delivered bool) {
+func assertRacingDeclineOutcome(t *testing.T, c *Coordinator, runID, responderTask, askID string, answerCh <-chan string, unpark func(), delivered bool) {
 	t.Helper()
 	want := agentmsg.AskDeclinePrefix + agentmsg.DeclineReasonResponderTerminal
 	if delivered {
@@ -158,7 +158,7 @@ func assertRacingDeclineOutcome(t *testing.T, c Coordinator, coord *coordinator,
 		default:
 		}
 	}
-	if got := coord.asksTargeting(runID, responderTask); len(got) != 0 {
+	if got := c.asksTargeting(runID, responderTask); len(got) != 0 {
 		unpark()
 		t.Fatalf("byTarget retains %v", got)
 	}
@@ -172,7 +172,6 @@ func TestDeclineAskWhenMailboxAlreadyTerminal(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "asker", "asker", string(ledger.TaskStatusAwaitingInput))
 	createTestTask(t, repo, runID, "responder", "responder", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
 	askerTask, responderTask := "asker", "responder"
 
 	askID := "ask-terminal-window"
@@ -207,11 +206,11 @@ func TestDeclineAskWhenMailboxAlreadyTerminal(t *testing.T) {
 	}
 	// 3. The MailboxSend post-send bookkeeping lands: record + isTerminal →
 	//    the single-ask decline path unblocks the asker at delivery time.
-	coord.recordAskTarget(h.runID, responderTask, askID)
+	c.recordAskTarget(h.runID, responderTask, askID)
 	if !h.mailboxes.isTerminal(responderTask) {
 		t.Fatal("mailbox must be terminal")
 	}
-	coord.declineAskDeliveredToTerminal(h.runID, responderTask, askID)
+	c.declineAskDeliveredToTerminal(h.runID, responderTask, askID)
 
 	want := agentmsg.AskDeclinePrefix + agentmsg.DeclineReasonResponderTerminal
 	select {
@@ -225,7 +224,7 @@ func TestDeclineAskWhenMailboxAlreadyTerminal(t *testing.T) {
 	if !c.IsAskAnswered(askID) {
 		t.Fatal("declined ask must be sealed")
 	}
-	if got := coord.asksTargeting(runID, responderTask); len(got) != 0 {
+	if got := c.asksTargeting(runID, responderTask); len(got) != 0 {
 		t.Fatalf("asksTargeting = %v, want empty", got)
 	}
 }
@@ -240,7 +239,6 @@ func TestMailboxSendDeclinesAskDeliveredToTerminalMailbox(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "asker", "asker", string(ledger.TaskStatusAwaitingInput))
 	createTestTask(t, repo, runID, "responder", "responder", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
 	askerTask, responderTask := "asker", "responder"
 
 	askID := "ask-terminal-pinned"
@@ -252,7 +250,7 @@ func TestMailboxSendDeclinesAskDeliveredToTerminalMailbox(t *testing.T) {
 
 	// Hold asks.mu: MailboxSend's Send succeeds, then the call blocks inside
 	// recordAskTarget — pinning the missed-decline window exactly.
-	coord.asks.mu.Lock()
+	c.asks.mu.Lock()
 	mailboxDone := make(chan struct{})
 	go func() {
 		defer close(mailboxDone)
@@ -284,11 +282,11 @@ func TestMailboxSendDeclinesAskDeliveredToTerminalMailbox(t *testing.T) {
 	// Release: the record lands, isTerminal is true → the single-ask decline
 	// fires (or the unblocked fence wins — both are idempotent; exactly one
 	// sentinel reaches the park).
-	coord.asks.mu.Unlock()
+	c.asks.mu.Unlock()
 	<-mailboxDone
 	<-fenceDone
 
-	assertDeclinedAskUnblocksAsker(t, c, coord, runID, askID, responderTask, answerCh)
+	assertDeclinedAskUnblocksAsker(t, c, runID, askID, responderTask, answerCh)
 }
 
 // TestMailboxSendDeclinesAskRacingTerminal stress-drives MailboxSend against a
@@ -297,7 +295,6 @@ func TestMailboxSendDeclinesAskDeliveredToTerminalMailbox(t *testing.T) {
 func TestMailboxSendDeclinesAskRacingTerminal(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "asker", "asker", string(ledger.TaskStatusAwaitingInput))
-	coord := c.(*coordinator)
 	askerTask := "asker"
 	ctx := context.Background()
 
@@ -325,7 +322,7 @@ func TestMailboxSendDeclinesAskRacingTerminal(t *testing.T) {
 			// unblocked by a late sentinel.
 			c.CloseAsk(askID)
 		}
-		assertRacingDeclineOutcome(t, c, coord, runID, responderTask, askID, answerCh, unpark, delivered)
+		assertRacingDeclineOutcome(t, c, runID, responderTask, askID, answerCh, unpark, delivered)
 		unpark()
 	}
 }

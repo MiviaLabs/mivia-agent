@@ -19,7 +19,7 @@ import (
 // before the pool finishes.
 type earlyFenceFixture struct {
 	repo             ledger.LedgerRepository
-	c                Coordinator
+	c                *Coordinator
 	h                *RunHandle
 	runID            string
 	responderStarted chan struct{}
@@ -91,7 +91,7 @@ func buildEarlyFenceFixture(t *testing.T) earlyFenceFixture {
 // the coordinator path. LONG wait semantics (30s) — the assertion bound in
 // waitForDeclineSentinel is 2s, far below wait_seconds, so only the early fence
 // can unblock it.
-func parkAndDeliverAsk(t *testing.T, c Coordinator, h *RunHandle, runID string) (<-chan string, agentmsg.Message) {
+func parkAndDeliverAsk(t *testing.T, c *Coordinator, h *RunHandle, runID string) (<-chan string, agentmsg.Message) {
 	t.Helper()
 	ask, err := agentmsg.NewMessage(runID, agentmsg.KindAsk,
 		agentmsg.Party{TaskID: "asker", Role: "asker"},
@@ -147,7 +147,7 @@ func assertMidRunTerminalStatus(t *testing.T, repo ledger.LedgerRepository, runI
 // assertSingleTerminalEvent lets the run finish, then counts terminal events
 // for the responder: the early fence appends no events, and recordRunResults
 // must not double-append or error on the already-terminal task.
-func assertSingleTerminalEvent(t *testing.T, repo ledger.LedgerRepository, c Coordinator, h *RunHandle, runID string) {
+func assertSingleTerminalEvent(t *testing.T, repo ledger.LedgerRepository, c *Coordinator, h *RunHandle, runID string) {
 	t.Helper()
 	if _, err := c.Join(context.Background(), h); err != nil {
 		t.Fatal(err)

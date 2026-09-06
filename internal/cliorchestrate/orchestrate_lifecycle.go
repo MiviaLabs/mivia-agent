@@ -416,7 +416,7 @@ var _ tools.Tool = (*cancelRunTool)(nil)
 // bounded Background context - the join caller must not block on it - with
 // orphanedRunCancelTimeout as the ceiling so even an unresponsive Cancel
 // cannot leak the goroutine forever.
-func cancelWedgedRun(c coordinator.Coordinator, h *coordinator.RunHandle) {
+func cancelWedgedRun(c OrchestrationCoordinator, h *coordinator.RunHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanedRunCancelTimeout)
 	defer cancel()
 	_ = c.Cancel(ctx, h)
@@ -426,7 +426,7 @@ func cancelWedgedRun(c coordinator.Coordinator, h *coordinator.RunHandle) {
 // or canceled run may not answer Inspect within the short budget; callers
 // treat the zero snapshot as "status unknown" and say so instead of
 // guessing.
-func latestSnapshot(c coordinator.Coordinator, h *coordinator.RunHandle, ctx context.Context) ledger.RunSnapshot {
+func latestSnapshot(c OrchestrationCoordinator, h *coordinator.RunHandle, ctx context.Context) ledger.RunSnapshot {
 	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	snap, err := c.Inspect(qctx, h)
@@ -467,7 +467,7 @@ func joinSalvageHint(joinBudgetExpired bool) string {
 // caller cancel leaves the run running under its own budget - another caller
 // may own it, and walking away is not a verdict. Deriving joinBudgetExpired
 // here keeps the hint and the cancel decision from ever disagreeing.
-func joinSalvageEnvelope(repo ledger.LedgerRepository, coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
+func joinSalvageEnvelope(repo ledger.LedgerRepository, coord OrchestrationCoordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
 	joinBudgetExpired := errors.Is(joinErr, context.DeadlineExceeded) && callerAlive
 	if joinBudgetExpired {
 		go cancelWedgedRun(coord, handle)

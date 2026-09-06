@@ -15,7 +15,7 @@ import (
 // state. The shared repository then holds two terminal tasks for the run: the
 // originally admitted task and the referral. It returns the admitted request
 // (run/key/task) and the referral task ID so callers can rejoin.
-func admitRunWithReferral(t *testing.T, repo ledger.LedgerRepository, admit func(Coordinator, EnsureRunRequest) (*RunHandle, error)) (EnsureRunRequest, string) {
+func admitRunWithReferral(t *testing.T, repo ledger.LedgerRepository, admit func(*Coordinator, EnsureRunRequest) (*RunHandle, error)) (EnsureRunRequest, string) {
 	t.Helper()
 	creator := newIdempotencyCoordinator(repo)
 	req := EnsureRunRequest{RunID: NewRunID(), Tasks: []subagents.Task{idempotencyTask()}, IdempotencyKey: "rejoin-after-referral"}
@@ -48,7 +48,7 @@ func admitRunWithReferral(t *testing.T, repo ledger.LedgerRepository, admit func
 // referral as "partial admission" or a count mismatch and bricked the key.
 func TestEnsureSingleTaskRunRejoinAfterReferral(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
-	req, _ := admitRunWithReferral(t, repo, func(c Coordinator, req EnsureRunRequest) (*RunHandle, error) {
+	req, _ := admitRunWithReferral(t, repo, func(c *Coordinator, req EnsureRunRequest) (*RunHandle, error) {
 		return c.EnsureSingleTaskRun(context.Background(), req)
 	})
 	recovered := newIdempotencyCoordinator(repo)
@@ -63,7 +63,7 @@ func TestEnsureSingleTaskRunRejoinAfterReferral(t *testing.T) {
 
 func TestJoinAsRecoveredRejoinAfterReferral(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
-	req, _ := admitRunWithReferral(t, repo, func(c Coordinator, req EnsureRunRequest) (*RunHandle, error) {
+	req, _ := admitRunWithReferral(t, repo, func(c *Coordinator, req EnsureRunRequest) (*RunHandle, error) {
 		return c.EnsureSingleTaskRun(context.Background(), req)
 	})
 	recovered := newIdempotencyCoordinator(repo)
@@ -78,7 +78,7 @@ func TestJoinAsRecoveredRejoinAfterReferral(t *testing.T) {
 
 func TestEnsureRunRejoinAfterReferral(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
-	req, _ := admitRunWithReferral(t, repo, func(c Coordinator, req EnsureRunRequest) (*RunHandle, error) {
+	req, _ := admitRunWithReferral(t, repo, func(c *Coordinator, req EnsureRunRequest) (*RunHandle, error) {
 		return c.EnsureRun(context.Background(), req)
 	})
 	recovered := newIdempotencyCoordinator(repo)
@@ -97,7 +97,7 @@ func TestEnsureRunRejoinAfterReferral(t *testing.T) {
 // an admitted task with altered input cannot slip through the relaxed guards.
 func TestRejoinAfterReferralRejectsNonAdmittedWork(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
-	req, refID := admitRunWithReferral(t, repo, func(c Coordinator, req EnsureRunRequest) (*RunHandle, error) {
+	req, refID := admitRunWithReferral(t, repo, func(c *Coordinator, req EnsureRunRequest) (*RunHandle, error) {
 		return c.EnsureSingleTaskRun(context.Background(), req)
 	})
 	recovered := newIdempotencyCoordinator(repo)

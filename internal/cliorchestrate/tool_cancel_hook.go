@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -36,7 +35,7 @@ func ToolCancelReadyHook(d *runtime.Dispatcher) func(ctx context.Context, cancel
 		if !ok {
 			return
 		}
-		coord, ok := v.(coordinator.Coordinator)
+		coord, ok := v.(OrchestrationCoordinator)
 		if !ok {
 			return
 		}

@@ -11,11 +11,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
+func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
 	return c.runDAGSeeded(h, tasks, nil)
 }
 
-func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) ([]subagents.Result, error) {
+func (c *Coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) ([]subagents.Result, error) {
 	pending := make(map[string]subagents.Task, len(tasks))
 	for _, task := range tasks {
 		pending[task.ID] = task
@@ -88,7 +88,7 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 // it succeeds while we own the run and returns ErrClaimHeld once another
 // holder took it. On theft, the caller stops dispatching and leaves the run
 // to the new owner (do not settle — the run is not ours anymore).
-func (c *coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) error {
+func (c *Coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) error {
 	if err := c.repo.ClaimRun(h.poolCtx, h.runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
 			return fmt.Errorf("run %q execution claim was taken by another executor; dispatching stopped", h.runID)
@@ -109,7 +109,7 @@ func (c *coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, result
 	return nil
 }
 
-func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Task, results map[string]subagents.Result) ([]subagents.Task, error) {
+func (c *Coordinator) collectReady(h *RunHandle, pending map[string]subagents.Task, results map[string]subagents.Result) ([]subagents.Task, error) {
 	ready := make([]subagents.Task, 0, len(pending))
 	var runErr error
 	for id, task := range pending {
@@ -147,7 +147,7 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 	return ready, runErr
 }
 
-func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
+func (c *Coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
 	var runErr error
 	for _, task := range ready {
 		if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err == nil {
@@ -204,7 +204,7 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 // still be dispatched, never recorded as failed without executing. A ledger
 // read error reports false so the caller falls through to the legacy failure
 // path unchanged.
-func (c *coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
+func (c *Coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
 	if err != nil {
 		return false
@@ -216,7 +216,7 @@ func (c *coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
 // already been claimed for cancellation (cancel_requested or canceled). When a
 // startReady dispatch CAS loses to reconcileCancellation, this distinguishes a
 // cancellation race from a genuine failure so the task surfaces as canceled.
-func (c *coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
+func (c *Coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
 	snap, err := c.repo.GetTask(context.Background(), h.runID, taskID)
 	if err != nil {
 		return false
@@ -312,7 +312,7 @@ func canceledResult(h *RunHandle, taskID string) subagents.Result {
 // change, and same as requeueForResume's crash-recovery path (recovery.go) -
 // both already require MaxRetries > 0, so the exposure is bounded to
 // deployments that explicitly opt into retry.
-func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
+func (c *Coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
 	if err != nil || h.policy().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
 		return false
@@ -342,7 +342,7 @@ func buildBatch(ready []subagents.Task, pending map[string]subagents.Task, resul
 	return batch
 }
 
-func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState, tasks ...[]subagents.Task) error {
+func (c *Coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState, tasks ...[]subagents.Task) error {
 	var runErr error
 	// tasks is optional (the direct-call test path passes none): the retry
 	// transition carries the task's SessionID only when the task is in hand.
@@ -395,7 +395,7 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 	return runErr
 }
 
-func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) []subagents.Result {
+func (c *Coordinator) finalizeDAG(tasks []subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) []subagents.Result {
 	for taskID := range queue {
 		if _, ok := results[taskID]; !ok {
 			if state := states[taskID]; state != nil {
@@ -423,7 +423,7 @@ func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]sub
 	return out
 }
 
-func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string, sessionIDs ...string) error {
+func (c *Coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string, sessionIDs ...string) error {
 	ctx := h.poolContext()
 	snap, err := c.repo.GetTask(ctx, h.runID, taskID)
 	if err != nil {
@@ -458,7 +458,7 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 // count forever. Open/closed/claimed ask bookkeeping is untouched — in-flight
 // open asks are retired at the attempt boundary via CloseAsk/SealAskAnswer.
 // The per-attempt upstream message quota is reset here too (FIX P3b).
-func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
+func (c *Coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
 	attemptID := newAttemptID()
 	h.setAttempt(taskID, attemptID)
 	c.resetTaskAsks(h.runID, taskID)

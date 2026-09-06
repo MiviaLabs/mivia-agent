@@ -2,7 +2,6 @@ package clichat
 
 import (
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	coordinator "github.com/MiviaLabs/mivia-agent/internal/coordinator"
 )
 
 // ResumeConfirmationInfo is re-exported from cliorchestrate for the resume
@@ -33,5 +32,5 @@ var ResumeRun = cliorchestrate.ResumeRun
 // ErrOrchestrationSwitchActive is re-exported from cliorchestrate for tests.
 var ErrOrchestrationSwitchActive = cliorchestrate.ErrOrchestrationSwitchActive
 
-// Coordinator is an alias kept for tests that reference the coordinator type.
-type Coordinator = coordinator.Coordinator
+// Coordinator is an alias kept for tests that reference the coordinator type:
+// it names clichat's narrow chatCoordinator consumer view.

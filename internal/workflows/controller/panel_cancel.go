@@ -44,7 +44,7 @@ const maxCancelPhaseRetries = 4
 // terminal, or a non-nil error: ErrCancelBlocked when a child's terminal
 // state is ambiguous, ErrCancelPending when children are known but not yet
 // all terminal, or a wrapped durable error otherwise.
-func ReconcilePanelCancellation(ctx context.Context, repo workflowledger.Repository, panel PanelCancelCoordinator, runID, holder, attemptID string) (workflowledger.StepAttempt, bool, error) {
+func ReconcilePanelCancellation(ctx context.Context, repo LedgerRepository, panel PanelCancelCoordinator, runID, holder, attemptID string) (workflowledger.StepAttempt, bool, error) {
 	attempt, err := repo.GetStepAttempt(ctx, runID, attemptID)
 	if err != nil {
 		return workflowledger.StepAttempt{}, false, err
@@ -88,7 +88,7 @@ func ReconcilePanelCancellation(ctx context.Context, repo workflowledger.Reposit
 // concurrent members_admitted -> synthesis_admitted transition, or a
 // concurrent cancel_pending transition that already won). Already-terminal
 // or already-cancel_pending attempts are returned unchanged.
-func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.Repository, runID, holder string, attempt workflowledger.StepAttempt) (workflowledger.StepAttempt, error) {
+func advancePanelPhaseToCancelPending(ctx context.Context, repo LedgerRepository, runID, holder string, attempt workflowledger.StepAttempt) (workflowledger.StepAttempt, error) {
 	if holder == "" {
 		return attempt, workflowledger.ErrClaimNotHeld
 	}

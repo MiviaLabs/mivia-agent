@@ -13,11 +13,11 @@ import (
 
 // tasksFromSnapshots restores task work without persisted authority.
 // The ledger is workspace data. It cannot grant permission or caller identity.
-func (c *coordinator) tasksFromSnapshots(ctx context.Context, snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
+func (c *Coordinator) tasksFromSnapshots(ctx context.Context, snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
 	return c.tasksFromSnapshotsWithAuthority(ctx, snaps, nil)
 }
 
-func (c *coordinator) tasksFromSnapshotsWithAuthority(ctx context.Context, snaps []ledger.TaskSnapshot, liveTasks []subagents.Task) ([]subagents.Task, map[string]subagents.Result, error) {
+func (c *Coordinator) tasksFromSnapshotsWithAuthority(ctx context.Context, snaps []ledger.TaskSnapshot, liveTasks []subagents.Task) ([]subagents.Task, map[string]subagents.Result, error) {
 	out := make([]subagents.Task, 0, len(snaps))
 	done := make(map[string]subagents.Result)
 	liveByID := make(map[string]subagents.Task, len(liveTasks))
@@ -47,7 +47,7 @@ func (c *coordinator) tasksFromSnapshotsWithAuthority(ctx context.Context, snaps
 	return out, done, nil
 }
 
-func (c *coordinator) taskFromSnapshot(snap ledger.TaskSnapshot, liveByID map[string]subagents.Task) (subagents.Task, error) {
+func (c *Coordinator) taskFromSnapshot(snap ledger.TaskSnapshot, liveByID map[string]subagents.Task) (subagents.Task, error) {
 	name := snap.AgentName
 	if snap.AgentName == "" || snap.AgentDigest == "" {
 		switch live, hasLive := liveByID[snap.TaskID]; {

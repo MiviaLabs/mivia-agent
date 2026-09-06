@@ -56,7 +56,7 @@ func TestAwaitingInputTransitionsOnCoordinator(t *testing.T) {
 	_ = repo.CreateTask(ctx, ledger.TaskSnapshot{
 		RunID: "r-park", TaskID: "t-park", Status: string(ledger.TaskStatusRunning), Version: 1,
 	})
-	coord := c.(*coordinator)
+	coord := c
 	if err := coord.TransitionToAwaitingInput(ctx, "r-park", "t-park"); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestDeliverAnswerNoPendingAndDouble(t *testing.T) {
 // once the TTL elapses.
 func TestParkQuestionExpiredDoesNotBlockNewPark(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	prevTTL := parkTTL
 	parkTTL = time.Hour
 	t.Cleanup(func() { parkTTL = prevTTL })
@@ -213,7 +213,7 @@ func TestParkQuestionExpiredDoesNotBlockNewPark(t *testing.T) {
 // late answer.
 func TestDeliverAnswerExpiredParkReturnsFalse(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	prevTTL := parkTTL
 	parkTTL = time.Hour
 	t.Cleanup(func() { parkTTL = prevTTL })
@@ -239,7 +239,7 @@ func TestDeliverAnswerExpiredParkReturnsFalse(t *testing.T) {
 // TestCountPendingQuestionsExpiredParkZero: an expired park counts as absent.
 func TestCountPendingQuestionsExpiredParkZero(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	prevTTL := parkTTL
 	parkTTL = time.Hour
 	t.Cleanup(func() { parkTTL = prevTTL })
@@ -265,7 +265,7 @@ func TestCountPendingQuestionsExpiredParkZero(t *testing.T) {
 // maxWait+parkSlack) so a legitimately long asker wait is never evicted early.
 func TestParkQuestionMaxWaitLongerThanTTLNotEvicted(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	prevTTL := parkTTL
 	parkTTL = time.Minute
 	t.Cleanup(func() { parkTTL = prevTTL })
@@ -300,7 +300,7 @@ func TestParkQuestionMaxWaitLongerThanTTLNotEvicted(t *testing.T) {
 // is expired and DeliverAnswer must refuse (eviction applies as usual).
 func TestParkQuestionMaxWaitExpiredEvicts(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	prevTTL := parkTTL
 	parkTTL = time.Minute
 	t.Cleanup(func() { parkTTL = prevTTL })
@@ -364,7 +364,7 @@ func TestDeliverAnswerTerminalTaskEvictsAndReturnsFalse(t *testing.T) {
 func TestTransitionAwaitingInputErrorPaths(t *testing.T) {
 	c, repo := newPostMessageCoordinator(t)
 	ctx := context.Background()
-	coord := c.(*coordinator)
+	coord := c
 	if err := coord.TransitionToAwaitingInput(ctx, "missing", "t"); err == nil {
 		t.Fatal("missing run/task")
 	}
@@ -418,7 +418,7 @@ func TestConsumeMessageQuotaUnlimited(t *testing.T) {
 // expired parks are treated as absent via the existing eviction.
 func TestParkedQuestionsReturnsLiveAndDropsExpired(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	prevTTL := parkTTL
 	parkTTL = time.Hour
 	t.Cleanup(func() { parkTTL = prevTTL })
