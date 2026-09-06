@@ -489,6 +489,55 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 	return nil
 }
 
+// firstProviderCandidate scans DefaultConfigCandidates() in order and returns
+// the first existing candidate whose config actually declares a provider
+// ([provider].name or any [providers.*] entry). A workspace mivia.toml that
+// only carries workspace concerns (workflows, verifiers, MCP) must not shadow
+// the user config and kill the first-time-user flow: without this filter, the
+// workspace file becomes the base config, AutoBootstrapUserConfig never fires
+// (it only triggers when NO candidate exists), and resolveProvider fails with
+// a baffling "[providers.openrouter]: models must be non-empty" naming a
+// provider the user never configured.
+//
+// When no existing candidate declares a provider: if allowBootstrap is true
+// the return is "" so loadFile can auto-bootstrap the user config (the
+// provider-less workspace file still applies through the overlay path);
+// otherwise the first existing candidate is returned unchanged, preserving
+// the pre-existing found=true/resolveProvider-error behavior for callers
+// that did not opt into bootstrapping. Candidates that exist but fail to
+// decode are treated as provider-less; their parse error still surfaces
+// later, when the file is loaded as the base or as the workspace overlay.
+func firstProviderCandidate(allowBootstrap bool) string {
+	candidates := DefaultConfigCandidates()
+	firstExisting := ""
+	for _, cand := range candidates {
+		if strings.TrimSpace(cand) == "" {
+			continue
+		}
+		if info, err := os.Stat(cand); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if firstExisting == "" {
+			firstExisting = cand
+		}
+		data, err := os.ReadFile(cand)
+		if err != nil {
+			continue
+		}
+		var file File
+		if err := decodeConfigInto(data, cand, &file); err != nil {
+			continue
+		}
+		if strings.TrimSpace(file.Provider.Name) != "" || len(file.Providers) > 0 {
+			return cand
+		}
+	}
+	if allowBootstrap {
+		return ""
+	}
+	return firstExisting
+}
+
 // loadFile resolves the base config (opts.ConfigPath, else the first of
 // DefaultConfigCandidates() that exists) and, when opts.WorkspaceRoot names
 // a directory with its own .mivia/mivia.toml distinct from that base file,
@@ -517,7 +566,7 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 func loadFile(opts LoadOptions) (File, string, bool, error) {
 	path := ExpandPath(opts.ConfigPath)
 	if path == "" {
-		path, _ = FirstExisting(DefaultConfigCandidates())
+		path = firstProviderCandidate(opts.AutoBootstrapUserConfig)
 	}
 	if path == "" && opts.AutoBootstrapUserConfig && strings.TrimSpace(opts.ConfigPath) == "" {
 		bootstrapped, err := autoBootstrapUserConfig()
