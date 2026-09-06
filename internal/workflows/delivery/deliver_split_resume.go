@@ -105,9 +105,13 @@ func resumeDeliveryCommitSplit(ctx context.Context, repo LedgerRepository, git G
 // prove it. The record is re-upserted with CommitSHA/TreeSHA (mirroring
 // commitStagedTree) so a later crash resumes in windows A/B/C instead of
 // re-adopting. It returns the adopted commit and its tree.
-func adoptRecordedC1Commit(ctx context.Context, repo interface {
+// deliveryUpsertStore is the only ledger surface the crash-window adoption
+// path needs: re-upserting the adopted commit's delivery record.
+type deliveryUpsertStore interface {
 	UpsertDelivery(ctx context.Context, d ledger.DeliveryRecord) error
-}, git GitRunner, req Request, existing ledger.DeliveryRecord, head string) (string, string, error) {
+}
+
+func adoptRecordedC1Commit(ctx context.Context, repo deliveryUpsertStore, git GitRunner, req Request, existing ledger.DeliveryRecord, head string) (string, string, error) {
 	headTree, terr := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
 	if terr != nil {
 		return "", "", fmt.Errorf("cannot verify recorded delivery commit: %w", terr)

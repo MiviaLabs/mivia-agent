@@ -127,7 +127,7 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok {
 		return "", fmt.Errorf("post_message requires a running task identity")
 	}
-	c, _ := cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo).(chatCoordinator)
+	var c chatCoordinator = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 
 	if kind == agentmsg.KindAsk {
 		return t.handleAsk(ctx, c, id, in.Body, in.Refs, in.ToRole, in.WaitSeconds, in.InReplyTo)
@@ -344,7 +344,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	c, _ := record.GetCoordinator().(chatCoordinator)
 	if c == nil {
-		c, _ = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo).(chatCoordinator)
+		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
 	// One GetRun for both the incoming filter (a raw model id -> the real
 	// task the run holds) and each returned message's TaskID (the real,
@@ -399,7 +399,7 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 	post := &postMessageTool{
 		dispatcher: d, cfg: cfg, repo: repo,
 		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
-			c, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(chatCoordinator)
+			var c chatCoordinator = cliorchestrate.InitCoordinator(d, cfg, repo)
 			var meta coordinator.ReferralSpawnMeta
 			if agentReg != nil {
 				if route, err := cliorchestrate.ResolveTaskRoute(agentReg, nil, toRole, ""); err == nil {

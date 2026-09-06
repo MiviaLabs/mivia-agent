@@ -328,9 +328,9 @@ func ActiveCoordinator() (OrchestrationCoordinator, bool) {
 // or durable ledger repository and a subagent pool backed by the given
 // dispatcher. Safe for concurrent calls; only the first invocation initialises
 // the singleton. Subsequent calls are no-ops.
-func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) OrchestrationCoordinator {
+func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
 	if existing, ok := coordinators.Load(d); ok {
-		return existing.(OrchestrationCoordinator)
+		return existing.(*coordinator.Coordinator)
 	}
 	poolDepth, poolFanout := PoolLimitsFromConfig(cfg)
 	repo := defaultOrchestrationRepo
@@ -373,7 +373,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 			coordinatorRepos.Delete(d)
 		})
 	}
-	return actual.(OrchestrationCoordinator)
+	return actual.(*coordinator.Coordinator)
 }
 
 // maxTaskRetries and minTaskRetryBaseBackoff clamp [subagents.retry] against

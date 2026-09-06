@@ -114,7 +114,7 @@ func TestAskMailboxFullDeclines(t *testing.T) {
 		return json.RawMessage(`{"ok":true}`), nil
 	}))
 	_ = d.Register(runtime.Subagent, "asker", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
-		coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(*coordinator.Coordinator)
+		coord := cliorchestrate.InitCoordinator(d, cfg, repo)
 		id, _ := runtime.TaskIdentityFrom(ctx)
 		deadline := time.After(2 * time.Second)
 		for {

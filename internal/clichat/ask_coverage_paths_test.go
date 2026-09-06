@@ -453,7 +453,7 @@ func TestHandleAskParkHeldWithLivePeer(t *testing.T) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(*coordinator.Coordinator)
+		coord := cliorchestrate.InitCoordinator(d, cfg, repo)
 		id, _ := runtime.TaskIdentityFrom(ctx)
 		_, unpark, err := coord.ParkQuestion(id.RunID, id.TaskID, "held")
 		if err != nil {

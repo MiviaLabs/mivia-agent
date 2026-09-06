@@ -261,7 +261,7 @@ func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf 
 func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *definition.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *definition.GoModuleBaseline, ownerSessionID string, sessionRepo ledger.LedgerRepository) (*controller.LinearController, error) {
 	applyHarnessSandboxSetting(res.Harness)
 	coord := InitCoordinatorFunc(dispatcher, res.Subagents, legacy)
-	runner := controller.NewCoordinatorRunner(coord.(*coordinator.Coordinator))
+	runner := controller.NewCoordinatorRunner(coord)
 	// Register every child run this controller ensures under the owning
 	// session, so inspect_agents/join_run/cancel_run resolve workflow children
 	// the same way they resolve dispatch_tasks runs.
