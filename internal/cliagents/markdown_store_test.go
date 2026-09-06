@@ -437,6 +437,33 @@ func TestOpenMarkdownStoreDegradesOnScanFailure(t *testing.T) {
 	}
 }
 
+// TestOpenMarkdownStoreSkipsUnconfiguredOrgScope pins that an absent
+// organization identity skips the org refresh entirely: the scope must not
+// be marked degraded by a refresh that was never supposed to run.
+func TestOpenMarkdownStoreSkipsUnconfiguredOrgScope(t *testing.T) {
+	source, err := memory.NewMarkdownSource(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ms := store.(*markdownStore)
+	ms.mu.Lock()
+	degraded := ms.degraded[memory.ScopeOrg]
+	ms.mu.Unlock()
+	if degraded {
+		t.Fatal("org scope was degraded although no org identity is configured")
+	}
+}
+
 // TestMarkdownStoreRefreshReconcilesDuplicateIDs pins the reconcile contract:
 // two files that collide on one filename-derived index ID must not fail the
 // sync with "duplicate memory index id". The first path in scan order wins;
@@ -451,7 +478,9 @@ func TestMarkdownStoreRefreshReconcilesDuplicateIDs(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	head := "# Dup %s\n\nscope: project\nverdict: neutral\n\n## Summary\n\nDuplicate id %s\n"
+	// No verdict field: the scan must reconcile it to neutral so the
+	// derived index's verdict CHECK accepts the row.
+	head := "# Dup %s\n\nscope: project\n\n## Summary\n\nDuplicate id %s\n"
 	for _, name := range []string{"first-suites.md", "second-suites.md"} {
 		data := fmt.Sprintf(head, name, name)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
