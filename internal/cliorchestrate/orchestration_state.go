@@ -23,7 +23,7 @@ import (
 // orchestration tool. runHandles maps runID → *orchestrationHandle for
 // subsequent Inspect/Join/Cancel calls.
 var (
-	coordinators     sync.Map // *runtime.Dispatcher → coordinator.Coordinator
+	coordinators     sync.Map // *runtime.Dispatcher → OrchestrationCoordinator
 	coordinatorRepos sync.Map // *runtime.Dispatcher → ledger.LedgerRepository
 	runHandles       sync.Map // runID → orchestrationHandle
 )
@@ -66,7 +66,7 @@ func sessionCallerContext(ctx context.Context) context.Context {
 }
 
 type orchestrationHandle struct {
-	coord      coordinator.Coordinator
+	coord      OrchestrationCoordinator
 	handle     *coordinator.RunHandle
 	repo       ledger.LedgerRepository
 	dispatcher *runtime.Dispatcher
@@ -75,7 +75,7 @@ type orchestrationHandle struct {
 }
 
 // GetCoordinator returns the coordinator for this run handle. See RunAccess.
-func (h *orchestrationHandle) GetCoordinator() coordinator.Coordinator { return h.coord }
+func (h *orchestrationHandle) GetCoordinator() OrchestrationCoordinator { return h.coord }
 
 // GetHandle returns the run handle. See RunAccess.
 func (h *orchestrationHandle) GetHandle() *coordinator.RunHandle { return h.handle }
@@ -310,11 +310,11 @@ func PoolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
 // ActiveCoordinator returns the first Coordinator registered in the
 // package-level coordinators map, if any. Used to find a running dispatch's
 // Coordinator from a caller that does not hold the *runtime.Dispatcher key.
-func ActiveCoordinator() (coordinator.Coordinator, bool) {
-	var found coordinator.Coordinator
+func ActiveCoordinator() (OrchestrationCoordinator, bool) {
+	var found OrchestrationCoordinator
 	var ok bool
 	coordinators.Range(func(_, value any) bool {
-		c, isCoordinator := value.(coordinator.Coordinator)
+		c, isCoordinator := value.(OrchestrationCoordinator)
 		if !isCoordinator {
 			return true // continue
 		}
@@ -328,9 +328,9 @@ func ActiveCoordinator() (coordinator.Coordinator, bool) {
 // or durable ledger repository and a subagent pool backed by the given
 // dispatcher. Safe for concurrent calls; only the first invocation initialises
 // the singleton. Subsequent calls are no-ops.
-func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) coordinator.Coordinator {
+func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) OrchestrationCoordinator {
 	if existing, ok := coordinators.Load(d); ok {
-		return existing.(coordinator.Coordinator)
+		return existing.(OrchestrationCoordinator)
 	}
 	poolDepth, poolFanout := PoolLimitsFromConfig(cfg)
 	repo := defaultOrchestrationRepo
@@ -373,7 +373,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 			coordinatorRepos.Delete(d)
 		})
 	}
-	return actual.(coordinator.Coordinator)
+	return actual.(OrchestrationCoordinator)
 }
 
 // maxTaskRetries and minTaskRetryBaseBackoff clamp [subagents.retry] against

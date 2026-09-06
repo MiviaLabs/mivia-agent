@@ -17,7 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -26,7 +25,7 @@ import (
 // recordedRoute is one published (callID, runID, taskID) triple plus the
 // coordinator it was published with.
 type recordedRoute struct {
-	coord  coordinator.Coordinator
+	coord  OrchestrationCoordinator
 	callID string
 	runID  string
 	taskID string
@@ -38,7 +37,7 @@ type routeRecorder struct {
 	routes []recordedRoute
 }
 
-func (r *routeRecorder) sink(c coordinator.Coordinator, callID, runID, taskID string) {
+func (r *routeRecorder) sink(c OrchestrationCoordinator, callID, runID, taskID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.routes = append(r.routes, recordedRoute{coord: c, callID: callID, runID: runID, taskID: taskID})
@@ -55,7 +54,7 @@ func (r *routeRecorder) snapshot() []recordedRoute {
 // installRouteSink installs fn for one test and restores the previous sink
 // afterwards. The sink is package-level process state, so no test that
 // touches it may run in parallel with another that does.
-func installRouteSink(t *testing.T, fn func(coordinator.Coordinator, string, string, string)) {
+func installRouteSink(t *testing.T, fn func(OrchestrationCoordinator, string, string, string)) {
 	t.Helper()
 	prev := subagentTaskRouteSink.Load()
 	SetSubagentTaskRouteSink(fn)

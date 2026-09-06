@@ -20,6 +20,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/gittest"
@@ -157,7 +158,7 @@ func wireSessionSeams() {
 		return reg, err
 	}
 	InstallHookSessionFunc = func(workspaceRoot string, staleBypass, quiet bool) (func(), error) { return func() {}, nil }
-	InitCoordinatorFunc = func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) coordinator.Coordinator {
+	InitCoordinatorFunc = func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) cliorchestrate.OrchestrationCoordinator {
 		return coordinator.New(repos[0], subagents.New(d, subagents.Policy{Workers: 4}))
 	}
 	WorkflowBuildDispatcher = func(opts cliagents.SessionDispatcherOpts) (*runtime.Dispatcher, error) {

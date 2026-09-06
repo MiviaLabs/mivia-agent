@@ -261,7 +261,7 @@ func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf 
 func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *definition.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *definition.GoModuleBaseline, ownerSessionID string, sessionRepo ledger.LedgerRepository) (*controller.LinearController, error) {
 	applyHarnessSandboxSetting(res.Harness)
 	coord := InitCoordinatorFunc(dispatcher, res.Subagents, legacy)
-	runner := controller.NewCoordinatorRunner(coord)
+	runner := controller.NewCoordinatorRunner(coord.(coordinator.Coordinator))
 	// Register every child run this controller ensures under the owning
 	// session, so inspect_agents/join_run/cancel_run resolve workflow children
 	// the same way they resolve dispatch_tasks runs.
@@ -371,7 +371,7 @@ func workflowOwnerSessionID(ctx context.Context) string {
 // standard tools keep answering "unknown run_id" for the run's children - a
 // run registered under no session repo could never be inspected or canceled
 // by anyone.
-func workflowChildRunRegistrar(d *runtime.Dispatcher, coord coordinator.Coordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
+func workflowChildRunRegistrar(d *runtime.Dispatcher, coord cliorchestrate.OrchestrationCoordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
 	if strings.TrimSpace(ownerSessionID) == "" || sessionRepo == nil {
 		log.Printf("workflow: child run registration skipped: no owning session or session ledger repo")
 		return nil

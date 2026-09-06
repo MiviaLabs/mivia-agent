@@ -121,7 +121,7 @@ func TestAskLiveRoundTrip(t *testing.T) {
 
 func answerFirstAsk(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, repo ledger.LedgerRepository) (json.RawMessage, error) {
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
-	coord := cliorchestrate.InitCoordinator(d, cfg, repo)
+	coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(coordinator.Coordinator)
 	id, ok := runtime.TaskIdentityFrom(ctx)
 	if !ok {
 		return nil, context.Canceled

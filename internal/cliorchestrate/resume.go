@@ -23,7 +23,7 @@ type ResumeConfirmationInfo struct {
 
 // ListInterruptedRuns returns the list of interrupted runs from the coordinator.
 // Used by both the slash command (no argument) and the TUI dashboard.
-func ListInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coordinator.RecoveredRun, error) {
+func ListInterruptedRuns(ctx context.Context, c ResumeCoordinator) ([]coordinator.RecoveredRun, error) {
 	return c.ListInterruptedRuns(ctx)
 }
 
@@ -34,9 +34,18 @@ func ListInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coor
 // If c is nil, the function looks up the coordinator from the package-level map.
 // If d is nil, looks up a dispatcher from the coordinator map. It returns the
 // registered handle record for callers that pin principal ownership.
-func ResumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrationHandle, error) {
+func ResumeRun(ctx context.Context, c OrchestrationCoordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrationHandle, error) {
 	if c == nil {
-		if c = FindCoordinator(); c == nil {
+		if rc := FindCoordinator(); rc != nil {
+			// A stored ResumeCoordinator that is not a full
+			// OrchestrationCoordinator (a test double) cannot serve a
+			// resume that needs inspect/join/cancel; the real
+			// coordinator always can.
+			if oc, ok := rc.(OrchestrationCoordinator); ok {
+				c = oc
+			}
+		}
+		if c == nil {
 			return nil, errors.New("no active coordinator (no orchestration runs exist)")
 		}
 	}
@@ -174,10 +183,10 @@ func ParseConfirmResponse(response string) bool {
 }
 
 // FindCoordinator looks up the package-level coordinator singleton.
-func FindCoordinator() coordinator.Coordinator {
-	var c coordinator.Coordinator
+func FindCoordinator() ResumeCoordinator {
+	var c ResumeCoordinator
 	coordinators.Range(func(_, value any) bool {
-		if coord, ok := value.(coordinator.Coordinator); ok {
+		if coord, ok := value.(ResumeCoordinator); ok {
 			c = coord
 			return false
 		}

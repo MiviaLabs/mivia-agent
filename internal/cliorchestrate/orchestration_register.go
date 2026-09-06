@@ -25,7 +25,7 @@ import (
 //     configures retention timer and OnClose eviction).
 //   - Dispatcher must be non-nil to prevent panic on close.
 //   - Additive; cfg supplies handle retention window (orchestrationHandleRetention).
-func RegisterChildRunHandle(runID string, c coordinator.Coordinator, h *coordinator.RunHandle, repo ledger.LedgerRepository, d *runtime.Dispatcher, sessionID string, cfg config.SubagentConfig) error {
+func RegisterChildRunHandle(runID string, c OrchestrationCoordinator, h *coordinator.RunHandle, repo ledger.LedgerRepository, d *runtime.Dispatcher, sessionID string, cfg config.SubagentConfig) error {
 	if d == nil {
 		return errors.New("child run registration needs a dispatcher")
 	}

@@ -39,8 +39,14 @@ func registerSubagentProgress() {
 	// dispatch side's sink type is not assignable to the UI-side one
 	// directly (func parameter types must match exactly).
 	uiadapter.SubagentTaskRouteRegistrar = func(sink func(coord uiadapter.SubagentTaskCoordinator, callID, runID, taskID string)) {
-		cli.SetSubagentTaskRouteSink(func(coord coordinator.Coordinator, callID, runID, taskID string) {
-			sink(coord, callID, runID, taskID)
+		cli.SetSubagentTaskRouteSink(func(coord cli.OrchestrationCoordinator, callID, runID, taskID string) {
+			// The dispatch side publishes its narrow orchestration view; the
+			// route table stores the UI-cancel subset. The live value is the
+			// real coordinator, which carries both, so the widening
+			// assertion holds everywhere a route is actually published.
+			if c, ok := coord.(coordinator.Coordinator); ok {
+				sink(c, callID, runID, taskID)
+			}
 		})
 	}
 }

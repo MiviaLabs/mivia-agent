@@ -19,6 +19,7 @@ package newtui
 import (
 	"context"
 	"encoding/json"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"testing"
 	"time"
 
@@ -150,7 +151,8 @@ func TestSubagentCancelWiring_ToolCallCancelResolvesTheSameRoute(t *testing.T) {
 		t.Fatal("no coordinator registered after a real dispatch")
 	}
 	runID := singleRunID(t, repo)
-	if coord.HandleForRun(runID) == nil {
+	c, _ := coord.(coordinator.Coordinator)
+	if c == nil || c.HandleForRun(runID) == nil {
 		t.Fatalf("the registered coordinator does not own run %q; this test resolved the wrong one", runID)
 	}
 	var gotToolCallID string

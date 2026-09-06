@@ -16,12 +16,12 @@ package cliworkflow
 import (
 	"context"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -78,7 +78,7 @@ var (
 	NewSessionDispatcherFunc func(opts cliagents.SessionDispatcherOpts) (*runtime.Dispatcher, error)
 
 	// InitCoordinatorFunc stands for cli.initCoordinator (orchestration_state.go).
-	InitCoordinatorFunc func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) coordinator.Coordinator
+	InitCoordinatorFunc func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) cliorchestrate.OrchestrationCoordinator
 
 	// InjectBaselineMessagingFunc stands for cli.injectBaselineMessaging
 	// (messaging_tools.go).
