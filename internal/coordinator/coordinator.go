@@ -50,11 +50,12 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	// would duplicate the terminal lifecycle event.
 	results = mergeSeededResults(results, tasks, seed)
 
-	h.mu.Lock()
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	snap, snapErr := c.repo.GetRun(persistCtx, h.runID)
 	cancel()
 	runErr = joinError(runErr, snapErr)
+
+	h.mu.Lock()
 	h.result = &RunResult{Snapshot: snap, Results: results, Err: runErr}
 	h.mu.Unlock()
 }
