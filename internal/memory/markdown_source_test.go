@@ -47,6 +47,33 @@ func TestMarkdownSourceWritesAndScansProjectMemory(t *testing.T) {
 	}
 }
 
+// TestMarkdownSourceDefaultsEmptyVerdict pins the reconcile default: a
+// hand-authored file without a verdict field must scan as neutral, because
+// the derived index's verdict CHECK rejects an empty verdict and the scan
+// must not hand it one.
+func TestMarkdownSourceDefaultsEmptyVerdict(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("# No verdict\n\nscope: project\n\n## Summary\n\nFact.\n")
+	if err := os.WriteFile(filepath.Join(dir, "no-verdict.md"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs, err := source.Scan(context.Background(), ScopeProject)
+	if err != nil || len(docs) != 1 {
+		t.Fatalf("docs=%d err=%v, want one document", len(docs), err)
+	}
+	if docs[0].Entry.Verdict != VerdictNeutral {
+		t.Fatalf("verdict = %q, want %q", docs[0].Entry.Verdict, VerdictNeutral)
+	}
+}
+
 func TestMarkdownSourceScansProtocolMemory(t *testing.T) {
 	root := t.TempDir()
 	source, err := NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
