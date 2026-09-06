@@ -127,14 +127,19 @@ func repositorySessionStorePath(root string, invocation chatInvocation, _ *confi
 	if !found {
 		return workspace.GlobalContextStorePath(root), nil
 	}
-	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
+	// Read only the one key this path needs, without provider resolution: the
+	// repo config may legitimately declare no [providers] section (the user's
+	// provider lives in ~/.mivia/mivia.toml), and a full Load here would
+	// hard-fail with "[providers.openrouter]: models must be non-empty" -
+	// blocking chat startup over a key that has nothing to do with providers.
+	storePath, set, err := config.LoadSubagentStorePath(configPath)
 	if err != nil {
 		return "", err
 	}
-	if !resolved.StorePathSet {
+	if !set {
 		return workspace.GlobalContextStorePath(root), nil
 	}
-	path := config.ExpandPath(resolved.Subagents.StorePath)
+	path := config.ExpandPath(storePath)
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
