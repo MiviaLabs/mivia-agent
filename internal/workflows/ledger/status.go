@@ -13,7 +13,26 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 )
 
-func buildStatusView(ctx context.Context, repo Repository, runID string) (StatusView, error) {
+// viewRepository is the read-side subset the status, inspect, list, and
+// events views use. The full ledger contract carries the write, claim, and
+// admin members these views never touch; they depend on the subset, not the
+// fat interface. Repository satisfies it.
+type viewRepository interface {
+	GetRun(ctx context.Context, runID string) (RunSnapshot, error)
+	ListRuns(ctx context.Context, status ...RunStatus) ([]RunSnapshot, error)
+	GetRunSnapshot(ctx context.Context, runID string) ([]byte, error)
+	ListEvents(ctx context.Context, runID string, limit, offset int) ([]EventRecord, error)
+	ListStepAttempts(ctx context.Context, runID string) ([]StepAttempt, error)
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
+	GetRunClaim(ctx context.Context, runID string) (holder string, acquiredAt time.Time, ok bool, err error)
+	ListApprovals(ctx context.Context, runID string) ([]ApprovalRecord, error)
+	ListDeliveries(ctx context.Context, runID string) ([]DeliveryRecord, error)
+	GetLoopCounters(ctx context.Context, runID string) ([]LoopCounter, error)
+}
+
+var _ viewRepository = (Repository)(nil)
+
+func buildStatusView(ctx context.Context, repo viewRepository, runID string) (StatusView, error) {
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -93,7 +112,9 @@ const deliveryErrorHintMax = 4 << 10
 // status view surfaces the failure hint automatically. Fail-soft: an empty or
 // unresolvable ref yields an empty string; a missing hint must not block the
 // status view (DC-9).
-func resolvedDeliveryError(ctx context.Context, repo Repository, ref string) string {
+func resolvedDeliveryError(ctx context.Context, repo interface {
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
+}, ref string) string {
 	if ref == "" {
 		return ""
 	}
@@ -200,7 +221,7 @@ func extractVerdict(a StepAttempt) string {
 // limit=DefaultInspectPageBytes, which keeps the pre-pagination behavior for
 // artifacts that fit the page. Artifacts larger than MaxPageableBytes are
 // refused outright.
-func buildInspectView(ctx context.Context, repo Repository, runID string, attempt StepAttempt, page ...int) (InspectView, error) {
+func buildInspectView(ctx context.Context, repo viewRepository, runID string, attempt StepAttempt, page ...int) (InspectView, error) {
 	pageOffset, pageLimit := 0, DefaultInspectPageBytes
 	if len(page) > 0 {
 		pageOffset = page[0]

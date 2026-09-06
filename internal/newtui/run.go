@@ -12,7 +12,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -44,7 +43,7 @@ func registerSubagentProgress() {
 			// route table stores the UI-cancel subset. The live value is the
 			// real coordinator, which carries both, so the widening
 			// assertion holds everywhere a route is actually published.
-			if c, ok := coord.(*coordinator.Coordinator); ok {
+			if c, ok := coord.(uiadapter.SubagentTaskCoordinator); ok {
 				sink(c, callID, runID, taskID)
 			}
 		})

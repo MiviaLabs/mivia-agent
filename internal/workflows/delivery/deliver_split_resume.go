@@ -41,7 +41,7 @@ import (
 // write itself crashed), so the only work left is the deferred half. It
 // returns the delivered commit and its recorded tree, which is what gets
 // pushed next.
-func resumeDeliveryCommitSplit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef, title, body string) (string, string, error) {
+func resumeDeliveryCommitSplit(ctx context.Context, repo LedgerRepository, git GitRunner, req Request, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef, title, body string) (string, string, error) {
 	deferred, err := ParseDeferredFiles(existing.DeferredFiles)
 	if err != nil {
 		return "", "", &RefusalError{Reason: fmt.Sprintf("cannot resume the deferred-file split: the recorded deferred_files value is invalid: %v", err)}
@@ -105,7 +105,9 @@ func resumeDeliveryCommitSplit(ctx context.Context, repo deliveryRepository, git
 // prove it. The record is re-upserted with CommitSHA/TreeSHA (mirroring
 // commitStagedTree) so a later crash resumes in windows A/B/C instead of
 // re-adopting. It returns the adopted commit and its tree.
-func adoptRecordedC1Commit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, existing ledger.DeliveryRecord, head string) (string, string, error) {
+func adoptRecordedC1Commit(ctx context.Context, repo interface {
+	UpsertDelivery(ctx context.Context, d ledger.DeliveryRecord) error
+}, git GitRunner, req Request, existing ledger.DeliveryRecord, head string) (string, string, error) {
 	headTree, terr := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
 	if terr != nil {
 		return "", "", fmt.Errorf("cannot verify recorded delivery commit: %w", terr)
@@ -163,7 +165,7 @@ func verifyMiviaCommitOnTop(ctx context.Context, git GitRunner, gc GitContext, p
 // must still be present in the worktree: C2 is committed from EXACTLY those
 // paths, saved under the deferred branch, and the worktree is reset back to
 // c1. It returns c1 and its tree unchanged.
-func reexecuteDeferredCommit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, deferred []string, branch, c1, c1Tree, title, body string) (string, string, error) {
+func reexecuteDeferredCommit(ctx context.Context, repo LedgerRepository, git GitRunner, req Request, deferred []string, branch, c1, c1Tree, title, body string) (string, string, error) {
 	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
 	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
 		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)

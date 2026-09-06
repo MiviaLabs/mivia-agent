@@ -246,7 +246,7 @@ func ChunkPartIndex(chunkID string, order []string) (int, error) {
 // plan-mode run from the run ledger (F1/F8: the plan is a run output). When
 // the plan run's decompose step ran more than once, the LATEST succeeded
 // attempt that produced an output is authoritative.
-func LoadStackPlanOutput(ctx context.Context, repo deliveryRepository, stackID string) ([]byte, error) {
+func LoadStackPlanOutput(ctx context.Context, repo LedgerRepository, stackID string) ([]byte, error) {
 	attempts, err := repo.ListStepAttempts(ctx, stackID)
 	if err != nil {
 		if errors.Is(err, workflowledger.ErrNotFound) {
@@ -292,7 +292,7 @@ func LoadStackPlanOutput(ctx context.Context, repo deliveryRepository, stackID s
 // malformed decompose output, or a lookup failure) - callers must treat a
 // lookup failure as "not applicable", never as a refusal or a false
 // "undriven" diagnostic.
-func DecomposedChunks(ctx context.Context, repo deliveryRepository, runID string) (chunks int, ok bool) {
+func DecomposedChunks(ctx context.Context, repo LedgerRepository, runID string) (chunks int, ok bool) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return 0, false
@@ -336,7 +336,7 @@ func DecomposedChunks(ctx context.Context, repo deliveryRepository, runID string
 // replay them (D3: chunk runs replay the plan run's inputs). The plan run's
 // own RunID IS the stack id; it was never admitted with a "<stack>:<chunk>"
 // key, so it is read directly by RunID.
-func PlanInputs(ctx context.Context, repo deliveryRepository, stackID string) (map[string]string, error) {
+func PlanInputs(ctx context.Context, repo LedgerRepository, stackID string) (map[string]string, error) {
 	raw, err := repo.GetRunSnapshot(ctx, stackID)
 	if err != nil {
 		return nil, fmt.Errorf("plan run snapshot: %w", err)

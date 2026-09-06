@@ -7,13 +7,13 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// controllerRepository is this package's consumer-side view of the workflow
+// LedgerRepository is this package's consumer-side view of the workflow
 // ledger: the run, attempt, loop-counter, approval, panel-phase, content, and
 // claim members step execution, advancement, and cancellation use. The full
 // ledger contract carries delivery, event, recovery, and admin members this
 // package never touches; it depends on the subset, not the fat interface.
 // workflowledger.Repository satisfies it.
-type controllerRepository interface {
+type LedgerRepository interface {
 	CreateRun(ctx context.Context, snap workflowledger.RunSnapshot, snapshotJSON []byte) error
 	GetRun(ctx context.Context, runID string) (workflowledger.RunSnapshot, error)
 	GetRunSnapshot(ctx context.Context, runID string) ([]byte, error)
@@ -41,4 +41,4 @@ type controllerRepository interface {
 }
 
 // Compile-time check that the shipped ledger repository satisfies this subset.
-var _ controllerRepository = (*workflowledger.StorageRepository)(nil)
+var _ LedgerRepository = (*workflowledger.StorageRepository)(nil)

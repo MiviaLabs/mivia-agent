@@ -203,3 +203,26 @@ func TestActiveCoordinatorWithStoredEntry(t *testing.T) {
 		t.Fatalf("ActiveCoordinator() = (%v, %v); want (non-nil, true)", got, ok)
 	}
 }
+
+// TestResumeRunFindsStoredCoordinator covers ResumeRun's nil-coordinator
+// fallback: a coordinator stored under the dispatcher (here, the real
+// coordinator, which satisfies both ResumeCoordinator and
+// OrchestrationCoordinator) is found via FindCoordinator, narrowed back to
+// OrchestrationCoordinator, and its resume error is returned verbatim.
+func TestResumeRunFindsStoredCoordinator(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(repo, nil)
+	d := &runtime.Dispatcher{}
+	cleanup := StoreTestCoordinator(d, coord, repo)
+	t.Cleanup(cleanup)
+
+	ctx := context.Background()
+	ctx = runtime.ContextWithCaller(ctx, runtime.Caller{SessionID: "sess-resume-fallback"})
+	record, err := ResumeRun(ctx, nil, d, "no-such-run", repo)
+	if err == nil {
+		t.Fatal("ResumeRun with an unknown run id returned nil error, want the resume failure")
+	}
+	if record != nil {
+		t.Fatalf("ResumeRun returned record %v, want nil on failure", record)
+	}
+}

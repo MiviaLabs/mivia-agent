@@ -44,7 +44,7 @@ const MaxDeliveryRepairs = DefaultMaxDeliveryRepairs
 //
 // Nothing here knows what the failure was or which step repairs it — the
 // workflow author names the step, so the mechanism stays generic.
-func ReopenForRepair(ctx context.Context, repo deliveryRepository, runID, repairStep string, maxRepairs int, cause error, stdout io.Writer) error {
+func ReopenForRepair(ctx context.Context, repo LedgerRepository, runID, repairStep string, maxRepairs int, cause error, stdout io.Writer) error {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("delivery failed: %v; list attempts for repair: %w", cause, err)
@@ -117,7 +117,7 @@ func ReopenForRepair(ctx context.Context, repo deliveryRepository, runID, repair
 // StoreDeliveryFailureText puts the harness repair hint (RepairHint) in
 // content-addressed storage and returns its ref. Fail-soft: an empty ref
 // costs the repair agent its evidence, but must not stop the re-entry.
-func StoreDeliveryFailureText(ctx context.Context, repo deliveryRepository, cause error) string {
+func StoreDeliveryFailureText(ctx context.Context, repo LedgerRepository, cause error) string {
 	if cause == nil {
 		return ""
 	}

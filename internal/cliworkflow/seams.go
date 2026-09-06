@@ -175,7 +175,7 @@ var (
 
 	// StackDecomposedChunksFunc stands for cli.stackDecomposedChunks
 	// (stack_admit_integration.go).
-	StackDecomposedChunksFunc func(ctx context.Context, repo workflowledger.Repository, runID string) (chunks int, ok bool)
+	StackDecomposedChunksFunc func(ctx context.Context, repo delivery.LedgerRepository, runID string) (chunks int, ok bool)
 
 	// OpenContextStoreFunc stands for cli.openContextStore (context_setup.go).
 	OpenContextStoreFunc func(root string, cfg config.SubagentConfig) (*storage.SQLite, error)

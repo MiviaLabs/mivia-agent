@@ -87,7 +87,7 @@ func deliveryFooter(runID, workflowDigest, stackPart string) string {
 // A metadata defect is a PRMetadataError; a policy-file defect is a
 // RefusalError. The stage runs BEFORE any commit or push, so a metadata
 // defect writes no delivery record.
-func validatePRMetadata(ctx context.Context, repo deliveryRepository, req Request) (title, commitSubject, body string, err error) {
+func validatePRMetadata(ctx context.Context, repo LedgerRepository, req Request) (title, commitSubject, body string, err error) {
 	summary, err := ResolveLatestChangeSummary(ctx, repo, req.RunID)
 	if err != nil {
 		return "", "", "", err

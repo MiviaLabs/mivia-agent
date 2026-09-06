@@ -11,7 +11,7 @@ import (
 // CancelRun cancels a run that is not yet terminal. It is a thin wrapper
 // around CancelRunWithAttempts for callers that only drive the status
 // transition and do not need the attempts that were canceled.
-func CancelRun(ctx context.Context, repo controllerRepository, coord workflowledger.PanelChildCoordinator, runID string) error {
+func CancelRun(ctx context.Context, repo LedgerRepository, coord workflowledger.PanelChildCoordinator, runID string) error {
 	_, err := CancelRunWithAttempts(ctx, repo, coord, runID)
 	return err
 }
@@ -35,7 +35,7 @@ func CancelRun(ctx context.Context, repo controllerRepository, coord workflowled
 // the workflow execution file lock and clear a stale claim before calling.
 // Callers emit one step_completed event per returned attempt: each carries
 // the canceled status and the operator-cancel ErrorRef.
-func CancelRunWithAttempts(ctx context.Context, repo controllerRepository, coord workflowledger.PanelChildCoordinator, runID string) ([]workflowledger.StepAttempt, error) {
+func CancelRunWithAttempts(ctx context.Context, repo LedgerRepository, coord workflowledger.PanelChildCoordinator, runID string) ([]workflowledger.StepAttempt, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("workflow ledger is nil")
 	}
@@ -59,7 +59,7 @@ func CancelRunWithAttempts(ctx context.Context, repo controllerRepository, coord
 // workflow claim untouched, so a later cancel or resume can retry the same
 // idempotent reconciliation. Non-panel attempts are unaffected: they keep
 // the existing best-effort "mark canceled" behavior.
-func CancelRunWithAttemptsWithClaim(ctx context.Context, repo controllerRepository, coord workflowledger.PanelChildCoordinator, runID, holder string) ([]workflowledger.StepAttempt, error) {
+func CancelRunWithAttemptsWithClaim(ctx context.Context, repo LedgerRepository, coord workflowledger.PanelChildCoordinator, runID, holder string) ([]workflowledger.StepAttempt, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("workflow ledger is nil")
 	}
@@ -136,7 +136,7 @@ func CancelRunWithAttemptsWithClaim(ctx context.Context, repo controllerReposito
 // completed meanwhile is simply skipped (the claim fences concurrent
 // completion anyway). The canceled attempts are returned so callers can
 // emit one step_completed event per attempt.
-func markRemainingAttemptsCanceled(ctx context.Context, repo controllerRepository, runID string) ([]workflowledger.StepAttempt, error) {
+func markRemainingAttemptsCanceled(ctx context.Context, repo LedgerRepository, runID string) ([]workflowledger.StepAttempt, error) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -166,7 +166,7 @@ func markRemainingAttemptsCanceled(ctx context.Context, repo controllerRepositor
 // ErrCancelBlocked/ErrCancelPending/a durable error without settling
 // anything, leaving the run and the attempt's phase exactly as
 // ReconcilePanelCancellation last observed them for a later retry.
-func cancelPanelAttempt(ctx context.Context, repo controllerRepository, coord workflowledger.PanelChildCoordinator, runID, holder string, attempt workflowledger.StepAttempt) (workflowledger.StepAttempt, error) {
+func cancelPanelAttempt(ctx context.Context, repo LedgerRepository, coord workflowledger.PanelChildCoordinator, runID, holder string, attempt workflowledger.StepAttempt) (workflowledger.StepAttempt, error) {
 	if coord == nil {
 		return workflowledger.StepAttempt{}, fmt.Errorf("panel attempt %q requires a coordinator to cancel; none was supplied", attempt.AttemptID)
 	}

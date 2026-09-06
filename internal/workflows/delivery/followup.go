@@ -29,7 +29,7 @@ import (
 // > 0), or ok=false when there is none. HasDeferredFollowUp is this function's
 // boolean projection; EnsureFollowUpPublished needs the full record for
 // DeferredFiles, so both share this one lookup instead of two separate scans.
-func latestDeferredDeliveryRecord(ctx context.Context, repo deliveryRepository, runID string) (ledger.DeliveryRecord, bool) {
+func latestDeferredDeliveryRecord(ctx context.Context, repo LedgerRepository, runID string) (ledger.DeliveryRecord, bool) {
 	records, err := repo.ListDeliveries(ctx, runID)
 	if err != nil {
 		return ledger.DeliveryRecord{}, false
@@ -45,7 +45,7 @@ func latestDeferredDeliveryRecord(ctx context.Context, repo deliveryRepository, 
 // HasDeferredFollowUp reports whether runID's most recent succeeded delivery
 // record left a pending deferred commit (DeliveryRecord.StackRemainingCommits
 // > 0).
-func HasDeferredFollowUp(ctx context.Context, repo deliveryRepository, runID string) bool {
+func HasDeferredFollowUp(ctx context.Context, repo LedgerRepository, runID string) bool {
 	_, ok := latestDeferredDeliveryRecord(ctx, repo, runID)
 	return ok
 }
@@ -140,7 +140,7 @@ func shortRef(parentRef *PRRef, parentBranch string) string {
 // follow-up (the generic post-delivery call, and the stack driver's own
 // later pass) never double-publish. published=false with a nil error means
 // nothing was deferred - the normal case for every non-split delivery.
-func EnsureFollowUpPublished(ctx context.Context, git GitRunner, pr PRClient, worktreeRoot string, repo deliveryRepository, run ledger.RunSnapshot, label string, stdout func(string)) (branch, sha string, ref PRRef, published bool, err error) {
+func EnsureFollowUpPublished(ctx context.Context, git GitRunner, pr PRClient, worktreeRoot string, repo LedgerRepository, run ledger.RunSnapshot, label string, stdout func(string)) (branch, sha string, ref PRRef, published bool, err error) {
 	if worktreeRoot == "" || run.WorktreeName == "" {
 		return "", "", PRRef{}, false, nil
 	}

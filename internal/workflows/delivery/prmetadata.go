@@ -59,7 +59,7 @@ func LatestFailureText(ctx context.Context, repo interface {
 // OutputRef, so the presence of pr_title marks a change summary. Only a
 // storage or load failure is an error; an output that is not valid JSON is
 // skipped.
-func ResolveLatestChangeSummary(ctx context.Context, repo deliveryRepository, runID string) (map[string]any, error) {
+func ResolveLatestChangeSummary(ctx context.Context, repo LedgerRepository, runID string) (map[string]any, error) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return nil, err

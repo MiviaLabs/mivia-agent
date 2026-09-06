@@ -7,13 +7,13 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// deliveryRepository is this package's consumer-side view of the workflow
+// LedgerRepository is this package's consumer-side view of the workflow
 // ledger: the run-read, attempt, content, and delivery members the publish,
 // repair, stacking, and follow-up paths use. The full ledger contract carries
 // loop counters, approvals, panel phases, events, and admin members this
 // package never touches; it depends on the subset, not the fat interface.
-// workflowdeliveryRepository satisfies it.
-type deliveryRepository interface {
+// workflowLedgerRepository satisfies it.
+type LedgerRepository interface {
 	GetRun(ctx context.Context, runID string) (workflowledger.RunSnapshot, error)
 	GetRunSnapshot(ctx context.Context, runID string) ([]byte, error)
 	CompareAndSetRunStatus(ctx context.Context, runID string, expectedVersion uint64, status workflowledger.RunStatus, finishedAt *time.Time) error
@@ -31,4 +31,4 @@ type deliveryRepository interface {
 }
 
 // Compile-time check that the shipped ledger repository satisfies this subset.
-var _ deliveryRepository = (*workflowledger.StorageRepository)(nil)
+var _ LedgerRepository = (*workflowledger.StorageRepository)(nil)
