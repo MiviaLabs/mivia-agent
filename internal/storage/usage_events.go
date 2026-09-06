@@ -14,9 +14,9 @@ import (
 // lock, since a session's own store can be written by more than one mivia
 // process sharing a workspace, same as every other table here).
 func (s *SQLite) RecordUsageEvent(ctx context.Context, workspaceID string, record usage.UsageRecord) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
 	return retrySQLiteBusy(ctx, func() error {
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
 		return s.inTx(ctx, func(tx *sql.Tx) error {
 			var summarized any
 			if record.Summarized != nil {
