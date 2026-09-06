@@ -275,13 +275,13 @@ func TestCancelOrTombstoneMember_SlowWorkerReportsPendingNotBlocked(t *testing.T
 // win admission for the same idempotency key in that gap, every run, with no
 // goroutines or timing luck required.
 type joinAsRecoveredRaceCoordinator struct {
-	panelChildCoordinator
+	PanelChildCoordinator
 	once sync.Once
 	hook func()
 }
 
 func (r *joinAsRecoveredRaceCoordinator) JoinAsRecovered(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error) {
-	h, err := r.panelChildCoordinator.JoinAsRecovered(ctx, req)
+	h, err := r.PanelChildCoordinator.JoinAsRecovered(ctx, req)
 	if errors.Is(err, coordledger.ErrNotFound) {
 		r.once.Do(r.hook)
 	}
@@ -352,7 +352,7 @@ func TestCancelOrTombstoneMember_ConcurrentAdmissionWinnerIsNotFalselyTerminal(t
 	})
 	forwardDispatcher, cancelerInner, repo, run, attempt := concurrentAdmissionRaceFixture(t, handler)
 
-	raceCoord := &joinAsRecoveredRaceCoordinator{panelChildCoordinator: cancelerInner}
+	raceCoord := &joinAsRecoveredRaceCoordinator{PanelChildCoordinator: cancelerInner}
 	panel := NewPanelCoordinator(run, raceCoord, repo)
 
 	member := attempt.PanelExecution.Members[0]

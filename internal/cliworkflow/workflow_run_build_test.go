@@ -461,7 +461,7 @@ func TestBuildWorkflowControllerRegistersChildRunsUnderOwnerSession(t *testing.T
 
 // runnerCoordinator returns the coordinator the built controller dispatches
 // through, for the ownership-vs-execution identity assertion above.
-func runnerCoordinator(t *testing.T, built WorkflowControllerBuild) coordinator.Coordinator {
+func runnerCoordinator(t *testing.T, built WorkflowControllerBuild) any {
 	t.Helper()
 	runner, ok := built.Controller.Runner.(*controller.CoordinatorRunner)
 	if !ok || runner == nil {

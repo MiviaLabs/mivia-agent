@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -24,7 +23,7 @@ import (
 // yields a *controller.CoordinatorRunner (e.g. a scripted test runner):
 // CancelRunWithAttemptsWithClaim then fails closed only if it actually
 // finds a live panel attempt to reconcile.
-func (e *Engine) panelCancelCoordinator(active *activeRun) coordinator.Coordinator {
+func (e *Engine) panelCancelCoordinator(active *activeRun) workflowledger.PanelChildCoordinator {
 	if active != nil && active.ctrl != nil {
 		if runner, ok := active.ctrl.Runner.(*controller.CoordinatorRunner); ok {
 			return runner.Coordinator

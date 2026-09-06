@@ -16,7 +16,7 @@ import (
 // Advance goroutine, and this type is only installed after setup's member
 // dispatch has already completed.
 type countingChildDispatchCoordinator struct {
-	coordinator.Coordinator
+	stepCoordinator
 	memberRunIDs        map[string]struct{}
 	synthesisRunID      string
 	memberDispatches    int
@@ -30,7 +30,7 @@ func (c *countingChildDispatchCoordinator) EnsureSingleTaskRun(ctx context.Conte
 	if req.RunID == c.synthesisRunID {
 		c.synthesisDispatches++
 	}
-	return c.Coordinator.EnsureSingleTaskRun(ctx, req)
+	return c.stepCoordinator.EnsureSingleTaskRun(ctx, req)
 }
 
 // missingSynthesisInputRepo wraps a Repository and returns ErrContentNotFound
@@ -76,9 +76,9 @@ func TestAdvancePanelStep_ResumeAfterSynthesisAdmittedJoinsSynthesisNotMembers(t
 	// synthesis child must be (that is the join).
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	counting := &countingChildDispatchCoordinator{
-		Coordinator:    runner.Coordinator,
-		memberRunIDs:   map[string]struct{}{},
-		synthesisRunID: attempt.PanelExecution.SynthesisRunID,
+		stepCoordinator: runner.Coordinator,
+		memberRunIDs:    map[string]struct{}{},
+		synthesisRunID:  attempt.PanelExecution.SynthesisRunID,
 	}
 	for _, m := range attempt.PanelExecution.Members {
 		counting.memberRunIDs[m.CoordinatorRunID] = struct{}{}
@@ -134,9 +134,9 @@ func TestAdvancePanelStep_ResumeSynthesisAdmittedFailsClosedOnMissingPersistedEn
 
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	counting := &countingChildDispatchCoordinator{
-		Coordinator:    runner.Coordinator,
-		memberRunIDs:   map[string]struct{}{},
-		synthesisRunID: attempt.PanelExecution.SynthesisRunID,
+		stepCoordinator: runner.Coordinator,
+		memberRunIDs:    map[string]struct{}{},
+		synthesisRunID:  attempt.PanelExecution.SynthesisRunID,
 	}
 	for _, m := range attempt.PanelExecution.Members {
 		counting.memberRunIDs[m.CoordinatorRunID] = struct{}{}
