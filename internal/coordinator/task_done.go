@@ -28,7 +28,7 @@ import (
 // attempt persistence are NOT done here — recordRunResults does that once at
 // run end with the run's canonical result set, and appends the single terminal
 // event.
-func (c *coordinator) onTaskDone(ctx context.Context, t subagents.Task, r subagents.Result) {
+func (c *Coordinator) onTaskDone(ctx context.Context, t subagents.Task, r subagents.Result) {
 	if c == nil || c.repo == nil {
 		return
 	}

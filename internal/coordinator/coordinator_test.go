@@ -350,7 +350,7 @@ func TestCoordinator_RecoveredHandleRetainsThenReleasesBookkeeping(t *testing.T)
 		t.Fatal(err)
 	}
 	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
-	cr := c.(*coordinator)
+	cr := c
 	cr.handleRetention = 10 * time.Millisecond
 	h, err := c.Spawn(context.Background(), nil, key)
 	if err != nil {
@@ -526,7 +526,7 @@ func TestCoordinator_ConcurrentSpawn(t *testing.T) {
 }
 
 func TestCoordinator_ValidateTasksRejectsUnknownDependency(t *testing.T) {
-	c := &coordinator{}
+	c := &Coordinator{}
 	err := c.validateTasks([]subagents.Task{
 		{ID: "t1", DependsOn: []string{"nonexistent"}},
 	})
@@ -536,7 +536,7 @@ func TestCoordinator_ValidateTasksRejectsUnknownDependency(t *testing.T) {
 }
 
 func TestCoordinator_ValidateTasksRejectsDuplicateID(t *testing.T) {
-	c := &coordinator{}
+	c := &Coordinator{}
 	err := c.validateTasks([]subagents.Task{
 		{ID: "t1"},
 		{ID: "t1"},

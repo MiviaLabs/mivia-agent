@@ -61,7 +61,7 @@ func assertAskDeclinedEvent(t *testing.T, repo ledger.LedgerRepository, runID, a
 // assertDeclineMessageSummary asserts ListRunMessages surfaces the decline as
 // an ask_declined entry attributed to the asker: present unfiltered and under
 // the asker filter, absent under the responder filter.
-func assertDeclineMessageSummary(t *testing.T, c Coordinator, runID, askerTask, responderTask, askID string) {
+func assertDeclineMessageSummary(t *testing.T, c *Coordinator, runID, askerTask, responderTask, askID string) {
 	t.Helper()
 	msgs, err := c.ListRunMessages(context.Background(), runID, "")
 	if err != nil {

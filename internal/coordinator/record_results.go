@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, results []subagents.Result, runErr error) error {
+func (c *Coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, results []subagents.Result, runErr error) error {
 	// Early-CAS window (plan R9): Pool.OnTaskDone may have already CASed a
 	// task to a terminal status (and fenced its mailbox) while the pool is
 	// still running. A crash between that early CAS and this finalize leaves a
@@ -44,7 +44,7 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 // terminal mailbox fence, output content, attempt identity, and lifecycle
 // event. Errors are joined into runErr; the possibly-overridden result is
 // returned so the caller keeps its result slice in sync.
-func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagents.Result, resultMap map[string]subagents.Result, persistCtx context.Context, runErr *error) subagents.Result {
+func (c *Coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagents.Result, resultMap map[string]subagents.Result, persistCtx context.Context, runErr *error) subagents.Result {
 	// Defense in depth: a "missing" result — a never-executed task on a
 	// stolen/aborted run whose claim probe failed without settling it — must
 	// never be terminalized. mapStatus's default maps a missing result (no
@@ -130,7 +130,7 @@ func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 // recorded, so a ref on a task always resolves. The write error is joined into
 // runErr on the same terms as the sibling persistence failures in
 // recordRunResults.
-func (c *coordinator) persistResultContent(ctx context.Context, outputRef, errorRef string, r subagents.Result, runErr *error) (string, string) {
+func (c *Coordinator) persistResultContent(ctx context.Context, outputRef, errorRef string, r subagents.Result, runErr *error) (string, string) {
 	if outputRef != "" && len(r.Output) > 0 {
 		if err := c.repo.StoreContent(ctx, outputRef, r.Output); err != nil {
 			*runErr = joinError(*runErr, fmt.Errorf("store task %q output content: %w", r.TaskID, err))
@@ -156,7 +156,7 @@ func (c *coordinator) persistResultContent(ctx context.Context, outputRef, error
 // for good — flush pops before the store outcome is known — which is accepted
 // while finalize runs exactly once; if any resume/retry path ever re-invokes
 // this, convert the buffer to peek/pop-after-success first.
-func (c *coordinator) persistToolCalls(ctx context.Context, h *RunHandle, taskID string, runErr *error) string {
+func (c *Coordinator) persistToolCalls(ctx context.Context, h *RunHandle, taskID string, runErr *error) string {
 	steps := h.toolCalls.flush(taskID)
 	if len(steps) == 0 {
 		return ""
@@ -176,7 +176,7 @@ func (c *coordinator) persistToolCalls(ctx context.Context, h *RunHandle, taskID
 
 // tryTaskStatusCAS attempts a compare-and-set on a task's status, handling
 // the special case of blocked status.
-func (c *coordinator) tryTaskStatusCAS(ctx context.Context, runID, taskID string, snap ledger.TaskSnapshot, newStatus string, runErr *error) bool {
+func (c *Coordinator) tryTaskStatusCAS(ctx context.Context, runID, taskID string, snap ledger.TaskSnapshot, newStatus string, runErr *error) bool {
 	if newStatus == string(ledger.TaskStatusBlocked) {
 		if snap.Status == newStatus {
 			return true

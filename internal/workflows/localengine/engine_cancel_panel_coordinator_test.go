@@ -8,7 +8,7 @@ import (
 )
 
 // TestPanelCancelCoordinatorReusesLiveInstance is a regression test: Engine's
-// panelCancelCoordinator used to build a brand-new coordinator.Coordinator
+// panelCancelCoordinator used to build a brand-new *coordinator.Coordinator
 // via e.NewRunner() on every Cancel call, instead of reusing the coordinator
 // instance actually executing the run's in-flight Advance() call. A fresh
 // coordinator instance has its own empty in-memory handle map and its own

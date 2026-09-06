@@ -117,7 +117,7 @@ func (b *subagentBlockingTool) outcome() (ran bool, err error) {
 // off ctx and forward the published ToolCanceler to the coordinator's own
 // registry. registered closes once that hand-off has happened, so a test
 // can wait for it before calling CancelSubagentToolCall.
-func cancelableSubagentTask(t *testing.T, d *runtime.Dispatcher, coord Coordinator, handlerName, callID string) (tool *subagentBlockingTool, registered <-chan struct{}) {
+func cancelableSubagentTask(t *testing.T, d *runtime.Dispatcher, coord *Coordinator, handlerName, callID string) (tool *subagentBlockingTool, registered <-chan struct{}) {
 	t.Helper()
 	tool = newSubagentBlockingTool(handlerName + "-tool")
 	reg := tools.NewRegistry()
@@ -169,7 +169,7 @@ func TestCancelSubagentToolCall_IsolatedFromSiblingAndTask(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	p := subagents.New(d, subagents.Policy{Workers: 2})
 	c := New(repo, p)
-	coord := c.(*coordinator)
+	coord := c
 
 	toolA, registeredA := cancelableSubagentTask(t, d, coord, "blockA", "call-A")
 	toolB, registeredB := cancelableSubagentTask(t, d, coord, "blockB", "call-B")
@@ -251,7 +251,7 @@ func TestCancelSubagentToolCall_UnknownIsSafeNoop(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
-	coord := c.(*coordinator)
+	coord := c
 
 	tool, registered := cancelableSubagentTask(t, d, coord, "blockOnly", "call-only")
 
@@ -296,7 +296,7 @@ func TestCancelSubagentToolCall_RecoveredHandleIsNoop(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
-	coord := c.(*coordinator)
+	coord := c
 	recovered := &RunHandle{
 		runID: "recovered-run", done: make(chan struct{}), cancelDone: make(chan struct{}),
 		owner: coord,

@@ -29,7 +29,7 @@ import (
 // inside the dispatched batch with its ledger row already at running.
 type dispatchWindowRun struct {
 	repo    ledger.LedgerRepository
-	coord   *coordinator
+	coord   *Coordinator
 	h       *RunHandle
 	release chan struct{}
 	mu      *sync.Mutex
@@ -80,7 +80,7 @@ func spawnDispatchWindowRun(t *testing.T) (dispatchWindowRun, string) {
 	}
 	first := <-started
 	return dispatchWindowRun{
-		repo: repo, coord: c.(*coordinator), h: h, release: release,
+		repo: repo, coord: c, h: h, release: release,
 		mu: &mu, entered: &entered,
 	}, first
 }

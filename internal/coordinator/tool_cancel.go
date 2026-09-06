@@ -44,7 +44,7 @@ func (h *RunHandle) subagentToolCanceler(taskID string) (agent.ToolCanceler, boo
 // doc comment (types.go) for the contract; HandleForRun already returns nil
 // for an unknown runID, so a not-yet-visible or already-evicted run is a
 // clean no-op rather than a panic.
-func (c *coordinator) RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler) {
+func (c *Coordinator) RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler) {
 	if c == nil || runID == "" {
 		return
 	}
@@ -57,7 +57,7 @@ func (c *coordinator) RegisterSubagentToolCanceler(runID, taskID string, cancele
 
 // CancelSubagentToolCall implements Coordinator. See the interface doc
 // comment (types.go) for the contract.
-func (c *coordinator) CancelSubagentToolCall(ctx context.Context, h *RunHandle, taskID, callID string) (bool, error) {
+func (c *Coordinator) CancelSubagentToolCall(ctx context.Context, h *RunHandle, taskID, callID string) (bool, error) {
 	if err := c.validateHandle(h); err != nil {
 		return false, err
 	}

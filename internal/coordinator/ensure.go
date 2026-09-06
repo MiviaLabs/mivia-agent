@@ -27,7 +27,7 @@ type EnsureRunRequest struct {
 }
 
 // EnsureRun creates or resumes the exact host-admitted run.
-func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
+func (c *Coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
 	var err error
 	req, err = c.resolveEnsurePolicy(ctx, req)
 	if err != nil {
@@ -105,7 +105,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 
 // EnsureSingleTaskRun admits exactly one runnable task. Wave 3 callers use
 // this operation instead of general DAG admission.
-func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
+func (c *Coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
 	if len(req.Tasks) != 1 {
 		return nil, fmt.Errorf("ensure single task run: want one task")
 	}
@@ -168,7 +168,7 @@ func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequ
 }
 
 // EnsureTerminalSingleTaskRun admits a canceled single-task tombstone.
-func (c *coordinator) EnsureTerminalSingleTaskRun(ctx context.Context, req EnsureRunRequest, status ledger.TaskStatus) (*RunHandle, error) {
+func (c *Coordinator) EnsureTerminalSingleTaskRun(ctx context.Context, req EnsureRunRequest, status ledger.TaskStatus) (*RunHandle, error) {
 	if status != ledger.TaskStatusCanceled {
 		return nil, fmt.Errorf("ensure terminal single task run: unsupported status %q", status)
 	}
@@ -216,7 +216,7 @@ func (c *coordinator) EnsureTerminalSingleTaskRun(ctx context.Context, req Ensur
 // NeedsActorPermit reports whether an admitted child needs a local actor
 // permit. It never admits work. It briefly claims a durable child to tell an
 // unclaimed resumable child from a remote wait-only child.
-func (c *coordinator) NeedsActorPermit(ctx context.Context, req EnsureRunRequest) (bool, error) {
+func (c *Coordinator) NeedsActorPermit(ctx context.Context, req EnsureRunRequest) (bool, error) {
 	var err error
 	req, err = c.resolveEnsurePolicy(ctx, req)
 	if err != nil {
@@ -254,7 +254,7 @@ func (c *coordinator) NeedsActorPermit(ctx context.Context, req EnsureRunRequest
 
 // resolveEnsurePolicy restores the durable policy for an omitted request.
 // An explicit non-zero policy is later compared with the durable tuple.
-func (c *coordinator) resolveEnsurePolicy(ctx context.Context, req EnsureRunRequest) (EnsureRunRequest, error) {
+func (c *Coordinator) resolveEnsurePolicy(ctx context.Context, req EnsureRunRequest) (EnsureRunRequest, error) {
 	if req.Policy != (ledger.RunPolicy{}) || strings.TrimSpace(req.IdempotencyKey) == "" {
 		req.Policy = policyWithRetry(req.Policy, c.retryPolicyLocked())
 		return req, nil
@@ -273,7 +273,7 @@ func (c *coordinator) resolveEnsurePolicy(ctx context.Context, req EnsureRunRequ
 
 // joinSingleTaskAdmission validates and joins a durable admission winner.
 // It never changes the winner's terminal or runnable state.
-func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRunRequest, key, fingerprint string) (*RunHandle, error) {
+func (c *Coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRunRequest, key, fingerprint string) (*RunHandle, error) {
 	run, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if err != nil {
 		if errors.Is(err, ledger.ErrNotFound) {
@@ -335,7 +335,7 @@ func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRun
 	return c.resumeInterruptedRun(ctx, run.RunID, req.Tasks, nonInteractiveRunOpts(req)...)
 }
 
-func (c *coordinator) validateEnsureRequest(ctx context.Context, req EnsureRunRequest) (string, string, error) {
+func (c *Coordinator) validateEnsureRequest(ctx context.Context, req EnsureRunRequest) (string, string, error) {
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return "", "", fmt.Errorf("ensure run: idempotency key is empty")
 	}
@@ -434,7 +434,7 @@ func latestAttempts(tasks []ledger.TaskSnapshot) map[string]string {
 	return attempts
 }
 
-func (c *coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprint string, req EnsureRunRequest) (*RunHandle, error) {
+func (c *Coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprint string, req EnsureRunRequest) (*RunHandle, error) {
 	// Claim first; only a held claim is ever cleared, and only once, so a
 	// force resume cannot wipe a live claim held by another executor.
 	if err := c.claimForResume(ctx, runID, req.ForceResume); err != nil {
@@ -472,7 +472,7 @@ func nonInteractiveRunOpts(req EnsureRunRequest) []runHandleOption {
 
 // claimForResume acquires a free or expired execution claim. Force resume does
 // not clear a live claim. The interrupted-run path refreshes the same lease.
-func (c *coordinator) claimForResume(ctx context.Context, runID string, force bool) error {
+func (c *Coordinator) claimForResume(ctx context.Context, runID string, force bool) error {
 	_ = force
 	if err := c.claimRun(ctx, runID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
@@ -486,7 +486,7 @@ func (c *coordinator) claimForResume(ctx context.Context, runID string, force bo
 // registerEnsuredHandle stores the run handle under its idempotency key so a
 // repeat EnsureRun for the same key returns the same handle, then evicts it
 // once the run reaches a terminal state.
-func (c *coordinator) registerEnsuredHandle(key string, h *RunHandle) {
+func (c *Coordinator) registerEnsuredHandle(key string, h *RunHandle) {
 	c.handlesMu.Lock()
 	c.handles[key] = h
 	c.handlesMu.Unlock()

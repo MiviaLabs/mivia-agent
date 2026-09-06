@@ -14,7 +14,7 @@ import (
 // is registered on the coordinator (HandleForRun-reachable) without needing
 // a live in-flight task: onTaskStart's own guard logic is what these tests
 // exercise directly, not the pool's dispatch machinery.
-func onTaskStartFixture(t *testing.T) (*coordinator, *RunHandle) {
+func onTaskStartFixture(t *testing.T) (*Coordinator, *RunHandle) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -22,7 +22,7 @@ func onTaskStartFixture(t *testing.T) (*coordinator, *RunHandle) {
 		return json.RawMessage(`"ok"`), nil
 	}))
 	p := subagents.New(d, subagents.Policy{Workers: 1})
-	c := New(repo, p).(*coordinator)
+	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "seed", Name: "noop"}}, "")
 	if err != nil {

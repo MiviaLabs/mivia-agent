@@ -315,7 +315,7 @@ func TestHandleAskFindLiveError(t *testing.T) {
 }
 
 // livePeerRun starts a hanging peer task and returns run handle + dispatcher/repo/coord.
-func livePeerRun(t *testing.T) (*runtime.Dispatcher, coordinator.Coordinator, ledger.LedgerRepository, *coordinator.RunHandle) {
+func livePeerRun(t *testing.T) (*runtime.Dispatcher, *coordinator.Coordinator, ledger.LedgerRepository, *coordinator.RunHandle) {
 	t.Helper()
 	d := runtime.New(runtime.Policy{})
 	repo := ledger.NewMemoryLedgerRepository()
@@ -453,7 +453,7 @@ func TestHandleAskParkHeldWithLivePeer(t *testing.T) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(coordinator.Coordinator)
+		coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(*coordinator.Coordinator)
 		id, _ := runtime.TaskIdentityFrom(ctx)
 		_, unpark, err := coord.ParkQuestion(id.RunID, id.TaskID, "held")
 		if err != nil {

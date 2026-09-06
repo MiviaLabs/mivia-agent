@@ -418,7 +418,7 @@ func TestCoordinatorRunner_EvidenceCrossCheck(t *testing.T) {
 // command, exactly as a child agent can through post_message. It is the spoof
 // the evidence gate must refuse: the child is authoring its own audit trail.
 type evidencePostingHandler struct {
-	coord coordinator.Coordinator
+	coord *coordinator.Coordinator
 	runID string
 	out   json.RawMessage
 }

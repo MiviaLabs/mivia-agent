@@ -14,14 +14,14 @@ import (
 // buildTestCoordinator creates a coordinator with a real (fast) repo for
 // tests that exercise the tasksFromSnapshots / terminalTaskResultWithOutput
 // path without needing slow-load cancellation behaviour.
-func buildTestCoordinator(t *testing.T) (*coordinator, *ledger.MemoryLedgerRepository) {
+func buildTestCoordinator(t *testing.T) (*Coordinator, *ledger.MemoryLedgerRepository) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
-	return c.(*coordinator), repo
+	return c, repo
 }
 
 // TestTasksFromSnapshots_CompletedWithOutputRef (TC-A success): a completed
@@ -84,7 +84,7 @@ func TestTerminalTaskResultWithOutput_CanceledCtx(t *testing.T) {
 	outputRef := "ref:output:tc-b-456"
 	_ = slowRepo.StoreContent(context.Background(), outputRef, []byte(`{"result":"slow"}`))
 
-	c := &coordinator{repo: slowRepo}
+	c := &Coordinator{repo: slowRepo}
 
 	snap := ledger.TaskSnapshot{
 		TaskID:    "task-b",

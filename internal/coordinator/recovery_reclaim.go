@@ -60,7 +60,7 @@ const (
 // than racing into their own CreateRun - two creators would both execute the
 // keyed work. On probe error or delete failure the run is left untouched and
 // the caller must treat the key as contended.
-func (c *coordinator) reclaimAbandonedRun(runID string) bool {
+func (c *Coordinator) reclaimAbandonedRun(runID string) bool {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Acquire the claim lease-aware (probe, then takeover only when the
@@ -90,7 +90,7 @@ func (c *coordinator) reclaimAbandonedRun(runID string) bool {
 
 // watchRecoveredRun monitors a recovered run and resolves the handle once the
 // run is terminal. Non-terminal recovered runs produce errRecoveredRunNotResumable.
-func (c *coordinator) watchRecoveredRun(h *RunHandle) {
+func (c *Coordinator) watchRecoveredRun(h *RunHandle) {
 	snap, err := c.repo.GetRun(context.Background(), h.runID)
 	result := &RunResult{Snapshot: snap, Err: err}
 	if err == nil {
@@ -120,7 +120,7 @@ const watchedRunReclaimInterval = 500 * time.Millisecond
 // hang forever. watchJoinedRun instead re-probes the claim on
 // watchedRunReclaimInterval and, once it can take over an expired claim,
 // resumes the run itself on this same handle via resumeExecutionOnHandle.
-func (c *coordinator) watchJoinedRun(h *RunHandle) {
+func (c *Coordinator) watchJoinedRun(h *RunHandle) {
 	pollTicker := time.NewTicker(25 * time.Millisecond)
 	defer pollTicker.Stop()
 	reclaimTicker := time.NewTicker(watchedRunReclaimInterval)
@@ -171,7 +171,7 @@ func (c *coordinator) watchJoinedRun(h *RunHandle) {
 // winner's run so the keyed work executes exactly once. Only after the budget is
 // exhausted does the contention surface to the caller; the caller never falls
 // through to create on contention.
-func (c *coordinator) recoverIdempotentWithRetry(ctx context.Context, key, fingerprint string) (*RunHandle, bool, error) {
+func (c *Coordinator) recoverIdempotentWithRetry(ctx context.Context, key, fingerprint string) (*RunHandle, bool, error) {
 	deadline := time.Now().Add(contentionRetryTotal)
 	for {
 		h, found, err := c.recoverByIdempotencyKey(ctx, key, fingerprint)

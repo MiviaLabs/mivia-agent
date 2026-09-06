@@ -92,7 +92,7 @@ func TestResumeSurfacesRequeueCASFailureAndNextResumeRecovers(t *testing.T) {
 	defer func() { log.SetOutput(prevWriter); log.SetFlags(prevFlags) }()
 
 	repo.blockRequeue.Store(true)
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	h, err := c.ResumeInterruptedRun(ctx, "r")
 	if err != nil {
 		t.Fatalf("first resume: %v", err)
@@ -118,7 +118,7 @@ func TestResumeSurfacesRequeueCASFailureAndNextResumeRecovers(t *testing.T) {
 	// handle is retained for handleRetention); requeuePersistedFailures must
 	// re-drive the stranded retry_pending task and the DAG must complete it.
 	repo.blockRequeue.Store(false)
-	c2 := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c2 := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	h2, err := c2.ResumeInterruptedRun(ctx, "r")
 	if err != nil {
 		t.Fatalf("second resume: %v", err)

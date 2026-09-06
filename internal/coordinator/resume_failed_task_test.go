@@ -40,7 +40,7 @@ func TestResumeFailInterruptedRunWithFailedTaskSettlesNotInvalidTransition(t *te
 	}
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 
 	h, err := c.ResumeInterruptedRun(ctx, "r")
 	if err != nil {

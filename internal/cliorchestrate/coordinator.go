@@ -34,3 +34,9 @@ type OrchestrationCoordinator interface {
 	ParkedQuestions(runID string) []coordinator.ParkedQuestion
 	RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler)
 }
+
+// Compile-time checks that the real coordinator satisfies both subsets.
+var (
+	_ OrchestrationCoordinator = (*coordinator.Coordinator)(nil)
+	_ ResumeCoordinator        = (*coordinator.Coordinator)(nil)
+)

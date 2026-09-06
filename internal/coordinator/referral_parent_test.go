@@ -11,7 +11,7 @@ import (
 // parent. Nothing else records that: the referral's own request carries the
 // role it targets, not the task that wanted it.
 func TestAskerTaskIDNamesTheTaskThatAsked(t *testing.T) {
-	c := &coordinator{asks: newAskRegistry()}
+	c := &Coordinator{asks: newAskRegistry()}
 	c.RegisterAsk("run-1", "task-asker", "planner", "ask-1", nil)
 
 	if got := c.askerTaskID("ask-1"); got != "task-asker" {
@@ -23,7 +23,7 @@ func TestAskerTaskIDNamesTheTaskThatAsked(t *testing.T) {
 // parent" rather than to a wrong one. An unknown ask must read as a top-level
 // run, which is what a consumer already handles.
 func TestAskerTaskIDIsEmptyForAnUnknownAsk(t *testing.T) {
-	c := &coordinator{asks: newAskRegistry()}
+	c := &Coordinator{asks: newAskRegistry()}
 
 	if got := c.askerTaskID("never-registered"); got != "" {
 		t.Errorf("askerTaskID = %q for an unknown ask, want empty", got)
@@ -34,7 +34,7 @@ func TestAskerTaskIDIsEmptyForAnUnknownAsk(t *testing.T) {
 // an ask whose owner was purged at a retry boundary. Reporting a stale parent
 // would attach a live run to a task that is no longer running it.
 func TestAskerTaskIDIsEmptyAfterTheSlotIsReleased(t *testing.T) {
-	c := &coordinator{asks: newAskRegistry()}
+	c := &Coordinator{asks: newAskRegistry()}
 	c.RegisterAsk("run-1", "task-asker", "planner", "ask-1", nil)
 
 	c.asks.mu.Lock()

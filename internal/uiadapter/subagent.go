@@ -40,6 +40,9 @@ type SubagentTaskCoordinator interface {
 	CancelSubagentToolCall(ctx context.Context, h *coordinator.RunHandle, taskID, callID string) (bool, error)
 }
 
+// Compile-time check that the real coordinator satisfies this subset.
+var _ SubagentTaskCoordinator = (*coordinator.Coordinator)(nil)
+
 type subagentTaskRoute struct {
 	coord  SubagentTaskCoordinator
 	runID  string

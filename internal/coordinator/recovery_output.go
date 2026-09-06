@@ -13,7 +13,7 @@ import (
 // with optional output content loading. Unlike the package-level function,
 // it loads the output ref when available and sets result.Output.
 // Accepts a context so LoadContent respects cancellation/deadlines.
-func (c *coordinator) terminalTaskResultWithOutput(ctx context.Context, snap ledger.TaskSnapshot) (subagents.Result, bool) {
+func (c *Coordinator) terminalTaskResultWithOutput(ctx context.Context, snap ledger.TaskSnapshot) (subagents.Result, bool) {
 	result, terminal := terminalTaskResult(snap)
 	if !terminal || snap.OutputRef == "" {
 		if terminal {
@@ -30,7 +30,7 @@ func (c *coordinator) terminalTaskResultWithOutput(ctx context.Context, snap led
 	return result, true
 }
 
-func (c *coordinator) resultsFromSnapshots(ctx context.Context, tasks []ledger.TaskSnapshot) []subagents.Result {
+func (c *Coordinator) resultsFromSnapshots(ctx context.Context, tasks []ledger.TaskSnapshot) []subagents.Result {
 	results := make([]subagents.Result, len(tasks))
 	for i, task := range tasks {
 		result, terminal := c.terminalTaskResultWithOutput(ctx, task)

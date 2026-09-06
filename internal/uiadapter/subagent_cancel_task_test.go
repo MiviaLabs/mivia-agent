@@ -24,7 +24,7 @@ func (f invoker) Invoke(ctx context.Context, req runtime.Request) (json.RawMessa
 // coordinator-faking convention of its own (there is nothing else in this
 // package to follow) and the interface is large enough that a hand-written
 // fake would drift from its real contract.
-func newTestCoordinatorRun(t *testing.T) (coordinator.Coordinator, *coordinator.RunHandle, string, <-chan struct{}) {
+func newTestCoordinatorRun(t *testing.T) (*coordinator.Coordinator, *coordinator.RunHandle, string, <-chan struct{}) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})

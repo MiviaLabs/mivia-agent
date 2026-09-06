@@ -46,7 +46,7 @@ func questionKey(runID, taskID string) string { return runID + "\x00" + taskID }
 // evictExpiredQuestionsLocked removes parked questions whose TTL has elapsed
 // so they no longer block a future ParkQuestion or count as pending. Caller
 // must hold c.questions.mu.
-func (c *coordinator) evictExpiredQuestionsLocked() {
+func (c *Coordinator) evictExpiredQuestionsLocked() {
 	now := c.nowLocked()
 	for key, q := range c.questions.byKey {
 		if now.After(q.expiresAt) {
@@ -66,7 +66,7 @@ func (c *coordinator) evictExpiredQuestionsLocked() {
 // evicted early by a peer's DeliverAnswer, while an orphaned park (asker killed
 // without unpark) still self-heals via the TTL. Absent maxWait behaves as 0
 // (parkTTL floor only).
-func (c *coordinator) ParkQuestion(runID, taskID, messageID string, maxWait ...time.Duration) (<-chan string, func(), error) {
+func (c *Coordinator) ParkQuestion(runID, taskID, messageID string, maxWait ...time.Duration) (<-chan string, func(), error) {
 	// Non-interactive parent: the run's parent is a controller that can never
 	// answer child questions, so a real park would only burn the asker's full
 	// wait_seconds before timing out. Decline immediately at park time with the
@@ -117,7 +117,7 @@ func (c *coordinator) ParkQuestion(runID, taskID, messageID string, maxWait ...t
 // the undelivered notice instead of reporting delivery to a dead asker. Repo
 // read errors fail open - a buffered channel send to a dead goroutine is
 // harmless and the park TTL heals it.
-func (c *coordinator) DeliverAnswer(runID, taskID, inReplyTo, body string) bool {
+func (c *Coordinator) DeliverAnswer(runID, taskID, inReplyTo, body string) bool {
 	key := questionKey(runID, taskID)
 	c.questions.mu.Lock()
 	c.evictExpiredQuestionsLocked()
@@ -150,7 +150,7 @@ func (c *coordinator) DeliverAnswer(runID, taskID, inReplyTo, body string) bool 
 }
 
 // TransitionToAwaitingInput CAS-es running → awaiting_input for a parked question.
-func (c *coordinator) TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error {
+func (c *Coordinator) TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error {
 	snap, err := c.repo.GetTask(ctx, runID, taskID)
 	if err != nil {
 		return err
@@ -166,7 +166,7 @@ func (c *coordinator) TransitionToAwaitingInput(ctx context.Context, runID, task
 
 // TransitionFromAwaitingInput CAS-es awaiting_input → newStatus (usually running).
 // Returns ErrConflict when another path (cancel) won the race.
-func (c *coordinator) TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error {
+func (c *Coordinator) TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error {
 	snap, err := c.repo.GetTask(ctx, runID, taskID)
 	if err != nil {
 		return err
@@ -189,7 +189,7 @@ type messageQuota struct {
 
 // ConsumeMessageQuota increments the per-task upstream message count and
 // fails when max is exceeded. max <= 0 means unlimited.
-func (c *coordinator) ConsumeMessageQuota(runID, taskID string, max int) error {
+func (c *Coordinator) ConsumeMessageQuota(runID, taskID string, max int) error {
 	if max <= 0 {
 		return nil // unlimited
 	}
@@ -205,7 +205,7 @@ func (c *coordinator) ConsumeMessageQuota(runID, taskID string, max int) error {
 }
 
 // CountPendingQuestions returns how many questions are currently parked for a task.
-func (c *coordinator) CountPendingQuestions(runID, taskID string) int {
+func (c *Coordinator) CountPendingQuestions(runID, taskID string) int {
 	key := questionKey(runID, taskID)
 	c.questions.mu.Lock()
 	defer c.questions.mu.Unlock()
@@ -221,7 +221,7 @@ func (c *coordinator) CountPendingQuestions(runID, taskID string) int {
 // (messageQuota is otherwise increment-only — no refund existed before).
 // Floored at zero: it only ever undoes a prior ConsumeMessageQuota and never
 // grants credit that was not consumed.
-func (c *coordinator) RefundMessageQuota(runID, taskID string) {
+func (c *Coordinator) RefundMessageQuota(runID, taskID string) {
 	if c.msgQuota == nil {
 		return
 	}
@@ -239,7 +239,7 @@ func (c *coordinator) RefundMessageQuota(runID, taskID string) {
 // boundary (mintRetryAttempt) right after resetTaskAsks, mirroring its shape:
 // nil-guarded, locks msgQuota.mu, and deletes the per-task key (which is the
 // same questionKey helper the quota registry shares with parked questions).
-func (c *coordinator) resetMessageQuota(runID, taskID string) {
+func (c *Coordinator) resetMessageQuota(runID, taskID string) {
 	if c.msgQuota == nil || runID == "" || taskID == "" {
 		return
 	}
@@ -261,7 +261,7 @@ type ParkedQuestion struct {
 // (same semantics as CountPendingQuestions / DeliverAnswer). The slice is
 // non-nil (empty when none) so callers can render "parks": []. Order follows
 // map iteration and is intentionally unspecified.
-func (c *coordinator) ParkedQuestions(runID string) []ParkedQuestion {
+func (c *Coordinator) ParkedQuestions(runID string) []ParkedQuestion {
 	if runID == "" {
 		return []ParkedQuestion{}
 	}

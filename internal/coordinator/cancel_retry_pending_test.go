@@ -85,7 +85,7 @@ func TestCancelDuringRetryBackoff(t *testing.T) {
 }
 
 // waitForTaskStatus polls Inspect until a single task reaches status.
-func waitForTaskStatus(t *testing.T, c Coordinator, h *RunHandle, status string) {
+func waitForTaskStatus(t *testing.T, c *Coordinator, h *RunHandle, status string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {

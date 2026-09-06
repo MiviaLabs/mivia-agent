@@ -15,7 +15,7 @@ import (
 // spawnRegisteredRunHandle builds a real coordinator plus a real child run
 // handle, the shape the workflow host wiring hands the seam. The returned
 // cleanup deletes the registry entry the caller creates for the handle.
-func spawnRegisteredRunHandle(t *testing.T) (coord coordinator.Coordinator, h *coordinator.RunHandle, d *runtime.Dispatcher, repo ledger.LedgerRepository) {
+func spawnRegisteredRunHandle(t *testing.T) (coord *coordinator.Coordinator, h *coordinator.RunHandle, d *runtime.Dispatcher, repo ledger.LedgerRepository) {
 	t.Helper()
 	repo = ledger.NewMemoryLedgerRepository()
 	coord = coordinator.New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))

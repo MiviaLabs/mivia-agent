@@ -20,7 +20,7 @@ import (
 // scoped, like canceling it on their own context dying) use SpawnNew
 // instead. Spawn's signature is unchanged so its 140+ existing callers
 // across this package's own tests are untouched.
-func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
+func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
 	h, _, err := c.spawnReportingNew(ctx, tasks, idempotencyKey)
 	return h, err
 }
@@ -32,11 +32,11 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 // started. A caller that gets isNew=false must not treat itself as the
 // run's owner for any purpose the run's actual creator did not agree to
 // (e.g. canceling it when its own unrelated wait times out).
-func (c *coordinator) SpawnNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
+func (c *Coordinator) SpawnNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
 	return c.spawnReportingNew(ctx, tasks, idempotencyKey)
 }
 
-func (c *coordinator) spawnReportingNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
+func (c *Coordinator) spawnReportingNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
 	c.spawnMu.Lock()
 	defer c.spawnMu.Unlock()
 	policy := policyWithRetry(ledger.RunPolicy{}, c.retryPolicyLocked())
@@ -67,11 +67,11 @@ func (c *coordinator) spawnReportingNew(ctx context.Context, tasks []subagents.T
 	return h, created, err
 }
 
-func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, bool, error) {
+func (c *Coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, bool, error) {
 	return c.createAndStartRunWithID(ctx, newRunID(), tasks, key, fingerprint, policy, true)
 }
 
-func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, bool, error) {
+func (c *Coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, bool, error) {
 	now := c.nowLocked()
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks)), Policy: policy}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
@@ -240,7 +240,7 @@ func scopedKey(ctx context.Context, key string) string {
 	return idempotencyScope(ctx) + ":" + key
 }
 
-func (c *coordinator) lookupHandle(key string) *RunHandle {
+func (c *Coordinator) lookupHandle(key string) *RunHandle {
 	if key == "" {
 		return nil
 	}
@@ -254,7 +254,7 @@ type namedTask struct {
 	taskID, displayName, attemptID string
 }
 
-func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []subagents.Task, now time.Time) ([]namedTask, error) {
+func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []subagents.Task, now time.Time) ([]namedTask, error) {
 	out := make([]namedTask, 0, len(tasks))
 	for _, task := range tasks {
 		named, err := c.createTask(ctx, runID, task, now)
@@ -266,7 +266,7 @@ func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 	return out, nil
 }
 
-func (c *coordinator) createTask(ctx context.Context, runID string, task subagents.Task, now time.Time) (namedTask, error) {
+func (c *Coordinator) createTask(ctx context.Context, runID string, task subagents.Task, now time.Time) (namedTask, error) {
 	taskID := task.ID
 	if taskID == "" {
 		taskID = newTaskID()
@@ -308,7 +308,7 @@ func withNonInteractiveParent() runHandleOption {
 	return func(h *RunHandle) { h.nonInteractiveParent = true }
 }
 
-func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool, opts ...runHandleOption) *RunHandle {
+func (c *Coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool, opts ...runHandleOption) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
 		runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx,
@@ -343,7 +343,7 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 // releaseAndDeleteRun deletes a run while this coordinator still holds its
 // execution claim. It releases the claim after the delete attempt. This order
 // prevents another host from claiming the run before cleanup deletes it.
-func (c *coordinator) releaseAndDeleteRun(ctx context.Context, runID string) {
+func (c *Coordinator) releaseAndDeleteRun(ctx context.Context, runID string) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = c.repo.DeleteRun(cleanupCtx, runID)

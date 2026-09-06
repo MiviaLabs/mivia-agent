@@ -15,13 +15,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// wedgedCoordinator embeds the Coordinator interface and overrides only
+// wedgedCoordinator embeds the coordinator type and overrides only
 // Join/Inspect/Cancel to simulate the exact production failure observed on
 // run-BAUJAKBOCGZDDXLQRWDJN436OE: a task stuck "running" forever (e.g. an
 // upstream HTTP call ignoring its context) so coordinator.Join never fires
 // h.done. Embedded interface = unexpected method calls panic loudly.
 type wedgedCoordinator struct {
-	coordinator.Coordinator
+	*coordinator.Coordinator
 
 	mu       sync.Mutex
 	canceled int
@@ -103,7 +103,7 @@ func configForJoinTest() struct{} { return struct{}{} } // removed below
 // return made the join-timeout graceful cancel unreachable - the wedged task
 // silently leaked to its full budget.
 type wedgedWithWorkCoordinator struct {
-	coordinator.Coordinator
+	*coordinator.Coordinator
 
 	mu       sync.Mutex
 	canceled int

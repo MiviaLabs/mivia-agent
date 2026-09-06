@@ -21,7 +21,7 @@ import (
 // An empty result is a legitimate answer - the task made no tool calls, or it
 // completed before the trace field existed - and callers must treat it as "no
 // executions proven", never as "trust the child".
-func (c *coordinator) LoadTaskToolCalls(ctx context.Context, runID, taskID string) ([]subagents.ToolCallStep, error) {
+func (c *Coordinator) LoadTaskToolCalls(ctx context.Context, runID, taskID string) ([]subagents.ToolCallStep, error) {
 	if runID == "" || taskID == "" {
 		return nil, fmt.Errorf("load task tool calls: run_id and task_id are required")
 	}

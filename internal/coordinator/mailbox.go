@@ -174,7 +174,7 @@ func (m *runMailboxes) isTerminal(taskID string) bool {
 // When a KindAsk message is successfully delivered, the target task is
 // recorded in the ask registry so finalize can decline the ask if the target
 // reaches terminal status without answering.
-func (c *coordinator) MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
+func (c *Coordinator) MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
 	if h == nil || h.mailboxes == nil {
 		return false, nil
 	}

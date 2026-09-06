@@ -40,7 +40,7 @@ func TestCoverageQueueRecoveredRetryRequeuesFailedTask(t *testing.T) {
 	// queueRecoveredRetry reads it via h.policy().
 	c := newIdempotencyCoordinator(repo).WithRetryPolicy(RetryPolicy{
 		MaxRetries: 2, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond, BackoffFactor: 2, JitterFraction: 0,
-	}).(*coordinator)
+	})
 	const runID = "recovered-retry-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -100,7 +100,7 @@ func (flushRetriesGetTaskFailingRepo) GetTask(context.Context, string, string) (
 // failure).
 func TestCoverageFlushRetriesReadFailureJoinsError(t *testing.T) {
 	repo := &flushRetriesGetTaskFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	h := c.newRunHandle("flush-read-run", "", map[string]string{}, "", false)
 
 	pending := map[string]subagents.Task{}
@@ -136,7 +136,7 @@ func TestCoverageFlushRetriesReadFailureJoinsError(t *testing.T) {
 func TestCoverageFlushRetriesReadFailureReschedulesFuture(t *testing.T) {
 	ctx := context.Background()
 	repo := &flushRetriesGetTaskFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "flush-read-probe-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -188,7 +188,7 @@ func TestCoverageFlushRetriesReadFailureReschedulesFuture(t *testing.T) {
 func TestCoverageFlushRetriesDropsNonRetryPendingTask(t *testing.T) {
 	ctx := context.Background()
 	repo := ledger.NewMemoryLedgerRepository()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "flush-drop-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -234,7 +234,7 @@ func (flushRetriesCASFailingRepo) CompareAndSetTaskStatus(context.Context, strin
 func TestCoverageFlushRetriesCASFailureJoinsError(t *testing.T) {
 	ctx := context.Background()
 	repo := &flushRetriesCASFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "flush-cas-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -279,7 +279,7 @@ func TestCoverageFlushRetriesCASFailureJoinsError(t *testing.T) {
 func TestCoverageFlushRetriesCASFailureReschedulesFuture(t *testing.T) {
 	ctx := context.Background()
 	repo := &flushRetriesCASFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "flush-cas-probe-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -341,7 +341,7 @@ func (flushRetriesAppendFailingRepo) AppendEvent(context.Context, ledger.Lifecyc
 func TestCoverageFlushRetriesAppendEventFailureJoinsError(t *testing.T) {
 	ctx := context.Background()
 	repo := &flushRetriesAppendFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "flush-append-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -391,7 +391,7 @@ func TestCoverageFlushRetriesAppendEventFailureJoinsError(t *testing.T) {
 // with no cancellation, the select takes timer.C after the backoff elapses and
 // returns nil (the pool context is not canceled).
 func TestCoverageWaitForRetryTimerFires(t *testing.T) {
-	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
+	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository())
 	h := c.newRunHandle("wait-timer-run", "", map[string]string{}, "", false)
 	queue := map[string]time.Time{"t1": time.Now().Add(5 * time.Millisecond)}
 	err := waitForRetry(h, queue)
@@ -404,7 +404,7 @@ func TestCoverageWaitForRetryTimerFires(t *testing.T) {
 // waitForRetry: when the run is canceled before the backoff elapses, the select
 // takes poolCtx.Done() and the deferred timer Stop discards the pending timer.
 func TestCoverageWaitForRetryCanceledStopsTimer(t *testing.T) {
-	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
+	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository())
 	h := c.newRunHandle("wait-cancel-run", "", map[string]string{}, "", false)
 	h.cancel() // poolCtx is canceled before waitForRetry blocks
 	queue := map[string]time.Time{"t1": time.Now().Add(time.Minute)}

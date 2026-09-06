@@ -215,9 +215,13 @@ type stepCoordinator interface {
 	Cancel(ctx context.Context, h *coordinator.RunHandle) error
 }
 
-// Compile-time check that the step subset covers the panel child subset the
-// panel step path hands to workflowledger.NewPanelCoordinator.
-var _ workflowledger.PanelChildCoordinator = (stepCoordinator)(nil)
+// Compile-time checks that the real coordinator satisfies the step subset,
+// and that the step subset covers the panel child subset the panel step path
+// hands to workflowledger.NewPanelCoordinator.
+var (
+	_ stepCoordinator                      = (*coordinator.Coordinator)(nil)
+	_ workflowledger.PanelChildCoordinator = (stepCoordinator)(nil)
+)
 
 // CoordinatorRunner is the production implementation of AgentStepRunner.
 type CoordinatorRunner struct {
@@ -425,7 +429,7 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 }
 
 // toolCallTraceSource exposes the host-recorded tool-call trace for one task.
-// coordinator.Coordinator satisfies it; it is a narrow optional interface so a
+// *coordinator.Coordinator satisfies it; it is a narrow optional interface so a
 // host without the trace yields NO history rather than a different, weaker
 // source of truth.
 type toolCallTraceSource interface {

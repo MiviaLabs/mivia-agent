@@ -23,7 +23,7 @@ var (
 // returns a recovered handle. If the run is terminal, the handle's result is
 // immediately available. If the run is non-terminal, Join/Cancel will return
 // errRecoveredRunNotResumable (conservative Phase 1 behaviour).
-func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerprint string) (*RunHandle, bool, error) {
+func (c *Coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerprint string) (*RunHandle, bool, error) {
 	snap, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if errors.Is(err, ledger.ErrNotFound) {
 		return nil, false, nil
@@ -84,11 +84,11 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 // allows the DAG scheduler to retry them if retryPolicy is configured.
 // Queued tasks are left as-is and will be picked up by the DAG execution.
 // Returns a RunHandle for the resumed run.
-func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*RunHandle, error) {
+func (c *Coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*RunHandle, error) {
 	return c.resumeInterruptedRun(ctx, runID, nil)
 }
 
-func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, liveTasks []subagents.Task, opts ...runHandleOption) (*RunHandle, error) {
+func (c *Coordinator) resumeInterruptedRun(ctx context.Context, runID string, liveTasks []subagents.Task, opts ...runHandleOption) (*RunHandle, error) {
 	c.resumeMu.Lock()
 	defer c.resumeMu.Unlock()
 	if c.HandleForRun(runID) != nil {
@@ -150,7 +150,7 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 // it in the background. The caller must already hold the run's execution
 // claim; ownership transfers to the executeResumedRun goroutine, which
 // heartbeats and releases it.
-func (c *coordinator) startResumedExecution(h *RunHandle, tasks []subagents.Task, alreadyDone map[string]subagents.Result) {
+func (c *Coordinator) startResumedExecution(h *RunHandle, tasks []subagents.Task, alreadyDone map[string]subagents.Result) {
 	h.mu.Lock()
 	h.localActor = true
 	h.mu.Unlock()
@@ -164,7 +164,7 @@ func (c *coordinator) startResumedExecution(h *RunHandle, tasks []subagents.Task
 // run's execution claim: HandleForRun already resolves to h, so a fresh
 // newRunHandle would be a second, conflicting registration for the same run.
 // The caller must already hold the run's execution claim.
-func (c *coordinator) resumeExecutionOnHandle(ctx context.Context, h *RunHandle, runID string, failInterrupted bool) error {
+func (c *Coordinator) resumeExecutionOnHandle(ctx context.Context, h *RunHandle, runID string, failInterrupted bool) error {
 	c.resumeMu.Lock()
 	defer c.resumeMu.Unlock()
 	tasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID, nil, failInterrupted)
@@ -178,7 +178,7 @@ func (c *coordinator) resumeExecutionOnHandle(ctx context.Context, h *RunHandle,
 // resumeValidateAndMark reads the interrupted run's tasks, validates them,
 // marks any in-flight tasks as interrupted, and returns the prepared task
 // list plus results from already-completed tasks.
-func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, liveTasks []subagents.Task, failInterrupted bool) ([]subagents.Task, map[string]subagents.Result, error) {
+func (c *Coordinator) resumeValidateAndMark(ctx context.Context, runID string, liveTasks []subagents.Task, failInterrupted bool) ([]subagents.Task, map[string]subagents.Result, error) {
 	tasks, err := c.repo.ListTasks(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
@@ -212,7 +212,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, l
 	return c.tasksFromSnapshotsWithAuthority(ctx, updatedTasks, liveTasks)
 }
 
-func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string, failInterrupted bool) {
+func (c *Coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string, failInterrupted bool) {
 	for _, task := range tasks {
 		if task.Status != string(ledger.TaskStatusRunning) && task.Status != string(ledger.TaskStatusCancelRequested) {
 			continue
@@ -268,7 +268,7 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 // failure strands the task at retry_pending: it is logged so the stranded state
 // is visible (DC-9) and requeuePersistedFailures re-drives it on the next
 // resume (DC-4).
-func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string, version uint64) {
+func (c *Coordinator) requeueForResume(ctx context.Context, runID, taskID string, version uint64) {
 	snap, err := c.repo.GetTask(ctx, runID, taskID)
 	if err != nil {
 		log.Printf("coordinator: resume: requeue task %q: read: %v", taskID, err)
@@ -305,7 +305,7 @@ func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string
 // transition, and resume's exclusive claim prevents touching a retry owned by
 // a live executor. Resume IS the retry request, so immediate re-queue
 // (bypassing any remaining backoff) is correct.
-func (c *coordinator) requeuePersistedFailures(ctx context.Context, runID string) {
+func (c *Coordinator) requeuePersistedFailures(ctx context.Context, runID string) {
 	tasks, err := c.repo.ListTasks(ctx, runID)
 	if err != nil {
 		return
@@ -320,7 +320,7 @@ func (c *coordinator) requeuePersistedFailures(ctx context.Context, runID string
 
 // ListInterruptedRuns returns all recovered runs that were interrupted.
 // These are runs with non-terminal statuses that can be resumed.
-func (c *coordinator) ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, error) {
+func (c *Coordinator) ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, error) {
 	if recoverer, ok := c.repo.(interface {
 		Recover(ctx context.Context) ([]ledger.RecoveredRun, error)
 	}); ok {
@@ -445,7 +445,7 @@ func isTerminalRunStatus(status ledger.RunStatus) bool {
 }
 
 // rebuildTasksForResume reads the run's tasks and rebuilds them for execution.
-func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) ([]subagents.Task, error) {
+func (c *Coordinator) rebuildTasksForResume(ctx context.Context, runID string) ([]subagents.Task, error) {
 	snaps, err := c.repo.ListTasks(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)

@@ -9,7 +9,7 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// countingChildDispatchCoordinator wraps a coordinator.Coordinator and counts
+// countingChildDispatchCoordinator wraps a *coordinator.Coordinator and counts
 // EnsureSingleTaskRun calls per child run ID, so a test can prove a resume
 // joins the persisted synthesis child without ever re-dispatching a member.
 // Access is single-threaded: a resume drives every child dispatch on the

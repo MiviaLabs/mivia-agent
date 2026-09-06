@@ -43,3 +43,6 @@ type chatCoordinator interface {
 	UnclaimAskAnswer(askID, askerTaskID string)
 	SealAskAnswer(askID string) bool
 }
+
+// Compile-time check that the real coordinator satisfies this subset.
+var _ chatCoordinator = (*coordinator.Coordinator)(nil)

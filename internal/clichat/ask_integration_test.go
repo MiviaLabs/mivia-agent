@@ -18,7 +18,7 @@ import (
 )
 
 func askTestEnv(t *testing.T, cfg config.SubagentConfig, workers int) (
-	*runtime.Dispatcher, coordinator.Coordinator, ledger.LedgerRepository,
+	*runtime.Dispatcher, *coordinator.Coordinator, ledger.LedgerRepository,
 ) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
@@ -121,7 +121,7 @@ func TestAskLiveRoundTrip(t *testing.T) {
 
 func answerFirstAsk(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, repo ledger.LedgerRepository) (json.RawMessage, error) {
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
-	coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(coordinator.Coordinator)
+	coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(*coordinator.Coordinator)
 	id, ok := runtime.TaskIdentityFrom(ctx)
 	if !ok {
 		return nil, context.Canceled
@@ -152,7 +152,7 @@ func answerFirstAsk(ctx context.Context, d *runtime.Dispatcher, cfg config.Subag
 	return json.RawMessage(out), nil
 }
 
-func spawnJoin(t *testing.T, c coordinator.Coordinator, tasks []subagents.Task) *coordinator.RunResult {
+func spawnJoin(t *testing.T, c *coordinator.Coordinator, tasks []subagents.Task) *coordinator.RunResult {
 	t.Helper()
 	h, err := c.Spawn(context.Background(), tasks, "")
 	if err != nil {
@@ -170,7 +170,7 @@ func spawnJoin(t *testing.T, c coordinator.Coordinator, tasks []subagents.Task) 
 	return result
 }
 
-func assertKindsContain(t *testing.T, c coordinator.Coordinator, runID string, want ...string) {
+func assertKindsContain(t *testing.T, c *coordinator.Coordinator, runID string, want ...string) {
 	t.Helper()
 	msgs, err := c.ListRunMessages(context.Background(), runID, "")
 	if err != nil {
@@ -360,7 +360,7 @@ func answerFromBrief(ctx context.Context, d *runtime.Dispatcher, cfg config.Suba
 	return json.RawMessage(out), nil
 }
 
-func waitReferralAndAnswer(t *testing.T, c coordinator.Coordinator, runID string) {
+func waitReferralAndAnswer(t *testing.T, c *coordinator.Coordinator, runID string) {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
 	for c.ReferralSpawnsUsed(runID) < 1 {

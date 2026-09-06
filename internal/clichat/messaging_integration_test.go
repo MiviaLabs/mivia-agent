@@ -364,7 +364,7 @@ func TestParallelPostMessageQuestionDoesNotUnparkWinner(t *testing.T) {
 }
 
 // newPostMessageCoordinatorFromCLI reuses coordinator.New for cli-package tests.
-func newPostMessageCoordinatorFromCLI(t *testing.T) (coordinator.Coordinator, ledger.LedgerRepository) {
+func newPostMessageCoordinatorFromCLI(t *testing.T) (*coordinator.Coordinator, ledger.LedgerRepository) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})

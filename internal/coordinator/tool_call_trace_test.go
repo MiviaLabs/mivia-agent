@@ -17,19 +17,16 @@ import (
 // either credits a command that never ran or rejects one that did.
 
 // traceLoader is the same narrow optional interface the workflow controller
-// type-asserts. New returns the Coordinator interface, which deliberately does
+// type-asserts. New returns the concrete *Coordinator, whose method set includes
 // not carry this accessor, so the test reaches it the way its real caller
 // does rather than by widening the exported surface.
 type traceLoader interface {
 	LoadTaskToolCalls(ctx context.Context, runID, taskID string) ([]subagents.ToolCallStep, error)
 }
 
-func mustTraceLoader(t *testing.T, c Coordinator) traceLoader {
+func mustTraceLoader(t *testing.T, c *Coordinator) traceLoader {
 	t.Helper()
-	loader, ok := c.(traceLoader)
-	if !ok {
-		t.Fatal("the coordinator does not expose LoadTaskToolCalls; the workflow evidence gate resolves it by exactly this assertion")
-	}
+	var loader traceLoader = c
 	return loader
 }
 

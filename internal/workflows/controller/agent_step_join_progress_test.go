@@ -104,7 +104,7 @@ func TestJoinWatchdogEmitsStepHeartbeat(t *testing.T) {
 // value models a fresh child whose first heartbeat lands after the first
 // watchdog tick); a negative value disables the ticker. The returned stop
 // channel ends the ticker.
-func newJoinWatchdogHarness(t *testing.T, taskID, idempotencyKey, workflowRunID string, attemptNo int, heartbeatDelay time.Duration) (coordinator.Coordinator, *coordinator.RunHandle, AgentStepRequest, chan struct{}) {
+func newJoinWatchdogHarness(t *testing.T, taskID, idempotencyKey, workflowRunID string, attemptNo int, heartbeatDelay time.Duration) (*coordinator.Coordinator, *coordinator.RunHandle, AgentStepRequest, chan struct{}) {
 	t.Helper()
 	d := runtime.New(runtime.Policy{})
 	handler := &neverSettlingHandler{}

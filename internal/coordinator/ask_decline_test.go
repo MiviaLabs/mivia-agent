@@ -17,7 +17,7 @@ import (
 // blocking parent task, plus the live handle. Tests drive responder/asker task
 // state directly in the ledger and call MarkTaskMailboxTerminal to simulate the
 // finalize fence exactly as recordRunResults/cancel/referral paths do.
-func newAskDeclineFixture(t *testing.T) (Coordinator, ledger.LedgerRepository, *RunHandle, string) {
+func newAskDeclineFixture(t *testing.T) (*Coordinator, ledger.LedgerRepository, *RunHandle, string) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -56,19 +56,19 @@ func createTestTask(t *testing.T, repo ledger.LedgerRepository, runID, taskID, r
 
 // deliverAskTo parks the asker, registers the ask, and mailbox-delivers it to
 // the responder task exactly like the parent router's RouteDeliver path.
-func deliverAskTo(t *testing.T, c Coordinator, h *RunHandle, runID, askerTask, responderTask, askID string) <-chan string {
+func deliverAskTo(t *testing.T, c *Coordinator, h *RunHandle, runID, askerTask, responderTask, askID string) <-chan string {
 	t.Helper()
 	return deliverAskTracked(t, c, h, runID, askerTask, responderTask, askID, true)
 }
 
 // deliverAskNoPark registers and mailbox-delivers an ask without parking an
 // asker (for tests that only exercise byTarget bookkeeping).
-func deliverAskNoPark(t *testing.T, c Coordinator, h *RunHandle, runID, askerTask, responderTask, askID string) {
+func deliverAskNoPark(t *testing.T, c *Coordinator, h *RunHandle, runID, askerTask, responderTask, askID string) {
 	t.Helper()
 	deliverAskTracked(t, c, h, runID, askerTask, responderTask, askID, false)
 }
 
-func deliverAskTracked(t *testing.T, c Coordinator, h *RunHandle, runID, askerTask, responderTask, askID string, park bool) <-chan string {
+func deliverAskTracked(t *testing.T, c *Coordinator, h *RunHandle, runID, askerTask, responderTask, askID string, park bool) <-chan string {
 	t.Helper()
 	ask, err := agentmsg.NewMessage(runID, agentmsg.KindAsk,
 		agentmsg.Party{TaskID: askerTask, Role: "asker"},
@@ -123,7 +123,7 @@ func TestAskDeclinedWhenTargetCompletes(t *testing.T) {
 	createTestTask(t, repo, runID, responderTask, "responder", string(ledger.TaskStatusQueued))
 
 	answerCh := deliverAskTo(t, c, h, runID, askerTask, responderTask, "ask-decline")
-	coord := c.(*coordinator)
+	coord := c
 	if got := coord.asksTargeting(runID, responderTask); len(got) != 1 || got[0] != "ask-decline" {
 		t.Fatalf("asksTargeting before finalize = %v", got)
 	}
@@ -188,7 +188,7 @@ func TestAskDeliveredBeforeTargetCompletes(t *testing.T) {
 	default:
 		t.Fatal("asker must still hold the real answer after finalize")
 	}
-	if got := c.(*coordinator).asksTargeting(runID, responderTask); len(got) != 0 {
+	if got := c.asksTargeting(runID, responderTask); len(got) != 0 {
 		t.Fatalf("sealed ask must be pruned from byTarget: %v", got)
 	}
 }
@@ -204,7 +204,7 @@ func TestNoDeclineWhenRetryPending(t *testing.T) {
 	createTestTask(t, repo, runID, responderTask, "responder", string(ledger.TaskStatusRetryPending))
 
 	answerCh := deliverAskTo(t, c, h, runID, askerTask, responderTask, "ask-retry")
-	coord := c.(*coordinator)
+	coord := c
 
 	// Fence while retry is pending: must not decline.
 	h.MarkTaskMailboxTerminal(responderTask)
@@ -264,7 +264,7 @@ func TestNoDeclineWhenRetryPending(t *testing.T) {
 func TestRetryResetsAskQuota(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "t1", "worker", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
+	coord := c
 	const maxAsks = 4
 	for i := 0; i < maxAsks; i++ {
 		if !coord.TryRegisterAsk(runID, "t1", "worker", fmt.Sprintf("ask-%d", i), nil, maxAsks) {
@@ -303,7 +303,7 @@ func TestRetryResetsAskQuota(t *testing.T) {
 func TestRetryResetsMessageQuota(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "t1", "worker", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
+	coord := c
 	const maxMsgs = 1
 	if err := coord.ConsumeMessageQuota(runID, "t1", maxMsgs); err != nil {
 		t.Fatal(err)
@@ -326,7 +326,7 @@ func TestRetryResetsMessageQuota(t *testing.T) {
 func TestAskTargetPrunedOnSeal(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "responder", "responder", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
+	coord := c
 
 	// SealAskAnswer path.
 	deliverAskNoPark(t, c, h, runID, "asker", "responder", "ask-seal")
@@ -395,7 +395,7 @@ func TestAskMultiTaskSameRolePrecision(t *testing.T) {
 		t.Fatal("ask must be closed")
 	}
 	// Nothing was ever delivered to B, and B's tracking stays empty.
-	if got := c.(*coordinator).asksTargeting(runID, "task-b"); len(got) != 0 {
+	if got := c.asksTargeting(runID, "task-b"); len(got) != 0 {
 		t.Fatalf("task B byTarget = %v, want empty", got)
 	}
 }
@@ -456,7 +456,7 @@ func TestNULAnswerRejectedNeverReachesParkedAsker(t *testing.T) {
 func TestRecordAskTargetSkipsAlreadySealedAsk(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "responder", "responder", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
+	coord := c
 
 	askID := "ask-sealed-before-record"
 	ask, err := agentmsg.NewMessage(runID, agentmsg.KindAsk,
@@ -496,7 +496,7 @@ func TestRecordAskTargetSkipsAlreadySealedAsk(t *testing.T) {
 func TestMailboxSendSealRaceNeverLeaksByTarget(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "responder", "responder", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
+	coord := c
 
 	const n = 40
 	for i := 0; i < n; i++ {
@@ -536,7 +536,7 @@ func TestMailboxSendSealRaceNeverLeaksByTarget(t *testing.T) {
 // persist) must not be sealed by the decline variant — the real answer wins.
 func TestSealOpenAskAnswerRefusesClaimedAsk(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	coord.RegisterAsk("r", "t", "a", "ask-claimed", nil)
 	if _, err := coord.ClaimAskAnswer("ask-claimed"); err != nil {
 		t.Fatal(err)
@@ -557,7 +557,7 @@ func TestDeclineDoesNotSealClaimedAsk(t *testing.T) {
 	c, repo, h, runID := newAskDeclineFixture(t)
 	createTestTask(t, repo, runID, "asker", "asker", string(ledger.TaskStatusAwaitingInput))
 	createTestTask(t, repo, runID, "responder", "responder", string(ledger.TaskStatusQueued))
-	coord := c.(*coordinator)
+	coord := c
 	askerTask, responderTask := "asker", "responder"
 
 	answerCh := deliverAskTo(t, c, h, runID, askerTask, responderTask, "ask-claimed-decline")
@@ -672,7 +672,7 @@ func TestAskDeliveredToAwaitingInputDeclinedOnComplete(t *testing.T) {
 	if _, ok := c.AskLookup("ask-awaiting"); ok {
 		t.Fatal("declined ask must not remain open")
 	}
-	if got := c.(*coordinator).asksTargeting(runID, responderTask); len(got) != 0 {
+	if got := c.asksTargeting(runID, responderTask); len(got) != 0 {
 		t.Fatalf("asksTargeting after decline = %v, want empty", got)
 	}
 }

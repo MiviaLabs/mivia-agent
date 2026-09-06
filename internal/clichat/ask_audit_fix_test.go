@@ -114,7 +114,7 @@ func TestAskMailboxFullDeclines(t *testing.T) {
 		return json.RawMessage(`{"ok":true}`), nil
 	}))
 	_ = d.Register(runtime.Subagent, "asker", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
-		coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(coordinator.Coordinator)
+		coord, _ := cliorchestrate.InitCoordinator(d, cfg, repo).(*coordinator.Coordinator)
 		id, _ := runtime.TaskIdentityFrom(ctx)
 		deadline := time.After(2 * time.Second)
 		for {
@@ -479,7 +479,7 @@ func TestUnclaimAskAnswerEdges(t *testing.T) {
 
 // assertSealedBeforeClaimAnswer pins the structured notice a peer receives when
 // the ask was already sealed (timeout/close) before the answer could be claimed.
-func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
+func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c *coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
 	t.Helper()
 	c.RegisterAsk(runID, taskID, "worker", "done", nil)
 	_ = c.CompleteAskAnswer("done")
@@ -504,7 +504,7 @@ func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c coordi
 // loser surfaces either the ClaimAskAnswer race error (ask still open/claimed
 // at peek) or, if it peeked after the winner sealed, the structured
 // already-answered notice — both mean the duplicate was dropped.
-func assertConcurrentOneShot(t *testing.T, tool *postMessageTool, c coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
+func assertConcurrentOneShot(t *testing.T, tool *postMessageTool, c *coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
 	t.Helper()
 	c.RegisterAsk(runID, taskID, "worker", "race", nil)
 	beforeRace, err := c.ListRunMessages(ctx, runID, "")

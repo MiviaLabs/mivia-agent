@@ -24,7 +24,7 @@ func (f panelCancelHandlerFunc) Invoke(ctx context.Context, req runtime.Request)
 // panelCancelFixture builds a real PanelCoordinator over a real coordinator
 // and an admitted 2-member panel attempt in members_admitted phase, ready
 // for a test to drive toward cancel_pending.
-func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *StorageRepository, coordinator.Coordinator, string, StepAttempt) {
+func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *StorageRepository, *coordinator.Coordinator, string, StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
 	// The pool routes by task.Name (validPanelTask sets TaskName to the
@@ -305,7 +305,7 @@ func (r *joinAsRecoveredRaceCoordinator) JoinAsRecovered(ctx context.Context, re
 // instances sharing one durable ledger (a stale forward dispatcher and the
 // canceler), plus an admitted 2-member panel attempt, for tests that need to
 // race a concurrent forward admission against a cancel call.
-func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner coordinator.Coordinator, repo *StorageRepository, run string, attempt StepAttempt) {
+func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner *coordinator.Coordinator, repo *StorageRepository, run string, attempt StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
 	for _, name := range []string{"member-0", "member-1", "synthesis"} {

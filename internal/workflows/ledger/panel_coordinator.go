@@ -27,6 +27,9 @@ type PanelChildCoordinator interface {
 	Cancel(ctx context.Context, h *coordinator.RunHandle) error
 }
 
+// Compile-time check that the real coordinator satisfies this subset.
+var _ PanelChildCoordinator = (*coordinator.Coordinator)(nil)
+
 // PanelCoordinator binds every child operation to persisted panel state.
 // It does not execute panel fan-out or aggregation.
 type PanelCoordinator struct {

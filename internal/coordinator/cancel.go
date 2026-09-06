@@ -9,7 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
-func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
+func (c *Coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
 	// Fence mailbox on cancel finalize (plan 53.03). Called after the terminal
 	// CAS; also covers paths where recordRunResults already left the task
 	// canceled and finalize only needs durable attempt/event bookkeeping.
@@ -32,7 +32,7 @@ func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task
 
 // Cancel records a cancel_requested state, cancels the run context, and
 // commits terminal canceled only through a valid compare-and-set transition.
-func (c *coordinator) Cancel(ctx context.Context, h *RunHandle) error {
+func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 	if err := c.validateHandle(h); err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func (h *RunHandle) cancelErr() error {
 	return h.cancellationErr
 }
 
-func (c *coordinator) reconcileCancellation(h *RunHandle) {
+func (c *Coordinator) reconcileCancellation(h *RunHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var err error
@@ -128,7 +128,7 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 	close(h.cancelDone)
 }
 
-func (c *coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHandle) error {
+func (c *Coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHandle) error {
 	h.cancelOnce.Do(func() {
 		go func() {
 			err := c.cancelRecovered(context.Background(), h)
@@ -144,7 +144,7 @@ func (c *coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHan
 	}
 }
 
-func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
+func (c *Coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
 	// A recovered run may still carry a claim row left by the executor that
 	// created or resumed it. Every mutation below is claim-fenced
 	// (AppendClaimed), so the claim must be probed FIRST with OUR holder:

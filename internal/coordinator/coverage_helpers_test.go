@@ -74,7 +74,7 @@ func TestCoverageHelpersListInterruptedAndCleanup(t *testing.T) {
 	if err := repo.ClaimRun(ctx, "queued", "other-executor"); err != nil {
 		t.Fatalf("ClaimRun: %v", err)
 	}
-	coord := New(repo, nil).(*coordinator)
+	coord := New(repo, nil)
 	runs, err := coord.ListInterruptedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ListInterruptedRuns: %v", err)
@@ -84,7 +84,7 @@ func TestCoverageHelpersListInterruptedAndCleanup(t *testing.T) {
 	}
 
 	memoryRepo := ledger.NewMemoryLedgerRepository()
-	cleanup := New(memoryRepo, nil).(*coordinator)
+	cleanup := New(memoryRepo, nil)
 	if err := memoryRepo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "cleanup", Status: ledger.RunStatusCreated}); err != nil {
 		t.Fatalf("CreateRun cleanup: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestCoverageHelpersRunDAGExecutesPreparedTask(t *testing.T) {
 	if err := dispatcher.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	coord := New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1})).(*coordinator)
+	coord := New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1}))
 	const runID = "direct-dag"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)

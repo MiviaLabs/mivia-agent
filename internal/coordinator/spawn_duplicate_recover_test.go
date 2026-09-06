@@ -73,7 +73,7 @@ func duplicateWinnerRepo(t *testing.T) *duplicateWinnerVisibleRepo {
 // fence free of sleep and clock tuning.
 func TestSpawnNewReportsRecoveredDuplicateAsNotNew(t *testing.T) {
 	repo := duplicateWinnerRepo(t)
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 
 	h, isNew, err := c.SpawnNew(context.Background(), []subagents.Task{idempotencyTask()}, "K")
 	if err != nil {
@@ -109,7 +109,7 @@ func TestSpawnNewReportsRecoveredDuplicateAsNotNew(t *testing.T) {
 // surfaces and no handle leaves spawnReportingNew as success.
 func TestSpawnNewKeepsDuplicateErrorWhenRecoveryMisses(t *testing.T) {
 	repo := &duplicateKeyedCreateRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 
 	h, isNew, err := c.SpawnNew(context.Background(), []subagents.Task{idempotencyTask()}, "K")
 	if h != nil {

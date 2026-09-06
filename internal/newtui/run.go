@@ -34,7 +34,7 @@ func registerSubagentProgress() {
 	// Screen.cancelSelectedSubagentTask (and the thread dialog's
 	// per-tool-call cancel) resolve the highlighted row through. Set before
 	// buildApp, which is where NewSubagentThreads actually runs. The
-	// adapter narrows each published coordinator.Coordinator to the
+	// adapter narrows each published coordinator to the
 	// SubagentTaskCoordinator subset the route table stores, because the
 	// dispatch side's sink type is not assignable to the UI-side one
 	// directly (func parameter types must match exactly).
@@ -44,7 +44,7 @@ func registerSubagentProgress() {
 			// route table stores the UI-cancel subset. The live value is the
 			// real coordinator, which carries both, so the widening
 			// assertion holds everywhere a route is actually published.
-			if c, ok := coord.(coordinator.Coordinator); ok {
+			if c, ok := coord.(*coordinator.Coordinator); ok {
 				sink(c, callID, runID, taskID)
 			}
 		})
