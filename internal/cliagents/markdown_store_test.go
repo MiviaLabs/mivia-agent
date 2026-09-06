@@ -403,7 +403,12 @@ func TestOpenMarkdownStoreRequiresIndexAndProjectID(t *testing.T) {
 	})
 }
 
-func TestOpenMarkdownStorePropagatesOrgScanFailure(t *testing.T) {
+// TestOpenMarkdownStoreDegradesOnScanFailure pins the startup contract: a
+// scope whose initial refresh fails must not stop the store from opening.
+// The index is a derived cache; the failed scope is marked degraded so the
+// read path rescans and surfaces the underlying error at the tool that
+// needs it, instead of the CLI refusing to start.
+func TestOpenMarkdownStoreDegradesOnScanFailure(t *testing.T) {
 	source, err := memory.NewMarkdownSource(t.TempDir(), t.TempDir(), "acme")
 	if err != nil {
 		t.Fatal(err)
@@ -415,8 +420,60 @@ func TestOpenMarkdownStorePropagatesOrgScanFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer index.Close()
-	if _, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: fault, Index: index, ProjectID: "repo", OrgID: "acme"}); err == nil {
-		t.Fatal("OpenMarkdownStore accepted an organization scope that fails to scan")
+	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: fault, Index: index, ProjectID: "repo", OrgID: "acme"})
+	if err != nil {
+		t.Fatalf("OpenMarkdownStore failed on an org scan failure: %v", err)
+	}
+	defer store.Close()
+	ms := store.(*markdownStore)
+	ms.mu.Lock()
+	degraded := ms.degraded[memory.ScopeOrg]
+	ms.mu.Unlock()
+	if !degraded {
+		t.Fatal("org scope was not marked degraded after a failed initial sync")
+	}
+	if _, err := store.Search(context.Background(), memory.Query{Text: "anything", Scope: memory.ScopeOrg}); err == nil {
+		t.Fatal("Search on a degraded org scope did not surface the refresh failure")
+	}
+}
+
+// TestMarkdownStoreRefreshReconcilesDuplicateIDs pins the reconcile contract:
+// two files that collide on one filename-derived index ID must not fail the
+// sync with "duplicate memory index id". The first path in scan order wins;
+// the duplicate file stays on disk untouched.
+func TestMarkdownStoreRefreshReconcilesDuplicateIDs(t *testing.T) {
+	root, indexPath := t.TempDir(), filepath.Join(t.TempDir(), "context.db")
+	source, err := memory.NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	head := "# Dup %s\n\nscope: project\nverdict: neutral\n\n## Summary\n\nDuplicate id %s\n"
+	for _, name := range []string{"first-suites.md", "second-suites.md"} {
+		data := fmt.Sprintf(head, name, name)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index, err := storage.OpenSQLite(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
+	if err != nil {
+		t.Fatalf("OpenMarkdownStore failed on colliding index IDs: %v", err)
+	}
+	defer store.Close()
+	hits, err := store.Search(context.Background(), memory.Query{Text: "Duplicate", Scope: memory.ScopeProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ID != "suites" {
+		t.Fatalf("hits = %+v, want one reconciled row with ID suites", hits)
 	}
 }
 

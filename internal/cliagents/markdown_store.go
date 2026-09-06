@@ -62,12 +62,20 @@ func OpenMarkdownStore(ctx context.Context, cfg MarkdownStoreConfig) (memory.Sto
 		cfg.MaxSearchResults = memory.DefaultMaxSearchResults
 	}
 	s := &markdownStore{cfg: cfg}
-	if err := s.refresh(ctx, memory.ScopeProject); err != nil {
-		return nil, err
-	}
-	if cfg.OrgID != "" {
-		if err := s.refresh(ctx, memory.ScopeOrg); err != nil {
-			return nil, err
+	for _, scope := range []memory.Scope{memory.ScopeProject, memory.ScopeOrg} {
+		if scope == memory.ScopeOrg && cfg.OrgID == "" {
+			continue
+		}
+		if err := s.refresh(ctx, scope); err != nil {
+			// The index is a derived cache. A failed initial sync must not
+			// stop startup: degrade the scope so reads rescan and surface the
+			// underlying error at the tool that needs it.
+			s.mu.Lock()
+			if s.degraded == nil {
+				s.degraded = make(map[memory.Scope]bool)
+			}
+			s.degraded[scope] = true
+			s.mu.Unlock()
 		}
 	}
 	return s, nil
@@ -78,8 +86,18 @@ func (s *markdownStore) refresh(ctx context.Context, scope memory.Scope) error {
 	if err != nil {
 		return err
 	}
+	// Document IDs come from filename suffixes (memory.documentID), so two
+	// externally written files can collide on one ID. The index is a derived
+	// cache: reconcile by keeping one row per ID - the first path in scan
+	// order, which ReadDir sorts - instead of failing the whole sync. The
+	// losing file stays on disk as the canonical record.
 	rows := make([]storage.MemoryIndexDocument, 0, len(docs))
+	seenIDs := make(map[string]struct{}, len(docs))
 	for _, doc := range docs {
+		if _, dup := seenIDs[doc.ID]; dup {
+			continue
+		}
+		seenIDs[doc.ID] = struct{}{}
 		rows = append(rows, storage.MemoryIndexDocument{ID: doc.ID, Scope: string(scope), ProjectID: projectID(scope, s.cfg.ProjectID), OrgID: orgID(scope, s.cfg.OrgID), SourcePath: doc.Path, SourceHash: doc.Hash, Title: doc.Entry.Title, Summary: doc.Entry.Summary, Verdict: string(doc.Entry.Verdict), Tags: strings.Join(doc.Entry.Tags, ", "), Created: doc.Entry.Created, Content: doc.Entry.Render()})
 	}
 	if err := s.cfg.Index.SyncMemoryIndex(ctx, string(scope), projectID(scope, s.cfg.ProjectID), orgID(scope, s.cfg.OrgID), rows); err != nil {

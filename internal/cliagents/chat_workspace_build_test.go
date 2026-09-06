@@ -35,7 +35,11 @@ func TestBuildToolsForRoot_WorkspaceFailurePropagates(t *testing.T) {
 	closeFn() // must be safe on the failure path
 }
 
-func TestBuildToolsForRoot_MemoryFailureAndHappyPath(t *testing.T) {
+// The memory index is a derived cache, so an unusable memory path must not
+// stop tool-registry construction (and with it the CLI): the store opens in a
+// degraded state and the underlying failure surfaces when a memory tool is
+// actually used.
+func TestBuildToolsForRoot_MemoryDegradesAndHappyPath(t *testing.T) {
 	wsRoot := t.TempDir()
 	memRoot := filepath.Join(wsRoot, ".mivia") // parent exists; store opens/creates fine
 	happyReg, closeFn, err := cliagents.BuildToolsForRoot(wsRoot, memRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
@@ -53,8 +57,12 @@ func TestBuildToolsForRoot_MemoryFailureAndHappyPath(t *testing.T) {
 		}
 		return r
 	}, filepath.Join(wsRoot, ".mivia"))
-	_, _, merr := cliagents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
-	if merr == nil {
-		t.Fatal("expected memory wiring failure on an unusable path")
+	degradedReg, degradedClose, derr := cliagents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
+	if derr != nil {
+		t.Fatalf("unusable memory path must degrade, not fail wiring: %v", derr)
 	}
+	if degradedReg == nil {
+		t.Fatal("nil registry on degraded memory path")
+	}
+	degradedClose()
 }

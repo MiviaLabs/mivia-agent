@@ -142,6 +142,11 @@ func (s MarkdownSource) Scan(ctx context.Context, scope Scope) ([]MarkdownDocume
 				e.Scope = ScopeProject
 			}
 		}
+		// Hand-authored files may omit fields the derived index requires.
+		// Reconcile with defaults instead of failing the whole scan.
+		if e.Verdict == "" {
+			e.Verdict = VerdictNeutral
+		}
 		if e.Scope != scope {
 			return nil, fmt.Errorf("memory %s declares scope %q, want %q", path, e.Scope, scope)
 		}
