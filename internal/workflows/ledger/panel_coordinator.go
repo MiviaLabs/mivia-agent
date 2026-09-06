@@ -15,11 +15,23 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
+// panelChildCoordinator is the consumer-side subset of a coordinator the
+// panel child operations need: ensure/join/cancel one child run. The full
+// coordinator carries far more; the panel depends on the subset, not the fat
+// interface. The real coordinator type satisfies it.
+type panelChildCoordinator interface {
+	EnsureSingleTaskRun(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	EnsureTerminalSingleTaskRun(ctx context.Context, req coordinator.EnsureRunRequest, status coordledger.TaskStatus) (*coordinator.RunHandle, error)
+	JoinAsRecovered(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	Join(ctx context.Context, h *coordinator.RunHandle) (*coordinator.RunResult, error)
+	Cancel(ctx context.Context, h *coordinator.RunHandle) error
+}
+
 // PanelCoordinator binds every child operation to persisted panel state.
 // It does not execute panel fan-out or aggregation.
 type PanelCoordinator struct {
 	workflowRunID string
-	inner         coordinator.Coordinator
+	inner         panelChildCoordinator
 	repo          Repository
 }
 
@@ -48,7 +60,7 @@ func (p PanelCoordinator) MemberNeedsActorPermit(ctx context.Context, attemptID,
 	return probe.NeedsActorPermit(p.childContext(ctx), req)
 }
 
-func NewPanelCoordinator(workflowRunID string, inner coordinator.Coordinator, repo Repository) PanelCoordinator {
+func NewPanelCoordinator(workflowRunID string, inner panelChildCoordinator, repo Repository) PanelCoordinator {
 	return PanelCoordinator{workflowRunID: workflowRunID, inner: inner, repo: repo}
 }
 
