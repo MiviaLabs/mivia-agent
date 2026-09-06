@@ -117,26 +117,14 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectTurnStart(env, ev.Detail, isSynthetic)
 
 	case events.KindTurnEnd:
-		if !p.knownTurn(turnID) {
-			return nil
-		}
-		ts := p.turn(turnID)
-		if ts.done {
-			return nil
-		}
-		ts.done = true
-		return p.closeTurn(env, turnID, ev, p.projectTurnEnd(env, ev.Detail))
+		return p.closeTurnOnTerminal(env, turnID, ev, func() []WireEvent {
+			return p.projectTurnEnd(env, ev.Detail)
+		})
 
 	case events.KindError:
-		if !p.knownTurn(turnID) {
-			return nil
-		}
-		ts := p.turn(turnID)
-		if ts.done {
-			return nil
-		}
-		ts.done = true
-		return p.closeTurn(env, turnID, ev, p.projectTurnError(env, ev))
+		return p.closeTurnOnTerminal(env, turnID, ev, func() []WireEvent {
+			return p.projectTurnError(env, ev)
+		})
 
 	case events.KindAssistant:
 		// The attribution check MUST come before p.turn(turnID). A subagent's
@@ -187,6 +175,22 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 	}
 }
 
+// closeTurnOnTerminal guards and closes a turn for its terminal event, then
+// hands the terminal builder to closeTurn. Only a known, still-open turn has a
+// terminal to ship; marking the turn done here is what makes a second terminal
+// for the same turn a no-op.
+func (p *Projector) closeTurnOnTerminal(env Envelope, turnID string, ev events.Event, terminal func() []WireEvent) []WireEvent {
+	if !p.knownTurn(turnID) {
+		return nil
+	}
+	ts := p.turn(turnID)
+	if ts.done {
+		return nil
+	}
+	ts.done = true
+	return p.closeTurn(env, turnID, ev, terminal)
+}
+
 // closeTurn emits a turn's terminal preceded by everything its open prose
 // blocks still owe the wire.
 //
@@ -198,10 +202,16 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 // buffer, and the reader cannot tell withheld prose from prose that never
 // existed. The flush is TERMINAL - no aggregate can follow it - so it ships
 // even a tail that nothing streamed alongside.
-func (p *Projector) closeTurn(env Envelope, turnID string, ev events.Event, terminal []WireEvent) []WireEvent {
+//
+// terminal is a builder, not a slice, and it runs LAST. Seqs are assigned at
+// build time, so a pre-evaluated terminal took its seq before the flush and
+// settle events that precede it on the wire: the stored batch then held a
+// descending seq and the terminal above the prose it closed. Building the
+// terminal last keeps seq assignment order equal to wire order.
+func (p *Projector) closeTurn(env Envelope, turnID string, ev events.Event, terminal func() []WireEvent) []WireEvent {
 	out := p.flushHeldAssistantFor(env, turnID, ev)
 	out = append(out, p.settleThinkingFor(env, turnID, ev)...)
-	return append(out, terminal...)
+	return append(out, terminal()...)
 }
 
 // Flush emits any pending sync.dropped event if drops advanced.
