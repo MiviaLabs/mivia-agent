@@ -178,7 +178,7 @@ func TestPanelMemberWorkLimitsHonorStepMaxTurns(t *testing.T) {
 // panelStepFixture builds a controller whose workflow starts with an
 // agent_panel step. It returns the controller, the workflow repository, and
 // the coordinator ledger so tests can assert settlement and dispatch.
-func panelStepFixture(t *testing.T, runID string) (*LinearController, workflowledger.Repository, coordledger.LedgerRepository, definition.Step) {
+func panelStepFixture(t *testing.T, runID string) (*LinearController, controllerRepository, coordledger.LedgerRepository, definition.Step) {
 	t.Helper()
 	step := definition.Step{
 		ID: "review", Kind: "agent_panel", Context: []definition.ContextBinding{{From: "inputs.task", As: "task", MaxBytes: 1024}},

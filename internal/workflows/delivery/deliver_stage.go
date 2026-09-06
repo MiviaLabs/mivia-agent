@@ -31,7 +31,7 @@ const (
 // scope into the delivered branch) nor adoptOwnFollowUpCommit (which would
 // adopt the deferred commit as the delivery commit) may run. It returns the
 // adopted HEAD and tree SHA.
-func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef, title, body string) (string, string, error) {
+func commitOrResume(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key string, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef, title, body string) (string, string, error) {
 	treeSHA := existing.TreeSHA
 	if head != req.BaseCommit {
 		// Retry path: verify the recorded record against HEAD BEFORE any
@@ -134,7 +134,7 @@ func buildCommitMessage(title, body string) string {
 // branch that gets pushed. The deferred branch is left for the driver to
 // push as a follow-up PR after this delivery succeeds; see stacking.go's
 // deferredBranchName and CountUnshippedCommits' doc comment.
-func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef, title, body string) (string, string, error) {
+func freshDeliveryCommit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key, diffRef, title, body string) (string, string, error) {
 	deferred, err := ParseDeferredFiles(req.Inputs[InputDeferredFiles])
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
@@ -148,7 +148,7 @@ func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRun
 
 // freshDeliveryCommitSingle is the pre-existing, unsplit fresh-commit path:
 // stage everything, commit once.
-func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef, title, body string) (string, string, error) {
+func freshDeliveryCommitSingle(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key, diffRef, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
@@ -199,7 +199,7 @@ func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git 
 // attempt's FRESH diff ref, preserving every other field (RemoteID, URL,
 // Mode, BaseRef, HeadRef, Provider) so the run keeps proving ownership of its
 // own PR on further retries.
-func commitWorktreeFollowUp(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, existing ledger.DeliveryRecord, diffRef, title, body string) (string, string, error) {
+func commitWorktreeFollowUp(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, existing ledger.DeliveryRecord, diffRef, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		return "", "", err
 	}
@@ -262,7 +262,7 @@ func commitWorktreeFollowUp(ctx context.Context, repo ledger.Repository, git Git
 // ref (what is actually at HEAD), preserving every other field of the existing
 // record (RemoteID, URL, Mode, BaseRef, HeadRef, Provider). It returns the
 // adopted HEAD and its actual tree.
-func adoptOwnDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, existing ledger.DeliveryRecord, head, headTree, diffRef string, porcelainEmpty bool) (string, string, error) {
+func adoptOwnDeliveryCommit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, existing ledger.DeliveryRecord, head, headTree, diffRef string, porcelainEmpty bool) (string, string, error) {
 	if !porcelainEmpty {
 		return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
 	}
@@ -349,7 +349,7 @@ func adoptOwnDeliveryCommit(ctx context.Context, repo ledger.Repository, git Git
 // other field (RemoteID, URL, Mode, BaseRef, HeadRef, Provider, Status) so
 // the run keeps proving ownership of its own PR. It returns the adopted HEAD
 // and its actual tree.
-func adoptOwnFollowUpCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, existing ledger.DeliveryRecord, head, diffRef string, porcelainEmpty bool) (string, string, error) {
+func adoptOwnFollowUpCommit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, existing ledger.DeliveryRecord, head, diffRef string, porcelainEmpty bool) (string, string, error) {
 	if !porcelainEmpty {
 		return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
 	}
@@ -405,7 +405,7 @@ func adoptOwnFollowUpCommit(ctx context.Context, repo ledger.Repository, git Git
 // is the SAME pending record with ONLY TreeSHA/CommitSHA changed
 // (byte-identical caller fields) and fires only here, on the fresh-commit
 // path — never on a retry.
-func commitStagedTree(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, stage ledger.DeliveryRecord, treeSHA, msg string) (string, string, error) {
+func commitStagedTree(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, stage ledger.DeliveryRecord, treeSHA, msg string) (string, string, error) {
 	// Commit through Git so pre-commit and commit-msg hooks can reject it.
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,

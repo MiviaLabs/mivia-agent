@@ -54,7 +54,7 @@ const runeutilPlan = `{"id":"c1","title":"runeutil","files":["internal/runeutil/
 
 // runChunkScopeTest drives one chunk-mode repair run with the given runner
 // outputs and returns the settled run, its error, and the repository.
-func runChunkScopeTest(t *testing.T, planJSON string, runner *scriptedRunner) (*LinearController, workflowledger.Repository, error) {
+func runChunkScopeTest(t *testing.T, planJSON string, runner *scriptedRunner) (*LinearController, controllerRepository, error) {
 	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, chunkScopeWorkflow(t, -1), map[string]StepRuntime{
@@ -338,7 +338,7 @@ func (s *recordingSink) byKind(k ProgressKind) []ProgressEvent {
 
 // runChunkScopeTestWithSink is runChunkScopeTest plus a recording progress
 // sink wired before Start.
-func runChunkScopeTestWithSink(t *testing.T, planJSON string, runner *scriptedRunner) (*LinearController, workflowledger.Repository, *recordingSink, error) {
+func runChunkScopeTestWithSink(t *testing.T, planJSON string, runner *scriptedRunner) (*LinearController, controllerRepository, *recordingSink, error) {
 	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, chunkScopeWorkflow(t, -1), map[string]StepRuntime{

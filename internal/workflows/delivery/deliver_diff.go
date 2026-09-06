@@ -4,15 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // intendedDiff resolves HEAD and the intended change against the admitted
 // base: committed work (base..HEAD) plus uncommitted work (porcelain). An
 // empty intended diff settles as no_diff (record written here) and reports
 // noDiff=true. It returns the porcelain text for the diff snapshot too.
-func intendedDiff(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string) (head string, porcelainEmpty bool, diffText, porcelain string, noDiff bool, err error) {
+func intendedDiff(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key string) (head string, porcelainEmpty bool, diffText, porcelain string, noDiff bool, err error) {
 	out, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD")
 	if err != nil {
 		return "", false, "", "", false, fmt.Errorf("cannot resolve HEAD: %w", err)

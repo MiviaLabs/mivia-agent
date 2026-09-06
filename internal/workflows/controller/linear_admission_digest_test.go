@@ -76,7 +76,7 @@ func TestFreshAdmissionStillComparesThisBinarysDigest(t *testing.T) {
 	}
 }
 
-func newAdmissionFixture(t *testing.T, repo workflowledger.Repository) *LinearController {
+func newAdmissionFixture(t *testing.T, repo controllerRepository) *LinearController {
 	t.Helper()
 	ctrl, err := NewLinearController(repo, &scriptedRunner{}, linearWorkflow(t), map[string]StepRuntime{
 		"first":  {Agent: agents.ResolvedAgent{Name: "one"}},

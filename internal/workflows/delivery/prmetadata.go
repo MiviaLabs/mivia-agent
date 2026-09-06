@@ -19,7 +19,10 @@ const DeliveryRepairStepID = "wf-delivery"
 // wf-delivery repair attempt that carries an error ref, or "" when none
 // exists. The attempt with the highest AttemptNo wins; a later attempt in
 // event order wins a tie. Only a storage or load failure is an error.
-func LatestFailureText(ctx context.Context, repo ledger.Repository, runID string) (string, error) {
+func LatestFailureText(ctx context.Context, repo interface {
+	ListStepAttempts(ctx context.Context, runID string) ([]ledger.StepAttempt, error)
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
+}, runID string) (string, error) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return "", err
@@ -56,7 +59,7 @@ func LatestFailureText(ctx context.Context, repo ledger.Repository, runID string
 // OutputRef, so the presence of pr_title marks a change summary. Only a
 // storage or load failure is an error; an output that is not valid JSON is
 // skipped.
-func ResolveLatestChangeSummary(ctx context.Context, repo ledger.Repository, runID string) (map[string]any, error) {
+func ResolveLatestChangeSummary(ctx context.Context, repo deliveryRepository, runID string) (map[string]any, error) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return nil, err

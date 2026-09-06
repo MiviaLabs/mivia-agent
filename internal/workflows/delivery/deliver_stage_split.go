@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // deferredCommitMessage builds the host-only follow-up commit message for a
@@ -35,7 +33,7 @@ func deferredCommitMessage(title, body string, deferredCount int) string {
 // deferredBranchName (git branch -f), and resets the worktree back to the
 // delivered commit - so deferred's content is preserved but never reachable
 // from the branch that gets pushed next.
-func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string, deferred []string, title, body string) (string, string, error) {
+func freshDeliveryCommitSplit(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key, diffRef string, deferred []string, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err

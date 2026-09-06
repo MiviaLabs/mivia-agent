@@ -14,7 +14,7 @@ import (
 // whole job is to decide that, and a returned error is the cheapest unambiguous
 // proof that it did not stop early.
 type errListRepo struct {
-	workflowledger.Repository
+	controllerRepository
 }
 
 var errReachedRepo = errors.New("guard did not short-circuit")

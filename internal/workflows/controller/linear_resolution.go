@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // resolutionRunner is the AgentStepRunner used by NewResolutionController.
@@ -23,6 +22,6 @@ func (resolutionRunner) RunStep(context.Context, AgentStepRequest) (AgentStepRes
 // (approve/reject) on an existing run. It carries the admitted workflow and
 // inputs but no step runtimes: Approve/Reject only read the workflow's
 // transitions and write to the ledger.
-func NewResolutionController(repo workflowledger.Repository, wf *definition.CompiledWorkflow, runID string, snapshot []byte, inputs map[string]any) (*LinearController, error) {
+func NewResolutionController(repo controllerRepository, wf *definition.CompiledWorkflow, runID string, snapshot []byte, inputs map[string]any) (*LinearController, error) {
 	return NewLinearController(repo, resolutionRunner{}, wf, map[string]StepRuntime{}, inputs, runID, snapshot)
 }

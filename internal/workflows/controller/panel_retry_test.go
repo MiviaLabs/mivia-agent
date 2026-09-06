@@ -38,7 +38,7 @@ func (h *flakyMemberHandler) Invoke(context.Context, runtime.Request) (json.RawM
 // re-enters the panel with a fresh attempt), with members wired to the given
 // handler and a synthesizer that always succeeds. The workflow carries the
 // given limits so tests can configure the re-entry budget.
-func panelRetryFixture(t *testing.T, runID string, memberHandler runtime.Handler, synthesisOutput string, limits definition.Limits) (*LinearController, workflowledger.Repository) {
+func panelRetryFixture(t *testing.T, runID string, memberHandler runtime.Handler, synthesisOutput string, limits definition.Limits) (*LinearController, controllerRepository) {
 	t.Helper()
 	step := definition.Step{
 		ID: "review", Kind: "agent_panel", Agent: "review-synthesizer", Skill: "review-synthesis",
@@ -92,7 +92,7 @@ func panelRetryFixture(t *testing.T, runID string, memberHandler runtime.Handler
 	return ctrl, repo
 }
 
-func countPanelAttempts(t *testing.T, repo workflowledger.Repository, runID string) (failed, succeeded, total int) {
+func countPanelAttempts(t *testing.T, repo controllerRepository, runID string) (failed, succeeded, total int) {
 	t.Helper()
 	attempts, err := repo.ListStepAttempts(context.Background(), runID)
 	if err != nil {

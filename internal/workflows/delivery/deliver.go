@@ -80,7 +80,7 @@ func (req Request) stage(name, detail string) {
 // once the attempt is in flight (after the stage record) are plain errors
 // with the record marked failed, so the run stays delivery_pending for a
 // retry.
-func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request) (Result, error) {
+func Deliver(ctx context.Context, repo deliveryRepository, git GitRunner, pr PRClient, req Request) (Result, error) {
 	// 0. Stage observability begins at the entry guard.
 	req.stage("guard", fmt.Sprintf("delivering run %s", req.RunID))
 
@@ -167,7 +167,7 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 // base is verified against the origin base recorded at admission
 // (OriginBaseCommit) when present; otherwise the admitted local BaseCommit
 // is the pin.
-func verifyEligibilityAndStage(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string, run ledger.RunSnapshot) (head string, porcelainEmpty bool, diffRef, repoSlug, originBase string, noDiff bool, err error) {
+func verifyEligibilityAndStage(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key string, run ledger.RunSnapshot) (head string, porcelainEmpty bool, diffRef, repoSlug, originBase string, noDiff bool, err error) {
 	req.stage("eligibility", "verify the pinned worktree and intended diff")
 	originBase = run.OriginBaseCommit
 	if originBase == "" {
@@ -186,7 +186,7 @@ func verifyEligibilityAndStage(ctx context.Context, repo ledger.Repository, git 
 // (delivery.Deliver, engine.Deliver, CLI deliverRunWithStore) shares one
 // recovery transition and cannot diverge. A CAS failure means another
 // deliverer raced us; the attempt is a recoverable error.
-func deliveryRunGuard(ctx context.Context, repo ledger.Repository, req Request) (ledger.RunSnapshot, error) {
+func deliveryRunGuard(ctx context.Context, repo deliveryRepository, req Request) (ledger.RunSnapshot, error) {
 	run, err := repo.GetRun(ctx, req.RunID)
 	if err != nil {
 		return ledger.RunSnapshot{}, err
@@ -227,7 +227,7 @@ func validateDeliveryCommitSubject(req Request, subject string) error {
 // so every entry path shares one recovery edge and cannot diverge. A CAS
 // failure means another deliverer raced us; the attempt is a recoverable
 // error.
-func promoteToDeliveryPending(ctx context.Context, repo ledger.Repository, runID string, run ledger.RunSnapshot) (ledger.RunSnapshot, error) {
+func promoteToDeliveryPending(ctx context.Context, repo deliveryRepository, runID string, run ledger.RunSnapshot) (ledger.RunSnapshot, error) {
 	if err := repo.CompareAndSetRunStatus(ctx, runID, run.Version, ledger.RunStatusDeliveryPending, nil); err != nil {
 		return ledger.RunSnapshot{}, fmt.Errorf("delivery re-eligibility: promote %s to delivery_pending: %w", run.Status, err)
 	}
@@ -294,7 +294,7 @@ func replayResult(existing ledger.DeliveryRecord) Result {
 // commit, whether the worktree is clean, the content ref of the diff snapshot
 // (empty when there is nothing to publish), and the PR client repo slug. The
 // no-diff outcome writes the no_diff record here and returns an empty ref.
-func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, originBase string) (head string, porcelainEmpty bool, diffRef, repoSlug string, err error) {
+func verifyEligibility(ctx context.Context, repo deliveryRepository, git GitRunner, req Request, key, originBase string) (head string, porcelainEmpty bool, diffRef, repoSlug string, err error) {
 	repoSlug, err = verifyWorktreeAndRemote(ctx, git, req, originBase)
 	if err != nil {
 		return "", false, "", "", err
@@ -360,7 +360,7 @@ func baseStillContains(ctx context.Context, git GitRunner, req Request, admitted
 // pushAndPublish pushes the delivery commit and finds or creates exactly one
 // PR, recording each stage durably. originBase is the admitted remote base
 // pin used by the post-create base verification (AR-7).
-func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef, originBase string, existing ledger.DeliveryRecord, title, body string) (Result, error) {
+func pushAndPublish(ctx context.Context, repo deliveryRepository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef, originBase string, existing ledger.DeliveryRecord, title, body string) (Result, error) {
 	// 12-13. Push the branch to origin and record the push.
 	if err := pushDeliveryBranch(ctx, repo, git, req, key, head, treeSHA, diffRef, existing); err != nil {
 		return Result{}, err
@@ -425,7 +425,7 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 // reviewer flipped its draft state, while a genuinely foreign PR with the
 // wrong draft state is a permanent condition and settles as a refusal instead
 // of deadlocking the run in delivery_pending forever.
-func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, req Request, key, repoSlug string, existing ledger.DeliveryRecord, title, body string) (*PRRef, error) {
+func findOrCreatePR(ctx context.Context, repo deliveryRepository, pr PRClient, req Request, key, repoSlug string, existing ledger.DeliveryRecord, title, body string) (*PRRef, error) {
 	found, err := pr.FindByHead(ctx, repoSlug, req.Branch)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)

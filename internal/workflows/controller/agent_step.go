@@ -60,11 +60,11 @@ type RouteDecision struct {
 
 // RecordStepResult writes the child identity and bounded evidence selection to
 // one workflow attempt. The controller calls it after attempt admission.
-func RecordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
+func RecordStepResult(ctx context.Context, repo controllerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
 	return recordStepResult(ctx, repo, attempt, result, status, RouteDecision{})
 }
 
-func recordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
+func recordStepResult(ctx context.Context, repo controllerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
@@ -99,7 +99,7 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 
 // CompleteExistingStepResult completes an attempt that the controller already
 // recorded before an interruption. The stable child key prevents re-dispatch.
-func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
+func CompleteExistingStepResult(ctx context.Context, repo controllerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}

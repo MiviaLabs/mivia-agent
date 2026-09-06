@@ -15,6 +15,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
+// panelRepo is the consumer-side subset of the ledger the panel
+// coordinator reads attempts from and claims runs with.
+type panelRepo interface {
+	GetStepAttempt(ctx context.Context, runID, attemptID string) (StepAttempt, error)
+	ClaimRun(ctx context.Context, runID, holder string) error
+	ReleaseRun(ctx context.Context, runID, holder string) error
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
+}
+
 // PanelChildCoordinator is the consumer-side subset of a coordinator the
 // panel child operations need: ensure/join/cancel one child run. The full
 // coordinator carries far more; the panel depends on the subset, not the fat
@@ -35,7 +44,7 @@ var _ PanelChildCoordinator = (*coordinator.Coordinator)(nil)
 type PanelCoordinator struct {
 	workflowRunID string
 	inner         PanelChildCoordinator
-	repo          Repository
+	repo          panelRepo
 }
 
 type panelActorPermitProbe interface {
@@ -63,7 +72,7 @@ func (p PanelCoordinator) MemberNeedsActorPermit(ctx context.Context, attemptID,
 	return probe.NeedsActorPermit(p.childContext(ctx), req)
 }
 
-func NewPanelCoordinator(workflowRunID string, inner PanelChildCoordinator, repo Repository) PanelCoordinator {
+func NewPanelCoordinator(workflowRunID string, inner PanelChildCoordinator, repo panelRepo) PanelCoordinator {
 	return PanelCoordinator{workflowRunID: workflowRunID, inner: inner, repo: repo}
 }
 

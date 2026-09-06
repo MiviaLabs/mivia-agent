@@ -101,7 +101,7 @@ func panelSynthesisFixture(t *testing.T, runID, memberReport, synthesisOutput st
 // member-run steps directly, bypassing the panelsEnabled fail-closed gate
 // (Wave 5's wiring is dead code in production until Wave 6 lands; this test
 // exercises it directly, matching how RunPanelMembers itself is tested).
-func driveAdvancePanelSynthesis(t *testing.T, ctrl *LinearController, repo workflowledger.Repository, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
+func driveAdvancePanelSynthesis(t *testing.T, ctrl *LinearController, repo controllerRepository, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
 	t.Helper()
 	if err := ctrl.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
