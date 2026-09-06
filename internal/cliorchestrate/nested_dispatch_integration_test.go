@@ -143,8 +143,7 @@ func TestNestedSyncDispatchCompletes(t *testing.T) {
 		cfg  func() config.SubagentConfig
 	}{
 		{
-			// Production default: MaxWorkers=0 (pool spawns one worker per
-			// task per batch, no shared bounded pool).
+			// Production default: MaxWorkers=0 (config 0 falls back to pool DefaultWorkers=3).
 			name: "default_unbounded_workers",
 			cfg:  func() config.SubagentConfig { return config.DefaultSubagentConfig },
 		},

@@ -53,9 +53,83 @@ func (h *countingHandler) Invoke(_ context.Context, _ runtime.Request) (json.Raw
 	return json.RawMessage(`{"output":"done"}`), nil
 }
 
-// TestPoolUnlimitedWorkersDispatchesAll verifies that Workers: 0 allows all
-// tasks to run concurrently rather than capping at a default worker count.
-// With 8 tasks each sleeping 50 ms, peak concurrency must exceed 4.
+// TestPoolDefaultWorkersBoundedToThree verifies that an unconfigured pool
+// (Workers: 0) defaults to DefaultWorkers (3) and never executes more than 3
+// tasks concurrently when given a batch of 12 tasks.
+func TestPoolDefaultWorkersBoundedToThree(t *testing.T) {
+	var active, peak atomic.Int32
+	var wg sync.WaitGroup
+	barrier := make(chan struct{})
+
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "instant", &countingHandler{
+		active:  &active,
+		peak:    &peak,
+		wg:      &wg,
+		barrier: barrier,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New(d, Policy{})
+
+	const taskCount = 12
+	tasks := make([]Task, taskCount)
+	for i := range tasks {
+		tasks[i] = Task{
+			ID:     "t" + string(rune('0'+i)),
+			Name:   "instant",
+			Input:  json.RawMessage(`"go"`),
+			Budget: 1,
+		}
+	}
+
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		_, _ = p.Run(context.Background(), tasks)
+	}()
+
+	// Wait until at least 3 workers are active (the pool capacity).
+	for !t.Failed() {
+		if active.Load() >= 3 {
+			break
+		}
+		stdruntime.Gosched()
+		select {
+		case <-runDone:
+			t.Fatal("run finished before reaching expected worker capacity")
+		default:
+		}
+	}
+
+	// Give any additional workers a chance to start if unbounded.
+	// If Workers was unbounded, all 12 tasks would start and active would reach 12.
+	for i := 0; i < 50; i++ {
+		stdruntime.Gosched()
+	}
+
+	if cur := active.Load(); cur > 3 {
+		t.Fatalf("active workers = %d, expected <= 3 under default policy", cur)
+	}
+
+	// Release the barrier to let workers finish.
+	close(barrier)
+	<-runDone
+	wg.Wait()
+
+	observed := peak.Load()
+	t.Logf("peak concurrency: %d", observed)
+	if observed > 3 {
+		t.Fatalf("peak concurrency = %d, expected <= 3 for default Workers bound", observed)
+	}
+	if observed < 3 {
+		t.Fatalf("peak concurrency = %d, expected 3", observed)
+	}
+}
+
+// TestPoolUnlimitedWorkersDispatchesAll verifies that Policy{Workers: Unlimited}
+// allows all tasks to run concurrently rather than capping at DefaultWorkers.
 func TestPoolUnlimitedWorkersDispatchesAll(t *testing.T) {
 	var active, peak atomic.Int32
 	var wg sync.WaitGroup
@@ -71,7 +145,7 @@ func TestPoolUnlimitedWorkersDispatchesAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p := New(d, Policy{Workers: 0})
+	p := New(d, Policy{Workers: Unlimited})
 
 	tasks := make([]Task, 8)
 	for i := range tasks {
@@ -100,7 +174,7 @@ func TestPoolUnlimitedWorkersDispatchesAll(t *testing.T) {
 		stdruntime.Gosched()
 		select {
 		case <-runDone:
-			// Run finished before we hit 8 concurrent - try again with timing.
+			// Run finished before we hit 8 concurrent.
 		default:
 		}
 	}
@@ -111,7 +185,7 @@ func TestPoolUnlimitedWorkersDispatchesAll(t *testing.T) {
 	observed := peak.Load()
 	t.Logf("peak concurrency: %d", observed)
 	if observed <= 4 {
-		t.Fatalf("peak concurrency = %d, expected > 4 (Workers: 0 should not be capped)", observed)
+		t.Fatalf("peak concurrency = %d, expected > 4 (Workers: Unlimited should not be capped)", observed)
 	}
 }
 
@@ -188,6 +262,9 @@ func TestPoolUnlimitedDepthSkipsCheck(t *testing.T) {
 func TestPolicySafeDefaultsApplied(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	p := New(d, Policy{})
+	if p.Workers() != DefaultWorkers {
+		t.Fatalf("Workers: got %d, want %d (safe default)", p.Workers(), DefaultWorkers)
+	}
 	if p.p.MaxFanout != DefaultMaxFanout {
 		t.Fatalf("MaxFanout: got %d, want %d (safe default)", p.p.MaxFanout, DefaultMaxFanout)
 	}
@@ -203,7 +280,10 @@ func TestPolicySafeDefaultsApplied(t *testing.T) {
 // disables bounds even after defaults would otherwise apply.
 func TestPolicyUnlimitedSentinelDisablesBounds(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
-	p := New(d, Policy{MaxFanout: Unlimited, MaxDepth: Unlimited, MaxBudget: Unlimited})
+	p := New(d, Policy{Workers: Unlimited, MaxFanout: Unlimited, MaxDepth: Unlimited, MaxBudget: Unlimited})
+	if p.Workers() != Unlimited {
+		t.Fatalf("Workers: got %d, want %d (unlimited sentinel)", p.Workers(), Unlimited)
+	}
 	if p.p.MaxFanout != Unlimited {
 		t.Fatalf("MaxFanout: got %d, want %d (unlimited sentinel)", p.p.MaxFanout, Unlimited)
 	}

@@ -110,6 +110,7 @@ const Unlimited = -1
 // admit DefaultMaxFanout tasks at a realistic multi-thousand budget each
 // while still rejecting a pathological value.
 const (
+	DefaultWorkers   = 3
 	DefaultMaxFanout = 32
 	DefaultMaxDepth  = 10
 	DefaultMaxBudget = 1_000_000
@@ -155,6 +156,9 @@ type Pool struct {
 	ShouldSkipTask func(ctx context.Context, t Task) bool
 }
 
+// Workers returns the configured or defaulted worker limit.
+func (p *Pool) Workers() int { return p.p.Workers }
+
 // MaxFanout returns the maximum number of tasks accepted in one orchestration.
 func (p *Pool) MaxFanout() int { return p.p.MaxFanout }
 
@@ -187,6 +191,9 @@ func New(d *runtime.Dispatcher, p Policy) *Pool {
 	// Apply safe defaults for zero-valued limits. Zero must not mean unlimited;
 	// an unconfigured deployment should degrade to safe bounds rather than
 	// unbounded fan-out or budget. Use Unlimited (-1) to explicitly opt out.
+	if p.Workers == 0 {
+		p.Workers = DefaultWorkers
+	}
 	if p.MaxFanout == 0 {
 		p.MaxFanout = DefaultMaxFanout
 	}
@@ -313,8 +320,8 @@ func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Res
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	workers := p.p.Workers
-	if workers == 0 {
-		// 0 = unlimited: one worker per task (bounded by len(tasks)).
+	if workers == Unlimited || workers <= 0 {
+		// Unlimited: one worker per task (bounded by len(tasks)).
 		workers = len(tasks)
 	}
 	if workers > len(tasks) {
