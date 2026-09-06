@@ -26,8 +26,8 @@ func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
 	if got.Model != "test-model" {
 		t.Fatalf("Model = %q, want %q", got.Model, "test-model")
 	}
-	if got.MaxIterations != 5 {
-		t.Fatalf("MaxIterations = %d, want 5", got.MaxIterations)
+	if got.Bounds.MaxIterations != 5 {
+		t.Fatalf("MaxIterations = %d, want 5", got.Bounds.MaxIterations)
 	}
 	if got.Completer == nil {
 		t.Fatal("Completer = nil, want the wrapped CLI completer")
@@ -52,8 +52,8 @@ func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 	if got.Model != "" {
 		t.Fatalf("Model = %q, want empty", got.Model)
 	}
-	if got.MaxIterations != 0 {
-		t.Fatalf("MaxIterations = %d, want 0 (unbounded passes through to SDK)", got.MaxIterations)
+	if got.Bounds.MaxIterations != 0 {
+		t.Fatalf("MaxIterations = %d, want 0 (unbounded passes through to SDK)", got.Bounds.MaxIterations)
 	}
 }
 

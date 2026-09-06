@@ -88,8 +88,8 @@ func TestSDKTurnShapingKeepsToolsOffered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sdkOpts.TurnResultBudget != 0 {
-		t.Fatalf("TurnResultBudget = %d, want 0 while host shaping is active", sdkOpts.TurnResultBudget)
+	if sdkOpts.Bounds.TurnResultBudget != 0 {
+		t.Fatalf("TurnResultBudget = %d, want 0 while host shaping is active", sdkOpts.Bounds.TurnResultBudget)
 	}
 	defs, _, err := sdkagentloop.Definitions(sdkOpts.Tools, nil)
 	if err != nil {

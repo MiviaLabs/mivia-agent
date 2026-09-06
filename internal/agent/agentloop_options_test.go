@@ -389,8 +389,8 @@ func TestBuildAgentLoopOptionsWorkLimitsTurnsClamp(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildAgentLoopOptions: %v", err)
 			}
-			if got.MaxIterations != tc.want {
-				t.Fatalf("MaxIterations = %d, want %d", got.MaxIterations, tc.want)
+			if got.Bounds.MaxIterations != tc.want {
+				t.Fatalf("MaxIterations = %d, want %d", got.Bounds.MaxIterations, tc.want)
 			}
 		})
 	}
@@ -659,7 +659,7 @@ func TestBuildAgentLoopOptionsCarriesMaxConcurrentTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
-	if got.MaxConcurrentTools != 4 {
-		t.Fatalf("MaxConcurrentTools = %d, want 4", got.MaxConcurrentTools)
+	if got.Bounds.MaxConcurrentTools != 4 {
+		t.Fatalf("MaxConcurrentTools = %d, want 4", got.Bounds.MaxConcurrentTools)
 	}
 }

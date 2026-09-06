@@ -81,13 +81,11 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	// the parity the field-mapping doc advertises.
 	maxIterations := opts.MaxSteps
 	out := sdkagentloop.Options{
-		Completer:          completer,
-		Tools:              sdkTools,
-		Model:              opts.Model,
-		MaxIterations:      maxIterations,
-		MaxCallsPerTurn:    opts.MaxToolCallsPerBatch,
-		MaxConcurrentTools: opts.MaxConcurrentTools,
-		SessionID:          opts.SessionID,
+		Completer: completer,
+		Tools:     sdkTools,
+		Model:     opts.Model,
+		Bounds:    sdkagentloop.Bounds{MaxIterations: maxIterations, MaxCallsPerTurn: opts.MaxToolCallsPerBatch, MaxConcurrentTools: opts.MaxConcurrentTools},
+		SessionID: opts.SessionID,
 	}
 	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
@@ -144,7 +142,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 // positive turn limit becomes the bound even above the default 25.
 func applySDKStepBound(out *sdkagentloop.Options, opts Options) {
 	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
-		out.MaxIterations = limit
+		out.Bounds.MaxIterations = limit
 	}
 }
 

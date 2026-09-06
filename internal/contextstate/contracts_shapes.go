@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextref"
 	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
 )
 
@@ -20,7 +21,7 @@ const (
 	// MaxSourceRangeEvents is the inclusive span that keeps range arithmetic honest.
 	MaxSourceRangeEvents = sdkctx.MaxSourceRangeEvents
 	// HashPrefix is the SDK's canonical content-address prefix.
-	HashPrefix = sdkctx.HashPrefix
+	HashPrefix = sdkref.HashPrefix
 
 	// Namespace is the CLI's local payload namespace. The SDK exposes
 	// none, and the CLI's ContentRef rejects every other value at
@@ -137,17 +138,17 @@ func invalid(field, reason string) error { return &ValidationError{Field: field,
 // Digest returns the SDK's SHA-256 of the ordered concatenation of chunks,
 // as 64 lowercase hex characters. The CLI never mixes namespace or owner
 // fields into the digest.
-func Digest(chunks ...[]byte) string { return sdkctx.Digest(chunks...) }
+func Digest(chunks ...[]byte) string { return sdkref.Digest(chunks...) }
 
 // Mint returns the SDK's canonical content address of the concatenated
 // chunks: HashPrefix plus Digest. The CLI's own contentRefID is a different
 // function with a different prefix.
-func Mint(chunks ...[]byte) string { return sdkctx.Mint(chunks...) }
+func Mint(chunks ...[]byte) string { return sdkref.Mint(chunks...) }
 
 // IsRef reports whether ref matches the SDK's canonical "sha256:<64 hex>"
 // shape. The CLI's own contentRefID mints "ctxp_<hex>" strings that fail
 // this check, which is the point: a CLI reference is not an SDK reference.
-func IsRef(s string) bool { return sdkctx.IsRef(s) }
+func IsRef(s string) bool { return sdkref.IsRef(s) }
 
 // NewContentRef mints an SDK-shaped ContentRef. The CLI's own
 // contentRefID minter lives in sanitize.go.

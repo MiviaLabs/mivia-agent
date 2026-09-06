@@ -78,7 +78,7 @@ func newSDKContinueOnStop(l *Loop, sdkOpts sdkagentloop.Options, opts Options, t
 		// exhausted branch, carried over verbatim: an exhausted budget
 		// returns the turn it already has instead of failing it, and a
 		// non-positive bound is the unbounded contract and passes through.
-		if sdkOpts.MaxIterations > 0 && turn.currentStep() >= sdkOpts.MaxIterations {
+		if sdkOpts.Bounds.MaxIterations > 0 && turn.currentStep() >= sdkOpts.Bounds.MaxIterations {
 			return nil
 		}
 		switch d.Stop {

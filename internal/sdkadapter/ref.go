@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
+	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextref"
 )
 
 // migrationWindow is the documented cut-off for the dual-parse behaviour.
