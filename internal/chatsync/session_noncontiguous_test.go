@@ -163,3 +163,69 @@ func TestNonContiguous400AtNewMarkRebasesAgain(t *testing.T) {
 	waitUntil(t, "the tail after the second rebase to be accepted", func() bool { return f.LastSeq(id) == 7 })
 	assertOneSessionNoFork(t, f, s)
 }
+
+// TestFlush_NonContiguousTailWithMarkAtTailStartRebasesTheTail covers the
+// in-tail gap at mark == firstUnflushed-1: dropping the acknowledged prefix
+// alone heals nothing there, because the remainder itself is not contiguous.
+// The rebase must fall through to a full renumber of the remainder onto the
+// mark; a cursor-only advance retries the same rejected batch and wedges the
+// stream into the fork path.
+func TestFlush_NonContiguousTailWithMarkAtTailStartRebasesTheTail(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("noncontig-in-tail")
+
+	dir := t.TempDir()
+	bus, s := openAgainstFake(t, f, id, dir)
+
+	// Attach and land one clean event, so the server mark (1) sits exactly
+	// at firstUnflushed-1 once the gapped tail is injected.
+	publishTurnStart(bus, id, "turn:1", "attach and land seq 1")
+	waitUntil(t, "seq 1 to be accepted", func() bool { return f.LastSeq(id) == 1 })
+
+	// Inject a tail with a gap of its own, the shape a legacy or corrupted
+	// outbox can hold: the next batch is [2,4] against mark 1.
+	s.mu.Lock()
+	if err := s.appendLocked([]WireEvent{
+		{Seq: 2, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Envelope: Envelope{V: 1, Turn: "turn:2"}, Text: "a"}},
+		{Seq: 4, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Envelope: Envelope{V: 1, Turn: "turn:2"}, Text: "b"}},
+	}); err != nil {
+		t.Fatalf("seed gapped tail: %v", err)
+	}
+	s.mu.Unlock()
+
+	f.RejectAppendsWith(400, "Bad Request", "Non-contiguous batch: events[1] has seq 4, expected 3")
+	s.triggerFlush()
+	waitUntil(t, "the first push attempt", func() bool { return len(f.Batches()) >= 2 })
+	f.ClearAppendRejection()
+
+	waitUntil(t, "the renumbered tail to be accepted", func() bool { return f.LastSeq(id) == 3 })
+	assertOneSessionNoFork(t, f, s)
+	if next := s.LastSeq(); next != 3 {
+		t.Errorf("projector LastSeq() = %d, want 3; the next event must continue the rebased stream", next)
+	}
+}
+
+// TestFirstGapIndexPinsContiguityDecision pins the rebase decision helper
+// directly: a clean tail from mark+1 reads as no gap, and a gap anywhere in
+// the tail - not just at its head - names that index.
+func TestFirstGapIndexPinsContiguityDecision(t *testing.T) {
+	mk := func(seqs ...int64) []StoredEvent {
+		out := make([]StoredEvent, len(seqs))
+		for i, seq := range seqs {
+			out[i] = StoredEvent{Seq: seq}
+		}
+		return out
+	}
+	if got := firstGapIndex(mk(2, 3, 4), 1); got != -1 {
+		t.Errorf("firstGapIndex(clean tail) = %d, want -1", got)
+	}
+	if got := firstGapIndex(mk(2, 4), 1); got != 1 {
+		t.Errorf("firstGapIndex(internal gap) = %d, want 1", got)
+	}
+	if got := firstGapIndex(mk(3, 4), 1); got != 0 {
+		t.Errorf("firstGapIndex(head gap) = %d, want 0", got)
+	}
+	if got := firstGapIndex(nil, 1); got != -1 {
+		t.Errorf("firstGapIndex(empty) = %d, want -1", got)
+	}
+}

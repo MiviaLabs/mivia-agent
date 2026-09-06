@@ -78,8 +78,11 @@ func (s *SyncSession) handleBadRequest(ctx context.Context, err error) {
 //
 //   - The server holds a prefix of what the outbox still holds, or all of it
 //     (serverLastSeq >= firstUnflushed-1). Dropping the acknowledged prefix
-//     leaves the remainder already contiguous from serverLastSeq+1, and no
-//     event body changes - which keeps replay byte-identical, the property the
+//     leaves the remainder contiguous from serverLastSeq+1 when the tail
+//     itself was contiguous; a tail with a gap of its own - the projector
+//     inversion no longer produces one, but a legacy or externally corrupted
+//     outbox can hold it - is renumbered onto the mark instead. No event body
+//     changes either way, which keeps replay byte-identical, the property the
 //     API's idempotency rests on.
 //   - The server is BEHIND the outbox's first unflushed seq. The events in
 //     between are gone and no resend can produce them, so the events are
@@ -108,6 +111,22 @@ func (s *SyncSession) rebaseOn(serverLastSeq int64) error {
 		if serverLastSeq > s.projector.LastSeq() {
 			s.projector.ResetSeq(serverLastSeq)
 		}
+		// Dropping the acknowledged prefix heals the batch only when the
+		// remainder beyond the mark is itself contiguous. A gap inside the
+		// tail - a legacy or externally corrupted outbox can hold one -
+		// survives the advance, and the resent batch is rejected again, so
+		// renumber the remainder onto the mark.
+		rest, err := s.outbox.UnflushedEvents()
+		if err != nil {
+			return fmt.Errorf("read unflushed events: %w", err)
+		}
+		if firstGapIndex(rest, serverLastSeq) >= 0 {
+			count, rebaseErr := s.outbox.Rebase(serverLastSeq)
+			if rebaseErr != nil {
+				return fmt.Errorf("rebase outbox: %w", rebaseErr)
+			}
+			s.projector.ResetSeq(serverLastSeq + int64(count))
+		}
 		return nil
 	}
 
@@ -130,4 +149,17 @@ func (s *SyncSession) poison(ctx context.Context, err error) {
 func (s *SyncSession) scheduleRetry() {
 	s.retryBase = nextRetryBackoff(s.retryBase)
 	s.retryAt = time.Now().Add(jitterBackoff(s.retryBase))
+}
+
+// firstGapIndex returns the index of the first event that breaks contiguity
+// from base+1, or -1 when every event lines up. The rebase decision reads it
+// as "does the remainder need renumbering": an unflushed tail with a gap of
+// its own cannot be healed by dropping the acknowledged prefix alone.
+func firstGapIndex(events []StoredEvent, base int64) int {
+	for i, ev := range events {
+		if ev.Seq != base+int64(i)+1 {
+			return i
+		}
+	}
+	return -1
 }
