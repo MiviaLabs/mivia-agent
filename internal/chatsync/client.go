@@ -430,13 +430,19 @@ func parseErrorResponse(resp *http.Response) error {
 	var errEnv ErrorEnvelope
 	_ = json.Unmarshal(respBytes, &errEnv)
 
-	msg := parseErrorMessage(errEnv.Message)
+	// Envelope text meets the same hygiene as the raw-body snippet: a proxy
+	// or misbehaving CDN error page can carry control characters, and they
+	// must not reach the operator-facing message or the code field. A
+	// message that is control characters only falls through to the body
+	// snippet, exactly like an empty one.
+	msg := sanitizeErrorSnippet(parseErrorMessage(errEnv.Message))
 	if msg == "" {
-		msg = errEnv.Error
+		msg = sanitizeErrorSnippet(errEnv.Error)
 	}
 	if msg == "" {
 		msg = errorBodySnippet(respBytes, readErr)
 	}
+	code := sanitizeErrorSnippet(errEnv.Error)
 
 	switch resp.StatusCode {
 	// 413 and 422 join 400 as poison. The deployed API answers 400 for an
@@ -453,7 +459,7 @@ func parseErrorResponse(resp *http.Response) error {
 		return &BadRequestError{
 			StatusCode: resp.StatusCode,
 			Message:    msg,
-			Code:       errEnv.Error,
+			Code:       code,
 		}
 	case http.StatusUnauthorized:
 		return ErrUnauthorized
@@ -463,7 +469,7 @@ func parseErrorResponse(resp *http.Response) error {
 		return &ConflictError{
 			StatusCode: resp.StatusCode,
 			Message:    msg,
-			Code:       errEnv.Error,
+			Code:       code,
 		}
 	default:
 		return fmt.Errorf("server error (%d): %s", resp.StatusCode, msg)

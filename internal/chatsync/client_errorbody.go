@@ -18,15 +18,24 @@ const errorBodySnippetLimit = 512
 // a bare status line, so an operator can tell "the server said nothing" from
 // "the server's answer was lost". A readable but non-envelope body becomes a
 // bounded snippet: capped on a rune boundary, control characters removed, so
-// the text stays valid to log, store, and show.
+// the text stays valid to log, store, and show. A body that is all invalid
+// text - the sanitizer strips every byte of it - gets the same explicit
+// wording, because an empty snippet names nothing either.
 func errorBodySnippet(body []byte, readErr error) string {
-	if len(body) == 0 {
-		if readErr != nil {
-			return fmt.Sprintf("the response body was empty or unreadable: %v", readErr)
-		}
-		return "the response body was empty or unreadable"
+	// Sanitize before the cap: Map turns one invalid byte into a three-byte
+	// replacement rune, so capping first could ship a snippet past the limit.
+	// A snippet that holds nothing but replacement runes carries no usable
+	// text - the body was binary, or the transport lost it - and gets the
+	// explicit wording instead.
+	empty := "the response body was empty or unreadable"
+	snippet := truncateRuneBoundary(sanitizeErrorSnippet(string(body)), errorBodySnippetLimit)
+	if strings.ContainsFunc(snippet, func(r rune) bool { return r != utf8.RuneError }) {
+		return snippet
 	}
-	return sanitizeErrorSnippet(truncateRuneBoundary(string(body), errorBodySnippetLimit))
+	if readErr != nil {
+		return fmt.Sprintf("%s: %v", empty, readErr)
+	}
+	return empty
 }
 
 // truncateRuneBoundary cuts s to at most max bytes without splitting a rune.

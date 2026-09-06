@@ -1,6 +1,7 @@
 package chatsync
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -26,6 +27,37 @@ func TestErrorBodySnippetPicksTextByBodyState(t *testing.T) {
 	got = errorBodySnippet([]byte("hello"), readErr)
 	if got != "hello" {
 		t.Errorf("errorBodySnippet(body, err) = %q, want the body snippet, not the empty wording", got)
+	}
+}
+
+// TestErrorBodySnippetCapHoldsAfterSanitization pins the order of
+// operations: sanitization expands each invalid byte into a three-byte
+// replacement rune, so capping before sanitizing could ship a snippet past
+// the limit. Mid-string invalid bytes with a valid trailing rune are the
+// shape that breaks a cap-first order.
+func TestErrorBodySnippetCapHoldsAfterSanitization(t *testing.T) {
+	body := append(bytes.Repeat([]byte{0xff}, 100), []byte(strings.Repeat("a", 500))...)
+	got := errorBodySnippet(body, nil)
+	if len(got) > errorBodySnippetLimit {
+		t.Errorf("snippet is %d bytes, want at most %d", len(got), errorBodySnippetLimit)
+	}
+	if !strings.HasSuffix(got, "a") {
+		t.Errorf("snippet %q does not end at the cut boundary", got)
+	}
+}
+
+// TestErrorBodySnippetAllInvalidTextStillNamesTheGap pins the all-invalid
+// body: a blob the cap and the sanitizer strip to nothing must produce the
+// explicit empty-body wording, not an empty message an operator cannot act on.
+func TestErrorBodySnippetAllInvalidTextStillNamesTheGap(t *testing.T) {
+	blob := bytes.Repeat([]byte{0xff}, errorBodySnippetLimit+100)
+	if got := errorBodySnippet(blob, nil); got != "the response body was empty or unreadable" {
+		t.Errorf("all-invalid body = %q, want the explicit empty-body wording", got)
+	}
+	readErr := errors.New("connection reset mid-body")
+	got := errorBodySnippet(blob, readErr)
+	if !strings.Contains(got, "empty or unreadable") || !strings.Contains(got, "connection reset mid-body") {
+		t.Errorf("all-invalid body with read error = %q, want the wording WITH the read error text", got)
 	}
 }
 

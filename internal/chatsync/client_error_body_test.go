@@ -107,3 +107,36 @@ func TestParseErrorResponse_EnvelopeMessageAndCodePinned(t *testing.T) {
 		t.Errorf("StatusCode = %d, want 400", bad.StatusCode)
 	}
 }
+
+// TestParseErrorResponse_EnvelopeMessageSanitized pins that envelope-delivered
+// text meets the same hygiene as the raw-body snippet: control characters a
+// proxy or misbehaving CDN error page can carry - NUL, newline, escape - do
+// not reach the operator-facing message or the code field.
+func TestParseErrorResponse_EnvelopeMessageSanitized(t *testing.T) {
+	client := badRequestServer(t, func() string {
+		out, err := json.Marshal(ErrorEnvelope{StatusCode: 400, Error: "Bad\x07Request", Message: json.RawMessage(`"ab\u0000c\nd"`)})
+		if err != nil {
+			t.Fatalf("marshal envelope: %v", err)
+		}
+		return string(out)
+	}())
+
+	_, err := client.AppendEvents(t.Context(), "sess-1", []EventItem{{Seq: 1, Type: TypeTurnStarted}})
+	if err == nil {
+		t.Fatal("expected a bad request error, got nil")
+	}
+	var bad *BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("errors.As(err, &badRequestError) = false, got %T: %v", err, err)
+	}
+	for _, r := range bad.Message {
+		if isControlRune(r) {
+			t.Errorf("Message %q still carries control character %#x", bad.Message, r)
+		}
+	}
+	for _, r := range bad.Code {
+		if isControlRune(r) {
+			t.Errorf("Code %q still carries control character %#x", bad.Code, r)
+		}
+	}
+}
