@@ -13,12 +13,6 @@ const AnsiBoldEnd = clichat.AnsiBoldEnd
 // AnsiDimEnd re-exports the clichat.AnsiDimEnd constant.
 const AnsiDimEnd = clichat.AnsiDimEnd
 
-// DialogRectFor re-exports the clichat.DialogRectFor function.
-var DialogRectFor = clichat.DialogRectFor
-
-// FitDialogRow re-exports the clichat.FitDialogRow function.
-var FitDialogRow = clichat.FitDialogRow
-
 // GlyphCheck re-exports the clichat.GlyphCheck constant.
 const GlyphCheck = clichat.GlyphCheck
 
@@ -33,12 +27,6 @@ const GlyphLozenge = clichat.GlyphLozenge
 
 // GlyphTriR re-exports the clichat.GlyphTriR constant.
 const GlyphTriR = clichat.GlyphTriR
-
-// MakeDialogLayout re-exports the clichat.MakeDialogLayout function.
-var MakeDialogLayout = clichat.MakeDialogLayout
-
-// StripANSI re-exports the clichat.StripANSI function.
-var StripANSI = clichat.StripANSI
 
 // TUIDimStyle re-exports the clichat.TUIDimStyle variable.
 var TUIDimStyle = clichat.TUIDimStyle
@@ -114,12 +102,6 @@ var ToolPathStyle = clichat.ToolPathStyle
 
 // ToolTimeStyle re-exports the clichat.ToolTimeStyle variable.
 var ToolTimeStyle = clichat.ToolTimeStyle
-
-// DialogLayout re-exports the clichat.DialogLayout type.
-type DialogLayout = clichat.DialogLayout
-
-// DialogPrefs re-exports the clichat.DialogPrefs type.
-type DialogPrefs = clichat.DialogPrefs
 
 // TuiFocus re-exports the clichat.TuiFocus type.
 type TuiFocus = clichat.TuiFocus

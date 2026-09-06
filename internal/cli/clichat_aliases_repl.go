@@ -67,9 +67,6 @@ var HandleSlashEffort = clichat.HandleSlashEffort
 // HandleSlashInfo re-exports the clichat.HandleSlashInfo function.
 var HandleSlashInfo = clichat.HandleSlashInfo
 
-// HighlightCodeBlock re-exports the clichat.HighlightCodeBlock function.
-var HighlightCodeBlock = clichat.HighlightCodeBlock
-
 // IsBannerTool re-exports the clichat.IsBannerTool function.
 var IsBannerTool = clichat.IsBannerTool
 
@@ -93,9 +90,6 @@ var LatestAutoSaveName = clichat.LatestAutoSaveName
 
 // Max re-exports the clichat.Max function.
 var Max = clichat.Max
-
-// MaxThinkingLines re-exports the clichat.MaxThinkingLines constant.
-const MaxThinkingLines = clichat.MaxThinkingLines
 
 // MinCardWidth re-exports the clichat.MinCardWidth constant.
 const MinCardWidth = clichat.MinCardWidth
@@ -165,9 +159,6 @@ var VisualLineCount = clichat.VisualLineCount
 
 // EffortOrchestrationNotice re-exports the clichat.EffortOrchestrationNotice constant.
 const EffortOrchestrationNotice = clichat.EffortOrchestrationNotice
-
-// Rect re-exports the clichat.Rect type.
-type Rect = clichat.Rect
 
 // SafeEffortError re-exports the clichat.SafeEffortError function.
 var SafeEffortError = clichat.SafeEffortError
@@ -249,9 +240,6 @@ var CancellationCanReplaceTurnError = clichat.CancellationCanReplaceTurnError
 
 // ModelRestoreNoticeText re-exports the clichat.ModelRestoreNoticeText function.
 var ModelRestoreNoticeText = clichat.ModelRestoreNoticeText
-
-// OverlayAt re-exports the clichat.OverlayAt function.
-var OverlayAt = clichat.OverlayAt
 
 // OpenRepositoryContextStore re-exports the clichat.OpenRepositoryContextStore function.
 var OpenRepositoryContextStore = clichat.OpenRepositoryContextStore

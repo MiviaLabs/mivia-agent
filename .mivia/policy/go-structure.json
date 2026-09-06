@@ -40,10 +40,6 @@
         "maxLines": 903,
         "note": "local/web/ssrf; split by scope"
       },
-      "internal/clichat/chatblock_render.go": {
-        "maxLines": 855,
-        "note": "chatblock render with workgroups; split chrome vs workgroup"
-      },
       "internal/clichat/highlight.go": {
         "maxLines": 721,
         "note": "syntax tables OK-ish"

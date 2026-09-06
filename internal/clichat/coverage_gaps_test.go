@@ -2,7 +2,7 @@ package clichat
 
 // coverage_gaps_test.go closes the remaining diff-coverage gaps reported by
 // the gate for stack_command_helpers.go, legacytui_test_exports.go,
-// tool_render.go, chat_slash_handlers.go, and dialog_geometry.go.
+// tool_render.go, and chat_slash_handlers.go.
 
 import (
 	"bytes"
@@ -599,49 +599,4 @@ func termOut(term *Terminal) string {
 		return b.String()
 	}
 	return ""
-}
-
-// --- dialog_geometry.go ---
-
-func TestDialogRectClampsWithMaxPercents(t *testing.T) {
-	p := DialogPrefs{PreferredWPct: 90, maxWPct: 50, PreferredHPct: 90, maxHPct: 50}
-	r := dialogRect(100, 50, p, 0, 0)
-	if r.W != 50 || r.H != 25 {
-		t.Fatalf("dialogRect(max pct clamps) = %+v; want 50x25", r)
-	}
-	// percentOf edge cases: non-positive inputs return 0.
-	if got := percentOf(-1, 50); got != 0 {
-		t.Fatalf("percentOf(negative n) = %d", got)
-	}
-	if got := percentOf(100, -5); got != 0 {
-		t.Fatalf("percentOf(negative pct) = %d", got)
-	}
-	// preferredDimension default branch returns the content, clamped at 0.
-	if got := preferredDimension(100, 0, 0, -7); got != 0 {
-		t.Fatalf("preferredDimension(negative content) = %d", got)
-	}
-}
-
-func TestMakeDialogLayoutNilMeasure(t *testing.T) {
-	layout := MakeDialogLayout(80, 24, DialogPrefs{MinW: 20, MinH: 5}, nil)
-	if layout.Rect.W == 0 || layout.Rect.H == 0 {
-		t.Fatalf("MakeDialogLayout(nil measure) produced an empty rect: %+v", layout)
-	}
-}
-
-func TestWrapDisplayRowsEdges(t *testing.T) {
-	// Non-positive inner width returns nothing.
-	if rows, src := WrapDisplayRowsWithSources([]string{"a"}, 0); rows != nil || src != nil {
-		t.Fatalf("WrapDisplayRowsWithSources(0) = (%v, %v); want (nil, nil)", rows, src)
-	}
-	// A multi-line input wraps to multiple rows with per-row sources.
-	rows, src := WrapDisplayRowsWithSources([]string{"abcdefghij", "xy"}, 4)
-	if len(rows) < 3 {
-		t.Fatalf("WrapDisplayRowsWithSources(wrap) rows = %v", rows)
-	}
-	for i, s := range src {
-		if s == 1 && !strings.HasPrefix(rows[i], "xy") {
-			t.Fatalf("source index 1 must map to row %q", rows[i])
-		}
-	}
 }

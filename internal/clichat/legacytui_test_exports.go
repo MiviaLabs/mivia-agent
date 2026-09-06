@@ -137,34 +137,14 @@ func FilterSkillsForScope(reg *skills.Registry, scope AgentSkillScope) *skills.R
 	return cliagents.FilterSkillsForScope(reg, scope)
 }
 
-// RenderOneChatBlock is renderOneChatBlock, exported for internal/legacytui.
-func RenderOneChatBlock(block ChatBlock, model string, width int, thinkingExpandDefault bool) []string {
-	return renderOneChatBlock(block, model, width, thinkingExpandDefault)
-}
-
 // SummarizeToolDetail is summarizeToolDetail, exported for internal/legacytui.
 func SummarizeToolDetail(name, detail, result string) string {
 	return summarizeToolDetail(name, detail, result)
 }
 
-// RenderThinkingBlock is renderThinkingBlock, exported for internal/legacytui.
-func RenderThinkingBlock(text string, collapsed bool, scrollOffset int, thinkingExpandDefault bool, width int) []string {
-	return renderThinkingBlock(text, collapsed, scrollOffset, thinkingExpandDefault, width)
-}
-
-// HighlightCodeBlock is highlightCodeBlock, exported for internal/legacytui.
-func HighlightCodeBlock(lang, code string) string {
-	return highlightCodeBlock(lang, code)
-}
-
 // FormatUserMessageCard is formatUserMessageCard, exported for internal/legacytui.
 func FormatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	return formatUserMessageCard(text, width, sentAt)
-}
-
-// FormatUserBubbleTime is formatUserBubbleTime, exported for internal/legacytui.
-func FormatUserBubbleTime(t time.Time) string {
-	return formatUserBubbleTime(t)
 }
 
 // OrchestrationSwitchGuard is orchestrationSwitchGuard, exported for internal/legacytui.
@@ -260,11 +240,6 @@ func HandleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 // HandleSlashInfo is handleSlashInfo, exported for internal/legacytui.
 func HandleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
 	return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)
-}
-
-// DialogRectFor is dialogRect, exported for internal/legacytui.
-func DialogRectFor(termW, termH int, p DialogPrefs, contentW, contentH int) Rect {
-	return dialogRect(termW, termH, p, contentW, contentH)
 }
 
 // ConfigureChatWorkspace is cliagents.ConfigureChatWorkspace, exported for internal/legacytui.
@@ -385,9 +360,6 @@ func NewChatInvocationWorkspacePath(workspacePath string) ChatInvocation {
 func NewChatInvocationRepositorySessionStorePath(path string) ChatInvocation {
 	return chatInvocation{repositorySessionStorePath: path}
 }
-
-// WorkGroupWindowRows is workGroupWindowRows, exported for internal/legacytui.
-const WorkGroupWindowRows = workGroupWindowRows
 
 // REPLRuntime is replRuntime, exported for internal/legacytui.
 type REPLRuntime = replRuntime
