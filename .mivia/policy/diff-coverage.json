@@ -1,6 +1,19 @@
 {
   "description": "Per-line accepted residue for the diff-coverage gate (scripts/diff_coverage.py). Each entry names exact line numbers that are provably unreachable or not unit-testable, with the reason a test cannot execute them. The gate subtracts these from the failing set and prints every accepted line, so the residue stays explicit and reviewable. Entries whose lines become covered are reported as stale and should be pruned. Never use this to silence a line a test COULD cover - add the test instead. The list is expected to shrink toward zero or be deleted with the code it describes. Residue provenance: the SDK-convergence cli split (slices 1-6) moved and lightly edited ~6300 changed-statement lines; every line a test could reach was covered across the slices - what remains below is the audited tail.",
   "knownUncovered": {
+    "internal/agent/agentloop_adapter.go": {
+      "lines": [
+        102
+      ],
+      "reason": "buildAgentLoopOptions's adoptSDKRows error return. adoptSDKRows returns a non-nil error only from adoptSDKCompaction, whose single error site is the failed type assertion completer.(sdkshape.TokenEstimator). The completer argument here is newSDKTurnCompleter's return, whose static type is the concrete *agentLoopCompleter and which is non-nil because the error branch above returns first. *agentLoopCompleter declares EstimateTokens(sdkshape.Request) (int, error) with a pointer receiver, so it always satisfies sdkshape.TokenEstimator and the assertion cannot fail on this path. TestAdoptSDKRowsWrapsCompactionError covers the guarded contract directly at the shared helper, with an estimator-free completer no production call site can construct."
+    },
+    "internal/agent/agentloop_adoption.go": {
+      "lines": [
+        443,
+        444
+      ],
+      "reason": "recordSDKTurnTelemetry's json.Marshal failure return. payload is a local map[string]any whose every entry is written in this function and is a string (session_id), an int (span_count and the three usage counts), or a []string (span_names). No caller-supplied value of another type can enter it. encoding/json has no failure mode for those types: it substitutes U+FFFD for invalid UTF-8 rather than erroring, and no channel, function, complex, cyclic, or Marshaler value is present. Same class as the accepted audit_dump.go entry."
+    },
     "internal/agent/audit_dump.go": {
       "lines": [
         373,
