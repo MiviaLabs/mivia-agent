@@ -140,10 +140,9 @@ func repositorySessionStorePath(root string, invocation chatInvocation, _ *confi
 	// case) falls through to the pin, then to the user file, instead of
 	// stopping at the repo file the way repositoryConfigPath's single-base
 	// resolution does for provider lookups.
+	// storePathCandidates already drops every blank path, so no
+	// candidate here is empty.
 	for _, candidatePath := range storePathCandidates(root, invocation) {
-		if candidatePath == "" {
-			continue
-		}
 		if info, err := os.Stat(candidatePath); err != nil || !info.Mode().IsRegular() {
 			continue
 		}
