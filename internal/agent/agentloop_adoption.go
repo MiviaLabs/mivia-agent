@@ -340,6 +340,13 @@ func confirmSDKCompaction(ctx context.Context, l *Loop, opts Options) {
 		Token:          l.LastPreparation.Token,
 		ElidedMessages: pending.elidedMessages,
 		ElidedBytes:    pending.elidedBytes,
+		// The SDK path has no PreparationManager output to price the
+		// compaction, and this synthetic record is the turn's first
+		// Compacted one - recordPreparation latches its counts for the whole
+		// turn. Without the adapter's own estimates the operator banner, the
+		// bus event, and the durable usage record all read "0 -> 0 tokens".
+		BeforeTokens: pending.beforeTokens,
+		AfterTokens:  pending.afterTokens,
 	})
 	l.lastEmittedCompactionKey = pending.key
 	EmitCompaction(ctx, opts, l.LastPreparation, pending.summarized, pending.reason)

@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -35,6 +36,15 @@ type sdkCompactionOutcome struct {
 	key            string // sdkCompactionIdentity(droppedOnly); "" is never a valid key
 	elidedMessages int
 	elidedBytes    int
+	// beforeTokens/afterTokens price what this compaction replaced against
+	// what it left behind, using the host's own EstimatePromptCost. The SDK
+	// path has no PreparationManager output to carry them, and
+	// confirmSDKCompaction's synthetic Preparation is the turn's FIRST
+	// Compacted record - so without these, context.go latches 0/0 for the
+	// whole turn and every compaction event, operator banner, and durable
+	// usage record reads "0 -> 0 tokens".
+	beforeTokens int
+	afterTokens  int
 }
 
 // noSummarizerReason is the fallback text prepareSDKOnce's PM-driven
@@ -63,6 +73,10 @@ const noSummarizerReason = "no summarizer is configured for this session"
 func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Message) (sdkplan.Summary, error) {
 	prior, dropped := splitSDKPriorSummary(msgs)
 	cliDropped := sdkMessagesToCLI(dropped)
+	var cliPrior []provider.Message
+	if prior != nil {
+		cliPrior = sdkMessagesToCLI([]sdkshape.Message{*prior})
+	}
 	key := sdkSummarizeInputKey(prior, cliDropped)
 	if memo := a.memoized(key); memo != nil {
 		return a.replayMemo(memo)
@@ -92,7 +106,7 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 		a.l.summaryFailureReason = reason
 		return sdkplan.Summary{}, err
 	}
-	return a.succeed(cliDropped, summary, request, key), nil
+	return a.succeed(cliDropped, cliPrior, summary, request, key), nil
 }
 
 // buildRequest builds the governed summary request from the turn-state
@@ -113,7 +127,7 @@ func (a *sdkSummarizerAdapter) buildRequest(snapshot contextmgr.TurnStateSnapsho
 		OpenWork:          snapshot.OpenWork,
 		Risks:             snapshot.Risks,
 		SourceExcerpts:    contextmgr.SourceExcerpts(cliDropped, nil),
-		SourceRange:       a.l.LastPreparation.Token.Range,
+		SourceRange:       a.summarySourceRange(),
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,
 		Model:             summarizer.Binding.Model,
@@ -122,6 +136,59 @@ func (a *sdkSummarizerAdapter) buildRequest(snapshot contextmgr.TurnStateSnapsho
 		Budget:            SummaryRequestBudget(a.opts.MaxContextTokens),
 		OutputLimit:       SummaryOutputLimitTokens,
 	})
+}
+
+// summarySourceRange supplies the compaction's source provenance. The
+// recorded preparation's range is preferred, but it is unavailable on the
+// turn's first compaction: runOnceSDK discards the preparation at turn start
+// and the bookkeeping Prepare that repopulates it only runs in
+// ObserveRequest, which the SDK fires AFTER compactHistory has already called
+// Summarize. On the PreparationManager == nil adoption row nothing ever
+// records one at all. Reading the zero value there failed the request's own
+// validation and silently degraded the compaction to a structural drop with
+// no summary, so a range is minted from the session principal instead -
+// mirroring StructuralPreparationManager.Prepare's own zero-range fallback.
+func (a *sdkSummarizerAdapter) summarySourceRange() contextstate.SourceRange {
+	if recorded := a.l.LastPreparation.Token.Range; recorded.Validate() == nil {
+		return recorded
+	}
+	session := a.opts.PreparationInput.Principal.SessionID
+	if session == "" {
+		return a.l.LastPreparation.Token.Range
+	}
+	sequence := a.opts.PreparationInput.Revision.Source
+	id := contextstate.SourceID{SessionID: session, Sequence: sequence}
+	return contextstate.SourceRange{Start: id, End: id}
+}
+
+// compactionTokens prices one compaction: what the dropped turns (plus any
+// held-aside prior summary they replace) cost, against what remains in their
+// place afterwards - the rendered summary alone, or nothing when the drop was
+// unsummarized. It uses the host's own EstimatePromptCost with the loop's
+// calibrated accounting profile, the same semantics the PreparationManager
+// path reports, so an adopted turn's compaction event and durable usage
+// record carry real numbers instead of zeros.
+func (a *sdkSummarizerAdapter) compactionTokens(cliDropped, cliPrior []provider.Message, replacement provider.Message) (before, after int) {
+	profile := a.l.contextAccounting()
+	source := append(append([]provider.Message(nil), cliPrior...), cliDropped...)
+	before, err := provider.EstimatePromptCost(source, nil, profile)
+	if err != nil {
+		return 0, 0
+	}
+	if replacement.Content == "" {
+		return before, 0
+	}
+	after, err = provider.EstimatePromptCost([]provider.Message{replacement}, nil, profile)
+	if err != nil {
+		return before, 0
+	}
+	if after > before {
+		// A "compaction" that grew the prompt is not one; report the
+		// conservative no-shrink shape rather than an event
+		// NewCompactionEvent would reject for After > Before.
+		after = before
+	}
+	return before, after
 }
 
 // summarizeWithOneRetry runs the governed summarizer and retries once
@@ -142,9 +209,10 @@ func summarizeWithOneRetry(ctx context.Context, summarizer *contextmgr.Summarize
 // succeed records the pending outcome of a successful compaction,
 // memoizes the call under key, and maps the host summary onto the SDK
 // shape.
-func (a *sdkSummarizerAdapter) succeed(cliDropped []provider.Message, summary contextmgr.UntrustedSummary, request contextmgr.SummaryRequest, key string) sdkplan.Summary {
+func (a *sdkSummarizerAdapter) succeed(cliDropped, cliPrior []provider.Message, summary contextmgr.UntrustedSummary, request contextmgr.SummaryRequest, key string) sdkplan.Summary {
 	value := summary.Value()
 	rendered := RenderSummaryMessage(summary, request.Input.Evidence)
+	before, after := a.compactionTokens(cliDropped, cliPrior, rendered)
 	a.l.sdkPendingCompaction = &sdkCompactionOutcome{
 		message:    rendered,
 		summarized: true,
@@ -157,6 +225,8 @@ func (a *sdkSummarizerAdapter) succeed(cliDropped []provider.Message, summary co
 		key:            sdkCompactionIdentity(cliDropped, rendered.Content),
 		elidedMessages: len(cliDropped),
 		elidedBytes:    sdkElidedBytes(cliDropped),
+		beforeTokens:   before,
+		afterTokens:    after,
 	}
 	a.l.summaryFailureReason = ""
 	out := sdkplan.Summary{
@@ -180,6 +250,9 @@ func (a *sdkSummarizerAdapter) succeed(cliDropped []provider.Message, summary co
 // regardless of the wrap.
 func (a *sdkSummarizerAdapter) skip(dropped []provider.Message, reason string, key string) error {
 	a.l.summaryFailureReason = reason
+	// An unsummarized drop still elided real tokens and put nothing back, so
+	// it is priced the same way: before = what was dropped, after = 0.
+	before, after := a.compactionTokens(dropped, nil, provider.Message{})
 	a.l.sdkPendingCompaction = &sdkCompactionOutcome{
 		summarized: false,
 		reason:     reason,
@@ -189,6 +262,8 @@ func (a *sdkSummarizerAdapter) skip(dropped []provider.Message, reason string, k
 		key:            sdkCompactionIdentity(dropped, reason),
 		elidedMessages: len(dropped),
 		elidedBytes:    sdkElidedBytes(dropped),
+		beforeTokens:   before,
+		afterTokens:    after,
 	}
 	err := fmt.Errorf("%w: %s", sdkplan.ErrSummarySkipped, reason)
 	a.rememberSummarize(key, sdkplan.Summary{}, err)

@@ -16,6 +16,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -131,12 +132,12 @@ func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sd
 		}
 		return convertToSDKResponse(*r), nil
 	} else if err != nil {
-		return sdkshape.Response{}, err
+		return sdkshape.Response{}, translatePromptTooLong(err)
 	}
 	// Fallback: ChatTurn returned (nil, nil) - defensive only.
 	content, err := a.cli.Chat(ctx, cliReq)
 	if err != nil {
-		return sdkshape.Response{}, err
+		return sdkshape.Response{}, translatePromptTooLong(err)
 	}
 	if a.onUsage != nil {
 		a.onUsage(ctx, cliReq, &provider.Response{Content: content})
@@ -177,7 +178,7 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 		resp, err := a.chatStreamResponse(ctx, cliReq)
 		if err != nil {
 			select {
-			case ch <- sdkshape.Chunk{Err: err}:
+			case ch <- sdkshape.Chunk{Err: translatePromptTooLong(err)}:
 			case <-ctx.Done():
 			}
 			return
@@ -191,6 +192,25 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 		emitStreamChunks(ctx, ch, convertToSDKResponse(*resp), cliReq.StreamWriter != nil)
 	}()
 	return ch, nil
+}
+
+// translatePromptTooLong tags a host context-window rejection with the SDK's
+// own prompt-too-long sentinel, keeping the host sentinel in the chain.
+//
+// The two sentinels are independent errors.New values: the host wire layers
+// (internal/provider/openai_errors.go, zai_errors.go) wrap only
+// provider.ErrPromptTooLong, while the SDK's in-loop Window recovery gates on
+// errors.Is(err, sdkshape.ErrPromptTooLong) (mivia-ai-sdk/agentloop/run.go).
+// Without this translation the SDK recovery is unreachable for every real
+// provider, and on an SDK-Window-adopted turn the host retry is suppressed on
+// the premise that the SDK already recovered - so the rejection would end the
+// turn with no recovery attempted anywhere. Errors that are not
+// context-window rejections pass through untouched.
+func translatePromptTooLong(err error) error {
+	if err == nil || !errors.Is(err, provider.ErrPromptTooLong) || errors.Is(err, sdkshape.ErrPromptTooLong) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", sdkshape.ErrPromptTooLong, err)
 }
 
 // chatStreamResponse runs one streaming turn and returns the whole
