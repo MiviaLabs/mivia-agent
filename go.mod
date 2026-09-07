@@ -76,3 +76,7 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.54.0
 )
+
+// Local development: track the SDK main branch until the compaction
+// adoption cut (production TokenEstimator) lands in a tagged release.
+replace github.com/MiviaLabs/mivia-ai-sdk => /home/mac/projects/mivialabs/mivia-ai-sdk

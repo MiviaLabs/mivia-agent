@@ -79,7 +79,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
-	sdkOpts.Trim = sdkPrepareTrim(l, opts, turn)
+	applySDKTrim(l, opts, turn, &sdkOpts)
 	// Legacy not-in-registry denial (agentloop_tool_error.go; the
 	// reporter records a failed outcome for its synthesized denials)
 	// and the legacy tool_start/tool_end wire shape (sdk_tool_events.go).

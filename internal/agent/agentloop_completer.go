@@ -48,6 +48,10 @@ type agentLoopCompleter struct {
 	// emitTurnUsage calibration/token-usage update. Nil drops the
 	// report.
 	onUsage func(ctx context.Context, req provider.Request, resp *provider.Response)
+	// ctxProfile carries the loop's context accounting profile for
+	// EstimateTokens (agentloop_adoption.go); the host's own token
+	// semantics drive the SDK compaction trigger.
+	ctxProfile provider.ContextAccountingProfile
 	// advertised returns the run's pinned advertised ToolSpec snapshot
 	// (nil when none exists); applyAdvertisedTools replaces the
 	// request's registry-derived tools with it. See sdk_advertised.go
@@ -65,18 +69,18 @@ var _ sdkshape.Completer = (*agentLoopCompleter)(nil)
 // nil-derefs on the first call, per the repo rule that internal
 // packages return errors instead of panicking.
 func newAgentLoopCompleter(c provider.Completer) (*agentLoopCompleter, error) {
-	return newAgentLoopCompleterWithDefaults(c, turnRequestDefaults{}, nil, nil, nil)
+	return newAgentLoopCompleterWithDefaults(c, turnRequestDefaults{}, nil, nil, nil, provider.ContextAccountingProfile{})
 }
 
 // newAgentLoopCompleterWithDefaults builds the wrapper with the
 // per-turn request defaults, an optional finish-reason recorder, an
 // optional per-Chat iteration bump, and an optional per-call usage
 // reporter. Nil callbacks drop the report.
-func newAgentLoopCompleterWithDefaults(c provider.Completer, defaults turnRequestDefaults, onFinish func(string), onChat func(), onUsage func(context.Context, provider.Request, *provider.Response)) (*agentLoopCompleter, error) {
+func newAgentLoopCompleterWithDefaults(c provider.Completer, defaults turnRequestDefaults, onFinish func(string), onChat func(), onUsage func(context.Context, provider.Request, *provider.Response), ctxProfile provider.ContextAccountingProfile) (*agentLoopCompleter, error) {
 	if c == nil {
 		return nil, errors.New("agent: nil CLI completer")
 	}
-	return &agentLoopCompleter{cli: c, defaults: defaults, onFinish: onFinish, onChat: onChat, onUsage: onUsage}, nil
+	return &agentLoopCompleter{cli: c, defaults: defaults, onFinish: onFinish, onChat: onChat, onUsage: onUsage, ctxProfile: ctxProfile}, nil
 }
 
 // Name implements provider.Completer. It forwards to the wrapped

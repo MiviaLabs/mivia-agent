@@ -273,23 +273,17 @@ projection (`agentloop_adoption.go`), each pinned by
 - **HeartbeatInterval + Bus** — a 15s cadence next to the bridged
   bus; both SDK tick kinds bridge onto the legacy EventHeartbeat
   "working" surface.
-
-### Rows deliberately not adopted
-
-- **DedupWithinTurn** — the SDK dedups same-(name, arguments) pairs
-  within a run, which contradicts the host's fresh-execution
-  contract for same-batch read twins and cross-step re-issues
-  (`TestLoopReadToolAlwaysExecutesFreshAcrossSteps`). The host keeps
-  its delivery-level dedup.
-- **Conclude** — the host's wrap-up budget already rides
-  ContinueOnStop; a Conclude nudge changed pinned stop semantics
-  (bounded turns concluded instead of stopping no_tool_calls) and
-  displaced the host summary injection as the last history message.
-- **Window/Summarizer/Calibrated** — blocked on upgrading the SDK
-  dependency past v0.3.0, whose provider has no production
-  TokenEstimator, and on migrating `summary_inject` wholesale: the
-  host still injects its own summaries on the SDK path, so enabling
-  the triple today would double-summarize.
+- **Window/Summarizer/Calibrated** — adopted for turns without a
+  PreparationManager: the triple sizes from MaxContextTokens (80/50
+  hysteresis), the summarizer rides the wrapped completer, and the
+  calibrated estimator is `agentLoopCompleter.EstimateTokens`, which
+  runs the host's own EstimatePromptCost semantics. With a
+  PreparationManager the row stays host-owned: Trim IS the host's
+  per-request preparation pipeline (repair, prune, inject), and the
+  SDK's Window and Trim are mutually exclusive, so adopting there
+  means migrating durable context management off the request path
+  first. Requires the go.mod replace tracking mivia-ai-sdk main,
+  whose provider/anthropic implements the production TokenEstimator.
 
 ## See also
 

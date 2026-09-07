@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -161,5 +162,57 @@ func TestBuildAgentLoopOptions_AdoptionRowsBlankSession(t *testing.T) {
 	}
 	if got.Budget == nil || got.Budget.MaxBytes != sdkSessionBudgetMaxBytes {
 		t.Fatal("Budget must be set even without a ceiling; it bounds a runaway loop")
+	}
+}
+
+// TestBuildAgentLoopOptions_SDKCompactionAdopted locks the compaction
+// triple row: with a context ceiling and a wired summarizer, the SDK
+// Options carry a Window sized from the ceiling, a Summarizer over
+// the wrapped completer, and a Calibrated estimator - and the host
+// Trim pass stands down, because the SDK's Window and Trim are
+// mutually exclusive.
+func TestBuildAgentLoopOptions_SDKCompactionAdopted(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	opts := Options{
+		SessionID:        "sess-compact",
+		MaxContextTokens: 10000,
+	}
+	opts.SummaryConfig.Summarizer = &contextmgr.Summarizer{}
+	got, _, err := buildAgentLoopOptions(l, opts, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.Window == nil {
+		t.Fatal("Window = nil, want the SDK compaction window")
+	}
+	if got.Window.MaxTokens != 10000 || got.Window.Reserve != 2000 {
+		t.Fatalf("Window = %+v, want MaxTokens 10000 and Reserve 2000", got.Window)
+	}
+	if got.Summarizer == nil {
+		t.Fatal("Summarizer = nil, want the SDK summarizer over the wrapped completer")
+	}
+	if got.Calibrated == nil {
+		t.Fatal("Calibrated = nil, want the calibrated estimator")
+	}
+	if got.Trim != nil {
+		t.Fatal("Trim set while the SDK compaction triple owns the window")
+	}
+}
+
+// TestBuildAgentLoopOptions_SDKCompactionNeedsSummarizer pins the
+// adoption precondition: without a wired summarizer the SDK cannot
+// own summarization, so no Window lands even with a ceiling.
+func TestBuildAgentLoopOptions_SDKCompactionNeedsSummarizer(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	opts := Options{SessionID: "sess-plain", MaxContextTokens: 10000}
+	got, _, err := buildAgentLoopOptions(l, opts, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.Window != nil {
+		t.Fatal("Window set without a wired summarizer; SDK compaction cannot adopt")
+	}
+	if got.Summarizer != nil || got.Calibrated != nil {
+		t.Fatal("triple partially wired without adoption")
 	}
 }

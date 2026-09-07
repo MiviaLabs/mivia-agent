@@ -296,7 +296,7 @@ func (f *captureRequestCompleter) ChatTurn(_ context.Context, req provider.Reque
 func TestMergeTurnDefaultsWireStreamTransport(t *testing.T) {
 	// A non-streaming SDK request must come out carrying StreamTransport.
 	f := &captureRequestCompleter{chatTurnOut: &provider.Response{FinishReason: "stop"}}
-	w, err := newAgentLoopCompleterWithDefaults(f, turnRequestDefaults{streamTransport: true}, nil, nil, nil)
+	w, err := newAgentLoopCompleterWithDefaults(f, turnRequestDefaults{streamTransport: true}, nil, nil, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestMergeTurnDefaultsWireStreamTransport(t *testing.T) {
 	// A live streaming turn wins: StreamingWriter turns Stream on and the
 	// wire-stream transport must not ride along.
 	fStream := &captureRequestCompleter{chatTurnOut: &provider.Response{FinishReason: "stop"}}
-	wStream, err := newAgentLoopCompleterWithDefaults(fStream, turnRequestDefaults{streamTransport: true}, nil, nil, nil)
+	wStream, err := newAgentLoopCompleterWithDefaults(fStream, turnRequestDefaults{streamTransport: true}, nil, nil, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)
 	}

@@ -74,11 +74,10 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	}
 	// MaxSteps passes through verbatim. The SDK's Validate accepts 0
 	// and treats it as uncapped via unboundedOrSet (MaxInt32), matching
-	// the legacy loop's MaxSteps <= 0 == unbounded contract. A
-	// positive MaxSteps is the requested cap as-is. The previous
-	// defaultSDKMaxIterations = 25 substitution was removed: it capped
-	// the SDK path at a value the legacy loop never honored, breaking
-	// the parity the field-mapping doc advertises.
+	// the legacy loop's MaxSteps <= 0 == unbounded contract. The
+	// previous defaultSDKMaxIterations = 25 substitution was removed:
+	// it capped the SDK path below the parity the field-mapping doc
+	// advertises.
 	maxIterations := opts.MaxSteps
 	out := sdkagentloop.Options{
 		Completer: completer,
@@ -87,12 +86,13 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 		Bounds:    sdkagentloop.Bounds{MaxIterations: maxIterations, MaxCallsPerTurn: opts.MaxToolCallsPerBatch, MaxConcurrentTools: opts.MaxConcurrentTools},
 		SessionID: opts.SessionID,
 	}
-	adoptSDKRows(&out, opts, turn)
-	adoptSDKObservabilityRows(&out, opts)
+	if err := adoptSDKRows(&out, opts, completer, turn); err != nil {
+		return sdkagentloop.Options{}, nil, err
+	}
 	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's
-	// TurnResultBudget stays unset because its semantics (omit the
+	// the SDK's result-budget field stays unset because its semantics (omit the
 	// over-budget result) contradict the CLI's degrade-with-notice
 	// contract. The negative derived-budget mode has no SDK analogue
 	// and was rejected above.
@@ -209,7 +209,7 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
 		streamTransport:       opts.WireStreamTransport,
-	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage)
+	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage, l.contextAccounting())
 	if err != nil {
 		return nil, err
 	}
@@ -280,9 +280,9 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 		return nil, err
 	}
 	applyRefOnlyShim(sdkReg, cliReg, opts.RefOnlyTools, turn.currentSpool(), BatchDegradeFloorBytes, opts.SessionID, turn)
-	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
+	// Host-side turn shaping replaces the SDK's result budget: the
 	// CLI contract degrades with an honest notice and never omits a
-	// call, so the SDK's TurnResultBudget stays unset.
+	// call, so the SDK's result budget stays unset.
 	applyTurnShaping(sdkReg, cliReg, opts, turn)
 	return sdkReg, nil
 }
@@ -369,14 +369,14 @@ func cliToolSpecsToSDKDefs(specs []provider.ToolSpec) []sdkshape.ToolDefinition 
 // Fields the SDK accepts at zero but interprets differently are NOT
 // rejected here: the accepted-semantic-gap table lives on the
 // agentloop adapter's package doc. Today that is a negative
-// BatchResultBudgetBytes (the SDK's TurnResultBudget is a literal
+// BatchResultBudgetBytes (the SDK's former result-budget field was a literal
 // byte budget only, not the CLI's "derived from MaxContextTokens" mode).
 // It passes through to the SDK silently; the CLI caller accepts the
 // difference. MaxConcurrentTools is carried via sdkagentloop.Options.MaxConcurrentTools.
 func rejectUnsupportedSDKBatches(opts Options) error {
 	// All options are carried on the SDK path: Surface via bridgeSDKBridgeSurface,
 	// BeforeStep via Steer injector, RefOnlyTools and RemainderSpool via ref-only shim,
-	// BatchResultBudgetBytes via TurnResultBudget, MailboxPendingInterrupt via bridgeSteerSignals,
+	// BatchResultBudgetBytes via the host shaping wrapper, MailboxPendingInterrupt via bridgeSteerSignals,
 	// WorkLimits fields via buildAgentLoopOptions/WorkBudget/ToolBudget bridges,
 	// and MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
 	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,

@@ -32,6 +32,8 @@ func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, turn *sdkTurnSta
 				l.recordPreparation(fallback)
 				l.captureOmittedEvidence(input, fallback)
 				l.PreparationErr = nil
+				// SDK compaction adopted: the SDK planning pass owns
+				// summarization, so the host injection stands down.
 				preparedWithSummary := injectSummaryAfterPrepare(l, ctx, opts, fallback.Messages)
 				if fallback.Compacted {
 					key := compactionIdentity(fallback.Token)

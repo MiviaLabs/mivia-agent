@@ -1,6 +1,6 @@
 // Package agent - turn-level result shaping for the SDK backend.
 //
-// The SDK's TurnResultBudget OMITS an over-budget result with a bare
+// The SDK's former TurnResultBudget OMITTED an over-budget result with a bare
 // notice; the CLI's contract is the legacy batch shaper's three tiers
 // (fit unchanged / re-cut with an honest notice / notice alone) and
 // "no call may be failed by the budget". This wrapper carries that
@@ -18,7 +18,7 @@
 //
 // The wrapper runs OUTSIDE the ref-only shim, so a ref-only notice
 // (already notice-sized) is charged as emitted. While this wrapper is
-// active the adapter leaves Options.TurnResultBudget unset so the
+// active the adapter leaves the SDK's own result budget unset so the
 // SDK's omission path never engages.
 package agent
 
@@ -296,7 +296,7 @@ type resultBudgetTool interface {
 // turn-level shaping wrapper. Positive BatchResultBudgetBytes is
 // literal; negative selects the legacy derived-from-context budget
 // (shape_batch.go:505-517); zero leaves the registry inert. The
-// SDK's own TurnResultBudget stays unset across all three branches so
+// SDK's own result budget stays unset across all three branches so
 // its omission path never runs.
 func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) {
 	if sdkReg == nil {

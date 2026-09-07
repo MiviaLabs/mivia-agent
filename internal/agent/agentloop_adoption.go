@@ -10,10 +10,15 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkcontextbudget "github.com/MiviaLabs/mivia-ai-sdk/contextbudget"
+	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/contextplan"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
 
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -31,20 +36,28 @@ const (
 
 // adoptSDKRows sets every adoption row in one call; see the per-row
 // functions below and the projection test in agentloop_adapter_test.go.
-func adoptSDKRows(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
+func adoptSDKRows(out *sdkagentloop.Options, opts Options, completer sdkshape.Completer, turn *sdkTurnState) error {
 	adoptSDKUsage(out, opts)
 	adoptSDKBudget(out, opts)
 	adoptSDKBounds(out, opts)
 	adoptSDKTracer(out, turn)
+	adoptSDKAudit(out, opts)
+	// Row: Window + Summarizer + Calibrated (see sdkCompactionAdopted).
+	if err := adoptSDKCompaction(out, completer, opts); err != nil {
+		return fmt.Errorf("agent: adopt SDK compaction: %w", err)
+	}
+	return nil
 }
 
-// adoptSDKObservabilityRows sets the audit and conclude rows;
-// split from adoptSDKRows to keep both under the function-size
-// budget. The heartbeat row is set by the caller once the events
-// bridge has installed the bus (agentloop_run.go), because a
-// positive HeartbeatInterval without a Bus fails Validate.
-func adoptSDKObservabilityRows(out *sdkagentloop.Options, opts Options) {
-	adoptSDKAudit(out, opts)
+// applySDKTrim installs the host Trim pass unless the SDK compaction
+// triple owns the window: the SDK's Window and Trim are mutually
+// exclusive, and an adopted turn stands the host trim down with the
+// host summary injection.
+func applySDKTrim(l *Loop, opts Options, turn *sdkTurnState, out *sdkagentloop.Options) {
+	if sdkCompactionAdopted(opts) {
+		return
+	}
+	out.Trim = sdkPrepareTrim(l, opts, turn)
 }
 
 // adoptSDKUsage rides the run on the SDK's per-session accumulator,
@@ -133,4 +146,54 @@ func adoptSDKAudit(out *sdkagentloop.Options, opts Options) {
 // the caller sets this only where it installed the bus.
 func adoptSDKHeartbeat(out *sdkagentloop.Options) {
 	out.HeartbeatInterval = sdkHeartbeatInterval
+}
+
+// sdkCompactionAdopted reports whether a turn wires the SDK's
+// compaction triple (Window + Summarizer + Calibrated): it needs a
+// context ceiling to size the window from and a wired host
+// summarizer, whose provider binding the SDK summarizer rides. The
+// triple and the host's summary injection are complementary, not
+// duplicates: the host injects once, after its own pre-run prepare
+// compaction, while the SDK triple compacts mid-run growth inside the
+// loop. Only the host Trim pass stands down on adopted turns, because
+// the SDK's Window and Trim are mutually exclusive.
+func sdkCompactionAdopted(opts Options) bool {
+	return opts.MaxContextTokens > 0 && opts.SummaryConfig.Summarizer != nil &&
+		opts.PreparationManager == nil
+}
+
+// adoptSDKCompaction wires the SDK's compaction triple. The wrapped
+// completer implements provider.TokenEstimator (EstimateTokens
+// below), so sdkagentloop.EnableCompaction can size the window from
+// the host's context ceiling with the SDK's default hysteresis
+// (trigger at 80%, target at 50%) and a conservative calibration
+// factor.
+func adoptSDKCompaction(out *sdkagentloop.Options, completer sdkshape.Completer, opts Options) error {
+	if !sdkCompactionAdopted(opts) {
+		return nil
+	}
+	window := sdkplan.Window{
+		MaxTokens:  opts.MaxContextTokens,
+		Reserve:    opts.MaxContextTokens / 5,
+		Compaction: sdkplan.Compaction{TriggerPercent: 80, TargetPercent: 50},
+	}
+	if window.Reserve < 0 {
+		window.Reserve = 0
+	}
+	return sdkagentloop.EnableCompaction(out, completer, window, 0.25)
+}
+
+// EstimateTokens implements provider.TokenEstimator for the wrapped
+// CLI completer. It converts the SDK request back to the CLI shape
+// and runs the host's own EstimatePromptCost with the loop's context
+// accounting profile, so the SDK compaction trigger uses exactly the
+// token semantics the host's context manager calibrated. The host's
+// provider interface has no estimator capability, so this adapter is
+// what makes the SDK's compaction triple usable with the CLI
+// completer without a second provider round trip.
+func (c *agentLoopCompleter) EstimateTokens(req sdkshape.Request) (int, error) {
+	if c == nil {
+		return 0, fmt.Errorf("agent: nil completer for token estimation")
+	}
+	return provider.EstimatePromptCost(sdkMessagesToCLI(req.Messages), sdkToolDefsToCLI(req.Tools), c.ctxProfile)
 }
