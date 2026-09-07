@@ -93,6 +93,14 @@ func TestBootstrapNeverOverwritesProviderlessUserConfig(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected the provider-resolution error for an existing provider-less user config")
 	}
+	// The guard must not swallow the diagnosis: the caller has to see the
+	// actionable provider error, not "already exists".
+	if strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("bootstrap guard masked the real error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "is not configured") {
+		t.Fatalf("want the resolveProvider error, got: %v", err)
+	}
 	data, readErr := os.ReadFile(userPath)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -120,6 +128,12 @@ func TestBootstrapNeverOverwritesCorruptUserConfig(t *testing.T) {
 	_, err := Load(LoadOptions{AllowMissingConfig: true, AutoBootstrapUserConfig: true})
 	if err == nil {
 		t.Fatalf("expected the user config's parse error to surface")
+	}
+	if strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("bootstrap guard masked the parse error: %v", err)
+	}
+	if !strings.Contains(err.Error(), userPath) {
+		t.Fatalf("want a parse error naming %s, got: %v", userPath, err)
 	}
 	data, readErr := os.ReadFile(userPath)
 	if readErr != nil {

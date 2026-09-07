@@ -58,6 +58,13 @@ func WriteDefaultUserConfig(path string) error {
 	return nil
 }
 
+// errUserConfigExists reports that the user config bootstrap was asked to
+// write a file that already exists. It is a fall-through signal, not a user
+// facing failure: loadFile answers it by loading the existing file, so the
+// file's real problem (a TOML parse error, or an unresolvable provider)
+// surfaces instead of a message about bootstrapping.
+var errUserConfigExists = errors.New("user config already exists")
+
 // autoBootstrapUserConfig silently writes a minimal default config to
 // UserConfigPath() and returns the path it wrote. It returns "" (no error)
 // when HOME cannot be resolved, in which case the caller falls back to its
@@ -70,15 +77,16 @@ func WriteDefaultUserConfig(path string) error {
 // "" whenever no candidate DECLARES A PROVIDER, which is also true of an
 // existing but provider-less or corrupt user config file - so this function
 // cannot trust "reached here" to mean "path does not exist" and must check
-// itself: an existing file at path is stat'd and rejected with an error
-// rather than overwritten, preserving whatever real content is there.
+// itself: an existing file at path is left untouched and reported with
+// errUserConfigExists, which loadFile turns into "load that file normally"
+// so its own parse/provider error is what the caller sees.
 func autoBootstrapUserConfig() (string, error) {
 	path := UserConfigPath()
 	if path == "" {
 		return "", nil
 	}
 	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("auto-bootstrap user config: %s already exists", path)
+		return "", fmt.Errorf("auto-bootstrap user config: %s: %w", path, errUserConfigExists)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("auto-bootstrap user config: stat %s: %w", path, err)
 	}

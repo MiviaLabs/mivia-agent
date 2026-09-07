@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -573,10 +574,19 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	}
 	if path == "" && opts.AutoBootstrapUserConfig && strings.TrimSpace(opts.ConfigPath) == "" {
 		bootstrapped, err := autoBootstrapUserConfig()
-		if err != nil {
+		switch {
+		case errors.Is(err, errUserConfigExists):
+			// The candidate scan reported "no provider anywhere" only because
+			// the existing user config is provider-less or undecodable. Load
+			// it as the base anyway so the file's own error surfaces below,
+			// rather than a bootstrap message that names neither the problem
+			// nor the remedy every other command prints.
+			path = UserConfigPath()
+		case err != nil:
 			return File{}, "", false, err
+		default:
+			path = bootstrapped
 		}
-		path = bootstrapped
 	}
 	if path == "" {
 		if !opts.AllowMissingConfig {
