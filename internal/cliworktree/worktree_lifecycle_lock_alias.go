@@ -25,3 +25,9 @@ func LockWorktreeLifecycle(root, name string) (*vcs.WorktreeLifecycleLock, error
 func LockWorktreeMarkerFile(file *os.File) (func(), error) {
 	return vcs.LockWorktreeMarkerFile(file)
 }
+
+// OpenMarkerExcludeLockFile opens the Git exclude lock file under root
+// without following a symlink at any component.
+func OpenMarkerExcludeLockFile(root *os.Root, path string) (*os.File, error) {
+	return vcs.OpenMarkerExcludeLockFile(root, path)
+}
