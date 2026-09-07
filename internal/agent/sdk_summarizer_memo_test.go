@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -317,5 +318,69 @@ func TestSDKSummarizerMemoDoesNotLeakAcrossTurns(t *testing.T) {
 	}
 	if summaryProvider.calls != 2 {
 		t.Fatalf("provider calls = %d, want 2: the memo must not survive resetTurnCompaction", summaryProvider.calls)
+	}
+}
+
+// TestSDKCompactionIdentityEmptyWithoutDroppedOrSalt pins the empty-key
+// guard: an identity with nothing dropped and no salt is not a
+// compaction, and confirmSDKCompaction treats "" as "nothing to
+// ground". Every real call site passes a non-empty salt, so this
+// guard is what keeps a salt-less caller from grounding a phantom.
+func TestSDKCompactionIdentityEmptyWithoutDroppedOrSalt(t *testing.T) {
+	if key := sdkCompactionIdentity(nil, ""); key != "" {
+		t.Fatalf("sdkCompactionIdentity(nil, \"\") = %q, want the empty key", key)
+	}
+	if key := sdkCompactionIdentity(nil, "reason"); key == "" {
+		t.Fatal("a salt alone must still produce a key")
+	}
+	if key := sdkCompactionIdentity([]provider.Message{{Role: provider.RoleUser, Content: "x"}}, ""); key == "" {
+		t.Fatal("a dropped message alone must still produce a key")
+	}
+}
+
+// TestSDKSummarizerAdapterRequestInvalidSkips covers the
+// buildRequest failure branch. A zero source range fails envelope
+// validation, so the adapter skips with SummaryReasonRequestInvalid
+// and never calls the provider.
+func TestSDKSummarizerAdapterRequestInvalidSkips(t *testing.T) {
+	summaryProvider := &echoingSummaryProvider{}
+	a, l := newAdapterFixture(t, summaryProvider)
+	l.LastPreparation.Token.Range = contextstate.SourceRange{}
+
+	_, err := a.Summarize(context.Background(), sdkMessagesOf("dropped one", "dropped two"))
+	if !errors.Is(err, sdkplan.ErrSummarySkipped) {
+		t.Fatalf("err = %v, want errors.Is ErrSummarySkipped", err)
+	}
+	if summaryProvider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0: an invalid request never reaches the provider", summaryProvider.calls)
+	}
+	if l.summaryFailureReason != contextmgr.SummaryReasonRequestInvalid {
+		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, contextmgr.SummaryReasonRequestInvalid)
+	}
+}
+
+// TestSummarizeWithOneRetryStopsOnCanceledContext covers the
+// cancelled-context short circuit. A retry under a dead context would
+// fail the same way at once, so the helper returns the first failure
+// and issues no second call.
+func TestSummarizeWithOneRetryStopsOnCanceledContext(t *testing.T) {
+	transient := &provider.TransientError{Err: errors.New("connection reset")}
+	summaryProvider := &alwaysFailingSummaryProvider{err: transient}
+	a, _ := newAdapterFixture(t, summaryProvider)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := a.Summarize(ctx, sdkMessagesOf("dropped one", "dropped two"))
+	if err == nil {
+		t.Fatal("Summarize() = nil, want the retryable failure")
+	}
+	before := summaryProvider.calls
+	if before == 0 {
+		t.Fatal("provider was never called")
+	}
+	// The adapter attempt already ran. A cancelled context must stop
+	// the SECOND adapter attempt, so the count stays where it is.
+	if before > 2 {
+		t.Fatalf("provider calls = %d, want at most 2: a cancelled context must stop the retry", before)
 	}
 }
