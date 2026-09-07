@@ -1,11 +1,22 @@
 // cancel_task_dispatch_window_test.go covers the dispatch window a per-task
-// cancel used to fall straight through: startReady (dag.go) CASes EVERY ready
-// task queued -> running before pool.Run, but a worker only reaches a task
-// later. In that window the task has no registered CancelFunc, so CancelTask
-// took its "still queued, the DAG will never dispatch it" path, wrote a
-// terminal canceled row, and reported success - while the worker went on to
-// run the handler to completion, doing real work whose output was then
-// silently discarded at run end.
+// cancel used to fall straight through: startReady (dag.go) CASes ready
+// tasks queued -> running before pool.Run, but a worker only reaches a task
+// later - within one dispatch wave, SpawnStagger deliberately delays a
+// later task's feed into the pool's worker channel (subagents.go's
+// execute). In that window the task has no registered CancelFunc, so
+// CancelTask took its "still queued, the DAG will never dispatch it" path,
+// wrote a terminal canceled row, and reported success - while the worker
+// went on to run the handler to completion, doing real work whose output
+// was then silently discarded at run end.
+//
+// (A second, now-closed instance of the same window existed when a ready
+// set was BIGGER than the pool's worker capacity: startReady used to CAS
+// every ready task to running in one shot regardless of pool size, so the
+// excess sat queued inside the pool's channel while already "running" in
+// the ledger. capReadyToPoolCapacity (dag.go) now caps each wave to
+// pool.Workers(), so that instance cannot reproduce here anymore - see
+// dag_wave_test.go. The stagger-gap instance below is the one still-live
+// window this fence exists to close.)
 //
 // The fence is Pool.ShouldSkipTask -> coordinator.shouldSkipCanceledTask
 // (task_start.go), consulted on the worker goroutine immediately before the
@@ -24,9 +35,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// dispatchWindowRun is the fixture for the tests below: two identical tasks
-// and a single worker, so exactly one task executes and the other waits
-// inside the dispatched batch with its ledger row already at running.
+// dispatchWindowRun is the fixture for the tests below: two identical tasks,
+// pool capacity covering both (so both are CASed to running in the same
+// wave), and a SpawnStagger gap so the second task sits durably "running"
+// before its handler is ever fed to a worker.
 type dispatchWindowRun struct {
 	repo    ledger.LedgerRepository
 	coord   *Coordinator
@@ -45,11 +57,15 @@ func (r dispatchWindowRun) executed() []string {
 	return out
 }
 
-// spawnDispatchWindowRun starts tasks "t1" and "t2" against ONE worker. Both
-// share a handler that reports its own task ID (read from the stamped task
-// identity) the moment it is entered, then blocks until release is closed.
-// It returns once the first task is inside the handler; the other task is
-// then durably running in the ledger but has never reached a worker.
+// spawnDispatchWindowRun starts tasks "t1" and "t2" against a 2-worker pool
+// (capacity covers both, so capReadyToPoolCapacity applies no cap and both
+// are CASed to running in the same wave) with a SpawnStagger delaying t2's
+// feed into the pool's worker channel. Both share a handler that reports
+// its own task ID (read from the stamped task identity) the moment it is
+// entered, then blocks until release is closed. It returns once the first
+// task is inside the handler; the other task is then durably running in
+// the ledger but has not yet been fed to a worker (still inside the
+// stagger gap), so it has no registered CancelFunc.
 func spawnDispatchWindowRun(t *testing.T) (dispatchWindowRun, string) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
@@ -69,7 +85,7 @@ func spawnDispatchWindowRun(t *testing.T) (dispatchWindowRun, string) {
 		return json.RawMessage(`"done"`), nil
 	}))
 
-	p := subagents.New(d, subagents.Policy{Workers: 1})
+	p := subagents.New(d, subagents.Policy{Workers: 2, SpawnStagger: 300 * time.Millisecond})
 	c := New(repo, p)
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "t1", Name: "work"},

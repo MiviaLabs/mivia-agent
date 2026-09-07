@@ -46,10 +46,14 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 	// Capability.Timeout is the parent agent-loop budget for this tool call.
 	// It may exceed the default 60s ToolTimeout so multi-step batches are not
 	// killed early; EffectiveTimeoutSec still keeps a finite safety ceiling.
+	// DispatchOrchestrationSecForWorkers scales the budget for batches
+	// bigger than the pool's worker capacity, which the coordinator's DAG
+	// runs across multiple sequential dispatch waves - see that function's
+	// doc comment for why an unscaled budget killed later waves.
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
 		ResourceKey: ToolDispatchTasks,
-		Timeout:     time.Duration(DispatchOrchestrationSec(t.cfg.DefaultTimeout, args)) * time.Second,
+		Timeout:     time.Duration(DispatchOrchestrationSecForWorkers(t.cfg.DefaultTimeout, t.cfg.MaxWorkers, args)) * time.Second,
 	}
 }
 

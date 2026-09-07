@@ -55,6 +55,17 @@ func (c *Coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 			}
 			continue
 		}
+		// Cap this wave to the pool's actual worker capacity. Without this,
+		// startReady CASes EVERY ready task queued -> running before
+		// pool.Run ever dispatches them, so a ready set bigger than the
+		// pool's concurrency ceiling shows more tasks "running" (to the
+		// ledger, inspect_agents, and the TUI) than the pool will ever
+		// execute at once - the excess sit queued inside the pool's own
+		// internal channel, falsely reporting "running" with zero progress
+		// until a worker frees up, sometimes minutes later. Tasks beyond
+		// capacity stay untouched in pending and are re-offered as ready on
+		// the next loop iteration, once this wave's pool.Run call returns.
+		ready = c.capReadyToPoolCapacity(ready)
 		runErr = joinError(runErr, c.startReady(h, ready, pending, results, retryQueue, retryStates))
 		batch := buildBatch(ready, pending, results, retryQueue)
 		if len(batch) == 0 {
@@ -145,6 +156,29 @@ func (c *Coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 		}
 	}
 	return ready, runErr
+}
+
+// capReadyToPoolCapacity truncates ready to the pool's worker capacity, so
+// the caller only transitions (and later dispatches) as many tasks as the
+// pool can actually run concurrently in this wave. Truncated tasks stay
+// untouched (still "queued" in the ledger, still in pending) and are
+// re-offered as ready on the DAG loop's next iteration, once this wave's
+// pool.Run call frees a worker.
+//
+// A nil pool or a non-positive/unlimited Workers() value (subagents.Pool's
+// own "0 means unlimited" and "Unlimited (-1)" contract) applies no cap:
+// the pool itself sizes its worker count from len(batch) in that case
+// (subagents.go's execute), so capping here would only shrink throughput
+// without fixing anything the running-status bug touches.
+func (c *Coordinator) capReadyToPoolCapacity(ready []subagents.Task) []subagents.Task {
+	if c.pool == nil {
+		return ready
+	}
+	capacity := c.pool.Workers()
+	if capacity <= 0 || capacity >= len(ready) {
+		return ready
+	}
+	return ready[:capacity]
 }
 
 func (c *Coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {

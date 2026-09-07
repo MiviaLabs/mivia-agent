@@ -208,7 +208,7 @@ func New(d *runtime.Dispatcher, p Policy) *Pool {
 
 func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 	if p.p.MaxFanout != Unlimited && p.p.MaxFanout > 0 && len(tasks) > p.p.MaxFanout {
-		return nil, fmt.Errorf("fan-out limit exceeded")
+		return nil, fmt.Errorf("fan-out limit exceeded: got %d tasks, configured limit is %d", len(tasks), p.p.MaxFanout)
 	}
 	by := map[string]Task{}
 	keys := map[string]string{}
