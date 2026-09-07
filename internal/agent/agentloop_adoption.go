@@ -271,20 +271,28 @@ func adoptSDKCompaction(l *Loop, out *sdkagentloop.Options, completer sdkshape.C
 // never called on this error path.
 func sdkCompactionObserver(l *Loop, opts Options, turn *sdkTurnState) func(context.Context, sdkshape.Request) error {
 	return func(ctx context.Context, req sdkshape.Request) error {
-		toolSpecs := l.initialToolSpecs(opts)
-		if adv := turn.currentAdvertised(); adv != nil {
-			toolSpecs = adv
+		cliMessages := sdkMessagesToCLI(req.Messages)
+		// The bookkeeping Prepare pass only applies when a
+		// PreparationManager is wired: the PreparationManager ==
+		// nil adoption row (no PM, ceiling + summarizer set) is
+		// deliberately kept reachable by sdkCompactionAdopted, and
+		// has no PreparationManager to call.
+		if opts.PreparationManager != nil {
+			toolSpecs := l.initialToolSpecs(opts)
+			if adv := turn.currentAdvertised(); adv != nil {
+				toolSpecs = adv
+			}
+			input := l.buildPrepareInput(toolSpecs, opts)
+			input.Messages = cliMessages
+			input.Budget = math.MaxInt
+			preparation, err := opts.PreparationManager.Prepare(ctx, input)
+			if err != nil {
+				l.PreparationErr = err
+				return err
+			}
+			l.recordPreparation(preparation)
+			l.captureOmittedEvidence(input, preparation)
 		}
-		input := l.buildPrepareInput(toolSpecs, opts)
-		input.Messages = sdkMessagesToCLI(req.Messages)
-		input.Budget = math.MaxInt
-		preparation, err := opts.PreparationManager.Prepare(ctx, input)
-		if err != nil {
-			l.PreparationErr = err
-			return err
-		}
-		l.recordPreparation(preparation)
-		l.captureOmittedEvidence(input, preparation)
 		// Confirmed after the bookkeeping Prepare above, not before:
 		// this gives l.LastPreparation.Token a real, freshly-Prepared
 		// value before confirmSDKCompaction reads it for the
@@ -293,7 +301,7 @@ func sdkCompactionObserver(l *Loop, opts Options, turn *sdkTurnState) func(conte
 		// instead of a first-iteration zero value.
 		confirmSDKCompaction(ctx, l, opts)
 		if opts.ObserveRequestHistory != nil {
-			opts.ObserveRequestHistory(input.Messages)
+			opts.ObserveRequestHistory(cliMessages)
 		}
 		return nil
 	}

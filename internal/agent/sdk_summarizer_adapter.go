@@ -105,9 +105,15 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 	value := summary.Value()
 	rendered := RenderSummaryMessage(summary, request.Input.Evidence)
 	a.l.sdkPendingCompaction = &sdkCompactionOutcome{
-		message:        rendered,
-		summarized:     true,
-		key:            sdkCompactionIdentity(cliDropped),
+		message:    rendered,
+		summarized: true,
+		// rendered.Content salts the key so a compaction that drops
+		// nothing new this round (a held-aside prior re-summarized
+		// alone; the SDK still calls Summarize whenever a prior
+		// exists, even with zero newly dropped messages) still gets
+		// a non-empty, distinct key - the rendered summary is always
+		// non-empty on success, unlike an empty dropped set.
+		key:            sdkCompactionIdentity(cliDropped, rendered.Content),
 		elidedMessages: len(cliDropped),
 		elidedBytes:    sdkElidedBytes(cliDropped),
 	}
@@ -131,9 +137,12 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 func (a *sdkSummarizerAdapter) skip(dropped []provider.Message, reason string) error {
 	a.l.summaryFailureReason = reason
 	a.l.sdkPendingCompaction = &sdkCompactionOutcome{
-		summarized:     false,
-		reason:         reason,
-		key:            sdkCompactionIdentity(dropped),
+		summarized: false,
+		reason:     reason,
+		// reason salts the key so a skip with nothing newly dropped
+		// (a held-aside prior alone) still gets a non-empty key; see
+		// the matching comment on the success path above.
+		key:            sdkCompactionIdentity(dropped, reason),
 		elidedMessages: len(dropped),
 		elidedBytes:    sdkElidedBytes(dropped),
 	}
@@ -153,13 +162,25 @@ func splitSDKPriorSummary(msgs []sdkshape.Message) (prior *sdkshape.Message, dro
 }
 
 // sdkCompactionIdentity derives a deterministic identity for one real
-// compaction from its dropped set's content, so two distinct
-// compactions in the same turn ground and emit independently while a
-// re-observed (already-confirmed) outcome does not re-emit. Mirrors
-// compactionIdentity's role for the PM-driven path, which keys off a
-// contextmgr.CommitToken that does not exist at this call site.
-func sdkCompactionIdentity(dropped []provider.Message) string {
-	if len(dropped) == 0 {
+// compaction from its dropped set's content plus salt, so two
+// distinct compactions in the same turn ground and emit independently
+// while a re-observed (already-confirmed) outcome does not re-emit.
+// Mirrors compactionIdentity's role for the PM-driven path, which
+// keys off a contextmgr.CommitToken that does not exist at this call
+// site. salt is always non-empty at both call sites (the rendered
+// summary content on success, the classified reason on a skip), so
+// the returned key is empty only when dropped is also empty AND salt
+// is empty - a compaction with nothing dropped and nothing to say
+// about it, which never happens: the SDK calls Summarize only when
+// there is something dropped or a prior to reuse, and every call
+// site here passes a non-empty salt regardless. Without salt, a
+// compaction whose dropped set was empty (a held-aside prior
+// re-summarized alone, with nothing newly dropped this round) would
+// return "", indistinguishable from "no compaction happened" to
+// confirmSDKCompaction's guard, silently losing a real summary the
+// model actually saw.
+func sdkCompactionIdentity(dropped []provider.Message, salt string) string {
+	if len(dropped) == 0 && salt == "" {
 		return ""
 	}
 	h := fnv.New64a()
@@ -167,6 +188,7 @@ func sdkCompactionIdentity(dropped []provider.Message) string {
 		_, _ = h.Write([]byte(m.Role))
 		_, _ = h.Write([]byte(m.Content))
 	}
+	_, _ = h.Write([]byte(salt))
 	return fmt.Sprintf("sdk:%x", h.Sum64())
 }
 

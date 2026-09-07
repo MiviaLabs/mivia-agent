@@ -337,3 +337,59 @@ func TestAdoptSDKCompactionEffectiveThresholds(t *testing.T) {
 		t.Fatal("ObserveRequest not wired")
 	}
 }
+
+// TestSDKCompactionObserverNoPreparationManagerDoesNotPanic is a RED
+// test for a fast-bug-audit finding: sdkCompactionObserver's
+// bookkeeping Prepare pass called opts.PreparationManager.Prepare
+// unconditionally, panicking on a nil interface whenever a turn
+// adopted SDK compaction with no PreparationManager wired - a row
+// sdkCompactionAdopted deliberately keeps reachable ("that row
+// already adopted before this field existed... stays automatic").
+func TestSDKCompactionObserverNoPreparationManagerDoesNotPanic(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: nil, TurnState: contextmgr.NewTurnState()}
+	completer, err := newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{}, nil, nil, nil, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)
+	}
+	opts := Options{
+		MaxContextTokens: 1000,
+		SummaryConfig:    SummaryConfig{Summarizer: ptrSummarizer(summaryInjectSummarizer(t, fullSummaryProvider{}))},
+		// PreparationManager deliberately left nil.
+	}
+	var out sdkagentloop.Options
+	if err := adoptSDKCompaction(l, &out, completer, opts, newSDKTurnState()); err != nil {
+		t.Fatalf("adoptSDKCompaction: %v", err)
+	}
+	if out.ObserveRequest == nil {
+		t.Fatal("ObserveRequest not wired")
+	}
+	req := sdkshape.Request{Messages: []sdkshape.Message{{Role: sdkshape.RoleUser, Content: "hi"}}}
+	if err := out.ObserveRequest(context.Background(), req); err != nil {
+		t.Fatalf("ObserveRequest() = %v, want nil with no PreparationManager wired", err)
+	}
+}
+
+// TestSDKSummarizerAdapterEmptyDroppedWithPriorStillGrounds is a RED
+// test for a fast-bug-audit finding: when the SDK calls Summarize
+// with only a held-aside prior summary and nothing newly dropped
+// (compactHistory's len(res.Dropped) > 0 || prior != nil condition
+// admits this), sdkCompactionIdentity of the empty dropped set
+// returns "", which confirmSDKCompaction's guard treats identically
+// to "nothing pending" - silently dropping a real, sent summary from
+// the durable commit.
+func TestSDKSummarizerAdapterEmptyDroppedWithPriorStillGrounds(t *testing.T) {
+	a, l := newAdapterFixture(t, fullSummaryProvider{})
+	prior := sdkshape.Message{Role: sdkshape.RoleUser, Name: sdkplan.SummaryMessageName, Content: "prior summary"}
+	_, err := a.Summarize(context.Background(), []sdkshape.Message{prior})
+	if err != nil {
+		t.Fatalf("Summarize() = %v, want nil", err)
+	}
+	confirmSDKCompaction(context.Background(), l, a.opts)
+	got, ok := l.InjectedSummary()
+	if !ok {
+		t.Fatal("InjectedSummary() reports nothing injected; the real, sent summary was lost")
+	}
+	if got.Content == "" {
+		t.Fatal("InjectedSummary() content is empty")
+	}
+}
