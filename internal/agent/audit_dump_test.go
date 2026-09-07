@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // completionRequest and completionResponse are one completed call carrying
@@ -386,5 +389,76 @@ func TestProviderAuditDumpConcurrentAppends(t *testing.T) {
 	wg.Wait()
 	if lines := readDumpLines(t, dir, "S8"); len(lines) != 20 {
 		t.Fatalf("want 20 well-formed lines, got %d", len(lines))
+	}
+}
+
+// readDumpLinesRaw returns the raw JSONL lines of one session's dump
+// file under namePrefix (the sdkloop sink writes a sibling file).
+func readDumpLinesRaw(t *testing.T, dir, namePrefix, sessionID string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, namePrefix+auditDumpFileName(sessionID)))
+	if err != nil {
+		t.Fatalf("read dump: %v", err)
+	}
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// TestSDKLoopAuditDumpCarriesTheRecord pins the SDK-loop audit sink:
+// a completion line carries the model and token usage, and a tool-call
+// line carries the tool name, result body, and run error. A line of
+// empty skeletons makes the sink useless for the empty-turn debugging
+// it exists for.
+func TestSDKLoopAuditDumpCarriesTheRecord(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "aud")
+	t.Setenv(EnvProviderAuditDir, dir)
+	dump := newSDKLoopAuditDump("S9")
+	if dump == nil {
+		t.Fatal("expected an SDK loop audit hook with the env dir set")
+	}
+	dump(sdkagentloop.AuditRecord{
+		Kind:      sdkagentloop.AuditKindCompletion,
+		Iteration: 1,
+		Request: sdkshape.Request{
+			Model:    "m1",
+			Messages: []sdkshape.Message{{Role: sdkshape.RoleUser, Content: "q"}},
+		},
+		Response: sdkshape.Response{
+			FinishReason: "stop",
+			Usage:        sdkshape.Usage{PromptTokens: 11, CompletionTokens: 7},
+		},
+	})
+	dump(sdkagentloop.AuditRecord{
+		Kind:       sdkagentloop.AuditKindToolCall,
+		Iteration:  1,
+		ToolCall:   sdkshape.ToolCall{Name: "run_command", Arguments: []byte(`{"argv":["ls"]}`)},
+		ToolResult: sdkshape.Message{Role: sdkshape.RoleTool, Name: "run_command", Content: "file.txt"},
+		Err:        errors.New("exit 2"),
+	})
+	lines := readDumpLinesRaw(t, dir, "sdkloop-", "S9")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 dump lines, got %d", len(lines))
+	}
+	var completion map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &completion); err != nil {
+		t.Fatalf("decode completion line: %v", err)
+	}
+	if completion["model"] != "m1" || completion["finish_reason"] != "stop" {
+		t.Fatalf("completion line lost the wire facts: %v", completion)
+	}
+	var toolCall map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &toolCall); err != nil {
+		t.Fatalf("decode tool-call line: %v", err)
+	}
+	if toolCall["tool"] != "run_command" || toolCall["err"] == "" {
+		t.Fatalf("tool-call line lost the outcome: %v", toolCall)
+	}
+	if !strings.Contains(toolCall["result"].(string), "file.txt") {
+		t.Fatalf("tool-call line lost the result body: %v", toolCall)
 	}
 }

@@ -65,6 +65,71 @@ func TestWorkspaceConfigWithoutProviderBootstrapsFirstTime(t *testing.T) {
 	}
 }
 
+// TestBootstrapNeverOverwritesProviderlessUserConfig pins the data-loss
+// guard: an existing ~/.mivia/mivia.toml that declares no provider (only
+// approvals/chat-style settings) must never be replaced by the bootstrapped
+// default template. firstProviderCandidate's provider filter made this state
+// report "nothing exists", which sent loadFile into autoBootstrapUserConfig -
+// a bare os.WriteFile over the user's file, with no backup and no error.
+// The contract is bootstrap.go's own documented invariant: the write only
+// happens when the user config does not exist; an existing provider-less
+// user config keeps pre-filter behavior (found=true, the provider error
+// surfaces from resolveProvider).
+func TestBootstrapNeverOverwritesProviderlessUserConfig(t *testing.T) {
+	isolateHomeAndConfigEnv(t)
+	userCfg := "[approvals]\ndefault_mode = \"once\"\n\n[chat]\nstream_idle = 30\n"
+	userPath := UserConfigPath()
+	if userPath == "" {
+		t.Fatal("UserConfigPath empty; HOME must resolve in this test")
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(userCfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{AllowMissingConfig: true, AutoBootstrapUserConfig: true})
+	if err == nil {
+		t.Fatalf("expected the provider-resolution error for an existing provider-less user config")
+	}
+	data, readErr := os.ReadFile(userPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != userCfg {
+		t.Fatalf("existing user config was overwritten:\n got %q\nwant %q", data, userCfg)
+	}
+}
+
+// TestBootstrapNeverOverwritesCorruptUserConfig pins the corrupt-file
+// variant: a user config that fails to decode is treated as provider-less
+// by the candidate scan, but the scan's "" return must not turn into an
+// overwrite - the parse error has to surface instead.
+func TestBootstrapNeverOverwritesCorruptUserConfig(t *testing.T) {
+	isolateHomeAndConfigEnv(t)
+	bad := "[approvals\ndefault_mode = \"once\"\n"
+	userPath := UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{AllowMissingConfig: true, AutoBootstrapUserConfig: true})
+	if err == nil {
+		t.Fatalf("expected the user config's parse error to surface")
+	}
+	data, readErr := os.ReadFile(userPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != bad {
+		t.Fatalf("corrupt user config was overwritten:\n got %q\nwant %q", data, bad)
+	}
+}
+
 // TestWorkspaceConfigWithProviderStillWins confirms a workspace config that
 // DOES declare a provider remains the base config - the filter only skips
 // provider-less files.

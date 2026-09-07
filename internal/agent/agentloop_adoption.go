@@ -89,17 +89,13 @@ func adoptSDKBudget(out *sdkagentloop.Options, opts Options) {
 	}
 }
 
-// adoptSDKBounds sets the two Bounds rows the host has no knob for:
-// MaxTotalTokens becomes the per-run billing ceiling derived from the
-// host's context-token ceiling, and MaxConsecutiveToolFailures adds a
-// hard stop beside the host reminder path's failure-spiral breaker
-// (recordProgress), which fires its reminder at the same count. A
-// turn that exhausts the bound fails with the SDK's sentinel;
-// handleSDKRunError maps it onto the host's loop-breaker vocabulary.
+// adoptSDKBounds sets the failure-spiral hard stop beside the host
+// reminder path's breaker (recordProgress), which fires its reminder
+// at the same count. MaxTotalTokens deliberately stays unset: the SDK
+// bound counts cumulative billed tokens across the whole run, which
+// re-bills history every iteration, so the per-prompt context ceiling
+// is the wrong scale and would hard-fail healthy long turns.
 func adoptSDKBounds(out *sdkagentloop.Options, opts Options) {
-	if opts.MaxContextTokens > 0 {
-		out.Bounds.MaxTotalTokens = opts.MaxContextTokens
-	}
 	out.Bounds.MaxConsecutiveToolFailures = sdkFailureSpiralBound
 }
 
@@ -196,4 +192,42 @@ func (c *agentLoopCompleter) EstimateTokens(req sdkshape.Request) (int, error) {
 		return 0, fmt.Errorf("agent: nil completer for token estimation")
 	}
 	return provider.EstimatePromptCost(sdkMessagesToCLI(req.Messages), sdkToolDefsToCLI(req.Tools), c.ctxProfile)
+}
+
+// sdkRepeatedToolFailureError converts the SDK's graceful
+// StopRepeatedToolFailures stop into the host's failure-spiral hard
+// error. The stop arrives with a nil error and a normal-looking
+// Result whose Final is the last model turn; returning it unchanged
+// let a turn that never ran its work report success with stale text.
+// Every other graceful stop stays a non-error.
+func sdkRepeatedToolFailureError(res sdkagentloop.Result) error {
+	if res.Stop != sdkagentloop.StopRepeatedToolFailures {
+		return nil
+	}
+	return fmt.Errorf("agent: turn stopped by the failure spiral bound after %d iterations; last model text kept in history",
+		res.Iterations)
+}
+
+// finishAgentLoopTurn is the SDK run's post-run epilogue: stamp the
+// tool-message names, map the hard-error and bridge-failure paths,
+// convert the repeated-failure stop into a failed turn (the SDK
+// reports it as a graceful stop reason with a nil error; the host
+// contract expects the turn to fail), and render the final result.
+func finishAgentLoopTurn(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, res sdkagentloop.Result, msgs []provider.Message, err error) (sdkagentloop.Result, error) {
+	stampSDKToolMessageNames(res.History)
+	if err != nil {
+		return handleSDKRunError(ctx, l, opts, turn, res, err)
+	}
+	// A surface-bridge failure (registry conversion at a mid-run
+	// rotation) recorded in the turn state kept the prior surface so
+	// the run could wind down gracefully; the turn still fails with
+	// the recorded error, carried through the same partial-Result
+	// path as a hard failure.
+	if berr := turn.bridgeError(); berr != nil {
+		return res, berr
+	}
+	if rerr := sdkRepeatedToolFailureError(res); rerr != nil {
+		return res, rerr
+	}
+	return finishSDKResult(opts, res, msgs)
 }

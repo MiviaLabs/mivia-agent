@@ -116,8 +116,8 @@ func TestBuildAgentLoopOptions_AdoptionRows(t *testing.T) {
 	if got.Budget.MaxEvents != sdkSessionBudgetMaxEvents {
 		t.Fatalf("Budget.MaxEvents = %d, want %d", got.Budget.MaxEvents, sdkSessionBudgetMaxEvents)
 	}
-	if got.Bounds.MaxTotalTokens != 500000 {
-		t.Fatalf("MaxTotalTokens = %d, want the context ceiling", got.Bounds.MaxTotalTokens)
+	if got.Bounds.MaxTotalTokens != 0 {
+		t.Fatalf("MaxTotalTokens = %d, want 0 (uncapped): the SDK bound counts cumulative billed tokens across the whole run, so deriving it from the per-prompt context ceiling hard-fails healthy long turns that re-bill history every iteration", got.Bounds.MaxTotalTokens)
 	}
 	if got.Bounds.MaxConsecutiveToolFailures != sdkFailureSpiralBound {
 		t.Fatalf("MaxConsecutiveToolFailures = %d, want %d", got.Bounds.MaxConsecutiveToolFailures, sdkFailureSpiralBound)

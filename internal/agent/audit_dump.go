@@ -120,6 +120,12 @@ func appendAuditDump(dir, path string, rec auditDumpEntry) error {
 	if err != nil {
 		return fmt.Errorf("marshal audit record: %w", err)
 	}
+	return appendAuditDumpLine(dir, path, raw)
+}
+
+// appendAuditDumpLine appends one pre-marshaled JSON line through the
+// same locked, O_NOFOLLOW, 0600 write path as appendAuditDump.
+func appendAuditDumpLine(dir, path string, raw []byte) error {
 	auditDumpMu.Lock()
 	defer auditDumpMu.Unlock()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -345,6 +351,57 @@ func auditDumpText(s string) string {
 // sibling file name so the two streams stay greppable apart.
 type sdkLoopAuditDump func(rec sdkagentloop.AuditRecord)
 
+// sdkLoopCompletionLine projects a completion record: the model that
+// answered, its finish reason, token usage, and the message count the
+// request carried.
+func sdkLoopCompletionLine(sessionID string, audit sdkagentloop.AuditRecord) string {
+	payload := map[string]any{
+		"session_id":    sessionID,
+		"iteration":     audit.Iteration,
+		"kind":          string(audit.Kind),
+		"model":         auditDumpText(audit.Request.Model),
+		"finish_reason": auditDumpText(audit.Response.FinishReason),
+		"message_count": len(audit.Request.Messages),
+		"input_tokens":  audit.Response.Usage.PromptTokens,
+		"output_tokens": audit.Response.Usage.CompletionTokens,
+	}
+	if audit.Response.Usage.TotalTokens != 0 {
+		payload["total_tokens"] = audit.Response.Usage.TotalTokens
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf(`{"session_id":%q,"iteration":%d,"kind":%q,"marshal_error":"%v"}`,
+			sessionID, audit.Iteration, string(audit.Kind), err)
+	}
+	return string(raw)
+}
+
+// sdkLoopToolCallLine projects a tool-call record: the requested
+// call's name and arguments, the rendered result body, and the run
+// error, all through the shared redaction and cap helpers.
+func sdkLoopToolCallLine(sessionID string, audit sdkagentloop.AuditRecord) string {
+	errText := ""
+	if audit.Err != nil {
+		errText = auditDumpText(audit.Err.Error())
+	}
+	payload := map[string]any{
+		"session_id":   sessionID,
+		"iteration":    audit.Iteration,
+		"kind":         string(audit.Kind),
+		"tool":         auditDumpText(audit.ToolCall.Name),
+		"arguments":    auditDumpArguments(audit.ToolCall.Arguments),
+		"result":       auditDumpText(audit.ToolResult.Content),
+		"err":          errText,
+		"result_bytes": len(audit.ToolResult.Content),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf(`{"session_id":%q,"iteration":%d,"kind":%q,"marshal_error":"%v"}`,
+			sessionID, audit.Iteration, string(audit.Kind), err)
+	}
+	return string(raw)
+}
+
 // newSDKLoopAuditDump returns the SDK-loop audit recorder for one
 // run, or nil when the operator never named an audit directory. See
 // EnvProviderAuditDump and EnvProviderAuditDir; the SDK loop's own
@@ -361,11 +418,16 @@ func newSDKLoopAuditDump(sessionID string) sdkLoopAuditDump {
 		if auditDumpDisabled.Load() {
 			return
 		}
-		entry := auditDumpEntry{
-			SessionID: sessionID,
-			Iteration: audit.Iteration,
+		var line string
+		switch audit.Kind {
+		case sdkagentloop.AuditKindCompletion:
+			line = sdkLoopCompletionLine(sessionID, audit)
+		case sdkagentloop.AuditKindToolCall:
+			line = sdkLoopToolCallLine(sessionID, audit)
+		default:
+			line = sdkLoopCompletionLine(sessionID, audit)
 		}
-		if err := appendAuditDump(dir, path, entry); err != nil {
+		if err := appendAuditDumpLine(dir, path, []byte(line)); err != nil {
 			auditDumpDisabled.Store(true)
 			log.Printf("agent: sdk loop audit dump disabled for this process: %v", err)
 		}

@@ -99,19 +99,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage
 	// row the legacy loop writes; an Audit bridge would duplicate it.
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
-	stampSDKToolMessageNames(res.History)
-	if err != nil {
-		return handleSDKRunError(ctx, l, opts, turn, res, err)
-	}
-	// A surface-bridge failure (registry conversion at a mid-run
-	// rotation) recorded in the turn state kept the prior surface so
-	// the run could wind down gracefully; the turn still fails with
-	// the recorded error, carried through the same partial-Result
-	// path as a hard failure.
-	if berr := turn.bridgeError(); berr != nil {
-		return res, berr
-	}
-	return finishSDKResult(opts, res, msgs)
+	return finishAgentLoopTurn(ctx, l, opts, turn, res, msgs, err)
 }
 
 // ensureSDKDispatcher installs a scoped runtime dispatcher over the
