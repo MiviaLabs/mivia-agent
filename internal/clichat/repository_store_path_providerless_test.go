@@ -152,3 +152,31 @@ func TestRepositorySessionStorePathReadsExplicitStorePath(t *testing.T) {
 		t.Fatalf("store path = %q, want %q", got, want)
 	}
 }
+
+// TestStorePathCandidatesDropsDuplicateAndBlankPaths pins the dedup filter:
+// a pin naming the repository's own config, and an unresolvable user config
+// path, must both be dropped so no file is read twice and no blank candidate
+// reaches the stat/decode loop.
+func TestStorePathCandidatesDropsDuplicateAndBlankPaths(t *testing.T) {
+	root := t.TempDir()
+	repoConfig := workspace.NamespacePath(root, "mivia.toml")
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_CONFIG", "")
+	got := storePathCandidates(root, chatInvocation{configPath: repoConfig})
+	want := []string{repoConfig, workspace.NamespacePath(os.Getenv("HOME"), "mivia.toml")}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %v, want the pin deduplicated against the repository file: %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidate %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	t.Setenv("HOME", "")
+	blankHome := storePathCandidates(root, chatInvocation{})
+	if len(blankHome) != 1 || blankHome[0] != repoConfig {
+		t.Fatalf("candidates with no resolvable home = %v, want only %q", blankHome, repoConfig)
+	}
+}

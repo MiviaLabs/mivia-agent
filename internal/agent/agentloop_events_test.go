@@ -6,6 +6,7 @@ import (
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkevents "github.com/MiviaLabs/mivia-ai-sdk/events"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
@@ -33,5 +34,40 @@ func TestTheBridgeReportsEachCompletedAssistantMessage(t *testing.T) {
 	if got.Kind != want.Kind || got.Detail != want.Detail || got.Content != "" {
 		t.Fatalf("captured %+v, want Kind=%s Detail=%q and NO content - the "+
 			"flag must not read as a second aggregate", got, want.Kind, want.Detail)
+	}
+}
+
+// TestBridgeToolCallEndFallsBackToToolName pins the call-key fallback:
+// a provider that omits the tool-call id must still produce an
+// operator tool_end, keyed by the tool name. Without the fallback the
+// key stays empty and the event is dropped entirely.
+func TestBridgeToolCallEndFallsBackToToolName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		call    sdkshape.ToolCall
+		wantKey string
+	}{
+		{name: "id present", call: sdkshape.ToolCall{ID: "call-1", Name: "my_tool"}, wantKey: "call-1"},
+		{name: "id omitted", call: sdkshape.ToolCall{Name: "my_tool"}, wantKey: "my_tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured []Event
+			opts := Options{OnEvent: func(e Event) { captured = append(captured, e) }}
+			ctx := sdkagentloop.WithToolCall(context.Background(), tc.call)
+			bridgeToolCallEnd(opts, newSDKTurnState(), ctx)
+			if len(captured) != 1 {
+				t.Fatalf("captured %d events, want exactly 1: %+v", len(captured), captured)
+			}
+			got := captured[0]
+			if got.Kind != EventToolEnd || got.ToolCallID != tc.wantKey {
+				t.Fatalf("captured %+v, want Kind=%s ToolCallID=%q", got, EventToolEnd, tc.wantKey)
+			}
+			if got.Name != "my_tool" {
+				t.Fatalf("Name = %q, want my_tool", got.Name)
+			}
+			if got.Detail != "completed (duplicate)" {
+				t.Fatalf("Detail = %q, want the dedup-served vocabulary", got.Detail)
+			}
+		})
 	}
 }

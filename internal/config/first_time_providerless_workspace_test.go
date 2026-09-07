@@ -202,3 +202,60 @@ func TestNoBootstrapNonChatCallerKeepsLegacyError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestFirstProviderCandidateSkipsBlankConfigEnv pins that a blank
+// $MIVIA_CONFIG never becomes a candidate: the search must fall through to
+// the user config that actually declares the provider, instead of stopping on
+// a whitespace-only path.
+func TestFirstProviderCandidateSkipsBlankConfigEnv(t *testing.T) {
+	home := isolateHomeAndConfigEnv(t)
+	t.Setenv("MIVIA_CONFIG", "   ")
+	userPath := writeUserConfig(t, home, testWorkspaceProviderTOML())
+
+	if got := firstProviderCandidate(true); got != userPath {
+		t.Fatalf("firstProviderCandidate = %q, want the user config %q", got, userPath)
+	}
+	if got := firstProviderCandidate(false); got != userPath {
+		t.Fatalf("firstProviderCandidate without bootstrap = %q, want %q", got, userPath)
+	}
+}
+
+// TestFirstProviderCandidateSkipsUnreadableCandidate pins the read-failure
+// branch: a candidate that exists but cannot be read is treated as
+// provider-less, so it never shadows a later, readable config that does
+// declare a provider.
+func TestFirstProviderCandidateSkipsUnreadableCandidate(t *testing.T) {
+	home := isolateHomeAndConfigEnv(t)
+	unreadable := filepath.Join(t.TempDir(), "unreadable.toml")
+	if err := os.WriteFile(unreadable, []byte(testWorkspaceProviderTOML()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+	if _, err := os.ReadFile(unreadable); err == nil {
+		t.Fatalf("read of %s unexpectedly succeeded; the test cannot force a read failure", unreadable)
+	}
+	t.Setenv("MIVIA_CONFIG", unreadable)
+
+	// With no other candidate, the unreadable file still counts as the first
+	// EXISTING candidate, so the non-bootstrap caller keeps its legacy return
+	// and the bootstrap caller is free to write a fresh user config.
+	if got := firstProviderCandidate(false); got != unreadable {
+		t.Fatalf("firstProviderCandidate without bootstrap = %q, want the first existing candidate %q", got, unreadable)
+	}
+	if got := firstProviderCandidate(true); got != "" {
+		t.Fatalf("firstProviderCandidate = %q, want empty so bootstrap can run", got)
+	}
+
+	// A readable user config that declares a provider now wins: the
+	// unreadable candidate must never shadow it.
+	userPath := writeUserConfig(t, home, testWorkspaceProviderTOML())
+	if got := firstProviderCandidate(true); got != userPath {
+		t.Fatalf("firstProviderCandidate = %q, want the readable user config %q", got, userPath)
+	}
+	if got := firstProviderCandidate(false); got != userPath {
+		t.Fatalf("firstProviderCandidate without bootstrap = %q, want %q", got, userPath)
+	}
+}

@@ -84,3 +84,40 @@ func TestAnthropicImplementsAllThreeSDKCapabilities(t *testing.T) {
 		t.Error("AnthropicCompleter does not implement sdkshape.TokenEstimator")
 	}
 }
+
+// TestAnthropicEstimateTokensCountsReasoningBlocks pins that reasoning blocks
+// reach the estimate: sdkRequestMessagesToProvider concatenates every block's
+// content into ReasoningContent, so a message carrying reasoning costs more
+// than the same message without it, and two blocks cost more than one.
+// Dropping the blocks would under-report the prompt and delay compaction.
+func TestAnthropicEstimateTokensCountsReasoningBlocks(t *testing.T) {
+	c := newAnthropicCompleter("anthropic", "https://example.invalid", "key", nil, false)
+	reasoning := "the model deliberated at length about the requested change"
+	request := func(blocks ...sdkshape.ReasoningBlock) sdkshape.Request {
+		return sdkshape.Request{Messages: []sdkshape.Message{
+			{Role: sdkshape.RoleAssistant, Content: "answer", ReasoningBlocks: blocks},
+		}}
+	}
+
+	plain, err := c.EstimateTokens(request())
+	if err != nil {
+		t.Fatalf("EstimateTokens without reasoning: %v", err)
+	}
+	one, err := c.EstimateTokens(request(sdkshape.ReasoningBlock{Content: reasoning}))
+	if err != nil {
+		t.Fatalf("EstimateTokens with one reasoning block: %v", err)
+	}
+	two, err := c.EstimateTokens(request(
+		sdkshape.ReasoningBlock{Content: reasoning},
+		sdkshape.ReasoningBlock{Content: reasoning},
+	))
+	if err != nil {
+		t.Fatalf("EstimateTokens with two reasoning blocks: %v", err)
+	}
+	if one <= plain {
+		t.Fatalf("EstimateTokens with reasoning = %d, want > %d (the blocks must be counted)", one, plain)
+	}
+	if two <= one {
+		t.Fatalf("EstimateTokens with two blocks = %d, want > %d (every block must be counted)", two, one)
+	}
+}

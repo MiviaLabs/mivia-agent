@@ -206,3 +206,37 @@ func TestMergeProviderFallbackNoOpWhenBaseIsUserConfig(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 }
+
+// TestMergeProviderFallbackSkipsUnresolvableHome pins the no-home path: when
+// HOME is unset the user layer has no address, so the fallback contributes
+// nothing and never turns a good explicit config into a load failure.
+func TestMergeProviderFallbackSkipsUnresolvableHome(t *testing.T) {
+	root := t.TempDir()
+	repoPath := writeRepoConfigAt(t, root, strings.Join([]string{
+		"[provider]",
+		"name = " + strconv.Quote("deepseek"),
+		"",
+		deepseekProviderTOML("deepseek-chat", 131072),
+	}, "\n"))
+	t.Setenv("MIVIA_CONFIG", "")
+	t.Setenv("HOME", "")
+	if got := UserConfigPath(); got != "" {
+		t.Fatalf("UserConfigPath() = %q, want empty with HOME unset", got)
+	}
+
+	var file File
+	if err := mergeProviderFallback(&file, repoPath); err != nil {
+		t.Fatalf("mergeProviderFallback with no resolvable home: %v", err)
+	}
+	if file.Provider.Name != "" || len(file.Providers) != 0 {
+		t.Fatalf("file = %+v, want no user-layer contribution", file.Provider)
+	}
+
+	res, err := Load(LoadOptions{ConfigPath: repoPath})
+	if err != nil {
+		t.Fatalf("Load with no resolvable home: %v", err)
+	}
+	if res.ProviderName != "deepseek" {
+		t.Fatalf("ProviderName = %q, want the explicit config's deepseek", res.ProviderName)
+	}
+}

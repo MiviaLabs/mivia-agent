@@ -125,3 +125,22 @@ func TestDAGWaveDoesNotStarveRemainingReadyTasks(t *testing.T) {
 		}
 	}
 }
+
+// TestCapReadyToPoolCapacityWithNilPoolAppliesNoCap pins the nil-pool guard
+// of capReadyToPoolCapacity. A cancel-only coordinator carries a nil pool
+// (see cancel_nil_pool_test.go), so the wave cap must return the ready slice
+// untouched instead of dereferencing the pool for its worker count.
+func TestCapReadyToPoolCapacityWithNilPoolAppliesNoCap(t *testing.T) {
+	c := New(ledger.NewMemoryLedgerRepository(), nil)
+	ready := []subagents.Task{{ID: "t0", Name: "n"}, {ID: "t1", Name: "n"}, {ID: "t2", Name: "n"}}
+
+	got := c.capReadyToPoolCapacity(ready)
+	if len(got) != len(ready) {
+		t.Fatalf("capped ready = %d tasks, want all %d uncapped with a nil pool", len(got), len(ready))
+	}
+	for i := range got {
+		if got[i].ID != ready[i].ID {
+			t.Fatalf("task %d = %q, want %q (order must be preserved)", i, got[i].ID, ready[i].ID)
+		}
+	}
+}

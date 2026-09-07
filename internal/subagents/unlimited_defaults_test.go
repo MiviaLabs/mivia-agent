@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	stdruntime "runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -329,3 +330,35 @@ func TestDefaultBudgetAdmitsARealisticDispatchBatch(t *testing.T) {
 }
 
 var taskIDs4 = [4]string{"explore-meta", "explore-app-architecture", "explore-data-layer", "explore-testing-gates"}
+
+// TestPoolFanoutLimitRejectsOversizedBatch is the counterpart of
+// TestPoolUnlimitedFanoutAcceptsAll: a configured, positive MaxFanout must
+// reject a batch larger than the limit before any task is dispatched, so a
+// runaway fan-out never reaches the dispatcher.
+func TestPoolFanoutLimitRejectsOversizedBatch(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "instant", &instantHandler{}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New(d, Policy{Workers: 1, MaxFanout: 2})
+	tasks := []Task{
+		{ID: "a", Name: "instant", Input: json.RawMessage(`"go"`), Budget: 1},
+		{ID: "b", Name: "instant", Input: json.RawMessage(`"go"`), Budget: 1},
+		{ID: "c", Name: "instant", Input: json.RawMessage(`"go"`), Budget: 1},
+	}
+
+	results, err := p.Run(context.Background(), tasks)
+	if err == nil {
+		t.Fatal("Run must reject a batch above MaxFanout")
+	}
+	if !strings.Contains(err.Error(), "fan-out limit exceeded") {
+		t.Fatalf("error = %v, want the fan-out limit rejection", err)
+	}
+	if !strings.Contains(err.Error(), "got 3 tasks") || !strings.Contains(err.Error(), "limit is 2") {
+		t.Fatalf("error = %v, want the observed count and the configured limit", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results = %d, want none dispatched on rejection", len(results))
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // setTestReasoningRedactionPolicy installs a minimal policy matching
@@ -122,5 +123,27 @@ func TestEmitReasoningNilPolicyIdentity(t *testing.T) {
 	}
 	if got.Content != raw {
 		t.Fatalf("nil-policy identity broken: got %q want %q", got.Content, raw)
+	}
+}
+
+// TestReasoningBlocksToContentDropsRedactedBlocks pins the SDK-to-CLI
+// reasoning projection: a provider-redacted block carries no readable
+// text, so its Content must never reach the CLI's plain-string
+// ReasoningContent. The surviving blocks keep arrival order.
+func TestReasoningBlocksToContentDropsRedactedBlocks(t *testing.T) {
+	blocks := []sdkshape.ReasoningBlock{
+		{Content: "first "},
+		{Content: "REDACTED-PAYLOAD", Redacted: true},
+		{Content: "second"},
+	}
+	got := reasoningBlocksToContent(blocks)
+	if strings.Contains(got, "REDACTED-PAYLOAD") {
+		t.Fatalf("reasoningBlocksToContent = %q; a redacted block's content reached the CLI surface", got)
+	}
+	if got != "first second" {
+		t.Fatalf("reasoningBlocksToContent = %q, want %q", got, "first second")
+	}
+	if reasoningBlocksToContent(nil) != "" {
+		t.Fatalf("reasoningBlocksToContent(nil) = %q, want empty", reasoningBlocksToContent(nil))
 	}
 }
