@@ -14,7 +14,7 @@ import (
 func quoteTOML(s string) string { return strconv.Quote(s) }
 
 // isolateChatHome points HOME at a fresh temp dir and clears $MIVIA_CONFIG so
-// repositoryConfigPath's candidate search only sees what the test writes.
+// storePathCandidates' search only sees what the test writes.
 func isolateChatHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()

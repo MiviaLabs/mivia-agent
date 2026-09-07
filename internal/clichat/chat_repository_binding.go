@@ -123,50 +123,75 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 }
 
 func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {
-	configPath, found := repositoryConfigPath(root, invocation)
-	if !found {
-		return workspace.GlobalContextStorePath(root), nil
+	// Read only the one key this path needs, without provider resolution: a
+	// repo or pin config may legitimately declare no [providers] section
+	// (the user's provider lives in ~/.mivia/mivia.toml), and a full Load
+	// here would hard-fail with "[providers.openrouter]: models must be
+	// non-empty" - blocking chat startup over a key that has nothing to do
+	// with providers.
+	//
+	// Precedence, highest first: the repository's own .mivia/mivia.toml,
+	// then an explicit --config/$MIVIA_CONFIG pin, then the user-level
+	// config - the repo file overlays the pin the same way loadFile's own
+	// workspace overlay wins on overlap, and the user file is the final
+	// fallback when neither sets [subagents] store_path. Each candidate is
+	// tried in order; the first that actually SETS the key wins, so a repo
+	// file present but silent on store_path (writeRepoConfig's "[workflows]"
+	// case) falls through to the pin, then to the user file, instead of
+	// stopping at the repo file the way repositoryConfigPath's single-base
+	// resolution does for provider lookups.
+	for _, candidatePath := range storePathCandidates(root, invocation) {
+		if candidatePath == "" {
+			continue
+		}
+		if info, err := os.Stat(candidatePath); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		storePath, set, err := config.LoadSubagentStorePath(candidatePath)
+		if err != nil {
+			return "", err
+		}
+		if !set {
+			continue
+		}
+		path := config.ExpandPath(storePath)
+		if filepath.IsAbs(path) {
+			return path, nil
+		}
+		return filepath.Join(root, path), nil
 	}
-	// Read only the one key this path needs, without provider resolution: the
-	// repo config may legitimately declare no [providers] section (the user's
-	// provider lives in ~/.mivia/mivia.toml), and a full Load here would
-	// hard-fail with "[providers.openrouter]: models must be non-empty" -
-	// blocking chat startup over a key that has nothing to do with providers.
-	storePath, set, err := config.LoadSubagentStorePath(configPath)
-	if err != nil {
-		return "", err
-	}
-	if !set {
-		return workspace.GlobalContextStorePath(root), nil
-	}
-	path := config.ExpandPath(storePath)
-	if filepath.IsAbs(path) {
-		return path, nil
-	}
-	return filepath.Join(root, path), nil
+	return workspace.GlobalContextStorePath(root), nil
 }
 
-func repositoryConfigPath(root string, invocation chatInvocation) (string, bool) {
-	configPath := invocation.configPath
-	if configPath == "" {
-		configPath = os.Getenv("MIVIA_CONFIG")
+// storePathCandidates returns the ordered, deduplicated set of config files
+// repositorySessionStorePath consults: the repository file, the explicit
+// pin (invocation.configPath or $MIVIA_CONFIG, absolute-expanded), and the
+// user-level config. A blank or duplicate candidate is dropped so the same
+// file is never read twice.
+func storePathCandidates(root string, invocation chatInvocation) []string {
+	ordered := []string{workspace.NamespacePath(root, "mivia.toml")}
+	pin := invocation.configPath
+	if pin == "" {
+		pin = os.Getenv("MIVIA_CONFIG")
 	}
-	if configPath != "" {
-		path := config.ExpandPath(configPath)
+	if pin != "" {
+		path := config.ExpandPath(pin)
 		if !filepath.IsAbs(path) {
-			absolute, err := filepath.Abs(path)
-			if err != nil {
-				return "", false
+			if absolute, err := filepath.Abs(path); err == nil {
+				path = absolute
 			}
-			path = absolute
 		}
-		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
-			return "", false
-		}
-		return path, true
+		ordered = append(ordered, path)
 	}
-	return config.FirstExisting([]string{
-		workspace.NamespacePath(root, "mivia.toml"),
-		config.UserConfigPath(),
-	})
+	ordered = append(ordered, config.UserConfigPath())
+	seen := make(map[string]bool, len(ordered))
+	out := make([]string, 0, len(ordered))
+	for _, p := range ordered {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
