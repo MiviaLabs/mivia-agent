@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -172,8 +173,32 @@ func sdkMessageToCLI(m sdkshape.Message) provider.Message {
 		ToolCalls:        calls,
 		ToolCallID:       m.ToolCallID,
 		Name:             m.Name,
-		ReasoningContent: m.ReasoningContent,
+		ReasoningContent: reasoningBlocksToContent(m.ReasoningBlocks),
 	}
+}
+
+// reasoningBlocksToContent concatenates the Content of every non-redacted
+// SDK reasoning block, in arrival order, into the CLI's plain-string
+// ReasoningContent. A nil or empty slice yields "".
+func reasoningBlocksToContent(blocks []sdkshape.ReasoningBlock) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Redacted {
+			continue
+		}
+		sb.WriteString(b.Content)
+	}
+	return sb.String()
+}
+
+// reasoningContentToBlocks wraps a non-empty CLI ReasoningContent string in
+// a single SDK ReasoningBlock. An empty string yields a nil slice so an
+// absent reasoning trace round-trips as absent.
+func reasoningContentToBlocks(content string) []sdkshape.ReasoningBlock {
+	if content == "" {
+		return nil
+	}
+	return []sdkshape.ReasoningBlock{{Content: content}}
 }
 
 // sdkToolCallToCLI converts one SDK tool call to the CLI's
@@ -226,12 +251,12 @@ func cliMessageToSDK(m provider.Message) sdkshape.Message {
 		}
 	}
 	return sdkshape.Message{
-		Role:             sdkshape.Role(m.Role),
-		Content:          m.Content,
-		ToolCalls:        calls,
-		ToolCallID:       m.ToolCallID,
-		Name:             m.Name,
-		ReasoningContent: m.ReasoningContent,
+		Role:            sdkshape.Role(m.Role),
+		Content:         m.Content,
+		ToolCalls:       calls,
+		ToolCallID:      m.ToolCallID,
+		Name:            m.Name,
+		ReasoningBlocks: reasoningContentToBlocks(m.ReasoningContent),
 	}
 }
 
@@ -257,10 +282,10 @@ func convertToSDKResponse(r provider.Response) sdkshape.Response {
 	}
 	return sdkshape.Response{
 		Message: sdkshape.Message{
-			Role:             sdkshape.RoleAssistant,
-			Content:          r.Content,
-			ReasoningContent: r.ReasoningContent,
-			ToolCalls:        toolCalls,
+			Role:            sdkshape.RoleAssistant,
+			Content:         r.Content,
+			ReasoningBlocks: reasoningContentToBlocks(r.ReasoningContent),
+			ToolCalls:       toolCalls,
 		},
 		ToolCalls:    toolCalls,
 		FinishReason: r.FinishReason,
