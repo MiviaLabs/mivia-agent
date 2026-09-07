@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextref"
+	sdkref "github.com/MiviaLabs/mivia-ai-sdk/context/ref"
 )
 
 // TestParseCLIFormat parses a "ref:<kind>:<hex>" string and confirms the

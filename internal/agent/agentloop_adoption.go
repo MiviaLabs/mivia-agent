@@ -19,8 +19,8 @@ import (
 	"time"
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
-	sdkcontextbudget "github.com/MiviaLabs/mivia-ai-sdk/contextbudget"
-	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/contextplan"
+	sdkcontextbudget "github.com/MiviaLabs/mivia-ai-sdk/context/budget"
+	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"

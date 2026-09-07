@@ -1,9 +1,13 @@
-# Workflow rules: no big test suites; absolute local SDK replace; shared tree etiquette
+---
+id: workflow_rules_no_big_test_suites_absolute_local_sdk_replace_shared_tree_etiquette_c599e6279a4ba3aa4848f4cb798b67d8
+title: 'Workflow rules: no big test suites; absolute local SDK replace; shared tree etiquette'
+content: 'In mivia-agent, never run package-wide or ./... go test; verify with go build, go vet, and targeted -run tests; keep go.mod''s mivia-ai-sdk replace as an absolute local path; the tree is shared, so stage/commit only your own files by explicit path.'
+importance: high
+tags: [testing, verification, go, git-workflow, user-preference]
+updated: 2026-09-07
+---
 
-scope: project
-verdict: neutral
-tags: testing, verification, go, git-workflow, user-preference
-created: 2026-09-07
+# Workflow rules: no big test suites; absolute local SDK replace; shared tree etiquette
 
 ## Summary
 Mivia-agent repo: user forbids running large test suites (a package-wide go test was canceled); verify with go build, go vet, and targeted -run tests only. go.mod must keep the absolute local replace path for mivia-ai-sdk, and the tree is shared with other agents, so stage/commit only your own files.

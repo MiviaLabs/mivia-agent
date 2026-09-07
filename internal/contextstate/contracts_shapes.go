@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextref"
+	sdkref "github.com/MiviaLabs/mivia-ai-sdk/context/ref"
 	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/x/contextstate"
 )
 
