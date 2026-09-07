@@ -131,6 +131,18 @@ func TestParseProtocolMemoryAdoptsFullyRecognizedBody(t *testing.T) {
 	}
 }
 
+// A bare "# Title" with nothing after it reaches the no-section-found exit:
+// there is no structure to adopt, so the title text must survive as the body.
+func TestParseProtocolMemoryKeepsBareTitleBody(t *testing.T) {
+	e, _, ok := parseProtocolMemory([]byte(protocolFile("# Just a title\n")), ScopeProject)
+	if !ok {
+		t.Fatal("parseProtocolMemory rejected a well-formed protocol file")
+	}
+	if !strings.Contains(e.Why, "Just a title") {
+		t.Fatalf("body lost; Why = %q", e.Why)
+	}
+}
+
 // A "# " title with no sections at all has no structure to adopt: the body
 // must survive as Why, not be replaced by an empty parse.
 func TestParseProtocolMemoryKeepsTitleOnlyBody(t *testing.T) {
