@@ -87,6 +87,20 @@ func TestSessionSyncObservabilityFlow(t *testing.T) {
 		t.Fatalf("writer id = %q, want writer-integration", appendRequest.WriterID)
 	}
 
+	// LastSeq is the FAKE API's signal: it moves when the request lands on
+	// the server, which is strictly before the client reads the response and
+	// records the ack. Sampling telemetry off that signal reads the counters
+	// mid-flight, so wait for the client side to settle before asserting.
+	// The assertions below still own the failure message.
+	settle := time.Now().Add(3 * time.Second)
+	for time.Now().Before(settle) {
+		if snap := telemetry.Snapshot(); snap.Uploaded == 1 && snap.LastAckSeq == 1 &&
+			snap.OutboxDepth == 0 && !snap.LastSuccessAt.IsZero() {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	snapshot := telemetry.Snapshot()
 	if snapshot.Produced != 1 || snapshot.Projected != 1 || snapshot.Appended != 1 || snapshot.Uploaded != 1 {
 		t.Fatalf("unexpected sync telemetry: %+v", snapshot)

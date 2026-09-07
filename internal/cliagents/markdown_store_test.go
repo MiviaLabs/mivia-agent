@@ -45,6 +45,10 @@ func TestMarkdownStoreSaveSearchCountAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +94,10 @@ func TestMarkdownStoreReadOnlyRejectsSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo", ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +147,10 @@ func TestReadOnlySearchRefreshesChangedMarkdownIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: root})
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +209,10 @@ func TestMarkdownStorePromoteCoreAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	defer index.Close()
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
 	if err != nil {
@@ -232,6 +248,10 @@ func TestMarkdownStoreSerializesConcurrentSaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	defer index.Close()
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
 	if err != nil {
@@ -390,6 +410,10 @@ func TestOpenMarkdownStoreRequiresIndexAndProjectID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	defer index.Close()
 	t.Run("nil index", func(t *testing.T) {
 		if _, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, ProjectID: "repo"}); err == nil {
@@ -419,6 +443,10 @@ func TestOpenMarkdownStoreDegradesOnScanFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	defer index.Close()
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: fault, Index: index, ProjectID: "repo", OrgID: "acme"})
 	if err != nil {
@@ -449,6 +477,10 @@ func TestOpenMarkdownStoreSkipsUnconfiguredOrgScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	defer index.Close()
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
 	if err != nil {
@@ -491,6 +523,10 @@ func TestMarkdownStoreRefreshReconcilesDuplicateIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	defer index.Close()
 	store, err := OpenMarkdownStore(context.Background(), MarkdownStoreConfig{Source: source, Index: index, ProjectID: "repo"})
 	if err != nil {

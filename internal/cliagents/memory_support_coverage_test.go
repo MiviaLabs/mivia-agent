@@ -188,6 +188,10 @@ func TestOwnedMarkdownStore_CloseReturnsStoreCloseError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
+	// SQLite.Close is once-guarded, so this safety net is a no-op for a test
+	// that closes the index itself and still releases the file for one that
+	// does not. Windows cannot unlink an open context.db at TempDir cleanup.
+	t.Cleanup(func() { _ = index.Close() })
 	wantErr := errors.New("store close boom")
 	s := &ownedMarkdownStore{Store: erroringMemoryStore{closeErr: wantErr}, index: index}
 	if err := s.Close(); !errors.Is(err, wantErr) {

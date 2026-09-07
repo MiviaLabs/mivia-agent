@@ -572,6 +572,14 @@ func TestMarkdownSourceSaveAtomicWriteError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	// Mode 0500 only refuses a new file where the OS enforces it. Windows
+	// Chmod just toggles FILE_ATTRIBUTE_READONLY, which does not stop
+	// creation inside the directory, so atomicWrite has no failure to hit.
+	if probe, probeErr := os.OpenFile(filepath.Join(dir, "writability-probe"), os.O_CREATE|os.O_WRONLY, 0o600); probeErr == nil {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+		t.Skip("platform still creates files in a read-only directory; atomicWrite cannot fail here")
+	}
 	source, err := NewMarkdownSource(root, "", "")
 	if err != nil {
 		t.Fatal(err)

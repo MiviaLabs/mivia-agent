@@ -408,6 +408,11 @@ func TestGapDeleteRunErrorPropagates(t *testing.T) {
 	seeder.Repo = inner
 	res := gapsStart(t, seeder, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, seeder, res.RunID, workflowledger.RunStatusSucceeded, 15*time.Second)
+	// The terminal status is written before the executor drops its claim, so
+	// the seeder can still hold the run when Delete's cancel runs and the
+	// cancel is refused ("claimed by another executor") long before DeleteRun
+	// is ever reached. Drain the launch so the claim is released first.
+	gapsDrainLaunch(t, seeder, res.RunID)
 	// Point the wrapped engine at the same underlying repository data by
 	// reusing the seeder's repo inside the wrapper.
 	wrapped.Repository = inner
