@@ -234,8 +234,16 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 	// grammar) keeps the prior whole-body-as-Why fallback: Parse would
 	// otherwise misread its first line as a bogus title and silently drop
 	// the rest as unrecognized header lines.
-	if body := strings.TrimSpace(strings.Join(bodyLines, "\n")); strings.HasPrefix(body, "# ") {
-		if parsed, err := Parse([]byte(body)); err == nil && parsed.Title != "" {
+	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	e.Why = body
+	if strings.HasPrefix(body, "# ") {
+		// The structural re-parse is adopted only when it actually recognized
+		// one of the template's sections. A hand-authored body may also open
+		// with a "# " (or "## ") heading while using section names Parse does
+		// not know; Parse drops every unrecognized section, so adopting its
+		// empty result there would discard the body this fallback preserves.
+		if parsed, err := Parse([]byte(body)); err == nil && parsed.Title != "" &&
+			(parsed.Why != "" || parsed.Good != "" || parsed.Bad != "" || parsed.Summary != "" || len(parsed.References) > 0) {
 			if parsed.Summary != "" {
 				e.Summary = parsed.Summary
 			}
@@ -244,8 +252,6 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 			e.Why = parsed.Why
 			e.References = parsed.References
 		}
-	} else {
-		e.Why = body
 	}
 	return e, values["id"], true
 }

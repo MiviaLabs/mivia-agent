@@ -223,6 +223,14 @@ func (e Entry) validateCollections() error {
 		if strings.Contains(tag, ",") {
 			return fmt.Errorf("tag must not contain a comma")
 		}
+		// RenderProtocolFile writes tags into an unquoted YAML flow sequence
+		// ("tags: [a, b]"), and the memories gate (scripts/check_memories.py)
+		// requires each element to be a plain keyword. Refuse the characters
+		// that break either the sequence or the gate's per-tag rule, so a file
+		// this package writes is never rejected downstream.
+		if strings.ContainsAny(tag, ":[]{}") || strings.Contains(tag, " #") {
+			return fmt.Errorf("tag must be a plain keyword without any of : [ ] { } or \" #\"")
+		}
 	}
 	if len(e.References) > maxReferences {
 		return fmt.Errorf("references must have at most %d items", maxReferences)
