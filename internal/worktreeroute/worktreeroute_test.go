@@ -188,6 +188,12 @@ func TestWorkspaceID_FallsBackToFallbackRootWhenCwdVanishes(t *testing.T) {
 	if err := os.Remove(vanishing); err != nil {
 		t.Skipf("platform cannot remove the working directory: %v", err)
 	}
+	// Removing the cwd is not enough on every platform: macOS keeps the
+	// vnode alive, so getcwd still answers and filepath.Abs still succeeds.
+	// Only assert the fallback where the branch is actually reachable.
+	if _, err := filepath.Abs("relative-child"); err == nil {
+		t.Skip("platform still resolves an absolute path from a removed working directory")
+	}
 
 	// With the cwd gone, filepath.Abs fails and the fallback digests the
 	// CLEANED relative input itself; EvalSymlinks cannot resolve either,
