@@ -243,6 +243,54 @@ option.
   from `agentloop_steer.go`'s `fireSteer` through `sdkTurnState` for
   `agentloop_budget.go`'s `refund` to consult.
 
+## 5. Adoption rows (2026-09-07 rollout)
+
+One row per SDK loop knob the host now sets in the adapter
+projection (`agentloop_adoption.go`), each pinned by
+`TestBuildAgentLoopOptions_AdoptionRows`:
+
+- **Usage (+ SessionID)** — the run carries an SDK session
+  accumulator. Only set with a SessionID; the SDK rejects Usage
+  without one. The durable UsageWriter path stays the system of
+  record.
+- **Budget** — a generous runaway bound (64 MiB / 4096 events).
+  Deriving it from MaxContextTokens double-bounded history below the
+  operator's prompt ceiling: the SDK budget counts history bytes
+  while the ceiling counts prompt tokens. The host's context pruning
+  and batch shaping stay the binding budgets.
+- **Bounds.MaxTotalTokens** — the per-run billing ceiling, derived
+  from MaxContextTokens.
+- **Bounds.MaxConsecutiveToolFailures** — a hard stop at the same
+  count the reminder path's failure-spiral breaker fires at;
+  `handleSDKRunError` maps the sentinel onto the loop-breaker
+  vocabulary.
+- **Tracer** — every SDK-path run gets a span tracer parked on the
+  turn state for the chatsync/session sink. New host capability.
+- **Audit** — the SDK loop's Audit hook feeds a `sdkloop-` JSONL
+  stream in the operator audit directory, next to (not replacing) the
+  completer-seam wire dump; the dump needs the effective post-merge
+  request, which the SDK audit record does not carry.
+- **HeartbeatInterval + Bus** — a 15s cadence next to the bridged
+  bus; both SDK tick kinds bridge onto the legacy EventHeartbeat
+  "working" surface.
+
+### Rows deliberately not adopted
+
+- **DedupWithinTurn** — the SDK dedups same-(name, arguments) pairs
+  within a run, which contradicts the host's fresh-execution
+  contract for same-batch read twins and cross-step re-issues
+  (`TestLoopReadToolAlwaysExecutesFreshAcrossSteps`). The host keeps
+  its delivery-level dedup.
+- **Conclude** — the host's wrap-up budget already rides
+  ContinueOnStop; a Conclude nudge changed pinned stop semantics
+  (bounded turns concluded instead of stopping no_tool_calls) and
+  displaced the host summary injection as the last history message.
+- **Window/Summarizer/Calibrated** — blocked on upgrading the SDK
+  dependency past v0.3.0, whose provider has no production
+  TokenEstimator, and on migrating `summary_inject` wholesale: the
+  host still injects its own summaries on the SDK path, so enabling
+  the triple today would double-summarize.
+
 ## See also
 
 - `internal/agent/agentloop_adapter.go` — the mapping code itself.
