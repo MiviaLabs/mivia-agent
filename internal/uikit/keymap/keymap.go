@@ -171,17 +171,18 @@ const (
 	IDForceSend ID = "force-send"
 
 	// Session tabs navigation.
-	IDTabPrev ID = "tab-prev"
-	IDTabNext ID = "tab-next"
-	IDTab1    ID = "tab-1"
-	IDTab2    ID = "tab-2"
-	IDTab3    ID = "tab-3"
-	IDTab4    ID = "tab-4"
-	IDTab5    ID = "tab-5"
-	IDTab6    ID = "tab-6"
-	IDTab7    ID = "tab-7"
-	IDTab8    ID = "tab-8"
-	IDTab9    ID = "tab-9"
+	IDTabPrev  ID = "tab-prev"
+	IDTabNext  ID = "tab-next"
+	IDTabClose ID = "tab-close"
+	IDTab1     ID = "tab-1"
+	IDTab2     ID = "tab-2"
+	IDTab3     ID = "tab-3"
+	IDTab4     ID = "tab-4"
+	IDTab5     ID = "tab-5"
+	IDTab6     ID = "tab-6"
+	IDTab7     ID = "tab-7"
+	IDTab8     ID = "tab-8"
+	IDTab9     ID = "tab-9"
 )
 
 // Binding is one row of the table.
@@ -228,6 +229,7 @@ func Default() []Binding {
 		{ID: IDBlackboardDialog, Context: ContextGlobal, Keys: []string{"f3"}, Help: "blackboard & agent messages", Short: "blackboard"},
 		{ID: IDTabPrev, Context: ContextGlobal, Keys: []string{"f6"}, Help: "switch to previous session tab", Short: "tab-prev"},
 		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"f7"}, Help: "switch to next session tab", Short: "tab-next"},
+		{ID: IDTabClose, Context: ContextGlobal, Keys: []string{"f8"}, Help: "detach current session tab", Short: "tab-close"},
 		{ID: IDTab1, Context: ContextGlobal, Keys: []string{"alt+1"}, Help: "switch to session tab 1", Hidden: true},
 		{ID: IDTab2, Context: ContextGlobal, Keys: []string{"alt+2"}, Help: "switch to session tab 2", Hidden: true},
 		{ID: IDTab3, Context: ContextGlobal, Keys: []string{"alt+3"}, Help: "switch to session tab 3", Hidden: true},

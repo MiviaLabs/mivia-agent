@@ -113,6 +113,39 @@ func (s Screen) switchTabRelative(delta int) (app.Screen, tea.Cmd) {
 	return s.switchToSessionIndex(nextIdx)
 }
 
+func detachTabOrder(order []string, currentID string) ([]string, string, bool) {
+	if len(order) <= 1 {
+		return order, "", false
+	}
+	idx := -1
+	for i, id := range order {
+		if id == currentID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return order, "", false
+	}
+	next := make([]string, 0, len(order)-1)
+	next = append(next, order[:idx]...)
+	next = append(next, order[idx+1:]...)
+	nextIdx := idx
+	if nextIdx >= len(next) {
+		nextIdx = len(next) - 1
+	}
+	return next, next[nextIdx], true
+}
+
+func (s Screen) detachCurrentTab() (app.Screen, tea.Cmd) {
+	order, nextID, ok := detachTabOrder(s.sessionOrder, s.convID())
+	if !ok {
+		return s, nil
+	}
+	s.sessionOrder = order
+	return s.switchToSessionID(nextID)
+}
+
 func (s Screen) tabGlobalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	switch id {
 	case keymap.IDTabPrev:
@@ -120,6 +153,9 @@ func (s Screen) tabGlobalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		return next, cmd, true
 	case keymap.IDTabNext:
 		next, cmd := s.switchTabRelative(1)
+		return next, cmd, true
+	case keymap.IDTabClose:
+		next, cmd := s.detachCurrentTab()
 		return next, cmd, true
 	case keymap.IDTab1:
 		next, cmd := s.switchToSessionIndex(0)
