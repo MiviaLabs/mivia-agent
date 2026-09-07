@@ -1060,6 +1060,14 @@ def test_pre_push_semgrep_engine_resilience() -> None:
 
 
 def main() -> None:
+    # Every fixture here pins the hook's AUTO-DETECT behavior, none tests the
+    # MIVIA_PUSH_VERIFY_BASE/TIP override path itself, so an override left
+    # active in the invoking shell (set to scope a rewritten-history push)
+    # must not leak into subprocess envs built from os.environ.copy() below -
+    # it would silently steer every fixture onto the override branch instead
+    # of the auto-detect logic each one exists to pin.
+    os.environ.pop("MIVIA_PUSH_VERIFY_BASE", None)
+    os.environ.pop("MIVIA_PUSH_VERIFY_TIP", None)
     # Discovery by scan, not by a hand-maintained call list: seven trailer
     # CONTENT tests defined after the __main__ guard silently never ran
     # here. Zero-argument test_ functions run in sorted order; the
