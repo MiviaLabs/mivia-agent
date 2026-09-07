@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -59,6 +60,73 @@ func TestTabReview_TabExactIDPriority(t *testing.T) {
 	s = next.(Screen)
 	if s.convID() != "sess-B" {
 		t.Errorf("out of bounds /tab should remain on sess-B, got %q", s.convID())
+	}
+}
+
+func TestDetachTabOrder(t *testing.T) {
+	tests := []struct {
+		name, current string
+		order, want   []string
+		wantNext      string
+	}{
+		{"middle", "b", []string{"a", "b", "c"}, []string{"a", "c"}, "c"},
+		{"last", "c", []string{"a", "b", "c"}, []string{"a", "b"}, "b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, next, ok := detachTabOrder(tt.order, tt.current)
+			if !ok || next != tt.wantNext || strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("detachTabOrder() = %v, %q, %v; want %v, %q, true", got, next, ok, tt.want, tt.wantNext)
+			}
+		})
+	}
+	if _, _, ok := detachTabOrder([]string{"a"}, "a"); ok {
+		t.Fatal("single visible tab must not detach")
+	}
+	if _, _, ok := detachTabOrder([]string{"a", "b"}, "missing"); ok {
+		t.Fatal("missing current ID must not detach")
+	}
+}
+
+func TestDetachCurrentTabPreservesSession(t *testing.T) {
+	s, _, _, _ := setupTwoSessionScreen(t)
+	s.sessions["sess-A"] = &sessionState{conv: s.conv}
+	s.sessionOrder = []string{"sess-A", "sess-B"}
+	next, _ := s.detachCurrentTab()
+	s = next.(Screen)
+	if got := strings.Join(s.sessionOrder, ","); got != "sess-B" {
+		t.Fatalf("visible tabs after detach = %q, want sess-B", got)
+	}
+	if s.sessions["sess-A"] == nil {
+		t.Fatal("detached session was removed from session state")
+	}
+	if s.convID() != "sess-B" {
+		t.Fatalf("detaching should select the neighboring session, got %q", s.convID())
+	}
+}
+
+func TestDetachCurrentTabKeyAndNoOpPaths(t *testing.T) {
+	s, _, _, _ := setupTwoSessionScreen(t)
+	s.sessions["sess-A"] = &sessionState{conv: s.conv}
+	s.sessionOrder = []string{"sess-A", "sess-B"}
+	next, _, handled := s.globalAction(keymap.IDTabClose)
+	if !handled {
+		t.Fatal("F8 tab-close action was not handled")
+	}
+	if got := next.(Screen).convID(); got != "sess-B" {
+		t.Fatalf("F8 dispatch selected %q, want sess-B", got)
+	}
+
+	single := s
+	single.conv = s.sessions["sess-A"].conv
+	single.sessionOrder = []string{"sess-A"}
+	if next, cmd := single.detachCurrentTab(); cmd != nil || next.(Screen).sessionOrder[0] != "sess-A" {
+		t.Fatal("detaching the only visible tab must be a no-op")
+	}
+	missing := s
+	missing.sessionOrder = []string{"sess-X", "sess-Y"}
+	if next, cmd := missing.detachCurrentTab(); cmd != nil || strings.Join(next.(Screen).sessionOrder, ",") != "sess-X,sess-Y" {
+		t.Fatal("detaching with an unlisted current session must be a no-op")
 	}
 }
 

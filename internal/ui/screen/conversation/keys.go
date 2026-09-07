@@ -410,6 +410,7 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 			return s, nil, false
 		case keymap.IDThemeDialog, keymap.IDOpenPager,
 			keymap.IDTabNext, keymap.IDTabPrev,
+			keymap.IDTabClose,
 			keymap.IDTab1, keymap.IDTab2, keymap.IDTab3,
 			keymap.IDTab4, keymap.IDTab5, keymap.IDTab6,
 			keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
@@ -520,7 +521,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	if s.embedded {
 		switch id {
 		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog, keymap.IDBlackboardDialog,
-			keymap.IDTabPrev, keymap.IDTabNext, keymap.IDTab1, keymap.IDTab2, keymap.IDTab3, keymap.IDTab4, keymap.IDTab5, keymap.IDTab6, keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
+			keymap.IDTabPrev, keymap.IDTabNext, keymap.IDTabClose, keymap.IDTab1, keymap.IDTab2, keymap.IDTab3, keymap.IDTab4, keymap.IDTab5, keymap.IDTab6, keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
 			return s, nil, true
 		}
 	}
