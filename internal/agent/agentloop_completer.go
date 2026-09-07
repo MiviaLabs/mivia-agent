@@ -92,7 +92,10 @@ func (a *agentLoopCompleter) Name() string { return a.cli.Name() }
 // ContextWindow forwards the session's configured context ceiling
 // through the SDK's ContextAccountant capability, so the SDK loop can
 // derive a default Window for every provider the host wraps, not just
-// Anthropic. Zero when the ceiling is unset.
+// Anthropic. Non-zero only when the SDK compaction triple owns the
+// window (sdkContextWindowForwarded): on host-prepared turns the
+// SDK's Window must stay nil, so no ceiling is advertised that could
+// arm a default Window over the host's own per-iteration Trim.
 func (a *agentLoopCompleter) ContextWindow() int { return a.defaults.contextWindow }
 
 // ReasoningEffort forwards the CLI reasoning dial through the SDK's

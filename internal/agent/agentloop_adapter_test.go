@@ -129,6 +129,43 @@ func TestBuildAgentLoopOptions_NoWindowWithPreparationManager(t *testing.T) {
 	}
 }
 
+// TestContextWindowForwardedOnlyOnAdoptedCompaction pins the
+// ContextAccountant forwarder's gate: the ceiling is advertised only
+// when the SDK compaction triple owns the window. A wired
+// PreparationManager must see zero, or the SDK could derive a default
+// Window on top of the host's own per-iteration Trim (Window and Trim
+// are mutually exclusive by contract).
+func TestContextWindowForwardedOnlyOnAdoptedCompaction(t *testing.T) {
+	adopted := Options{MaxContextTokens: 1000, SummaryConfig: SummaryConfig{Summarizer: &contextmgr.Summarizer{}}}
+	if got := sdkContextWindowForwarded(adopted); got != 1000 {
+		t.Fatalf("sdkContextWindowForwarded(adopted) = %d, want 1000", got)
+	}
+	prepared := Options{MaxContextTokens: 1000, PreparationManager: &stubPreparationManager{keep: 3}}
+	if got := sdkContextWindowForwarded(prepared); got != 0 {
+		t.Fatalf("sdkContextWindowForwarded(manager-wired) = %d, want 0: the SDK's Window must stay nil on host-prepared turns", got)
+	}
+	bare := Options{MaxContextTokens: 1000}
+	if got := sdkContextWindowForwarded(bare); got != 0 {
+		t.Fatalf("sdkContextWindowForwarded(no summarizer) = %d, want 0", got)
+	}
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, _, err := buildAgentLoopOptions(l, Options{
+		Model:              "m",
+		MaxContextTokens:   1000,
+		PreparationManager: &stubPreparationManager{keep: 3},
+	}, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	ca, ok := got.Completer.(interface{ ContextWindow() int })
+	if !ok {
+		t.Fatal("completer lost the ContextAccountant capability")
+	}
+	if w := ca.ContextWindow(); w != 0 {
+		t.Fatalf("ContextWindow = %d on a host-prepared turn; want 0 so the SDK derives no default Window over the host Trim", w)
+	}
+}
+
 // TestAgentLoopCompleterEstimateTokens pins the TokenEstimator
 // adapter the SDK compaction trigger depends on (EnableCompaction
 // fails closed without one): EstimateTokens converts the SDK request

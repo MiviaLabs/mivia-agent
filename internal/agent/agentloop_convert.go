@@ -24,9 +24,10 @@ type turnRequestDefaults struct {
 	// turn. mergeTurnDefaults applies it only when the request is still
 	// non-streaming, so a live streaming turn always wins.
 	streamTransport bool
-	// contextWindow is the session's configured context ceiling,
-	// forwarded through the wrapper's ContextWindow so the SDK loop's
-	// default-Window derivation works for every provider.
+	// contextWindow is the ceiling the completer advertises through
+	// the SDK's ContextAccountant, gated on the SDK compaction triple
+	// owning the window (sdkContextWindowForwarded); zero on
+	// host-prepared turns so the SDK derives no default Window.
 	contextWindow int
 }
 

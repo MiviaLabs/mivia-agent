@@ -155,6 +155,20 @@ func sdkCompactionAdopted(opts Options) bool {
 		opts.PreparationManager == nil
 }
 
+// sdkContextWindowForwarded reports the context ceiling the completer
+// advertises through the SDK's ContextAccountant. Non-zero only when
+// the SDK compaction triple owns the window: on every other turn the
+// host contract keeps the SDK's Window nil (host-side preparation or
+// prompt-budget preflight owns compaction), and advertising a ceiling
+// there could let the SDK derive a default Window on top of the
+// host's own per-iteration Trim.
+func sdkContextWindowForwarded(opts Options) int {
+	if !sdkCompactionAdopted(opts) {
+		return 0
+	}
+	return opts.MaxContextTokens
+}
+
 // adoptSDKCompaction wires the SDK's compaction triple. The wrapped
 // completer implements provider.TokenEstimator (EstimateTokens
 // below), so sdkagentloop.EnableCompaction can size the window from

@@ -209,7 +209,7 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
 		streamTransport:       opts.WireStreamTransport,
-		contextWindow:         opts.MaxContextTokens,
+		contextWindow:         sdkContextWindowForwarded(opts),
 	}, func(finishReason string) { l.LastFinishReason = finishReason }, turn.bumpIteration, onUsage, l.contextAccounting())
 	if err != nil {
 		return nil, err
