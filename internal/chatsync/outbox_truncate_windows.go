@@ -14,6 +14,14 @@ import "os"
 // O_RDWR handle on the same path can do the cut. The append handle keeps
 // writing at end-of-file, so it needs no repositioning afterwards.
 func truncateOutboxFile(f *os.File, size int64) error {
+	// A dead outbox holds a nil events file, and Dead() is exactly that nil
+	// check. (*os.File).Truncate answers ErrInvalid for a nil receiver, so
+	// the POSIX path already returns an error there; reading f.Name() would
+	// panic instead, and the outbox contract is that dead returns an error
+	// and never panics.
+	if f == nil {
+		return os.ErrInvalid
+	}
 	rw, err := os.OpenFile(f.Name(), os.O_RDWR, 0o600)
 	if err != nil {
 		return err

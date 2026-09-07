@@ -51,10 +51,10 @@ func TestParseDiffHunks_DropsSeparatorAndTerminatorEmptyLines(t *testing.T) {
 	}
 }
 
-// A blank line in the middle of a hunk is real content: tools that trim
-// trailing whitespace emit a blank context row without its leading space.
-// The separator drop must keep those.
-func TestParseDiffHunks_KeepsBlankContextInsideHunk(t *testing.T) {
+// A raw empty line in the middle of a hunk is a producer separator and must
+// not become a visible blank diff row. A real blank context line has the
+// unified-diff context marker and is tested separately below.
+func TestParseDiffHunks_DropsEmptySeparatorInsideHunk(t *testing.T) {
 	output := "--- a/g.txt\n" +
 		"+++ b/g.txt\n" +
 		"@@ -1,3 +1,3 @@\n" +
@@ -67,13 +67,27 @@ func TestParseDiffHunks_KeepsBlankContextInsideHunk(t *testing.T) {
 		t.Fatalf("hunks=%d, want 1", len(hunks))
 	}
 	lines := hunks[0].Lines
-	if len(lines) != 3 {
-		t.Fatalf("lines=%d, want 3 (the final newline element must not count): %+v", len(lines), lines)
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d, want 2 (the raw empty separator must not count): %+v", len(lines), lines)
 	}
-	if lines[1].Kind != uievent.DiffLineContext || lines[1].Text != "" {
-		t.Fatalf("mid-hunk blank context lost: %+v", lines)
+	if lines[1].Text != "last" {
+		t.Fatalf("last line = %q, want %q", lines[1].Text, "last")
 	}
-	if lines[2].Text != "last" {
-		t.Fatalf("last line = %q, want %q", lines[2].Text, "last")
+}
+
+func TestParseDiffHunks_KeepsExplicitBlankContextInsideHunk(t *testing.T) {
+	output := "--- a/g.txt\n" +
+		"+++ b/g.txt\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" first\n" +
+		" \n" +
+		" last"
+
+	hunks, _, _, _ := parseDiffHunks(output)
+	if len(hunks) != 1 || len(hunks[0].Lines) != 3 {
+		t.Fatalf("explicit blank context was not preserved: %+v", hunks)
+	}
+	if hunks[0].Lines[1].Kind != uievent.DiffLineContext || hunks[0].Lines[1].Text != "" {
+		t.Fatalf("explicit blank context changed: %+v", hunks[0].Lines)
 	}
 }
