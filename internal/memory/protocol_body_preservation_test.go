@@ -131,6 +131,34 @@ func TestParseProtocolMemoryAdoptsFullyRecognizedBody(t *testing.T) {
 	}
 }
 
+// A "# " title with no sections at all has no structure to adopt: the body
+// must survive as Why, not be replaced by an empty parse.
+func TestParseProtocolMemoryKeepsTitleOnlyBody(t *testing.T) {
+	body := "# Just a title\n\nsome prose with no headings at all\n"
+
+	e, _, ok := parseProtocolMemory([]byte(protocolFile(body)), ScopeProject)
+	if !ok {
+		t.Fatal("parseProtocolMemory rejected a well-formed protocol file")
+	}
+	if !strings.Contains(e.Why, "some prose") {
+		t.Fatalf("body lost; Why = %q", e.Why)
+	}
+}
+
+// A body whose "# " line carries no title text cannot be parsed structurally
+// (Parse returns an empty Entry), so the raw body must be kept.
+func TestParseProtocolMemoryKeepsUntitledBody(t *testing.T) {
+	body := "#  \n\n## Why\nbecause\n"
+
+	e, _, ok := parseProtocolMemory([]byte(protocolFile(body)), ScopeProject)
+	if !ok {
+		t.Fatal("parseProtocolMemory rejected a well-formed protocol file")
+	}
+	if !strings.Contains(e.Why, "because") {
+		t.Fatalf("body lost; Why = %q", e.Why)
+	}
+}
+
 // RenderProtocolFile writes tags into an unquoted YAML flow sequence, so
 // Validate must refuse any tag the repo's own memories gate
 // (scripts/check_memories.py) would reject in that position.

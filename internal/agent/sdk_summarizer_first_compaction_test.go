@@ -157,6 +157,35 @@ func TestCompactionTokensReportWholePromptScale(t *testing.T) {
 	}
 }
 
+// The compaction estimates must carry the loop's rolling calibration, the
+// same correction contextmgr's planner applies, or the two paths' numbers are
+// not comparable even once both price the whole prompt.
+func TestCompactionTokensAppliesLoopCalibration(t *testing.T) {
+	raw := func() int {
+		a, l := newUnseededAdapterFixture(t, fullSummaryProvider{})
+		if _, err := a.Summarize(context.Background(), sdkTestMessages()); err != nil {
+			t.Fatalf("Summarize: %v", err)
+		}
+		return l.sdkPendingCompaction.beforeTokens
+	}()
+
+	a, l := newUnseededAdapterFixture(t, fullSummaryProvider{})
+	// A provider that bills twice the estimate: the calibrator's ratio must
+	// scale the reported compaction numbers by the same factor.
+	l.Calibration.Update(100, 200)
+	if l.Calibration.Samples == 0 {
+		t.Fatal("calibration fixture did not record a sample")
+	}
+	if _, err := a.Summarize(context.Background(), sdkTestMessages()); err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	got := l.sdkPendingCompaction.beforeTokens
+	if got <= raw {
+		t.Fatalf("beforeTokens = %d with a %.2f calibration ratio, want more than the uncalibrated %d",
+			got, l.Calibration.Ratio, raw)
+	}
+}
+
 // The adapter is what knows the compaction's real sizes, so it must park them
 // on the pending outcome for confirmSDKCompaction to ground.
 func TestSDKSummarizerRecordsTokenCountsOnPendingOutcome(t *testing.T) {

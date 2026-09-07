@@ -214,16 +214,13 @@ func (a *sdkSummarizerAdapter) compactionTokens(cliDropped, cliPrior []provider.
 // applyLoopCalibration scales a raw estimate by the loop's rolling
 // estimate/actual ratio, mirroring contextmgr's applyCalibration so the SDK
 // path's numbers land on the same scale the PreparationManager path reports.
-// A loop with no samples yet has no correction to apply.
+// A loop with no samples yet has no correction to apply. Both operands are
+// non-negative past the guard, so the product needs no further clamping.
 func applyLoopCalibration(l *Loop, estimate int) int {
 	if l.Calibration.Samples <= 0 || l.Calibration.Ratio <= 0 {
 		return estimate
 	}
-	scaled := int(float64(estimate) * l.Calibration.Ratio)
-	if scaled < 0 {
-		return estimate
-	}
-	return scaled
+	return int(float64(estimate) * l.Calibration.Ratio)
 }
 
 // summarizeWithOneRetry runs the governed summarizer and retries once
