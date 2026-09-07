@@ -1108,6 +1108,29 @@ process exited moments later. Reproduced live against a real staging session
 surfaced together while dogfooding), then pinned by
 `TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping`.
 
+**Second instance.** `internal/cliworkflow/workflow_resume_lock.go`'s
+`acquireWorkflowExecutionLockBounded` races a contended
+`AcquireWorkflowExecutionLock` attempt (blocking up to ~1s inside a
+non-context-aware flock retry loop) against `ctx.Done()`. When ctx wins, the
+function returns immediately - correct, so a cancelled caller is never kept
+waiting - but spawns a goroutine to drain the abandoned attempt and release
+the lock if it eventually succeeds, so a cancelled caller never leaks a held
+lock either. Nothing let a caller wait for THAT goroutine, though: it can
+still be opening/closing files inside the lock store's directory after the
+caller (a test using `t.TempDir()`) has already returned and `t.TempDir()`'s
+own `RemoveAll` cleanup has run, intermittently failing with "directory not
+empty" under full-suite load (the volume-scale trigger here is concurrent
+package execution, not event count). Same mechanism as the `events.Bus` case
+above with the roles reversed: there the unseen upstream layer was a queue
+feeding a drain; here it is a goroutine racing a teardown. Fixed by
+`drainAbandonedLockAttempts`, a `sync.WaitGroup` a caller that owns the lock
+store directory's lifetime can wait on before tearing it down - the
+upstream-layer synchronization primitive DC-30's probe calls for, this time a
+`Wait` rather than a `Flush`. Pinned by
+`TestAcquireWorkflowExecutionLockBoundedDrainsAbandonedAttemptBeforeCleanup`,
+which forces the abandoned attempt to block on a real channel (not scheduler
+timing) so the proof is deterministic.
+
 **Probes.**
 - For every teardown call (`Stop`, `Close`, `Shutdown`) that follows a
   non-blocking handoff (`Publish`, a buffered channel send, a queue push),
