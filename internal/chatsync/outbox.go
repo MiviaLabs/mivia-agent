@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -114,7 +113,7 @@ func acquireLock(dir string) (*os.File, error) {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 
-	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockOutboxFile(lf); err != nil {
 		_ = lf.Close()
 		return nil, ErrOutboxLocked
 	}
@@ -123,7 +122,7 @@ func acquireLock(dir string) (*os.File, error) {
 
 func releaseLock(lf *os.File) {
 	if lf != nil {
-		_ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+		unlockOutboxFile(lf)
 		_ = lf.Close()
 	}
 }
