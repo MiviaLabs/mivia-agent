@@ -333,6 +333,20 @@ func (s *sdkTurnState) shapeCounter() *turnShapeCounter {
 	return s.shape
 }
 
+// bumpIteration is the completer's per-Chat callback (the onChat
+// seam): it counts the iteration and resets the turn-shaping ordering
+// gate on the one seam that runs once per iteration whether or not a
+// Bus is installed. The bus's EventIterationStart handler is the
+// wrong home for the reset: headless runs (no OnEvent/EventBus/
+// FinalWriter) install no Bus, and a missed reset carried iteration
+// 1's nextIndex high-water mark into later iterations, so their
+// results shaped in completion order instead of call-index order and
+// chargeAndAdvance skipped its broadcasts.
+func (s *sdkTurnState) bumpIteration() {
+	s.steps.Add(1)
+	s.resetIterationShaping()
+}
+
 // resetIterationShaping resets nextIndex at the top of each iteration.
 // A new broadcast channel is installed so the previous one - which the
 // now-completed waiters drained - does not leak as a permanently-open

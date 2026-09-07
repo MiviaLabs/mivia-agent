@@ -115,9 +115,6 @@ func adoptSDKTracer(out *sdkagentloop.Options, turn *sdkTurnState) {
 // loop or the workflow layer.
 const sdkHeartbeatInterval = 15 * time.Second
 
-// sdkConcludeMargin is how close to the iteration bound the SDK loop
-// starts nudging the model toward a final answer, and
-// sdkConcludeDeadline is the wall-clock term for turns that name one.
 // adoptSDKAudit feeds the SDK loop's structured per-call audit
 // records into the operator's audit-dump sink when it is enabled. It
 // deliberately does NOT replace the completer-seam wire dump: the SDK
@@ -173,9 +170,8 @@ func adoptSDKCompaction(out *sdkagentloop.Options, completer sdkshape.Completer,
 		Reserve:    opts.MaxContextTokens / 5,
 		Compaction: sdkplan.Compaction{TriggerPercent: 80, TargetPercent: 50},
 	}
-	if window.Reserve < 0 {
-		window.Reserve = 0
-	}
+	// Reserve = MaxContextTokens/5 is non-negative by construction
+	// (MaxContextTokens > 0 is sdkCompactionAdopted's first gate).
 	return sdkagentloop.EnableCompaction(out, completer, window, 0.25)
 }
 
@@ -204,7 +200,7 @@ func sdkRepeatedToolFailureError(res sdkagentloop.Result) error {
 	if res.Stop != sdkagentloop.StopRepeatedToolFailures {
 		return nil
 	}
-	return fmt.Errorf("agent: turn stopped by the failure spiral bound after %d iterations; last model text kept in history",
+	return fmt.Errorf("agent: turn stopped by the failure spiral bound after %d iterations; last model text kept in history; see the failure-spiral reminders above each failing turn",
 		res.Iterations)
 }
 

@@ -85,21 +85,31 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// and the legacy tool_start/tool_end wire shape (sdk_tool_events.go).
 	sdkOpts.OnToolCallError = sdkToolCallErrorReporter(opts, turn)
 	sdkOpts.Hooks = sdkToolEventHooks(opts, turn)
-	if opts.OnEvent != nil || opts.EventBus != nil || opts.FinalWriter != nil {
-		// The SDK (since mivia-ai-sdk commit c207575) fires the four
-		// lifecycle names whenever Bus is non-nil; the heartbeat ticks
-		// gate separately on HeartbeatInterval, which stays zero here
-		// because the CLI surface drops tick events by design.
-		sdkOpts.Bus = bridgeAgentLoopEvents(opts, turn)
-		// The heartbeat row rides the bus install: a positive
-		// HeartbeatInterval without a Bus fails the SDK's Validate.
-		adoptSDKHeartbeat(&sdkOpts)
-	}
+	installSDKEventBridge(&sdkOpts, opts, turn)
 	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage
 	// row the legacy loop writes; an Audit bridge would duplicate it.
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
 	return finishAgentLoopTurn(ctx, l, opts, turn, res, msgs, err)
+}
+
+// installSDKEventBridge wires the event surface onto the built SDK
+// options: whenever any observer is wired (OnEvent, EventBus, or
+// FinalWriter) the run gets the bridged Bus and - riding the same
+// install, because a positive HeartbeatInterval without a Bus fails
+// the SDK's Validate - the heartbeat row (adoptSDKHeartbeat). A run
+// with no observer installs neither; the Bus exists only to feed
+// those surfaces. Named seam so the adoption-row test can pin the
+// Bus/HeartbeatInterval coupling directly.
+func installSDKEventBridge(sdkOpts *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
+	if opts.OnEvent == nil && opts.EventBus == nil && opts.FinalWriter == nil {
+		return
+	}
+	// The SDK (since mivia-ai-sdk commit c207575) fires the four
+	// lifecycle names whenever Bus is non-nil; the heartbeat ticks
+	// gate separately on the adopted HeartbeatInterval.
+	sdkOpts.Bus = bridgeAgentLoopEvents(opts, turn)
+	adoptSDKHeartbeat(sdkOpts)
 }
 
 // ensureSDKDispatcher installs a scoped runtime dispatcher over the
@@ -173,14 +183,12 @@ func sdkErrIsInterrupted(ctx context.Context, err error) bool {
 // dispatcher writes them back so an errored turn keeps its partial history.
 func handleSDKRunError(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
 	recordSDKCanceledStreamPartial(ctx, l, turn, err)
-	// The SDK's consecutive-failure bound is the hard-stop counterpart
-	// of the host reminder path's failure-spiral breaker (both trip at
-	// sdkFailureSpiralBound). Re-word the sentinel so the operator sees
-	// the loop-breaker vocabulary the legacy path used, not a bare
-	// SDK error.
-	if errors.Is(err, sdkagentloop.ErrMaxConsecutiveToolFailures) {
-		err = fmt.Errorf("%w; see the failure-spiral reminders above each failing turn", err)
-	}
+	// The failure-spiral bound's runtime surface is the graceful
+	// StopRepeatedToolFailures stop (converted to a failed turn by
+	// sdkRepeatedToolFailureError in finishAgentLoopTurn); the
+	// ErrMaxConsecutiveToolFailures sentinel is only Validate's
+	// negative-bound rejection, unreachable with the adopted positive
+	// bound, so there is nothing to re-word here.
 	return res, err
 }
 
@@ -199,7 +207,7 @@ func handleSDKRunError(ctx context.Context, l *Loop, opts Options, turn *sdkTurn
 // validation guard for the persistence-side half of this fix).
 const maxEmptyResponseRetries = 2
 
-// signal bridge on one built SDK loop and drives RunSteerable.
+// runSDKSteerable installs the steer-signal bridge on one built SDK loop and drives RunSteerable.
 func runSDKSteerable(ctx context.Context, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState) (sdkagentloop.Result, error) {
 	steer := sdkagentloop.NewSteer()
 	// BeforeStep carrier (plan 54, blocker 2 of the SDK convergence):
@@ -383,7 +391,7 @@ func RunAgentLoop(ctx context.Context, l *Loop, opts Options) (sdkagentloop.Resu
 // authoritative on the wire (the SDK's 5-field schema is never
 // reached). A nil PreparationManager returns the loop's history
 // unchanged. See docs/development/sdk-backend-field-mapping.md for
-// the full rationale.
-// Compile-time check: SDK's Completer type is reachable from the
-// adapter package through the same alias the bridge package uses.
-var _ sdkshape.Completer
+// the full rationale. The former trailing var _ sdkshape.Completer
+// declaration was a no-op (a nil interface variable satisfies it) and
+// has been removed; the real compile-time assertion lives in
+// agentloop_completer.go.

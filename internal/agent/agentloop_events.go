@@ -103,9 +103,11 @@ func bridgeAgentLoopEvents(opts Options, turn *sdkTurnState) *sdkevents.Bus {
 		// stream-revoke gate the first PointPreTool of the next
 		// iteration arms (the revoke moved off the bus handler;
 		// PointPreTool fires before the queued tool_start, the
-		// legacy ordering).
+		// legacy ordering). The per-iteration shaping-gate reset
+		// does NOT live here: headless runs install no Bus, so it
+		// rides the completer's per-Chat bump instead
+		// (newSDKTurnCompleter's onChat).
 		turn.resetStreamRevoke()
-		turn.resetIterationShaping()
 		emit(opts, Event{Kind: EventStep, Detail: e.Data})
 		return nil
 	})

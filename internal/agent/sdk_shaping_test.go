@@ -88,10 +88,14 @@ func TestSDKTurnShapingKeepsToolsOffered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sdkOpts.Bounds == (sdkagentloop.Bounds{}) {
-		t.Fatal("Bounds zero; host shaping must still project the iteration bounds")
+	if sdkOpts.Bounds.MaxConsecutiveToolFailures != sdkFailureSpiralBound {
+		t.Fatalf("Bounds.MaxConsecutiveToolFailures = %d, want the failure-spiral bound %d",
+			sdkOpts.Bounds.MaxConsecutiveToolFailures, sdkFailureSpiralBound)
 	}
-	defs, _, err := sdkagentloop.Definitions(sdkOpts.Tools, nil)
+	if sdkOpts.Bounds.MaxTotalTokens != 0 {
+		t.Fatalf("Bounds.MaxTotalTokens = %d, want 0: the SDK bound re-bills history per iteration and must stay unset under host shaping", sdkOpts.Bounds.MaxTotalTokens)
+	}
+	defs, err := sdkagentloop.Definitions(sdkOpts.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

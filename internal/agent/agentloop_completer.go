@@ -18,6 +18,7 @@ import (
 	"errors"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
@@ -87,6 +88,24 @@ func newAgentLoopCompleterWithDefaults(c provider.Completer, defaults turnReques
 // CLI completer so the SDK loop's Name()-keyed lookups match the
 // CLI runtime's own naming.
 func (a *agentLoopCompleter) Name() string { return a.cli.Name() }
+
+// ContextWindow forwards the session's configured context ceiling
+// through the SDK's ContextAccountant capability, so the SDK loop can
+// derive a default Window for every provider the host wraps, not just
+// Anthropic. Zero when the ceiling is unset.
+func (a *agentLoopCompleter) ContextWindow() int { return a.defaults.contextWindow }
+
+// ReasoningEffort forwards the CLI reasoning dial through the SDK's
+// ReasoningPolicy capability, mapped onto the SDK effort vocabulary.
+// Levels with no SDK equivalent report no default, leaving the SDK
+// request empty exactly as the legacy path sends it.
+func (a *agentLoopCompleter) ReasoningEffort() string {
+	effort, ok := sdkadapter.LevelToReasoningEffort(a.defaults.reasoning.Level)
+	if !ok {
+		return ""
+	}
+	return string(effort)
+}
 
 // Chat implements provider.Completer. It calls the CLI's ChatTurn
 // (the only path that surfaces tool calls) and falls back to Chat

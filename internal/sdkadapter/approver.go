@@ -204,3 +204,15 @@ func (a *approvalGatedToolAdapter) denied(ctx context.Context, reason string) (s
 	}
 	return sdktools.Out{Value: fmt.Sprintf("tool call denied by user: %s", reason)}, nil
 }
+
+// MaxResultBytes and Privileged forward the inner tool's declared
+// budget and privilege marker, so the approval wrapper never masks
+// the capabilities the loop's shaping and scope checks read.
+func (a *approvalGatedToolAdapter) MaxResultBytes() int {
+	n, _ := sdktools.ResultBudgetOf(a.inner)
+	return n
+}
+
+func (a *approvalGatedToolAdapter) Privileged() bool {
+	return sdktools.IsPrivileged(a.inner)
+}

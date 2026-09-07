@@ -294,7 +294,7 @@ func TestRefOnlyShimKeepsToolInSDKDefinitions(t *testing.T) {
 	if _, err := st.DecodeArguments([]byte(`{}`)); err != nil {
 		t.Fatalf("shim DecodeArguments: %v", err)
 	}
-	defs, _, err := sdkagentloop.Definitions(sdkReg, nil)
+	defs, err := sdkagentloop.Definitions(sdkReg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

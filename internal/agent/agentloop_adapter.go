@@ -58,8 +58,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 		opts.OnToolCancelReady(turn.cancelCall)
 	}
 	// Item 8: WorkLimits token reservations ride the SDK's WorkBudget
-	// hook over the loop's workLimitMeter, with the legacy outputCap
-	// clamp on Options.MaxTokens.
+	// hook over the loop's workLimitMeter (legacy outputCap clamp).
 	budgetHook, clampedMaxTokens, err := newSDKWorkBudgetHook(l, opts)
 	if err != nil {
 		return sdkagentloop.Options{}, nil, err
@@ -92,15 +91,14 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's
-	// the SDK's result-budget field stays unset because its semantics (omit the
+	// result-budget field stays unset because its semantics (omit the
 	// over-budget result) contradict the CLI's degrade-with-notice
 	// contract. The negative derived-budget mode has no SDK analogue
 	// and was rejected above.
 	// WorkLimits.MaxTurns clamps MaxIterations, mirroring the legacy
 	// clamp at loop.go's runOnceLegacy (see applySDKStepBound).
 	applySDKStepBound(&out, opts)
-	// Stop-time continuations ride the SDK's own ContinueOnStop hook;
-	// see installSDKContinueOnStop.
+	// Stop-time continuations ride the SDK's ContinueOnStop hook.
 	installSDKContinueOnStop(l, &out, opts, turn, turnUserText)
 	// MaxToolCalls rides the ToolBudget bridge (agentloop_toolbudget.go),
 	// sharing l.workLimits with the WorkBudget bridge above.
@@ -122,10 +120,12 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 		out.Surface = bridgeSDKBridgeSurface(l, opts, turn)
 	}
 	// WatchdogInterval deliberately does NOT map to
-	// HeartbeatInterval: a positive HeartbeatInterval requires a Bus
-	// the CLI path does not wire, and Validate would reject the
-	// options. The watchdog's steer-latency role is carried by the
-	// MailboxPending poller in the steer bridge instead.
+	// HeartbeatInterval: the heartbeat row is adopted only where an
+	// event surface is wired (RunAgentLoopOnce's
+	// installSDKEventBridge), because a positive HeartbeatInterval
+	// without a Bus fails the SDK's Validate. The watchdog's
+	// steer-latency role is carried by the MailboxPending poller in
+	// the steer bridge instead.
 	return out, turn, nil
 }
 
@@ -209,7 +209,8 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
 		streamTransport:       opts.WireStreamTransport,
-	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage, l.contextAccounting())
+		contextWindow:         opts.MaxContextTokens,
+	}, func(finishReason string) { l.LastFinishReason = finishReason }, turn.bumpIteration, onUsage, l.contextAccounting())
 	if err != nil {
 		return nil, err
 	}

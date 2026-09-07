@@ -114,6 +114,18 @@ func (a *admissionCheckedToolAdapter) Name() string { return a.cliName }
 // and Go interface wrappers silently strip optional interfaces, so
 // every wrapper layer forwards explicitly; a profile-less inner yields
 // the zero profile ("undeclared": the registry default applies).
+// MaxResultBytes and Privileged forward the inner adapter's
+// declared budget and privilege marker, so the wrappers never mask
+// the capabilities the loop's shaping and scope checks read.
+func (a *admissionCheckedToolAdapter) MaxResultBytes() int {
+	n, _ := sdktools.ResultBudgetOf(a.inner)
+	return n
+}
+
+func (a *admissionCheckedToolAdapter) Privileged() bool {
+	return sdktools.IsPrivileged(a.inner)
+}
+
 func (a *admissionCheckedToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
 	return sdktools.ExecutionProfileOf(a.inner)
 }
@@ -291,6 +303,33 @@ type sdkToolAdapter struct {
 var _ sdktools.Tool = (*sdkToolAdapter)(nil)
 var _ sdktools.SchemaTool = (*sdkToolAdapter)(nil)
 var _ sdktools.ProfiledTool = (*sdkToolAdapter)(nil)
+
+// MaxResultBytes forwards the CLI tool's declared result budget
+// through the SDK's ResultBudgetTool capability: the Capability's
+// MaxResultBytes when the tool is CapableTool, else its
+// ResultBudgetBytes when it implements the host budget interface.
+// Zero means unbounded, so the SDK loop's per-call shaping only
+// binds tools that declared a bound host-side.
+func (s *sdkToolAdapter) MaxResultBytes() int {
+	if capable, ok := s.cli.(tools.CapableTool); ok {
+		if n := capable.Capability(nil).MaxResultBytes; n > 0 {
+			return n
+		}
+	}
+	if budgeted, ok := s.cli.(tools.ResultBudgetTool); ok {
+		return budgeted.ResultBudgetBytes()
+	}
+	return 0
+}
+
+// Privileged forwards the CLI tool's session-control privilege
+// marker through the SDK's PrivilegedTool capability, so a wired
+// SDK Scope enforces the same explicit-allowlisting rule the host
+// registry enforces for privileged tools.
+func (s *sdkToolAdapter) Privileged() bool {
+	_, privileged := s.cli.(tools.PrivilegedTool)
+	return privileged
+}
 
 // ExecutionProfile publishes the CLI tool's Capability as the SDK
 // ExecutionProfile, so the SDK's run-timeout backstop honors a

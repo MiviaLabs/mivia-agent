@@ -308,3 +308,48 @@ func TestRelaxTopLevelAdditionalPropertiesRemoveKeyAndMarshal(t *testing.T) {
 		t.Fatalf("other keys lost during relax: %s", got)
 	}
 }
+
+// capablePrivilegedCLITool declares a result budget through its
+// Capability and the host privilege marker, the two host surfaces the
+// adapter must forward onto the SDK's ResultBudgetTool and
+// PrivilegedTool capabilities.
+type capablePrivilegedCLITool struct {
+	fakeCLITool
+}
+
+func (f *capablePrivilegedCLITool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionWrite, MaxResultBytes: 512}
+}
+
+func (f *capablePrivilegedCLITool) Privileged() {}
+
+// TestConvertToolRegistryForwardsBudgetAndPrivilege pins the
+// conversion: the SDK adapter publishes the CLI tool's result budget
+// and privilege marker, and the admission wrapper forwards both.
+func TestConvertToolRegistryForwardsBudgetAndPrivilege(t *testing.T) {
+	reg := tools.NewRegistry()
+	tool := &capablePrivilegedCLITool{fakeCLITool: fakeCLITool{name: "writer"}}
+	reg.Register(tool)
+	sdkReg, err := ConvertToolRegistry(reg)
+	if err != nil {
+		t.Fatalf("ConvertToolRegistry: %v", err)
+	}
+	got, ok := sdkReg.Get("writer")
+	if !ok {
+		t.Fatal("writer missing from the converted registry")
+	}
+	if n, ok := sdktools.ResultBudgetOf(got); !ok || n != 512 {
+		t.Fatalf("ResultBudgetOf = %d, %v; want 512, true", n, ok)
+	}
+	if !sdktools.IsPrivileged(got) {
+		t.Fatal("privilege marker lost in conversion")
+	}
+	// Through the admission wrapper the same facts must survive.
+	wrapped := WrapToolWithAdmission(got, tool, AdmissionPredicates{})
+	if n, ok := sdktools.ResultBudgetOf(wrapped); !ok || n != 512 {
+		t.Fatalf("wrapped ResultBudgetOf = %d, %v; want 512, true", n, ok)
+	}
+	if !sdktools.IsPrivileged(wrapped) {
+		t.Fatal("privilege marker lost under the admission wrapper")
+	}
+}

@@ -9,11 +9,15 @@
 // one shared counter, and each result is shaped with the legacy
 // shapeOne tiers against the bytes remaining in the turn.
 //
-// The SDK runs tool calls sequentially within a turn, so charging in
-// call order is equivalent to the legacy batch-level allocation: at
-// most one result straddles the boundary and pays the degrade floor.
-// The D8 per-batch status line has no sequential analogue and is
-// omitted; each degrade still carries its own honest notice, and a
+// The SDK may dispatch a turn's tool calls in parallel
+// (Bounds.MaxConcurrentTools > 1), so the wrapper orders shaping by
+// call index (waitForOrderingSlot / waitForDispatchedPredecessors):
+// no result shapes until its predecessors have charged. That restores
+// the legacy batch-level allocation - at most one result straddles
+// the boundary and pays the degrade floor - deterministically, so
+// identical batches produce identical kept-bytes splits. The D8
+// per-batch status line has no turn-level analogue and is omitted;
+// each degrade still carries its own honest notice, and a
 // content-free heartbeat row is emitted per degraded result.
 //
 // The wrapper runs OUTSIDE the ref-only shim, so a ref-only notice

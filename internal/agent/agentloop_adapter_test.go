@@ -58,6 +58,105 @@ func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 	}
 }
 
+// TestInstallSDKEventBridge_HeartbeatRidesBus pins the heartbeat
+// adoption row's coupling: the 15s interval installs only next to the
+// bridged Bus (a positive HeartbeatInterval without a Bus fails the
+// SDK's Validate), and a run with no observer gets neither.
+func TestInstallSDKEventBridge_HeartbeatRidesBus(t *testing.T) {
+	turn := newSDKTurnState()
+	wired := sdkagentloop.Options{}
+	installSDKEventBridge(&wired, Options{OnEvent: func(Event) {}}, turn)
+	if wired.Bus == nil {
+		t.Fatal("Bus = nil with OnEvent wired; the event bridge must install")
+	}
+	if wired.HeartbeatInterval != sdkHeartbeatInterval {
+		t.Fatalf("HeartbeatInterval = %s, want %s", wired.HeartbeatInterval, sdkHeartbeatInterval)
+	}
+	headless := sdkagentloop.Options{}
+	installSDKEventBridge(&headless, Options{}, turn)
+	if headless.Bus != nil || headless.HeartbeatInterval != 0 {
+		t.Fatalf("headless run got Bus=%v HeartbeatInterval=%s; want neither",
+			headless.Bus, headless.HeartbeatInterval)
+	}
+}
+
+// TestApplySDKTrimStandsDownOnAdoptedCompaction pins the Trim row:
+// when the SDK compaction triple owns the window (ceiling +
+// summarizer, no PreparationManager) the host Trim stands down - the
+// SDK's Window and Trim are mutually exclusive - and installs in
+// every other case.
+func TestApplySDKTrimStandsDownOnAdoptedCompaction(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	turn := newSDKTurnState()
+	adopted := Options{
+		Model:            "m",
+		MaxContextTokens: 1000,
+		SummaryConfig:    SummaryConfig{Summarizer: &contextmgr.Summarizer{}},
+	}
+	var out sdkagentloop.Options
+	applySDKTrim(l, adopted, turn, &out)
+	if out.Trim != nil {
+		t.Fatal("Trim installed although SDK compaction is adopted; Window and Trim are mutually exclusive")
+	}
+	unadopted := Options{
+		Model:              "m",
+		MaxContextTokens:   1000,
+		PreparationManager: &stubPreparationManager{keep: 3},
+	}
+	applySDKTrim(l, unadopted, turn, &out)
+	if out.Trim == nil {
+		t.Fatal("Trim not installed although compaction is not adopted (no summarizer)")
+	}
+}
+
+// TestBuildAgentLoopOptions_NoWindowWithPreparationManager pins the
+// compaction row's negative case: a wired PreparationManager disables
+// the SDK compaction triple even with a ceiling and a summarizer, so
+// the SDK's Window stays nil.
+func TestBuildAgentLoopOptions_NoWindowWithPreparationManager(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, _, err := buildAgentLoopOptions(l, Options{
+		Model:              "m",
+		MaxContextTokens:   1000,
+		SummaryConfig:      SummaryConfig{Summarizer: &contextmgr.Summarizer{}},
+		PreparationManager: &stubPreparationManager{keep: 3},
+	}, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.Window != nil {
+		t.Fatal("Window set although a PreparationManager is wired; the SDK triple must stay off")
+	}
+}
+
+// TestAgentLoopCompleterEstimateTokens pins the TokenEstimator
+// adapter the SDK compaction trigger depends on (EnableCompaction
+// fails closed without one): EstimateTokens converts the SDK request
+// back to the CLI shape and returns exactly the host estimator's
+// number, and a nil completer fails closed instead of panicking.
+func TestAgentLoopCompleterEstimateTokens(t *testing.T) {
+	c, err := newAgentLoopCompleterWithDefaults(&fakeCompleter{name: "test"}, turnRequestDefaults{}, nil, nil, nil, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)
+	}
+	req := sdkshape.Request{Messages: []sdkshape.Message{{Role: sdkshape.RoleUser, Content: "estimate me"}}}
+	got, err := c.EstimateTokens(req)
+	if err != nil {
+		t.Fatalf("EstimateTokens: %v", err)
+	}
+	want, err := provider.EstimatePromptCost(sdkMessagesToCLI(req.Messages), sdkToolDefsToCLI(req.Tools), c.ctxProfile)
+	if err != nil {
+		t.Fatalf("EstimatePromptCost: %v", err)
+	}
+	if got != want {
+		t.Fatalf("EstimateTokens = %d, want the host estimator's %d", got, want)
+	}
+	var nilC *agentLoopCompleter
+	if _, err := nilC.EstimateTokens(req); err == nil {
+		t.Fatal("nil completer EstimateTokens returned nil error; want fail-closed")
+	}
+}
+
 // TestRunAgentLoop_FailsOnNilCompleter locks the fail-closed path:
 // RunAgentLoop delegates to RunAgentLoopOnce with a zero Loop, whose
 // nil Completer is rejected by the wrapper constructor before the
