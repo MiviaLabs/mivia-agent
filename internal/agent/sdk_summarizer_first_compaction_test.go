@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -113,6 +114,46 @@ func TestConfirmSDKCompactionCarriesTokenCounts(t *testing.T) {
 	}
 	if l.turnBeforeTokens != 900 || l.turnAfterTokens != 400 {
 		t.Fatalf("turn counters = %d -> %d, want 900 -> 400", l.turnBeforeTokens, l.turnAfterTokens)
+	}
+}
+
+// BeforeTokens/AfterTokens are shared fields: on non-adopted turns the
+// PreparationManager fills them with WHOLE-PROMPT, calibrated,
+// schema-inclusive numbers (contextmgr/planner.go), and EmitCompaction's
+// banner plus the durable usage record read them without knowing which path
+// produced them. Pricing only the dropped subset here would report e.g.
+// "90000 -> 1200" for a context that actually went 180k -> 96k.
+func TestCompactionTokensReportWholePromptScale(t *testing.T) {
+	a, l := newUnseededAdapterFixture(t, fullSummaryProvider{})
+	// A retained history far larger than the dropped set: whole-prompt
+	// numbers must dominate, and the delta must equal the compaction's saving.
+	retained := make([]provider.Message, 0, 40)
+	for i := 0; i < 40; i++ {
+		retained = append(retained, provider.Message{
+			Role:    provider.RoleAssistant,
+			Content: strings.Repeat("retained context that stays in the prompt ", 20),
+		})
+	}
+	l.Messages = append([]provider.Message{{Role: provider.RoleUser, Content: "the user's objective"}}, retained...)
+	retainedCost := provider.EstimateMessagesPromptCost(l.Messages, 0, l.contextAccounting())
+
+	if _, err := a.Summarize(context.Background(), sdkTestMessages()); err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	pending := l.sdkPendingCompaction
+	if pending == nil {
+		t.Fatal("no pending outcome recorded")
+	}
+	if pending.beforeTokens < retainedCost {
+		t.Fatalf("beforeTokens = %d, want at least the retained history cost %d: the fields carry whole-prompt totals, not the dropped subset",
+			pending.beforeTokens, retainedCost)
+	}
+	if pending.afterTokens < retainedCost {
+		t.Fatalf("afterTokens = %d, want at least the retained history cost %d: the retained prompt survives the compaction",
+			pending.afterTokens, retainedCost)
+	}
+	if pending.afterTokens > pending.beforeTokens {
+		t.Fatalf("afterTokens %d > beforeTokens %d", pending.afterTokens, pending.beforeTokens)
 	}
 }
 

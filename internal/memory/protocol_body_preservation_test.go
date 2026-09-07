@@ -72,6 +72,65 @@ func TestParseProtocolMemoryRoundTripsTemplateBody(t *testing.T) {
 	}
 }
 
+// protocolFile wraps a body in the minimal protocol frontmatter.
+func protocolFile(body string) string {
+	return "---\nid: partial\ntitle: 'Partial'\ncontent: 'Summary line.'\nimportance: high\nupdated: 2026-01-02\ntags: [ops]\nx-verdict: good\n---\n\n" + body
+}
+
+// A body that mixes ONE recognized template section with unrecognized
+// sections and free text is still hand-authored: the structural parse cannot
+// account for it, so adopting the parse would silently drop everything it
+// does not recognize. Only a body the parser fully accounts for may be
+// adopted.
+func TestParseProtocolMemoryKeepsPartialTemplateBody(t *testing.T) {
+	body := "# Incident\n\nnote: capture this\n\n## Why\nbecause\n\n## Follow-ups\n- email Bob\n"
+
+	e, _, ok := parseProtocolMemory([]byte(protocolFile(body)), ScopeProject)
+	if !ok {
+		t.Fatal("parseProtocolMemory rejected a well-formed protocol file")
+	}
+	for _, want := range []string{"capture this", "Follow-ups", "email Bob", "because"} {
+		if !strings.Contains(e.Why, want) {
+			t.Fatalf("body text %q lost; Why = %q", want, e.Why)
+		}
+	}
+}
+
+// The regression this must never reproduce: a body with a recognized section
+// but no "## Why" had Why overwritten with the parse's empty Why, losing the
+// body outright - strictly worse than the pre-fix behavior.
+func TestParseProtocolMemoryNeverBlanksWhy(t *testing.T) {
+	body := "# T\n\n## What worked\nstuff\n\n## Notes\nkeep me\n"
+
+	e, _, ok := parseProtocolMemory([]byte(protocolFile(body)), ScopeProject)
+	if !ok {
+		t.Fatal("parseProtocolMemory rejected a well-formed protocol file")
+	}
+	if e.Why == "" {
+		t.Fatal("Why was blanked by the structural re-parse; the body is lost")
+	}
+	if !strings.Contains(e.Why, "keep me") || !strings.Contains(e.Why, "stuff") {
+		t.Fatalf("body text lost; Why = %q", e.Why)
+	}
+}
+
+// A body made ENTIRELY of recognized sections is fully accounted for, so it
+// still round-trips into the dedicated fields and must not collapse into Why.
+func TestParseProtocolMemoryAdoptsFullyRecognizedBody(t *testing.T) {
+	body := "# T\n\n## Summary\nsum\n\n## What worked\ngood\n\n## Why\nbecause\n"
+
+	e, _, ok := parseProtocolMemory([]byte(protocolFile(body)), ScopeProject)
+	if !ok {
+		t.Fatal("parseProtocolMemory rejected a well-formed protocol file")
+	}
+	if e.Why != "because" {
+		t.Fatalf("Why = %q, want the parsed section", e.Why)
+	}
+	if e.Good != "good" {
+		t.Fatalf("Good = %q, want the parsed section", e.Good)
+	}
+}
+
 // RenderProtocolFile writes tags into an unquoted YAML flow sequence, so
 // Validate must refuse any tag the repo's own memories gate
 // (scripts/check_memories.py) would reject in that position.

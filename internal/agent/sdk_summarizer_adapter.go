@@ -161,32 +161,69 @@ func (a *sdkSummarizerAdapter) summarySourceRange() contextstate.SourceRange {
 	return contextstate.SourceRange{Start: id, End: id}
 }
 
-// compactionTokens prices one compaction: what the dropped turns (plus any
-// held-aside prior summary they replace) cost, against what remains in their
-// place afterwards - the rendered summary alone, or nothing when the drop was
-// unsummarized. It uses the host's own message accounting with the loop's
-// calibrated profile, the same semantics the PreparationManager path reports,
-// so an adopted turn's compaction event and durable usage record carry real
-// numbers instead of zeros.
+// compactionTokens prices one compaction the way the PreparationManager path
+// prices its own: as WHOLE-PROMPT totals, before and after.
 //
-// EstimateMessagesPromptCost is the total form of EstimatePromptCost: the
-// only failure the latter has is marshaling tool schemas, and a compaction
-// prices messages alone, so there is no error to handle here.
+// before is the loop's current history (everything the prompt carries at the
+// moment the SDK decided to compact); after is that same history with the
+// dropped turns and any held-aside prior summary removed and the rendered
+// summary put in their place. The delta is the compaction's saving, and both
+// absolutes are on the scale EmitCompaction's banner and the durable usage
+// record already report for non-adopted turns - these are shared
+// Preparation fields, and no consumer knows which path filled them. Pricing
+// the dropped subset alone would report "90000 -> 1200" for a prompt that
+// actually went 180k -> 96k.
+//
+// The loop's calibration ratio is applied for the same reason the planner
+// applies it (contextmgr/planner.go), so estimates from the two paths are
+// directly comparable. EstimateMessagesPromptCost is the total form of
+// EstimatePromptCost: its only failure is marshaling tool schemas, and this
+// prices messages alone, so there is no error to handle.
 func (a *sdkSummarizerAdapter) compactionTokens(cliDropped, cliPrior []provider.Message, replacement provider.Message) (before, after int) {
 	profile := a.l.contextAccounting()
-	source := append(append([]provider.Message(nil), cliPrior...), cliDropped...)
-	before = provider.EstimateMessagesPromptCost(source, 0, profile)
-	if replacement.Content == "" {
-		return before, 0
+	history := a.l.Messages
+	before = provider.EstimateMessagesPromptCost(history, 0, profile)
+
+	// Remove what this compaction drops, then add back what it injects.
+	removed := provider.EstimateMessagesPromptCost(append(append([]provider.Message(nil), cliPrior...), cliDropped...), 0, profile)
+	// EstimateMessagesPromptCost charges a fixed request frame on top of the
+	// per-message cost; subtracting a second full estimate would subtract that
+	// frame twice, so discount it once.
+	frame := provider.EstimateMessagesPromptCost(nil, 0, profile)
+	afterEstimate := before - (removed - frame)
+	if replacement.Content != "" {
+		afterEstimate += provider.EstimateMessagesPromptCost([]provider.Message{replacement}, 0, profile) - frame
 	}
-	after = provider.EstimateMessagesPromptCost([]provider.Message{replacement}, 0, profile)
-	if after > before {
+	if afterEstimate < frame {
+		// The dropped set is not a subset of this history (the SDK holds its
+		// own message slice), so the subtraction under-ran. Report the frame
+		// floor rather than a negative or nonsensical total.
+		afterEstimate = frame
+	}
+	if afterEstimate > before {
 		// A "compaction" that grew the prompt is not one; report the
 		// conservative no-shrink shape rather than an event
 		// NewCompactionEvent would reject for After > Before.
-		after = before
+		afterEstimate = before
 	}
+	before = applyLoopCalibration(a.l, before)
+	after = applyLoopCalibration(a.l, afterEstimate)
 	return before, after
+}
+
+// applyLoopCalibration scales a raw estimate by the loop's rolling
+// estimate/actual ratio, mirroring contextmgr's applyCalibration so the SDK
+// path's numbers land on the same scale the PreparationManager path reports.
+// A loop with no samples yet has no correction to apply.
+func applyLoopCalibration(l *Loop, estimate int) int {
+	if l.Calibration.Samples <= 0 || l.Calibration.Ratio <= 0 {
+		return estimate
+	}
+	scaled := int(float64(estimate) * l.Calibration.Ratio)
+	if scaled < 0 {
+		return estimate
+	}
+	return scaled
 }
 
 // summarizeWithOneRetry runs the governed summarizer and retries once

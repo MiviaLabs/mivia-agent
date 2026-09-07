@@ -236,24 +236,67 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 	// the rest as unrecognized header lines.
 	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
 	e.Why = body
-	if strings.HasPrefix(body, "# ") {
-		// The structural re-parse is adopted only when it actually recognized
-		// one of the template's sections. A hand-authored body may also open
-		// with a "# " (or "## ") heading while using section names Parse does
-		// not know; Parse drops every unrecognized section, so adopting its
-		// empty result there would discard the body this fallback preserves.
-		if parsed, err := Parse([]byte(body)); err == nil && parsed.Title != "" &&
-			(parsed.Why != "" || parsed.Good != "" || parsed.Bad != "" || parsed.Summary != "" || len(parsed.References) > 0) {
-			if parsed.Summary != "" {
-				e.Summary = parsed.Summary
-			}
-			e.Good = parsed.Good
-			e.Bad = parsed.Bad
-			e.Why = parsed.Why
-			e.References = parsed.References
+	if parsed, ok := parseFullyAccountedBody(body); ok {
+		if parsed.Summary != "" {
+			e.Summary = parsed.Summary
 		}
+		e.Good = parsed.Good
+		e.Bad = parsed.Bad
+		e.Why = parsed.Why
+		e.References = parsed.References
 	}
 	return e, values["id"], true
+}
+
+// parseFullyAccountedBody re-parses a protocol body structurally and reports
+// whether the parse ACCOUNTS FOR ALL OF IT: a "# " title followed only by
+// sections Parse understands (Summary / What worked / What did not work /
+// Why / References), with no free text outside them.
+//
+// Partial recognition is not enough to adopt. Parse silently drops every
+// unrecognized section and every non-header line before the first section, so
+// a hand-authored body carrying one "## Why" among its own headings would
+// come back stripped of everything else - and a body with a recognized
+// section but no "## Why" would come back with Why empty, losing the body
+// entirely. Both are worse than keeping the raw body, so anything the parser
+// cannot fully account for keeps the whole-body-as-Why fallback.
+func parseFullyAccountedBody(body string) (Entry, bool) {
+	if !strings.HasPrefix(body, "# ") {
+		return Entry{}, false
+	}
+	parsed, err := Parse([]byte(body))
+	if err != nil || parsed.Title == "" {
+		return Entry{}, false
+	}
+	// Walk the body the way Parse does and reject anything it would discard:
+	// a heading it does not assign, or prose sitting outside every section.
+	lines := strings.Split(body, "\n")
+	inSection := false
+	for _, raw := range lines[1:] {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if heading, found := strings.CutPrefix(trimmed, "## "); found {
+			switch strings.ToLower(strings.TrimSpace(heading)) {
+			case "summary", "what worked", "what did not work", "why", "references":
+				inSection = true
+				continue
+			default:
+				return Entry{}, false
+			}
+		}
+		if !inSection {
+			// Free text between the title and the first section: Parse reads
+			// it as header "key: value" lines and drops the rest.
+			return Entry{}, false
+		}
+	}
+	// A title with no recognized section at all carries no structure to adopt.
+	if !inSection {
+		return Entry{}, false
+	}
+	return parsed, true
 }
 
 // Delete removes one file under a configured memory root.
