@@ -124,7 +124,7 @@ func TestBuildAgentLoopOptions_NoWindowWithPreparationManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
-	if got.Window != nil {
+	if got.Compaction.Window != nil {
 		t.Fatal("Window set although a PreparationManager is wired; the SDK triple must stay off")
 	}
 }
@@ -318,16 +318,16 @@ func TestBuildAgentLoopOptions_SDKCompactionAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
-	if got.Window == nil {
+	if got.Compaction.Window == nil {
 		t.Fatal("Window = nil, want the SDK compaction window")
 	}
-	if got.Window.MaxTokens != 10000 || got.Window.Reserve != 2000 {
-		t.Fatalf("Window = %+v, want MaxTokens 10000 and Reserve 2000", got.Window)
+	if got.Compaction.Window.MaxTokens != 10000 || got.Compaction.Window.Reserve != 2000 {
+		t.Fatalf("Window = %+v, want MaxTokens 10000 and Reserve 2000", got.Compaction.Window)
 	}
-	if got.Summarizer == nil {
+	if got.Compaction.Summarizer == nil {
 		t.Fatal("Summarizer = nil, want the SDK summarizer over the wrapped completer")
 	}
-	if got.Calibrated == nil {
+	if got.Compaction.Calibrated == nil {
 		t.Fatal("Calibrated = nil, want the calibrated estimator")
 	}
 	if got.Trim != nil {
@@ -345,10 +345,10 @@ func TestBuildAgentLoopOptions_SDKCompactionNeedsSummarizer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
-	if got.Window != nil {
+	if got.Compaction.Window != nil {
 		t.Fatal("Window set without a wired summarizer; SDK compaction cannot adopt")
 	}
-	if got.Summarizer != nil || got.Calibrated != nil {
+	if got.Compaction.Summarizer != nil || got.Compaction.Calibrated != nil {
 		t.Fatal("triple partially wired without adoption")
 	}
 }

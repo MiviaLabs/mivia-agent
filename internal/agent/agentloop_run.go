@@ -83,7 +83,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// Legacy not-in-registry denial (agentloop_tool_error.go; the
 	// reporter records a failed outcome for its synthesized denials)
 	// and the legacy tool_start/tool_end wire shape (sdk_tool_events.go).
-	sdkOpts.OnToolCallError = sdkToolCallErrorReporter(opts, turn)
+	sdkExtensions(&sdkOpts).OnToolCallError = sdkToolCallErrorReporter(opts, turn)
 	sdkOpts.Hooks = sdkToolEventHooks(opts, turn)
 	installSDKEventBridge(&sdkOpts, opts, turn)
 	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)

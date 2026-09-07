@@ -103,10 +103,10 @@ func buildAndRotate(t *testing.T, opts Options, fix *rotatedSurfaceFixture, rota
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
-	if sdkOpts.Surface == nil {
+	if sdkOpts.Extensions.Surface == nil {
 		t.Fatal("bridged Surface hook not installed")
 	}
-	rotated := sdkOpts.Surface()
+	rotated := sdkOpts.Extensions.Surface()
 	if err := turn.bridgeError(); err != nil {
 		t.Fatalf("surface rotation recorded bridge error: %v", err)
 	}

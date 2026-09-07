@@ -36,6 +36,19 @@ func unsupportedSDKOption(field string) error {
 	return fmt.Errorf("agent: SDK backend does not support Options.%s", field)
 }
 
+// sdkExtensions returns out.Extensions, allocating it on first use. The
+// SDK's Options/Extensions split (agentloop.Options.Extensions) moved
+// OnToolCallError, Surface, StreamingWriter, WorkBudget, ToolBudget, and
+// ContinueOnStop off Options itself; a nil Extensions means every member
+// at its zero value, so lazily allocating here changes nothing the SDK's
+// own Validate observes.
+func sdkExtensions(out *sdkagentloop.Options) *sdkagentloop.Extensions {
+	if out.Extensions == nil {
+		out.Extensions = &sdkagentloop.Extensions{}
+	}
+	return out.Extensions
+}
+
 // buildAgentLoopOptions projects a Loop and CLI Options onto the
 // SDK's agentloop.Options. Completer and Tools come from the Loop;
 // the remaining mapped fields come from Options. Every unsupported
@@ -102,8 +115,8 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	installSDKContinueOnStop(l, &out, opts, turn, turnUserText)
 	// MaxToolCalls rides the ToolBudget bridge (agentloop_toolbudget.go),
 	// sharing l.workLimits with the WorkBudget bridge above.
-	out.WorkBudget = budgetHook
-	out.ToolBudget = newSDKToolBudget(l)
+	sdkExtensions(&out).WorkBudget = budgetHook
+	sdkExtensions(&out).ToolBudget = newSDKToolBudget(l)
 	// Surface rotation: the CLI's per-step Surface hook (legacy
 	// applySurfaceHook) bridges onto the SDK's own Options.Surface,
 	// consulted at the top of every iteration from the second one on -
@@ -117,7 +130,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	// returns nil (keep prior surface); RunAgentLoopOnce fails the run
 	// with the recorded error after RunSteerable returns.
 	if opts.Surface != nil {
-		out.Surface = bridgeSDKBridgeSurface(l, opts, turn)
+		sdkExtensions(&out).Surface = bridgeSDKBridgeSurface(l, opts, turn)
 	}
 	// WatchdogInterval deliberately does NOT map to
 	// HeartbeatInterval: the heartbeat row is adopted only where an
@@ -158,7 +171,7 @@ func applySDKStepBound(out *sdkagentloop.Options, opts Options) {
 // every completed call of the turn (the deleted replay_step_budget.go's
 // rule, which outlived that file's budget arithmetic).
 func installSDKContinueOnStop(l *Loop, out *sdkagentloop.Options, opts Options, turn *sdkTurnState, turnUserText string) {
-	out.ContinueOnStop = newSDKContinueOnStop(l, *out, opts, turn, turnUserText)
+	sdkExtensions(out).ContinueOnStop = newSDKContinueOnStop(l, *out, opts, turn, turnUserText)
 }
 
 // attachSDKObservability wires the run's live stream tee. The operator wire
@@ -174,7 +187,7 @@ func attachSDKObservability(out *sdkagentloop.Options, opts Options, turn *sdkTu
 func attachSDKStreamingWriter(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
 	if opts.FinalWriter != nil {
 		tw := &teeWriter{w: opts.FinalWriter, opts: opts}
-		out.StreamingWriter = tw
+		sdkExtensions(out).StreamingWriter = tw
 		turn.setStreamTee(tw)
 	}
 }
