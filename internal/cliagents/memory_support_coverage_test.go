@@ -89,6 +89,13 @@ func TestOpenMemoryStoreWithReadOnly_AbsRootFails(t *testing.T) {
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatal(err)
 	}
+	// Removing the cwd is only a proxy for "filepath.Abs now fails", and the
+	// proxy does not hold everywhere: macOS keeps the vnode alive, so getcwd
+	// still answers and Abs still resolves. Probe the property this test
+	// actually depends on and skip where the branch is unreachable.
+	if _, probeErr := filepath.Abs("relative-root"); probeErr == nil {
+		t.Skip("platform still resolves an absolute path from a removed working directory")
+	}
 	_, err = OpenMemoryStoreWithReadOnly("relative-root", config.MemoryConfig{StoreBackend: memory.BackendMarkdown}, false)
 	if err == nil {
 		t.Fatal("OpenMemoryStoreWithReadOnly: expected error when cwd is unresolvable, got nil")
