@@ -9,6 +9,9 @@
 package agent
 
 import (
+	"context"
+	"time"
+
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkcontextbudget "github.com/MiviaLabs/mivia-ai-sdk/contextbudget"
 	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
@@ -33,6 +36,15 @@ func adoptSDKRows(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
 	adoptSDKBudget(out, opts)
 	adoptSDKBounds(out, opts)
 	adoptSDKTracer(out, turn)
+}
+
+// adoptSDKObservabilityRows sets the audit and conclude rows;
+// split from adoptSDKRows to keep both under the function-size
+// budget. The heartbeat row is set by the caller once the events
+// bridge has installed the bus (agentloop_run.go), because a
+// positive HeartbeatInterval without a Bus fails Validate.
+func adoptSDKObservabilityRows(out *sdkagentloop.Options, opts Options) {
+	adoptSDKAudit(out, opts)
 }
 
 // adoptSDKUsage rides the run on the SDK's per-session accumulator,
@@ -86,4 +98,39 @@ func adoptSDKTracer(out *sdkagentloop.Options, turn *sdkTurnState) {
 	t := sdktrace.New()
 	out.Tracer = t
 	turn.setTracer(t)
+}
+
+// sdkHeartbeatInterval is the SDK loop's progress-tick cadence. It
+// matches the controller's durable heartbeat cadence so operator
+// surfaces see one tick rhythm whether the tick came from the SDK
+// loop or the workflow layer.
+const sdkHeartbeatInterval = 15 * time.Second
+
+// sdkConcludeMargin is how close to the iteration bound the SDK loop
+// starts nudging the model toward a final answer, and
+// sdkConcludeDeadline is the wall-clock term for turns that name one.
+// adoptSDKAudit feeds the SDK loop's structured per-call audit
+// records into the operator's audit-dump sink when it is enabled. It
+// deliberately does NOT replace the completer-seam wire dump: the SDK
+// audit record carries the SDK-shaped request, whose reasoning,
+// max_tokens, and temperature fields are merged later inside the
+// completer, so the two sinks answer different questions (see
+// audit_dump.go's package comment).
+func adoptSDKAudit(out *sdkagentloop.Options, opts Options) {
+	dump := newSDKLoopAuditDump(opts.SessionID)
+	if dump == nil {
+		return
+	}
+	out.Audit = func(_ context.Context, rec sdkagentloop.AuditRecord) error {
+		dump(rec)
+		return nil
+	}
+}
+
+// adoptSDKHeartbeat turns on the SDK loop's progress ticks next to
+// the bridged bus; see bridgeAgentLoopEvents for the tick-to-event
+// translation. A positive interval without a Bus fails Validate, so
+// the caller sets this only where it installed the bus.
+func adoptSDKHeartbeat(out *sdkagentloop.Options) {
+	out.HeartbeatInterval = sdkHeartbeatInterval
 }

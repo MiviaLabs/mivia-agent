@@ -91,6 +91,9 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		// gate separately on HeartbeatInterval, which stays zero here
 		// because the CLI surface drops tick events by design.
 		sdkOpts.Bus = bridgeAgentLoopEvents(opts, turn)
+		// The heartbeat row rides the bus install: a positive
+		// HeartbeatInterval without a Bus fails the SDK's Validate.
+		adoptSDKHeartbeat(&sdkOpts)
 	}
 	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage

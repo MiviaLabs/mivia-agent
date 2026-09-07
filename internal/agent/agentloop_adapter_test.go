@@ -127,6 +127,24 @@ func TestBuildAgentLoopOptions_AdoptionRows(t *testing.T) {
 	if turn.tracer != got.Tracer {
 		t.Fatal("turn state did not park the run tracer")
 	}
+	if got.Audit != nil {
+		t.Fatal("Audit set without the operator audit directory; it must stay inert")
+	}
+}
+
+// TestBuildAgentLoopOptions_AdoptionRowsAuditSink locks the audit
+// row: with the operator audit directory named, the SDK loop's Audit
+// hook feeds the sdkloop JSONL sink.
+func TestBuildAgentLoopOptions_AdoptionRowsAuditSink(t *testing.T) {
+	t.Setenv(EnvProviderAuditDir, t.TempDir())
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, _, err := buildAgentLoopOptions(l, Options{SessionID: "sess-audit"}, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.Audit == nil {
+		t.Fatal("Audit = nil with an audit directory named; the SDK loop audit row did not adopt")
+	}
 }
 
 // TestBuildAgentLoopOptions_AdoptionRowsBlankSession locks the guard:

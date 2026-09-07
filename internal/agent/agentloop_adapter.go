@@ -88,6 +88,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 		SessionID: opts.SessionID,
 	}
 	adoptSDKRows(&out, opts, turn)
+	adoptSDKObservabilityRows(&out, opts)
 	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's

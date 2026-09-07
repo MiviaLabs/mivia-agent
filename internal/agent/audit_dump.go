@@ -29,6 +29,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
 // EnvProviderAuditDir names a directory that receives one JSONL file per
@@ -337,4 +338,36 @@ func auditDumpText(s string) string {
 		return s
 	}
 	return s[:auditDumpFieldCap] + fmt.Sprintf("…[truncated, %d bytes total]", len(s))
+}
+
+// sdkLoopAuditDump is one SDK-loop audit record serialized into the
+// same operator directory the provider wire dump uses, under a
+// sibling file name so the two streams stay greppable apart.
+type sdkLoopAuditDump func(rec sdkagentloop.AuditRecord)
+
+// newSDKLoopAuditDump returns the SDK-loop audit recorder for one
+// run, or nil when the operator never named an audit directory. See
+// EnvProviderAuditDump and EnvProviderAuditDir; the SDK loop's own
+// Audit hook feeds this sink (agentloop_adoption.go), which records
+// the SDK-shaped per-call outcome the completer-seam wire dump
+// deliberately does not.
+func newSDKLoopAuditDump(sessionID string) sdkLoopAuditDump {
+	dir := strings.TrimSpace(os.Getenv(EnvProviderAuditDir))
+	if dir == "" {
+		return nil
+	}
+	path := filepath.Join(dir, "sdkloop-"+auditDumpFileName(sessionID))
+	return func(audit sdkagentloop.AuditRecord) {
+		if auditDumpDisabled.Load() {
+			return
+		}
+		entry := auditDumpEntry{
+			SessionID: sessionID,
+			Iteration: audit.Iteration,
+		}
+		if err := appendAuditDump(dir, path, entry); err != nil {
+			auditDumpDisabled.Store(true)
+			log.Printf("agent: sdk loop audit dump disabled for this process: %v", err)
+		}
+	}
 }
