@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -681,7 +681,7 @@ func TestDispatchTasksSameToolCallIDDedupesRetry(t *testing.T) {
 	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"wait":"run"}`)
 	callCtx := func() context.Context {
 		base := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session"})
-		return toolcallctx.WithToolCall(base, provider.ToolCall{ID: "call_retry_1", Name: ToolDispatchTasks})
+		return sdkagentloop.WithToolCall(base, provider.ToolCall{ID: "call_retry_1", Name: ToolDispatchTasks})
 	}
 	first, err := tool.Execute(callCtx(), args)
 	if err != nil {
@@ -717,10 +717,10 @@ func TestDispatchTasksDifferentToolCallIDsDoNotDedupe(t *testing.T) {
 	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
 	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"wait":"run"}`)
 	base := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session"})
-	if _, err := tool.Execute(toolcallctx.WithToolCall(base, provider.ToolCall{ID: "call_a", Name: ToolDispatchTasks}), args); err != nil {
+	if _, err := tool.Execute(sdkagentloop.WithToolCall(base, provider.ToolCall{ID: "call_a", Name: ToolDispatchTasks}), args); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(toolcallctx.WithToolCall(base, provider.ToolCall{ID: "call_b", Name: ToolDispatchTasks}), args); err != nil {
+	if _, err := tool.Execute(sdkagentloop.WithToolCall(base, provider.ToolCall{ID: "call_b", Name: ToolDispatchTasks}), args); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {

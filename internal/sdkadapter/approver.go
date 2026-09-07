@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -17,7 +17,7 @@ import (
 // must carry the id so the UI's approval resolver can match a
 // decision back to the gate that is blocked on it.
 func callIDFromContext(ctx context.Context) string {
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		return tc.ID
 	}
 	return ""

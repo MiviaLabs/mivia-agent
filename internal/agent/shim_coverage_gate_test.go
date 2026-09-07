@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -210,7 +210,7 @@ func TestADuplicateIsClassifiedFromTheOwnersBody(t *testing.T) {
 
 	// Two identical calls in one turn: the second is dedup-served.
 	for _, id := range []string{"call-1", "call-2"} {
-		ctx := toolcallctx.WithToolCall(context.Background(),
+		ctx := sdkagentloop.WithToolCall(context.Background(),
 			sdkshape.ToolCall{ID: id, Name: failing.Name()})
 		if _, err := RunUnadmittedTool(ctx, opts, turn, failing, json.RawMessage(`{}`)); err != nil {
 			t.Fatalf("%s: %v", id, err)

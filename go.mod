@@ -16,6 +16,7 @@ require (
 	git.sr.ht/~jamesponddotco/gitignore-go v1.0.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/MiviaLabs/mivia-ai-sdk v0.3.0
+	github.com/MiviaLabs/mivia-ai-sdk/x v0.0.0-00010101000000-000000000000
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.0
@@ -80,3 +81,5 @@ require (
 // Local development: track the SDK main branch until the compaction
 // adoption cut (production TokenEstimator) lands in a tagged release.
 replace github.com/MiviaLabs/mivia-ai-sdk => /home/mac/projects/mivialabs/mivia-ai-sdk
+
+replace github.com/MiviaLabs/mivia-ai-sdk/x => /home/mac/projects/mivialabs/mivia-ai-sdk/x

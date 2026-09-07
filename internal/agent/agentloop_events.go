@@ -23,7 +23,6 @@ import (
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkevents "github.com/MiviaLabs/mivia-ai-sdk/events"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
@@ -35,7 +34,7 @@ import (
 func bridgeToolCallEnd(opts Options, turn *sdkTurnState, ctx context.Context) {
 	var outcome *toolCallOutcome
 	var callKey, callName string
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		callKey = tc.ID
 		if callKey == "" {
 			callKey = tc.Name

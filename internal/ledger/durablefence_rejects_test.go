@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/durablefence"
+	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/ledger/ledgertest"
 )
 
 // TestStorageLedgerRunClaimRejectsDefectiveScenarios asserts the SDK

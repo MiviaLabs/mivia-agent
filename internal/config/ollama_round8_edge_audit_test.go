@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
 )
 
 func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -27,7 +27,7 @@ func (t *idCapableTool) Capability(json.RawMessage) tools.Capability {
 	return tools.Capability{Class: tools.ExecutionWrite, ResourceKey: "id_tool"}
 }
 func (t *idCapableTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		t.mu.Lock()
 		t.got = tc.ID
 		t.mu.Unlock()
@@ -69,7 +69,7 @@ func TestApprovalPendingEmitsToolCallID(t *testing.T) {
 	if !ok {
 		t.Fatal("id_tool not in sdk reg")
 	}
-	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+	ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{
 		ID: "call-XYZ-7", Name: "id_tool", Index: 0, Arguments: []byte(`{}`),
 	})
 	out, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)})

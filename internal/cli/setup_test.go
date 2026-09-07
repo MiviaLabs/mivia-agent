@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
 )
 
 // runSetupCapture runs setup with controlled IO and returns the summary text.

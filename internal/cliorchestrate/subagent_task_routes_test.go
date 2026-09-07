@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -142,7 +142,7 @@ func TestDispatchTasks_PublishesRouteForEveryTask(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	ctx = runtime.ContextWithCaller(ctx, runtime.Caller{SessionID: "route-publish-session"})
-	ctx = toolcallctx.WithToolCall(ctx, provider.ToolCall{ID: "call_routes_1", Name: ToolDispatchTasks})
+	ctx = sdkagentloop.WithToolCall(ctx, provider.ToolCall{ID: "call_routes_1", Name: ToolDispatchTasks})
 
 	if _, err := tool.Execute(ctx, json.RawMessage(
 		`{"tasks":[{"id":"alpha","agent":"leaf","prompt":"a"},{"id":"beta","agent":"leaf","prompt":"b"}]}`)); err != nil {

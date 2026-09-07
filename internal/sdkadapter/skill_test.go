@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/skills"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/x/skills"
 )
 
 // TestSkillSDKBridgeRoundTrip pins the four-field round-trip: an SDK

@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
 const defaultPendingBuffer = 16
@@ -121,7 +121,7 @@ func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) 
 	// with whatever ID the request carries, so both domains stay
 	// self-consistent.
 	callID := ""
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok && tc.ID != "" {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok && tc.ID != "" {
 		callID = tc.ID
 	}
 	if callID == "" {

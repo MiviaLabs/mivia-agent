@@ -2,7 +2,7 @@ package sdkadapter
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/skills"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/x/skills"
 )
 
 // SDKSkillToCLI converts an SDK-shaped Skill into the CLI's

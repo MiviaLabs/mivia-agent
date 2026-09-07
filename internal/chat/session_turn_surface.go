@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
 // wireStepBoundaryAdmission installs the mid-turn admission publication hook
@@ -190,7 +190,7 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 // "this path has no in-flight SDK call id to match a prompt back to" and that
 // the result was a deny "rather than hang". BOTH claims were false. The SDK
 // stamps the call id into the ctx it hands this handler
-// (toolcallctx.WithToolCall), and uiadapter's gate already keys its waiter off
+// (sdkagentloop.WithToolCall), and uiadapter's gate already keys its waiter off
 // exactly that id - while the missing prompt meant an interactive policy
 // called the gate, blocked on a channel nobody could resolve, and drew
 // nothing until the operator cancelled the turn.
@@ -209,7 +209,7 @@ func (s *Session) decideDeferredApproval(ctx context.Context, tool tools.Tool, n
 	s.mu.Unlock()
 
 	toolCallID := ""
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		toolCallID = tc.ID
 	}
 	if toolCallID == "" || emitPending == nil {

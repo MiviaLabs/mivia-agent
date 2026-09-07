@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -174,8 +174,8 @@ func TestCancelCallDoesNotAbortSiblingCalls(t *testing.T) {
 	slowDone := make(chan outcome, 1)
 	quickDone := make(chan outcome, 1)
 
-	slowCtx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call-slow", Name: slow.Name()})
-	quickCtx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call-quick", Name: "quick-tool"})
+	slowCtx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call-slow", Name: slow.Name()})
+	quickCtx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call-quick", Name: "quick-tool"})
 
 	go func() {
 		out, err := shimSlow.Run(slowCtx, sdktools.InOut{Value: map[string]any{}})
@@ -247,7 +247,7 @@ func TestRunUnadmittedToolSharesTheCancelRegistry(t *testing.T) {
 	turn := newSDKTurnState()
 	opts := Options{Dispatcher: governedDispatcher(t, cliReg), SessionID: "sess-cancel-deferred"}
 
-	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call-deferred", Name: slow.Name()})
+	ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call-deferred", Name: slow.Name()})
 
 	type outcome struct {
 		body string

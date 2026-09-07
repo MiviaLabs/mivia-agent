@@ -31,9 +31,8 @@ import (
 	"errors"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/hooks"
+	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/events"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // toolCallOutcome is one call's recorded execution result: the
@@ -144,15 +143,11 @@ func (s *sdkTurnState) resetStreamRevoke() {
 // legacy "queued" tool_start. Both hooks always allow (observers never
 // veto - the approval and admission gates live elsewhere).
 func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
-	reg := sdkhooks.New()
-	_ = reg.Add(sdkhooks.PointPreTool, "agent.tool-events", func(ctx context.Context, payload any) (bool, error) {
+	reg := sdkhooks.NewRegistry()
+	_ = reg.Add(sdkhooks.PointPreTool, "agent.tool-events", func(_ context.Context, payload any) (bool, error) {
 		call, ok := payload.(sdkshape.ToolCall)
 		if !ok {
-			if tc, hasTC := toolcallctx.ToolCallFromContext(ctx); hasTC {
-				call = tc
-			} else {
-				return true, nil
-			}
+			return true, nil
 		}
 		// Content-then-tools: the first tool call of an iteration
 		// clears the optimistic final-stream tokens, the same

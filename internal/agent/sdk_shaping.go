@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -83,7 +83,7 @@ func (w *turnShapeWrapper) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
 	callKey := toolCallKeyFromContext(ctx, w.toolName)
 	callIndex := -1
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		callIndex = tc.Index
 	}
 	// Counted in flight for the whole call, tool execution included: a later
@@ -146,7 +146,7 @@ const orderingHoleGraceWindow = 250 * time.Millisecond
 // waiter - sync.Cond.Wait has no context awareness and would strand
 // the goroutine indefinitely.
 //
-// With a toolcallctx.BatchOrder on ctx (SDKs that publish the batch's
+// With a sdkagentloop.BatchOrder on ctx (SDKs that publish the batch's
 // dispatch ledger) the wait is EXACT: a dispatched, unsettled
 // predecessor is either running or not yet scheduled - never a
 // permanent hole - so the waiter needs no heuristic at all. Without
@@ -156,7 +156,7 @@ func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex in
 	if callIndex <= 0 {
 		return
 	}
-	if order, ok := toolcallctx.BatchOrderFromContext(ctx); ok {
+	if order, ok := sdkagentloop.BatchOrderFromContext(ctx); ok {
 		w.waitForDispatchedPredecessors(ctx, order, callIndex)
 		return
 	}
@@ -217,7 +217,7 @@ func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex in
 // it on abort). No grace timer: the ledger's settle-exactly-once contract
 // makes "unsettled" mean "still coming", so waiting cannot strand and
 // escaping cannot reorder. Caller must hold counter.mu.
-func (w *turnShapeWrapper) waitForDispatchedPredecessors(ctx context.Context, order *toolcallctx.BatchOrder, callIndex int) {
+func (w *turnShapeWrapper) waitForDispatchedPredecessors(ctx context.Context, order *sdkagentloop.BatchOrder, callIndex int) {
 	outstanding := func() bool {
 		for _, d := range order.Dispatched() {
 			if d >= callIndex {

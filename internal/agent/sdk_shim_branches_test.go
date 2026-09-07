@@ -12,8 +12,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -217,7 +217,7 @@ func TestTurnShapeWrapperReattachesPass1HookContext(t *testing.T) {
 		totalN:      len("body-bytes"),
 		toolName:    "bare_tool",
 	})
-	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call_1", Name: "bare_tool"})
+	ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{ID: "call_1", Name: "bare_tool"})
 	out, err := w.Run(ctx, sdktools.InOut{})
 	if err != nil {
 		t.Fatal(err)

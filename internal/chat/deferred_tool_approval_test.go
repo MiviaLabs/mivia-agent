@@ -15,8 +15,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // The deferred-tool path invokes the runtime dispatcher DIRECTLY, underneath
@@ -360,7 +360,7 @@ func TestAnInteractiveDeferredCallRaisesAPromptTheOperatorCanAnswer(t *testing.T
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ctx = toolcallctx.WithToolCall(ctx, sdkshape.ToolCall{ID: "call-42", Name: "write_file"})
+	ctx = sdkagentloop.WithToolCall(ctx, sdkshape.ToolCall{ID: "call-42", Name: "write_file"})
 
 	done := make(chan agent.UnadmittedToolResult, 1)
 	go func() { done <- opts.UnadmittedToolHandler(ctx, "write_file", json.RawMessage(`{}`)) }()
@@ -437,7 +437,7 @@ func TestADeferredCallWithNoCallIDRefusesInsteadOfBlocking(t *testing.T) {
 // than consults a gate without it, because a prompt keyed to nothing can never
 // be answered - so a test that means to exercise the GATE must supply one.
 func promptableCtx() context.Context {
-	return toolcallctx.WithToolCall(context.Background(),
+	return sdkagentloop.WithToolCall(context.Background(),
 		sdkshape.ToolCall{ID: "call-1", Name: "write_file"})
 }
 

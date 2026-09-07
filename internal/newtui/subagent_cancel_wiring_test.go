@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
@@ -99,7 +99,7 @@ func dispatchOneBlockingTask(t *testing.T) (*uiadapter.SubagentThreads, ledger.L
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	ctx = runtime.ContextWithCaller(ctx, runtime.Caller{SessionID: "cancel-wiring-session"})
-	ctx = toolcallctx.WithToolCall(ctx, provider.ToolCall{ID: "call_wire_1", Name: cliorchestrate.ToolDispatchTasks})
+	ctx = sdkagentloop.WithToolCall(ctx, provider.ToolCall{ID: "call_wire_1", Name: cliorchestrate.ToolDispatchTasks})
 
 	// wait="none" so Execute returns while the task is still running -
 	// the only state in which cancelling it is meaningful.

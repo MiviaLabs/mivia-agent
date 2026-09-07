@@ -28,7 +28,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -280,7 +280,7 @@ func (d *dispatcherShim) dispatcherAndSpool() (*runtime.Dispatcher, *remainder.S
 // toolCallKeyFromContext returns the lookup key for the in-flight tool call:
 // call.ID when non-empty, falling back to call.Name for ID-less test fixtures.
 func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		if tc.ID != "" {
 			return tc.ID
 		}
@@ -428,7 +428,7 @@ func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cl
 	// which pass1Map's own comment names as a leak. take deletes either way,
 	// so this is a no-op when shaping already claimed it.
 	if turn != nil {
-		if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+		if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 			turn.pass1.take(tc.ID, body)
 		}
 	}

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/durablefence"
+	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/ledger/ledgertest"
 )
 
 // TestStorageReleaseHolderPassesDurableFenceChecks wires the durable

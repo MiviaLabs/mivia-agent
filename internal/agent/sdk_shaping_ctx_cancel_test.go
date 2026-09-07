@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -76,12 +76,12 @@ func TestSDKTurnShaping_CtxCancelWakesCondWait(t *testing.T) {
 	}
 	results := make(chan result, 2)
 	go func() {
-		ctx0 := toolcallctx.WithToolCall(ctx, sdkToolCallFor("c0", 0))
+		ctx0 := sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c0", 0))
 		body, err := w0.Run(ctx0, sdktools.InOut{Value: json.RawMessage(`{}`)})
 		results <- result{idx: 0, body: stringFromOut(body), err: err}
 	}()
 	go func() {
-		ctx1 := toolcallctx.WithToolCall(ctx, sdkToolCallFor("c1", 1))
+		ctx1 := sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c1", 1))
 		body, err := w1.Run(ctx1, sdktools.InOut{Value: json.RawMessage(`{}`)})
 		results <- result{idx: 1, body: stringFromOut(body), err: err}
 	}()
@@ -183,11 +183,11 @@ func runResetIterationPair(t *testing.T, counter *turnShapeCounter) []int {
 	defer cancel()
 	done := make(chan int, 2)
 	go func() {
-		_, _ = w0.Run(toolcallctx.WithToolCall(ctx, sdkToolCallFor("c0", 0)), sdktools.InOut{Value: json.RawMessage(`{}`)})
+		_, _ = w0.Run(sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c0", 0)), sdktools.InOut{Value: json.RawMessage(`{}`)})
 		done <- 0
 	}()
 	go func() {
-		_, _ = w1.Run(toolcallctx.WithToolCall(ctx, sdkToolCallFor("c1", 1)), sdktools.InOut{Value: json.RawMessage(`{}`)})
+		_, _ = w1.Run(sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c1", 1)), sdktools.InOut{Value: json.RawMessage(`{}`)})
 		done <- 1
 	}()
 	waitEnter := func(target int32, msg string) {

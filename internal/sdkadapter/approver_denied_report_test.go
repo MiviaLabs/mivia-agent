@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -73,7 +73,7 @@ func runDeniedCase(t *testing.T, pred AdmissionPredicates) (deniedReport, bool) 
 		t.Fatal("deny_tool not in sdk reg")
 	}
 
-	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+	ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{
 		ID: "call-DENY-1", Name: "deny_tool", Index: 0, Arguments: []byte(`{}`),
 	})
 	out, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)})
@@ -165,7 +165,7 @@ func TestAnApprovedCallReportsNoDenial(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrapped, _ := sdkReg.Get("deny_tool")
-	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+	ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{
 		ID: "call-OK-1", Name: "deny_tool", Index: 0, Arguments: []byte(`{}`),
 	})
 	if _, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)}); err != nil {
@@ -206,7 +206,7 @@ func TestADenyPolicyEnforcesItselfWithNoApprover(t *testing.T) {
 		t.Fatal("deny_tool not in sdk reg")
 	}
 
-	ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+	ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{
 		ID: "call-HEADLESS-1", Name: "deny_tool", Index: 0, Arguments: []byte(`{}`),
 	})
 	out, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)})
@@ -283,7 +283,7 @@ func TestEveryNonAutoPolicyBuildsTheApprovalLayer(t *testing.T) {
 			if !ok {
 				t.Fatal("deny_tool not in sdk reg")
 			}
-			ctx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+			ctx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{
 				ID: "call-1", Name: "deny_tool", Index: 0, Arguments: []byte(`{}`),
 			})
 			if _, err := wrapped.Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)}); err != nil {

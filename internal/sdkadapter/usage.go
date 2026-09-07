@@ -11,26 +11,26 @@ package sdkadapter
 
 import (
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
-	sdkusage "github.com/MiviaLabs/mivia-ai-sdk/usage"
 )
 
-// Accumulator re-exports the SDK's per-session usage.Accumulator. See
-// the package doc for why the bridge is a type alias.
-type Accumulator = sdkusage.Accumulator
+// Accumulator re-exports the SDK's per-session provider.Accumulator
+// (folded in from the former usage package). See the package doc for
+// why the bridge is a type alias.
+type Accumulator = provider.Accumulator
 
 // NewAccumulator returns an empty SDK Accumulator ready to record.
-func NewAccumulator() *Accumulator { return sdkusage.New() }
+func NewAccumulator() *Accumulator { return provider.NewAccumulator() }
 
 // WrapCompleter returns a provider.Completer that records every
 // completed Chat turn's usage under sessionID in a.
 func WrapCompleter(sessionID string, a *Accumulator, c provider.Completer) (provider.Completer, error) {
-	return sdkusage.WrapCompleter(sessionID, a, c)
+	return provider.WrapCompleter(sessionID, a, c)
 }
 
 // Re-exported sentinels so CLI callers can errors.Is against
 // sdkadapter.ErrBlankSessionID without an extra SDK import.
 var (
-	ErrBlankSessionID = sdkusage.ErrBlankSessionID
-	ErrNilAccumulator = sdkusage.ErrNilAccumulator
-	ErrNilCompleter   = sdkusage.ErrNilCompleter
+	ErrBlankSessionID = provider.ErrBlankSessionID
+	ErrNilAccumulator = provider.ErrNilAccumulator
+	ErrNilCompleter   = provider.ErrNilUsageCompleter
 )

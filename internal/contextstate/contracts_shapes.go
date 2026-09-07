@@ -6,7 +6,7 @@ import (
 	"time"
 
 	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextref"
-	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
+	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/x/contextstate"
 )
 
 // Shape bounds the SDK pins FOR the transport structs, re-exported so
