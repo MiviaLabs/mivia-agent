@@ -63,9 +63,9 @@
     },
     {
       "file": "internal/cliorchestrate/dispatch.go",
-      "operand": "DispatchOrchestrationSec(t.cfg.DefaultTimeout, args)",
+      "operand": "DispatchOrchestrationSecForWorkers(t.cfg.DefaultTimeout, t.cfg.MaxWorkers, args)",
       "unit": "Second",
-      "reason": "derived from EffectiveTimeoutSec, clamped at MaxTimeoutSeconds; the +15s slack fits under the ceiling by construction"
+      "reason": "derived from EffectiveTimeoutSec, clamped at MaxTimeoutSeconds on every path; the wave multiply carries an overflow guard and the +15s slack re-clamps at the ceiling"
     },
     {
       "file": "internal/cliorchestrate/dispatch.go",
