@@ -9,8 +9,8 @@
     },
     "internal/agent/agentloop_adoption.go": {
       "lines": [
-        443,
-        444
+        450,
+        451
       ],
       "reason": "recordSDKTurnTelemetry's json.Marshal failure return. payload is a local map[string]any whose every entry is written in this function and is a string (session_id), an int (span_count and the three usage counts), or a []string (span_names). No caller-supplied value of another type can enter it. encoding/json has no failure mode for those types: it substitutes U+FFFD for invalid UTF-8 rather than erroring, and no channel, function, complex, cyclic, or Marshaler value is present. Same class as the accepted audit_dump.go entry."
     },
@@ -27,8 +27,8 @@
     },
     "internal/agent/sdk_summarizer_adapter.go": {
       "lines": [
-        77,
-        78
+        91,
+        92
       ],
       "reason": "sdkSummarizerAdapter.Summarize's TurnState.Snapshot() error return: Snapshot re-validates the accumulator with validateSummaryText for state and validateSummaryList for the five lists, and contextmgr.TurnState's fields are unexported, so every value it can hold arrived through SetState or appendItem. SetState applies validateSummaryText(\"state\", state, true), the exact check Snapshot repeats. appendItem applies the same three rules validateSummaryList checks: the MaxSummaryItems cap, validateSummaryText(field, value, false), and duplicate rejection. No caller outside contextmgr can construct a TurnState that passes its setters and then fails its own Snapshot, so the skip branch is defensive and unreachable from this package. TestSDKSummarizerAdapterRequestInvalidSkips covers the sibling skip branch (buildRequest failure) that IS reachable."
     },

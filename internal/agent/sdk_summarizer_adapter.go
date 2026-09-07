@@ -164,24 +164,22 @@ func (a *sdkSummarizerAdapter) summarySourceRange() contextstate.SourceRange {
 // compactionTokens prices one compaction: what the dropped turns (plus any
 // held-aside prior summary they replace) cost, against what remains in their
 // place afterwards - the rendered summary alone, or nothing when the drop was
-// unsummarized. It uses the host's own EstimatePromptCost with the loop's
-// calibrated accounting profile, the same semantics the PreparationManager
-// path reports, so an adopted turn's compaction event and durable usage
-// record carry real numbers instead of zeros.
+// unsummarized. It uses the host's own message accounting with the loop's
+// calibrated profile, the same semantics the PreparationManager path reports,
+// so an adopted turn's compaction event and durable usage record carry real
+// numbers instead of zeros.
+//
+// EstimateMessagesPromptCost is the total form of EstimatePromptCost: the
+// only failure the latter has is marshaling tool schemas, and a compaction
+// prices messages alone, so there is no error to handle here.
 func (a *sdkSummarizerAdapter) compactionTokens(cliDropped, cliPrior []provider.Message, replacement provider.Message) (before, after int) {
 	profile := a.l.contextAccounting()
 	source := append(append([]provider.Message(nil), cliPrior...), cliDropped...)
-	before, err := provider.EstimatePromptCost(source, nil, profile)
-	if err != nil {
-		return 0, 0
-	}
+	before = provider.EstimateMessagesPromptCost(source, 0, profile)
 	if replacement.Content == "" {
 		return before, 0
 	}
-	after, err = provider.EstimatePromptCost([]provider.Message{replacement}, nil, profile)
-	if err != nil {
-		return before, 0
-	}
+	after = provider.EstimateMessagesPromptCost([]provider.Message{replacement}, 0, profile)
 	if after > before {
 		// A "compaction" that grew the prompt is not one; report the
 		// conservative no-shrink shape rather than an event

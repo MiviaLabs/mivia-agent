@@ -110,3 +110,38 @@ func (c *fixedErrCompleter) ChatTurn(context.Context, provider.Request) (*provid
 func (c *fixedErrCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
 	return "", c.err
 }
+
+// nilTurnThenErrCompleter exercises Chat's defensive fallback: ChatTurn
+// returns (nil, nil), so Chat falls through to the plain Chat call, which
+// then fails. That fallback must translate the sentinel too - it is the same
+// provider rejection arriving by a different route.
+type nilTurnThenErrCompleter struct{ err error }
+
+func (c *nilTurnThenErrCompleter) Name() string { return "nil-turn-then-err" }
+
+func (c *nilTurnThenErrCompleter) Chat(context.Context, provider.Request) (string, error) {
+	return "", c.err
+}
+
+func (c *nilTurnThenErrCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	return nil, nil
+}
+
+func (c *nilTurnThenErrCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
+	return "", c.err
+}
+
+func TestCompleterTranslatesOnChatFallbackPath(t *testing.T) {
+	cli := &nilTurnThenErrCompleter{err: fmt.Errorf("zai: 1261: %w", provider.ErrPromptTooLong)}
+	a, err := newAgentLoopCompleter(cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, chatErr := a.Chat(context.Background(), sdkshape.Request{Model: "m"})
+	if !errors.Is(chatErr, sdkshape.ErrPromptTooLong) {
+		t.Fatalf("Chat fallback err = %v, want errors.Is sdkshape.ErrPromptTooLong", chatErr)
+	}
+	if !errors.Is(chatErr, provider.ErrPromptTooLong) {
+		t.Fatalf("Chat fallback err = %v, want the host sentinel preserved", chatErr)
+	}
+}
