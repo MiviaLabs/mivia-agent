@@ -14,7 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 	"github.com/pelletier/go-toml/v2"
 )
 

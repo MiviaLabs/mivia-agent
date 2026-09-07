@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 // apiVersionSegment matches a path segment that is an API version prefix: v1,

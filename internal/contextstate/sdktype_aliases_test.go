@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	sdkref "github.com/MiviaLabs/mivia-ai-sdk/context/ref"
-	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/x/contextstate"
+	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
 )
 
 // TestReexportedShapeConstants pins that the CLI's shape constants are

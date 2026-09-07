@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 // Moved from ollama_r4_hostile_audit_test.go during the clichat extraction:

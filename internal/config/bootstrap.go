@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 	"golang.org/x/term"
 )
 

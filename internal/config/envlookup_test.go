@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/x/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 func TestLookup(t *testing.T) {
