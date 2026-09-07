@@ -125,6 +125,7 @@ func TestRebaseThatCannotWriteTheRenumberedFileIsTerminal(t *testing.T) {
 func TestRebaseThatCannotSwapTheFileInIsTerminal(t *testing.T) {
 	requireNonRoot(t)
 	ob, dir := seedOutboxWithEvents(t, 2)
+	requireUnwritableDir(t, dir)
 
 	prev := outboxSyncFile
 	outboxSyncFile = func(f *os.File) error {
@@ -233,6 +234,30 @@ func requireNonRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permission bits these failures are built from")
 	}
+}
+
+// requireUnwritableDir skips unless chmod 0500 on dir actually refuses a new
+// file in it. Windows Chmod only toggles FILE_ATTRIBUTE_READONLY, which does
+// not stop creation inside the directory, so a failure built from the
+// permission bits never arrives and the sabotaged step succeeds instead.
+func requireUnwritableDir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skipf("cannot make %s read-only: %v", dir, err)
+	}
+	defer func() {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Fatalf("restore %s: %v", dir, err)
+		}
+	}()
+	probe := filepath.Join(dir, "writability-probe")
+	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	_ = f.Close()
+	_ = os.Remove(probe)
+	t.Skip("platform still creates files in a read-only directory; the permission-bit failure is unreachable")
 }
 
 func requireDevFull(t *testing.T) {

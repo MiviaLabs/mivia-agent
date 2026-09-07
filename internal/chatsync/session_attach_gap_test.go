@@ -32,6 +32,7 @@ func TestEnsureAttachedPropagatesOpeningSeqError(t *testing.T) {
 	// Make the cursor write Rebase performs fail: the directory itself
 	// becomes unwritable, not just one file, so any recreated cursor file
 	// fails the same way.
+	requireUnwritableDir(t, dir)
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}

@@ -38,6 +38,13 @@ func TestContextWorkspaceID_MatchesWorktreerouteLeaf(t *testing.T) {
 	// stable across machines: sha256("/nonexistent-mivia-golden-fixture").
 	const goldenIn = "/nonexistent-mivia-golden-fixture"
 	const golden = "workspace-fe5715e77b011c8c"
+	// The golden digests the input verbatim, which only holds where the input
+	// is already absolute. Windows resolves it against the current drive, so
+	// Abs returns a different string and the pin cannot apply. The parity
+	// checks above still cover every platform.
+	if abs, absErr := filepath.Abs(goldenIn); absErr != nil || abs != goldenIn {
+		t.Skip("platform does not treat the golden fixture path as already absolute")
+	}
 	if got := worktreeroute.WorkspaceID(goldenIn); got != golden {
 		t.Errorf("WorkspaceID(%q) = %q, want the pinned golden %q - changing the digest scheme strands every stored session keyed on the old ids", goldenIn, got, golden)
 	}

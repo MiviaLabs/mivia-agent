@@ -57,6 +57,12 @@ func TestBuildToolsForRoot_MemoryDegradesAndHappyPath(t *testing.T) {
 		}
 		return r
 	}, filepath.Join(wsRoot, ".mivia"))
+	// filepath.Abs is pure string manipulation on POSIX but is backed by
+	// syscall.FullPath on Windows, which rejects the NUL outright. Where the
+	// path never reaches the store, there is no degrade to observe.
+	if _, probeErr := filepath.Abs(nulMemRoot); probeErr != nil {
+		t.Skipf("platform rejects a NUL path before the store can degrade: %v", probeErr)
+	}
 	degradedReg, degradedClose, derr := cliagents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
 	if derr != nil {
 		t.Fatalf("unusable memory path must degrade, not fail wiring: %v", derr)

@@ -87,7 +87,9 @@ func TestOpenMemoryStoreWithReadOnly_AbsRootFails(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(orig) })
 	if err := os.RemoveAll(gone); err != nil {
-		t.Fatal(err)
+		// Windows holds a handle on its own working directory and refuses to
+		// remove it, so the stale-cwd precondition cannot be built there.
+		t.Skipf("platform will not remove its own working directory: %v", err)
 	}
 	// Removing the cwd is only a proxy for "filepath.Abs now fails", and the
 	// proxy does not hold everywhere: macOS keeps the vnode alive, so getcwd

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -159,6 +160,12 @@ func TestAutoBootstrapUserConfigReportsStatFailure(t *testing.T) {
 		t.Fatalf("write blocking file at %s: %v", namespace, err)
 	}
 
+	// Windows reports a path under a regular file as ERROR_PATH_NOT_FOUND,
+	// which Go maps to ErrNotExist. There the absent-path classification is
+	// correct and the stat branch this test pins is unreachable.
+	if _, statErr := os.Stat(UserConfigPath()); errors.Is(statErr, os.ErrNotExist) {
+		t.Skip("platform reports a path under a regular file as ErrNotExist; ENOTDIR is not observable")
+	}
 	path, err := autoBootstrapUserConfig()
 	if err == nil {
 		t.Fatal("expected a stat failure when the config namespace is a regular file")

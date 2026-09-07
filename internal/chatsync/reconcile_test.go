@@ -3,6 +3,7 @@ package chatsync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -323,6 +324,13 @@ func TestScanDanglingEvents_DirIsActuallyAFile(t *testing.T) {
 	notADir := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// Windows reports ERROR_PATH_NOT_FOUND for a path under a regular file,
+	// which Go maps to ENOENT. There the "no events file yet" classification
+	// is correct and there is no non-ENOENT error to propagate, so the branch
+	// is only reachable where the OS distinguishes the two.
+	if _, probeErr := os.Open(filepath.Join(notADir, eventsFileName)); errors.Is(probeErr, os.ErrNotExist) {
+		t.Skip("platform reports a path under a regular file as ENOENT; ENOTDIR is not observable")
 	}
 	if _, _, _, _, err := scanDanglingEvents(notADir); err == nil {
 		t.Fatal("scanDanglingEvents did not propagate a non-ENOENT os.Open error")

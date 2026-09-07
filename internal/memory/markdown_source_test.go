@@ -415,6 +415,11 @@ func TestMarkdownSourceScanReadFileError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+	// chmod 000 only toggles the read-only attribute on Windows, so the file
+	// stays readable there and Scan has no read error to surface.
+	if _, err := os.ReadFile(unreadable); err == nil {
+		t.Skipf("platform still reads %s after chmod 000; cannot force a read failure", unreadable)
+	}
 	if _, err := source.Scan(context.Background(), ScopeProject); err == nil {
 		t.Fatal("Scan accepted a file it cannot read")
 	}

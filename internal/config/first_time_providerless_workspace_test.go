@@ -248,8 +248,11 @@ func TestFirstProviderCandidateSkipsUnreadableCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+	// chmod 000 only toggles the read-only attribute on Windows, so the read
+	// still succeeds there and the branch under test is unreachable. Probe
+	// the precondition rather than failing on a platform that cannot build it.
 	if _, err := os.ReadFile(unreadable); err == nil {
-		t.Fatalf("read of %s unexpectedly succeeded; the test cannot force a read failure", unreadable)
+		t.Skipf("platform still reads %s after chmod 000; cannot force a read failure", unreadable)
 	}
 	t.Setenv("MIVIA_CONFIG", unreadable)
 
