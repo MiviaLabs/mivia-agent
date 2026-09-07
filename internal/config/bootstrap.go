@@ -66,11 +66,21 @@ func WriteDefaultUserConfig(path string) error {
 // It is only reached from loadFile when LoadOptions.AutoBootstrapUserConfig
 // is set and no explicit --config/$MIVIA_CONFIG path was given and the
 // normal candidate search already came up empty - see loadFile's doc
-// comment for the full policy - so it never overwrites an existing file.
+// comment for the full policy. That search (firstProviderCandidate) returns
+// "" whenever no candidate DECLARES A PROVIDER, which is also true of an
+// existing but provider-less or corrupt user config file - so this function
+// cannot trust "reached here" to mean "path does not exist" and must check
+// itself: an existing file at path is stat'd and rejected with an error
+// rather than overwritten, preserving whatever real content is there.
 func autoBootstrapUserConfig() (string, error) {
 	path := UserConfigPath()
 	if path == "" {
 		return "", nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("auto-bootstrap user config: %s already exists", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("auto-bootstrap user config: stat %s: %w", path, err)
 	}
 	if err := WriteDefaultUserConfig(path); err != nil {
 		return "", fmt.Errorf("auto-bootstrap user config: %w", err)
