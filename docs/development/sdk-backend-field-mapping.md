@@ -30,7 +30,7 @@ The SDK path consumes these directly:
 | `LastFinishReason` | completer `onFinish` callback | the wrapper reports each response's finish reason onto `Loop.LastFinishReason`; the truncation-aware corrective turn keys on it |
 | `MaxSteps` | `Options.MaxIterations` | passed through; SDK's `unboundedOrSet` maps `0` → `math.MaxInt32` so `MaxSteps = 0` (unbounded) reaches the SDK unchanged. `MaxTurns` (when > 0) clamps to the smaller of the two positive values, and stays applied over an unset `MaxSteps` (see §2) |
 | `SessionID` | `Options.SessionID` | required when Usage is set |
-| `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires because the host wires no Window) |
+| `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires on turns with a `PreparationManager`, or without a wired summarizer, because those turns keep `Window` nil; on manager-less turns with a summarizer wired and a positive `MaxContextTokens`, `adoptSDKCompaction` does wire a Window via `EnableCompaction` (§5)) |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
 | `MaxConcurrentTools` | `Options.MaxConcurrentTools` | parallel dispatch worker pool; call context threads tool call IDs so per-call pass-1 parts and event synthesis do not race |
 | `BatchResultBudgetBytes > 0` | host-side shaping wrapper | `applyTurnShaping` charges one shared per-turn counter and applies the legacy degrade tiers (fit / re-cut with notice / notice alone); the SDK's omit-on-budget behavior is never engaged - the host wrapper is the sole shaper |
@@ -92,7 +92,13 @@ caller accepts the difference.
   happens in call order (the SDK executes sequentially) rather than
   after the whole batch resolves.
 - **Same-batch dedup** — the legacy dispatcher collapses identical
-  read-class calls within one batch; the SDK executes every call.
+  read-class calls within one batch via `SkipDedup` on the dispatcher
+  shim (`internal/agent/sdk_dispatcher_shim.go`, keyed off each tool's
+  capability class). The SDK offers an equivalent knob,
+  `agentloop.Options.DedupWithinTurn`, but the adapter leaves it
+  unset; the host's own `SkipDedup` mechanism predates this row and
+  already covers the same case, so adopting `DedupWithinTurn` instead
+  is an open decision, not scheduled.
 - **A `Surface` rotation that changes `Registry` without also changing
   `Dispatcher`** — no real caller does this (every production Surface
   hook pairs them, e.g. `internal/chat/session_turn_surface.go`'s
@@ -105,8 +111,13 @@ caller accepts the difference.
   the ORIGINAL registry and does not follow a Registry-only rotation.
   Always rotate `Dispatcher` alongside `Registry`.
 - **Conclude-steer nudges** — the legacy loop injects a conclude
-  message when budgets or the deadline are nearly exhausted; the SDK
-  path has no equivalent injection.
+  message when budgets or the deadline are nearly exhausted. The SDK
+  has an equivalent field group, `agentloop.Options.Conclude`
+  (`Margin`, `Deadline`, `Notice`) plus `DefaultConcludeNotice`, but
+  the adapter does not set it; the host's wrap-up budget instead rides
+  `Options.ContinueOnStop` (`internal/agent/continue_on_stop.go`),
+  which predates this row. Migrating the wrap-up path onto `Conclude`
+  is an open decision.
 - **Soft-interrupted partial text survives as final reply** — the
   legacy `steerInterruptOutcome` carries the streamed partial from
   an interrupted Completer call into the post-steer step's `lastText`
@@ -268,7 +279,20 @@ projection (`agentloop_adoption.go`), each pinned by
   `StopRepeatedToolFailures` stop; `sdkRepeatedToolFailureError`
   converts it into a failed turn carrying the loop-breaker wording.
 - **Tracer** — every SDK-path run gets a span tracer parked on the
-  turn state for the chatsync/session sink. New host capability.
+  turn state. `recordSDKTurnTelemetry` (`agentloop_adoption.go`) is
+  the reader: it appends the run's span count and names to the
+  operator audit directory (`EnvProviderAuditDir`) alongside the
+  usage snapshot below, so the row is read at least once instead of
+  accumulating write-only. No dedicated chatsync/session sink exists
+  yet; consuming spans in a real trace surface is future work.
+- **Usage** — every SessionID-bearing SDK-path run gets a per-session
+  usage accumulator parked on the turn state. The host's durable
+  UsageWriter path (`l.emitTurnUsage`) stays the system of record;
+  `recordSDKTurnTelemetry` reads the accumulator's `Total` once per
+  turn into the same audit-directory line as Tracer, so the
+  accumulator is not write-only. Consolidating `emitTurnUsage` to read
+  from the accumulator instead of maintaining its own count is future
+  work.
 - **Audit** — the SDK loop's Audit hook feeds a `sdkloop-` JSONL
   stream in the operator audit directory, next to (not replacing) the
   completer-seam wire dump; the dump needs the effective post-merge
@@ -280,7 +304,19 @@ projection (`agentloop_adoption.go`), each pinned by
   PreparationManager: the triple sizes from MaxContextTokens (80/50
   hysteresis), the summarizer rides the wrapped completer, and the
   calibrated estimator is `agentLoopCompleter.EstimateTokens`, which
-  runs the host's own EstimatePromptCost semantics. With a
+  runs the host's own EstimatePromptCost semantics. **Test-only today**:
+  every production call site wires a `PreparationManager`
+  (`contextmgr.StructuralPreparationManager{}`, set in
+  `internal/composition/session.go` and
+  `internal/clichat/context_setup_session.go`), so `sdkCompactionAdopted`
+  is false in production and this row never fires outside tests. It
+  also rides `agentLoopCompleter` — the turn-aware wrapper that
+  advertises tools and bumps the iteration counter as Chat side
+  effects — rather than a raw `provider.Completer`; the SDK's
+  `contextsummary.Summarizer` should run against a plain completer
+  with none of that turn-state coupling. Fixing both (making the row
+  reachable in production, and giving the summarizer its own raw
+  completer) is tracked as future work, not attempted here. With a
   PreparationManager the row stays host-owned: Trim IS the host's
   per-request preparation pipeline (repair, prune, inject), and the
   SDK's Window and Trim are mutually exclusive, so adopting there

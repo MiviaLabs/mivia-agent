@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
 )
@@ -146,9 +147,18 @@ type sdkTurnState struct {
 	consecutiveFailures atomic.Int64
 	consecutiveReads    atomic.Int64
 	// tracer parks the SDK loop's span tracer for the run (adoption
-	// row: Tracer). The chatsync/session sink reads completed spans
-	// from here after the run; nil until adoptSDKTracer runs.
+	// row: Tracer). finishAgentLoopTurn's recordSDKTurnTelemetry is
+	// the reader: it appends the run's spans and usage snapshot to
+	// the operator audit dump when EnvProviderAuditDir is set. nil
+	// until adoptSDKTracer runs. See docs/development/
+	// sdk-backend-field-mapping.md for the adoption-row status; a
+	// dedicated chatsync/session sink is not built yet.
 	tracer *sdktrace.Tracer
+	// usage parks the SDK loop's per-session usage accumulator
+	// (adoption row: Usage), read the same way as tracer above; nil
+	// until adoptSDKUsage runs (it only runs when opts.SessionID is
+	// set).
+	usage *sdkadapter.Accumulator
 }
 
 // isMutatingCommand reports whether a shell execution command represents a state
@@ -185,6 +195,15 @@ func (s *sdkTurnState) setTracer(t *sdktrace.Tracer) {
 		return
 	}
 	s.tracer = t
+}
+
+// setUsage parks the run's SDK usage accumulator on the turn state
+// (adoption row: Usage); see agentloop_adoption.go's adoptSDKUsage.
+func (s *sdkTurnState) setUsage(a *sdkadapter.Accumulator) {
+	if s == nil {
+		return
+	}
+	s.usage = a
 }
 
 // recordFailure tracks consecutive tool failures and returns an anti-loop system

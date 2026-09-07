@@ -10,7 +10,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -37,7 +42,7 @@ const (
 // adoptSDKRows sets every adoption row in one call; see the per-row
 // functions below and the projection test in agentloop_adapter_test.go.
 func adoptSDKRows(out *sdkagentloop.Options, opts Options, completer sdkshape.Completer, turn *sdkTurnState) error {
-	adoptSDKUsage(out, opts)
+	adoptSDKUsage(out, opts, turn)
 	adoptSDKBudget(out, opts)
 	adoptSDKBounds(out, opts)
 	adoptSDKTracer(out, turn)
@@ -66,12 +71,16 @@ func applySDKTrim(l *Loop, opts Options, turn *sdkTurnState, out *sdkagentloop.O
 // Chat call) stays the system of record; the accumulator is the
 // in-process view the SDK loop keeps consistent on its own. The SDK
 // rejects Usage without a SessionID, so a blank session ID leaves the
-// row unset instead of failing the turn.
-func adoptSDKUsage(out *sdkagentloop.Options, opts Options) {
+// row unset instead of failing the turn. The accumulator is parked on
+// turn so recordSDKTurnTelemetry can read it back after the run; see
+// that function for the reader.
+func adoptSDKUsage(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
 	if opts.SessionID == "" {
 		return
 	}
-	out.Usage = sdkadapter.NewAccumulator()
+	acc := sdkadapter.NewAccumulator()
+	out.Usage = acc
+	turn.setUsage(acc)
 }
 
 // adoptSDKBudget gives the SDK run a generous runaway bound (bytes
@@ -100,9 +109,11 @@ func adoptSDKBounds(out *sdkagentloop.Options, opts Options) {
 }
 
 // adoptSDKTracer gives the run a span tracer and parks it on the turn
-// state, where the chatsync/session sink can read completed spans
-// after the run. This is a new capability for the host (the legacy
-// loop has no span surface), not a replacement for anything.
+// state, where recordSDKTurnTelemetry reads completed spans after the
+// run and appends them to the operator audit dump when it is enabled.
+// This is a new capability for the host (the legacy loop has no span
+// surface), not a replacement for anything; no dedicated
+// chatsync/session sink exists yet.
 func adoptSDKTracer(out *sdkagentloop.Options, turn *sdkTurnState) {
 	t := sdktrace.New()
 	out.Tracer = t
@@ -175,6 +186,21 @@ func sdkContextWindowForwarded(opts Options) int {
 // the host's context ceiling with the SDK's default hysteresis
 // (trigger at 80%, target at 50%) and a conservative calibration
 // factor.
+//
+// Known latent issue, not fixed here: completer is agentLoopCompleter,
+// the turn-aware wrapper (agentloop_completer.go's Chat) that also
+// advertises tools and bumps the shared turn's iteration counter as
+// side effects. sdkagentloop.EnableCompaction hands that same
+// completer to contextsummary.NewSummarizer, so the summarizer's own
+// mid-run compaction calls inherit those side effects instead of
+// running against a plain provider.Completer. Currently unreachable
+// in production: sdkCompactionAdopted requires opts.PreparationManager
+// == nil, and every production call site sets one
+// (contextmgr.StructuralPreparationManager{} in
+// internal/composition/session.go and
+// internal/clichat/context_setup_session.go), so this row only fires
+// under test. See docs/development/sdk-backend-field-mapping.md's
+// Window/Summarizer/Calibrated row.
 func adoptSDKCompaction(out *sdkagentloop.Options, completer sdkshape.Completer, opts Options) error {
 	if !sdkCompactionAdopted(opts) {
 		return nil
@@ -225,6 +251,7 @@ func sdkRepeatedToolFailureError(res sdkagentloop.Result) error {
 // contract expects the turn to fail), and render the final result.
 func finishAgentLoopTurn(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, res sdkagentloop.Result, msgs []provider.Message, err error) (sdkagentloop.Result, error) {
 	stampSDKToolMessageNames(res.History)
+	recordSDKTurnTelemetry(opts, turn)
 	if err != nil {
 		return handleSDKRunError(ctx, l, opts, turn, res, err)
 	}
@@ -240,4 +267,53 @@ func finishAgentLoopTurn(ctx context.Context, l *Loop, opts Options, turn *sdkTu
 		return res, rerr
 	}
 	return finishSDKResult(opts, res, msgs)
+}
+
+// recordSDKTurnTelemetry is the reader for the Tracer and Usage
+// adoption rows (adoptSDKTracer, adoptSDKUsage): both park state on
+// turn that nothing else in the host consumes. This appends one JSON
+// line per turn to the operator audit directory (EnvProviderAuditDir;
+// the same directory and disable-latch newSDKLoopAuditDump uses, under
+// a sibling file name) summarizing the run's spans and usage total, so
+// the rows are read at least once instead of accumulating write-only.
+// A full consolidation into a dedicated chatsync/session sink (spans)
+// and into l.emitTurnUsage (usage) is tracked as future work; see the
+// package doc and adoptSDKUsage's comment.
+func recordSDKTurnTelemetry(opts Options, turn *sdkTurnState) {
+	if turn == nil || (turn.tracer == nil && turn.usage == nil) {
+		return
+	}
+	dir := strings.TrimSpace(os.Getenv(EnvProviderAuditDir))
+	if dir == "" {
+		return
+	}
+	if auditDumpDisabled.Load() {
+		return
+	}
+	payload := map[string]any{"session_id": opts.SessionID}
+	if turn.tracer != nil {
+		spans := turn.tracer.Spans()
+		names := make([]string, 0, len(spans))
+		for _, s := range spans {
+			names = append(names, s.Name)
+		}
+		payload["span_count"] = len(spans)
+		payload["span_names"] = names
+	}
+	if turn.usage != nil && opts.SessionID != "" {
+		if total, ok := turn.usage.Total(opts.SessionID); ok {
+			payload["usage_prompt_tokens"] = total.PromptTokens
+			payload["usage_completion_tokens"] = total.CompletionTokens
+			payload["usage_total_tokens"] = total.TotalTokens
+		}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, "sdktelemetry-"+auditDumpFileName(opts.SessionID))
+	if err := appendAuditDumpLine(dir, path, raw); err != nil {
+		log.Printf("agent: sdk turn telemetry dump disabled for this process: %v", err)
+		auditDumpDisabled.Store(true)
+	}
 }
