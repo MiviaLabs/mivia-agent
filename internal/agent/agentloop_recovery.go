@@ -24,8 +24,22 @@ import (
 // retry (documented, not wired here): the legacy path's retry-time
 // summary re-derivation (refreshOmittedEvidenceAfterRetry, memo
 // invalidation, injectSummary) and its prompt-token reservation are not
-// reproduced; the SDK's own Window-based recovery stays disabled
-// because the host wires no Window (that is a separate semantic item).
+// reproduced.
+//
+// On an SDK-Window-adopted turn (sdkCompactionAdopted true), this
+// wrapper never reruns: adoptSDKCompaction already wired a Window, so
+// the rejected run's own internal recovery (agentloop's
+// recoverPromptTooLong) already compacted and retried once before
+// returning ErrPromptTooLong to this function at all. A host-side
+// rerun on the same rejection would discard that already-tried
+// recovery and start a second, independent SDK loop on a freshly,
+// structurally pruned history - wasted work, and unsafe: l here
+// persists across both run() calls with no reset in between
+// (resetTurnCompaction runs once per TURN, in loop_dispatch.go, not
+// between these two calls), so state confirmSDKCompaction grounded
+// from the first, abandoned attempt (InjectedSummary,
+// LastPreparation.Compacted) could otherwise survive into whatever
+// the second, differently-pruned attempt ultimately commits.
 func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState) (sdkagentloop.Result, error) {
 	run := func(msgs []sdkshape.Message) (sdkagentloop.Result, error) {
 		loop, err := sdkagentloop.New(sdkOpts)
@@ -35,7 +49,7 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 		return runSDKSteerable(ctx, loop, opts, msgs, turn)
 	}
 	res, err := run(preparedMsgs)
-	if err == nil || opts.DisableProviderReplay ||
+	if err == nil || opts.DisableProviderReplay || sdkCompactionAdopted(opts) ||
 		(!errors.Is(err, provider.ErrPromptTooLong) && !errors.Is(err, sdkshape.ErrPromptTooLong)) {
 		return res, err
 	}
