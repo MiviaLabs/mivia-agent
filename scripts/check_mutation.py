@@ -27,6 +27,7 @@ import concurrent.futures
 import subprocess
 import sys
 import tempfile
+import uuid
 from collections import Counter
 from pathlib import Path
 
@@ -247,6 +248,10 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
     "[build failed]" or "[setup failed]" (see BUILD_FAILURE_MARKERS) - the
     same discarded verdict a separate build step produced, for one fewer
     compiler invocation per mutant."""
+    # Journal the pre-mutation bytes BEFORE mutating. The finally below
+    # restores on every in-process exit; the journal is what restores when
+    # this process is killed outright. See recover_inflight.
+    token = inflight_begin(site.path, original)
     site.path.write_bytes(apply_mutation(original, site))
     try:
         target = test_target(Path(pkg_dir), pkg)
@@ -277,6 +282,7 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
         return classify(True, outcome)
     finally:
         site.path.write_bytes(original)
+        inflight_end(token)
 
 
 # COVERAGE_BLOCK_RE matches one data line of a `go tool cover` profile:
@@ -425,6 +431,99 @@ def verify_restored(originals: dict[Path, bytes]) -> list[str]:
         except OSError as err:
             drifted.append(f"{path}: could not be read back to verify restoration: {err}")
     return drifted
+
+
+def inflight_dir() -> Path:
+    """inflight_dir returns the crash journal directory, inside the git dir.
+
+    The git directory sits outside the worktree, so a backup written here can
+    never be formatted, staged, or committed. `git rev-parse --git-dir` is
+    used rather than ROOT/".git" because a worktree's .git is a file."""
+    proc = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        return ROOT / ".git" / "mutation-inflight"
+    git_dir = Path(proc.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = ROOT / git_dir
+    return git_dir / "mutation-inflight"
+
+
+def write_durable(path: Path, data: bytes) -> None:
+    """write_durable writes data and forces it out of the page cache. A
+    backup still in cache when the machine dies restores nothing."""
+    with open(path, "wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def inflight_begin(path: Path, original: bytes) -> str:
+    """inflight_begin records path's pre-mutation bytes and returns its token.
+
+    Call this BEFORE writing the mutation. Each call takes its own token, so
+    the parallel workers never share a journal file."""
+    directory = inflight_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    write_durable(directory / f"{token}.bak", original)
+    write_durable(
+        directory / f"{token}.json",
+        json.dumps({"path": str(path.resolve())}).encode("utf-8"),
+    )
+    return token
+
+
+def inflight_end(token: str) -> None:
+    """inflight_end drops one journal entry after its file is restored."""
+    directory = inflight_dir()
+    for suffix in (".bak", ".json"):
+        try:
+            (directory / f"{token}{suffix}").unlink()
+        except OSError:
+            pass
+
+
+def recover_inflight() -> list[str]:
+    """recover_inflight restores every file a killed sweep left mutated, and
+    returns one message per file it put back.
+
+    This is the only restore path that survives a process which never runs
+    Python again. run_mutant restores in a `finally`, and SIGTERM is re-raised
+    as KeyboardInterrupt so that `finally` runs, but neither helps against
+    SIGKILL, an OOM kill, or a power loss. The sweep mutates one file per
+    worker at a time, so one hard kill can strand several files at once.
+
+    An entry whose file already matches its backup is dropped silently: the
+    sweep restored it and died before it could clear the journal."""
+    directory = inflight_dir()
+    if not directory.is_dir():
+        return []
+    restored = []
+    for marker in sorted(directory.glob("*.json")):
+        token = marker.stem
+        try:
+            target = Path(json.loads(marker.read_text(encoding="utf-8"))["path"])
+            original = (directory / f"{token}.bak").read_bytes()
+        except (OSError, ValueError, KeyError):
+            inflight_end(token)
+            continue
+        try:
+            if target.read_bytes() != original:
+                write_durable(target, original)
+                restored.append(str(target))
+        except FileNotFoundError:
+            # The file is gone: a deleted temp tree, or a branch switch that
+            # removed it. A file that does not exist is not a stranded
+            # mutant, so drop the entry instead of reporting it every run.
+            pass
+        except OSError as err:
+            restored.append(f"{target}: could not be restored: {err}")
+            continue
+        inflight_end(token)
+    return restored
 
 
 def restore_and_verify(originals: dict[Path, bytes]) -> None:
@@ -1028,6 +1127,11 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
 
 
 def main() -> int:
+    # Heal a previous run that was killed mid-mutation before doing anything
+    # else. A stranded mutant is not a stale file: the pre-commit hook's
+    # gofmt step re-stages the working tree, so it gets committed silently.
+    for restored in recover_inflight():
+        print(f"check_mutation: restored a file a killed sweep left mutated: {restored}")
     parser = argparse.ArgumentParser(description="mutation kit: per-package kill rate")
     parser.add_argument("--pkg", help="package directory to mutate, e.g. internal/cli")
     parser.add_argument("--floor", type=float, help="override the stored floor for this run")

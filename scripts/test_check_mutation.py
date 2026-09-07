@@ -10,6 +10,7 @@ directly with `python3 scripts/test_check_mutation.py`.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import sys
@@ -383,6 +384,108 @@ def test_parse_deleted_lines_skips_headers_and_blank_deletions() -> None:
     got = cm.parse_deleted_lines(fixture)
     assert got == Counter({"package x": 1, "- indented content": 1}), got
     assert cm.parse_deleted_lines("--- /dev/null\n+++ b/internal/x/x.go\n") == Counter()
+
+
+@contextlib.contextmanager
+def _isolated_journal(tmp: str):
+    """_isolated_journal points the crash journal at a temp directory.
+
+    Without it a journal test reads and clears the repository's own journal,
+    so a real stranded mutant could be dropped by a test run."""
+    original = cm.inflight_dir
+    cm.inflight_dir = lambda: Path(tmp) / "journal"
+    try:
+        yield
+    finally:
+        cm.inflight_dir = original
+
+
+def test_recover_inflight_restores_a_file_a_killed_sweep_left_mutated() -> None:
+    """The journal is the only restore path that survives SIGKILL.
+
+    run_mutant restores in a `finally`, and SIGTERM is re-raised as
+    KeyboardInterrupt so that `finally` runs. Neither runs on SIGKILL, an OOM
+    kill, or a power loss. This simulates that: journal, mutate, then abandon
+    the file with no restore, exactly as a killed process leaves it."""
+    with tempfile.TemporaryDirectory() as tmp, _isolated_journal(tmp):
+        target = Path(tmp) / "victim.go"
+        original = b"package p\n\nfunc f() { return }\n"
+        target.write_bytes(original)
+
+        token = cm.inflight_begin(target, original)
+        target.write_bytes(b"package p\n\nfunc f() { }\n")
+        assert target.read_bytes() != original, "the mutation did not apply"
+
+        restored = cm.recover_inflight()
+        assert str(target) in restored, f"recover did not report the file: {restored}"
+        assert target.read_bytes() == original, "the file was not restored"
+
+        assert cm.recover_inflight() == [], "the journal was not cleared"
+        cm.inflight_end(token)
+
+
+def test_recover_inflight_leaves_an_already_restored_file_alone() -> None:
+    """A sweep that restored its file and then died still leaves a journal
+    entry. Recovery must drop it silently rather than report a phantom."""
+    with tempfile.TemporaryDirectory() as tmp, _isolated_journal(tmp):
+        target = Path(tmp) / "victim.go"
+        original = b"package p\n"
+        target.write_bytes(original)
+        cm.inflight_begin(target, original)
+
+        assert cm.recover_inflight() == [], "an already-restored file was reported"
+        assert target.read_bytes() == original
+
+
+def test_inflight_dir_sits_outside_the_worktree() -> None:
+    """A backup inside the worktree could be formatted, staged, or committed.
+    The journal must live under the git directory instead."""
+    directory = cm.inflight_dir()
+    assert ".git" in directory.parts, f"journal is not under the git dir: {directory}"
+
+
+def test_run_mutant_journals_the_file_while_it_is_mutated() -> None:
+    """run_mutant must journal BEFORE it mutates, not merely restore after.
+
+    This is the wiring test. The unit tests above drive inflight_begin
+    directly, so they still pass if run_mutant never calls it - and a sweep
+    killed mid-mutant would then strand the file with nothing to recover
+    from. This asserts the journal exists at the moment the mutated file is
+    on disk, by inspecting it from inside the stubbed test subprocess."""
+    from mutation_tokenize import Site
+
+    with tempfile.TemporaryDirectory() as tmp, _isolated_journal(tmp):
+        target = Path(tmp) / "victim.go"
+        original = b"package p\n\nfunc f() bool { return true }\n"
+        target.write_bytes(original)
+        site = Site(target, original.index(b"true"), original.index(b"true") + 4,
+                    "true", "false", "bool")
+
+        seen = {}
+        real_run = cm.subprocess.run
+
+        def spy(cmd, *args, **kwargs):
+            if cmd and cmd[0] == "go":
+                journal = cm.inflight_dir()
+                seen["entries"] = sorted(journal.glob("*.bak")) if journal.is_dir() else []
+                seen["mutated"] = target.read_bytes() != original
+                backups = [b.read_bytes() for b in seen["entries"]]
+                seen["backup_is_original"] = original in backups
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            return real_run(cmd, *args, **kwargs)
+
+        cm.subprocess.run = spy
+        try:
+            cm.run_mutant(site, original, "internal/x", str(tmp))
+        finally:
+            cm.subprocess.run = real_run
+
+        assert seen.get("mutated"), "the file was not mutated when the tests ran"
+        assert seen.get("entries"), "run_mutant did not journal the file before mutating it"
+        assert seen.get("backup_is_original"), "the journal did not hold the pre-mutation bytes"
+        assert target.read_bytes() == original, "run_mutant did not restore the file"
+        leftover = cm.inflight_dir()
+        assert not sorted(leftover.glob("*.json")), "run_mutant did not clear its journal entry"
 
 
 def main() -> int:
