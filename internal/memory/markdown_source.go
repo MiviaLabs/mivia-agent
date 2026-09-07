@@ -72,8 +72,13 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	if err := e.Validate(Limits{}); err != nil {
 		return MarkdownDocument{}, err
 	}
-	content := []byte(e.Render())
-	id := entryID(e.Scope, s.namespace(e.Scope), e.Title, string(content))
+	// id is the filename's uniqueness suffix, hashed from the legacy Render
+	// shape purely for a stable dedup key; it has no bearing on what gets
+	// written to disk (below) and changing the on-disk format must not
+	// change this derivation, since document()/documentID() and existing
+	// callers key off the filename's <slug>-<id> shape.
+	id := entryID(e.Scope, s.namespace(e.Scope), e.Title, e.Render())
+	stem := slug(e.Title) + "-" + id
 	dir, err := s.dir(e.Scope)
 	if err != nil {
 		return MarkdownDocument{}, err
@@ -87,11 +92,27 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	if err := rejectSymlinkComponents(dir); err != nil {
 		return MarkdownDocument{}, err
 	}
-	path := filepath.Join(dir, slug(e.Title)+"-"+id+".md")
+	// .agents/memories/README.md derives a file's frontmatter id from its
+	// filename: drop .md, replace every hyphen with an underscore
+	// (scripts/check_memories.py's expected_id). RenderProtocolFile writes
+	// that same id into the frontmatter so a file this package writes
+	// passes the pre-push gate the capture skill's own files must pass.
+	protocolID := strings.ReplaceAll(stem, "-", "_")
+	content := []byte(e.RenderProtocolFile(protocolID))
+	path := filepath.Join(dir, stem+".md")
 	if err := atomicWrite(ctx, path, content); err != nil {
 		return MarkdownDocument{}, err
 	}
-	return document(path, e, content), nil
+	doc := document(path, e, content)
+	// A file this method writes always re-parses through parseProtocolMemory
+	// on the next Scan (its "id:" frontmatter key sets a value Parse's own
+	// legacy-header path never populates), which reports doc.ID as that
+	// frontmatter id, not documentID's filename-hash-suffix convention. The
+	// two must agree here so a caller that saves and later looks the entry
+	// up by the ID Save just returned - memory_delete keyed on
+	// memory_save's own result, for one - still finds it after a Scan.
+	doc.ID = protocolID
+	return doc, nil
 }
 
 // Scan returns all regular Markdown files in one scope. It does not recurse
@@ -169,7 +190,7 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 		}
 		key, value, ok := strings.Cut(lines[i], ":")
 		if ok {
-			values[strings.TrimSpace(strings.ToLower(key))] = strings.TrimSpace(value)
+			values[strings.TrimSpace(strings.ToLower(key))] = yamlUnquote(strings.TrimSpace(value))
 		}
 	}
 	if end < 0 || values["id"] == "" || values["title"] == "" || values["content"] == "" {
@@ -182,8 +203,51 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 			tagList = append(tagList, tag)
 		}
 	}
-	body := strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
-	return Entry{Title: values["title"], Scope: scope, Verdict: VerdictNeutral, Tags: tagList, Summary: values["content"], Why: body}, values["id"], true
+	// Scope is always the directory-implied scan scope, never a value read
+	// from the frontmatter: Save always writes into the scope-correct
+	// directory, so the two never legitimately disagree for a file this
+	// package wrote, and trusting an embedded "scope:" on a hand-edited
+	// file risks Scan's scope-mismatch check rejecting the whole scan
+	// (markdown_source.go Scan) over a typo in one memory.
+	verdict := Verdict(values["x-verdict"])
+	switch verdict {
+	case VerdictGood, VerdictBad, VerdictMixed, VerdictNeutral:
+	default:
+		verdict = VerdictNeutral
+	}
+	e := Entry{
+		Title: values["title"], Scope: scope, Verdict: verdict,
+		Importance: Importance(values["importance"]), Tags: tagList, Summary: values["content"],
+		// README's "updated" key is this package's Created field: Save has
+		// no separate "last edited" concept (the capture skill never edits
+		// an existing memory either), so the two names carry one value.
+		Created: values["updated"],
+	}
+	bodyLines := lines[end+1:]
+	// RenderProtocolFile's own body shape - "# <title>" followed by the
+	// Summary/What worked/What did not work/Why/References sections Parse
+	// already knows how to read - is detected by its leading "# " heading
+	// and parsed structurally, so a file this package wrote round-trips
+	// through Scan with Good/Bad/References intact instead of collapsing
+	// into Why. A hand-authored file without that heading (the capture
+	// skill's terse/narrative/incident body shapes have no fixed section
+	// grammar) keeps the prior whole-body-as-Why fallback: Parse would
+	// otherwise misread its first line as a bogus title and silently drop
+	// the rest as unrecognized header lines.
+	if body := strings.TrimSpace(strings.Join(bodyLines, "\n")); strings.HasPrefix(body, "# ") {
+		if parsed, err := Parse([]byte(body)); err == nil && parsed.Title != "" {
+			if parsed.Summary != "" {
+				e.Summary = parsed.Summary
+			}
+			e.Good = parsed.Good
+			e.Bad = parsed.Bad
+			e.Why = parsed.Why
+			e.References = parsed.References
+		}
+	} else {
+		e.Why = body
+	}
+	return e, values["id"], true
 }
 
 // Delete removes one file under a configured memory root.
