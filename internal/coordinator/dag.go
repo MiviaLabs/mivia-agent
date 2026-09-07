@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -55,18 +56,11 @@ func (c *Coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 			}
 			continue
 		}
-		// Cap this wave to the pool's actual worker capacity. Without this,
-		// startReady CASes EVERY ready task queued -> running before
-		// pool.Run ever dispatches them, so a ready set bigger than the
-		// pool's concurrency ceiling shows more tasks "running" (to the
-		// ledger, inspect_agents, and the TUI) than the pool will ever
-		// execute at once - the excess sit queued inside the pool's own
-		// internal channel, falsely reporting "running" with zero progress
-		// until a worker frees up, sometimes minutes later. Tasks beyond
-		// capacity stay untouched in pending and are re-offered as ready on
-		// the next loop iteration, once this wave's pool.Run call returns.
-		ready = c.capReadyToPoolCapacity(ready)
-		runErr = joinError(runErr, c.startReady(h, ready, pending, results, retryQueue, retryStates))
+		// Cap only the EAGER pre-dispatch CAS pass, not the batch pool.Run
+		// receives - see capReadyToPoolCapacity's and onTaskStart's doc
+		// comments for why.
+		eager := c.capReadyToPoolCapacity(ready)
+		runErr = joinError(runErr, c.startReady(h, eager, pending, results, retryQueue, retryStates))
 		batch := buildBatch(ready, pending, results, retryQueue)
 		if len(batch) == 0 {
 			continue
@@ -155,6 +149,21 @@ func (c *Coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 			ready = append(ready, task)
 		}
 	}
+	// Sorted by ID to match subagents.Pool's own internal ready() ordering
+	// (subagents.go): Pool.run rebuilds its own pending map from whatever
+	// batch buildBatch submits and re-derives ITS OWN dispatch order via
+	// ready(), which sorts by ID - completely independent of the order this
+	// slice is built in. Left unsorted (map iteration order, randomized per
+	// call), capReadyToPoolCapacity's ready[:capacity] prefix names a
+	// DIFFERENT set of tasks than the ones Pool.execute's fixed worker count
+	// actually dispatches first, so the eager pre-dispatch CAS pass and the
+	// pool's real concurrency ceiling silently disagree on which tasks are
+	// "the first N" - onTaskStart's lazy CAS (task_start.go) then adds
+	// running transitions for whichever tasks the pool actually reaches
+	// first, on top of capReadyToPoolCapacity's already-CASed set, letting
+	// the ledger's running count exceed true worker capacity. Sorting here
+	// makes both selections agree.
+	sort.Slice(ready, func(i, j int) bool { return ready[i].ID < ready[j].ID })
 	return ready, runErr
 }
 
@@ -170,6 +179,23 @@ func (c *Coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 // the pool itself sizes its worker count from len(batch) in that case
 // (subagents.go's execute), so capping here would only shrink throughput
 // without fixing anything the running-status bug touches.
+//
+// The caller (runDAGSeeded) uses this ONLY to bound startReady's eager
+// pre-dispatch ledger CAS - not the batch buildBatch submits to pool.Run,
+// which always gets the full, uncapped ready set. Pool.execute
+// (subagents.go) already caps its own worker-goroutine count to the pool's
+// configured Workers and feeds them from one shared jobs channel, so it
+// continuously admits the next ready task the instant ANY worker frees -
+// the correct concurrency primitive. Capping the SUBMITTED batch as well (a
+// prior fix) threw that continuous admission away: pool.Run/Pool.execute
+// wg.Wait()s for the WHOLE submitted batch before returning, so a
+// capacity-capped task was only ever reconsidered once every task of the
+// PRIOR wave finished - including a slow or parked one still holding a
+// worker no other wave task needed anymore. A task beyond this eager cap
+// reaches the pool still "queued" in the ledger; onTaskStart (task_start.go)
+// lazily CASes it to running the moment a worker actually reaches it, so
+// the ledger never shows more "running" than the pool can execute AND a
+// freed worker is reused within the same wave, not the next one.
 func (c *Coordinator) capReadyToPoolCapacity(ready []subagents.Task) []subagents.Task {
 	if c.pool == nil {
 		return ready

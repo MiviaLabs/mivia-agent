@@ -144,3 +144,68 @@ func TestCapReadyToPoolCapacityWithNilPoolAppliesNoCap(t *testing.T) {
 		}
 	}
 }
+
+// TestDAGAdmitsQueuedTaskWhenAWaveSiblingFreesEarly is the regression for
+// the production incident this test's name describes: capacity below the
+// ready count (3 tasks, 2 workers) with one admitted task (t0) parked
+// indefinitely and its wave sibling (t1) finishing immediately. The
+// capacity-capped 3rd task (t2) must be admitted into the freed worker slot
+// as soon as t1 finishes - it must NOT wait for t0, the still-parked sibling
+// of its own wave, to finish too.
+//
+// capReadyToPoolCapacity caps the READY SET to pool.Workers() before
+// pool.Run dispatches it (dag.go), but pool.Run/Pool.execute then
+// wg.Wait()s for the WHOLE capped batch before returning control to the DAG
+// loop (subagents.go). The DAG loop only re-evaluates collectReady/
+// capReadyToPoolCapacity for t2 after that pool.Run call returns - so a
+// worker slot t1 frees up mid-wave sits idle, unusable by t2, for as long as
+// t0 (t1's wave sibling, not t2's blocker) keeps running. This test proves
+// t2 enters its handler while t0 is still parked, i.e. within a bound well
+// under how long t0 stays parked - not "eventually, once t0 finishes" the
+// way TestDAGWaveDoesNotStarveRemainingReadyTasks already covers.
+func TestDAGAdmitsQueuedTaskWhenAWaveSiblingFreesEarly(t *testing.T) {
+	const workers = 2
+
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+
+	parkRelease := make(chan struct{})
+	entered := make(chan string, 3)
+	_ = d.Register(runtime.Subagent, "park", invoker(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		id, _ := runtime.TaskIdentityFrom(ctx)
+		entered <- id.TaskID
+		<-parkRelease
+		return json.RawMessage(`"done"`), nil
+	}))
+	_ = d.Register(runtime.Subagent, "instant", invoker(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		id, _ := runtime.TaskIdentityFrom(ctx)
+		entered <- id.TaskID
+		return json.RawMessage(`"done"`), nil
+	}))
+
+	p := subagents.New(d, subagents.Policy{Workers: workers})
+	c := New(repo, p)
+
+	tasks := []subagents.Task{
+		{ID: "t0", Name: "park"},
+		{ID: "t1", Name: "instant"},
+		{ID: "t2", Name: "instant"},
+	}
+	if _, err := c.Spawn(context.Background(), tasks, ""); err != nil {
+		t.Fatal(err)
+	}
+	defer close(parkRelease)
+
+	seen := map[string]bool{}
+	deadline := time.After(3 * time.Second)
+	for len(seen) < 3 {
+		select {
+		case id := <-entered:
+			seen[id] = true
+		case <-deadline:
+			t.Fatalf("t2 never entered its handler within 3s of t1 finishing; "+
+				"saw only %v enter while t0 stayed parked - the freed worker "+
+				"slot was not reused for the capacity-capped 3rd task", seen)
+		}
+	}
+}

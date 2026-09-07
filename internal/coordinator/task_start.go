@@ -2,7 +2,9 @@ package coordinator
 
 import (
 	"context"
+	"log"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -13,6 +15,24 @@ import (
 // that context's CancelFunc on the run handle. This is the sole write site
 // for RunHandle.taskCancels: without it there is no per-task CancelFunc for
 // CancelTask (cancel_task.go) to invoke, only the run-wide one Cancel uses.
+//
+// It also lazily CASes the task queued -> running here, the moment a pool
+// worker actually reaches it. capReadyToPoolCapacity (dag.go) caps ONLY
+// startReady's eager pre-dispatch CAS pass to the pool's worker count, not
+// the batch buildBatch submits to pool.Run: the full ready set is always
+// submitted, so Pool.execute's own worker-goroutine/jobs-channel pair
+// (subagents.go) continuously admits the next ready task the instant any
+// worker frees, instead of the DAG loop waiting for a whole wave to drain
+// before it can even consider a capacity-capped task. A task beyond
+// startReady's eager cap therefore reaches the pool still "queued" in the
+// ledger; this is the only place that transitions it once real work
+// actually starts. A failed CAS (already running from startReady's own
+// eager pass - the common case - or claimed by a race this best-effort
+// hygiene write does not need to win) is logged and otherwise ignored: the
+// task's result still flows through the normal pool.Run -> processResults
+// path regardless of this write's outcome, and GetTask's own read-then-CAS
+// pattern (transitionTask, coordinator.go) already no-ops silently when the
+// status already matches.
 func (c *Coordinator) onTaskStart(ctx context.Context, t subagents.Task, cancel context.CancelFunc) {
 	if c == nil {
 		return
@@ -32,6 +52,9 @@ func (c *Coordinator) onTaskStart(ctx context.Context, t subagents.Task, cancel 
 		return
 	}
 	h.registerTaskCancel(id.TaskID, cancel)
+	if err := c.transitionTask(h, t, string(ledger.TaskStatusRunning)); err != nil {
+		log.Printf("coordinator: task %q lazy queued->running transition at dispatch: %v", id.TaskID, err)
+	}
 }
 
 // shouldSkipCanceledTask is installed on the subagent pool as
