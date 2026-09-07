@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
 )
 
 // pass1Map hands pass-1 resultParts from the dispatcher shim
@@ -144,6 +145,10 @@ type sdkTurnState struct {
 	cancels             map[string]context.CancelFunc
 	consecutiveFailures atomic.Int64
 	consecutiveReads    atomic.Int64
+	// tracer parks the SDK loop's span tracer for the run (adoption
+	// row: Tracer). The chatsync/session sink reads completed spans
+	// from here after the run; nil until adoptSDKTracer runs.
+	tracer *sdktrace.Tracer
 }
 
 // isMutatingCommand reports whether a shell execution command represents a state
@@ -171,6 +176,15 @@ func isMutatingCommand(args []byte) bool {
 	default:
 		return true
 	}
+}
+
+// setTracer parks the run's SDK span tracer on the turn state
+// (adoption row: Tracer); see agentloop_adoption.go.
+func (s *sdkTurnState) setTracer(t *sdktrace.Tracer) {
+	if s == nil {
+		return
+	}
+	s.tracer = t
 }
 
 // recordFailure tracks consecutive tool failures and returns an anti-loop system

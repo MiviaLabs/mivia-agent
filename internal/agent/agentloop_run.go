@@ -182,6 +182,14 @@ func sdkErrIsInterrupted(ctx context.Context, err error) bool {
 // dispatcher writes them back so an errored turn keeps its partial history.
 func handleSDKRunError(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
 	recordSDKCanceledStreamPartial(ctx, l, turn, err)
+	// The SDK's consecutive-failure bound is the hard-stop counterpart
+	// of the host reminder path's failure-spiral breaker (both trip at
+	// sdkFailureSpiralBound). Re-word the sentinel so the operator sees
+	// the loop-breaker vocabulary the legacy path used, not a bare
+	// SDK error.
+	if errors.Is(err, sdkagentloop.ErrMaxConsecutiveToolFailures) {
+		err = fmt.Errorf("%w; see the failure-spiral reminders above each failing turn", err)
+	}
 	return res, err
 }
 

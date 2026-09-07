@@ -87,6 +87,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 		Bounds:    sdkagentloop.Bounds{MaxIterations: maxIterations, MaxCallsPerTurn: opts.MaxToolCallsPerBatch, MaxConcurrentTools: opts.MaxConcurrentTools},
 		SessionID: opts.SessionID,
 	}
+	adoptSDKRows(&out, opts, turn)
 	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's

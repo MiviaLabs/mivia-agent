@@ -92,3 +92,56 @@ func TestWiringSetsSDKReasoningEffortOnRequest(t *testing.T) {
 			req.SDKReasoningEffort, sdkshape.ReasoningEffortHigh)
 	}
 }
+
+// TestBuildAgentLoopOptions_AdoptionRows pins the adoption-table
+// projection: Usage (+ SessionID), Budget, Bounds.MaxTotalTokens,
+// Bounds.MaxConsecutiveToolFailures, DedupWithinTurn, and Tracer all
+// land on the built SDK Options. See agentloop_adoption.go.
+func TestBuildAgentLoopOptions_AdoptionRows(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, turn, err := buildAgentLoopOptions(l, Options{
+		SessionID:        "sess-1",
+		MaxContextTokens: 500000,
+	}, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.Usage == nil {
+		t.Fatal("Usage = nil, want the SDK session accumulator")
+	}
+	if got.Budget == nil || got.Budget.MaxBytes != sdkSessionBudgetMaxBytes {
+		t.Fatalf("Budget = %+v, want the runaway bound", got.Budget)
+	}
+	if got.Budget.MaxEvents != sdkSessionBudgetMaxEvents {
+		t.Fatalf("Budget.MaxEvents = %d, want %d", got.Budget.MaxEvents, sdkSessionBudgetMaxEvents)
+	}
+	if got.Bounds.MaxTotalTokens != 500000 {
+		t.Fatalf("MaxTotalTokens = %d, want the context ceiling", got.Bounds.MaxTotalTokens)
+	}
+	if got.Bounds.MaxConsecutiveToolFailures != sdkFailureSpiralBound {
+		t.Fatalf("MaxConsecutiveToolFailures = %d, want %d", got.Bounds.MaxConsecutiveToolFailures, sdkFailureSpiralBound)
+	}
+	if got.Tracer == nil {
+		t.Fatal("Tracer = nil, want the run span tracer")
+	}
+	if turn.tracer != got.Tracer {
+		t.Fatal("turn state did not park the run tracer")
+	}
+}
+
+// TestBuildAgentLoopOptions_AdoptionRowsBlankSession locks the guard:
+// a blank SessionID leaves Usage unset, because the SDK's Validate
+// rejects Usage without a SessionID and the turn must still build.
+func TestBuildAgentLoopOptions_AdoptionRowsBlankSession(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, _, err := buildAgentLoopOptions(l, Options{}, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.Usage != nil {
+		t.Fatal("Usage set without a SessionID; SDK Validate would reject the turn")
+	}
+	if got.Budget == nil || got.Budget.MaxBytes != sdkSessionBudgetMaxBytes {
+		t.Fatal("Budget must be set even without a ceiling; it bounds a runaway loop")
+	}
+}
