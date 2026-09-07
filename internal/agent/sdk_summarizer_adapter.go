@@ -52,24 +52,58 @@ const noSummarizerReason = "no summarizer is configured for this session"
 // (including "no summarizer wired" and a host-state read failure)
 // wraps sdkplan.ErrSummarySkipped with the classified reason; a
 // retryable failure returns unwrapped, so the SDK fails the whole
-// compaction closed instead of silently degrading - the adapter has
-// no retry loop of its own, unlike the PM-driven summarizeTurn's
-// bounded inline retries.
+// compaction closed instead of silently degrading.
+//
+// The call is memoized for the turn on its INPUT key (see
+// sdkSummarizeInputKey): a repeated call over the same dropped set
+// replays the first result byte for byte and issues no new provider
+// request. A retryable failure is retried exactly once inside the
+// same call; a second failure returns and stores no memo, so the
+// SDK's own recovery may still try again.
 func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Message) (sdkplan.Summary, error) {
-	_, dropped := splitSDKPriorSummary(msgs)
+	prior, dropped := splitSDKPriorSummary(msgs)
 	cliDropped := sdkMessagesToCLI(dropped)
+	key := sdkSummarizeInputKey(prior, cliDropped)
+	if memo := a.memoized(key); memo != nil {
+		return a.replayMemo(memo)
+	}
 
 	if a.opts.SummaryConfig.Summarizer == nil {
-		return sdkplan.Summary{}, a.skip(cliDropped, noSummarizerReason)
+		return sdkplan.Summary{}, a.skip(cliDropped, noSummarizerReason, key)
 	}
 
 	snapshot, err := a.l.TurnState.Snapshot()
 	if err != nil {
-		return sdkplan.Summary{}, a.skip(cliDropped, contextmgr.SummaryReasonHostState)
+		return sdkplan.Summary{}, a.skip(cliDropped, contextmgr.SummaryReasonHostState, key)
 	}
 
 	summarizer := a.opts.SummaryConfig.Summarizer
-	request, err := contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
+	request, err := a.buildRequest(snapshot, cliDropped)
+	if err != nil {
+		return sdkplan.Summary{}, a.skip(cliDropped, contextmgr.SummaryReasonRequestInvalid, key)
+	}
+
+	summary, err := summarizeWithOneRetry(ctx, summarizer, request)
+	if err != nil {
+		reason := contextmgr.ClassifySummaryFailure(err)
+		if !contextmgr.RetryableSummaryFailure(err) {
+			return sdkplan.Summary{}, a.skip(cliDropped, reason, key)
+		}
+		a.l.summaryFailureReason = reason
+		return sdkplan.Summary{}, err
+	}
+	return a.succeed(cliDropped, summary, request, key), nil
+}
+
+// buildRequest builds the governed summary request from the turn-state
+// snapshot and the dropped messages. Evidence comes from the
+// snapshot: it is the host's own content-free record of what the
+// compaction removed. SourceExcerpts come from the dropped messages
+// themselves. The two carry different data from different sources.
+// See TestSDKSummarizerAdapterEvidenceProvenance, which pins both.
+func (a *sdkSummarizerAdapter) buildRequest(snapshot contextmgr.TurnStateSnapshot, cliDropped []provider.Message) (contextmgr.SummaryRequest, error) {
+	summarizer := a.opts.SummaryConfig.Summarizer
+	return contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
 		Version:           contextmgr.SummarySchemaVersion,
 		Objective:         SummaryFieldText(latestUserObjective(a.l.Messages)),
 		State:             snapshot.State,
@@ -88,20 +122,27 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 		Budget:            SummaryRequestBudget(a.opts.MaxContextTokens),
 		OutputLimit:       SummaryOutputLimitTokens,
 	})
-	if err != nil {
-		return sdkplan.Summary{}, a.skip(cliDropped, contextmgr.SummaryReasonRequestInvalid)
-	}
+}
 
+// summarizeWithOneRetry runs the governed summarizer and retries once
+// on a retryable failure. The bound is exactly one retry: no loop and
+// no backoff. A cancelled context stops the retry, because a retry
+// would fail the same way at once.
+func summarizeWithOneRetry(ctx context.Context, summarizer *contextmgr.Summarizer, request contextmgr.SummaryRequest) (contextmgr.UntrustedSummary, error) {
 	summary, err := summarizer.Summarize(ctx, request)
-	if err != nil {
-		reason := contextmgr.ClassifySummaryFailure(err)
-		if !contextmgr.RetryableSummaryFailure(err) {
-			return sdkplan.Summary{}, a.skip(cliDropped, reason)
-		}
-		a.l.summaryFailureReason = reason
-		return sdkplan.Summary{}, err
+	if err == nil || !contextmgr.RetryableSummaryFailure(err) {
+		return summary, err
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return summary, err
+	}
+	return summarizer.Summarize(ctx, request)
+}
 
+// succeed records the pending outcome of a successful compaction,
+// memoizes the call under key, and maps the host summary onto the SDK
+// shape.
+func (a *sdkSummarizerAdapter) succeed(cliDropped []provider.Message, summary contextmgr.UntrustedSummary, request contextmgr.SummaryRequest, key string) sdkplan.Summary {
 	value := summary.Value()
 	rendered := RenderSummaryMessage(summary, request.Input.Evidence)
 	a.l.sdkPendingCompaction = &sdkCompactionOutcome{
@@ -118,7 +159,7 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 		elidedBytes:    sdkElidedBytes(cliDropped),
 	}
 	a.l.summaryFailureReason = ""
-	return sdkplan.Summary{
+	out := sdkplan.Summary{
 		Objective:       value.Objective,
 		State:           value.State,
 		Decisions:       value.Decisions,
@@ -126,15 +167,18 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 		ChangedSurfaces: value.ChangedSurfaces,
 		OpenWork:        value.OpenWork,
 		Risks:           value.Risks,
-	}, nil
+	}
+	a.rememberSummarize(key, out, nil)
+	return out
 }
 
 // skip records the pending outcome for a real-but-unsummarized
 // compaction (the dropped messages were still elided from the
-// model's context even though no summary exists for them) and
-// returns the wrapped skip sentinel. agentloop's summarizeDropped
-// matches it through errors.Is regardless of the wrap.
-func (a *sdkSummarizerAdapter) skip(dropped []provider.Message, reason string) error {
+// model's context even though no summary exists for them), memoizes
+// the settled skip under key, and returns the wrapped skip sentinel.
+// agentloop's summarizeDropped matches it through errors.Is
+// regardless of the wrap.
+func (a *sdkSummarizerAdapter) skip(dropped []provider.Message, reason string, key string) error {
 	a.l.summaryFailureReason = reason
 	a.l.sdkPendingCompaction = &sdkCompactionOutcome{
 		summarized: false,
@@ -146,7 +190,9 @@ func (a *sdkSummarizerAdapter) skip(dropped []provider.Message, reason string) e
 		elidedMessages: len(dropped),
 		elidedBytes:    sdkElidedBytes(dropped),
 	}
-	return fmt.Errorf("%w: %s", sdkplan.ErrSummarySkipped, reason)
+	err := fmt.Errorf("%w: %s", sdkplan.ErrSummarySkipped, reason)
+	a.rememberSummarize(key, sdkplan.Summary{}, err)
+	return err
 }
 
 // splitSDKPriorSummary removes the held-aside prior summary message,

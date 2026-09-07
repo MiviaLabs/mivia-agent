@@ -32,9 +32,6 @@ func SummaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 		// wrong reason on a caller that has no resolved configuration.
 		return ""
 	}
-	if !res.Context.Summary.SummaryEnabled() {
-		return "[context.summary] enabled is not set"
-	}
 	override := res.Context.Summary.Provider != nil && res.Context.Summary.Model != nil
 	if !override {
 		if strings.TrimSpace(res.BaseURL) == "" {
@@ -54,13 +51,12 @@ func SummaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 	return ""
 }
 
-// summaryWiring builds the LLM summarizer for one session setup. It is
-// opt-OUT: [context.summary] defaults to enabled, so the remaining condition
-// is a resolved provider endpoint plus a usable provider/model binding.
-// Missing either keeps every compaction path structural-only. A false return
-// is a policy state, never an error: setup must not fail because a summary
-// cannot run - but SummaryDisabledReason names the cause so it is never
-// silent.
+// summaryWiring builds the LLM summarizer for one session setup. The
+// summarizer is always enabled, so the only conditions are a resolved
+// provider endpoint plus a usable provider/model binding. Missing either
+// keeps every compaction path structural-only. A false return is a policy
+// state, never an error: setup must not fail because a summary cannot run -
+// but SummaryDisabledReason names the cause so it is never silent.
 //
 // A [context.summary] provider/model override replaces the session binding
 // for the summary call (the cost-containment escape hatch for cheap
@@ -73,7 +69,7 @@ func SummaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 // session does not rebuild it; summaries keep the startup binding until a new
 // session starts.
 func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
-	if sess == nil || res == nil || !res.Context.Summary.SummaryEnabled() {
+	if sess == nil || res == nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
 	// Override path: [context.summary] provider/model. Load-time validation

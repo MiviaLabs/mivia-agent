@@ -9,10 +9,10 @@ package clichat
 //     == true.
 //   - (b) INV-AG-32: that event carries NO summary payload - no summary body
 //     field and no "[host-injected context summary" content anywhere in it.
-//   - (c) a [context.summary] enabled = false workspace compacts
-//     structural-only: summarized == false, the event says "(structural
-//     only, no summary)", and the wire names the missing condition
-//     ("[context.summary]").
+//   - (c) a workspace whose [context.summary] provider/model override cannot
+//     be built compacts structural-only: summarized == false, the event says
+//     "(structural only, no summary)", and the wire names the missing
+//     condition ("[context.summary]").
 //   - (d/e) INV-AG-39: the rendered summary is durable ONLY in the
 //     checkpoint's active context; the projected source events/payloads
 //     never carry it.
@@ -108,8 +108,12 @@ func (s *channelsSummaryStub) summaryRequests() []provider.Request {
 // channelsWorkspaceConfig writes a HOME-pinned temp workspace whose
 // mivia.toml points the ollama provider at the httptest stub and pins the
 // durable context store under the workspace (mirrors catalogCompactWorkspace).
-// summaryEnabled drives [context.summary] enabled.
-func channelsWorkspaceConfig(t *testing.T, serverURL string, summaryEnabled bool) (ws, cfgPath, storePath string) {
+// summaryWirable selects whether the summarizer can be built. False adds a
+// [context.summary] provider/model override pointing at a provider with no
+// usable credential, which is fail-closed: the summarizer is not built and
+// the reason names the override. The summarizer itself is always enabled;
+// there is no switch that turns it off.
+func channelsWorkspaceConfig(t *testing.T, serverURL string, summaryWirable bool) (ws, cfgPath, storePath string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OLLAMA_API_KEY", "")
@@ -119,6 +123,21 @@ func channelsWorkspaceConfig(t *testing.T, serverURL string, summaryEnabled bool
 		t.Fatal(err)
 	}
 	storePath = filepath.Join(ws, ".mivia", "context.db")
+	unwirableOverride := `
+[providers.openrouter]
+base_url = "https://api.unreachable.invalid/v1"
+api_key_env = "MIVIA_CHANNELS_UNSET_KEY"
+models = [{ name = "cheap-summarizer", context_window_tokens = 1800 }]
+
+[context.summary]
+provider = "openrouter"
+model = "cheap-summarizer"
+`
+	if summaryWirable {
+		unwirableOverride = ""
+	} else {
+		t.Setenv("MIVIA_CHANNELS_UNSET_KEY", "")
+	}
 	fixture := fmt.Sprintf(`[provider]
 name = "ollama"
 
@@ -126,13 +145,10 @@ name = "ollama"
 base_url = "%s/v1"
 api_key_env = "OLLAMA_API_KEY"
 models = [{ name = "compact-test", context_window_tokens = 1800, max_output_tokens = 200 }]
-
-[context.summary]
-enabled = %v
-
+%s
 [subagents]
 store_path = %q
-`, serverURL, summaryEnabled, storePath)
+`, serverURL, unwirableOverride, storePath)
 	if err := os.WriteFile(cfgPath, []byte(fixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -342,10 +358,15 @@ func TestCompactionChannelsAutomaticEventOmitsSummaryAndPersistsToCheckpoint(t *
 }
 
 // TestCompactionChannelsStructuralOnlyNamesTheMissingCondition drives the
-// second workspace with [context.summary] enabled = false: automatic turns
-// never call the summarizer, and /compact emits a structural-only compaction
-// (summarized == false, "(structural only, no summary)") whose companion
-// notice names the missing condition ("[context.summary]").
+// second workspace, whose [context.summary] provider/model override cannot be
+// built: automatic turns never call the summarizer, and /compact emits a
+// structural-only compaction (summarized == false, "(structural only, no
+// summary)") whose companion notice names the missing condition
+// ("[context.summary]").
+//
+// The premise moved from an `enabled = false` flag, which load now refuses,
+// onto an unbuildable override. Both are the same observable state - the
+// summarizer cannot run - and every assertion below is unchanged.
 func TestCompactionChannelsStructuralOnlyNamesTheMissingCondition(t *testing.T) {
 	stub := &channelsSummaryStub{}
 	server := httptest.NewServer(stub)
@@ -364,7 +385,7 @@ func TestCompactionChannelsStructuralOnlyNamesTheMissingCondition(t *testing.T) 
 	}
 	_ = done()
 	if got := stub.summaryRequests(); len(got) != 0 {
-		t.Fatalf("[context.summary] enabled=false still sent %d summary request(s)", len(got))
+		t.Fatalf("an unbuildable [context.summary] override still sent %d summary request(s)", len(got))
 	}
 
 	var buf strings.Builder
@@ -388,7 +409,7 @@ func TestCompactionChannelsStructuralOnlyNamesTheMissingCondition(t *testing.T) 
 	// (c) structural-only: summarized == false and the event says so, and it
 	// still carries no summary payload.
 	if summarized, _ := record["summarized"].(bool); summarized {
-		t.Fatalf("compaction.summarized = %v, want false for [context.summary] enabled=false: %s", record["summarized"], lines[0])
+		t.Fatalf("compaction.summarized = %v, want false for an unbuildable [context.summary] override: %s", record["summarized"], lines[0])
 	}
 	if !strings.Contains(lines[0], "structural only") {
 		t.Fatalf("compaction event does not say \"structural only\": %s", lines[0])

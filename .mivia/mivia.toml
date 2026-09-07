@@ -21,8 +21,6 @@ show_iteration_notices = false
 temperature = 0.0
 
 [context]
-[context.summary]
-enabled = true
 
 [harness]
 sandbox = false

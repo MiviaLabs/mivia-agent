@@ -46,6 +46,9 @@ func (r *Resolved) Validate() error {
 	if r.PromptCache != "auto" && r.PromptCache != "off" {
 		return fmt.Errorf("[provider] prompt_cache must be \"auto\" or \"off\", got %q", r.PromptCache)
 	}
+	if err := validateSummaryEnabled(r); err != nil {
+		return err
+	}
 	if err := validateSummaryOverride(r); err != nil {
 		return err
 	}
@@ -53,6 +56,20 @@ func (r *Resolved) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// validateSummaryEnabled refuses the retired `[context.summary] enabled`
+// opt-out. The summarizer is always enabled now. An explicit `enabled = false`
+// is the one configuration whose meaning changed, so load fails it loudly and
+// once, rather than accepting the key and silently making a provider call the
+// operator deliberately stopped. `enabled = true` and an absent key both pass:
+// neither asks for behavior the host no longer offers.
+func validateSummaryEnabled(r *Resolved) error {
+	enabled := r.Context.Summary.Enabled
+	if enabled == nil || *enabled {
+		return nil
+	}
+	return fmt.Errorf("[context.summary] enabled = false is no longer supported: the compaction summarizer is always enabled; remove the line")
 }
 
 // validateSummaryOverride enforces the [context.summary] provider/model

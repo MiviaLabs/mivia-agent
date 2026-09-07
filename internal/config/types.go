@@ -71,18 +71,18 @@ type ContextConfig struct {
 	Summary ContextSummaryConfig `toml:"summary"`
 }
 
-// ContextSummaryConfig is the operator switch for LLM-backed compaction
-// summaries. It is ENABLED by default: compaction drops messages permanently,
-// so the summary is the only record of what was removed, and a workspace that
-// configures nothing should not silently lose that record. Opting out is
-// explicit.
+// ContextSummaryConfig configures the LLM-backed compaction summary. The
+// summarizer is ALWAYS enabled: compaction drops messages permanently, so the
+// summary is the only record of what was removed. No operator switch turns it
+// off. Only the provider/model override remains configurable.
 type ContextSummaryConfig struct {
-	// Enabled turns on the bounded provider call that summarizes what
-	// compaction dropped. Nil means unset, which resolves to true - the
-	// pointer exists precisely so an explicit `enabled = false` is
-	// distinguishable from an absent key, which a plain bool cannot express.
-	// The call still requires a resolved provider endpoint; without one the
-	// summary stays off and summaryDisabledReason names why.
+	// Enabled is the retired opt-out switch. It stays on the struct so load
+	// can still SEE an explicit `enabled = false` and refuse it with a
+	// message that names the key; see Resolved.Validate. Nil means the key
+	// is absent, which is the only other accepted state. Nothing reads it as
+	// a gate: the summary call needs a resolved provider endpoint and a
+	// provider/model binding, and summaryDisabledReason names either when it
+	// is missing.
 	Enabled *bool `toml:"enabled"`
 
 	// Provider and Model override the binding the summary call runs on,
@@ -94,12 +94,6 @@ type ContextSummaryConfig struct {
 	// Absent means the summary uses the session binding captured at setup.
 	Provider *string `toml:"provider"`
 	Model    *string `toml:"model"`
-}
-
-// SummaryEnabled reports the resolved switch: absent means on. Read this
-// rather than the pointer so the opt-out default lives in one place.
-func (c ContextSummaryConfig) SummaryEnabled() bool {
-	return c.Enabled == nil || *c.Enabled
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.

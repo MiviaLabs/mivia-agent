@@ -105,6 +105,12 @@ type Loop struct {
 	// or its own prompt-too-long recovery gave up before ever
 	// building a request) must never survive to ground a LATER call.
 	sdkPendingCompaction *sdkCompactionOutcome
+	// sdkSummaryMemo memoizes one sdkSummarizerAdapter.Summarize
+	// result per distinct dropped set, for this turn only. A repeated
+	// call over the same input replays it and issues no new provider
+	// request. Reset at resetTurnCompaction, beside every other
+	// turn-scoped compaction field.
+	sdkSummaryMemo *sdkSummaryMemo
 	// softInterruptAt is the unix-nano timestamp of the last soft interrupt
 	// (plan 54). It backs the cross-call SoftInterruptCooldown; watcher
 	// goroutines write it and later calls' watchers read it, so it must be

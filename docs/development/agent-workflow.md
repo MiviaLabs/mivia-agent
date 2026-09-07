@@ -206,7 +206,7 @@ delete-branch any PR a run opens; never merge one.
 ### Context-compaction e2e (`scripts/e2e_context_compaction.py`)
 
 Drives the real `mivia` binary through automatic compaction, manual
-`/compact`, the tool-enabled agent loop, and the summary-gate-off path.
+`/compact`, the tool-enabled agent loop, and the unbuildable-summarizer path.
 Every assertion reads a surface a user or host app observes - the NDJSON
 wire and the durable SQLite checkpoint - so a regression that unit tests
 pass by construction still fails here.

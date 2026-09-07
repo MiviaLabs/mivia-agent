@@ -117,10 +117,12 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 		Enabled:             true,
 		UsageWriter:         storage.NewUsageWriter(store, principal.WorkspaceID),
 	}
-	// The summary gate is explicit: the [context.summary] flag, a configured
-	// [privacy] policy, and a resolved provider endpoint together wire the LLM
-	// summarizer into the request path (manager.Summarizer, read per turn by
-	// the agent loop and plain chat). Anything less keeps every path
+	// The summarizer is always enabled. A resolved provider endpoint and a
+	// resolved provider/model binding together wire it into the request path
+	// (manager.Summarizer, read per turn by the agent loop and plain chat).
+	// A configured [privacy] policy is NOT a precondition: it governs what
+	// the checkpoint may persist, not whether the summary may run. Anything
+	// less than the endpoint and the binding keeps every path
 	// structural-only. The committer's summary seam stays unwired on purpose:
 	// CommitPreparation fails the turn when the summary call fails, and a
 	// background metadata call must never destroy a turn the model already

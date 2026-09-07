@@ -167,7 +167,7 @@ func newUsageEventsSession(t *testing.T) (string, *storage.SQLite, *chat.Session
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := summaryWiringResolved(t, false) // no summarizer: keep compaction structural-only
+	res := summaryWiringUnwirable(t) // no summarizer: keep compaction structural-only
 	session := chat.NewSession(res, usageReportingCompleter{})
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
 		t.Fatal(err)
@@ -364,7 +364,7 @@ func newSessionWithFailingUsageWriter(t *testing.T) (*chat.Session, *storage.SQL
 		t.Fatal(err)
 	}
 
-	res := summaryWiringResolved(t, false)
+	res := summaryWiringUnwirable(t)
 	session := chat.NewSession(res, usageReportingCompleter{})
 	if _, err := configureSessionContext(session, t.TempDir(), checkpointStore, res); err != nil {
 		t.Fatal(err)

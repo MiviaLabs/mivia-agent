@@ -489,11 +489,13 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 ## LLM compaction summaries
 
-`[context.summary] enabled` (default `true`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
+The compaction summarizer is always enabled. A bounded provider call summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
 
-Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
+Two conditions must hold, or the summary stays off: a resolved provider endpoint, and a resolved provider/model binding. A configured `[privacy]` redaction policy is NOT one of them: `[privacy]` governs what the checkpoint may persist, not whether the summary may run. A summary the redaction policy refuses is dropped, never sent or stored.
 
-Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) fails a turn closed on a retryable summary failure instead of degrading silently, since that path has no inline retry loop of its own; see `plans/sdk-window-compaction-adoption-plan.md`.
+The retired `[context.summary] enabled` key is refused at load. Remove the line from any config that still sets `enabled = false`.
+
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once, then fails the turn closed instead of degrading silently; see `plans/sdk-window-compaction-adoption-plan.md`.
 
 The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
 

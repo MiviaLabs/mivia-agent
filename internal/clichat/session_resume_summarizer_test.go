@@ -25,7 +25,7 @@ func TestSessionResumeRefreshesTheSummarizer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	res.ProviderName = "provider-a"
 	res.Model = "model-a"
 

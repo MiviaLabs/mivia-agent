@@ -31,7 +31,7 @@ func TestAutoCompactionSummarySurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	session := chat.NewSession(res, &summaryScriptedCompleter{})
 	if _, err := configureSessionContext(session, dir, store, res); err != nil {
 		t.Fatal(err)

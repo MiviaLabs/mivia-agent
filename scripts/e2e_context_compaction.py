@@ -207,7 +207,19 @@ store_backend = "sqlite"
 """
 
 SUMMARY_ON = ''
-SUMMARY_OFF = '\n[context.summary]\nenabled = false\n'
+# The summarizer is always enabled; `[context.summary] enabled = false` is
+# refused at load. The only way to keep a workspace structural-only is a
+# [context.summary] provider/model override that cannot be built. The wiring
+# is fail-closed, so the notice still names "[context.summary]".
+SUMMARY_OFF = (
+    '\n[providers.openrouter]\n'
+    'base_url = "https://api.unreachable.invalid/v1"\n'
+    'api_key_env = "MIVIA_E2E_UNSET_SUMMARY_KEY"\n'
+    'models = [{ name = "cheap-summarizer", context_window_tokens = 1600 }]\n'
+    '\n[context.summary]\n'
+    'provider = "openrouter"\n'
+    'model = "cheap-summarizer"\n'
+)
 PRIVACY_ON = '\n[privacy]\nredaction_patterns = ["never-match-this-e2e-pattern"]\n'
 
 
@@ -527,9 +539,10 @@ def scenario_agent_loop(base: Path, backend: Backend, report: Report) -> None:
 def scenario_default_on(base: Path, backend: Backend, report: Report) -> None:
     """A workspace that configures NOTHING must still summarize.
 
-    This is the opt-out contract. It was opt-in, so every workspace without an
-    explicit [context.summary] section compacted with no summary and no
-    signal - the reported "compaction does nothing, no LLM call" symptom.
+    The summarizer is always enabled. It was opt-in once, so every workspace
+    without an explicit [context.summary] section compacted with no summary
+    and no signal - the reported "compaction does nothing, no LLM call"
+    symptom.
     """
     print("\n[5] zero-config workspace: summary is on by default")
     if backend.stub:
@@ -566,10 +579,10 @@ def scenario_default_on(base: Path, backend: Backend, report: Report) -> None:
 
 
 def scenario_gate_off(base: Path, backend: Backend, report: Report) -> None:
-    """An unconfigured workspace must SAY it is structural-only."""
-    print("\n[4] explicit opt-out: honest, diagnosable structural-only compaction")
+    """A workspace that cannot build the summarizer must SAY it is structural-only."""
+    print("\n[4] unbuildable override: honest, diagnosable structural-only compaction")
     for name, summary, privacy, expect in [
-        ("explicit-opt-out", False, True, "context.summary"),
+        ("unbuildable-override", False, True, "context.summary"),
     ]:
         if backend.stub:
             backend.stub.reset()
@@ -608,7 +621,7 @@ def scenario_gate_off(base: Path, backend: Backend, report: Report) -> None:
         report.check(
             f"{name}: no summary is persisted",
             not bodies or SUMMARY_CONTENT not in bodies[-1],
-            detail="a summary was persisted with the gate off",
+            detail="a summary was persisted with an unbuildable summarizer",
         )
         if backend.stub:
             report.check(
