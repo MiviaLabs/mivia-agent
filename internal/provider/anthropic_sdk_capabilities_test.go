@@ -63,8 +63,12 @@ func TestAnthropicEstimateTokensEmptyRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateTokens: %v", err)
 	}
-	if got != 0 {
-		t.Fatalf("EstimateTokens for an empty request = %d, want 0", got)
+	// EstimateRequestCost charges a small fixed overhead even for a
+	// message-less, tool-less request; it is not itself zero-cost.
+	// Pin the exact baseline instead of asserting zero, so a change
+	// to that overhead shows up here rather than silently drifting.
+	if got != 3 {
+		t.Fatalf("EstimateTokens for an empty request = %d, want 3 (fixed request overhead)", got)
 	}
 }
 

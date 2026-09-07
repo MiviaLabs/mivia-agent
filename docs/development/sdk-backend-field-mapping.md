@@ -323,6 +323,20 @@ projection (`agentloop_adoption.go`), each pinned by
   means migrating durable context management off the request path
   first. Requires the go.mod replace tracking mivia-ai-sdk main,
   whose provider/anthropic implements the production TokenEstimator.
+- **Capability mirror** — `AnthropicCompleter`
+  (`internal/provider/anthropic_sdk_capabilities.go`) implements
+  `provider.ContextAccountant`, `provider.ReasoningPolicy`, and
+  `provider.TokenEstimator` directly, proving one concrete provider
+  can carry the capabilities itself instead of only the
+  `agentLoopCompleter` wrapper. The other eight builtin providers
+  (`openai_compat.go` and its per-vendor wrappers) are deliberately
+  left unmirrored — future work, not attempted here. Separately,
+  `tools.Scope`/`tools.RunScoped` (the SDK's `Privileged`/
+  `ResultBudget` enforcement point) are wired nowhere in the host;
+  `internal/tools/tools.go`'s own privilege filter remains the sole
+  live enforcement path. Replacing it with `tools.Scope` is a larger
+  design decision than this rollout and is tracked as its own
+  follow-up, not attempted here.
 
 ## See also
 
