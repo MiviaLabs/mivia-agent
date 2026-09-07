@@ -73,6 +73,21 @@ func TestQueuedWriter_BoundedBackpressureAndMetrics(t *testing.T) {
 		}(i)
 	}
 	<-gated.started
+	// The worker holds the gate, so wait until the bounded queue itself has
+	// backed up (one event in the worker plus two filling a capacity-2
+	// channel) before releasing. Submitted only counts an event that landed
+	// in the queue, so this is the saturation signal, not a guess.
+	deadline := time.Now().Add(10 * time.Second)
+	for w.Metrics().Submitted < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("queue never saturated, metrics=%+v", w.Metrics())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// Hold the gate past the coarsest monotonic-clock granularity this test
+	// runs on (Windows interrupt time ticks at up to ~15.6ms), so the wait
+	// the queued events accumulate is measurable rather than rounding to 0.
+	time.Sleep(50 * time.Millisecond)
 	close(gated.release)
 	wg.Wait()
 	close(errCh)
