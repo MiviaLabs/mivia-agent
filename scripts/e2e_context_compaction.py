@@ -561,7 +561,7 @@ def scenario_default_on(base: Path, backend: Backend, report: Report) -> None:
         "a zero-config workspace reports the compaction as summarized",
         all((e.get("compaction") or {}).get("summarized") is True
             for e in events if e.get("type") == "compaction"),
-        detail="compaction ran structural-only despite the opt-out default",
+        detail="compaction ran structural-only despite the always-enabled summarizer",
     )
     bodies = checkpoint_bodies(ws)
     report.check(

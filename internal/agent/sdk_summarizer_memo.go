@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"hash"
 	"hash/fnv"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -30,27 +31,35 @@ type sdkSummaryMemo struct {
 // Summarize call: the held-aside prior summary, when present, and the
 // dropped messages. The key cannot reuse sdkCompactionIdentity, whose
 // salt is the rendered summary - that text exists only after the call
-// returns, so it cannot identify the call before it runs. Role and
-// content of every input message feed the hash; a marker separates
-// the prior from the dropped set, so a prior with content "x" and a
-// dropped message with content "x" never collide.
+// returns, so it cannot identify the call before it runs. Role, name,
+// tool-call id, and content of every input message feed the hash. Name
+// and tool-call id are part of the key because contextmgr.excerptOf
+// copies Name into the excerpt of a tool-role message, so two dropped
+// sets that differ only there build different requests. A marker
+// separates the prior from the dropped set, so a prior with content
+// "x" and a dropped message with content "x" never collide.
 func sdkSummarizeInputKey(prior *sdkshape.Message, dropped []provider.Message) string {
 	h := fnv.New64a()
 	if prior != nil {
 		_, _ = h.Write([]byte("prior\x00"))
-		_, _ = h.Write([]byte(prior.Role))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(prior.Content))
-		_, _ = h.Write([]byte{0})
+		writeKeyFields(h, string(prior.Role), prior.Name, "", prior.Content)
 	}
 	_, _ = h.Write([]byte("dropped\x00"))
 	for _, m := range dropped {
-		_, _ = h.Write([]byte(m.Role))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(m.Content))
-		_, _ = h.Write([]byte{0})
+		writeKeyFields(h, m.Role, m.Name, m.ToolCallID, m.Content)
 	}
 	return fmt.Sprintf("sdkin:%x", h.Sum64())
+}
+
+// writeKeyFields feeds one message's identifying fields to h, each
+// terminated by a zero byte so no two field boundaries can be
+// confused. See sdkSummarizeInputKey for why Name and ToolCallID
+// belong in the key.
+func writeKeyFields(h hash.Hash64, role, name, toolCallID, content string) {
+	for _, field := range []string{role, name, toolCallID, content} {
+		_, _ = h.Write([]byte(field))
+		_, _ = h.Write([]byte{0})
+	}
 }
 
 // memoized returns the memo for key, or nil when this turn holds no

@@ -1,11 +1,10 @@
 # SDK Window compaction flip — implementation plan
 
-Status: planned, not yet built. Revision 3, after two hostile plan
-reviews returned REVISE.
+Status: planned, not yet built. Revision 4, rebased on commit
+`4e64b337`. Two hostile plan reviews returned REVISE before it.
 
-**Blocked until rebase.** A concurrent slice is landing the summarizer
-memo and the one-call retry in this same tree. See "Dependency on the
-concurrent summarizer slice". Do not start until that slice commits.
+Every file:line below was re-verified against `dev` at `1e85dfd4`. The
+raw sweeps were re-run, not reasoned about.
 
 Predecessor: `plans/sdk-window-compaction-adoption-plan.md`. That plan
 shipped items 1-6 and part of item 8. It deferred items 7 and 9. This
@@ -13,6 +12,22 @@ plan lands them, and makes the SDK Window the only compaction path in
 production.
 
 Owner role: planner. This document contains no production code.
+
+## Revision 4 changes
+
+Rebase pass on commit `4e64b337`.
+
+| Change | Section |
+|---|---|
+| Blocked-until-rebase banner and the dependency section removed | Header, "Landed prerequisite" |
+| Items A.1, A.2, A.3 cut as shipped | Section A |
+| Section B cut ENTIRELY as shipped, residual included | Section B |
+| The config-gate inversion table cut as shipped | "Tests whose assertions invert" |
+| Test T.9 cut as shipped | Tests |
+| Item A.4 restated against the shipped three-parameter `skip` and the shipped `replayMemo` | Item A.4 |
+| Item C.9 answers the memo question explicitly | Item C.9 |
+| A cached-failure replay analysis added; no defect found | New "Shipped-code check" section |
+| File sizes and every file:line re-verified | Throughout |
 
 ## Revision 3 changes
 
@@ -92,29 +107,36 @@ Every statement below was checked against the tree on 2026-09-07.
   `internal/agent/options.go:272` and read at
   `internal/agent/agentloop_adoption.go:183`. No production call site
   writes it. Only tests set it.
-- `internal/agent/sdk_summarizer_adapter.go` NOW HAS a turn memo and a
-  one-call retry. Revision 2 said it had neither. A concurrent slice
-  landed both while revision 2 was under review. `Summarize`
-  (`:63-95`) computes `sdkSummarizeInputKey`, replays through
-  `memoized`/`replayMemo`, and calls `summarizeWithOneRetry`. The memo
+- `internal/agent/sdk_summarizer_adapter.go` (247 lines) HAS a turn
+  memo and a one-call retry, from commit `4e64b337`. `Summarize`
+  (`:63`) computes `sdkSummarizeInputKey`, replays through
+  `memoized`/`replayMemo` (`:68-69`), and calls
+  `summarizeWithOneRetry` (`:131`). Its other functions are
+  `buildRequest` (`:104`), `succeed` (`:145`), and `skip` (`:181`),
+  which now takes THREE parameters: `(dropped, reason, key)`. The memo
   lives in `internal/agent/sdk_summarizer_memo.go`.
-  `resetTurnCompaction` (`internal/agent/context.go:101`) already
-  clears `l.sdkSummaryMemo`. Re-verify this bullet after the rebase.
-- `internal/agent/agentloop_adoption.go:272` defines
-  `sdkCompactionObserver`. It runs `PreparationManager.Prepare` with
-  `Budget = math.MaxInt` at line 287.
+  `resetTurnCompaction` (`internal/agent/context.go:89`) clears
+  `l.sdkSummaryMemo` at `:104`.
+- `internal/agent/agentloop_adoption.go` is 450 lines.
+  `sdkCompactionAdopted` is at `:176`, `adoptSDKCompaction` at `:229`,
+  `sdkCompactionObserver` at `:272` with `Budget = math.MaxInt` at
+  `:287`, `confirmSDKCompaction` at `:329`, and `finishAgentLoopTurn`
+  at `:383`. All unchanged by `4e64b337`.
 - `adoptSDKCompaction` pins `TriggerPercent` 100 and `TargetTokens` at
   `MaxContextTokens / 2`.
 - `internal/agent/agentloop_recovery.go:52` already stands the host
   prompt-too-long rerun down on an adopted turn. Commit `190555f0`
   landed that. Its doc comment at `:36-42` gives a second reason: `l`
   persists across both `run()` calls with no reset between them.
-- `internal/config/types.go:101` defines `SummaryEnabled`. It is
-  opt-out already. Only an explicit `enabled = false` turns it off.
-- `internal/clichat/context_setup_session.go:120` states a false claim
-  about the summary gate. `buildSummaryWiring`
-  (`internal/clichat/context_summary_setup.go:131`) states that
-  `[privacy]` is no longer a precondition.
+- `ContextSummaryConfig.SummaryEnabled` is DELETED. Commit `4e64b337`
+  removed the method, its normalization, and all three gate reads.
+  `validateSummaryEnabled` (`internal/config/validate.go:67`, called at
+  `:49`) now refuses `enabled = false` at load. The summarizer is
+  always enabled. Section B is therefore cut.
+- The `[privacy]`-precondition doc drift is FIXED.
+  `internal/clichat/context_setup_session.go:123` now reads "A
+  configured [privacy] policy is NOT a precondition". Five sibling
+  sites were corrected in the same commit. Item B.4 is cut.
 - `internal/agent/context.go:85` is `recordPreparation`'s last
   assignment: `l.LastPreparation = preparation`. It replaces the
   struct wholesale.
@@ -271,80 +293,51 @@ is larger than stated. Do not claim parity without T.1 passing.
 
 ---
 
-## Dependency on the concurrent summarizer slice
+## Landed prerequisite
 
-Review round 2 found that a second slice is working this same tree.
-`git status --short` shows it: `internal/agent/context.go`,
-`internal/agent/loop.go`, and
-`internal/agent/sdk_summarizer_adapter.go` modified, plus
-`internal/agent/sdk_summarizer_memo.go` and
-`internal/agent/sdk_summarizer_memo_test.go` untracked.
+Commit `4e64b337` ("feat(agent): always enable the summarizer and memoize
+the SDK adapter") is merged on `dev`. It shipped revision 2's items A.1,
+A.2, A.3, and ALL of section B. Every one is cut from this plan below,
+verified by reading the tree, not by trusting a summary. Commit
+`ff497585` allowed the two test renames that commit made.
 
-That slice has already landed revision 2's items A.1, A.2, and A.3.
-`Summarize` memoizes on `sdkSummarizeInputKey`, retries once through
-`summarizeWithOneRetry`, and `buildRequest`'s doc comment names
-`TestSDKSummarizerAdapterEvidenceProvenance` as the pin for the
-Evidence and SourceExcerpts provenance split.
 
-**Rule.** Do not start this plan until that slice commits. Then rebase
-on it, and re-verify before writing anything:
+## Shipped-code check: the memo caches failures
 
-1. Re-read the "Verified current state" bullets. The adapter bullet is
-   already rewritten; check the rest.
-2. Re-run the raw sweep `grep -rn "summaryProbeOptions(" --include=*.go
-   .`. The sibling slice's edits move line numbers in every table in
-   this document.
-3. Re-run the item B.4 greps.
-4. Confirm items A.1, A.2, and A.3 are in the committed tree, and that
-   the three memo tests this plan relied on exist.
+The memo now caches an error as well as a summary
+(`rememberSummarize(key, summary, err)`). A cached
+`plan.ErrSummarySkipped`, replayed later in the same turn, must still
+re-establish `l.sdkPendingCompaction`. `confirmSDKCompaction` reads
+that field to ground a real compaction, so a replay that skipped the
+side effect would silently lose the grounding: the dropped messages
+would be gone from the model's context with no compaction event, no
+`LastPreparation.Compacted`, and no operator notice.
 
-Per the `workflow-rules-no-big-test-suites-absolute-local-sdk-replace-shared-tree-etiquette`
-memory, stage only this plan's own files by explicit path.
+**The shipped code handles it. No defect.** The ordering is correct at
+three points:
 
-### Retracted: the section B dispute
+1. `skip` (`internal/agent/sdk_summarizer_adapter.go:181`) assigns
+   `a.l.sdkPendingCompaction` at `:183` BEFORE it calls
+   `a.rememberSummarize(key, sdkplan.Summary{}, err)` at `:194`.
+2. `rememberSummarize`
+   (`internal/agent/sdk_summarizer_memo.go:81`) copies
+   `*a.l.sdkPendingCompaction` into `memo.outcome` when the field is
+   non-nil, so the skip's outcome is captured, not lost.
+3. `replayMemo` (`internal/agent/sdk_summarizer_memo.go:71`) takes
+   `outcome := memo.outcome` and re-stashes `&outcome` on every
+   replay. Each replay gets a fresh copy, so
+   `confirmSDKCompaction` draining the field to nil does not empty the
+   memo.
 
-This revision first disputed review round 2's claim that section B
-belongs to the concurrent slice. The dispute was WRONG, and it is
-withdrawn. The tree changed during this revision, which is exactly the
-`concurrent_zcode_session_commits` memory's warning to re-check git
-state before reporting.
+Double-emission is separately prevented: the replayed outcome carries
+the same `sdkCompactionIdentity` key, and `confirmSDKCompaction`
+(`internal/agent/agentloop_adoption.go:329`) returns early when
+`pending.key == l.lastEmittedCompactionKey`.
 
-At the first check `git status --short` showed nothing under
-`internal/config`, `internal/clichat`, or `internal/composition`, and
-all three `SummaryEnabled()` gates were present. Minutes later the same
-command showed `internal/clichat/context_summary_setup.go`,
-`internal/composition/session.go`, `internal/config/types.go`,
-`internal/config/policy_resolve.go`, `internal/config/validate.go`, and
-`internal/config/context_summary_test.go` all modified.
-
-Verified as landed by the sibling slice:
-
-- Item B.1. All three `SummaryEnabled()` gate reads are gone. Only the
-  `contextstate.SummaryPolicy.SummaryEnabled` field assignments remain,
-  at `internal/clichat/context_summary_setup.go:134` and
-  `internal/composition/session.go:193`, which is correct: item B.1's
-  name-collision warning held.
-- Item B.2's Go half. `validateSummaryEnabled`
-  (`internal/config/validate.go:67-72`) rejects `enabled = false` with
-  the message this plan specified.
-- Item B.3. `SummaryDisabledReason`
-  (`internal/clichat/context_summary_setup.go:29`) now carries exactly
-  the three honest cases; the `enabled is not set` branch is gone.
-
-Items B.1, B.2's Go half, and B.3 are therefore CUT.
-
-Verified as NOT landed, and kept in this plan:
-
-- The config and fixture half of item B.2: `.mivia/mivia.toml:24-25`
-  still sets `enabled = true`, `.mivia/mivia.toml.example` still
-  documents the opt-out, `docs/product/config.md:490-496` still
-  documents the key as a switch, and
-  `scripts/e2e_context_compaction.py` still carries its opt-out
-  scenario.
-- All of item B.4. The stale claim is still present verbatim at
-  `internal/clichat/context_setup_session.go:120-122`.
-
-Re-check both lists at rebase time and cut whatever else has landed.
+The only path that stores no memo is the retryable double-failure at
+`internal/agent/sdk_summarizer_adapter.go:91-92`, which is correct: it
+sets no pending outcome either, and the SDK fails the compaction
+closed.
 
 ## Scope
 
@@ -358,9 +351,8 @@ B.1, B.2's Go half, and B.3.
 ### A. The summarizer adapter
 
 Revision 2 carried items A.1 (the memo), A.2 (the one-call retry), and
-A.3 (the evidence-provenance pin). Review round 2 found all three
-already landed by a concurrent slice. They are CUT from this plan. See
-"Dependency on the concurrent summarizer slice".
+A.3 (the evidence-provenance pin). Commit `4e64b337` shipped all three.
+They are CUT. See "Landed prerequisite".
 
 Only item A.4 remains. It is this plan's own.
 
@@ -378,86 +370,62 @@ the whole loop host-side. The direction was safe, but the wasted work
 is half of what commit `190555f0` set out to remove.
 
 The flag therefore records the LAST attempt, not any attempt. Three
-edits, against the code the concurrent slice shipped:
+edits, restated against the SHIPPED signatures:
 
-1. In `Summarize` (`internal/agent/sdk_summarizer_adapter.go:63`),
-   immediately after `key := sdkSummarizeInputKey(...)` and BEFORE the
-   `a.memoized(key)` check, set `a.l.sdkCompactionSkipped = false`.
-2. In `a.skip` (`internal/agent/sdk_summarizer_adapter.go:181`), set
-   `a.l.sdkCompactionSkipped = true`. All four skip sites route
-   through this one function (`:63`, `:68`, `:92`, `:99` in
-   `Summarize`), so one assignment covers every case.
-3. In `replayMemo` (`internal/agent/sdk_summarizer_memo.go`), set
+1. In `Summarize` (`internal/agent/sdk_summarizer_adapter.go:63`), set
+   `a.l.sdkCompactionSkipped = false` immediately after
+   `key := sdkSummarizeInputKey(prior, cliDropped)` (`:66`) and BEFORE
+   the `if memo := a.memoized(key); memo != nil` check (`:67`).
+   **Placement re-verified against the shipped control flow.** Every
+   path out of `Summarize` after that point either returns through
+   `replayMemo`, through `a.skip`, through `a.succeed`, or through the
+   retryable-failure return at `:91-92`. Edits 2 and 3 cover the first
+   two. `succeed` and the retryable return both leave the flag false,
+   which is correct: neither is a skip.
+2. In `skip` (`internal/agent/sdk_summarizer_adapter.go:181`), set
+   `a.l.sdkCompactionSkipped = true`. Its shipped signature is
+   `skip(dropped []provider.Message, reason string, key string) error`
+   — THREE parameters, not the two revision 2 planned against. Do not
+   change the signature; add the assignment beside the existing
+   `a.l.summaryFailureReason = reason` line. All four skip sites route
+   through this one function: `Summarize` calls it at `:72`, `:77`,
+   `:83`, and `:90`.
+3. In `replayMemo` (`internal/agent/sdk_summarizer_memo.go:71`), set
    `a.l.sdkCompactionSkipped = errors.Is(memo.err,
-   sdkplan.ErrSummarySkipped)`. A replay must restore the flag the
-   original call recorded, exactly as it already restores
-   `summaryFailureReason` and the pending outcome.
+   sdkplan.ErrSummarySkipped)`. The function already restores
+   `summaryFailureReason` and re-stashes the pending outcome; this is a
+   third line in the same restore block. **A replay restores the flag
+   correctly** because the memo caches the error, so a replayed skip
+   sets the flag true and a replayed success sets it false. Import
+   `errors` in that file if it is not already imported.
 
-Clear the flag in `resetTurnCompaction` as well, so a new turn starts
-false even when no `Summarize` call runs.
+Clear the flag in `resetTurnCompaction`
+(`internal/agent/context.go:89`) as well, so a new turn starts false
+even when no `Summarize` call runs.
 
 Test T.14 pins the last-attempt semantics.
 
-### B. The summarizer is always enabled — residual only
+### B. The summarizer is always enabled — FULLY SHIPPED, CUT
 
-The user's decision, verbatim: "summarizer must be not opt in - it
-must be always enabled, period, and must be best in class."
+Commit `4e64b337` landed every part of section B, including the residual
+revision 3 believed survived. Verified row by row:
 
-Items B.1, B.2's Go half, and B.3 are CUT. The concurrent slice landed
-them. See "Retracted: the section B dispute" for the verification.
-
-What remains is the config, fixture, and documentation residual that
-slice has not touched. Re-verify each row at rebase time before
-editing it.
-
-#### Item B.2r — the config and fixture residual
-
-| Path | Change | Verified not landed |
-|---|---|---|
-| `.mivia/mivia.toml:24-25` | Delete the `[context.summary]` section. It still sets `enabled = true`, which now loads but documents a switch that no longer exists. | yes |
-| `.mivia/mivia.toml.example` | Rewrite the `[context.summary]` block. Delete the "To turn it off" instructions. | yes |
-| `docs/product/config.md:490-496` | Rewrite. The section still opens "`[context.summary] enabled` (default `true`) turns on…". State instead that the summarizer is always enabled, and that an explicit `enabled = false` is a load error. | yes |
-| `scripts/e2e_context_compaction.py` | Delete the `SUMMARY_OFF` constant and the `explicit-opt-out` scenario. | yes |
-| `internal/clichat/sessions_command.go:167` | "a `[context.summary]`-enabled policy" is stale. Rewrite. | check at rebase |
-| `internal/clichat/context_summary_channels_integration_test.go:12-16` | The package doc's scenario (c) describes an `enabled = false` workspace. Rewrite to the endpoint case. | check at rebase |
-
-Do not re-add a load rejection. `validateSummaryEnabled`
-(`internal/config/validate.go:67-72`) already carries it.
-
-**Name collision, still live.**
-`contextstate.SummaryPolicy.SummaryEnabled`
-(`internal/contextstate/contracts.go:410`) is a DIFFERENT symbol from
-the deleted config method. It is assigned at
-`internal/clichat/context_summary_setup.go:134` and
-`internal/composition/session.go:193`, and read at
-`internal/contextmgr/summarizer.go:111`. Do not delete or change it.
-
-#### Item B.4 — fix the doc drift
-
-A grep sweep found five sites that repeat the stale claim. Each states
-that a configured `[privacy]` policy is a precondition. Each is false.
-Four also omit the real third condition, a resolved provider/model
-binding.
-
-| Path:line | Content to rewrite |
+| Revision 3 row | Tree today |
 |---|---|
-| `internal/clichat/context_setup_session.go:120-122` | "The summary gate is explicit: the [context.summary] flag, a configured [privacy] policy, and a resolved provider endpoint…" |
-| `internal/clichat/context_summary_setup_test.go:16-18` | "the smallest resolved config that can open the summary gate: a provider endpoint, a compiled [privacy] policy, and the [context.summary] flag" |
-| `internal/chat/compact_summary_test.go:144-146` | "the summary gate refuses requests without it" |
-| `docs/product/config.md:494` | "Two more conditions must hold… a configured `[privacy]` redaction policy, and a resolved provider endpoint." |
-| `internal/clichat/context_summary_integration_test.go:176-178` | "[context.summary] enabled plus [privacy] and an endpoint produce a Summarizer" |
+| The three `SummaryEnabled()` gate reads | Gone. Only the `contextstate` field assignments remain, at `internal/clichat/context_summary_setup.go:134` and `internal/composition/session.go:193`. The name-collision warning held. |
+| The load rejection | `validateSummaryEnabled`, `internal/config/validate.go:67`, called at `:49`. |
+| `ContextSummaryConfig.SummaryEnabled` and its normalization | Deleted. `grep -rn "SummaryEnabled" internal/config/` now returns only `validate.go`'s function name. |
+| `SummaryDisabledReason`'s `enabled is not set` branch | Gone. `internal/clichat/context_summary_setup.go:29` carries the three honest cases. |
+| `.mivia/mivia.toml` | The `[context.summary]` section is deleted. |
+| `.mivia/mivia.toml.example` | Rewritten at `:648-649`: "The retired `[context.summary] enabled = false` key is refused at load." |
+| `docs/product/config.md` | Rewritten at `:492` and `:496`. |
+| `scripts/e2e_context_compaction.py` | Rewritten at `:208-221`. `SUMMARY_OFF` now builds an unbuildable provider/model override, the only remaining structural-only cause. |
+| Item B.4's six doc-drift sites | All corrected. `internal/clichat/context_setup_session.go:123` now reads "A configured [privacy] policy is NOT a precondition"; `context_summary_setup_test.go:19`, `context_summary_integration_test.go:178`, `compact_summary_test.go:144-147`, `sessions_command.go:166`, and `context_summary_channels_integration_test.go:12-15` are all rewritten. |
 
-Copy the correct wording from `.mivia/mivia.toml.example:638-641`.
+Section B therefore has no remaining work. The user's decision — "summarizer
+must be not opt in - it must be always enabled, period" — is satisfied in
+the tree.
 
-Re-run these raw greps after the edits, and disposition every hit by
-hand: `summary gate`, `context.summary`, `\[privacy\]`,
-`buildSummaryWiring`, `SummaryEnabled`, `SummaryDisabledReason`,
-`LLM summarizer`, `precondition`. Do not filter. This follows the
-`sweep_greps_must_not_filter` memory.
-
-Also add the sentence the predecessor plan deferred: an SDK-adopted
-Window turn's mid-run compaction uses this summarizer, through the
-same redaction and provider binding.
 
 ### C. The flip
 
@@ -620,11 +588,36 @@ abandoned attempt writes and `resetTurnCompaction` does not touch:
 | `PreparationErr` | `sdkCompactionObserver`, `internal/agent/agentloop_adoption.go:290` | Run 1's observer error would be reported for run 2. |
 | `preCompactSource` | `captureOmittedEvidence`, `internal/agent/context.go:23` | It is the pre-compaction history run 1 stashed for its summary request. |
 
-`resetTurnCompaction` (`internal/agent/context.go:88-102`) already
-clears `sdkPendingCompaction`, `sdkSummaryMemo`,
+`resetTurnCompaction` (`internal/agent/context.go:89-105`) already
+clears `sdkPendingCompaction` (`:103`), `sdkSummaryMemo` (`:104`),
 `lastEmittedCompactionKey`, `turnCompactionEmitted`, `turnCompacted`,
-`turnCompactionKey`, the summary memo, and the six turn accumulators.
-Do not duplicate those lines.
+`turnCompactionKey`, the legacy summary memo, and the six turn
+accumulators. Do not duplicate those lines.
+
+**Must the SDK summary memo be cleared too? YES, and it already is.**
+The question is whether run 2, re-deriving over the same dropped set,
+should replay run 1's summary or issue a fresh call. The answer is
+fresh, for a reason the legacy path already states.
+`invalidateSummaryMemo`'s own doc comment
+(`internal/agent/summary_inject.go`) says the prompt-too-long retry
+calls it because "that retry prunes history host-side and re-derives
+the omitted evidence, so the memoized summary of the earlier
+compaction no longer describes what the retried request drops". The
+same reasoning holds here, and more strongly: `succeed`
+(`internal/agent/sdk_summarizer_adapter.go:147`) renders the message
+through `RenderSummaryMessage(summary, request.Input.Evidence)`, and
+this item clears `preCompactSource`, so run 2's evidence differs from
+run 1's by construction. Replaying would inject a summary whose
+evidence section describes a prune that no longer happened.
+
+In practice the collision is rare: `sdkCompactAfterPromptTooLong`
+prunes host-side before run 2, so run 2's dropped set usually differs
+and the input key misses anyway. The clear is what makes the rare
+identical-key case correct rather than accidentally correct. Because
+`resetTurnCompaction` already clears `sdkSummaryMemo`, calling it from
+`resetAbandonedSDKAttempt` is sufficient. Add no extra line; state the
+reason in the doc comment so a later reader does not "optimize" the
+clear away.
 
 **Named accepted residual.** `captureOmittedEvidence`
 (`internal/agent/context.go:28-29`) adds items to `l.TurnState` through
@@ -929,20 +922,11 @@ New file `internal/agent/sdk_compaction_observer_test.go`.
   interrupted-preparation identity, not a checkpoint conflict.
 - An observer error fails the turn with that exact error.
 
-### T.9 — the config decision, verify then fill
+### T.9 — CUT, the config decision is shipped and tested
 
-The concurrent slice landed the load rejection and modified
-`internal/config/context_summary_test.go`. Run these four checks after
-the rebase and add only what is missing:
-
-- `enabled = false` is a load error naming the key.
-- `enabled = true` loads and is a no-op.
-- An absent key loads and is a no-op.
-- A workspace with no `[privacy]` section still gets a summarizer.
-
-Add one this plan owns regardless: `.mivia/mivia.toml`, this repo's own
-dogfooded config, loads clean after item B.2r deletes its
-`[context.summary]` section.
+Commit `4e64b337` landed the load rejection and its tests. The
+`.mivia/mivia.toml` check revision 3 reserved for this plan is also
+moot: that file no longer carries a `[context.summary]` section.
 
 ### T.10 — an oversized newest turn has a stated outcome
 
@@ -1215,23 +1199,30 @@ was compacted", the fact that always mattered.
 | `TestOneShotHandlerPreflightAndOutputReserve` | `internal/subagents/oneshot_test.go:216` | preflight | Unchanged. Re-run and record. |
 | `TestOneShotHandlerDoesNotChargeOutputReserveAgainstPromptBudget` | `internal/subagents/oneshot_test.go:247` | reserve accounting | Unchanged. Re-run and record. |
 
-### Config-gate inversions
+### Config-gate inversions — CUT, all shipped
 
-These rows are CUT unless the rebase shows otherwise. The concurrent
-slice modified `internal/config/context_summary_test.go` and the
-`internal/clichat` setup files, so it very likely owns these
-inversions too. Re-run each named test after the rebase. Act on a row
-ONLY when its test still fails.
+Commit `4e64b337` landed every inversion in revision 3's table, and
+`ff497585` allowed the two renames in the deletion policy. Verified:
 
-| Test | Path:line | Assertion today | Replacement |
-|---|---|---|---|
-| `TestContextSummaryExplicitOptOut` | `internal/config/context_summary_test.go:18` | `enabled = false` disables | Rename to `TestContextSummaryExplicitOptOutIsALoadError`. Assert the load error names the key. An error is a harder contract than a boolean. |
-| `TestContextSummaryExplicitOptIn` | `internal/config/context_summary_test.go:28` | `enabled = true` resolves enabled | Assert the config loads without error. `SummaryEnabled` is gone. |
-| `TestContextSummaryDefaultsOn` | `internal/config/context_summary_test.go:10` | absent key resolves on | Assert an absent key loads and wires a summarizer, through `summaryWiring`. Moves the assertion from the resolved struct to observable behaviour. |
-| `TestSummaryWiringDisabledByDefault` | `internal/clichat/context_summary_setup_test.go:37`, assert `:40` | `enabled=false` wires nothing | Delete the premise; rename to `TestSummaryWiringNeedsAnEndpoint`. Assert a missing `BaseURL` is the remaining disabling cause. |
-| `TestSummaryDisabledReasonNamesTheMissingCondition` | `internal/clichat/context_summary_reason_test.go:33`, case `:39` | `flag off` names `context.summary` | Delete the `flag off` case. Add a `no binding` case naming the binding. Case count stays at two; both are reachable states. |
-| `TestSummaryWiringDoesNotRequireRedaction` | `internal/clichat/context_summary_setup_test.go:55` | no `[privacy]` still wires | Unchanged. Keep. |
-| `TestSummaryDisabledReasonIgnoresMissingRedaction` | `internal/clichat/context_summary_reason_test.go:63` | no `[privacy]` is not a cause | Unchanged. Keep. |
+- `TestContextSummaryExplicitOptOut` is now
+  `TestContextSummaryExplicitOptOutIsALoadError`
+  (`internal/config/context_summary_test.go:45`).
+- `TestSummaryWiringDisabledByDefault` is now
+  `TestSummaryWiringNeedsABinding`
+  (`internal/clichat/context_summary_setup_test.go:55`). Note the
+  shipped name differs from the `TestSummaryWiringNeedsAnEndpoint`
+  revision 3 proposed; the shipped name is the accurate one, because
+  the fixture varies the binding.
+- `TestSummaryDisabledReasonNamesTheMissingCondition`
+  (`internal/clichat/context_summary_reason_test.go:33`) dropped the
+  `flag off` case and added `no binding`. The case count is unchanged
+  at two, exactly as revision 3 specified.
+- `TestContextSummaryDefaultsOn`
+  (`internal/config/context_summary_test.go:29`) and
+  `TestContextSummaryExplicitOptIn` (`:60`) both survive.
+- `TestSummaryWiringDoesNotRequireRedaction` and
+  `TestSummaryDisabledReasonIgnoresMissingRedaction` are untouched, as
+  revision 3 required.
 
 ### Skips
 

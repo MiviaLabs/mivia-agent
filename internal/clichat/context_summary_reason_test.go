@@ -8,11 +8,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// A workspace that has not configured summarization gets structural-only
+// A workspace whose summarizer cannot be built gets structural-only
 // compaction: /compact returns instantly, makes no LLM call, and - before
 // this - said nothing at all. The operator sees a compaction "work" while the
-// summary they configured never runs, with no way to tell which of the three
-// conditions is missing. summaryWiring's own doc calls the false return "a
+// summary never runs, with no way to tell which of the two conditions is
+// missing. summaryWiring's own doc calls the false return "a
 // policy state, never an error", which is right, but a silent policy state is
 // undiagnosable.
 func summaryReasonResolved(t *testing.T, mutate func(*config.Resolved)) *config.Resolved {

@@ -175,8 +175,9 @@ type SummarySnapshot struct {
 
 // TestContextSummaryIntegrationEndToEnd drives the real production wiring with
 // no seam overrides: an always-enabled summarizer plus a resolved endpoint and
-// a resolved provider/model binding produce a Summarizer ([privacy] is not a
-// precondition; it governs what the checkpoint may persist); a compacting turn sends a real summary request through
+// a resolved provider/model binding produce a Summarizer. [privacy] is not a
+// precondition. It governs what the checkpoint may persist. A compacting turn
+// sends a real summary request through
 // the LLMSummaryProvider; the reply is validated and injected into the next
 // provider request. The commit path stays structural-only (summary failures
 // must never fail a finished turn), so the durable checkpoint carries no

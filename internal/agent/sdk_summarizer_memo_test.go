@@ -182,6 +182,16 @@ func TestSDKSummarizerAdapterRetryableFailureTwiceFailsClosed(t *testing.T) {
 	if l.sdkPendingCompaction != nil {
 		t.Fatalf("pending = %+v, want nil: a retryable failure records no outcome to confirm", l.sdkPendingCompaction)
 	}
+	// A retryable failure must NOT be memoized. Memoizing it would turn
+	// the one-retry policy into a turn-permanent poisoned entry, and the
+	// SDK's own recovery could never attempt the compaction again.
+	_, err = a.Summarize(context.Background(), sdkMessagesOf("dropped one", "dropped two"))
+	if err == nil {
+		t.Fatal("second Summarize() = nil, want the retryable failure again")
+	}
+	if summaryProvider.calls != 8 {
+		t.Fatalf("provider calls after a second attempt = %d, want 8: a retryable failure must never be memoized", summaryProvider.calls)
+	}
 }
 
 // TestSDKSummarizerAdapterNonRetryableFailureIssuesOneCall is the
@@ -199,6 +209,45 @@ func TestSDKSummarizerAdapterNonRetryableFailureIssuesOneCall(t *testing.T) {
 	}
 	if summaryProvider.calls != 1 {
 		t.Fatalf("provider calls = %d, want exactly 1 for a non-retryable failure", summaryProvider.calls)
+	}
+	// A non-retryable skip IS a settled outcome, so it memoizes. The
+	// replay must issue no new provider call and must still report the
+	// skip, or the SDK would re-attempt a compaction already declined.
+	_, err = a.Summarize(context.Background(), sdkMessagesOf("dropped one", "dropped two"))
+	if !errors.Is(err, sdkplan.ErrSummarySkipped) {
+		t.Fatalf("replayed err = %v, want errors.Is ErrSummarySkipped", err)
+	}
+	if summaryProvider.calls != 1 {
+		t.Fatalf("provider calls after replay = %d, want still 1: a non-retryable skip must be memoized", summaryProvider.calls)
+	}
+}
+
+// TestSDKSummarizerAdapterPriorSummaryChangesTheMemoKey pins the
+// held-aside prior summary's contribution to the memo key. The same
+// dropped set under two different priors is two different inputs, so
+// it must re-summarize. Without the prior in the key the two collide
+// and the second call replays the first prior's summary.
+func TestSDKSummarizerAdapterPriorSummaryChangesTheMemoKey(t *testing.T) {
+	summaryProvider := &echoingSummaryProvider{}
+	a, _ := newAdapterFixture(t, summaryProvider)
+
+	withPrior := func(content string) []sdkshape.Message {
+		prior := sdkshape.Message{
+			Role:    sdkshape.RoleUser,
+			Name:    sdkplan.SummaryMessageName,
+			Content: content,
+		}
+		return append([]sdkshape.Message{prior}, sdkMessagesOf("dropped one", "dropped two")...)
+	}
+
+	if _, err := a.Summarize(context.Background(), withPrior("prior summary A")); err != nil {
+		t.Fatalf("Summarize() with prior A = %v, want nil", err)
+	}
+	if _, err := a.Summarize(context.Background(), withPrior("prior summary B")); err != nil {
+		t.Fatalf("Summarize() with prior B = %v, want nil", err)
+	}
+	if summaryProvider.calls != 2 {
+		t.Fatalf("provider calls = %d, want exactly 2: a different prior is a different input", summaryProvider.calls)
 	}
 }
 

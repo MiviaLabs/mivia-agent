@@ -61,7 +61,8 @@ func TestSummaryWiringNeedsABinding(t *testing.T) {
 	}
 }
 
-// TestSummaryWiringDoesNotRequireRedaction pins the opt-out default. A
+// TestSummaryWiringDoesNotRequireRedaction pins the always-enabled
+// summarizer. A
 // workspace with no [privacy] section still gets a summarizer: compaction
 // drops its messages permanently, so gating the only record of what was
 // removed on an unrelated section meant those workspaces compacted blind.

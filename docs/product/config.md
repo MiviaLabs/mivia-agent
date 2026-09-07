@@ -495,7 +495,7 @@ Two conditions must hold, or the summary stays off: a resolved provider endpoint
 
 The retired `[context.summary] enabled` key is refused at load. Remove the line from any config that still sets `enabled = false`.
 
-Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once, then fails the turn closed instead of degrading silently; see `plans/sdk-window-compaction-adoption-plan.md`.
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once at the adapter, then fails the turn closed instead of degrading silently. The governed summarizer already retries once inline, so one adapter attempt costs two provider requests and a failed pair costs four; see `plans/sdk-window-compaction-adoption-plan.md`.
 
 The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
 
