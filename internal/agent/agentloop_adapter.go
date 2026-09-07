@@ -98,7 +98,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 		Bounds:    sdkagentloop.Bounds{MaxIterations: maxIterations, MaxCallsPerTurn: opts.MaxToolCallsPerBatch, MaxConcurrentTools: opts.MaxConcurrentTools},
 		SessionID: opts.SessionID,
 	}
-	if err := adoptSDKRows(&out, opts, completer, turn); err != nil {
+	if err := adoptSDKRows(l, &out, opts, completer, turn); err != nil {
 		return sdkagentloop.Options{}, nil, err
 	}
 	attachSDKObservability(&out, opts, turn)

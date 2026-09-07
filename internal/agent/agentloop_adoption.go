@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
 
@@ -41,14 +43,14 @@ const (
 
 // adoptSDKRows sets every adoption row in one call; see the per-row
 // functions below and the projection test in agentloop_adapter_test.go.
-func adoptSDKRows(out *sdkagentloop.Options, opts Options, completer sdkshape.Completer, turn *sdkTurnState) error {
+func adoptSDKRows(l *Loop, out *sdkagentloop.Options, opts Options, completer sdkshape.Completer, turn *sdkTurnState) error {
 	adoptSDKUsage(out, opts, turn)
 	adoptSDKBudget(out, opts)
 	adoptSDKBounds(out, opts)
 	adoptSDKTracer(out, turn)
 	adoptSDKAudit(out, opts)
 	// Row: Window + Summarizer + Calibrated (see sdkCompactionAdopted).
-	if err := adoptSDKCompaction(out, completer, opts); err != nil {
+	if err := adoptSDKCompaction(l, out, completer, opts, turn); err != nil {
 		return fmt.Errorf("agent: adopt SDK compaction: %w", err)
 	}
 	return nil
@@ -155,15 +157,30 @@ func adoptSDKHeartbeat(out *sdkagentloop.Options) {
 // sdkCompactionAdopted reports whether a turn wires the SDK's
 // compaction triple (Window + Summarizer + Calibrated): it needs a
 // context ceiling to size the window from and a wired host
-// summarizer, whose provider binding the SDK summarizer rides. The
-// triple and the host's summary injection are complementary, not
-// duplicates: the host injects once, after its own pre-run prepare
-// compaction, while the SDK triple compacts mid-run growth inside the
-// loop. Only the host Trim pass stands down on adopted turns, because
-// the SDK's Window and Trim are mutually exclusive.
+// summarizer, whose provider binding sdkSummarizerAdapter rides. A
+// wired PreparationManager no longer unconditionally excludes
+// adoption - the SDK's Window can own mid-run compaction instead,
+// with the PreparationManager running only as bookkeeping through
+// Options.ObserveRequest (sdkCompactionObserver), never compacting on
+// its own (see applySDKTrim, which stands the host's per-request Trim
+// pass down whenever this reports true) - but it DOES require the
+// caller to opt in through Options.PreferSDKCompaction: every
+// production call site already wires a PreparationManager, so making
+// adoption automatic there would silently change every production
+// turn's compaction mechanism in one release. The PreparationManager
+// == nil row is unaffected by PreferSDKCompaction: that row already
+// adopted before this field existed (it is the row
+// docs/development/sdk-backend-field-mapping.md called test-only),
+// and stays automatic since no PreparationManager-driven behavior
+// exists there to regress.
 func sdkCompactionAdopted(opts Options) bool {
-	return opts.MaxContextTokens > 0 && opts.SummaryConfig.Summarizer != nil &&
-		opts.PreparationManager == nil
+	if opts.MaxContextTokens <= 0 || opts.SummaryConfig.Summarizer == nil {
+		return false
+	}
+	if opts.PreparationManager == nil {
+		return true
+	}
+	return opts.PreferSDKCompaction
 }
 
 // sdkContextWindowForwarded reports the context ceiling the completer
@@ -180,39 +197,145 @@ func sdkContextWindowForwarded(opts Options) int {
 	return opts.MaxContextTokens
 }
 
-// adoptSDKCompaction wires the SDK's compaction triple. The wrapped
-// completer implements provider.TokenEstimator (EstimateTokens
-// below), so sdkagentloop.EnableCompaction can size the window from
-// the host's context ceiling with the SDK's default hysteresis
-// (trigger at 80%, target at 50%) and a conservative calibration
-// factor.
+// adoptSDKCompaction wires the SDK's compaction triple directly,
+// rather than through sdkagentloop.EnableCompaction: the Summarizer
+// is sdkSummarizerAdapter, riding the host's own governed
+// contextmgr.Summarizer (redaction, policy binding, evidence
+// tracking), not the SDK's generic plan.NewSummarizer-over-completer
+// fallback EnableCompaction would wire. This also fixes what used to
+// be a known latent issue: the old EnableCompaction path handed
+// agentLoopCompleter (the turn-aware wrapper that also advertises
+// tools and bumps the shared turn's iteration counter as Chat side
+// effects) to the SDK's generic summarizer, so a mid-run compaction
+// inherited those side effects. sdkSummarizerAdapter never calls
+// agentLoopCompleter at all for summarization - it calls
+// opts.SummaryConfig.Summarizer.Summarize, bound to whatever
+// completer the host wired it with at construction time, independent
+// of agentLoopCompleter. agentLoopCompleter is still used here only
+// for token estimation (EstimateTokens below), which has no side
+// effects to avoid.
 //
-// Known latent issue, not fixed here: completer is agentLoopCompleter,
-// the turn-aware wrapper (agentloop_completer.go's Chat) that also
-// advertises tools and bumps the shared turn's iteration counter as
-// side effects. sdkagentloop.EnableCompaction hands that same
-// completer to contextsummary.NewSummarizer, so the summarizer's own
-// mid-run compaction calls inherit those side effects instead of
-// running against a plain provider.Completer. Currently unreachable
-// in production: sdkCompactionAdopted requires opts.PreparationManager
-// == nil, and every production call site sets one
-// (contextmgr.StructuralPreparationManager{} in
-// internal/composition/session.go and
-// internal/clichat/context_setup_session.go), so this row only fires
-// under test. See docs/development/sdk-backend-field-mapping.md's
-// Window/Summarizer/Calibrated row.
-func adoptSDKCompaction(out *sdkagentloop.Options, completer sdkshape.Completer, opts Options) error {
+// TriggerPercent 100 with TargetTokens at MaxContextTokens/2 is the
+// host-style mapping to an exact 80%/50% trigger/target of
+// MaxContextTokens (Window.CompactTrigger/CompactTarget price a
+// percent against Budget = MaxTokens - Reserve, four fifths of
+// MaxTokens here, so a bare 80/50 TriggerPercent/TargetPercent pair
+// prices at an effective 64%/40% of MaxContextTokens instead - see
+// mivia-ai-sdk's docs/plans/agentloop.md, "Effective thresholds for
+// host-style configs"). PreserveNames carries opts.PreparationInput's
+// own list (set by internal/chat's prepareInputForContext, the same
+// list the PreparationManager path already protects) so a compaction
+// that crosses the core-memory frame does not drop it.
+func adoptSDKCompaction(l *Loop, out *sdkagentloop.Options, completer sdkshape.Completer, opts Options, turn *sdkTurnState) error {
 	if !sdkCompactionAdopted(opts) {
 		return nil
 	}
-	window := sdkplan.Window{
-		MaxTokens:  opts.MaxContextTokens,
-		Reserve:    opts.MaxContextTokens / 5,
-		Compaction: sdkplan.Compaction{TriggerPercent: 80, TargetPercent: 50},
+	est, ok := completer.(sdkshape.TokenEstimator)
+	if !ok {
+		return sdkagentloop.ErrNoTokenEstimator
 	}
 	// Reserve = MaxContextTokens/5 is non-negative by construction
 	// (MaxContextTokens > 0 is sdkCompactionAdopted's first gate).
-	return sdkagentloop.EnableCompaction(out, completer, window, 0.25)
+	window := sdkplan.Window{
+		MaxTokens: opts.MaxContextTokens,
+		Reserve:   opts.MaxContextTokens / 5,
+		Compaction: sdkplan.Compaction{
+			TriggerPercent: 100,
+			TargetTokens:   opts.MaxContextTokens / 2,
+			PreserveNames:  opts.PreparationInput.PreserveNames,
+		},
+	}
+	out.Compaction.Window = &window
+	out.Compaction.Summarizer = &sdkSummarizerAdapter{l: l, opts: opts}
+	out.Compaction.Calibrated = sdkplan.Calibrate(est, 0.25)
+	out.ObserveRequest = sdkCompactionObserver(l, opts, turn)
+	return nil
+}
+
+// sdkCompactionObserver returns the Options.ObserveRequest hook an
+// adopted turn wires. It confirms any pending SDK compaction first
+// (confirmSDKCompaction), then runs the host's Prepare pass as
+// bookkeeping only: Budget is math.MaxInt so Plan never crosses its
+// compaction trigger, guaranteeing this call never itself compacts -
+// the SDK's own compaction, through sdkSummarizerAdapter, is the only
+// compaction path on an adopted turn. Prepare still records
+// BeforeTokens/evidence/omitted-diff bookkeeping other host surfaces
+// read (ContextUsage, captureOmittedEvidence), and reports the exact
+// per-iteration request through opts.ObserveRequestHistory, matching
+// what sdkPrepareTrim reports on a non-adopted turn. A Prepare error
+// returns unwrapped: the SDK wraps it once more
+// (agentloop: iteration N: observe request: %w) before it reaches
+// finishErroredContextTurn, which already branches correctly on
+// !loop.HasPreparation with no ErrCheckpointConflict masquerade,
+// since HasPreparation only flips true inside recordPreparation,
+// never called on this error path.
+func sdkCompactionObserver(l *Loop, opts Options, turn *sdkTurnState) func(context.Context, sdkshape.Request) error {
+	return func(ctx context.Context, req sdkshape.Request) error {
+		toolSpecs := l.initialToolSpecs(opts)
+		if adv := turn.currentAdvertised(); adv != nil {
+			toolSpecs = adv
+		}
+		input := l.buildPrepareInput(toolSpecs, opts)
+		input.Messages = sdkMessagesToCLI(req.Messages)
+		input.Budget = math.MaxInt
+		preparation, err := opts.PreparationManager.Prepare(ctx, input)
+		if err != nil {
+			l.PreparationErr = err
+			return err
+		}
+		l.recordPreparation(preparation)
+		l.captureOmittedEvidence(input, preparation)
+		// Confirmed after the bookkeeping Prepare above, not before:
+		// this gives l.LastPreparation.Token a real, freshly-Prepared
+		// value before confirmSDKCompaction reads it for the
+		// synthetic Preparation it grounds through, so
+		// EmitCompaction's SourceRange carries real provenance
+		// instead of a first-iteration zero value.
+		confirmSDKCompaction(ctx, l, opts)
+		if opts.ObserveRequestHistory != nil {
+			opts.ObserveRequestHistory(input.Messages)
+		}
+		return nil
+	}
+}
+
+// confirmSDKCompaction drains l.sdkPendingCompaction, if set, and
+// grounds it into durable turn state. Reaching this call at all is
+// the proof the outcome was not abandoned: Options.ObserveRequest
+// fires immediately before the SAME iteration's Chat call, whose
+// request reflects whatever compactHistory just produced. An
+// abandoned attempt (checkCompactedBudget failure, or a recovery
+// path that gives up before ever calling reserveWork) never reaches
+// this function, so a pending outcome from that attempt is simply
+// overwritten by a later real compaction, or discarded with the Loop
+// when the turn ends (resetTurnCompaction also clears it at the next
+// turn's start, defensively, for any caller that reuses one Loop
+// across multiple runs).
+//
+// recordPreparation already accumulates elided-message/byte counters
+// across multiple compactions within one turn (context.go), the same
+// mechanism the PreparationManager path uses; passing a synthetic
+// Preparation through it here reuses that accumulation instead of
+// duplicating it, so a turn with two real SDK compactions grounds and
+// emits both, not just the last one.
+func confirmSDKCompaction(ctx context.Context, l *Loop, opts Options) {
+	pending := l.sdkPendingCompaction
+	l.sdkPendingCompaction = nil
+	if pending == nil || pending.key == "" || pending.key == l.lastEmittedCompactionKey {
+		return
+	}
+	if pending.summarized {
+		l.recordSDKInjectedSummary(pending.message)
+	}
+	l.recordPreparation(contextmgr.Preparation{
+		Compacted:      true,
+		Token:          l.LastPreparation.Token,
+		ElidedMessages: pending.elidedMessages,
+		ElidedBytes:    pending.elidedBytes,
+	})
+	l.lastEmittedCompactionKey = pending.key
+	EmitCompaction(ctx, opts, l.LastPreparation, pending.summarized, pending.reason)
+	l.turnCompactionEmitted = true
 }
 
 // EstimateTokens implements provider.TokenEstimator for the wrapped

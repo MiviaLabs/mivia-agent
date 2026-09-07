@@ -493,7 +493,7 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
 
-Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call.
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) fails a turn closed on a retryable summary failure instead of degrading silently, since that path has no inline retry loop of its own; see `plans/sdk-window-compaction-adoption-plan.md`.
 
 The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
 

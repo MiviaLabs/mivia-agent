@@ -206,11 +206,11 @@ func TestRunAgentLoop_FailsOnNilCompleter(t *testing.T) {
 	if !strings.Contains(err.Error(), "nil CLI completer") {
 		t.Fatalf("err = %v, want it to name the nil CLI completer", err)
 	}
-	if !errors.Is(err, sdkagentloop.ErrNoCompleter) {
+	if !errors.Is(err, sdkagentloop.ErrInvalidOptions) {
 		// The wrapper error is its own error; the SDK sentinel is not
 		// expected here - the assertion documents that the failure
 		// happens at the wrapper, before Validate.
-		t.Logf("note: err does not wrap ErrNoCompleter (fails at wrapper): %v", err)
+		t.Logf("note: err does not wrap ErrInvalidOptions (fails at wrapper): %v", err)
 	}
 }
 

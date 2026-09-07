@@ -99,6 +99,7 @@ func (l *Loop) resetTurnCompaction() {
 	l.turnCompactionKey = ""
 	l.invalidateSummaryMemo()
 	l.summaryMemoKey = ""
+	l.sdkPendingCompaction = nil
 }
 
 // compactionIdentity derives the memo key for one compaction event from its

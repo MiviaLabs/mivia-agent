@@ -30,11 +30,11 @@ The SDK path consumes these directly:
 | `LastFinishReason` | completer `onFinish` callback | the wrapper reports each response's finish reason onto `Loop.LastFinishReason`; the truncation-aware corrective turn keys on it |
 | `MaxSteps` | `Options.MaxIterations` | passed through; SDK's `unboundedOrSet` maps `0` → `math.MaxInt32` so `MaxSteps = 0` (unbounded) reaches the SDK unchanged. `MaxTurns` (when > 0) clamps to the smaller of the two positive values, and stays applied over an unset `MaxSteps` (see §2) |
 | `SessionID` | `Options.SessionID` | required when Usage is set |
-| `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires on turns with a `PreparationManager`, or without a wired summarizer, because those turns keep `Window` nil; on manager-less turns with a summarizer wired and a positive `MaxContextTokens`, `adoptSDKCompaction` does wire a Window via `EnableCompaction` (§5)) |
+| `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires on turns with a `PreparationManager`, or without a wired summarizer, because those turns keep `Window` nil; on manager-less turns with a summarizer wired and a positive `MaxContextTokens` (or, with `Options.PreferSDKCompaction` set, on manager-wired turns too), `adoptSDKCompaction` does wire a Window directly (§5)) |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
 | `MaxConcurrentTools` | `Options.MaxConcurrentTools` | parallel dispatch worker pool; call context threads tool call IDs so per-call pass-1 parts and event synthesis do not race |
 | `BatchResultBudgetBytes > 0` | host-side shaping wrapper | `applyTurnShaping` charges one shared per-turn counter and applies the legacy degrade tiers (fit / re-cut with notice / notice alone); the SDK's omit-on-budget behavior is never engaged - the host wrapper is the sole shaper |
-| `MaxContextTokens` | host-side compaction, or the SDK Window | with a `PreparationManager`: `sdkPrepareTrim` runs it per iteration and the SDK's `Window` stays nil; without one (and with a summarizer wired): `adoptSDKCompaction` owns the Window and the host Trim stands down (§5) |
+| `MaxContextTokens` | host-side compaction, or the SDK Window | with a `PreparationManager` and `Options.PreferSDKCompaction` unset (every production turn today): `sdkPrepareTrim` runs it per iteration and the SDK's `Window` stays nil; with a `PreparationManager` and `PreferSDKCompaction` set, or with no `PreparationManager` and a summarizer wired: `adoptSDKCompaction` owns the Window and the host Trim stands down (§5) |
 | `SummaryConfig.Summarizer` | host-side inject | `prepareSDKHistory` runs `Loop.injectSummary` once pre-run; SDK sees the summary frame |
 | `StagedToolMessage` / `UnadmittedToolHandler` | per-call wrapper | `sdkadapter.ConvertToolRegistryWithAdmission` on registered tools; denial renders as `RoleTool` |
 | `RefOnlyTools` / `RemainderSpool` | per-call wrapper | `applyRefOnlyShim` calls the CLI `*remainder.Spool` directly |
@@ -300,28 +300,40 @@ projection (`agentloop_adoption.go`), each pinned by
 - **HeartbeatInterval + Bus** — a 15s cadence next to the bridged
   bus; both SDK tick kinds bridge onto the legacy EventHeartbeat
   "working" surface.
-- **Window/Summarizer/Calibrated** — adopted for turns without a
-  PreparationManager: the triple sizes from MaxContextTokens (80/50
-  hysteresis), the summarizer rides the wrapped completer, and the
-  calibrated estimator is `agentLoopCompleter.EstimateTokens`, which
-  runs the host's own EstimatePromptCost semantics. **Test-only today**:
-  every production call site wires a `PreparationManager`
+- **Window/Summarizer/Calibrated** — adopted whenever
+  `MaxContextTokens` and `SummaryConfig.Summarizer` are both set: the
+  triple sizes from `MaxContextTokens` (`TriggerPercent: 100`,
+  `TargetTokens: MaxContextTokens/2`, an exact 80%/50% trigger/target
+  of `MaxContextTokens` - a bare 80/50 `TriggerPercent`/`TargetPercent`
+  pair would price at an effective 64%/40% instead, since the SDK's
+  percents price against `Budget`, not `MaxTokens`), and the calibrated
+  estimator is `agentLoopCompleter.EstimateTokens`, running the host's
+  own `EstimatePromptCost` semantics. The summarizer is
+  `sdkSummarizerAdapter` (`internal/agent/sdk_summarizer_adapter.go`),
+  which calls the host's own governed `contextmgr.Summarizer`
+  (redaction, policy binding, evidence tracking) - not
+  `agentLoopCompleter`, and not the SDK's generic
+  `plan.NewSummarizer`-over-completer fallback either; the prior
+  version of this row ("rides the wrapped completer... should run
+  against a plain completer") is fixed as a side effect of that
+  adapter, not a separate change. **Opt-in with a PreparationManager
+  wired**: every production call site wires one
   (`contextmgr.StructuralPreparationManager{}`, set in
   `internal/composition/session.go` and
-  `internal/clichat/context_setup_session.go`), so `sdkCompactionAdopted`
-  is false in production and this row never fires outside tests. It
-  also rides `agentLoopCompleter` — the turn-aware wrapper that
-  advertises tools and bumps the iteration counter as Chat side
-  effects — rather than a raw `provider.Completer`; the SDK's
-  `contextsummary.Summarizer` should run against a plain completer
-  with none of that turn-state coupling. Fixing both (making the row
-  reachable in production, and giving the summarizer its own raw
-  completer) is tracked as future work, not attempted here. With a
-  PreparationManager the row stays host-owned: Trim IS the host's
-  per-request preparation pipeline (repair, prune, inject), and the
-  SDK's Window and Trim are mutually exclusive, so adopting there
-  means migrating durable context management off the request path
-  first. Requires the go.mod replace tracking mivia-ai-sdk main,
+  `internal/clichat/context_setup_session.go`), and
+  `sdkCompactionAdopted` requires `Options.PreferSDKCompaction` in
+  that case (default false, so no production call site adopts this
+  row until it sets that field). With no PreparationManager wired,
+  the row still adopts automatically, unchanged from before - it
+  remains reachable only under test. With a PreparationManager wired
+  and `PreferSDKCompaction` unset (every production turn today), Trim
+  IS the host's per-request preparation pipeline (repair, prune,
+  inject), unaffected. See
+  `plans/sdk-window-compaction-adoption-plan.md` for the full design
+  and the confirm-on-observe grounding mechanism
+  (`confirmSDKCompaction`) an adopted turn with a PreparationManager
+  uses to reconcile the SDK's mid-run compaction with the durable
+  checkpoint. Requires the go.mod replace tracking mivia-ai-sdk main,
   whose provider/anthropic implements the production TokenEstimator.
 - **Capability mirror** — `AnthropicCompleter`
   (`internal/provider/anthropic_sdk_capabilities.go`) implements

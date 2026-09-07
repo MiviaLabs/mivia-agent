@@ -59,8 +59,11 @@ const Unbounded = sdkws.Unbounded
 // Re-exported sentinels so CLI callers can errors.Is against
 // sdkadapter.ErrEscape etc. without an extra SDK import.
 var (
-	ErrEscape       = sdkws.ErrEscape
-	ErrInvalidLimit = sdkws.ErrInvalidLimit
+	ErrEscape = sdkws.ErrEscape
+	// ErrInvalidLimit wraps the SDK's ErrInvalidOptions (the SDK
+	// collapsed its shape-only construction sentinels, including
+	// the former ErrInvalidLimit, into one shared sentinel).
+	ErrInvalidLimit = sdkws.ErrInvalidOptions
 	ErrSecretPath   = sdkws.ErrSecretPath
 	ErrTooLarge     = sdkws.ErrTooLarge
 )

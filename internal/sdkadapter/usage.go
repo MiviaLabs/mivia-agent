@@ -31,6 +31,12 @@ func WrapCompleter(sessionID string, a *Accumulator, c provider.Completer) (prov
 // sdkadapter.ErrBlankSessionID without an extra SDK import.
 var (
 	ErrBlankSessionID = provider.ErrBlankSessionID
-	ErrNilAccumulator = provider.ErrNilAccumulator
-	ErrNilCompleter   = provider.ErrNilUsageCompleter
+	// ErrNilAccumulator and ErrNilCompleter both wrap the SDK's
+	// single ErrInvalidOptions sentinel (the SDK collapsed its
+	// shape-only construction sentinels into one, distinguished by
+	// wrapped text, not by sentinel identity); both host names still
+	// resolve correctly through errors.Is, they simply can no longer
+	// be told apart from each other by identity alone.
+	ErrNilAccumulator = provider.ErrInvalidOptions
+	ErrNilCompleter   = provider.ErrInvalidOptions
 )

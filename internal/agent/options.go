@@ -257,6 +257,19 @@ type Options struct {
 	// compiled redaction policy applied to summary input and output through
 	// the summary validators.
 	SummaryConfig SummaryConfig
+	// PreferSDKCompaction opts a turn that ALSO carries a
+	// PreparationManager into the SDK's own mid-run Window compaction
+	// (sdkCompactionAdopted), instead of the PreparationManager
+	// driving compaction through the per-request Trim pass
+	// (sdkPrepareTrim). Ignored when PreparationManager is nil: that
+	// case already adopts whenever MaxContextTokens and
+	// SummaryConfig.Summarizer are both set, unaffected by this
+	// field. Every existing production call site wires a
+	// PreparationManager, so this field defaults to false and must be
+	// set explicitly - flipping the default would silently change
+	// every production turn's compaction mechanism at once. See
+	// plans/sdk-window-compaction-adoption-plan.md.
+	PreferSDKCompaction bool
 	// BeforeStep, when set, is called on the loop goroutine at the top of each
 	// step before history pruning and request build (plan 53.03). Returned
 	// messages are appended to the loop history. Nil is a no-op.

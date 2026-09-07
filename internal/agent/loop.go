@@ -95,6 +95,16 @@ type Loop struct {
 	// never leaves the loop and is never consulted by planning, commit, or
 	// checkpoint fingerprinting.
 	TurnState *contextmgr.TurnState
+	// sdkPendingCompaction holds one SDK-driven compaction's outcome
+	// between sdkSummarizerAdapter.Summarize (which sets it) and the
+	// next Options.ObserveRequest call (which drains and grounds it
+	// through confirmSDKCompaction). It stays nil except on an
+	// SDK-Window-adopted turn. Reset at resetTurnCompaction, the same
+	// place every other turn-scoped compaction field resets: an
+	// outcome the SDK itself abandoned (checkCompactedBudget failed,
+	// or its own prompt-too-long recovery gave up before ever
+	// building a request) must never survive to ground a LATER call.
+	sdkPendingCompaction *sdkCompactionOutcome
 	// softInterruptAt is the unix-nano timestamp of the last soft interrupt
 	// (plan 54). It backs the cross-call SoftInterruptCooldown; watcher
 	// goroutines write it and later calls' watchers read it, so it must be

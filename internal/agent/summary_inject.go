@@ -154,6 +154,17 @@ func (l *Loop) InjectedSummary() (provider.Message, bool) {
 	return l.injectedSummary, l.hasInjectedSummary
 }
 
+// recordSDKInjectedSummary records the summary message an SDK-driven
+// compaction actually sent to the model, so commitContextTurn's
+// existing InjectedSummary() read sees it exactly as it sees a
+// host-injected summary. Called only from confirmSDKCompaction, after
+// confirmation proves the SDK sent (not merely produced) this
+// message; never called directly from a Summarizer implementation.
+func (l *Loop) recordSDKInjectedSummary(msg provider.Message) {
+	l.injectedSummary = msg
+	l.hasInjectedSummary = true
+}
+
 // invalidateSummaryMemo forces the next injectSummary to run a fresh
 // Summarize. The prompt-too-long retry calls it: that retry prunes history
 // host-side and re-derives the omitted evidence, so the memoized summary of
