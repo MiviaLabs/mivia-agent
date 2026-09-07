@@ -39,7 +39,7 @@ evidence, under "Dependency on the concurrent summarizer slice".
 |---|---|
 | Item C.10's overlay double-counts elision | Item C.10, rewritten field by field; test T.5; mutation proof six |
 | Item C.11's translation loses chat history | Item C.11, scoped to the preflight's own shape |
-| Collision with the concurrent slice | Items A.1-A.3 cut; new dependency section |
+| Collision with the concurrent slice | Items A.1-A.3 cut; dependency section, itself superseded by revision 4 |
 | Item C.9's reset list is incomplete | Item C.9, four fields added, one residual named |
 | Test T.1's third arm is vacuous | Test T.1, arm 3 and sub-assertion 2 |
 | The over-budget conversions are not verbatim | Raw-sweep table, two rows |
@@ -136,7 +136,7 @@ Every statement below was checked against the tree on 2026-09-07.
 - The `[privacy]`-precondition doc drift is FIXED.
   `internal/clichat/context_setup_session.go:123` now reads "A
   configured [privacy] policy is NOT a precondition". Five sibling
-  sites were corrected in the same commit. Item B.4 is cut.
+  sites were corrected in the same commit. All of section B is cut.
 - `internal/agent/context.go:85` is `recordPreparation`'s last
   assignment: `l.LastPreparation = preparation`. It replaces the
   struct wholesale.
@@ -251,7 +251,10 @@ damaged by a different mechanism. See item C.10.
 `summarizeTurn` pass `snapshot.Evidence` from `TurnState.Snapshot()`.
 The dropped-messages argument feeds `SourceExcerpts`.
 
-**Correction.** Test T.7 asserts both facts separately. See item A.3.
+**Correction.** `4e64b337` landed the pin as
+`TestSDKSummarizerAdapterEvidenceProvenance`, named in `buildRequest`'s
+doc comment (`internal/agent/sdk_summarizer_adapter.go:104`). Test T.7
+verifies it rather than writing it.
 
 ---
 
@@ -345,8 +348,8 @@ One atomic commit. A stacked pair is allowed only when the two commits
 never separate on any branch. The tree must build and test green at
 the end of the commit, so item A.4, section B's residual, section C,
 and every test re-anchor land together. That set is smaller than
-revision 2's: the concurrent slice already owns items A.1 to A.3,
-B.1, B.2's Go half, and B.3.
+revision 2's: commit `4e64b337` shipped items A.1 to A.3 and all of
+section B.
 
 ### A. The summarizer adapter
 
@@ -507,9 +510,10 @@ Per Finding F.4, keep `loop.Messages`. Test T.5 pins the guarantee.
 #### Item C.6 — `InjectedSummary` byte equality
 
 `confirmSDKCompaction` calls `recordSDKInjectedSummary` with
-`pending.message`. After item A.1 the pending message comes from the
-memo on a repeated call, so the durable bytes equal the captured
-bytes. Test T.6 pins the equality.
+`pending.message`. The shipped memo makes the pending message come
+from `replayMemo` on a repeated call
+(`internal/agent/sdk_summarizer_memo.go:71`), so the durable bytes
+equal the captured bytes. Test T.6 pins the equality.
 
 #### Item C.7 — the recovery gate observes the skip
 
@@ -860,11 +864,10 @@ content with an empty `Name`.
 
 ### T.7 — verify the sibling slice's adapter coverage, then fill gaps
 
-Revision 2 specified this test file as new. The concurrent slice
-already created it:
-`internal/agent/sdk_summarizer_memo_test.go` is present and untracked.
-This item therefore becomes a VERIFY-then-fill step, run after the
-rebase, not a write-from-scratch step.
+Revision 2 specified this test file as new. Commit `4e64b337` created
+it: `internal/agent/sdk_summarizer_memo_test.go` is tracked at 11 KB.
+This item is therefore a VERIFY-then-fill step, not a
+write-from-scratch step.
 
 Read the shipped file. Check that it covers the seven legacy semantics
 below on the SDK path. Add only the rows it does not cover. Do not
@@ -882,7 +885,9 @@ rewrite rows it already covers, and do not duplicate them.
 
 The provenance pin the sibling slice named in `buildRequest`'s doc
 comment, `TestSDKSummarizerAdapterEvidenceProvenance`, covers
-revision 2's item A.3. Confirm it exists and asserts both halves:
+revision 2's item A.3, and `buildRequest`'s doc comment
+(`internal/agent/sdk_summarizer_adapter.go:104`) names it. Confirm it
+asserts both halves:
 `SourceExcerpts` come from the dropped-messages argument, and
 `Evidence` comes from the turn-state snapshot. Add the missing half
 only if one is absent.
@@ -1052,7 +1057,7 @@ A zero ceiling keeps `applySDKTrim` installing `Trim`, because
 `sdkPrepareTrim` gates only on `PreparationManager != nil`
 (`internal/agent/sdk_prepare.go:92-95`). `injectSummary` therefore
 still runs. `SummaryRequestBudget(0)` returns
-`defaultSummaryRequestBudget` (`internal/agent/summary_inject.go:40-47`),
+`defaultSummaryRequestBudget` (`internal/agent/summary_inject.go:42-47`),
 so the summary request stays valid.
 
 | Call site | Test | Action |
@@ -1062,7 +1067,7 @@ so the summary request stays valid.
 | `summary_memo_test.go:172` | `TestSummaryTransientFailureRetriesAcrossStepsThenStopsAtTheCap` | Same. |
 | `summary_memo_test.go:200` | `TestSummaryTransientFailureRecoversOnTheNextStep` | Same. |
 | `summary_memo_test.go:248` | `TestSummaryNonRetryableFailureIsNotReattemptedAcrossSteps` | Same. |
-| `summary_memo_test.go:267` | `TestSummaryOverBudgetDropReportsItsOwnReason` | Cannot move to a zero ceiling. `SummaryOverBudget` (`summary_inject.go:59-64`) treats a non-positive budget as unbounded, so the premise needs the 400 ceiling. **The conversion is NOT verbatim.** Today's assertion is `anyRequestCarriesSummary(completer.requests)`: the summary never reached THE PROVIDER. A direct `injectSummary` call can only assert absence from a RETURN VALUE, a different artefact, which is the wrong-artefact trap the `two_paths_execute_a_tool_call` memory names. Keep BOTH arms: (a) the direct unit call asserting the returned slice carries no summary and `SummaryFailureReason` equals `SummaryReasonOverBudget`, and (b) a driver-level arm that still runs `loop.Run` on the LEGACY path at a ceiling small enough to be over budget but large enough that the SDK Window does not adopt, asserting `anyRequestCarriesSummary` is false. When no such ceiling exists, say so in the test comment and name arm (a) plus test T.7's over-budget row as what covers the guarantee. |
+| `summary_memo_test.go:267` | `TestSummaryOverBudgetDropReportsItsOwnReason` | Cannot move to a zero ceiling. `SummaryOverBudget` (`internal/agent/summary_inject.go:61`) treats a non-positive budget as unbounded, so the premise needs the 400 ceiling. **The conversion is NOT verbatim.** Today's assertion is `anyRequestCarriesSummary(completer.requests)`: the summary never reached THE PROVIDER. A direct `injectSummary` call can only assert absence from a RETURN VALUE, a different artefact, which is the wrong-artefact trap the `two_paths_execute_a_tool_call` memory names. Keep BOTH arms: (a) the direct unit call asserting the returned slice carries no summary and `SummaryFailureReason` equals `SummaryReasonOverBudget`, and (b) a driver-level arm that still runs `loop.Run` on the LEGACY path at a ceiling small enough to be over budget but large enough that the SDK Window does not adopt, asserting `anyRequestCarriesSummary` is false. When no such ceiling exists, say so in the test comment and name arm (a) plus test T.7's over-budget row as what covers the guarantee. |
 | `summary_memo_test.go:289` | `TestSummaryFailureReasonClearsAfterALaterSuccessfulCompaction` | Switch to `summaryProbeOptionsLegacyPath`. Every assertion unchanged. |
 | `summary_inject_test.go:190` | `TestSummaryInjectionSentRequestCarriesSummary` | Switch to `summaryProbeOptionsLegacyPath`. Assertion unchanged. |
 | `summary_inject_test.go:237` | `TestSummaryInjectionDoesNotTouchDurableState` | Same. |
@@ -1188,10 +1193,10 @@ was compacted", the fact that always mattered.
 | `TestSubagentParentSteerCompactsWithoutDTOError` | `internal/subagents/multi_step_steer_sdk_test.go:170` | status completed, with `Force: true` to compact each step | `Force` no longer compacts. Re-anchor: assert the SDK Window compacts and steering still completes. Without this the test goes green while testing nothing. |
 | `TestSDKSessionTurnRetriesAfterPromptTooLong` | `internal/chat/session_sdk_backend_test.go:237`, asserts `:256`, `:259`, `:268` | reply `recovered`, one `EventPrune` | This is Finding F.1. With item C.7's corrected gate the adapter skips, so the host rerun still fires and all three assertions pass unchanged. No test change. Keep it green; it is the regression detector. |
 | `TestAgentLoopCompactionSummarySurvivesTheTurnBoundary` | `internal/clichat/context_summary_persistence_test.go:105`, asserts `:126`, `:129`, `:145` | summary in the request, in Active, and in the next turn | `driveCompactingTurn` tightens the prompt budget. That now drives the SDK Window. Verify the crossing still happens; retune the budget when it does not. Assertions unchanged. |
-| `TestContextSummaryIntegrationEndToEnd` | `internal/clichat/context_summary_integration_test.go:183` | end-to-end summary | Same harness, same verification. Also fix its stale doc comment (item B.4). |
+| `TestContextSummaryIntegrationEndToEnd` | `internal/clichat/context_summary_integration_test.go:183` | end-to-end summary | Same harness, same verification. Its doc comment was already corrected by `4e64b337` at `:178`. |
 | `TestContextSummaryIntegrationDegradesOnBadReply` | `internal/clichat/context_summary_integration_test.go:224` | degrade path | Same harness, same verification. |
-| `TestCompactionChannelsAutomaticEventOmitsSummaryAndPersistsToCheckpoint` | `internal/clichat/context_summary_channels_integration_test.go:293` | event shape | Same harness, same verification. |
-| `TestCompactionChannelsStructuralOnlyNamesTheMissingCondition` | `internal/clichat/context_summary_channels_integration_test.go:349` | `enabled = false` sends no summary request | An item B.2 inversion. The fixture config is now a load error. Re-anchor onto a remaining honest cause: no resolved endpoint. The assertion that the notice names the real missing condition is unchanged. Also fix the package doc at `:12-16`. |
+| `TestCompactionChannelsAutomaticEventOmitsSummaryAndPersistsToCheckpoint` | `internal/clichat/context_summary_channels_integration_test.go:309` | event shape | Same harness, same verification. |
+| `TestCompactionChannelsStructuralOnlyNamesTheMissingCondition` | `internal/clichat/context_summary_channels_integration_test.go:370` | the notice names the missing condition | Already re-anchored by `4e64b337`: the fixture now uses an unbuildable `[context.summary]` provider/model override, and the package doc at `:12-15` was rewritten to match. No change. Re-run and record. |
 | `TestAutoCompactionSummarySurvivesRestart` | `internal/clichat/context_summary_auto_resume_integration_test.go:27`, assert `:46` | tail contains the host-injected marker | Verify the crossing still happens. Assertion unchanged. |
 | `TestCompactionKeepsMemoryFrameInCommittedAndRestoredContext` | `internal/chat/context_memory_frame_compaction_test.go:38` | the memory frame survives | The protector becomes `PreserveNames` (item C.3). Assertion unchanged. This is item C.3's regression detector. |
 | `TestOneShotRejectsIrreduciblePrompt` | `internal/subagents/context_policy_test.go:16` | `agent.ErrPromptBudgetExceeded` | Unchanged by item C.8, and item C.11 keeps the vocabulary stable when the Window fails instead. Re-run and record. |
@@ -1243,19 +1248,18 @@ not add a skip. Do not remove one without restoring the test.
   most ONE summarizer call" is today proven by `summary_memo_test.go`.
   Under the raw-sweep disposition those seven tests keep their names
   and their assertions, so no listed name goes stale. Add the SDK-path
-  names the concurrent slice's `sdk_summarizer_memo_test.go` carries,
-  plus any test T.7 adds, since the invariant now has two mechanisms.
-  Read the shipped file for the real names after the rebase; do not
-  invent them. `TestSummaryOverBudgetDropReportsItsOwnReason` keeps its
+  names `internal/agent/sdk_summarizer_memo_test.go` carries, plus any
+  test T.7 adds, since the invariant now has two mechanisms. Read that
+  shipped file for the real names; do not invent them. `TestSummaryOverBudgetDropReportsItsOwnReason` keeps its
   name and gains a second arm, so the manifest entry stays valid.
 - **INV-AG-41** ("An automatic compaction announces itself on every
   surface", line 72). Confirm the SDK path reaches
   `emitContextCompaction` through `confirmSDKCompaction`. Add tests
   T.1 and T.12.
 - **INV-AG-42** ("A `[context.summary]` provider/model override is
-  real, not decorative", line 73). It lists
-  `TestSummaryWiringDisabledByDefault`, which this plan renames. Update
-  the name. The override contract does not change.
+  real, not decorative", line 73). Already updated by `4e64b337`: the
+  manifest now names `TestSummaryWiringNeedsABinding`, and neither old
+  name appears anywhere in `.mivia/invariants.md`. No change needed.
 
 Run `make validate-invariants` after the edits. It fails on a stale
 test name.
@@ -1264,7 +1268,7 @@ test name.
 
 ## File size budget
 
-`internal/agent/agentloop_adoption.go` is 451 lines. The soft limit is
+`internal/agent/agentloop_adoption.go` is 450 lines. The soft limit is
 500. Items C.1, C.3, C.10, and C.11 add lines. Move
 `sdkCompactionObserver` and `confirmSDKCompaction` into a new file
 `internal/agent/sdk_compaction_observer.go` BEFORE adding anything.
@@ -1274,17 +1278,18 @@ Item C.10's field-by-field overlay lives in that new file, beside
 the file again after the move and split further when it is still near
 the limit.
 
-`internal/agent/sdk_summarizer_adapter.go` grew under the concurrent
-slice. Item A.4 adds three lines to it and one to
-`internal/agent/sdk_summarizer_memo.go`. Re-measure both files after
-the rebase.
+`internal/agent/sdk_summarizer_adapter.go` is 247 lines after
+`4e64b337`. Item A.4 adds two lines to it and one to
+`internal/agent/sdk_summarizer_memo.go` (95 lines). Both stay far
+below the 500-line soft limit.
 
 `internal/agent/summary_inject_test.go` and
 `internal/agent/summary_memo_test.go` grow by the fixture switch.
 Check both against the 800-line test soft limit after the edit.
 
-Keep every function at or below 80 lines. Item A.2's retry loop goes
-in its own method.
+Keep every function at or below 80 lines. `summarizeWithOneRetry`
+(`internal/agent/sdk_summarizer_adapter.go:131`) already isolates the
+retry, so item A.4 adds no length pressure.
 
 ---
 
@@ -1307,8 +1312,9 @@ prohibits it.
 Do not run `go test -fuzz` with default parallelism.
 
 Do not run a live e2e workflow. `scripts/e2e_context_compaction.py`
-changes under item B.2, but running it needs the user's explicit
-request in the session.
+was already updated by `4e64b337`, and this plan changes it no
+further. Running it still needs the user's explicit request in the
+session.
 
 Never bypass a Git hook.
 
@@ -1326,8 +1332,8 @@ every guard. Five guards land here. Review round 1 added the last two.
 | **Item C.11's scoping** | Delete the `opts.PreparationManager == nil` term, restoring revision 2's blanket translation | T.10's chat-shape sibling |
 
 The revision 2 rows for the item A.1 memo and the `enabled = false`
-load rejection are both dropped: the concurrent slice owns those guards
-and ships their proofs. Verify after the rebase
+load rejection are both dropped: `4e64b337` owns those guards and ships
+their proofs. Verify
 that the shipped test suite carries one, and say so in the report
 rather than claiming it.
 
@@ -1349,10 +1355,10 @@ the result. An inspection-only proof is invalid.
 | No cycles | PASS. Item C.3 may need a constant instead of a `chat` import; the plan says so. |
 | No breaking API change | FAIL by design. `Options.PreferSDKCompaction` and `ContextSummaryConfig.SummaryEnabled` are deleted. Both are internal. Neither has an external consumer. |
 | Testable in isolation | PASS. Items A, B, and C each have their own tests. |
-| Backward-compatible config | FAIL by design. `enabled = false` becomes a load error. Item B.2 records the decision and the migration. |
+| Backward-compatible config | Not this plan's concern any more. `4e64b337` made `enabled = false` a load error; section B is cut. |
 | Every function has a test | PASS. |
-| Tree green at end of commit | CONDITIONAL. The raw-sweep table dispositions all 17 `summaryProbeOptions` call sites, which revision 1 left red. It is not provable while the concurrent slice is uncommitted, because that slice moves line numbers in every table here. The rebase rule is the precondition. |
-| No collision with concurrent work | FAIL until the rebase. Items A.1 to A.3 are cut. Section B is disputed on evidence; the rebase rule settles it. |
+| Tree green at end of commit | PASS. The raw-sweep table dispositions all 17 `summaryProbeOptions` call sites, which revision 1 left red. The sweep was re-run on `1e85dfd4` and returned the same 18 hits at the same line numbers. |
+| No collision with concurrent work | PASS. `4e64b337` is merged, the working tree is clean, and every item it shipped is cut. |
 
 ## Rollback criterion
 
