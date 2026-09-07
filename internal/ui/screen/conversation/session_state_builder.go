@@ -48,22 +48,7 @@ func (s Screen) newSessionState(conv ports.Conversation) *sessionState {
 					})
 				}
 				for _, tc := range m.ToolCalls {
-					st.transcript, _ = st.transcript.HandleEvent(uievent.Event{
-						Kind: uievent.KindToolStart,
-						Body: uievent.ToolStartBody{
-							ToolCallID: tc.ID,
-							Name:       tc.Name,
-						},
-					})
-					st.transcript, _ = st.transcript.HandleEvent(uievent.Event{
-						Kind: uievent.KindToolEnd,
-						Body: uievent.ToolEndBody{
-							ToolCallID: tc.ID,
-							Name:       tc.Name,
-							OK:         true,
-							Result:     tc.Output,
-						},
-					})
+					st.transcript = replayHistoricalToolCall(st.transcript, tc)
 				}
 				if m.Text != "" {
 					st.transcript, _ = st.transcript.HandleEvent(uievent.Event{
@@ -87,4 +72,19 @@ func (s Screen) newSessionState(conv ports.Conversation) *sessionState {
 		}
 	}
 	return st
+}
+
+func replayHistoricalToolCall(transcript transcript.Model, tc ports.ToolCall) transcript.Model {
+	transcript, _ = transcript.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: tc.ID, Name: tc.Name, Args: parseToolArgs(tc.Arguments)},
+	})
+	transcript, _ = transcript.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{
+			ToolCallID: tc.ID, Name: tc.Name, OK: true,
+			Result: tc.Output, Diff: tc.Diff,
+		},
+	})
+	return transcript
 }

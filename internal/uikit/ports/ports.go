@@ -29,6 +29,7 @@ type ToolCall struct {
 	Name      string
 	Arguments string
 	Output    string
+	Diff      *uievent.Diff
 }
 
 // Message is one turn of conversation history.

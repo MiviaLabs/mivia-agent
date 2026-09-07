@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // newSessionStateHistoryConv builds a backgroundTestConversation (the
@@ -42,6 +43,32 @@ func newSessionStateHistoryConv() *backgroundTestConversation {
 			// "completed").
 			{Role: "assistant", Text: "here is the answer", At: time.Unix(4, 0)},
 		},
+	}
+}
+
+func TestNewSessionState_ReplaysHistoricalToolDiff(t *testing.T) {
+	dark, _, themes := themePair(t)
+	diff := &uievent.Diff{Path: "a.go", Hunks: []uievent.DiffHunk{{
+		Header: "@@ -1 +1 @@",
+		Lines:  []uievent.DiffLine{{Kind: uievent.DiffLineDel, Text: "old"}, {Kind: uievent.DiffLineAdd, Text: "new"}},
+	}}}
+	conv := &backgroundTestConversation{
+		id: "history-diff",
+		history: []ports.Message{{Role: "assistant", ToolCalls: []ports.ToolCall{{
+			ID: "edit-1", Name: "search_replace", Output: "updated a.go", Diff: diff,
+		}}}},
+	}
+	s := New(dark, theme.TierASCII, themes, conv, nil, 100, time.Now)
+	st := s.newSessionState(conv)
+	blocks := st.transcript.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("replayed blocks=%d, want 1", len(blocks))
+	}
+	if blocks[0].Diff == nil || blocks[0].Diff.Path != "a.go" {
+		t.Fatalf("historical diff was not attached to tool block: %+v", blocks[0])
+	}
+	if len(blocks[0].Body) == 0 || !strings.Contains(strings.Join(blocks[0].Body, "\n"), "-old") {
+		t.Fatalf("historical diff was not rendered: %+v", blocks[0].Body)
 	}
 }
 

@@ -481,14 +481,16 @@ func (c *Conversation) History() []ports.Message {
 			var tcs []ports.ToolCall
 			for _, tc := range m.ToolCalls {
 				output := toolOutputs[tc.ID]
-				if d := parseToolDiff(tc.Function.Name, tc.Function.Arguments, output); d != nil {
-					diffs = append(diffs, *d)
+				diff := parseToolDiff(tc.Function.Name, tc.Function.Arguments, output)
+				if diff != nil {
+					diffs = append(diffs, *diff)
 				}
 				tcs = append(tcs, ports.ToolCall{
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 					Output:    output,
+					Diff:      diff,
 				})
 			}
 			out = append(out, ports.Message{

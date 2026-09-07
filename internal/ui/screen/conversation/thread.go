@@ -105,23 +105,7 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 				})
 			}
 			for _, tc := range m.ToolCalls {
-				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
-					Kind: uievent.KindToolStart,
-					Body: uievent.ToolStartBody{
-						ToolCallID: tc.ID,
-						Name:       tc.Name,
-						Args:       parseToolArgs(tc.Arguments),
-					},
-				})
-				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
-					Kind: uievent.KindToolEnd,
-					Body: uievent.ToolEndBody{
-						ToolCallID: tc.ID,
-						Name:       tc.Name,
-						OK:         true,
-						Result:     tc.Output,
-					},
-				})
+				s.transcript = replayHistoricalToolCall(s.transcript, tc)
 				if isSubagentTool(tc.Name) || (s.threads != nil && isThreadRegistered(s.threads, tc.ID)) {
 					status := "completed"
 					if tc.Output == "" && isLastMsg && m.Text == "" {
