@@ -413,15 +413,7 @@ func atomicWrite(ctx context.Context, path string, data []byte) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("replace memory: %w", err)
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return fmt.Errorf("open memory directory for sync: %w", err)
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
-		return fmt.Errorf("sync memory directory: %w", err)
-	}
-	return nil
+	return syncMemoryDir(filepath.Dir(path))
 }
 
 func rejectSymlinkComponents(path string) error {
