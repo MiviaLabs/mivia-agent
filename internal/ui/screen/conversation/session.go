@@ -255,6 +255,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 				if err == nil {
 					st.active = handle
 					st.statusline.Start("thinking", s.now())
+					st.statusline.SetQueued(len(st.queue))
 					s.refreshTopbar()
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
@@ -273,6 +274,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 				if err == nil {
 					st.active = handle
 					st.statusline.Start("thinking", s.now())
+					st.statusline.SetQueued(len(st.queue))
 					s.refreshTopbar()
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
@@ -304,6 +306,8 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 			if sc.queueOverlay.Active() {
 				sc.queueOverlay.SetItems(sc.queue)
 			}
+		} else {
+			sc.statusline.SetQueued(len(sc.queue))
 		}
 		return sc, cmd
 	}

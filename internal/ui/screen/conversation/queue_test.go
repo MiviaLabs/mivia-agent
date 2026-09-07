@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,35 @@ func TestEnterWhileTurnActiveQueuesMessage(t *testing.T) {
 	}
 	if got.composer.Value() != "" {
 		t.Errorf("expected composer to be cleared after queuing, got %q", got.composer.Value())
+	}
+}
+
+// TestQueueingAMessageDoesNotHideTheRunningTurnStatus pins the fix for a
+// reported bug: queuing a message while a turn is running used to call
+// statusline.Notice("message queued..."), and Notice REPLACES the whole
+// status line (see statusline.Model.View), so the running/thinking status
+// and its elapsed clock disappeared for the rest of the turn. The queued
+// count must show ALONGSIDE the active turn line instead.
+func TestQueueingAMessageDoesNotHideTheRunningTurnStatus(t *testing.T) {
+	events := []uievent.Event{{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}}}
+	s := newScreen(t, replay.New(events, time.Hour), nil, nil)
+	s = typeText(t, s, "hi")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.statusline.Active() {
+		t.Fatal("expected an active turn before queuing")
+	}
+
+	s = typeText(t, s, "again")
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := next.(Screen)
+
+	view := got.statusline.View(time.Now())
+	if !strings.Contains(view, "THINKING") {
+		t.Errorf("statusline = %q, want the running turn status still visible after queuing", view)
+	}
+	if !strings.Contains(view, "queued: 1") {
+		t.Errorf("statusline = %q, want the queued count alongside the turn status", view)
 	}
 }
 

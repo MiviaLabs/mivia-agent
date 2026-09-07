@@ -2,7 +2,6 @@ package conversation
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -168,7 +167,7 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 			if s.queueOverlay.Active() {
 				s.queueOverlay.SetItems(s.queue)
 			}
-			s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
+			s.statusline.SetQueued(len(s.queue))
 			return s, nil
 		}
 		return s.sendTextWithPersisted(o.SubmitPrompt, o.SubmitPersistedText)

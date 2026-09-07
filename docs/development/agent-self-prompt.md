@@ -55,7 +55,7 @@ with `write_file`); the next launch picks them up.
 
 | Workspace | Content |
 |-----------|---------|
-| **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.toml`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/cli/agent_prompt_repo_test.go`. |
+| **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.toml`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/clichat/agent_prompt_repo_test.go`. |
 | **Any other project** | That project’s stable conventions in agent `system_prompt` fields. |
 
 ### Optional fields

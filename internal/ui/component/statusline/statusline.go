@@ -48,6 +48,7 @@ type Model struct {
 
 	safetyMode string
 	costUSD    float64
+	queued     int
 
 	// notice is a one-line message shown INSTEAD of the turn line, and
 	// only until the next turn starts. It carries the outcome of an
@@ -74,6 +75,7 @@ func New(t theme.Theme, tier theme.Tier) Model {
 // spinner clock.
 func (m *Model) Start(label string, now time.Time) tea.Cmd {
 	m.notice = ""
+	m.queued = 0
 	m.active = true
 	m.label = label
 	m.detail = ""
@@ -126,6 +128,17 @@ func (m *Model) SetSafetyMode(mode string) {
 // SetCost updates the session spend displayed in the status line.
 func (m *Model) SetCost(costUSD float64) {
 	m.costUSD = costUSD
+}
+
+// SetQueued sets the number of messages waiting behind the active turn,
+// shown as a pill beside the turn line (label, detail, elapsed clock) -
+// never in place of it. A message queued while a turn is running must not
+// hide that a turn IS running: Notice() replaces the whole line and was
+// the wrong tool for this (see the callers this replaced in
+// internal/ui/screen/conversation). n <= 0 hides the pill. SetLabel and
+// SetDetail do not touch it - only Start (a new turn) and n == 0 clear it.
+func (m *Model) SetQueued(n int) {
+	m.queued = n
 }
 
 // Notice shows a one-line message until the next turn starts.
@@ -246,6 +259,9 @@ func (m Model) View(now time.Time) string {
 	}
 	if m.costUSD > 0.0001 {
 		pills = append(pills, subtle.Render(fmt.Sprintf("$%.2f", m.costUSD)))
+	}
+	if m.queued > 0 {
+		pills = append(pills, subtle.Render(fmt.Sprintf("[queued: %d]", m.queued)))
 	}
 
 	if len(pills) > 0 {

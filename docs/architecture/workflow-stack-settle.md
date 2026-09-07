@@ -43,18 +43,18 @@ base `dev`).
    14:38:59.
 
 The pattern is known in the repo. See
-`internal/cli/workflow_tool_engine_delivery_repair_test.go`, comment at line
-475: "workflow deliver on 'lock is busy' (observed: plan runs parked 50+
+`internal/cliworkflow/workflow_tool_engine_delivery_repair_test.go`, which
+covers "workflow deliver on 'lock is busy' (observed: plan runs parked 50+
 min)".
 
 ## Root causes
 
 | Id | Defect | Evidence |
 |----|--------|----------|
-| D1 | No autonomous settle. The drive loop lives inside a live process. Out-of-band merges are invisible. | `internal/workflows/localengine/engine_stack.go` line 143, `markMergedChunks` |
+| D1 | No autonomous settle. The drive loop lives inside a live process. Out-of-band merges are invisible. | `internal/workflows/localengine/engine_stack.go`, `markMergedChunks` |
 | D2 | Failed chunks park the parent. The drive halts on a failed chunk. | `internal/workflows/localengine/engine_stack_settle.go`, `stackHasProgress` |
-| D3 | Lock friction. The execution flock has a 5-second wait and an opaque error. | `internal/cli/workflow_resume_lock.go` line 66, `internal/cli/workflow_tool_engine.go` line 33 |
-| D4 | Status opacity. `delivery_pending` shows no blocking cause. | `internal/cli/stack_admit_integration.go` line 78 |
+| D3 | Lock friction. The execution flock has a 5-second wait and an opaque error. | `internal/cliworkflow/workflow_resume_lock.go`, `internal/cliworkflow/workflow_tool_engine.go` |
+| D4 | Status opacity. `delivery_pending` shows no blocking cause. | `internal/clichat/stack_admit_integration.go` |
 | D5 | Host and API parity gap. The `workflow_run` tool admits and returns. Nothing drives the stack after that. | `maybeDriveSettledStack` call sites, `scripts/run-delivery-workflow.sh` |
 
 ## Design goals
@@ -157,11 +157,11 @@ pattern: a string enum with a global default.
 | `internal/workflows/localengine/engine_stack_settle.go` | Add failure settle; apply `failed_pr_policy` |
 | `internal/workflows/definition/types.go` | Add `FailedPRPolicy` to `Stacking` |
 | `internal/workflows/compiler/stacking.go` | Validate `failed_pr_policy` enum and default |
-| `internal/cli/workflow_resume_lock.go` | Fix lock wait, holder report, stale reclaim |
-| `internal/cli/workflow_tool_engine.go` | Raise lock wait; report holder |
-| `internal/cli/stack_admit_integration.go` | Name the exact blocker in refusals |
-| `internal/cli/workflow_deliver.go` | Drive an advanceable stack before settling |
-| `internal/cli/workflows_sidebar.go` | Show blocking cause in the dot |
+| `internal/cliworkflow/workflow_resume_lock.go` | Fix lock wait, holder report, stale reclaim |
+| `internal/cliworkflow/workflow_tool_engine.go` | Raise lock wait; report holder |
+| `internal/clichat/stack_admit_integration.go` | Name the exact blocker in refusals |
+| `internal/cliworkflow/workflow_deliver.go` | Drive an advanceable stack before settling |
+| the delivery-status sidebar rendering | Show blocking cause in the dot |
 | `scripts/run-delivery-workflow.sh` | Print and background the drive command |
 | `docs/architecture/workflows.md` | Document the new knob and the sweep |
 

@@ -3,7 +3,7 @@
 What automated tests cannot prove about the TUI input layer, and how to check it
 by hand.
 
-The bindings themselves are **not** listed here. `internal/cli/keymap.go` is the
+The bindings themselves are **not** listed here. `internal/clichat/keymap.go` is the
 single declaration, and `/help` renders from it - a second list in a document is
 the exact drift this layer was rebuilt to remove.
 
@@ -13,7 +13,7 @@ Do not re-test these by hand; they fail the build if they break.
 
 | Layer | Covers |
 |---|---|
-| Unit (`internal/cli`) | Which pane a key reaches per focus, editing keys, paste refocus, copy acknowledgement truthfulness, registry validation, generated help |
+| Unit (`internal/clichat`) | Which pane a key reaches per focus, editing keys, paste refocus, copy acknowledgement truthfulness, registry validation, generated help |
 | PTY (`*_pty_test.go`, Linux) | Real CSI bytes for End/PgUp, SGR mouse wheel, bracketed paste (multi-line, >256-byte reassembly, no send from embedded newlines) |
 
 ## What needs a human, and why

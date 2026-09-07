@@ -235,6 +235,65 @@ func TestSetLabelClearsThePreviousDetail(t *testing.T) {
 	}
 }
 
+// TestSetQueuedShowsBesideTheActiveTurnLine pins the fix for a message
+// queued while a turn is running: the queued count must appear ALONGSIDE
+// the turn's own status (label, detail, elapsed clock), not replace it.
+// Before this, callers used Notice("message queued...") for this, and
+// Notice fully overwrites the turn line (see View()'s early return), so
+// the running/thinking status disappeared for the rest of the turn.
+func TestSetQueuedShowsBesideTheActiveTurnLine(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.Start("thinking", start)
+	m.SetQueued(2)
+	got := m.View(start.Add(3 * time.Second))
+	for _, want := range []string{"THINKING", "3.0s", "queued: 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("got %q, want %q alongside the active turn", got, want)
+		}
+	}
+}
+
+// TestSetQueuedZeroHidesThePill pins that clearing the queue (SetQueued(0))
+// removes the pill instead of showing "queued: 0".
+func TestSetQueuedZeroHidesThePill(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.SetQueued(3)
+	m.SetQueued(0)
+	got := m.View(time.Now())
+	if strings.Contains(got, "queued") {
+		t.Errorf("got %q, want no queued pill once the count is zero", got)
+	}
+}
+
+// TestSetQueuedSurvivesLabelChange pins that a label change (a tool
+// starting, a phase advancing) does not clear the queued pill - only
+// Start (a new turn) and SetQueued(0) should.
+func TestSetQueuedSurvivesLabelChange(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.SetQueued(1)
+	m.SetLabel("running")
+	got := m.View(time.Now())
+	if !strings.Contains(got, "queued: 1") {
+		t.Errorf("got %q, want the queued pill to survive a label change", got)
+	}
+}
+
+// TestStartClearsAStaleQueuedPill: a new turn must not inherit a queued
+// count left over from the previous one.
+func TestStartClearsAStaleQueuedPill(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.SetQueued(2)
+	m.Start("thinking", time.Now())
+	got := m.View(time.Now())
+	if strings.Contains(got, "queued") {
+		t.Errorf("got %q, want no stale queued pill after a new Start", got)
+	}
+}
+
 func TestStatusLineBadgeFixedFourteenRunes(t *testing.T) {
 	th := loadTheme(t)
 	labels := []string{"thinking", "running", "waiting", "pending", "done", "failed", "x", "running tool long label"}

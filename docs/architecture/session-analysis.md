@@ -11,11 +11,11 @@ verdicts; every must-fix landed).
 Early drafts read `.mivia/sessions/<name>/meta.json` (the legacy file-backed
 session store). That design was wrong twice over: the file store is not the
 default (`.mivia/mivia.toml:614` `store_backend = "sqlite"`; chat is
-unconditionally SQLite-backed per `internal/cli/context_setup.go:26-34`), and
+unconditionally SQLite-backed per `internal/clichat/context_setup.go`), and
 reading file transcripts re-opened the content-privacy surface. The skill's
 surface is the SQLite ledger, opened read-only.
 
-Ledger resolution (mirrors `internal/cli/chat_repository_binding.go:124-141`,
+Ledger resolution (mirrors `internal/clichat/chat_repository_binding.go:125-141`,
 `internal/workspace/namespace.go:78-84`):
 
 1. `[subagents].store_path` in `.mivia/mivia.toml` (expand `~`; join relative
@@ -23,7 +23,7 @@ Ledger resolution (mirrors `internal/cli/chat_repository_binding.go:124-141`,
 2. Else `~/.mivia/context.db` — the **global ledger, shared across every
    workspace on the machine**. Sessions are isolated inside it by workspace ID.
 
-Principal scoping (mirrors `internal/cli/context_setup_session.go:91-107`):
+Principal scoping (mirrors `internal/clichat/context_setup_session.go:93-103`):
 `workspace_id = "workspace-" + hex(sha256(realpath(root))[:8])` (hex of the first
 8 bytes = 16 hex chars, matching `context_setup_session.go`;
 `hex.EncodeToString(digest[:8])`), `subject_id = "local-user"`. Every query is scoped by both. The audit rated
@@ -66,7 +66,7 @@ Schema gate: `user_version >= 11` required (the `session_id` column is v11).
 - **Stalled** = `session_type='live' AND checkpoint_count=0`; snapshots are
   never stalled (they have no checkpoint relationship).
 - **Staleness labels**: `token_count`/`turn_count` are save-time estimates,
-  invalidated by compaction (`internal/cli/sessions_command.go:317-318` label
+  invalidated by compaction (`internal/clichat/sessions_command.go:316-317` label
   them STALE); `payload_bytes` is current, post-compaction.
 - **Anchor bias**: per-arm anchor translation table + whole-store context line
   in every report.

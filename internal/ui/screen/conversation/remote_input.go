@@ -179,7 +179,7 @@ func (s Screen) sendOrQueueRemote(text, persisted string) (app.Screen, tea.Cmd) 
 		if s.queueOverlay.Active() {
 			s.queueOverlay.SetItems(s.queue)
 		}
-		s.statusline.Notice(fmt.Sprintf("remote message queued (%d in queue)", len(s.queue)))
+		s.statusline.SetQueued(len(s.queue))
 		return s, nil
 	}
 	return s.sendTextWithPersisted(text, persisted)
