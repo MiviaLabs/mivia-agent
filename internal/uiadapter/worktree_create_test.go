@@ -17,7 +17,7 @@ import (
 
 func TestCommandRunner_StartInNewWorktree_CreateFailureSurfacesError(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -76,7 +76,7 @@ func TestCommandRunner_StartInNewWorktree_GuardArms(t *testing.T) {
 	}
 
 	// Outside any git repository: Root("") fails.
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	sess4, _ := catalogSession(t, store, mainDir)
 	sess4.UseTools = true
@@ -90,7 +90,7 @@ func TestCommandRunner_StartInNewWorktree_GuardArms(t *testing.T) {
 
 func TestCommandRunner_StartInNewWorktree_GeneratesNameAndStarts(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -117,7 +117,7 @@ func TestCommandRunner_StartInNewWorktree_GeneratesNameAndStarts(t *testing.T) {
 
 func TestCommandRunner_StartInNewWorktree_ExplicitNameSanitizes(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -138,7 +138,7 @@ func TestCommandRunner_StartInNewWorktree_ExplicitNameSanitizes(t *testing.T) {
 
 func TestCommandRunner_StartInNewWorktree_DuplicateSurfacesError(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -166,7 +166,7 @@ func TestCommandRunner_StartInNewWorktree_DuplicateSurfacesError(t *testing.T) {
 // after the error was discarded.
 func TestCommandRunner_StartInNewWorktree_SanitizeErrorNamesTheInput(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -190,7 +190,7 @@ func TestCommandRunner_StartInNewWorktree_SanitizeErrorNamesTheInput(t *testing.
 // documented remedy (press again) regenerates the same colliding name.
 func TestCommandRunner_StartInNewWorktree_SameSecondNamesDoNotCollide(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}

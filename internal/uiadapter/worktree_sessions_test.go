@@ -308,7 +308,7 @@ func TestSessionPool_BoundEntryGuardArmsRunBeforePersistence(t *testing.T) {
 
 func TestCommandRunner_ResumeInWorktree_PooledEntryFencedWhenInstanceGone(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir, canonicalWt := fx.Store, fx.MainDir, fx.WorktreeDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -345,7 +345,7 @@ func TestCommandRunner_ResumeInWorktree_PooledEntryFencedWhenInstanceGone(t *tes
 
 func TestCommandRunner_SelectSession_TypedBoundIdStillFailsClosed(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir, canonicalWt := fx.Store, fx.MainDir, fx.WorktreeDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -380,7 +380,7 @@ func TestCommandRunner_SelectSession_TypedBoundIdStillFailsClosed(t *testing.T) 
 
 func TestCommandRunner_SelectSession_RoutePseudoIdDoesNotStartFresh(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -401,7 +401,7 @@ func TestCommandRunner_SelectSession_RoutePseudoIdDoesNotStartFresh(t *testing.T
 
 func TestCommandRunner_SelectSession_ListedBoundRowRoutesToScopedResume(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -463,7 +463,7 @@ func TestCommandRunner_SelectSession_ListedBoundRowRoutesToScopedResume(t *testi
 // router existed - so they must keep the plain path.
 func TestCommandRunner_SelectSession_InstancelessWorktreeRowResumesPlain(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir, wtDir := fx.Store, fx.MainDir, fx.WorktreeDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -498,7 +498,7 @@ func TestCommandRunner_SelectSession_InstancelessWorktreeRowResumesPlain(t *test
 
 func TestCommandRunner_SelectSession_ListingErrorDegradesToPlainPath(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -519,7 +519,7 @@ func TestCommandRunner_SelectSession_ListingErrorDegradesToPlainPath(t *testing.
 
 func TestCommandRunner_ResumeInWorktree_UnboundPooledEntryPassesThrough(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir := fx.Store, fx.MainDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -619,7 +619,7 @@ func TestCommandRunner_ResumeInWorktree_PooledEntryChecksMarker(t *testing.T) {
 // panicking.
 func TestCommandRunner_ResumeInWorktree_FenceFailsClosedOnProbeError(t *testing.T) {
 	stubWorkflowWiring(t)
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store, mainDir, wtDir := fx.Store, fx.MainDir, fx.WorktreeDir
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}

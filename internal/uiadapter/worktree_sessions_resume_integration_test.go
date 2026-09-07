@@ -35,7 +35,7 @@ const (
 	resumeSavedSecondName   = "wt-save-2"
 )
 
-// worktreeCatalogFixtureNoClose mirrors worktreeCatalogFixture but hands
+// worktreeCatalogFixtureReopenable mirrors worktreeCatalogFixture but hands
 // the handle and database path to the caller: restart simulation closes
 // handle 1 and reopens the same path as an independent store.
 // worktreeCatalog names the fixture's parts so call sites bind them by
@@ -49,7 +49,7 @@ type worktreeCatalog struct {
 	DBPath      string
 }
 
-func worktreeCatalogFixtureNoClose(t *testing.T) worktreeCatalog {
+func worktreeCatalogFixtureReopenable(t *testing.T) worktreeCatalog {
 	t.Helper()
 	mainDir := filepath.Join(t.TempDir(), "main")
 	wtDir := filepath.Join(filepath.Dir(mainDir), ".mivia", "worktrees", "wt1")
@@ -67,6 +67,12 @@ func worktreeCatalogFixtureNoClose(t *testing.T) worktreeCatalog {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	// The handle is the caller's to close early and reopen, but SQLite.Close
+	// is once-guarded, so this safety net is a no-op for a caller that
+	// already closed it and still releases the file for a caller that did
+	// not. Without it Windows cannot unlink ctx.db at TempDir cleanup and
+	// fails the test on a leaked handle it never sees on unix.
+	t.Cleanup(func() { _ = store.Close() })
 	principal, err := worktreeroute.Principal(mainDir)
 	if err != nil {
 		t.Fatalf("derive principal: %v", err)
@@ -156,7 +162,7 @@ type restartScenario struct {
 // restart session, and resumes the saved worktree session through the
 // REAL ResumeInWorktree path (pre-bind before Load, pool-carried).
 func buildRestartScenario(t *testing.T) restartScenario {
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store1, mainDir, canonicalWt, dbPath := fx.Store, fx.MainDir, fx.WorktreeDir, fx.DBPath
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
@@ -376,7 +382,7 @@ func seedTurnOnlyWorktreeSession(t *testing.T, store *storage.SQLite, mainDir, c
 // turn must commit under the SAME session (no silent fork into a second
 // context session).
 func TestResumeInWorktree_TurnOnlySessionFromListingRestoresHistory(t *testing.T) {
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	store1, mainDir, canonicalWt, dbPath := fx.Store, fx.MainDir, fx.WorktreeDir, fx.DBPath
 	gitInitTempRepo(t, mainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}

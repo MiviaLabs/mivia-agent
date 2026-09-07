@@ -37,7 +37,7 @@ func newBoundResumeFixture(t *testing.T) boundResumeFixture {
 // with nil Tools while the context store is installed exactly the same.
 func newBoundResumeFixtureWithTools(t *testing.T, toolsOn bool) boundResumeFixture {
 	t.Helper()
-	fx := worktreeCatalogFixtureNoClose(t)
+	fx := worktreeCatalogFixtureReopenable(t)
 	gitInitTempRepo(t, fx.MainDir)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
 	seedID := seedTurnOnlyWorktreeSession(t, fx.Store, fx.MainDir, fx.WorktreeDir, res)
