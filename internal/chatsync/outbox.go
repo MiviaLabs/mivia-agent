@@ -33,7 +33,7 @@ const (
 // outside a test, and always restore them with t.Cleanup.
 var (
 	outboxSyncFile     = func(f *os.File) error { return f.Sync() }
-	outboxTruncateFile = func(f *os.File, size int64) error { return f.Truncate(size) }
+	outboxTruncateFile = func(f *os.File, size int64) error { return truncateOutboxFile(f, size) }
 )
 
 // Cursor represents the durable flushed sequence marker.
