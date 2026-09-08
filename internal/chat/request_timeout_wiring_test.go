@@ -1,11 +1,14 @@
 package chat
 
 import (
+	"encoding/json"
 	"io"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/orchestrationnotify"
 )
 
 // TestBuildAgentTurnOptionsUsesConfiguredRequestTimeout pins the wiring
@@ -33,6 +36,28 @@ func TestBuildAgentTurnOptionsUsesConfiguredRequestTimeout(t *testing.T) {
 	opts := sess.buildAgentTurnOptions(snapshot, "probe", io.Discard, nil, nil)
 	if opts.RequestTimeout != 1200*time.Second {
 		t.Fatalf("agent.Options.RequestTimeout = %s, want the configured 1200s", opts.RequestTimeout)
+	}
+}
+
+func TestBuildAgentTurnOptionsDrainsChildNotificationAtStepBoundary(t *testing.T) {
+	sess := NewSession(&config.Resolved{ProviderName: "test", Model: "test-model"}, &fakeCompleter{out: "ok"})
+	snapshot, done, err := sess.beginAgentTurn("probe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	payload, _ := json.Marshal(map[string]string{"message_id": "msg-1", "kind": "question", "synopsis": "need input", "content_ref": "ref-1"})
+	orchestrationnotify.Publish(ledger.LifecycleEvent{ID: "evt-1", SessionID: snapshot.sessionID, RunID: "run-1", TaskID: "task-1", Payload: payload})
+	opts := sess.buildAgentTurnOptions(snapshot, "probe", io.Discard, nil, nil)
+	got := opts.BeforeStep()
+	if len(got) != 1 || got[0].Name != "orchestration" || got[0].Content == "" {
+		t.Fatalf("BeforeStep() = %#v, want one orchestration notification", got)
+	}
+	if again := opts.BeforeStep(); again != nil {
+		t.Fatalf("second BeforeStep() = %#v, want drained", again)
+	}
+	if opts.InterruptCh == nil || opts.MailboxPending == nil || opts.MailboxPendingInterrupt == nil {
+		t.Fatal("root notification wake/pending hooks are not wired")
 	}
 }
 

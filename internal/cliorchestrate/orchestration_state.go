@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/orchestrationnotify"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -23,9 +24,10 @@ import (
 // orchestration tool. runHandles maps runID → *orchestrationHandle for
 // subsequent Inspect/Join/Cancel calls.
 var (
-	coordinators     sync.Map // *runtime.Dispatcher → OrchestrationCoordinator
-	coordinatorRepos sync.Map // *runtime.Dispatcher → ledger.LedgerRepository
-	runHandles       sync.Map // runID → orchestrationHandle
+	coordinators       sync.Map // *runtime.Dispatcher → OrchestrationCoordinator
+	coordinatorRepos   sync.Map // *runtime.Dispatcher → ledger.LedgerRepository
+	runHandles         sync.Map // runID → orchestrationHandle
+	routedCoordinators sync.Map // *coordinator.Coordinator → unsubscribe func
 )
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
@@ -363,9 +365,22 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
 	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
+	active := actual.(*coordinator.Coordinator)
+	unsubscribe := active.SubscribeLifecycle(func(event ledger.LifecycleEvent) {
+		if event.Kind == coordinator.LifecycleKindTaskMessage {
+			orchestrationnotify.Publish(event)
+		}
+	})
+	if previous, loaded := routedCoordinators.LoadOrStore(active, unsubscribe); loaded {
+		unsubscribe()
+		unsubscribe = previous.(func())
+	}
 	coordinatorRepos.Store(d, repo)
 	if actual == c {
 		d.OnClose(func() {
+			if raw, ok := routedCoordinators.LoadAndDelete(active); ok {
+				raw.(func())()
+			}
 			if ownedStore != nil {
 				_ = ownedStore.Close()
 			}
@@ -373,7 +388,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 			coordinatorRepos.Delete(d)
 		})
 	}
-	return actual.(*coordinator.Coordinator)
+	return active
 }
 
 // maxTaskRetries and minTaskRetryBaseBackoff clamp [subagents.retry] against

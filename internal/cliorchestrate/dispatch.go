@@ -70,11 +70,11 @@ func (t *dispatchTasksTool) Description() string {
 	// same-name skill collision can skip it), so the prose never promises a
 	// target the enum lacks.
 	if _, ok := t.agentReg.Get(agents.BuiltInGeneralPurposeName); ok {
-		desc += "The agent field is optional: when general-purpose is available, an omitted or blank agent uses it and its " +
+		desc += "The general-purpose agent is always available here. The agent field is optional: when general-purpose is available, an omitted or blank agent uses it and its " +
 			"default toolset; name an agent only to select another route. A skill is checked against the effective agent. "
 	} else {
 		desc += "The agent field is optional: name a listed agent for any task that needs tools; " +
-			"when general-purpose is unavailable, omitting or blanking agent runs a tool-less one-shot call; a skill still requires an agent. "
+			"when the built-in fallback is unavailable, omitting or blanking agent runs a tool-less one-shot call; a skill still requires an agent. "
 	}
 	desc += "Tasks without dependencies (depends_on) run concurrently. " +
 		"Every task always reports its own result and status, so one failure never " +
@@ -107,7 +107,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 			"wait": map[string]any{
 				"type": "string", "enum": []string{"none", "task", "run"},
-				"description": "Wait mode: run (default) blocks until the whole batch finishes and returns each task's result; none returns immediately with a run_id to inspect/join/cancel; task waits for the requested wait_task_id only",
+				"description": "Wait mode: none (default) returns immediately with a run_id; run blocks until the whole batch finishes; task waits for the requested wait_task_id",
 			},
 			"wait_task_id": map[string]any{
 				"type": "string", "description": "Required when wait=task",
@@ -194,6 +194,16 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 // fail-closed reasoning as RunThroughCoordinator) - the caller must
 // return (earlyOut, nil) immediately without building or spawning tasks.
 func (t *dispatchTasksTool) resolveBatchTimeout(ctx context.Context, tasks []dispatchTaskParam, requestedSeconds int) (timeout int, earlyOut string) {
+	if err := ctx.Err(); err != nil {
+		payload, _ := json.Marshal(map[string]string{
+			"error": "caller context already expired; no tasks were started",
+			// The caller abandoning the tool is a cancellation at this
+			// admission boundary, even when its context reports a deadline.
+			// Keep this consistent with the deadline branch below.
+			"status": string(ledger.TaskStatusCanceled),
+		})
+		return 0, string(payload)
+	}
 	// timeout_seconds IS the budget when explicit - never floored to the
 	// 12h default. Per-task overrides can still raise the batch budget so
 	// a task never outlives it.

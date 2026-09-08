@@ -674,6 +674,54 @@ func TestDispatchTasksWaitNoneReturnsRunID(t *testing.T) {
 	}
 }
 
+func TestDispatchTasksOmittedWaitReturnsRunID(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	block := make(chan struct{})
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		<-block
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	defer close(block)
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	started := time.Now()
+	out, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-default-wait"}), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"work"}]}`))
+	if err != nil {
+		t.Fatalf("Execute error = %v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("omitted wait blocked for %s; want detached dispatch", time.Since(started))
+	}
+	var resp struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil || resp.RunID == "" {
+		t.Fatalf("output %q missing run_id: %v", out, err)
+	}
+}
+
+func TestNormalizedDispatchWaitDefaultsToNone(t *testing.T) {
+	got, err := normalizedDispatchWait("", "")
+	if err != nil {
+		t.Fatalf("normalizedDispatchWait: %v", err)
+	}
+	if got != "none" {
+		t.Fatalf("default wait = %q, want none", got)
+	}
+	for _, mode := range []string{"none", "task", "run"} {
+		if mode == "task" {
+			got, err = normalizedDispatchWait(mode, "task-1")
+		} else {
+			got, err = normalizedDispatchWait(mode, "")
+		}
+		if err != nil || got != mode {
+			t.Fatalf("explicit wait %q normalized to %q, err=%v", mode, got, err)
+		}
+	}
+}
+
 // TestDispatchTasksSameToolCallIDDedupesRetry pins the harness-only
 // idempotency-key redesign: dispatch_tasks no longer accepts a model-
 // supplied idempotency_key (a model has no reliable way to construct a
@@ -744,12 +792,11 @@ func TestDispatchTasksDifferentToolCallIDsDoNotDedupe(t *testing.T) {
 	}
 }
 
-// TestDispatchTasksDefaultWaitIsRunBareArray guards backward compatibility:
-// omitting "wait" must still behave like today - block for the full batch
-// and return the bare per-task array (the shape
-// internal/uiadapter/subagent_reconstruct.go parses), not the async
-// run_id/task_results envelope.
-func TestDispatchTasksDefaultWaitIsRunBareArray(t *testing.T) {
+// TestDispatchTasksDefaultWaitIsNoneEnvelope guards the interactive default:
+// omitting "wait" returns a reachable run envelope instead of blocking for
+// the full batch. The UI and transcript reconstruction paths also accept this
+// wrapped shape.
+func TestDispatchTasksDefaultWaitIsNoneEnvelope(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	dispatcher := runtime.New(runtime.Policy{})
 	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
@@ -763,17 +810,20 @@ func TestDispatchTasksDefaultWaitIsRunBareArray(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var results []struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status"`
+	var response struct {
+		RunID       string `json:"run_id"`
+		TaskResults []struct {
+			TaskID string `json:"task_id"`
+			Status string `json:"status"`
+		} `json:"task_results"`
 	}
-	if err := json.Unmarshal([]byte(out), &results); err != nil {
-		t.Fatalf("Execute output %q is not a bare array: %v", out, err)
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatalf("Execute output %q is not a run envelope: %v", out, err)
 	}
-	// The real internal id is namespaced (see dispatchNamespace), but
-	// Execute strips that prefix from every model-visible output
-	// (stripNamespace) - the model wrote "t1" and must see "t1" back.
-	if len(results) != 1 || results[0].TaskID != "t1" || results[0].Status != "completed" {
-		t.Fatalf("results = %+v, want one completed t1 result", results)
+	// The run is detached, so task_results may still be empty while the
+	// worker is queued. The returned run ID is the durable handle used by
+	// inspect_agents or join_run.
+	if response.RunID == "" {
+		t.Fatalf("response = %+v, want a reachable run envelope", response)
 	}
 }

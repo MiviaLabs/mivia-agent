@@ -212,13 +212,13 @@ func normalizedSpawnWait(mode, taskID string) (string, error) {
 	return mode, nil
 }
 
-// normalizedDispatchWait is normalizedSpawnWait with dispatch_tasks' default:
-// an omitted wait blocks for the whole batch (mode "run"), matching
-// dispatch_tasks' original always-synchronous contract, instead of
-// spawn_agent's "none" default.
+// normalizedDispatchWait is normalizedSpawnWait with dispatch_tasks' default
+// detached mode. An omitted wait must return the run handle so the root model
+// can continue and receive child messages at a later step boundary. Explicit
+// task/run waits remain synchronization barriers.
 func normalizedDispatchWait(mode, taskID string) (string, error) {
 	if mode == "" {
-		mode = "run"
+		mode = "none"
 	}
 	return normalizedSpawnWait(mode, taskID)
 }

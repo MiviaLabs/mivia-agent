@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/orchestrationnotify"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -91,6 +92,24 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 	// becomes callable from the next step via the loop's Surface hook, and a
 	// deferred stage reports the reason instead of the unknown-tool denial.
 	s.wireStepBoundaryAdmission(&opts, turn)
+	// Child task messages are drained only on the root loop goroutine at the
+	// existing step boundary. This keeps provider turns serialized while still
+	// making detached dispatch findings and questions visible without a poll or
+	// a blocking join_run call.
+	if turn == nil {
+		opts.BeforeStep = func() []provider.Message {
+			return orchestrationnotify.Drain(snapshot.sessionID)
+		}
+		opts.InterruptCh = func() <-chan struct{} {
+			return orchestrationnotify.Interrupt(snapshot.sessionID)
+		}
+		opts.MailboxPending = func() bool {
+			return orchestrationnotify.Pending(snapshot.sessionID)
+		}
+		opts.MailboxPendingInterrupt = func() bool {
+			return orchestrationnotify.Pending(snapshot.sessionID)
+		}
+	}
 	// Report the prepared request at each step so the live context can be
 	// described while the turn runs rather than only after it commits.
 	opts.ObserveRequestHistory = s.observeRequestHistory

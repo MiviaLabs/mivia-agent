@@ -17,7 +17,7 @@ import (
 // dispatched via dispatch_tasks stuck "running" long after the user
 // canceled, and nothing about it preserved in history on quit/resume.
 //
-// dispatch_tasks' default (wait="run", synchronous) path blocks the caller
+// dispatch_tasks' explicit wait="run" synchronous path blocks the caller
 // on coordinator.Join, but the run's OWN execution context
 // (RunHandle.poolCtx) was rooted in context.Background(), never derived
 // from the caller's own context. So when the caller's context died (turn
@@ -53,7 +53,7 @@ func TestDispatchTasksSyncCancelPropagatesToOrphanedRun(t *testing.T) {
 	// own pre-existing timeout happen to fire around the same time" (a
 	// confound an earlier version of this test had when both used the same
 	// timeout_seconds value).
-	args := json.RawMessage(`{"tasks": [{"id":"slow","agent":"oneshot","prompt":"block forever"}]}`)
+	args := json.RawMessage(`{"tasks": [{"id":"slow","agent":"oneshot","prompt":"block forever"}],"wait":"run"}`)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	execDone := make(chan struct{})

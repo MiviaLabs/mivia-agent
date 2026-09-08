@@ -2,7 +2,9 @@ package chat
 
 import (
 	"fmt"
+
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/orchestrationnotify"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -323,6 +325,7 @@ func (s *Session) CloseDispatcher() {
 	if dispatcher != nil {
 		dispatcher.Close()
 	}
+	orchestrationnotify.Forget(s.SessionID)
 }
 
 // SetBindingSkillRegistry attaches the startup skill registry to the current
