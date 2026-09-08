@@ -31,6 +31,45 @@ type dispatchTaskResult struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// MarshalJSON flattens modelTaskResult's fields alongside dispatchTaskResult's
+// own (steps/elapsed/step_count/schema/reason) into one object.
+//
+// modelTaskResult declares its own MarshalJSON to pin field order
+// (orchestrate_lifecycle.go). Go promotes an embedded type's MarshalJSON to
+// satisfy json.Marshaler for the embedding struct too, so encoding/json calls
+// ONLY modelTaskResult.MarshalJSON for a dispatchTaskResult and never looks at
+// dispatchTaskResult's own fields at all - every dispatch_tasks result
+// silently dropped steps/elapsed/step_count/schema/reason from its JSON
+// output the moment that method was added, exactly the "silently dropped
+// fields" the embedding above was written to prevent.
+func (r dispatchTaskResult) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		TaskID       string            `json:"task_id"`
+		Status       string            `json:"status"`
+		Output       any               `json:"output,omitempty"`
+		OutputRef    string            `json:"output_ref,omitempty"`
+		OutputBytes  int               `json:"output_bytes,omitempty"`
+		Synopsis     string            `json:"synopsis,omitempty"`
+		ReadHint     string            `json:"read_hint,omitempty"`
+		Error        string            `json:"error,omitempty"`
+		ErrorRef     string            `json:"error_ref,omitempty"`
+		Messages     []messageSynopsis `json:"messages,omitempty"`
+		ToolCallsRef string            `json:"tool_calls_ref,omitempty"`
+		Agent        string            `json:"agent,omitempty"`
+		Steps        int               `json:"steps,omitempty"`
+		Elapsed      string            `json:"elapsed,omitempty"`
+		StepCount    int64             `json:"step_count,omitempty"`
+		Schema       string            `json:"schema,omitempty"`
+		Reason       string            `json:"reason,omitempty"`
+	}
+	m := r.modelTaskResult
+	return json.Marshal(alias{
+		m.TaskID, m.Status, m.Output, m.OutputRef, m.OutputBytes, m.Synopsis, m.ReadHint,
+		m.Error, m.ErrorRef, m.Messages, m.ToolCallsRef, m.Agent,
+		r.Steps, r.Elapsed, r.StepCount, r.Schema, r.Reason,
+	})
+}
+
 // TaskMessages is the opaque per-task message index. The map inside keys by
 // the FULL namespaced TaskID (what the coordinator records events under);
 // callers can only read through ForSnapshot, so a lookup keyed by the
