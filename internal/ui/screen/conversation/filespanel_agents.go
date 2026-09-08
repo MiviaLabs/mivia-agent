@@ -177,14 +177,27 @@ func (p *panel) reconcileTerminal(reason string) {
 	if changed {
 		p.rebindIfOpen()
 	}
-	// The turn is over, so no tool.end can still arrive for a tracked
-	// dispatch group: observeAgentGroupEnd - the ONLY other place that
-	// deletes from this map - is reached solely from a real ToolEndBody,
-	// which is exactly the event this function exists to stand in for.
-	// Leaving entries behind leaked one per interrupted dispatch for the
-	// session's lifetime, and let a late tool.end draining a superseded
-	// stream match a stale group and reopen rows this call just settled.
-	clear(p.dispatchGroups)
+	// The rows are settled; the group's MEMBER LIST is spent, but its call
+	// id must stay known.
+	//
+	// This map does double duty: observeAgentGroupEnd reads the member ids,
+	// and observeToolStartInto uses mere key presence as the fence that
+	// suppresses the agent loop's SECOND tool.start for one call ("queued"
+	// then "running"). A superseded stream is still drained after the turn
+	// ends - that is handleTurnEventFrom's stale-source contract - so that
+	// second start can legitimately arrive after this settle. Deleting the
+	// key would open the fence: the late start re-fans the call out and
+	// observeAgentStart resets every terminal row to "running" with a fresh
+	// clock, which is the exact phantom-activity symptom this function
+	// exists to prevent (and which holds the spinner clock armed forever).
+	//
+	// Emptying the value releases what is worth releasing while the key
+	// keeps the fence shut. A real ToolEndBody still deletes the key via
+	// observeAgentGroupEnd, whose member loop is then correctly a no-op
+	// because this call already settled every row.
+	for callID := range p.dispatchGroups {
+		p.dispatchGroups[callID] = nil
+	}
 }
 
 // observeAgentHistory idempotently registers or updates a subagent from replayed history.

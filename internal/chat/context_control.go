@@ -120,11 +120,49 @@ func (s *Session) ContextPreparation() (contextmgr.PreparationManager, contextmg
 // read lock from the goroutine running the compaction, so a bare field
 // assignment races it.
 func (s *Session) SwapOnAgentEvent(handler func(agent.Event)) func(agent.Event) {
+	previous, _ := s.SwapOnAgentEventToken(handler)
+	return previous
+}
+
+// SwapOnAgentEventToken is SwapOnAgentEvent plus an ownership token that
+// identifies THIS swap, for a later RestoreOnAgentEvent. A caller that
+// restores unconditionally can clobber a newer owner's sink; see
+// RestoreOnAgentEvent.
+func (s *Session) SwapOnAgentEventToken(handler func(agent.Event)) (func(agent.Event), uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	previous := s.OnAgentEvent
 	s.OnAgentEvent = handler
-	return previous
+	s.onAgentEventToken++
+	return previous, s.onAgentEventToken
+}
+
+// RestoreOnAgentEvent puts previous back ONLY if the sink installed by the
+// caller's swap (identified by token) is still the current one, and reports
+// whether it did.
+//
+// A bare SwapOnAgentEvent(previous) is correct only while the restoring
+// party still owns the slot, and two shipped paths break that ownership:
+// uiadapter's per-turn goroutine registers its restore defer BEFORE the
+// defer that unlocks the turn gate (defers run LIFO, so the gate opens
+// first and the next turn installs its own sink), and a TurnHandle may be
+// cancelled after its turn already ended. In both cases the finished turn
+// would write its own stale previous - usually nil - over the LIVE turn's
+// sink, and that turn then streams nothing: no assistant deltas, no tool
+// events, just a spinner and a turn that never produces output.
+//
+// Ownership is a monotonic token, NOT function identity: Go forbids == on
+// funcs, and comparing code pointers cannot work here because every turn's
+// sink is created from the SAME closure literal in uiadapter's
+// newTurnHandler, so all of them share one code pointer.
+func (s *Session) RestoreOnAgentEvent(token uint64, previous func(agent.Event)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.onAgentEventToken != token {
+		return false
+	}
+	s.OnAgentEvent = previous
+	return true
 }
 
 // Compact prepares and durably publishes the current conversation immediately.

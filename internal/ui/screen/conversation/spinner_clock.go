@@ -79,14 +79,18 @@ func (s Screen) handleStatuslineTick(msg statusline.TickMsg) (app.Screen, tea.Cm
 
 // hasActiveSession reports whether the foreground session or any background session
 // has in-flight turns, active statuslines, or active subagents.
+//
+// It asks statusline.Animating, never Active: Active is true for a bare
+// notice ("copied the block"), which outlives its turn and would pin the
+// clock on forever with nothing to animate.
 func (s Screen) hasActiveSession() bool {
-	if s.active != nil || s.statusline.Active() || s.panel.activeAgentCount() > 0 {
+	if s.active != nil || s.statusline.Animating() || s.panel.activeAgentCount() > 0 {
 		return true
 	}
 	// The embedded thread screen no longer keeps the clock alive itself
 	// (see handleStatuslineTick), so its activity has to count here or an
 	// open thread's turn would animate for exactly one frame.
-	if s.thread != nil && (s.thread.active != nil || s.thread.statusline.Active()) {
+	if s.thread != nil && (s.thread.active != nil || s.thread.statusline.Animating()) {
 		return true
 	}
 	return s.hasActiveBackgroundSession()
@@ -96,7 +100,7 @@ func (s Screen) hasActiveSession() bool {
 // in-flight turn, active statusline, or active subagents.
 func (s Screen) hasActiveBackgroundSession() bool {
 	for _, st := range s.sessions {
-		if st != nil && (st.active != nil || st.statusline.Active() || st.panel.activeAgentCount() > 0) {
+		if st != nil && (st.active != nil || st.statusline.Animating() || st.panel.activeAgentCount() > 0) {
 			return true
 		}
 	}

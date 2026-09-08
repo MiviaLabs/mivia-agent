@@ -153,7 +153,27 @@ func (m *Model) Notice(text string) { m.notice = text }
 func (m *Model) ClearNotice() { m.notice = "" }
 
 // Active reports whether the line draws anything.
+//
+// This is a RENDER question, not an activity question: a notice with no
+// turn behind it still occupies the row. Callers deciding whether the
+// spinner clock should keep running must use Animating instead - see the
+// comment there for the defect that distinction exists to prevent.
 func (m Model) Active() bool { return m.active || m.notice != "" }
+
+// Animating reports whether the line has a MOVING mark, i.e. whether a
+// tick would change anything on screen.
+//
+// It is deliberately narrower than Active. Update itself already refuses
+// to advance a frame unless m.active ("if _, ok := msg.(TickMsg); !ok ||
+// !m.active"), and View draws the notice INSTEAD of the mark, so a
+// notice-only line is static by construction.
+//
+// The distinction is load-bearing. A notice outlives its turn - Stop only
+// clears m.active, and the sole production reset is Start - so a clock
+// whose lifetime is gated on Active never lapses after a turn that left
+// one behind, repainting the whole cockpit at SpinnerFPS forever with
+// nothing running.
+func (m Model) Animating() bool { return m.active }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if _, ok := msg.(TickMsg); !ok || !m.active {

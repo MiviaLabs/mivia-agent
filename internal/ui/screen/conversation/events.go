@@ -206,7 +206,11 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 			// guarded: without armTick every progress event started an
 			// additional self-re-arming clock and the marks animated N times
 			// too fast while the cockpit repainted N times per interval.
-			if !s.statusline.Active() && s.panel.activeAgentCount() > 0 {
+			//
+			// Animating, not Active: a bare notice on the row ("copied the
+			// block") is static, and gating on Active suppressed this arm
+			// entirely, freezing the panel marks while the batch ran.
+			if !s.statusline.Animating() && s.panel.activeAgentCount() > 0 {
 				flushCmd = tea.Batch(flushCmd, s.armTick())
 			}
 		}

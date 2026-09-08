@@ -233,7 +233,7 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	stream := newTurnStream(events, turnCtx.Done(), cancelTurn)
 
 	handler := newTurnHandler(stream, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
-	previous := c.sess.SwapOnAgentEvent(handler)
+	previous, tapToken := c.sess.SwapOnAgentEventToken(handler)
 
 	var clearSubagent func()
 	if SubagentProgressRegistrar != nil {
@@ -241,7 +241,12 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	}
 
 	h := newTurnHandle(events, closed, cancelTurn, func() {
-		c.sess.SwapOnAgentEvent(previous)
+		// Ownership-checked: this turn's goroutine releases c.turnMu
+		// BEFORE this defer runs (defers are LIFO), and Cancel may be
+		// called on an already-finished handle, so by now a NEWER turn may
+		// own the sink. Restoring unconditionally would leave that live
+		// turn streaming nothing. See chat.Session.RestoreOnAgentEvent.
+		c.sess.RestoreOnAgentEvent(tapToken, previous)
 		if clearSubagent != nil {
 			clearSubagent()
 		}

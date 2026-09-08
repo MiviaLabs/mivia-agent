@@ -125,6 +125,10 @@ type Session struct {
 	BaseApprovalPolicy string
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
+	// onAgentEventToken increments on every OnAgentEvent swap, so a
+	// restoring caller can prove it still owns the slot. See
+	// RestoreOnAgentEvent. Guarded by mu, like OnAgentEvent itself.
+	onAgentEventToken uint64
 	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
 	// When set, the agent loop dual-publishes agent events onto this bus.
 	EventBus *events.Bus
