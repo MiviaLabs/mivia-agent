@@ -87,7 +87,16 @@ func (s ResolvedSync) Active(loggedIn bool) bool {
 	return loggedIn && !s.Disabled
 }
 
-func resolveSyncConfig(cfg SyncConfig) ResolvedSync {
+// ResolveSyncConfig collapses the raw three-state [sync] TOML form into
+// the settled plain-bool view every downstream consumer (chatsync.Client,
+// the settings view, etc.) reads. nil/absent means ON; explicit false
+// means OFF.
+//
+// Exported because several callers (notably the integration tests for the
+// general settings' sync toggles) need to round-trip a freshly-written
+// [sync] table through the same resolver without invoking config.Load's
+// heavier provider-resolution pipeline.
+func ResolveSyncConfig(cfg SyncConfig) ResolvedSync {
 	out := ResolvedSync{
 		Disabled: cfg.Enabled != nil && !*cfg.Enabled,
 		// Absent means on for all three. Only an explicit false turns one off.

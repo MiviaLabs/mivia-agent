@@ -168,7 +168,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		MCPWarnings:             append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:            resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:             resolvePromptCache(file.Provider.PromptCache),
-		Sync:                    resolveSyncConfig(file.Sync),
+		Sync:                    ResolveSyncConfig(file.Sync),
 	}
 	applyTimeoutBudgets(res, file, subagentCfg)
 	if !found {

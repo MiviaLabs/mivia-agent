@@ -20,6 +20,20 @@ type GeneralSettings struct {
 	ApprovalDefault        string
 	ScreenReader           bool
 	ReducedMotion          bool
+
+	// SyncIncludeThinking, SyncIncludeToolIO and SyncStreamAssistant are
+	// *bool while every sibling is a plain bool, and that is load-bearing.
+	// UpdateGeneralConfig is called for EVERY general edit (theme, mouse,
+	// scroll lines, ...), so a plain bool here would materialise
+	// `include_thinking = true` into the file the first time an operator
+	// touched any other field, converting a "left at default" install into
+	// an explicit setting. nil means "this edit did not concern this key -
+	// leave the file exactly as it is", which is the only way the
+	// three-state absent-means-on contract at sync.go can survive a
+	// general-section edit.
+	SyncIncludeThinking *bool
+	SyncIncludeToolIO   *bool
+	SyncStreamAssistant *bool
 }
 
 // ModelSettings contains model information for config updates.
@@ -118,6 +132,29 @@ func UpdateGeneralConfig(path string, view GeneralSettings) error {
 			}
 			apprMap["default_mode"] = view.ApprovalDefault
 			raw["approvals"] = apprMap
+		}
+
+		// [sync] is upserted only for non-nil pointers so an unrelated
+		// general edit (theme, mouse, ...) cannot materialise the three
+		// sync keys into a file that left them absent at default. Sibling
+		// preservation is free: readConfigMap round-trips the whole
+		// table and we only assign the three keys we own. Locking and
+		// atomic-rename are inherited from updateConfigFile.
+		if view.SyncIncludeThinking != nil || view.SyncIncludeToolIO != nil || view.SyncStreamAssistant != nil {
+			syncMap, _ := raw["sync"].(map[string]any)
+			if syncMap == nil {
+				syncMap = make(map[string]any)
+			}
+			if view.SyncIncludeThinking != nil {
+				syncMap["include_thinking"] = *view.SyncIncludeThinking
+			}
+			if view.SyncIncludeToolIO != nil {
+				syncMap["include_tool_io"] = *view.SyncIncludeToolIO
+			}
+			if view.SyncStreamAssistant != nil {
+				syncMap["stream_assistant"] = *view.SyncStreamAssistant
+			}
+			raw["sync"] = syncMap
 		}
 		return nil
 	})

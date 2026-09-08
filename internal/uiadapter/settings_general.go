@@ -33,6 +33,13 @@ func (s *SettingsStore) buildGeneralView(workspaceRoot string) ports.GeneralView
 		ShowReasoning:   true,
 		ScrollLines:     3,
 		ApprovalDefault: "always",
+		// Sync* default to true because config/sync.go documents "absent
+		// key == ON"; rendering false would lie to the operator about a
+		// file that has no opinion on these switches. The resolved view
+		// overrides these from s.res.Sync when it is non-nil below.
+		SyncIncludeThinking: true,
+		SyncIncludeToolIO:   true,
+		SyncStreamAssistant: true,
 	}
 	if s.res != nil {
 		if s.res.TUI.Theme != "" {
@@ -56,6 +63,11 @@ func (s *SettingsStore) buildGeneralView(workspaceRoot string) ports.GeneralView
 		v.ShowIterationNotices = s.res.ShowIterationNotices
 		v.ShowPromptCacheNotices = s.res.ShowPromptCacheNotices
 		v.ApprovalDefault = approvalModeToView(s.res.Approvals.ApprovalPolicy())
+		// Sync fields mirror ResolvedSync (already collapsed from the
+		// three-state file form by resolveSyncConfig).
+		v.SyncIncludeThinking = s.res.Sync.IncludeThinking
+		v.SyncIncludeToolIO = s.res.Sync.IncludeToolIO
+		v.SyncStreamAssistant = s.res.Sync.StreamAssistant
 	}
 	// Full disk comes from the operator's user config, never from res: res
 	// is the workspace-overlay-merged view, and this grant must only ever
@@ -76,6 +88,36 @@ func generalViewToSettings(v ports.GeneralView) config.GeneralSettings {
 		ApprovalDefault:        v.ApprovalDefault,
 		ScreenReader:           v.ScreenReader,
 		ReducedMotion:          v.ReducedMotion,
+		// The three sync *bool fields are intentionally left nil here:
+		// a whole-view projection would materialise sync keys into the
+		// file whenever any general edit fires, breaking the
+		// absent-means-on contract. syncEditToSettings, called from
+		// applyGeneral, populates exactly the pointer the operator
+		// actually touched.
+	}
+}
+
+// syncEditToSettings projects a single sync-related GeneralEdit onto the
+// GeneralSettings that UpdateGeneralConfig consumes. Only the pointer
+// matching the edit is populated; all three are nil for every other
+// GeneralEdit, which is what makes the [sync] upsert in UpdateGeneralConfig
+// a write-only-the-touched-key operation rather than a wholesale rewrite.
+//
+// Defined as a separate helper rather than inlined in applyGeneral so the
+// rule "never write a sync key from a non-sync edit" is testable in
+// isolation (see TestGeneralViewToSettings_LeavesSyncPointersNil's negative
+// counterpart in settings_general_test.go).
+func syncEditToSettings(e ports.GeneralEdit, gs *config.GeneralSettings) {
+	switch v := e.(type) {
+	case ports.SetSyncIncludeThinking:
+		on := v.On
+		gs.SyncIncludeThinking = &on
+	case ports.SetSyncIncludeToolIO:
+		on := v.On
+		gs.SyncIncludeToolIO = &on
+	case ports.SetSyncStreamAssistant:
+		on := v.On
+		gs.SyncStreamAssistant = &on
 	}
 }
 
@@ -161,7 +203,14 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	}
 
 	if cfgPath := s.configPath(); cfgPath != "" {
-		if err := config.UpdateGeneralConfig(cfgPath, generalViewToSettings(s.general)); err != nil {
+		settings := generalViewToSettings(s.general)
+		// syncEditToSettings sets exactly one sync pointer for a sync
+		// edit, none otherwise; this is the only path that materialises
+		// [sync] keys into the file, so an unrelated general edit cannot
+		// stamp include_thinking = true into a config that left it
+		// absent at default.
+		syncEditToSettings(e, &settings)
+		if err := config.UpdateGeneralConfig(cfgPath, settings); err != nil {
 			s.rollbackGeneral(prior)
 			return fmt.Errorf("persist general settings: %w", err)
 		}
@@ -225,6 +274,19 @@ func (s *SettingsStore) mutateGeneral(e ports.GeneralEdit, prior generalPriorSta
 		s.general.ScreenReader = v.On
 	case ports.SetReducedMotion:
 		s.general.ReducedMotion = v.On
+	case ports.SetSyncIncludeThinking:
+		// Matches the SetScreenReader/SetReducedMotion precedent: set the
+		// view field, do not mirror into s.res (the live chatsync client
+		// is intentionally not re-armed; takes effect on next session
+		// start). prior.general is a whole-struct copy captured before
+		// mutateGeneral ran, so rollback restores this field via the
+		// existing prior.general = ... assignment in rollbackGeneral
+		// without any new generalPriorState plumbing.
+		s.general.SyncIncludeThinking = v.On
+	case ports.SetSyncIncludeToolIO:
+		s.general.SyncIncludeToolIO = v.On
+	case ports.SetSyncStreamAssistant:
+		s.general.SyncStreamAssistant = v.On
 	case ports.SetFullDiskAccess:
 		// USER-config-only persistence, restart-to-apply - see
 		// applySetFullDiskAccess for the provenance rules (audit F2/AR-4).

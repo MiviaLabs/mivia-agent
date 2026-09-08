@@ -142,6 +142,12 @@ func (m *mockSettings) applyGeneral(e ports.GeneralEdit) error {
 		m.general.ReducedMotion = v.On
 	case ports.SetFullDiskAccess:
 		m.general.FullDiskAccess = v.On
+	case ports.SetSyncIncludeThinking:
+		m.general.SyncIncludeThinking = v.On
+	case ports.SetSyncIncludeToolIO:
+		m.general.SyncIncludeToolIO = v.On
+	case ports.SetSyncStreamAssistant:
+		m.general.SyncStreamAssistant = v.On
 	default:
 		return fmt.Errorf("unknown general edit %T", e)
 	}
@@ -676,6 +682,13 @@ func seedGeneral() ports.GeneralView {
 		ApprovalDefault:        "once",
 		ScreenReader:           false,
 		ReducedMotion:          false,
+		// Sync* fields mirror config/sync.go's three-state rule (absent ==
+		// ON), so the seeded harness view starts with every sync opt-out at
+		// its default-ON state. The tests that exercise the toggle paths
+		// override these explicitly.
+		SyncIncludeThinking: true,
+		SyncIncludeToolIO:   true,
+		SyncStreamAssistant: true,
 	}
 }
 

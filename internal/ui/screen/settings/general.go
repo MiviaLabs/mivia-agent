@@ -85,13 +85,23 @@ func boolChoice(b bool) string {
 // so the field cannot represent one.
 var scrollChoices = []string{"1", "2", "3", "5", "8"}
 
+// boolRowField builds the field for a true/false boolean row from the
+// given label and current view value. Centralising the KindChoice +
+// on/off choices here keeps rebuild() focused on row composition, and
+// keeps every boolean row visually consistent (the [ ON ]/[ OFF ]
+// semantic control is rendered by valueCell from the row.boolean flag).
+func boolRowField(s *generalSection, label string, on bool) field.Model {
+	f := field.New(s.theme, s.tier, label, field.KindChoice, s.width)
+	f.SetChoices([]string{"on", "off"}, boolChoice(on))
+	return f
+}
+
 // rebuild (re)creates every row from the store's current values. It
 // runs once at construction and again after every successful save, so
 // a row that failed to apply still shows the last CONFIRMED value, not
 // an optimistic local guess.
 func (s *generalSection) rebuild() {
 	v := s.store.General()
-	mk := func(label string) field.Model { return field.New(s.theme, s.tier, label, field.KindChoice, s.width) }
 
 	// No theme row here: Ctrl-T already opens the dedicated theme
 	// picker dialog (screen/themepicker), which live-previews every
@@ -99,22 +109,15 @@ func (s *generalSection) rebuild() {
 	// than a KindChoice cycler, so General does not duplicate it.
 	// ports.SetTheme/GeneralView.Theme stay - the port itself is not
 	// removed, only this UI's use of it.
-	mouseF := mk("mouse capture")
-	mouseF.SetChoices([]string{"on", "off"}, boolChoice(v.Mouse))
+	mouseF := boolRowField(s, "mouse capture", v.Mouse)
+	reasonF := boolRowField(s, "show reasoning", v.ShowReasoning)
+	iterF := boolRowField(s, "iteration notice", v.ShowIterationNotices)
+	cacheF := boolRowField(s, "prompt cache notice", v.ShowPromptCacheNotices)
 
-	reasonF := mk("show reasoning")
-	reasonF.SetChoices([]string{"on", "off"}, boolChoice(v.ShowReasoning))
-
-	iterF := mk("iteration notice")
-	iterF.SetChoices([]string{"on", "off"}, boolChoice(v.ShowIterationNotices))
-
-	cacheF := mk("prompt cache notice")
-	cacheF.SetChoices([]string{"on", "off"}, boolChoice(v.ShowPromptCacheNotices))
-
-	scrollF := mk("scroll lines")
+	scrollF := field.New(s.theme, s.tier, "scroll lines", field.KindChoice, s.width)
 	scrollF.SetChoices(scrollChoices, strconv.Itoa(v.ScrollLines))
 
-	approvalF := mk("approval default")
+	approvalF := field.New(s.theme, s.tier, "approval default", field.KindChoice, s.width)
 	// Strength-ordered, and reachable in BOTH directions (see handleKey's
 	// left/h binding). Every commit applies and persists immediately - this
 	// section has no preview step - and the runtime half now fans out to
@@ -127,17 +130,22 @@ func (s *generalSection) rebuild() {
 	// route passes through one weaker than both of its endpoints.
 	approvalF.SetChoices(approvalChoicesByStrength, v.ApprovalDefault)
 
-	srF := mk("screen reader")
-	srF.SetChoices([]string{"on", "off"}, boolChoice(v.ScreenReader))
-
-	rmF := mk("reduced motion")
-	rmF.SetChoices([]string{"on", "off"}, boolChoice(v.ReducedMotion))
+	srF := boolRowField(s, "screen reader", v.ScreenReader)
+	rmF := boolRowField(s, "reduced motion", v.ReducedMotion)
 
 	// Persisted in the operator's USER config AND applied live to the
 	// session's workspace root via the state re-arm - the never-silent
 	// FULL DISK ACCESS notice is pushed into the transcript either way.
-	fdF := mk("full disk access")
-	fdF.SetChoices([]string{"on", "off"}, boolChoice(v.FullDiskAccess))
+	fdF := boolRowField(s, "full disk access", v.FullDiskAccess)
+
+	// Sync opt-out toggles for the [sync] table. Persisted to the same
+	// workspace mivia.toml as every other general setting (not the user
+	// config - see SetFullDiskAccess for the contrast). Takes effect on
+	// the next session start - the live chatsync client is intentionally
+	// not re-armed, matching the ScreenReader/ReducedMotion precedent.
+	syncThinkingF := boolRowField(s, "sync: include reasoning", v.SyncIncludeThinking)
+	syncToolIOF := boolRowField(s, "sync: include tool i/o", v.SyncIncludeToolIO)
+	syncStreamF := boolRowField(s, "sync: stream assistant", v.SyncStreamAssistant)
 
 	s.rows = []generalRow{
 		{"mouse capture", mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }, true},
@@ -152,6 +160,9 @@ func (s *generalSection) rebuild() {
 		{"screen reader", srF, func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }, true},
 		{"reduced motion", rmF, func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }, true},
 		{"full disk access", fdF, func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }, true},
+		{"sync: include reasoning", syncThinkingF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeThinking{On: val == "on"} }, true},
+		{"sync: include tool i/o", syncToolIOF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeToolIO{On: val == "on"} }, true},
+		{"sync: stream assistant", syncStreamF, func(val string) ports.GeneralEdit { return ports.SetSyncStreamAssistant{On: val == "on"} }, true},
 	}
 	if s.cursor >= len(s.rows) {
 		s.cursor = len(s.rows) - 1

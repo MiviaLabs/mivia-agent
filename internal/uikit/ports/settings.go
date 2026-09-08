@@ -93,6 +93,19 @@ type GeneralView struct {
 	// AND re-arms the live session root (atomic SetUnrestricted), with the
 	// never-silent FULL DISK ACCESS notice pushed to the transcript.
 	FullDiskAccess bool
+
+	// SyncIncludeThinking, SyncIncludeToolIO and SyncStreamAssistant mirror
+	// config.ResolvedSync's collapsed booleans, not the file's three-state
+	// pointers: the view answers "is this on right now", and an absent
+	// [sync] key is on (see internal/config/sync.go). Toggling writes an
+	// EXPLICIT true or false; it never restores a key to absent, because
+	// absent == ON would silently invert the operator's last action on
+	// every cosmetic file rewrite. Takes effect on the next session start
+	// - the live chatsync client is not re-armed. Matching the
+	// ScreenReader/ReducedMotion precedent in mutateGeneral.
+	SyncIncludeThinking bool
+	SyncIncludeToolIO   bool
+	SyncStreamAssistant bool
 }
 
 // GeneralEdit is a closed union, one variant per General field: a
@@ -110,6 +123,15 @@ type SetApprovalDefault struct{ Mode string }
 type SetScreenReader struct{ On bool }
 type SetReducedMotion struct{ On bool }
 
+// SetSyncIncludeThinking, SetSyncIncludeToolIO and SetSyncStreamAssistant
+// toggle the three [sync] opt-out switches that gate what the remote
+// chat-sync API receives. Persisted by config.UpdateGeneralConfig through
+// the *bool pointer machinery so an unrelated general edit cannot
+// materialise sync keys into a file that left them absent at default.
+type SetSyncIncludeThinking struct{ On bool }
+type SetSyncIncludeToolIO struct{ On bool }
+type SetSyncStreamAssistant struct{ On bool }
+
 // SetFullDiskAccess persists the operator's full-disk grant to the user
 // config (config.SetUserFullDiskAccess). Restart-to-apply by design.
 type SetFullDiskAccess struct{ On bool }
@@ -123,6 +145,9 @@ func (SetScrollLines) isGeneralEdit()            {}
 func (SetApprovalDefault) isGeneralEdit()        {}
 func (SetScreenReader) isGeneralEdit()           {}
 func (SetReducedMotion) isGeneralEdit()          {}
+func (SetSyncIncludeThinking) isGeneralEdit()    {}
+func (SetSyncIncludeToolIO) isGeneralEdit()      {}
+func (SetSyncStreamAssistant) isGeneralEdit()    {}
 func (SetFullDiskAccess) isGeneralEdit()         {}
 
 // GeneralSettings is the General section's read/write surface.

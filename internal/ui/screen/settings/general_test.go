@@ -46,6 +46,7 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 	for _, want := range []string{
 		"mouse capture", "show reasoning", "iteration notice", "prompt cache notice", "scroll lines",
 		"approval default", "screen reader", "reduced motion", "full disk access",
+		"sync: include reasoning", "sync: include tool i/o", "sync: stream assistant",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("General view is missing %q:\n%s", want, plain)
@@ -73,6 +74,9 @@ func TestBooleanRowsRenderExplicitOnOffControls(t *testing.T) {
 		{"screen reader", v.ScreenReader},
 		{"reduced motion", v.ReducedMotion},
 		{"full disk access", v.FullDiskAccess},
+		{"sync: include reasoning", v.SyncIncludeThinking},
+		{"sync: include tool i/o", v.SyncIncludeToolIO},
+		{"sync: stream assistant", v.SyncStreamAssistant},
 	} {
 		row := lineFor(t, plain, tc.label)
 		want := boolControlText(tc.on)
@@ -351,7 +355,10 @@ func TestRefusedFullDiskToggleShowsConfirmedValue(t *testing.T) {
 	sec := newGeneralSection(store)
 	sec.SetSize(100, 30)
 	sec.SetTheme(th, theme.TierTrueColor) // triggers rebuild
-	sec.cursor = len(sec.rows) - 1        // the full-disk row
+	// The full-disk row is no longer the last row (three sync opt-out
+	// rows follow it). Find it by label so the test does not silently
+	// drift if more rows are appended in either direction.
+	sec.cursor = generalRowIndexByLabel(t, sec, "full disk access")
 
 	next, cmd := sec.commit(1)
 	if cmd == nil {
@@ -532,4 +539,19 @@ func TestApprovalRowNeverTransitsAutoApprove(t *testing.T) {
 		}
 	}
 	t.Fatalf("cycling never reached deny from %q", start)
+}
+
+// generalRowIndexByLabel returns the cursor index of the row whose label
+// matches want, or fails the test if no row matches. Used by tests that
+// must target a specific row by name (e.g. the refused-full-disk test)
+// so they do not silently drift when rows are appended or reordered.
+func generalRowIndexByLabel(t *testing.T, sec *generalSection, want string) int {
+	t.Helper()
+	for i, row := range sec.rows {
+		if row.label == want {
+			return i
+		}
+	}
+	t.Fatalf("general section has no row labelled %q (have %d rows)", want, len(sec.rows))
+	return 0
 }

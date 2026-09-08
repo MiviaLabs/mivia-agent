@@ -10,7 +10,7 @@ import (
 // `[sync] enabled` through the REAL go-toml decoder.
 //
 // TestSyncEnabledIsThreeState covers the same three states, but it hands
-// resolveSyncConfig a hand-built SyncConfig, so it asserts the author's intent
+// ResolveSyncConfig a hand-built SyncConfig, so it asserts the author's intent
 // about a *bool and never the decode. Everything between the file on disk and
 // that struct - the `toml:"enabled"` tag, go-toml's handling of a pointer
 // field, the distinction between an absent key and a present false - is
@@ -80,7 +80,7 @@ func TestSyncEnabledThreeStateThroughRealTOML(t *testing.T) {
 				t.Fatalf("decoded *Enabled = %v, want %v", *file.Sync.Enabled, tt.wantValue)
 			}
 
-			cfg := resolveSyncConfig(file.Sync)
+			cfg := ResolveSyncConfig(file.Sync)
 			if cfg.Disabled != tt.wantDisabled {
 				t.Errorf("Disabled = %v, want %v", cfg.Disabled, tt.wantDisabled)
 			}

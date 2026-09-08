@@ -14,22 +14,22 @@ func syncEnabled(v bool) *bool { return &v }
 // means ON, the opt-out would be unreachable.
 func TestStreamAssistantOptOutIsExpressible(t *testing.T) {
 	off := false
-	if resolveSyncConfig(SyncConfig{StreamAssistant: &off}).StreamAssistant {
+	if ResolveSyncConfig(SyncConfig{StreamAssistant: &off}).StreamAssistant {
 		t.Error("an explicit stream_assistant = false did not turn streaming off")
 	}
 
 	on := true
-	if !resolveSyncConfig(SyncConfig{StreamAssistant: &on}).StreamAssistant {
+	if !ResolveSyncConfig(SyncConfig{StreamAssistant: &on}).StreamAssistant {
 		t.Error("an explicit stream_assistant = true did not turn streaming on")
 	}
 
-	if !resolveSyncConfig(SyncConfig{}).StreamAssistant {
+	if !ResolveSyncConfig(SyncConfig{}).StreamAssistant {
 		t.Error("an absent stream_assistant key must mean on")
 	}
 }
 
 func TestSyncConfigDefaultsFailClosed(t *testing.T) {
-	cfg := resolveSyncConfig(SyncConfig{})
+	cfg := ResolveSyncConfig(SyncConfig{})
 
 	// An absent `enabled` key is NOT an opt-out. Sync is gated on being
 	// logged in (ResolvedSync.Active), not on a config switch, so the
@@ -91,7 +91,7 @@ func TestSyncEnabledIsThreeState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := resolveSyncConfig(SyncConfig{Enabled: tt.enabled})
+			cfg := ResolveSyncConfig(SyncConfig{Enabled: tt.enabled})
 			if cfg.Disabled != tt.wantDisabled {
 				t.Errorf("Disabled = %v, want %v", cfg.Disabled, tt.wantDisabled)
 			}
@@ -115,7 +115,7 @@ func TestSyncConfigPreservesCustomValues(t *testing.T) {
 		HeartbeatSeconds: 45,
 		MaxUnflushed:     1000,
 	}
-	cfg := resolveSyncConfig(custom)
+	cfg := ResolveSyncConfig(custom)
 
 	if cfg.Disabled || !cfg.IncludeToolIO || !cfg.IncludeThinking {
 		t.Errorf("expected custom bool flags preserved, got %+v", cfg)
@@ -191,7 +191,7 @@ func validToolsForSyncTest() ToolsConfig {
 // zero must be carried through as-is rather than overwritten by the built-in
 // default of 8.
 func TestSyncConfigBackgroundWatchMaxCustomValuePreserved(t *testing.T) {
-	cfg := resolveSyncConfig(SyncConfig{BackgroundWatchMax: 3})
+	cfg := ResolveSyncConfig(SyncConfig{BackgroundWatchMax: 3})
 	if cfg.BackgroundWatchMax != 3 {
 		t.Errorf("BackgroundWatchMax = %d, want 3 (configured value should be preserved, not defaulted)", cfg.BackgroundWatchMax)
 	}
@@ -200,7 +200,7 @@ func TestSyncConfigBackgroundWatchMaxCustomValuePreserved(t *testing.T) {
 // TestSyncConfigBackgroundWatchMaxDefaultsToEight covers the else branch: an
 // absent (zero-value) BackgroundWatchMax falls back to the built-in default.
 func TestSyncConfigBackgroundWatchMaxDefaultsToEight(t *testing.T) {
-	cfg := resolveSyncConfig(SyncConfig{})
+	cfg := ResolveSyncConfig(SyncConfig{})
 	if cfg.BackgroundWatchMax != 8 {
 		t.Errorf("BackgroundWatchMax = %d, want 8 (default)", cfg.BackgroundWatchMax)
 	}
@@ -213,7 +213,7 @@ func TestSyncConfigBackgroundWatchMaxDefaultsToEight(t *testing.T) {
 // in it, and no indication any had been withheld. Fails against a plain bool,
 // where absent and "false" are the same state.
 func TestStreamingDefaultsOnWhenSyncIsOn(t *testing.T) {
-	absent := resolveSyncConfig(SyncConfig{})
+	absent := ResolveSyncConfig(SyncConfig{})
 	if !absent.IncludeThinking {
 		t.Error("IncludeThinking = false for an absent key, want true: sync streams in full unless opted out")
 	}
@@ -226,7 +226,7 @@ func TestStreamingDefaultsOnWhenSyncIsOn(t *testing.T) {
 
 	// The opt-out must stay reachable, which is the whole reason these are
 	// pointers rather than bools.
-	off := resolveSyncConfig(SyncConfig{
+	off := ResolveSyncConfig(SyncConfig{
 		IncludeThinking: syncEnabled(false),
 		IncludeToolIO:   syncEnabled(false),
 		StreamAssistant: syncEnabled(false),
