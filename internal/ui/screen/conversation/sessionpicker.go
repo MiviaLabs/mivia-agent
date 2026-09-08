@@ -40,6 +40,13 @@ func newSessionPicker(t theme.Theme, tier theme.Tier, sessions []ports.SessionSu
 	}
 }
 
+// SetTheme updates the picker and its cached activity mark after a theme
+// change. The mark is rendered from its own theme copy in preview rows.
+func (sp *sessionPicker) SetTheme(t theme.Theme, tier theme.Tier) {
+	sp.Theme, sp.Tier = t, tier
+	sp.mark.Theme, sp.mark.Tier = t, tier
+}
+
 func (sp sessionPicker) visible() []ports.SessionSummary {
 	vis := sp.sessions
 	if sp.filter != "" {

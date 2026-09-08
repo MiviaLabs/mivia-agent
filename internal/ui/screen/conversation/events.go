@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -57,6 +58,17 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	s.topbar.SetTheme(msg.Theme, msg.Tier)
 	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 	s.welcome.SetTheme(msg.Theme, msg.Tier)
+	for _, p := range []*picker.Model{s.modelPicker, s.agentPicker, s.palettePicker, s.effortPicker} {
+		if p != nil {
+			p.Theme, p.Tier = msg.Theme, msg.Tier
+		}
+	}
+	if s.sessionPicker != nil {
+		s.sessionPicker.SetTheme(msg.Theme, msg.Tier)
+	}
+	if s.login != nil {
+		s.login.SetTheme(msg.Theme, msg.Tier)
+	}
 	if s.thread != nil {
 		next := s.thread.applyTheme(msg)
 		s.thread = &next

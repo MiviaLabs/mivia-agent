@@ -11,7 +11,13 @@ func TestEmbeddedThemesLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"mivia-dark": false, "mivia-light": false, "mivia-high-contrast": false}
+	want := map[string]bool{
+		"dracula-classic":     false,
+		"mivia-dark":          false,
+		"mivia-light":         false,
+		"mivia-high-contrast": false,
+		"nord-aurora":         false,
+	}
 	for _, th := range themes {
 		if _, ok := want[th.Name]; ok {
 			want[th.Name] = true

@@ -37,6 +37,15 @@ func newLoginDialog(t theme.Theme, tier theme.Tier) loginDialog {
 	return loginDialog{Theme: t, Tier: tier, email: email, password: password}
 }
 
+// SetTheme updates the dialog and both embedded fields. The fields own
+// textinput styles, so changing only the dialog's value fields leaves the
+// visible editor on the previous theme.
+func (d *loginDialog) SetTheme(t theme.Theme, tier theme.Tier) {
+	d.Theme, d.Tier = t, tier
+	d.email.SetTheme(t, tier)
+	d.password.SetTheme(t, tier)
+}
+
 // openLogin opens the login dialog, optionally prefilling the email
 // field from a /login <email> argument. The email field is always
 // focused first, prefilled or not: the user can edit it immediately, or

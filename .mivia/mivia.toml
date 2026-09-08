@@ -511,7 +511,7 @@ reduced_motion = false
 screen_reader = false
 scroll_lines = 3
 show_reasoning = true
-theme = 'mivia-dark'
+theme = 'dracula-classic'
 
 [verifiers]
 [verifiers.go-final]
