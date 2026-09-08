@@ -4,20 +4,9 @@ env_file = '~/.mivia/.env'
 default_mode = 'always'
 
 [chat]
-# max_prompt_tokens is deliberately unset: the budget is the bound model's own
-# window minus its output reserve, so a 1M-window model gets its whole window
-# rather than an operator clamp. A model's declared capacity is the capacity.
-#
-# What the clamp used to buy, and what is given up by removing it: the gauge
-# divides by this budget and compaction fires at 80% of it, so glm-5.3-flash
-# now runs to a 1,015,808 budget and compacts near 810k instead of 320k. Fewer
-# summarizer calls, each far larger and invalidating more of the prefix cache.
-# If compaction latency or recall on long sessions degrades, this is the first
-# knob to reach for; set it below the window rather than raising it.
 max_steps = 0
 show_iteration_notices = false
-# On while the context-burn work is being tuned: this is the only surface that
-# reports cache_read vs cache_write per turn.
+show_prompt_cache_notices = false
 temperature = 0.0
 
 [context]
@@ -76,12 +65,6 @@ redaction_placeholder = '[redacted]'
 [provider]
 default_model = 'glm-5.3-flash'
 name = 'zai'
-# Stream watchdog bounds, raised for hard-thinking models. First-byte covers
-# the silent wait before the first token (a reasoning model can think for
-# minutes before it streams anything); byte-idle covers gaps between bytes
-# after that. The compiled defaults (240s / 100s) are sized for chat models.
-# The content-idle bound has its own key (stream_content_idle_timeout_seconds,
-# default 90s); this repo keeps the default.
 stream_first_byte_timeout_seconds = 600
 stream_idle_timeout_seconds = 300
 
@@ -450,10 +433,6 @@ api_key_env = 'ZAI_API_KEY'
 base_url = 'https://api.z.ai/api/coding/paas/v4'
 default_model = 'glm-5.3-flash'
 
-# z.ai documents GLM-5.3-family thinking as always on: thinking.type accepts
-# only "enabled", so no "off" effort is declared. Efforts are low/high/max -
-# medium is not offered by GLM-5.3+. Flash carries a 1M window; output cap
-# 131072 per OpenRouter's spec sheet (z.ai's page states only "1M context").
 [[providers.zai.models]]
 context_window_tokens = 1048576
 max_output_tokens = 131072
@@ -486,43 +465,9 @@ reasoning = 'off'
 reasoning_dialect = 'thinking_preserved'
 reasoning_efforts = ['off', 'high']
 
-[sync]
-# Dogfood visibility, not a security decision: with this table absent, three
-# privacy/bandwidth gates on the upload path default OFF (internal/config/sync.go,
-# internal/chatsync/projector.go) - reasoning text is stripped to a byte count,
-# tool input/output are stripped and marked redacted, and assistant replies
-# upload as one final message instead of live deltas. The web chat-sessions
-# viewer already renders all three correctly once the CLI sends them (verified
-# 2026-09-01); this table is the only change needed. Every session synced from
-# this repo now uploads full reasoning and tool I/O to the configured sync API
-# by default - a deliberate repo-wide default, not a per-run opt-in.
-include_thinking = true
-include_tool_io = true
-stream_assistant = true
-
 [subagents]
-default_timeout_seconds = 43200
-# Whole-request wall for one subagent LLM call (context.WithTimeout around the
-# entire provider request - NOT an idle bound; idle dead air is owned by the
-# stream watchdogs: first-byte 600s, byte-idle 300s (configured under
-# [provider] above), content-idle 90s (default; the
-# stream_content_idle_timeout_seconds key), and reasoning deltas count as
-# progress). Sized above normal generations so a long healthy reasoning
-# stream survives, below the 1800s task total so a pathological request still
-# leaves retry room. The http.Client wall is DERIVED from this knob (budget +
-# 60s margin, 15-minute floor), so a larger value raises the wall with it and
-# the budget - not the wall - is what ends an overlong request.
-# An earlier 300s cut was reverted: it added zero wedge detection (watchdogs
-# fire first) and permanently killed healthy >5min reasoning turns with no
-# retry (the provider's own-deadline kill is deliberately non-transient).
 default_request_timeout_seconds = 900
-# Hard wall-clock kill for one subagent task (all its own steps, LLM calls,
-# and nested tool calls combined). Must stay above default_request_timeout_seconds
-# (900s) - see internal/config/subagent_timeout_ordering_test.go. Left at the
-# compiled DefaultSubagentTotalTimeoutSec (3600s) before, a genuinely stuck
-# subagent could sit silently for up to an hour with only the 3-minute sidebar
-# stall badge as a warning; 1800s (30 min) gives up sooner while still leaving
-# a full request-sized window over the per-request bound for one retry.
+default_timeout_seconds = 43200
 default_total_timeout_seconds = 1800
 max_audit_rounds = 0
 max_depth = -1
@@ -534,27 +479,20 @@ spawn_stagger_ms = 150
 store_backend = 'sqlite'
 store_path = '.mivia/context.db'
 
+[sync]
+include_thinking = true
+include_tool_io = false
+stream_assistant = true
+
 [tools]
 batch_result_budget_bytes = -1
-# Context-burn controls. Forensics on .mivia/context.db showed single grep and
-# glob results of 163 KB and 105 KB, and read/grep/glob/run_command accounting
-# for ~59% of all stored payload bytes - every one of them re-sent on every
-# later request until compaction.
-#
-# max_tool_result_bytes is the knob to use, NOT max_read_bytes: it bounds the
-# read-class tools and each stored result, and oversized results still spool to
-# a read_output ref, so truncation stays recoverable. max_read_bytes would also
-# clamp the in-place edit tools' file-size guard and start refusing edits to
-# large files (invariants.md is already 77 KB), so it stays unset.
-max_tool_result_bytes = 65536
-# Above the result cap on purpose: run_command bounds its own memory here,
-# then the loop cap trims to 64 KiB and mints the ref that recovers the rest.
-max_output_bytes = 262144
-max_list_dir_entries = 1000
 core = ['read_file', 'list_dir', 'grep', 'glob', 'inspect_repository', 'write_file', 'search_replace', 'multi_edit', 'run_command', 'search', 'fetch_url', 'extract', 'delete_file', 'memory_save', 'memory_search', 'memory_delete', 'workflow_run', 'workflow_status', 'workflow_inspect', 'workflow_deliver']
 env_allow_keyword_blocklist = ['SECRET', 'TOKEN', 'PASSWORD', 'API_KEY']
 env_allowlist = ['MIVIA_REDACT_TOOL_ARGS', 'TAVILY_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY', 'ZAI_API_KEY', 'MINIMAX_API_KEY', 'CLIPROXY_API_KEY', 'PATH', 'HOME', 'USER', 'USERNAME', 'LOGNAME', 'SHELL', 'TERM', 'PWD', 'OLDPWD', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LANGUAGE', 'EDITOR', 'VISUAL', 'DISPLAY', 'WAYLAND_DISPLAY', 'LC_*', 'XDG_*', 'GIT_*', 'NODE_*', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'GOPATH', 'GOROOT', 'GOPRIVATE', 'GONOSUMCHECK', 'GOSUMDB', 'GOEXPERIMENT', 'GOFLAGS', 'GO*', 'CARGO_HOME', 'RUSTUP_HOME', 'RUST_BACKTRACE', 'RUST_LOG', 'NPM_CONFIG_USERCONFIG', 'NODE_PATH', 'CC', 'CXX', 'CGO_ENABLED', 'CGO_CFLAGS', 'CGO_LDFLAGS', 'PIP_INDEX_URL', 'PIP_EXTRA_INDEX_URL', 'KUBECONFIG', 'CMAKE_GENERATOR', 'MAKEOBJDIRPREFIX', 'MAKE', 'MAKEFLAGS', 'MAKELEVEL', 'MFLAGS']
 env_blocklist = ['GIT_DIR', 'GIT_WORK_TREE']
+max_list_dir_entries = 1000
+max_output_bytes = 262144
+max_tool_result_bytes = 65536
 run_allowlist = ['codegraph', 'go', 'gofmt', 'goimports', 'govulncheck', 'make', 'cmake', 'ninja', 'git', 'gh', 'sh', 'bash', 'dash', 'node', 'npm', 'npx', 'yarn', 'pnpm', 'tsx', 'cargo', 'rustc', 'rustfmt', 'clippy-driver', 'python', 'python3', 'pip', 'pip3', 'pytest', 'uv', 'ruby', 'bundle', 'gem', 'rake', 'php', 'composer', 'java', 'javac', 'mvn', 'gradle', 'kotlin', 'kotlinc', 'dotnet', 'swift', 'swiftc', 'zig', 'elixir', 'mix', 'ghc', 'cabal', 'stack', 'perl', 'jq', 'yq', 'tomlq', 'tar', 'gzip', 'gunzip', 'bzip2', 'bunzip2', 'xz', 'unxz', 'unzip', 'zip', 'zstd', 'cat', 'ls', 'echo', 'pwd', 'which', 'env', 'rm', 'cp', 'mv', 'mkdir', 'touch', 'chmod', 'chown', 'ln', 'mktemp', 'realpath', 'readlink', 'basename', 'dirname', 'install', 'sed', 'awk', 'grep', 'rg', 'ag', 'fd', 'head', 'tail', 'sort', 'uniq', 'wc', 'cut', 'tr', 'fold', 'fmt', 'cat', 'diff', 'patch', 'comm', 'cmp', 'strings', 'iconv', 'base64', 'xargs', 'tee', 'timeout', 'nice', 'nohup', 'stdbuf', 'ps', 'top', 'htop', 'free', 'df', 'du', 'date', 'hostname', 'uname', 'arch', 'nproc', 'uptime', 'curl', 'wget', 'ssh', 'scp', 'docker', 'kubectl', 'helm', 'terraform', 'tofu', 'strace', 'ltrace', 'gdb', 'lldb', 'dlv', 'dmesg', 'lsof', 'sqlite3', 'psql']
 run_timeout_seconds = 86400
 secret_path_exceptions = ['.env.example']
