@@ -52,12 +52,8 @@ func (s Screen) newSessionState(conv ports.Conversation) *sessionState {
 				}
 				if m.Text != "" {
 					st.transcript, _ = st.transcript.HandleEvent(uievent.Event{
-						Kind: uievent.KindTextDelta,
-						Body: uievent.TextDeltaBody{Text: m.Text},
-					})
-					st.transcript, _ = st.transcript.HandleEvent(uievent.Event{
 						Kind: uievent.KindTextEnd,
-						Body: uievent.TextEndBody{},
+						Body: uievent.TextEndBody{Text: m.Text},
 					})
 				}
 				reason := "completed"
