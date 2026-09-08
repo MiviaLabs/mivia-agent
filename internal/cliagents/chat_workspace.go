@@ -292,7 +292,14 @@ func LogDiagnosticsCommandsOnce(w io.Writer, tc config.ToolsConfig, quiet bool) 
 // store. Bridge for the TUI pool's worktree-session creation path —
 // uiadapter cannot import internal/cliworktree directly (UI isolation).
 func CreateManagedWorktreeForPool(store *storage.SQLite, root, name string) error {
-	_, err := cliworktree.CreateManagedWorktreeInStore(store, root, name, "", config.DefaultWorktreeBranchPrefix)
+	return CreateManagedWorktreeForPoolFromRef(store, root, name, "")
+}
+
+// CreateManagedWorktreeForPoolFromRef creates a managed worktree in the given
+// store from baseRef. An empty ref preserves the existing default behavior.
+// This bridge keeps uiadapter independent from internal/cliworktree.
+func CreateManagedWorktreeForPoolFromRef(store *storage.SQLite, root, name, baseRef string) error {
+	_, err := cliworktree.CreateManagedWorktreeInStore(store, root, name, baseRef, config.DefaultWorktreeBranchPrefix)
 	return err
 }
 

@@ -5,6 +5,9 @@ package uiadapter_test
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,8 +15,177 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/MiviaLabs/mivia-agent/internal/worktreeroute"
 )
+
+func TestCommandRunner_StartInNewWorktree_UsesLaunchingCheckoutCommit(t *testing.T) {
+	stubWorkflowWiring(t)
+	fx := worktreeCatalogFixtureReopenable(t)
+	store, mainDir := fx.Store, fx.MainDir
+	gitInitTempRepo(t, mainDir)
+	mainCommit := gitOutput(t, mainDir, "rev-parse", "HEAD")
+	launchDir := filepath.Join(filepath.Dir(mainDir), "launch")
+	runGit(t, mainDir, "worktree", "add", "-q", "-b", "feature/launch", launchDir)
+	runGit(t, launchDir, "commit", "--allow-empty", "-qm", "launch-only")
+	launchCommit := gitOutput(t, launchDir, "rev-parse", "HEAD")
+	if launchCommit == mainCommit {
+		t.Fatalf("launch and main commits are equal: %s", launchCommit)
+	}
+	otherDir := t.TempDir()
+	gitInitTempRepo(t, otherDir)
+
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess, _ := catalogSession(t, store, mainDir)
+	sess.UseTools = true
+	sess.Tools = toolRegistryAt(t, mainDir)
+	t.Chdir(launchDir)
+	state := &cliagents.AgentSessionState{WorkspaceRoot: launchDir}
+	runner := uiadapter.NewCommandRunner(sess, res, state)
+	t.Cleanup(runner.Pool().CloseAll)
+	// Changing CWD after construction to another repository must not change
+	// the launch checkout used for creation or subsequent session binding.
+	t.Chdir(otherDir)
+
+	out := runner.StartInNewWorktree(context.Background(), "launch-base")
+	if out.Err != "" {
+		t.Fatalf("StartInNewWorktree: %s", out.Err)
+	}
+	createdDir := filepath.Join(workspace.WorktreesDir(mainDir), "launch-base")
+	createdCommit := gitOutput(t, createdDir, "rev-parse", "HEAD")
+	if createdCommit != launchCommit {
+		t.Fatalf("created worktree commit = %s, want launch commit %s", createdCommit, launchCommit)
+	}
+	if !strings.HasPrefix(filepath.Clean(createdDir), filepath.Clean(workspace.WorktreesDir(mainDir))+string(filepath.Separator)) {
+		t.Fatalf("created worktree path %q is outside main-root worktrees", createdDir)
+	}
+	principal, err := worktreeroute.Principal(mainDir)
+	if err != nil {
+		t.Fatalf("main-root principal: %v", err)
+	}
+	live, err := store.LiveWorktreeInstance(context.Background(), principal, "launch-base")
+	if err != nil {
+		t.Fatalf("shared-store worktree lookup: %v", err)
+	}
+	if filepath.Clean(live.CanonicalPath) != filepath.Clean(createdDir) {
+		t.Fatalf("shared-store path = %q, want %q", live.CanonicalPath, createdDir)
+	}
+	if out.Conversation == nil {
+		t.Fatal("successful creation did not install a conversation")
+	}
+	if runner.Pool().Session(out.Conversation.ID()) == nil {
+		t.Fatal("successful creation left the new session unbound in the pool")
+	}
+}
+
+func TestCommandRunner_StartInNewWorktree_InvalidNameWinsOnUnbornRepo(t *testing.T) {
+	stubWorkflowWiring(t)
+	fx := worktreeCatalogFixtureReopenable(t)
+	store, mainDir := fx.Store, fx.MainDir
+	runGit(t, mainDir, "init", "-q")
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess, _ := catalogSession(t, store, mainDir)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+	t.Chdir(mainDir)
+
+	out := runner.StartInNewWorktree(context.Background(), strings.Repeat("x", 300))
+	if out.Err == "" || !strings.Contains(out.Err, "too long") {
+		t.Fatalf("invalid-name error = %q, want name validation failure", out.Err)
+	}
+	if strings.Contains(out.Err, "resolve launch checkout commit") {
+		t.Fatalf("invalid-name error was masked by commit resolution: %q", out.Err)
+	}
+}
+
+func TestCommandRunner_StartInNewWorktree_DetachedLaunchUsesHEAD(t *testing.T) {
+	stubWorkflowWiring(t)
+	fx := worktreeCatalogFixtureReopenable(t)
+	store, mainDir := fx.Store, fx.MainDir
+	gitInitTempRepo(t, mainDir)
+	launchDir := filepath.Join(filepath.Dir(mainDir), "detached-launch")
+	runGit(t, mainDir, "worktree", "add", "-q", "-b", "feature/detached", launchDir)
+	runGit(t, launchDir, "checkout", "--detach", "-q")
+	runGit(t, launchDir, "commit", "--allow-empty", "-qm", "detached-launch")
+	launchCommit := gitOutput(t, launchDir, "rev-parse", "HEAD")
+
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess, _ := catalogSession(t, store, mainDir)
+	sess.UseTools = true
+	sess.Tools = toolRegistryAt(t, mainDir)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+	t.Chdir(launchDir)
+	if out := runner.StartInNewWorktree(context.Background(), "detached-base"); out.Err != "" {
+		t.Fatalf("StartInNewWorktree from detached HEAD: %s", out.Err)
+	}
+	createdDir := filepath.Join(workspace.WorktreesDir(mainDir), "detached-base")
+	if got := gitOutput(t, createdDir, "rev-parse", "HEAD"); got != launchCommit {
+		t.Fatalf("created worktree commit = %s, want detached HEAD %s", got, launchCommit)
+	}
+}
+
+func TestCommandRunner_StartInNewWorktree_RetainsExistingManagedBranch(t *testing.T) {
+	stubWorkflowWiring(t)
+	fx := worktreeCatalogFixtureReopenable(t)
+	store, mainDir := fx.Store, fx.MainDir
+	gitInitTempRepo(t, mainDir)
+	mainCommit := gitOutput(t, mainDir, "rev-parse", "HEAD")
+	launchDir := filepath.Join(filepath.Dir(mainDir), "retained-launch")
+	runGit(t, mainDir, "worktree", "add", "-q", "-b", "feature/retained-launch", launchDir)
+	runGit(t, launchDir, "commit", "--allow-empty", "-qm", "retained-launch")
+	launchCommit := gitOutput(t, launchDir, "rev-parse", "HEAD")
+	runGit(t, mainDir, "branch", "mivia/retained-base", mainCommit)
+
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess, _ := catalogSession(t, store, mainDir)
+	sess.UseTools = true
+	sess.Tools = toolRegistryAt(t, mainDir)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+	t.Chdir(launchDir)
+	if out := runner.StartInNewWorktree(context.Background(), "retained-base"); out.Err != "" {
+		t.Fatalf("StartInNewWorktree with retained branch: %s", out.Err)
+	}
+	createdDir := filepath.Join(workspace.WorktreesDir(mainDir), "retained-base")
+	if got := gitOutput(t, createdDir, "rev-parse", "HEAD"); got != mainCommit {
+		t.Fatalf("retained branch commit = %s, want original branch tip %s (launch commit %s)", got, mainCommit, launchCommit)
+	}
+}
+
+func TestCommandRunner_StartInNewWorktree_CommitResolutionFailureDoesNotCreate(t *testing.T) {
+	stubWorkflowWiring(t)
+	fx := worktreeCatalogFixtureReopenable(t)
+	store, mainDir := fx.Store, fx.MainDir
+	runGit(t, mainDir, "init", "-q")
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess, _ := catalogSession(t, store, mainDir)
+	sess.UseTools = true
+	sess.Tools = toolRegistryAt(t, mainDir)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+	t.Chdir(mainDir)
+
+	out := runner.StartInNewWorktree(context.Background(), "no-commit")
+	if out.Err == "" || !strings.Contains(out.Err, "resolve launch checkout commit") {
+		t.Fatalf("commit-resolution failure = %q", out.Err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.WorktreesDir(mainDir), "no-commit")); !os.IsNotExist(err) {
+		t.Fatalf("worktree exists after commit-resolution failure: %v", err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("git -C %s %v: %v", dir, args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
 
 func TestCommandRunner_StartInNewWorktree_CreateFailureSurfacesError(t *testing.T) {
 	stubWorkflowWiring(t)

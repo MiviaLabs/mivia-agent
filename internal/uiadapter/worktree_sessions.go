@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -50,6 +51,10 @@ func (r *CommandRunner) ResumeInWorktree(ctx context.Context, summary ports.Sess
 }
 
 func (r *CommandRunner) worktreeSessionOutcome(ctx context.Context, summary ports.SessionSummary, fresh bool) ports.CommandOutcome {
+	return r.worktreeSessionOutcomeWithRoot(ctx, summary, fresh, "")
+}
+
+func (r *CommandRunner) worktreeSessionOutcomeWithRoot(ctx context.Context, summary ports.SessionSummary, fresh bool, root string) ports.CommandOutcome {
 	sess := r.activeSession()
 	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
@@ -61,9 +66,12 @@ func (r *CommandRunner) worktreeSessionOutcome(ctx context.Context, summary port
 	if !ok || store == nil {
 		return ports.CommandOutcome{Err: "worktree sessions need a repository context store"}
 	}
-	root, err := worktreeroute.Root("")
-	if err != nil {
-		return ports.CommandOutcome{Err: fmt.Sprintf("resolve repository root: %v", err)}
+	var err error
+	if root == "" {
+		root, err = worktreeroute.Root("")
+		if err != nil {
+			return ports.CommandOutcome{Err: fmt.Sprintf("resolve repository root: %v", err)}
+		}
 	}
 	// Click-time fence on the pooled early return (resume arm only):
 	// when the pooled binding no longer matches the live managed instance,
@@ -213,7 +221,16 @@ func (r *CommandRunner) StartInNewWorktree(ctx context.Context, name string) por
 	if !ok || store == nil {
 		return ports.CommandOutcome{Err: "worktree sessions need a repository context store"}
 	}
-	root, err := worktreeroute.Root("")
+	// The launch checkout is the workspace where the TUI was constructed, not
+	// the currently active pooled session. The pool keeps its initial agent
+	// state when the active session changes, so its WorkspaceRoot is the stable
+	// launch anchor. Hand-built runners without that state use the current
+	// directory as a controlled compatibility fallback.
+	launchDir, err := r.launchCheckoutDir()
+	if err != nil {
+		return ports.CommandOutcome{Err: fmt.Sprintf("resolve launch checkout: %v", err)}
+	}
+	root, err := worktreeroute.Root(launchDir)
 	if err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("resolve repository root: %v", err)}
 	}
@@ -227,7 +244,11 @@ func (r *CommandRunner) StartInNewWorktree(ctx context.Context, name string) por
 		return ports.CommandOutcome{Err: fmt.Sprintf("invalid worktree name %q: %v", name, err)}
 	}
 	name = sanitized
-	if err := cliagents.CreateManagedWorktreeForPool(store, root, name); err != nil {
+	launchCommit, err := vcs.CurrentCommit(ctx, launchDir)
+	if err != nil {
+		return ports.CommandOutcome{Err: fmt.Sprintf("resolve launch checkout commit: %v", err)}
+	}
+	if err := cliagents.CreateManagedWorktreeForPoolFromRef(store, root, name, launchCommit); err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to create worktree %q: %v", name, err)}
 	}
 	// No canonicalization here: both consumers of WorktreeDir canonicalize
@@ -235,7 +256,26 @@ func (r *CommandRunner) StartInNewWorktree(ctx context.Context, name string) por
 	// for the tool registry), so the freshly created path is passed as-is.
 	dir := filepath.Join(workspace.WorktreesDir(root), name)
 	summary := ports.SessionSummary{ID: name, Worktree: name, WorktreeDir: dir}
-	return r.worktreeSessionOutcome(ctx, summary, true)
+	return r.worktreeSessionOutcomeWithRoot(ctx, summary, true, root)
+}
+
+// launchCheckoutDir returns the checkout where the TUI was launched. The
+// initial pool state is not replaced when the foreground session changes, so
+// its WorkspaceRoot remains pinned to that checkout. The fallback is for
+// tests and manual callers that construct a runner without agent state.
+func (r *CommandRunner) launchCheckoutDir() (string, error) {
+	if r != nil && r.pool != nil {
+		r.pool.mu.Lock()
+		state := r.pool.agentState
+		r.pool.mu.Unlock()
+		if state != nil && state.WorkspaceRoot != "" {
+			return filepath.Abs(state.WorkspaceRoot)
+		}
+	}
+	if r != nil && r.agentState != nil && r.agentState.WorkspaceRoot != "" {
+		return filepath.Abs(r.agentState.WorkspaceRoot)
+	}
+	return os.Getwd()
 }
 
 // randomNameTail returns four hex characters of crypto randomness for the
