@@ -1,12 +1,55 @@
 package conversation
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
+
+// ackLog records AckReceived firings from a mutex-free test fixture that
+// runAllCmds deliberately invokes on separate goroutines - matching real
+// bubbletea, which runs every Cmd in a tea.Batch concurrently (mount.go
+// returns each buffered event's ack as its own Cmd in one batch). The real
+// AckReceived closure (uiadapter/remote_input.go) only ever calls
+// chatsync.SyncSession.MarkInputReceived, which is already safe for
+// concurrent use; a plain `append` to a shared `[]string` from the test
+// fixture is not, and raced under -race (and, without it, occasionally
+// dropped one of two concurrent appends outright - the flake this replaces).
+type ackLog struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (l *ackLog) add(name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.got = append(l.got, name)
+}
+
+func (l *ackLog) slice() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.got...)
+}
+
+// ackCounter is ackLog's single-count sibling, for the many fixtures here
+// that only need "did the ack fire, exactly once". Some of the Cmd batches
+// under test (mount.go/remote_input.go) mix ackCmd with a Cmd that blocks
+// forever in these fixtures (awaitSessionEvent/awaitRemoteInput reading a
+// channel nothing ever signals) - runAllCmds tolerates that by design (a
+// bounded sleep instead of waiting on its WaitGroup), but a sleep is not a
+// happens-before edge, so the ack's write and the test's later read need
+// their own synchronization regardless of how that sleep resolves.
+type ackCounter struct {
+	n atomic.Int32
+}
+
+func (c *ackCounter) inc()      { c.n.Add(1) }
+func (c *ackCounter) load() int { return int(c.n.Load()) }
 
 // TestHandleRemoteInput_BusyQueue_AckDecoupledFromSend drives one remote
 // "message" while s.active != nil (busy foreground turn): the enqueue-vs-
@@ -25,10 +68,10 @@ func TestHandleRemoteInput_BusyQueue_AckDecoupledFromSend(t *testing.T) {
 	handle := &fakeTurnHandle{events: make(chan uievent.Event)}
 	s.active = handle
 
-	ackCount := 0
+	ackCount := &ackCounter{}
 	ev := ports.RemoteInputEvent{
 		SessionID: s.convID(), Kind: "message", Body: "queued while busy",
-		AckReceived: func() { ackCount++ },
+		AckReceived: ackCount.inc,
 	}
 	next, cmd := s.handleRemoteInput(ev)
 	scr := next.(Screen)
@@ -39,7 +82,7 @@ func TestHandleRemoteInput_BusyQueue_AckDecoupledFromSend(t *testing.T) {
 	if len(conv.sends) != 0 {
 		t.Fatalf("Send must not be called while busy, got %d calls", len(conv.sends))
 	}
-	if ackCount != 0 {
+	if got := ackCount.load(); got != 0 {
 		t.Fatal("ack fired before the returned Cmd was ever invoked")
 	}
 	if cmd == nil {
@@ -51,8 +94,8 @@ func TestHandleRemoteInput_BusyQueue_AckDecoupledFromSend(t *testing.T) {
 	// awaitRemoteInput already returned nil and rearm is nil too) never
 	// blocks, so this batch resolves to just the ackCmd.
 	runAllCmds(t, cmd)
-	if ackCount != 1 {
-		t.Fatalf("ackCount after invoking the Cmd = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount after invoking the Cmd = %d, want 1", got)
 	}
 	if len(conv.sends) != 0 {
 		t.Fatal("ack firing must not itself trigger Send")
@@ -77,11 +120,11 @@ func TestHandleSessionMountedMsg_MountFailure_AcksAllBufferedEvents(t *testing.T
 	primary := &fakeMountConv{id: "primary"}
 	s := New(th, theme.TierTrueColor, []theme.Theme{th}, primary, nil, 80, nil)
 
-	var acked []string
+	acked := &ackLog{}
 	s.mounting = map[string][]ports.RemoteInputEvent{
 		"bg-mount-fail": {
-			{SessionID: "bg-mount-fail", Body: "first", AckReceived: func() { acked = append(acked, "first") }},
-			{SessionID: "bg-mount-fail", Body: "second", AckReceived: func() { acked = append(acked, "second") }},
+			{SessionID: "bg-mount-fail", Body: "first", AckReceived: func() { acked.add("first") }},
+			{SessionID: "bg-mount-fail", Body: "second", AckReceived: func() { acked.add("second") }},
 		},
 	}
 
@@ -91,8 +134,8 @@ func TestHandleSessionMountedMsg_MountFailure_AcksAllBufferedEvents(t *testing.T
 		t.Fatal("expected a non-nil batched Cmd carrying every buffered ack")
 	}
 	runAllCmds(t, cmd)
-	if len(acked) != 2 {
-		t.Fatalf("acked = %v, want both events acked", acked)
+	if got := acked.slice(); len(got) != 2 {
+		t.Fatalf("acked = %v, want both events acked", got)
 	}
 	if got := next.statusline.View(fixedNow()); got == "" {
 		t.Fatal("expected the dropped-input notice to be set")
@@ -108,12 +151,12 @@ func TestHandleSessionMountedMsg_ForegroundSuccess_AcksFirstEventAndRemaining(t 
 	primary := &fakeMountConv{id: "fg-race"}
 	s := New(th, theme.TierTrueColor, []theme.Theme{th}, primary, nil, 80, nil)
 
-	var acked []string
+	acked := &ackLog{}
 	s.mounting = map[string][]ports.RemoteInputEvent{
 		"fg-race": {
-			{SessionID: "fg-race", Body: "first", AckReceived: func() { acked = append(acked, "first") }},
-			{SessionID: "fg-race", Body: "second", AckReceived: func() { acked = append(acked, "second") }},
-			{SessionID: "fg-race", Body: "third", AckReceived: func() { acked = append(acked, "third") }},
+			{SessionID: "fg-race", Body: "first", AckReceived: func() { acked.add("first") }},
+			{SessionID: "fg-race", Body: "second", AckReceived: func() { acked.add("second") }},
+			{SessionID: "fg-race", Body: "third", AckReceived: func() { acked.add("third") }},
 		},
 	}
 
@@ -124,8 +167,8 @@ func TestHandleSessionMountedMsg_ForegroundSuccess_AcksFirstEventAndRemaining(t 
 	}
 	runAllCmds(t, cmd)
 
-	if len(acked) != 3 {
-		t.Fatalf("acked = %v, want all three events acked", acked)
+	if got := acked.slice(); len(got) != 3 {
+		t.Fatalf("acked = %v, want all three events acked", got)
 	}
 	if len(primary.sends) != 1 || primary.sends[0].Text != "first" {
 		t.Fatalf("expected exactly 1 Send call for the first event, got %v", primary.sends)
@@ -149,11 +192,11 @@ func TestHandleSessionMountedMsg_BackgroundSuccess_AcksAtQueueAppend(t *testing.
 	st.active = &fakeTurnHandle{}
 	s.sessions = map[string]*sessionState{"bg-busy-mount": st}
 
-	var acked []string
+	acked := &ackLog{}
 	s.mounting = map[string][]ports.RemoteInputEvent{
 		"bg-busy-mount": {
-			{SessionID: "bg-busy-mount", Body: "first", AckReceived: func() { acked = append(acked, "first") }},
-			{SessionID: "bg-busy-mount", Body: "second", AckReceived: func() { acked = append(acked, "second") }},
+			{SessionID: "bg-busy-mount", Body: "first", AckReceived: func() { acked.add("first") }},
+			{SessionID: "bg-busy-mount", Body: "second", AckReceived: func() { acked.add("second") }},
 		},
 	}
 
@@ -164,8 +207,8 @@ func TestHandleSessionMountedMsg_BackgroundSuccess_AcksAtQueueAppend(t *testing.
 	}
 	runAllCmds(t, cmd)
 
-	if len(acked) != 2 {
-		t.Fatalf("acked = %v, want both events acked", acked)
+	if got := acked.slice(); len(got) != 2 {
+		t.Fatalf("acked = %v, want both events acked", got)
 	}
 	if len(bgConv.sends) != 0 {
 		t.Fatal("Send must not run while the background session is busy")
@@ -186,10 +229,10 @@ func TestHandleSessionMountedMsg_BackgroundDirectSend_AcksOnSuccess(t *testing.T
 
 	bgConv := &fakeMountConv{id: "bg-direct-mount"}
 
-	ackCount := 0
+	ackCount := &ackCounter{}
 	s.mounting = map[string][]ports.RemoteInputEvent{
 		"bg-direct-mount": {
-			{SessionID: "bg-direct-mount", Body: "hello", AckReceived: func() { ackCount++ }},
+			{SessionID: "bg-direct-mount", Body: "hello", AckReceived: ackCount.inc},
 		},
 	}
 
@@ -200,8 +243,8 @@ func TestHandleSessionMountedMsg_BackgroundDirectSend_AcksOnSuccess(t *testing.T
 	}
 	runAllCmds(t, cmd)
 
-	if ackCount != 1 {
-		t.Fatalf("ackCount = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
 	}
 	if len(bgConv.sends) != 1 {
 		t.Fatalf("expected 1 Send call, got %d", len(bgConv.sends))
@@ -220,10 +263,10 @@ func TestHandleSessionMountedMsg_BackgroundDirectSend_AcksOnSendError(t *testing
 
 	failConv := &failingSendConv{fakeMountConv: &fakeMountConv{id: "bg-direct-mount-fail"}, err: errBoom}
 
-	ackCount := 0
+	ackCount := &ackCounter{}
 	s.mounting = map[string][]ports.RemoteInputEvent{
 		"bg-direct-mount-fail": {
-			{SessionID: "bg-direct-mount-fail", Body: "hello", AckReceived: func() { ackCount++ }},
+			{SessionID: "bg-direct-mount-fail", Body: "hello", AckReceived: ackCount.inc},
 		},
 	}
 
@@ -234,8 +277,8 @@ func TestHandleSessionMountedMsg_BackgroundDirectSend_AcksOnSendError(t *testing
 	}
 	runAllCmds(t, cmd)
 
-	if ackCount != 1 {
-		t.Fatalf("ackCount = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
 	}
 	if next.sessions["bg-direct-mount-fail"] == nil {
 		t.Fatal("expected session state to have been created before the failed send")

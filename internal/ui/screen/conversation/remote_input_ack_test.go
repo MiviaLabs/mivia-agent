@@ -48,14 +48,14 @@ func TestSendOrQueueRemote_AcksOnDispatchSuccess(t *testing.T) {
 	primary := &fakeMountConv{id: "primary"}
 	s := New(th, theme.TierTrueColor, []theme.Theme{th}, primary, nil, 80, nil)
 
-	ackCount := 0
-	next, cmd := s.sendOrQueueRemote("hello", "(via web) hello", func() { ackCount++ })
+	ackCount := &ackCounter{}
+	next, cmd := s.sendOrQueueRemote("hello", "(via web) hello", ackCount.inc)
 	if cmd == nil {
 		t.Fatal("expected a non-nil Cmd")
 	}
 	runAllCmds(t, cmd)
-	if ackCount != 1 {
-		t.Fatalf("ackCount = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
 	}
 	sc := next.(Screen)
 	if len(primary.sends) != 1 {
@@ -71,14 +71,14 @@ func TestSendOrQueueRemote_AcksOnDispatchFailure(t *testing.T) {
 	th := testTheme()
 	s := New(th, theme.TierTrueColor, []theme.Theme{th}, errConversation{err: errors.New("boom")}, nil, 80, fixedNow)
 
-	ackCount := 0
-	_, cmd := s.sendOrQueueRemote("hello", "(via web) hello", func() { ackCount++ })
+	ackCount := &ackCounter{}
+	_, cmd := s.sendOrQueueRemote("hello", "(via web) hello", ackCount.inc)
 	if cmd == nil {
 		t.Fatal("expected a non-nil Cmd")
 	}
 	runAllCmds(t, cmd)
-	if ackCount != 1 {
-		t.Fatalf("ackCount = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
 	}
 }
 
@@ -93,18 +93,18 @@ func TestHandleRemoteInput_DirectSend_AcksOnSuccess(t *testing.T) {
 	st := s.newSessionState(bgConv)
 	s.sessions = map[string]*sessionState{"bg-direct": st}
 
-	ackCount := 0
+	ackCount := &ackCounter{}
 	ev := ports.RemoteInputEvent{
 		SessionID: "bg-direct", Kind: "message", Body: "hi",
-		AckReceived: func() { ackCount++ },
+		AckReceived: ackCount.inc,
 	}
 	_, cmd := s.handleRemoteInput(ev)
 	if cmd == nil {
 		t.Fatal("expected a non-nil Cmd")
 	}
 	runAllCmds(t, cmd)
-	if ackCount != 1 {
-		t.Fatalf("ackCount = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
 	}
 	if len(bgConv.sends) != 1 {
 		t.Fatalf("expected 1 Send call, got %d", len(bgConv.sends))
@@ -121,18 +121,18 @@ func TestHandleRemoteInput_DirectSend_AcksOnError(t *testing.T) {
 	st := s.newSessionState(failConv)
 	s.sessions = map[string]*sessionState{"bg-direct-fail": st}
 
-	ackCount := 0
+	ackCount := &ackCounter{}
 	ev := ports.RemoteInputEvent{
 		SessionID: "bg-direct-fail", Kind: "message", Body: "hi",
-		AckReceived: func() { ackCount++ },
+		AckReceived: ackCount.inc,
 	}
 	_, cmd := s.handleRemoteInput(ev)
 	if cmd == nil {
 		t.Fatal("expected a non-nil Cmd")
 	}
 	runAllCmds(t, cmd)
-	if ackCount != 1 {
-		t.Fatalf("ackCount = %d, want 1", ackCount)
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
 	}
 }
 
