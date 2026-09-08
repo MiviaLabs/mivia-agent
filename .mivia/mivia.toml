@@ -237,6 +237,38 @@ reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
 [[providers.llmproxycli.models]]
+context_window_tokens = 1050000
+max_output_tokens = 128000
+name = 'gpt-6-astra'
+reasoning = 'high'
+reasoning_dialect = 'openai'
+reasoning_efforts = ['low', 'medium', 'high', 'xhigh', 'max']
+
+[[providers.llmproxycli.models]]
+context_window_tokens = 1050000
+max_output_tokens = 128000
+name = 'gpt-5.6-sol'
+reasoning = 'high'
+reasoning_dialect = 'openai'
+reasoning_efforts = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
+
+[[providers.llmproxycli.models]]
+context_window_tokens = 1050000
+max_output_tokens = 128000
+name = 'gpt-5.6-terra'
+reasoning = 'medium'
+reasoning_dialect = 'openai'
+reasoning_efforts = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
+
+[[providers.llmproxycli.models]]
+context_window_tokens = 1050000
+max_output_tokens = 128000
+name = 'gpt-5.6-luna'
+reasoning = 'medium'
+reasoning_dialect = 'openai'
+reasoning_efforts = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
+
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'qwen3.8-flash'
