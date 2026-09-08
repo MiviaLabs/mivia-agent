@@ -293,3 +293,25 @@ func TestHumanizeUntil(t *testing.T) {
 		}
 	}
 }
+
+// TestWhoamiMissingServerURLValueSurfacesFlagError pins parseWhoamiArgs'
+// own flagValue error propagation: --server-url with nothing after it.
+func TestWhoamiMissingServerURLValueSurfacesFlagError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, _, err := runWhoamiCapture(t, []string{"--server-url"})
+	if err == nil || !strings.Contains(err.Error(), "requires a value") {
+		t.Fatalf("err = %v, want a flag-requires-a-value error", err)
+	}
+}
+
+// TestWhoamiInvalidServerURLSurfacesNewClientError pins NewClient's own
+// failure wrap: an explicit --server-url that fails miviaauth's HTTPS
+// validation must be reported as "whoami: ...", distinct from every other
+// test here which uses a valid httptest URL or the env default.
+func TestWhoamiInvalidServerURLSurfacesNewClientError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, _, err := runWhoamiCapture(t, []string{"--server-url", "not-a-url"})
+	if err == nil || !strings.Contains(err.Error(), "whoami:") {
+		t.Fatalf("err = %v, want a whoami-prefixed error", err)
+	}
+}
