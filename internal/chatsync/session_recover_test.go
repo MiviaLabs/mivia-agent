@@ -406,7 +406,13 @@ func TestDeadOutboxLatchesInsteadOfForking(t *testing.T) {
 	}
 	f.DeleteSession(a)
 	s.triggerFlush()
-	waitUntil(t, "the latch", s.Stopped)
+	// The generic 3s waitUntil is sized for an in-process check; this path
+	// is a real network round trip (404) through recoverRemoteSession's Dead
+	// check, the same shape TestConcurrentReadersDuringRecovery budgets 5s
+	// for elsewhere in this file. Windows CI runners are slow enough under
+	// load (scheduling, AV-scanned outbox I/O) that 3s intermittently missed
+	// a logic path with no actual race in it.
+	waitUntilWithin(t, "the latch", 5*time.Second, s.Stopped)
 	if n := len(f.SessionIDs()); n != 1 {
 		t.Errorf("%d sessions, want 1: nothing may be created for a backlog that cannot move", n)
 	}
