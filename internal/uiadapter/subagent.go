@@ -415,6 +415,23 @@ type SubagentTranscriptConversation struct {
 	// drops the newest, which is a different trade and is left as it was;
 	// what it was missing is the count.
 	dropped uint64
+	// sourceToolCallsRef is the tool-call trace reference this
+	// conversation's dispatch result carried by-reference (see
+	// encodedTaskResult.ToolCallsRef), set by setPendingToolCalls when a
+	// reconstruction is registered with a non-empty ref. Not yet read by
+	// History() in this slice - a later slice resolves it.
+	sourceToolCallsRef string
+	// contentResolver is the ledger repository setPendingToolCalls wires
+	// alongside sourceToolCallsRef, so a later slice's History() can
+	// resolve the ref back into bytes without this conversation importing
+	// internal/ledger (INV-TUI-29). Not yet read by History() in this
+	// slice.
+	contentResolver toolCallContentResolver
+	// resolved marks that sourceToolCallsRef has already been resolved
+	// into history, so History() does not re-resolve it on every call.
+	// Always false in this slice - nothing sets it true yet; slice 3 sets
+	// it once resolution lands.
+	resolved bool
 }
 
 // NewSubagentTranscriptConversation creates a new thread conversation.
@@ -444,6 +461,19 @@ func (c *SubagentTranscriptConversation) isReconstructed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.reconstructed
+}
+
+// setPendingToolCalls wires a tool-call trace reference and the resolver
+// that can later resolve it, onto a freshly constructed reconstruction.
+// Resolution itself does not happen here or anywhere yet in this slice -
+// History() still renders the existing "(tool calls recorded)" notice
+// unchanged; a later slice's History() reads these fields to actually
+// resolve the ref into bytes.
+func (c *SubagentTranscriptConversation) setPendingToolCalls(ref string, resolver toolCallContentResolver) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sourceToolCallsRef = ref
+	c.contentResolver = resolver
 }
 
 func isDoneNotice(e uievent.Event) bool {
