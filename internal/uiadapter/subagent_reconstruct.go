@@ -361,6 +361,9 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 					Arguments: s.Input,
 					Output:    s.Output,
 				}
+				if ports.ToolCallOK(ports.ToolCall{Name: s.Name, Output: s.Output}) {
+					msg.ToolCalls[i].Diff = parseToolDiff(s.Name, s.Input, s.Output)
+				}
 			}
 		}
 		history = append(history, msg)

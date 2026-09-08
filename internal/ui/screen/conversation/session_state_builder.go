@@ -1,9 +1,6 @@
 package conversation
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
@@ -92,16 +89,9 @@ func replayHistoricalToolCall(transcript transcript.Model, tc ports.ToolCall) tr
 	return transcript
 }
 
+// historicalToolCallOK delegates to ports.ToolCallOK, the single
+// ok-classifier shared with the live event path (event_kind.go's
+// translateToolEnd).
 func historicalToolCallOK(tc ports.ToolCall) bool {
-	if strings.EqualFold(tc.Name, "run_command") {
-		for _, line := range strings.Split(tc.Output, "\n") {
-			status, ok := strings.CutPrefix(strings.TrimSpace(line), "exit=")
-			if !ok {
-				continue
-			}
-			code, err := strconv.Atoi(status)
-			return err == nil && code == 0
-		}
-	}
-	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(tc.Output)), "error:")
+	return ports.ToolCallOK(tc)
 }

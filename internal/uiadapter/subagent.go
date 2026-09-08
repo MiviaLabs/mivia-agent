@@ -503,6 +503,9 @@ func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 		for i := range c.history[lastIdx].ToolCalls {
 			if c.history[lastIdx].ToolCalls[i].ID == body.ToolCallID {
 				c.history[lastIdx].ToolCalls[i].Output = body.Result
+				if body.Diff != nil {
+					c.history[lastIdx].ToolCalls[i].Diff = body.Diff
+				}
 				break
 			}
 		}
