@@ -71,3 +71,33 @@ func TestLoadTaskToolCalls_LoadContentGenuineErrorSurfaces(t *testing.T) {
 		t.Fatal("LoadTaskToolCalls swallowed a genuine LoadContent store failure")
 	}
 }
+
+// TestOnTaskStart_NilCoordinatorAndUnstampedContextAreNoOps pins onTaskStart's
+// two earliest guards directly: a nil receiver and a context carrying no
+// coordinator-stamped task identity must both be silent no-ops rather than
+// panicking or registering a cancel func nothing will ever look up.
+func TestOnTaskStart_NilCoordinatorAndUnstampedContextAreNoOps(t *testing.T) {
+	var nilC *Coordinator
+	nilC.onTaskStart(context.Background(), subagents.Task{ID: "t1"}, func() {})
+
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	c.onTaskStart(context.Background(), subagents.Task{ID: "t1"}, func() {}) // unstamped ctx
+}
+
+// TestShouldSkipCanceledTask_NilCoordinatorAndUnstampedContextFailOpen pins
+// shouldSkipCanceledTask's fail-open guards: every uncertain case must run
+// the task (return false), never silently skip real work.
+func TestShouldSkipCanceledTask_NilCoordinatorAndUnstampedContextFailOpen(t *testing.T) {
+	var nilC *Coordinator
+	if nilC.shouldSkipCanceledTask(context.Background(), subagents.Task{ID: "t1"}) {
+		t.Fatal("a nil coordinator must fail open (false), not claim the task is canceled")
+	}
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	if c.shouldSkipCanceledTask(context.Background(), subagents.Task{ID: "t1"}) {
+		t.Fatal("an unstamped context must fail open (false)")
+	}
+}
