@@ -43,6 +43,18 @@ type SubagentTaskCoordinator interface {
 // Compile-time check that the real coordinator satisfies this subset.
 var _ SubagentTaskCoordinator = (*coordinator.Coordinator)(nil)
 
+// toolCallContentResolver is this package's consumer-side view of a ledger
+// repository: the one method a later slice's SubagentTranscriptConversation.
+// History() needs to resolve a persisted tool-call content reference back
+// into its bytes. It is declared structurally, not by importing
+// internal/ledger, because internal/ledger is not in uiadapter's
+// import-layers.json allow-list (INV-TUI-29). Both
+// *ledger.MemoryLedgerRepository and *ledger.StorageLedgerRepository already
+// satisfy this method set today without either type being named here.
+type toolCallContentResolver interface {
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
+}
+
 type subagentTaskRoute struct {
 	coord  SubagentTaskCoordinator
 	runID  string
@@ -60,6 +72,34 @@ type SubagentThreads struct {
 	// needs. A callID with no route (never registered by a caller that knew
 	// the coordinator identity) cannot be canceled through this path.
 	routes map[string]subagentTaskRoute
+	// contentResolver is the ledger repository a later slice's
+	// SubagentTranscriptConversation.History() will use to resolve a
+	// persisted tool-call content reference back into its bytes. It is
+	// guarded by mu like every other field on this struct (INV-TUI-29:
+	// no second mutex). Not yet consumed in this slice - see
+	// SetContentResolver and resolver below.
+	contentResolver toolCallContentResolver
+}
+
+// SetContentResolver wires the ledger repository a later slice's
+// SubagentTranscriptConversation.History() will use to resolve a persisted
+// tool-call content reference back into its bytes (see resolver below).
+// Guarded by mu, the same lock every other field on this struct uses
+// (INV-TUI-29: no second mutex).
+func (s *SubagentThreads) SetContentResolver(r toolCallContentResolver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.contentResolver = r
+}
+
+// resolver returns the content resolver wired by SetContentResolver, or nil
+// if none has been wired. Guarded by mu (INV-TUI-29: no second mutex). Not
+// yet consumed in this slice - a later slice's
+// SubagentTranscriptConversation.History() will read it.
+func (s *SubagentThreads) resolver() toolCallContentResolver {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contentResolver
 }
 
 // SubagentTaskRouteRegistrar hands a new SubagentThreads registry's route

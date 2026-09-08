@@ -333,6 +333,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		}
 		id := initialSess.SessionID
 		conv := NewConversation(initialSess)
+		pool.wireContentResolver(agentState)
 		conv.SetSubagents(pool.threads)
 		pool.sessions[id] = initialSess
 		pool.convs[id] = conv
@@ -485,6 +486,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
 
 	conv := NewConversation(sess)
+	p.wireContentResolver(entryState)
 	conv.SetSubagents(p.threads)
 	id := sess.SessionID
 	p.sessions[id] = sess

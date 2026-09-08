@@ -15,6 +15,20 @@ import (
 // BindFunc binds a new session and returns the validated worktree root.
 type BindFunc func(*chat.Session) (string, error)
 
+// wireContentResolver wires state's ledger repository into the pool's
+// SubagentThreads registry as the resolver a reconstructed subagent
+// thread's History() reads tool_calls_ref content through. A nil state (the
+// pool has no base agent state, or an entry never forked one) is a no-op:
+// SubagentThreads.resolver() defaulting to nil is what every reconstruction
+// path already falls back to. Lives here rather than session_pool.go: that
+// file already sits at the go-structure hard file-LOC cap.
+func (p *SessionPool) wireContentResolver(state *cliagents.AgentSessionState) {
+	if state == nil {
+		return
+	}
+	p.threads.SetContentResolver(state.LedgerRepoValue())
+}
+
 func (p *SessionPool) CreateFreshBound(bind BindFunc) (ports.Conversation, error) {
 	return p.CreateFreshInDir(bind, "")
 }
@@ -39,6 +53,7 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 		return nil, err
 	}
 	conv := NewConversation(sess)
+	p.wireContentResolver(entryState)
 	conv.SetSubagents(p.threads)
 	p.sessions[sess.SessionID] = sess
 	p.convs[sess.SessionID] = conv
@@ -166,6 +181,7 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 		return existing, sess, true, nil
 	}
 	conv := NewConversation(sess)
+	p.wireContentResolver(entryState)
 	conv.SetSubagents(p.threads)
 	p.publishEntryLocked(id, sess, conv, entryState)
 	published = true
