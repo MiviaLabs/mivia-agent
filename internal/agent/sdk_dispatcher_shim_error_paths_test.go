@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"testing"
 )
 
@@ -43,5 +44,38 @@ func TestArmExplicitCancel_NoTurnOrNoCallKeyIsANoOp(t *testing.T) {
 	defer cancel2()
 	if ctx2 == nil {
 		t.Fatal("armExplicitCancel returned a nil context for an empty call key")
+	}
+}
+
+// TestWrapRefOnly_GuardClauses drives every early-return guard in
+// wrapRefOnly: an empty SessionID or non-positive floor, a turn with no
+// active spool, a tool not named in RefOnlyTools, and (implicitly, since
+// sdkadapter.ConvertTool's output always implements it) the SchemaTool
+// assertion succeeding on the happy path these tests do NOT take - each
+// guard returns inner unchanged rather than wrapping it.
+func TestWrapRefOnly_GuardClauses(t *testing.T) {
+	cliTool := &fakeTool{name: "spoolable"}
+	inner, err := sdkadapter.ConvertTool(cliTool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := newSDKTurnState()
+
+	cases := []struct {
+		name string
+		opts Options
+		turn *sdkTurnState
+	}{
+		{"empty session id", Options{RefOnlyTools: []string{"spoolable"}}, turn},
+		{"no active spool", Options{RefOnlyTools: []string{"spoolable"}, SessionID: "sess-1"}, turn},
+		{"name not listed", Options{RefOnlyTools: []string{"other-tool"}, SessionID: "sess-1"}, turn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := wrapRefOnly(inner, cliTool, tc.opts, tc.turn)
+			if got != inner {
+				t.Errorf("wrapRefOnly wrapped inner despite the guard, want it returned unchanged")
+			}
+		})
 	}
 }
