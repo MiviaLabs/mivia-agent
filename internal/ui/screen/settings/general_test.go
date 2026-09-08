@@ -41,7 +41,7 @@ func awaitGeneralSave(t *testing.T, s Screen, cmd tea.Cmd) Screen {
 }
 
 func TestGeneralSectionListsEveryRow(t *testing.T) {
-	s, _ := newHarnessScreen(t, 100, 30)
+	s, _ := newHarnessScreen(t, 100, 50)
 	plain := ansi.Strip(s.sections[0].View())
 	for _, want := range []string{
 		"mouse capture", "show reasoning", "iteration notice", "prompt cache notice", "scroll lines",
@@ -51,6 +51,70 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Errorf("General view is missing %q:\n%s", want, plain)
 		}
+	}
+}
+
+func TestGeneralRowsHaveVisualGroups(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 50)
+	plain := ansi.Strip(s.sections[0].View())
+	for _, want := range []string{"Interaction", "Behavior", "Accessibility", "Permissions", "Sync"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("General view is missing group label %q:\n%s", want, plain)
+		}
+	}
+}
+
+func TestGeneralChoiceRowsUseVisibleAffordance(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 50)
+	plain := ansi.Strip(s.sections[0].View())
+	for _, label := range []string{"scroll lines", "approval default"} {
+		row := lineFor(t, plain, label)
+		if !strings.Contains(row, "[") || !strings.Contains(row, "]") {
+			t.Errorf("choice row %q has no visible value affordance: %q", label, row)
+		}
+	}
+}
+
+func TestGeneralSelectedRowUsesSelectionStyleAndMarker(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	raw := s.sections[0].View()
+	plain := ansi.Strip(raw)
+	if !strings.Contains(plain, "> "+"mouse capture") {
+		t.Fatalf("selected row lost its marker:\n%s", plain)
+	}
+	selectionPrefix := styledPrefix(render.WithBg(render.Role(s.Theme, theme.TierTrueColor, theme.RoleFGSubtle), s.Theme, theme.TierTrueColor, theme.RoleBGSelection).Render("mouse capture"))
+	if !strings.Contains(raw, selectionPrefix) {
+		t.Fatalf("selected row does not use the selection background role:\n%s", raw)
+	}
+}
+
+func TestSmokeGeneralSettingsView(t *testing.T) {
+	s, _ := newHarnessScreen(t, 72, 50)
+	plain := ansi.Strip(s.sections[0].View())
+	for _, want := range []string{"Interaction", "Accessibility", "Permissions", "Sync", "[ ON  ]", "[ OFF ]"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("smoke view is missing %q:\n%s", want, plain)
+		}
+	}
+	for i, line := range strings.Split(plain, "\n") {
+		if ansi.StringWidth(line) > 72 {
+			t.Errorf("smoke row %d exceeds width 72 (%d): %q", i, ansi.StringWidth(line), line)
+		}
+	}
+}
+
+func TestGeneralDisplayGroupsDoNotAddSelectableRows(t *testing.T) {
+	s, _ := newHarnessScreen(t, 72, 24)
+	sec := s.sections[0].(*generalSection)
+	if got := len(sec.displayRows()); got != len(sec.rows)+5 {
+		t.Fatalf("display rows = %d, want %d data rows plus five headers", got, len(sec.rows)+5)
+	}
+	for i := 0; i < 4; i++ {
+		next, _ := sec.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+		sec = next.(*generalSection)
+	}
+	if sec.cursor != 4 {
+		t.Fatalf("cursor = %d after four down presses, want data row 4; group headers must not be selectable", sec.cursor)
 	}
 }
 
