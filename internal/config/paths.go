@@ -45,6 +45,12 @@ func UserAuthPath() string {
 	return userPath("auth.json")
 }
 
+// UserThemesDir returns the user-level directory for custom TUI themes.
+// It does not create or inspect the directory.
+func UserThemesDir() string {
+	return userPath("themes")
+}
+
 func userPath(name string) string {
 	home, err := workspace.UserHomeDir()
 	if err != nil {

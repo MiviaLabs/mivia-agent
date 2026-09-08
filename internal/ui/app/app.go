@@ -111,6 +111,10 @@ type Options struct {
 	// recovery. The effect on a real terminal cannot be tested here;
 	// the decision function and the ClearScreen Cmd are.
 	FullRepaint bool
+
+	// PersistTheme is called after a valid theme selection. It is a command
+	// factory so the app router remains independent of configuration storage.
+	PersistTheme func(name string) tea.Cmd
 }
 
 var _ tea.Model = Model{}
@@ -325,6 +329,9 @@ func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if th, ok := m.themeByName(msg.Name); ok {
 		m.Theme = th
+		if m.Opts.PersistTheme != nil {
+			cmds = append(cmds, m.Opts.PersistTheme(th.Name))
+		}
 		m.stack = slices.Clone(m.stack)
 		// Broadcast to every screen on the stack, not just the top (the
 		// picker itself): the base screen underneath is the one that

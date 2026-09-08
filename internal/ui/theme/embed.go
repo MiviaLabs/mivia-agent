@@ -53,6 +53,7 @@ func LoadUserDir(dir string) ([]Theme, error) {
 		}
 		return nil, fmt.Errorf("theme: glob user themes in %s: %w", dir, err)
 	}
+	sort.Strings(entries)
 	themes := make([]Theme, 0, len(entries))
 	for _, name := range entries {
 		raw, err := fs.ReadFile(os.DirFS(dir), name)
@@ -62,6 +63,9 @@ func LoadUserDir(dir string) ([]Theme, error) {
 		var t Theme
 		if err := json.Unmarshal(raw, &t); err != nil {
 			return nil, fmt.Errorf("theme: parse %s: %w", path.Join(dir, name), err)
+		}
+		if t.Name == "" {
+			return nil, fmt.Errorf("theme: %s missing \"name\"", path.Join(dir, name))
 		}
 		t.FirstParty = false
 		themes = append(themes, t)

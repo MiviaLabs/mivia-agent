@@ -3,6 +3,8 @@ package newtui
 import (
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +14,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -40,6 +44,70 @@ func TestBuildApp(t *testing.T) {
 	}
 	if appModel == nil {
 		t.Fatal("expected non-nil app model")
+	}
+}
+
+func TestBuildAppUsesConfiguredThemeAndDetectedTier(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	sess := chat.NewSession(&config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, nil)
+	root, _, _, err := buildApp(sess, &config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, true, &cli.AgentSessionState{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := root.(app.Model)
+	if !ok {
+		t.Fatalf("root type = %T, want app.Model", root)
+	}
+	if m.Theme.Name != "mivia-light" {
+		t.Fatalf("startup theme = %q, want mivia-light", m.Theme.Name)
+	}
+	if m.Tier == theme.TierTrueColor {
+		t.Fatalf("startup tier = %v, want NO_COLOR degradation", m.Tier)
+	}
+}
+
+func TestLoadAllThemesIncludesUserThemes(t *testing.T) {
+	oldEmbedded, oldUser, oldDir := loadEmbeddedThemes, loadUserThemes, userThemesDir
+	defer func() { loadEmbeddedThemes, loadUserThemes, userThemesDir = oldEmbedded, oldUser, oldDir }()
+	loadEmbeddedThemes = func() ([]theme.Theme, error) { return []theme.Theme{{Name: "built-in"}}, nil }
+	loadUserThemes = func(string) ([]theme.Theme, error) { return []theme.Theme{{Name: "custom"}}, nil }
+	userThemesDir = func() string { return "/custom/themes" }
+
+	themes, err := loadAllThemes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(themes) != 2 || themes[0].Name != "built-in" || themes[1].Name != "custom" {
+		t.Fatalf("themes = %+v, want built-in and custom", themes)
+	}
+}
+
+func TestChooseThemeFallsBackToDarkForUnknownName(t *testing.T) {
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := chooseTheme(themes, "not-installed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "mivia-dark" {
+		t.Fatalf("fallback theme = %q, want mivia-dark", got.Name)
+	}
+}
+
+func TestPersistThemeWritesSelectedName(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "mivia.toml")
+	store := uiadapter.NewSettingsStore(nil, &config.Resolved{ConfigPath: configPath}, nil)
+	if msg := persistTheme(store, "mivia-light")(); msg != nil {
+		t.Fatalf("persistTheme returned %v", msg)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `theme = 'mivia-light'`) {
+		t.Fatalf("saved config = %q, missing selected theme", data)
 	}
 }
 

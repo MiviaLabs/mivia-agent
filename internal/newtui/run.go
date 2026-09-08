@@ -2,6 +2,7 @@ package newtui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -151,10 +152,53 @@ func mouseEnabled(res *config.Resolved, env []string) bool {
 	return on
 }
 
-// loadThemes is theme.Embedded, indirected so a test can force the
-// error return (the compiled-in embed.FS itself cannot be corrupted
+// loadThemes combines embedded and user themes, indirected so tests can
+// force loader errors (the compiled-in embed.FS itself cannot be corrupted
 // in-process).
-var loadThemes = theme.Embedded
+var loadEmbeddedThemes = theme.Embedded
+var loadUserThemes = theme.LoadUserDir
+var userThemesDir = config.UserThemesDir
+var loadThemes = loadAllThemes
+
+func loadAllThemes() ([]theme.Theme, error) {
+	themes, err := loadEmbeddedThemes()
+	if err != nil {
+		return nil, err
+	}
+	if dir := userThemesDir(); dir != "" {
+		user, err := loadUserThemes(dir)
+		if err != nil {
+			return nil, err
+		}
+		themes = append(themes, user...)
+	}
+	return themes, nil
+}
+
+func chooseTheme(themes []theme.Theme, name string) (theme.Theme, error) {
+	if name != "" {
+		for _, th := range themes {
+			if th.Name == name {
+				return th, nil
+			}
+		}
+	}
+	for _, th := range themes {
+		if th.Name == "mivia-dark" {
+			return th, nil
+		}
+	}
+	return theme.Theme{}, fmt.Errorf("theme: default theme mivia-dark is not available")
+}
+
+func persistTheme(store *uiadapter.SettingsStore, name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := store.PersistTheme(name); err != nil {
+			return app.SettingsNoticeMsg{Text: "theme save failed: " + err.Error()}
+		}
+		return nil
+	}
+}
 
 // newTeaProgram is tea.NewProgram, indirected so a test can run RunTUI
 // headless: with the default options the program reads the process's real
@@ -170,12 +214,13 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	var th theme.Theme
-	for _, t := range themes {
-		if t.Name == "mivia-dark" {
-			th = t
-			break
-		}
+	themeName := ""
+	if res != nil {
+		themeName = res.TUI.Theme
+	}
+	th, err := chooseTheme(themes, themeName)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// runner owns the one SessionPool for this process; sourcing conv and
@@ -198,7 +243,9 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	settingsStore.SetConversation(conv)
 	wireSyncOptsNotifier(settingsStore, pool)
 	runner.SetSettingsStore(settingsStore)
-	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
+	env := os.Environ()
+	tier := theme.Detect(os.Stdout, env)
+	screen := conversation.New(th, tier, themes, conv, approver, 80, nil)
 
 	screen.SetCommands(runner.Commands())
 	screen.SetCommandRunner(runner)
@@ -223,15 +270,15 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	screen.SetSessionMounter(runner)
 	pool.StartBackgroundWatch(context.Background())
 
-	env := os.Environ()
 	report := termprobe.Probe(env, "")
 	// The help overlay names the detected terminal's own key for
 	// overriding mouse capture (rule 7.5); empty clears the line.
 	screen.SetMouseOverrideHint(report.MouseHint)
 
-	root := app.New(screen, th, theme.TierTrueColor, themes).WithOptions(app.Options{
-		Mouse:       mouseEnabled(res, env),
-		FullRepaint: report.FullRepaint,
+	root := app.New(screen, th, tier, themes).WithOptions(app.Options{
+		Mouse:        mouseEnabled(res, env),
+		FullRepaint:  report.FullRepaint,
+		PersistTheme: func(name string) tea.Cmd { return persistTheme(settingsStore, name) },
 	})
 
 	return root, settingsStore, runner, nil

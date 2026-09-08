@@ -106,6 +106,14 @@ func TestUserAuthPath(t *testing.T) {
 	}
 }
 
+func TestUserThemesDir(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home-does-not-exist")
+	t.Setenv("HOME", home)
+	if got, want := UserThemesDir(), workspace.NamespacePath(home, "themes"); got != want {
+		t.Fatalf("user themes dir = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultConfigCandidatesHonorsEnvOverrideFirst(t *testing.T) {
 	t.Setenv("MIVIA_CONFIG", "/tmp/explicit.toml")
 	got := DefaultConfigCandidates()
