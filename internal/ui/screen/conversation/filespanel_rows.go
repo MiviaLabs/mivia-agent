@@ -53,7 +53,19 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	// the groups that survive. The bounds come from exactly the line
 	// counts the old code obtained by rendering everything, so the
 	// visible output is unchanged - only the invisible work is gone.
-	startGroup, endGroup := panelWindowGroupBounds(navGroupHeights(plan), selGroup, maxRows, false)
+	//
+	// The limit is clamped to at least one row. transcriptHeight returns 0
+	// when the chrome is taller than the terminal, and narrowPanelRows
+	// hands that straight through; panelWindowGroupBounds reads a
+	// non-positive limit as "no windowing" and returns every group, which
+	// would restore the full O(all rows ever added) render on precisely
+	// the smallest terminals. Nothing survives the caller's overlay clip
+	// at that size either way, so clamping changes cost, never output.
+	limit := maxRows
+	if limit < 1 {
+		limit = 1
+	}
+	startGroup, endGroup := panelWindowGroupBounds(navGroupHeights(plan), selGroup, limit, false)
 
 	groups := s.renderNavGroups(plan, startGroup, endGroup, selGroup, inner, maxRows, visible, agents)
 	return clipRowsToWidth(flattenGroups(groups), inner)

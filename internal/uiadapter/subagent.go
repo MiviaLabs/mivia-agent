@@ -15,6 +15,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
+// subagentTaskTimeout bounds any single I/O call this package makes into
+// the coordinator or a content-ref resolver on behalf of a UI action:
+// canceling a task, canceling a tool call, or (subagent_resolve.go)
+// resolving a persisted tool-call trace reference. One constant, reused by
+// every caller, so a UI action never hangs indefinitely on a stalled
+// backend and every caller times out after the same interval.
+const subagentTaskTimeout = 30 * time.Second
+
 // subagentTaskRoute is the coordinator identity backing one registered
 // callID: the coordinator that dispatched it, the run it belongs to, and
 // its own task ID within that run - everything CancelSubagentTask needs to
@@ -180,7 +188,7 @@ func (s *SubagentThreads) CancelSubagentTask(callID string) (bool, error) {
 	if h == nil {
 		return false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), subagentTaskTimeout)
 	defer cancel()
 	if err := coord.CancelTask(ctx, h, taskID); err != nil {
 		return false, err
@@ -202,7 +210,7 @@ func (s *SubagentThreads) CancelSubagentToolCall(callID, toolCallID string) (boo
 	if h == nil {
 		return false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), subagentTaskTimeout)
 	defer cancel()
 	return coord.CancelSubagentToolCall(ctx, h, taskID, toolCallID)
 }
@@ -418,20 +426,28 @@ type SubagentTranscriptConversation struct {
 	// sourceToolCallsRef is the tool-call trace reference this
 	// conversation's dispatch result carried by-reference (see
 	// encodedTaskResult.ToolCallsRef), set by setPendingToolCalls when a
-	// reconstruction is registered with a non-empty ref. Not yet read by
-	// History() in this slice - a later slice resolves it.
+	// reconstruction is registered with a non-empty ref. Read by
+	// History()'s resolveToolCallsPending (subagent_resolve.go) the first
+	// time this conversation's dialog is opened.
 	sourceToolCallsRef string
 	// contentResolver is the ledger repository setPendingToolCalls wires
-	// alongside sourceToolCallsRef, so a later slice's History() can
-	// resolve the ref back into bytes without this conversation importing
-	// internal/ledger (INV-TUI-29). Not yet read by History() in this
-	// slice.
+	// alongside sourceToolCallsRef, so History()'s resolveToolCallsPending
+	// (subagent_resolve.go) can resolve the ref back into bytes without
+	// this conversation importing internal/ledger (INV-TUI-29).
 	contentResolver toolCallContentResolver
 	// resolved marks that sourceToolCallsRef has already been resolved
-	// into history, so History() does not re-resolve it on every call.
-	// Always false in this slice - nothing sets it true yet; slice 3 sets
-	// it once resolution lands.
+	// SUCCESSFULLY into history, so History() does not re-resolve it on
+	// every call. See resolveAttempted for the failure-caching half of
+	// this contract.
 	resolved bool
+	// resolveAttempted marks that a resolution attempt has already run,
+	// whether it succeeded or failed. A failed attempt (LoadContent
+	// error, malformed JSON) sets this WITHOUT setting resolved, so
+	// History() falls back to the static notice on every call but never
+	// re-issues LoadContent - a transient or permanent resolver failure
+	// must not turn every dialog render into another I/O call. See
+	// resolveToolCallsPending's doc comment for the full reasoning.
+	resolveAttempted bool
 }
 
 // NewSubagentTranscriptConversation creates a new thread conversation.
@@ -704,8 +720,14 @@ func (c *SubagentTranscriptConversation) Send(_ context.Context, in intent.Send)
 	return h, nil
 }
 
-// History returns a copy of the thread history.
+// History returns a copy of the thread history, first resolving a pending
+// sourceToolCallsRef into real tool-call rows if this conversation carries
+// one that has not been resolved yet (see resolveToolCallsPending in
+// subagent_resolve.go) - the actual fix that replaces the static
+// "(tool calls recorded)" notice with the tool calls it stands in for,
+// once a resumed subagent thread's dialog is opened.
 func (c *SubagentTranscriptConversation) History() []ports.Message {
+	c.resolveToolCallsPending()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]ports.Message, len(c.history))

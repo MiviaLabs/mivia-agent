@@ -192,6 +192,13 @@ func rawErrorEnvelopeText(raw string) string {
 	return raw
 }
 
+// toolCallsRecordedNotice is the placeholder assistant text resultText
+// renders for a result whose only content is a recorded tool-call trace
+// reference. Named so subagent_resolve.go's resolveToolCallsPending can
+// recognize and clear it once the reference actually resolves into real
+// rows, without the two call sites drifting on the exact string.
+const toolCallsRecordedNotice = "(tool calls recorded)"
+
 // resultText renders one task's display text: the real inline Output when
 // present, else the synopsis dispatch_tasks reports for an above-threshold
 // result that went by-reference (setOutputFields in
@@ -210,9 +217,36 @@ func resultText(r encodedTaskResult) string {
 		return r.Error
 	}
 	if r.ToolCallsRef != "" {
-		return "(tool calls recorded)"
+		return toolCallsRecordedNotice
 	}
 	return ""
+}
+
+// toolCallSummariesToPortsToolCalls converts merged tool-call summaries
+// into the ports.ToolCall rows a conversation message carries, computing
+// each row's Diff exactly as a live tool_end event would (see
+// SubagentTranscriptConversation.applyEvent's KindToolEnd case) - shared by
+// registerDispatchedTask (the legacy inline toolCallSummary wire shape)
+// and subagent_resolve.go's resolveToolCallsPending (the ref-resolved
+// path), so the two never render a tool call differently depending on
+// which wire shape produced it.
+func toolCallSummariesToPortsToolCalls(toolCalls []toolCallSummary) []ports.ToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	out := make([]ports.ToolCall, len(toolCalls))
+	for i, s := range toolCalls {
+		out[i] = ports.ToolCall{
+			ID:        s.ToolCallID,
+			Name:      s.Name,
+			Arguments: s.Input,
+			Output:    s.Output,
+		}
+		if ports.ToolCallOK(ports.ToolCall{Name: s.Name, Output: s.Output}) {
+			out[i].Diff = parseToolDiff(s.Name, s.Input, s.Output)
+		}
+	}
+	return out
 }
 
 // matchTaskOutputs pairs each dispatched task with its result text, by
@@ -378,20 +412,7 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 	}
 	if outputText != "" || len(toolCalls) > 0 {
 		msg := ports.Message{Role: "assistant", Text: outputText, At: at}
-		if len(toolCalls) > 0 {
-			msg.ToolCalls = make([]ports.ToolCall, len(toolCalls))
-			for i, s := range toolCalls {
-				msg.ToolCalls[i] = ports.ToolCall{
-					ID:        s.ToolCallID,
-					Name:      s.Name,
-					Arguments: s.Input,
-					Output:    s.Output,
-				}
-				if ports.ToolCallOK(ports.ToolCall{Name: s.Name, Output: s.Output}) {
-					msg.ToolCalls[i].Diff = parseToolDiff(s.Name, s.Input, s.Output)
-				}
-			}
-		}
+		msg.ToolCalls = toolCallSummariesToPortsToolCalls(toolCalls)
 		history = append(history, msg)
 	}
 
