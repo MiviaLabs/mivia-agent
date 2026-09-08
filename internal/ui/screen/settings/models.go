@@ -409,16 +409,18 @@ func (s *modelsSection) alignedRows() []string {
 	return lines
 }
 
-// renderGroupHeader draws a "Global"/"Project" section header in accent
-// bold, matching the Skills section's own group-header treatment
-// (skills_detail.go's headerText branch), except a "(none)" placeholder
-// line (leading two spaces, same convention as skills.go's own empty-
-// group rows) renders subtle instead.
+// renderGroupHeader draws a "Global"/"Project" section header using SectionHeader
+// with an accented glyph badge and trailing divider rule, matching General's
+// treatment. A "(none)" placeholder line (leading two spaces) renders subtle.
 func (s *modelsSection) renderGroupHeader(header string) string {
 	if len(header) >= 2 && header[:2] == "  " {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(header)
 	}
-	return render.Role(s.theme, s.tier, theme.RoleAccent).Bold(true).Render(header)
+	hw := s.width - 4
+	if hw <= 0 {
+		hw = 40
+	}
+	return render.SectionHeader(s.theme, s.tier, header, hw)
 }
 
 func (s *modelsSection) Hints() []keymap.ID {
