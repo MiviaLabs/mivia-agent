@@ -66,6 +66,7 @@ func (t *dispatchTasksTool) dispatchNamespace(ctx context.Context) string {
 // Execute, the latter because an empty id is a validation error the
 // caller already rejects elsewhere.
 func namespacedTaskID(namespace, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
 	if namespace == "" || rawID == "" {
 		return rawID
 	}

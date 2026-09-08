@@ -120,7 +120,7 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 						if json.Unmarshal([]byte(tc.Arguments), &args) == nil && len(args.Tasks) > 0 {
 							resultAgents := historicalTaskAgents(tc.Output, tc.ID)
 							for i, t := range args.Tasks {
-								tid := t.ID
+								tid := strings.TrimSpace(t.ID)
 								if tid == "" {
 									// Must match dispatchTaskIDs' fallback in
 									// events.go: never embed the raw

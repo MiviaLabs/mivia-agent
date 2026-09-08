@@ -391,7 +391,7 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 		taskName := ""
 		if m, ok := rt.(map[string]any); ok {
 			if s, ok := m["id"].(string); ok {
-				id = s
+				id = strings.TrimSpace(s)
 			}
 			taskName = extractAgentDisplayName("", m)
 		}
@@ -414,6 +414,7 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 // enforced by scripts/check_import_layers.py), so the two copies are kept
 // in sync by contract, not by the compiler.
 func namespacedTaskID(namespace, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
 	if namespace == "" || rawID == "" {
 		return rawID
 	}

@@ -539,6 +539,7 @@ func extractToolOutput(outputJSON string) string {
 // orchestration package (INV-TUI-29), so the two copies are kept in sync
 // by contract, not by the compiler.
 func namespacedTaskID(namespace, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
 	if namespace == "" || rawID == "" {
 		return rawID
 	}
