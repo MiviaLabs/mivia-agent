@@ -4,6 +4,7 @@ title: Test fixtures returning several same-typed values get destructured wrong 
 content: A fixture that returns multiple positional strings (store, mainDir, wtDir, dbPath) lets callers bind the wrong value to the wrong name; the tests stay self-consistent and green until an unrelated change exposes the swap - return a named struct instead.
 importance: medium
 tags: [testing, fixtures, go, worktree, review]
+updated: 2026-09-08
 ---
 
 # Positional fixture returns invite silent mis-binding

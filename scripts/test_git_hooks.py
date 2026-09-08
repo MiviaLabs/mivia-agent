@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -742,6 +743,19 @@ def test_pre_commit_full_script_auto_stages_memories(root: Path) -> None:
         # deleted from the working tree must stage as a deletion too.
         tracked[0].unlink()
 
+        # The exec pipe-bound gate (and every other invariant gate below it)
+        # is keyed on a staged .go file under internal/ - a memory-only
+        # change legitimately does not trigger it. Stage one trivial probe,
+        # same as test_pre_commit_full_script_runs_all_gates_with_staged_memory_db,
+        # so this test's "coexists with every other gate" claim actually
+        # exercises the invariant gates instead of skipping them all.
+        probe = root / "internal" / "evidencecheck" / "hook_probe_test.go"
+        probe.write_text(
+            "package evidencecheck\n\nimport \"testing\"\n\nfunc TestHookProbe(t *testing.T) {}\n",
+            encoding="utf-8",
+        )
+        run(["git", "add", str(probe)], root)
+
         result = run(
             [str(ROOT / "scripts" / "git-hooks" / "pre-commit")],
             root,
@@ -787,21 +801,31 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
         mivia_db = root / ".mivia" / "memory.db"
         assert mivia_db.is_file(), "worktree must carry the real committed memory.db"
 
-        # Real, valid mutation via the actual CLI (not a byte-level edit):
-        # find a real existing id, then promote it - a genuine read-write
-        # open plus (if not already core) a real row change.
-        found = run(
-            ["go", "run", "./cmd/mivia", "memory", "search", "the",
-             "--workspace", str(root), "--limit", "1", "--json"],
-            root,
-        )
-        results = json.loads(found.stdout)
-        assert results, "expected at least one existing memory entry to promote"
-        entry_id = results[0]["id"]
-        run(
-            ["go", "run", "./cmd/mivia", "memory", "promote", entry_id, "--workspace", str(root)],
-            root,
-        )
+        # `mivia memory promote` no longer touches this file: the memory
+        # store defaults to the Markdown backend (config.MemoryConfig has no
+        # store_path field - [memory].store_path in .mivia/mivia.toml is
+        # dead config), and its derived SQLite index lives at
+        # workspace.GlobalContextStorePath, under the user's HOME namespace
+        # directory, never under the workspace root. .mivia/memory.db is a
+        # leftover from an earlier schema (its own `memories` table predates
+        # the current index's `memory_entries` table) that nothing in the
+        # binary reads or writes today - it just still sits here, tracked.
+        #
+        # A real, valid mutation via direct sqlite3 (not a byte-level edit)
+        # against that same legacy schema is the closest equivalent to what
+        # this test used to get from the CLI: a genuine read-write open plus
+        # a real row change, producing an authentic page-level diff instead
+        # of a corrupted-looking one.
+        con = sqlite3.connect(str(mivia_db))
+        try:
+            row = con.execute("SELECT id, tier FROM memories LIMIT 1").fetchone()
+            assert row, "expected at least one existing memory.db row to flip"
+            entry_id, tier = row
+            new_tier = "archive" if tier == "core" else "core"
+            con.execute("UPDATE memories SET tier = ? WHERE id = ?", (new_tier, entry_id))
+            con.commit()
+        finally:
+            con.close()
         run(["git", "add", ".mivia/memory.db"], root)
         probe = root / "internal" / "evidencecheck" / "hook_probe_test.go"
         probe.write_text(

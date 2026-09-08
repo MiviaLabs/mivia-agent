@@ -7,11 +7,6 @@
       "internal/newtui",
       "internal/version"
     ],
-    "cmd/mivia-ui-demo": [
-      "internal/ui/jsonout",
-      "internal/ui/stream",
-      "internal/ui/theme"
-    ],
     "internal/agent": [
       "internal/contextmgr",
       "internal/contextstate",
@@ -77,8 +72,7 @@
       "internal/storage",
       "internal/tools",
       "internal/version",
-      "internal/workflows/ledger",
-      "internal/workspace"
+      "internal/workflows/ledger"
     ],
     "internal/cliagents": [
       "internal/agent",
@@ -153,7 +147,6 @@
       "internal/cliagents",
       "internal/config",
       "internal/coordinator",
-      "internal/events",
       "internal/jschema",
       "internal/ledger",
       "internal/runtime",
@@ -513,7 +506,6 @@
       "internal/workspace"
     ],
     "internal/workflows/controller": [
-      "internal/agentmsg",
       "internal/agents",
       "internal/config",
       "internal/coordinator",
@@ -560,7 +552,6 @@
     ],
     "internal/workflows/localengine": [
       "internal/agents",
-      "internal/coordinator",
       "internal/events",
       "internal/provider",
       "internal/storage",

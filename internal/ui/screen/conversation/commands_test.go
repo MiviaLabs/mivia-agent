@@ -67,6 +67,12 @@ type fakeRunner struct {
 	// without a real miviaauth round trip.
 	loginOutcome ports.CommandOutcome
 	loginCalls   []string
+
+	activeSessionID string
+}
+
+func (f *fakeRunner) SetActiveSessionID(id string) {
+	f.activeSessionID = id
 }
 
 func (f *fakeRunner) Run(_ context.Context, name, args string) ports.CommandOutcome {

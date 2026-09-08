@@ -163,8 +163,15 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 		}
 		return ports.CommandOutcome{Err: msg}
 	}
-	r.res.ProviderName = providerName
-	r.res.Model = modelName
+	// r.res is the *config.Resolved shared by every pooled session
+	// (NewSessionPool keeps the exact pointer NewCommandRunner was given),
+	// and chat.NewSession seeds a brand-new session's initial binding
+	// straight from res.ProviderName/res.Model. Writing this session's
+	// resolved choice onto it would silently change the workspace's
+	// configured default for every OTHER session the pool creates
+	// afterward - this command is /model, scoped to the active session,
+	// not a workspace-wide default change (that is the Settings screen's
+	// job; see settings_providers.go).
 	notice := fmt.Sprintf("Model set to %s (%s).", modelName, providerName)
 	if discarded != "" {
 		notice += fmt.Sprintf(" (Reasoning effort override %q discarded).", discarded)

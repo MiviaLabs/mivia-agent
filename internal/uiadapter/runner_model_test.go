@@ -223,6 +223,64 @@ func TestCommandRunner_SelectModel_ExactNameSearchSkipsUnselectableProvider(t *t
 	}
 }
 
+// TestCommandRunner_SelectModel_DoesNotLeakIntoNewSessionsDefault covers a
+// cross-session isolation bug: SelectModel used to write the resolved
+// provider/model directly onto the *config.Resolved it was given
+// (r.res.ProviderName = providerName; r.res.Model = modelName). NewCommandRunner
+// hands that SAME *config.Resolved pointer to its SessionPool
+// (session_pool.go's NewSessionPool), and chat.NewSession seeds a brand-new
+// session's initial binding straight from res.ProviderName/res.Model
+// (binding.go's NewSession). So switching THIS session's model - a
+// per-session action the user reaches via /model - silently changed the
+// workspace's configured default for every OTHER session the pool creates
+// afterward (a fresh tab via /new, or a new worktree), leaking one tab's
+// choice into tabs that never asked for it.
+func TestCommandRunner_SelectModel_DoesNotLeakIntoNewSessionsDefault(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-llmgateway-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "target-model"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: "target-model"}}},
+	})
+	sess := chat.NewSession(res, nil)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "target-model")
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	if got := sess.CurrentSelection(); got.ProviderName != "llmgateway" || got.Model != "target-model" {
+		t.Fatalf("session did not switch to the requested model: %+v", got)
+	}
+
+	conv, err := runner.Pool().CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh: %v", err)
+	}
+	newSess := runner.Pool().Session(conv.ID())
+	if newSess == nil {
+		t.Fatal("CreateFresh did not register the new session in the pool")
+	}
+	if got := newSess.CurrentSelection(); got.ProviderName != "ollama" || got.Model != "model-a" {
+		t.Errorf("new session started on %+v, want the workspace default {ollama model-a} - session A's /model switch leaked into it", got)
+	}
+}
+
 // TestCommandRunner_SelectModel_SwitchFailureNamesTheSingleOtherProvider
 // covers SelectModel's len(others)==1 hint (runner_model.go:~155-156): the
 // resolved provider exists in the catalog but is not Selectable, so the
