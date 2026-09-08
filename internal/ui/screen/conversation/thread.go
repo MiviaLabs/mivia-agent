@@ -198,6 +198,12 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	}
 	thread := NewThread(s.Theme, s.Tier, conv, render.DialogBodyWidth(contentWidth(s.width)), s.now)
 	thread.themes = s.themes
+	// One surface, one spinner clock: the embedded thread screen shares
+	// the parent's in-flight flag so a thread turn and the main turn
+	// cannot each run their own self-re-arming tick loop.
+	if s.tickArmed != nil {
+		thread.tickArmed = s.tickArmed
+	}
 	thread.threadID = callID
 	thread.SetCommands(s.composer.Commands())
 	thread.SetCommandRunner(s.runner)

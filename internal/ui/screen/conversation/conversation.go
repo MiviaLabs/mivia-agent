@@ -132,6 +132,22 @@ type Screen struct {
 
 	now func() time.Time
 
+	// tickArmed is the one spinner clock's in-flight flag, shared by
+	// POINTER across every copy of this Screen (session switches, the
+	// embedded thread screen, the value receivers this package returns)
+	// because the clock is process-wide state, not per-copy state.
+	//
+	// statusline.TickMsg is self-re-arming: handling one returns the Cmd
+	// for the next. Every UNCONDITIONAL statusline.TickCmd() therefore
+	// starts a clock that lives until the whole surface goes idle, and a
+	// second one does not replace the first - it runs beside it. Subagent
+	// progress events (see events.go) arrive continuously while a dispatch
+	// batch runs, so an unguarded arm there multiplied the clock once per
+	// event: the marks animate N times too fast and the entire cockpit
+	// repaints N times per interval, which is what makes input and
+	// scrolling lag. armTick is the only way to start the clock.
+	tickArmed *bool
+
 	// keys is the one dispatch table. See keys.go for the context order.
 	keys *keymap.Map
 
@@ -204,6 +220,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		panel:        newPanel(th, tier),
 		keys:         keymap.New(keymap.Default()),
 		now:          now,
+		tickArmed:    new(bool),
 	}
 	s.approval.SetWidth(contentWidth(width))
 	s.history.SetWidth(contentWidth(width))
@@ -536,38 +553,6 @@ func (s Screen) updateAsyncPortMsg(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
 		return next, cmd, true
 	}
 	return s, nil, false
-}
-
-// handleStatuslineTick advances the statusline spinner frame and continues
-// ticking while turns or subagents are active.
-func (s Screen) handleStatuslineTick(msg statusline.TickMsg) (app.Screen, tea.Cmd) {
-	next, cmd := s.statusline.Update(msg)
-	s.statusline = next
-	if cmd == nil && (s.panel.activeAgentCount() > 0 || s.hasActiveSession()) {
-		cmd = statusline.TickCmd()
-	}
-	s.forwardSharedMsg(msg)
-	return s, cmd
-}
-
-// hasActiveSession reports whether the foreground session or any background session
-// has in-flight turns, active statuslines, or active subagents.
-func (s Screen) hasActiveSession() bool {
-	if s.active != nil || s.statusline.Active() || s.panel.activeAgentCount() > 0 {
-		return true
-	}
-	return s.hasActiveBackgroundSession()
-}
-
-// hasActiveBackgroundSession reports whether any session in s.sessions has an
-// in-flight turn, active statusline, or active subagents.
-func (s Screen) hasActiveBackgroundSession() bool {
-	for _, st := range s.sessions {
-		if st != nil && (st.active != nil || st.statusline.Active() || st.panel.activeAgentCount() > 0) {
-			return true
-		}
-	}
-	return false
 }
 
 // handleSessionPickerTick refreshes the open /resume picker's per-row

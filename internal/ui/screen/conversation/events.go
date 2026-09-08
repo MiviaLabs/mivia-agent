@@ -10,7 +10,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -138,7 +137,11 @@ func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.C
 	s.composer.Clear()
 	s.active = handle
 	s.refreshTopbar()
-	cmd := s.statusline.Start("thinking", s.now())
+	// statusline.Start returns its own unconditional tick Cmd; it is
+	// dropped in favour of the guarded arm, so a turn beginning while a
+	// dispatch batch is already animating does not add a second clock.
+	_ = s.statusline.Start("thinking", s.now())
+	cmd := s.armTick()
 	return s, tea.Batch(cmd, s.awaitSessionEvent(s.convID(), handle.Events()))
 }
 
@@ -176,9 +179,12 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		// from the same stream the transcript renders.
 		if b.Progress != nil {
 			s.panel.observeAgent(b.ToolCallID, b.Progress)
+			// A dispatch batch emits progress continuously, so this arm is
+			// guarded: without armTick every progress event started an
+			// additional self-re-arming clock and the marks animated N times
+			// too fast while the cockpit repainted N times per interval.
 			if !s.statusline.Active() && s.panel.activeAgentCount() > 0 {
-				tickCmd := statusline.TickCmd()
-				flushCmd = tea.Batch(flushCmd, tickCmd)
+				flushCmd = tea.Batch(flushCmd, s.armTick())
 			}
 		}
 	case uievent.ToolEndBody:

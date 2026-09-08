@@ -9,7 +9,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
@@ -195,7 +194,7 @@ func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.
 	}
 	var cmd tea.Cmd
 	if s.hasActiveSession() {
-		cmd = statusline.TickCmd()
+		cmd = s.armTick()
 	}
 	if o.Notice != "" {
 		return s.withNotice(o.Notice), cmd

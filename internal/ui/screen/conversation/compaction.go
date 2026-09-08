@@ -50,7 +50,8 @@ func (s Screen) startCompaction(h ports.CompactionHandle) (app.Screen, tea.Cmd) 
 	s.compaction = h
 	s.compactionSessionID = s.convID()
 	s.compactionCancelRequested = false
-	spinner := s.statusline.Start("compact", s.now())
+	_ = s.statusline.Start("compact", s.now())
+	spinner := s.armTick()
 	return s, tea.Batch(spinner, nextCompactionEvent(h))
 }
 
