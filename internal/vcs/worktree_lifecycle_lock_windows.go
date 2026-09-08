@@ -3,6 +3,7 @@
 package vcs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,6 +98,10 @@ func openWindowsDirectoryNoFollow(rootDir windows.Handle, name string) (windows.
 		0,
 	)
 	if err != nil {
+		var s windows.NTStatus
+		if errors.As(err, &s) && ntObjectNotExist(uint32(s)) {
+			return 0, withNotExist(err)
+		}
 		return 0, err
 	}
 	var info windows.ByHandleFileInformation

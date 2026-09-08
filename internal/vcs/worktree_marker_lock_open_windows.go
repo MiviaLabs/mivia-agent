@@ -3,6 +3,7 @@
 package vcs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,10 @@ func OpenMarkerExcludeLockFile(root *os.Root, path string) (*os.File, error) {
 		0,
 	)
 	if err != nil {
+		var s windows.NTStatus
+		if errors.As(err, &s) && ntObjectNotExist(uint32(s)) {
+			return nil, withNotExist(err)
+		}
 		return nil, err
 	}
 	file := os.NewFile(uintptr(handle), filepath.Base(path))
