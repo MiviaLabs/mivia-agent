@@ -51,6 +51,15 @@ func (h *testTurnHandle) CancelToolCall(string) bool   { return false }
 
 type testMultiSessionRunner struct {
 	convs map[string]ports.Conversation
+	// activeID mirrors uiadapter.CommandRunner.sess: whichever session id
+	// the runner last learned about, via SelectSession (a resumed/newly
+	// visited tab) or SetActiveSessionID (any other focus change,
+	// including cycling back to an already-open tab).
+	activeID string
+}
+
+func (r *testMultiSessionRunner) SetActiveSessionID(id string) {
+	r.activeID = id
 }
 
 func (r *testMultiSessionRunner) Run(context.Context, string, string) ports.CommandOutcome {
@@ -88,6 +97,7 @@ func (r *testMultiSessionRunner) SelectSession(_ context.Context, id string) por
 	if !ok {
 		return ports.CommandOutcome{Err: "session not found"}
 	}
+	r.activeID = id
 	return ports.CommandOutcome{
 		Conversation:    conv,
 		ClearTranscript: true,
@@ -748,6 +758,47 @@ func TestTopSessionBar_KeyboardNavigation(t *testing.T) {
 	s = next.(Screen)
 	if s.convID() != "sess-A" {
 		t.Errorf("Alt+1 should switch to sess-A, got %q", s.convID())
+	}
+}
+
+// Cycling back to an already-open tab with the keyboard (F6/F7/Alt+N, or a
+// tab click) takes the fast path in switchToSessionID, which reuses the
+// cached sessionState and never calls runner.SelectSession again. Before the
+// fix, that meant the runner's notion of the "active" session stayed pinned
+// to whichever session it last resumed - so a /model (or any other
+// per-session runner command) issued after switching focus back to an idle
+// tab still acted on the OTHER, possibly-busy session, refusing the switch
+// on that session's state instead of the one actually on screen.
+func TestMultiSession_FastTabSwitchUpdatesRunnerActiveSession(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	// Visit sess-B once through the runner, as a picker/resume would.
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+	if runner.activeID != "sess-B" {
+		t.Fatalf("precondition: runner active id = %q, want sess-B", runner.activeID)
+	}
+
+	// Switch back to sess-A with a plain tab-cycle key. sess-A is already
+	// cached from screen setup, so this takes the fast path that bypasses
+	// the runner entirely.
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Fatalf("F6 should switch the screen to sess-A, got %q", s.convID())
+	}
+	if runner.activeID != "sess-A" {
+		t.Errorf("runner active id = %q after switching the visible tab to sess-A - a /model command now would wrongly act on sess-B", runner.activeID)
+	}
+
+	// And the reverse: cycling forward to sess-B (also already cached).
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Fatalf("F7 should switch the screen to sess-B, got %q", s.convID())
+	}
+	if runner.activeID != "sess-B" {
+		t.Errorf("runner active id = %q after switching the visible tab to sess-B, want sess-B", runner.activeID)
 	}
 }
 

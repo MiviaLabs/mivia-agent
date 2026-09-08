@@ -120,6 +120,23 @@ func (r *CommandRunner) SetActiveSession(sess *chat.Session) {
 	}
 }
 
+// SetActiveSessionID implements ports.CommandRunner: it repoints the runner
+// at the pooled session with the given id via SetActiveSession, without
+// resuming/loading it (SelectSession's job). The Screen calls this on every
+// tab focus change, including the fast path that reuses an already-open,
+// already-cached conversation without ever calling SelectSession again - see
+// SetActiveSession's doc comment for why r.sess/r.agentState must track the
+// session actually on screen. A no-op when there is no pool, no id, or no
+// live pooled session for id (nothing to point at).
+func (r *CommandRunner) SetActiveSessionID(id string) {
+	if r == nil || r.pool == nil || id == "" {
+		return
+	}
+	if sess := r.pool.Session(id); sess != nil {
+		r.SetActiveSession(sess)
+	}
+}
+
 func (r *CommandRunner) activeSession() *chat.Session {
 	if r == nil {
 		return nil

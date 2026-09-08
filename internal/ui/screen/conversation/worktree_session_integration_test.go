@@ -16,8 +16,13 @@ import (
 )
 
 type worktreeTestRunner struct {
-	sessions map[string]ports.Conversation
-	commands []composer.Command
+	sessions        map[string]ports.Conversation
+	commands        []composer.Command
+	activeSessionID string
+}
+
+func (r *worktreeTestRunner) SetActiveSessionID(id string) {
+	r.activeSessionID = id
 }
 
 func (r *worktreeTestRunner) Run(context.Context, string, string) ports.CommandOutcome {

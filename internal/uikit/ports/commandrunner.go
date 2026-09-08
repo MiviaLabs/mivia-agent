@@ -135,6 +135,17 @@ type CommandRunner interface {
 	// picker: switch/resume the selected session and report the outcome.
 	SelectSession(ctx context.Context, id string) CommandOutcome
 
+	// SetActiveSessionID tells the runner which pooled session is now the
+	// foreground session, so a per-session command issued next (SelectModel,
+	// SelectAgent, SelectEffort, ...) acts on the session actually on
+	// screen. A Screen with several open tabs calls SelectSession only the
+	// first time it visits a tab; every later focus change - including
+	// keyboard/mouse tab-cycling among already-open tabs - must still call
+	// this, or the runner keeps acting on whichever session it last touched
+	// even after the screen has moved on. A no-op for an id the runner has
+	// no live session for.
+	SetActiveSessionID(id string)
+
 	// StartInWorktree starts a brand-new chat session inside the worktree
 	// a route pseudo-row stands for: summary.Worktree and
 	// summary.WorktreeDir name the target, and no transcript exists yet.

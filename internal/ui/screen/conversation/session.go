@@ -169,6 +169,8 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	newID := s.convID()
 	s.registerSession(newID)
 
+	s.syncRunnerActiveSession(newID)
+
 	if cr, ok := s.runner.(interface{ Commands() []composer.Command }); ok {
 		s.commands = cr.Commands()
 	}
@@ -213,6 +215,20 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	s.topbar.SetUsage(seed)
 	s.refreshTopbar()
 	s.reflow()
+}
+
+// syncRunnerActiveSession tells the runner which session is now on screen.
+// switchConversation is the sole place s.conv changes, including the fast,
+// cached-tab path (switchToSessionID's `if st, ok := s.sessions[id]` branch)
+// that never calls s.runner.SelectSession again - without this call, a
+// /model (or any other per-session runner command) issued after cycling
+// back to an already-visited, idle tab kept acting on whichever session the
+// runner last touched, refusing the switch on that OTHER session's
+// activeTurns/switching state instead of this one's.
+func (s *Screen) syncRunnerActiveSession(id string) {
+	if s.runner != nil {
+		s.runner.SetActiveSessionID(id)
+	}
 }
 
 func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
