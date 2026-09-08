@@ -177,6 +177,14 @@ func (p *panel) reconcileTerminal(reason string) {
 	if changed {
 		p.rebindIfOpen()
 	}
+	// The turn is over, so no tool.end can still arrive for a tracked
+	// dispatch group: observeAgentGroupEnd - the ONLY other place that
+	// deletes from this map - is reached solely from a real ToolEndBody,
+	// which is exactly the event this function exists to stand in for.
+	// Leaving entries behind leaked one per interrupted dispatch for the
+	// session's lifetime, and let a late tool.end draining a superseded
+	// stream match a stale group and reopen rows this call just settled.
+	clear(p.dispatchGroups)
 }
 
 // observeAgentHistory idempotently registers or updates a subagent from replayed history.

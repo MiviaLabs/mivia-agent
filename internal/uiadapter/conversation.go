@@ -226,7 +226,13 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	}
 	emitSyntheticTurnStart(events, displayText, &seq)
 
-	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
+	// stream is the single owner of every send on, and the single close
+	// of, this turn's channel (turn_stream.go). It is built AFTER the
+	// synthetic turn.start, which goes into a channel nothing else can
+	// touch yet.
+	stream := newTurnStream(events, turnCtx.Done(), cancelTurn)
+
+	handler := newTurnHandler(stream, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
 	previous := c.sess.SwapOnAgentEvent(handler)
 
 	var clearSubagent func()
@@ -239,7 +245,7 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 		if clearSubagent != nil {
 			clearSubagent()
 		}
-	})
+	}, stream)
 	// turnOpts carries agent.Options.OnToolCancelReady through to the SDK
 	// backend for this turn (chat.TurnOptions -> agent.Options, see
 	// buildAgentTurnOptions). The hook fires once the run's per-turn cancel
@@ -308,7 +314,7 @@ var subagentForwardKinds = map[uievent.Kind]bool{
 // subagent's own completion live instead of only when the whole enclosing
 // batch finishes. The select on turnCtx.Done() drops the event rather than
 // blocks the agent loop if the buffer is full and Cancel is mid-flight.
-func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions, subagents *SubagentThreads) func(agent.Event) {
+func newTurnHandler(stream *turnStream, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions, subagents *SubagentThreads) func(agent.Event) {
 	forward := func(translated []uievent.Event) {
 		for _, e := range translated {
 			if closed.Load() {
@@ -320,9 +326,11 @@ func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr 
 			}
 			e.Seq = n
 			e.At = time.Now()
-			select {
-			case events <- e:
-			case <-turnCtx.Done():
+			// One send, serialised against the close. A false result means
+			// the stream closed (or the turn ended) under us, which is the
+			// same "stop forwarding" signal the closed.Load() check above
+			// gives - except this one cannot be stale.
+			if !stream.Send(e) {
 				return
 			}
 		}
@@ -365,12 +373,13 @@ func filterSubagentForward(translated []uievent.Event) []uievent.Event {
 // agent loop stops pushing events even before the goroutine returns;
 // Cancel invokes it before closing the channel so a stray emit cannot
 // panic on send-to-closed-channel.
-func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel context.CancelFunc, restore func()) *turnHandle {
+func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel context.CancelFunc, restore func(), stream *turnStream) *turnHandle {
 	return &turnHandle{
 		idAtomic: &atomic.Pointer[string]{},
 		events:   events,
 		cancel:   cancel,
 		closed:   closed,
+		stream:   stream,
 		restore:  restore,
 	}
 }
@@ -412,15 +421,23 @@ func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send,
 	}()
 }
 
-// emitTurnEndIfWinner CAS-claims closed. The winner emits the terminal
-// turn.end with the real TurnID and then closes the channel. The
-// non-blocking select protects against a full buffer at the moment of
+// emitTurnEndIfWinner claims the close. The winner emits the terminal
+// turn.end with the real TurnID and then closes the stream. The
+// non-blocking TrySend protects against a full buffer at the moment of
 // close (the receiver has stopped draining, which should not happen
 // for the terminal event but is a belt-and-braces guard).
+//
+// The claim is the turnStream's own close latch, not a separate atomic:
+// two flags for one decision is how the send/close race got in. The
+// atomic `closed` remains as the tap's cheap advisory pre-check only -
+// it is set here so that check keeps working, but it no longer decides
+// who closes.
 func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, seq *uint64, turnID string, err error) {
-	if !closed.CompareAndSwap(false, true) {
+	stream := h.stream
+	if stream == nil || stream.Closed() {
 		return
 	}
+	closed.Store(true)
 	reason := "completed"
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -435,10 +452,7 @@ func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, s
 				At:     time.Now(),
 				Body:   uievent.NoticeBody{Text: err.Error()},
 			}
-			select {
-			case h.events <- errEvent:
-			default:
-			}
+			stream.TrySend(errEvent)
 		}
 	}
 	atomic.AddUint64(seq, 1)
@@ -449,11 +463,11 @@ func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, s
 		At:     time.Now(),
 		Body:   uievent.TurnEndBody{Reason: reason},
 	}
-	select {
-	case h.events <- endEvent:
-	default:
-	}
-	close(h.events)
+	stream.TrySend(endEvent)
+	// Close reports whether THIS call closed it; a false result means
+	// Cancel won the race in between, which is the outcome the old CAS
+	// produced too - the channel is closed exactly once either way.
+	stream.Close()
 }
 
 // History returns a snapshot of the session's user/assistant turns at
@@ -630,7 +644,10 @@ type turnHandle struct {
 	events   chan uievent.Event
 	cancel   context.CancelFunc
 	closed   *atomic.Bool
-	restore  func()
+	// stream serialises every send against the single close. It is the
+	// only safe way to touch events; see turn_stream.go.
+	stream  *turnStream
+	restore func()
 	// toolCanceler is populated once (via Send's OnToolCancelReady
 	// callback, delivered on the turn goroutine, racing an early
 	// CancelToolCall from the UI goroutine) after the SDK backend's
@@ -679,10 +696,13 @@ func (h *turnHandle) Cancel() {
 	if h.restore != nil {
 		h.restore()
 	}
-	if h.closed != nil {
-		if h.closed.CompareAndSwap(false, true) {
-			close(h.events)
+	if h.stream != nil {
+		// The stream's own latch decides the single close; the atomic is
+		// updated for the tap's advisory pre-check only.
+		if h.closed != nil {
+			h.closed.Store(true)
 		}
+		h.stream.Close()
 	}
 }
 
