@@ -361,37 +361,42 @@ func (s *generalSection) View() string {
 	// widths (and therefore the value column's start position) stay
 	// identical no matter which rows are currently scrolled into view -
 	// scrolling must not shift the alignment the operator is reading by.
-	cells := make([][]string, len(display))
-	for i, item := range display {
-		if item.row == nil {
-			headerWidth := s.width - 4
-			if headerWidth <= 0 {
-				headerWidth = 40
-			}
-			hdr := render.SectionHeader(s.theme, s.tier, item.header, headerWidth)
-			cells[i] = []string{hdr, ""}
-			continue
-		}
-		selected := item.rowIdx == s.cursor
+	dataCells := make([][]string, 0, len(s.rows))
+	for i := range s.rows {
+		row := &s.rows[i]
+		selected := i == s.cursor
 		labelStyle := render.Role(s.theme, s.tier, theme.RoleFGSubtle)
 		if selected {
 			labelStyle = render.WithBg(labelStyle, s.theme, s.tier, theme.RoleBGSelection)
 		}
-		cells[i] = []string{labelStyle.Render(item.row.label), s.valueCell(*item.row, selected)}
+		dataCells = append(dataCells, []string{labelStyle.Render(row.label), s.valueCell(*row, selected)})
 	}
-	aligned := render.Columns(2, cells)
+	alignedData := render.Columns(2, dataCells)
+
+	headerWidth := s.width - 4
+	if headerWidth <= 0 {
+		headerWidth = 40
+	}
+
+	lines := make([]string, len(display))
+	dataIdx := 0
+	for i, item := range display {
+		if item.row == nil {
+			lines[i] = "  " + render.SectionHeader(s.theme, s.tier, item.header, headerWidth)
+		} else {
+			line := alignedData[dataIdx]
+			dataIdx++
+			if item.rowIdx == s.cursor {
+				lines[i] = render.Role(s.theme, s.tier, theme.RoleAccent).Render("> ") + line
+			} else {
+				lines[i] = "  " + line
+			}
+		}
+	}
 
 	var b []byte
 	for i := start; i < end; i++ {
-		line := aligned[i]
-		if display[i].row == nil {
-			line = "  " + line
-		} else if display[i].rowIdx == s.cursor {
-			line = render.Role(s.theme, s.tier, theme.RoleAccent).Render("> ") + line
-		} else {
-			line = "  " + line
-		}
-		b = append(b, line...)
+		b = append(b, lines[i]...)
 		b = append(b, '\n')
 	}
 	if s.notice != "" {
