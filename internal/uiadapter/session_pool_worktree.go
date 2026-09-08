@@ -197,6 +197,12 @@ func (p *SessionPool) newEntrySessionLocked() *chat.Session {
 	if p.res.ProviderName != "" {
 		comp, _ = provider.New(p.res)
 	}
+	if comp == nil {
+		// Same fallback sessionBindingFactory uses: a completer that fails
+		// per turn is diagnosable; a nil one silently strips the session of
+		// every completer-owned capability, including the dispatcher surface.
+		comp = fallbackCompleter{providerName: p.res.ProviderName}
+	}
 	sess := chat.NewSession(p.res, comp)
 	sess.UseTools = p.toolsOn
 	return sess
@@ -218,6 +224,17 @@ func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string,
 		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
 	}
 	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
+	// The adopted registry carries core tools only: BuildToolsForRoot never
+	// registers the dispatcher-owned session catalog (dispatch_tasks, the
+	// messaging/ledger tools, load_tools), which the launch attach registered
+	// onto the launch registry this entry just stopped using. Rebuild and
+	// publish the surface against the new base so the catalog travels with
+	// the session into its worktree. On failure keep the bare registry (the
+	// binding itself is valid) and surface the reason through the pool's
+	// tool-scope notice, like adoptWorktreeToolsLocked does.
+	if _, err := cliagents.AttachRebuiltSurface(sess, p.res, entryState); err != nil {
+		p.lastToolScopeNotice = "session tools: " + err.Error()
+	}
 	return entryState
 }
 
