@@ -37,6 +37,7 @@
       "internal/contextstate",
       "internal/events",
       "internal/hooksession",
+      "internal/orchestrationnotify",
       "internal/provider",
       "internal/reasoning",
       "internal/redact",
@@ -149,6 +150,7 @@
       "internal/coordinator",
       "internal/jschema",
       "internal/ledger",
+      "internal/orchestrationnotify",
       "internal/runtime",
       "internal/skills",
       "internal/storage",
@@ -568,6 +570,10 @@
       "internal/contextstate",
       "internal/storage",
       "internal/vcs"
+    ],
+    "internal/orchestrationnotify": [
+      "internal/ledger",
+      "internal/provider"
     ]
   },
   "deny": [
