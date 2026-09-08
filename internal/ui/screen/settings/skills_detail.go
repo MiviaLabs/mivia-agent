@@ -104,12 +104,13 @@ func (s *skillsSection) renderDetail(sk ports.SkillView) []string {
 		originLabel = "Global (user home: " + sk.Name + "/SKILL.md)"
 	}
 
+	badge := render.Role(s.theme, s.tier, theme.RoleBorder).Render("[" + originLabel + "]")
 	lines := []string{
-		accent.Bold(true).Render("/"+sk.Name) + "  " + subtle.Render(originLabel),
+		accent.Bold(true).Render("/"+sk.Name) + "  " + badge,
 	}
 
 	if sk.Description != "" {
-		lines = append(lines, fg.Render(sk.Description))
+		lines = append(lines, "", fg.Render(sk.Description))
 	}
 
 	var meta []string

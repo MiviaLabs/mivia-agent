@@ -154,8 +154,9 @@ func (s *mcpSection) renderDetail(srv ports.MCPServerView) []string {
 		originLabel = ports.MCPOriginFallback(srv.Scope, srv.Global)
 	}
 
+	badge := render.Role(s.theme, s.tier, theme.RoleBorder).Render("[" + originLabel + "]")
 	lines := []string{
-		accent.Bold(true).Render(srv.ID) + "  " + subtle.Render(originLabel),
+		accent.Bold(true).Render(srv.ID) + "  " + badge,
 	}
 
 	// Status line

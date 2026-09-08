@@ -107,12 +107,14 @@ func (s *agentsSection) renderDetail(ag ports.AgentView) []string {
 		originLabel = "Built-in (shipped with mivia)"
 	}
 
+	// Pill/Badge for scope
+	badge := render.Role(s.theme, s.tier, theme.RoleBorder).Render("[" + originLabel + "]")
 	lines := []string{
-		accent.Bold(true).Render(ag.Name) + "  " + subtle.Render(originLabel),
+		accent.Bold(true).Render(ag.Name) + "  " + badge,
 	}
 
 	if ag.Description != "" {
-		lines = append(lines, fg.Render(ag.Description))
+		lines = append(lines, "", fg.Render(ag.Description))
 	}
 
 	var meta []string
