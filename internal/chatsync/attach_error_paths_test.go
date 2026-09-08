@@ -216,3 +216,123 @@ func TestSyncSession_HandleCreateFailure_AuthStopLatchesRemoteEnd(t *testing.T) 
 		t.Fatal("handleCreateFailure with an auth-stop cause did not latch remoteEnded")
 	}
 }
+
+func newBareSyncSessionForFlushTests(t *testing.T, client *Client) *SyncSession {
+	t.Helper()
+	dir := t.TempDir()
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ob.Close() })
+	s := &SyncSession{
+		outbox: ob, client: client, health: newSyncHealth(nil),
+		doneCh: make(chan struct{}), uploaderDone: make(chan struct{}),
+	}
+	close(s.doneCh)
+	close(s.uploaderDone)
+	return s
+}
+
+// TestHandleBadRequest_NonSequenceComplaintPoisons pins handleBadRequest's
+// own defensive re-check: classifyFlushError already routes a
+// non-sequence-complaint BadRequestError to stopTerminally directly, so this
+// branch is unreachable through the normal flush path and is driven here by
+// calling handleBadRequest directly, the only way to reach it.
+func TestHandleBadRequest_NonSequenceComplaintPoisons(t *testing.T) {
+	s := newBareSyncSessionForFlushTests(t, nil)
+	s.handleBadRequest(context.Background(), &BadRequestError{Message: "totally malformed"})
+	if !s.Stopped() {
+		t.Fatal("handleBadRequest with a non-sequence-complaint error did not poison the session")
+	}
+}
+
+// TestHandleBadRequest_UnreadableSessionRetries pins the GetSession-failure
+// branch: with no reachable server, the batch cannot be classified, so the
+// session retries rather than poisoning on what might be a network blip.
+func TestHandleBadRequest_UnreadableSessionRetries(t *testing.T) {
+	client := newTestClient(t, ClientOptions{BaseURL: "http://127.0.0.1:1"})
+	s := newBareSyncSessionForFlushTests(t, client)
+	s.handleBadRequest(context.Background(), &BadRequestError{Message: "sequence mismatch"})
+	if s.Stopped() {
+		t.Fatal("handleBadRequest poisoned the session on an unreadable-session network error")
+	}
+	if s.retryAt.IsZero() {
+		t.Fatal("handleBadRequest did not arm a retry for an unreadable session")
+	}
+}
+
+// TestRebaseOn_UnflushedEventsErrorSurfaces pins rebaseOn's first read
+// guard by constructing a bare Outbox pointed at a directory whose
+// events.jsonl is itself a directory; UnflushedEvents re-opens the path
+// fresh on every call, so no live OpenOutbox handle is needed.
+func TestRebaseOn_UnflushedEventsErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, eventsFileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &SyncSession{outbox: &Outbox{dir: dir}, projector: NewProjector("sess-1", 0, ProjectorOptions{})}
+	if err := s.rebaseOn(5); err == nil {
+		t.Fatal("rebaseOn accepted an outbox whose events file is a directory")
+	} else if !strings.Contains(err.Error(), "read unflushed events") {
+		t.Fatalf("err = %v, want the read-unflushed wrap", err)
+	}
+}
+
+// TestRebaseOn_AdvanceCursorErrorSurfaces pins the advance-cursor guard on
+// the caught-up/ahead branch, using the same read-only-directory technique
+// established for the outbox's own durable-write tests.
+func TestRebaseOn_AdvanceCursorErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ob.Close()
+	s := &SyncSession{outbox: ob, projector: NewProjector("sess-1", 0, ProjectorOptions{})}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	probe := filepath.Join(dir, "writability-probe")
+	if f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("platform still creates files in a read-only directory")
+	}
+	if err := s.rebaseOn(0); err == nil {
+		t.Fatal("rebaseOn accepted an AdvanceCursor it could not persist")
+	} else if !strings.Contains(err.Error(), "advance cursor to server mark") {
+		t.Fatalf("err = %v, want the advance-cursor wrap", err)
+	}
+}
+
+// TestRebaseOn_ServerBehindOutboxRenumbers drives rebaseOn's second shape:
+// the server is BEHIND the outbox's first unflushed seq, so the tail is
+// renumbered onto serverLastSeq+1 rather than advancing the cursor. Every
+// other rebaseOn test (via handleBadRequest's existing suite) exercises
+// only the caught-up/ahead shape.
+func TestRebaseOn_ServerBehindOutboxRenumbers(t *testing.T) {
+	dir := t.TempDir()
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ob.Close()
+	if err := ob.Append(WireEvent{Seq: 10, Type: "turn_start"}, WireEvent{Seq: 11, Type: "turn_end"}); err != nil {
+		t.Fatal(err)
+	}
+	s := &SyncSession{outbox: ob, projector: NewProjector("sess-1", 0, ProjectorOptions{})}
+	// serverLastSeq(3) is well behind unflushed[0].Seq-1(9), taking the
+	// second shape.
+	if err := s.rebaseOn(3); err != nil {
+		t.Fatalf("rebaseOn: %v", err)
+	}
+	unflushed, err := ob.UnflushedEvents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unflushed) != 2 || unflushed[0].Seq != 4 || unflushed[1].Seq != 5 {
+		t.Fatalf("unflushed after rebase = %+v, want seqs renumbered onto 4,5", unflushed)
+	}
+}
