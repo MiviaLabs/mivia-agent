@@ -239,14 +239,15 @@ func (s *SubagentThreads) resolveTaskRoute(callID string) (SubagentTaskCoordinat
 }
 
 // registerReconstructed registers a reconstruction under key, but never at
-// the cost of richer live state: an existing registration that is not
-// itself a reconstruction (a live streaming conversation, or any foreign
-// ports.Conversation) always wins and the reconstruction is dropped for
-// that key. Replacing an older reconstruction with a fresh one is an
-// idempotent refresh and is allowed. This is what keeps a History() replay
-// (screen construction, session switch, transcript reset) from displacing
-// an in-flight or fully-streamed subagent thread with a prompt+summary
-// stub built from persisted tool-call JSON.
+// the cost of richer state: an existing registration that is not itself a
+// reconstruction (a live streaming conversation, or any foreign
+// ports.Conversation) always wins and the reconstruction is dropped. An
+// older reconstruction may be refreshed by a fresh one (idempotent) UNLESS
+// it already resolved incoming's own tool_calls_ref (carryForwardResolved,
+// subagent_resolve.go), in which case the richer, already-resolved
+// existing one is kept instead. This keeps a History() replay (screen
+// construction, session switch, transcript reset) from displacing live,
+// streamed, or resolved state with a stub built from persisted JSON.
 func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTranscriptConversation) {
 	if key == "" {
 		return
@@ -255,7 +256,7 @@ func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTransc
 	defer s.mu.Unlock()
 	if existing, ok := s.threads[key]; ok {
 		stc, isTranscript := existing.(*SubagentTranscriptConversation)
-		if !isTranscript || !stc.isReconstructed() {
+		if !isTranscript || !stc.isReconstructed() || carryForwardResolved(stc, conv) {
 			return
 		}
 	}

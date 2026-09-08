@@ -146,6 +146,34 @@ func (c *SubagentTranscriptConversation) resolveToolCallsPending() {
 	c.resolveAttempted = true
 }
 
+// hasResolvedMatch reports whether this conversation has ALREADY
+// successfully resolved sourceToolCallsRef into real tool-call rows AND
+// that resolved ref equals ref - the gate registerReconstructed uses to
+// decide whether an incoming, freshly rebuilt (and therefore always
+// unresolved) reconstruction for the same key may be dropped in favor of
+// keeping this one installed. Both conjuncts are required: a matching ref
+// alone (still pending, or a failed resolveAttempted) is not enough, and an
+// empty ref never counts as a match - two conversations that both simply
+// never had a ref must not be treated as "the same resolved content".
+func (c *SubagentTranscriptConversation) hasResolvedMatch(ref string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.resolved && c.sourceToolCallsRef != "" && c.sourceToolCallsRef == ref
+}
+
+// carryForwardResolved reports whether registerReconstructed should keep
+// existing installed and drop incoming: incoming is freshly built by
+// EVERY History() replay and is therefore always unresolved, so if
+// existing already resolved incoming's own sourceToolCallsRef, existing
+// carries everything incoming would and installing incoming would only
+// discard already-fetched content and force a future dialog reopen to
+// re-fetch it. incoming is a freshly constructed object not yet published
+// to any other goroutine (only the map write in registerReconstructed
+// publishes it), so its field is read directly here without incoming.mu.
+func carryForwardResolved(existing, incoming *SubagentTranscriptConversation) bool {
+	return incoming.sourceToolCallsRef != "" && existing.hasResolvedMatch(incoming.sourceToolCallsRef)
+}
+
 // applyResolvedToolCalls replaces the placeholder assistant message's
 // Text/ToolCalls IN PLACE with the resolved rows - never appended, since
 // the placeholder message already occupies the slot a live/legacy-decoded
