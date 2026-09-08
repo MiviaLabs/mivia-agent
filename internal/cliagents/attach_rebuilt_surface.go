@@ -71,7 +71,6 @@ func AttachRebuiltSurface(sess *chat.Session, res *config.Resolved, state *Agent
 		Prompt:   prompt,
 		MaxSteps: maxSteps,
 	})
-	println("DEBUG attach: widener returned", published, err == nil)
 	if err != nil {
 		return false, fmt.Errorf("attach rebuilt surface: %w", err)
 	}
