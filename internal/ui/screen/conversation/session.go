@@ -237,7 +237,7 @@ func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
 		}
 		return s, nil
 	}
-	return s.handleTurnEvent(msg.Event)
+	return s.handleTurnEventFrom(msg.Event, msg.Source)
 }
 
 func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {

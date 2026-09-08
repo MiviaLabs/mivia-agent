@@ -151,6 +151,29 @@ func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.C
 // for block shape; the panel and approval are side-effects of the same
 // stream, fed here because this screen sees every event.
 func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
+	return s.handleTurnEventFrom(ev, nil)
+}
+
+// handleTurnEventFrom is handleTurnEvent plus the channel the event was
+// read from, which decides whether the read loop re-arms.
+//
+// source nil means "no origin information" - the embedded thread screen's
+// wrapped events and the synthetic events this package injects for error
+// reporting. Those keep the historical unconditional re-arm.
+//
+// A NON-nil source that is not the active turn's channel is a stale
+// stream: a superseded turn still draining after s.active was replaced.
+// Re-arming on s.active.Events() for it would attach a SECOND permanent
+// read continuation to the live channel (a real turnHandle returns the
+// same channel on every call), after which two readers race for every
+// event and each re-arms on delivery, so the count never falls back.
+//
+// The re-arm follows the event back to its OWN channel instead of being
+// dropped, because handleEventMsg's untracked-session path documents the
+// invariant this shares: the read loop is the only remaining reference to
+// that channel, and abandoning it strands a writer that may be the agent
+// loop's synchronous event tap, which then blocks once the buffer fills.
+func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Event) (app.Screen, tea.Cmd) {
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
 
@@ -220,13 +243,27 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 
 	s.refreshTopbar()
 
-	var readCmd tea.Cmd
-
-	if s.active != nil {
-		readCmd = s.awaitSessionEvent(s.convID(), s.active.Events())
-	}
-	return s, tea.Batch(flushCmd, readCmd)
+	return s, tea.Batch(flushCmd, s.rearmRead(source))
 }
+
+// rearmRead returns the continuation that keeps ONE reader on the stream
+// this event came from. See handleTurnEventFrom for why a stale source
+// re-arms on itself instead of on the active turn's channel (double
+// reader) or on nothing at all (stranded writer).
+func (s Screen) rearmRead(source <-chan uievent.Event) tea.Cmd {
+	if source != nil && (s.active == nil || !sameEventStream(source, s.active.Events())) {
+		return s.awaitSessionEvent(s.convID(), source)
+	}
+	if s.active != nil {
+		return s.awaitSessionEvent(s.convID(), s.active.Events())
+	}
+	return nil
+}
+
+// sameEventStream reports whether two event channels are the same
+// underlying channel. Channel values are comparable, so this is identity,
+// not contents.
+func sameEventStream(a, b <-chan uievent.Event) bool { return a == b }
 
 // observeToolStart folds one ToolStartBody into the activity panel. A
 // dispatch_tasks call fires ONE tool.start for the whole batch, so it fans
