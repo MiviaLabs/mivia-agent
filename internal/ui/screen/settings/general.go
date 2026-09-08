@@ -23,6 +23,7 @@ import (
 // (KindText stays reserved for a section that actually needs free
 // text, e.g. Models' base_url in a later slice).
 type generalRow struct {
+	group string
 	label string
 	f     field.Model
 	apply func(value string) ports.GeneralEdit
@@ -34,6 +35,12 @@ type generalRow struct {
 	// non-boolean row (scroll lines, approval default) keeps showing its
 	// value directly, since "ON"/"OFF" would misdescribe a preset choice.
 	boolean bool
+}
+
+type generalDisplayRow struct {
+	header string
+	row    *generalRow
+	rowIdx int
 }
 
 // generalSection is the General settings section.
@@ -153,21 +160,21 @@ func (s *generalSection) rebuild() {
 	syncStreamF := boolRowField(s, "sync: stream assistant", v.SyncStreamAssistant)
 
 	s.rows = []generalRow{
-		{"mouse capture", mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }, true},
-		{"show reasoning", reasonF, func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }, true},
-		{"iteration notice", iterF, func(val string) ports.GeneralEdit { return ports.SetShowIterationNotices{On: val == "on"} }, true},
-		{"prompt cache notice", cacheF, func(val string) ports.GeneralEdit { return ports.SetShowPromptCacheNotices{On: val == "on"} }, true},
-		{"scroll lines", scrollF, func(val string) ports.GeneralEdit {
+		{group: "Interaction", label: "mouse capture", f: mouseF, apply: func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }, boolean: true},
+		{group: "Interaction", label: "show reasoning", f: reasonF, apply: func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }, boolean: true},
+		{group: "Interaction", label: "iteration notice", f: iterF, apply: func(val string) ports.GeneralEdit { return ports.SetShowIterationNotices{On: val == "on"} }, boolean: true},
+		{group: "Interaction", label: "prompt cache notice", f: cacheF, apply: func(val string) ports.GeneralEdit { return ports.SetShowPromptCacheNotices{On: val == "on"} }, boolean: true},
+		{group: "Behavior", label: "scroll lines", f: scrollF, apply: func(val string) ports.GeneralEdit {
 			n, _ := strconv.Atoi(val) // val is always one of scrollChoices; Atoi cannot fail
 			return ports.SetScrollLines{N: n}
-		}, false},
-		{"approval default", approvalF, func(val string) ports.GeneralEdit { return ports.SetApprovalDefault{Mode: val} }, false},
-		{"screen reader", srF, func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }, true},
-		{"reduced motion", rmF, func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }, true},
-		{"full disk access", fdF, func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }, true},
-		{"sync: include thinking", syncThinkingF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeThinking{On: val == "on"} }, true},
-		{"sync: include tool io", syncToolIOF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeToolIO{On: val == "on"} }, true},
-		{"sync: stream assistant", syncStreamF, func(val string) ports.GeneralEdit { return ports.SetSyncStreamAssistant{On: val == "on"} }, true},
+		}, boolean: false},
+		{group: "Behavior", label: "approval default", f: approvalF, apply: func(val string) ports.GeneralEdit { return ports.SetApprovalDefault{Mode: val} }, boolean: false},
+		{group: "Accessibility", label: "screen reader", f: srF, apply: func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }, boolean: true},
+		{group: "Accessibility", label: "reduced motion", f: rmF, apply: func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }, boolean: true},
+		{group: "Permissions", label: "full disk access", f: fdF, apply: func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }, boolean: true},
+		{group: "Sync", label: "sync: include thinking", f: syncThinkingF, apply: func(val string) ports.GeneralEdit { return ports.SetSyncIncludeThinking{On: val == "on"} }, boolean: true},
+		{group: "Sync", label: "sync: include tool io", f: syncToolIOF, apply: func(val string) ports.GeneralEdit { return ports.SetSyncIncludeToolIO{On: val == "on"} }, boolean: true},
+		{group: "Sync", label: "sync: stream assistant", f: syncStreamF, apply: func(val string) ports.GeneralEdit { return ports.SetSyncStreamAssistant{On: val == "on"} }, boolean: true},
 	}
 	if s.cursor >= len(s.rows) {
 		s.cursor = len(s.rows) - 1
@@ -296,15 +303,39 @@ func boolControl(t theme.Theme, tier theme.Tier, on bool) string {
 	return render.Role(t, tier, theme.RoleFGMuted).Render(boolControlText(false))
 }
 
-// valueCell renders one row's value column: the semantic ON/OFF control
-// for a boolean row, or the plain field value (scroll lines, approval
-// default) for anything else - "[ ON  ]" would misdescribe a preset
-// choice, so only boolean rows get the control treatment.
-func (s *generalSection) valueCell(row generalRow) string {
-	if row.boolean {
-		return boolControl(s.theme, s.tier, row.f.Value() == "on")
+// valueCell renders one row's value column. Every value is now a visible
+// control: boolean rows use the semantic ON/OFF word, while preset choices
+// use the same bracketed affordance with their actual value.
+func (s *generalSection) displayRows() []generalDisplayRow {
+	display := make([]generalDisplayRow, 0, len(s.rows)+5)
+	lastGroup := ""
+	for i := range s.rows {
+		row := &s.rows[i]
+		if row.group != lastGroup {
+			display = append(display, generalDisplayRow{header: row.group})
+			lastGroup = row.group
+		}
+		display = append(display, generalDisplayRow{row: row, rowIdx: i})
 	}
-	return render.Role(s.theme, s.tier, theme.RoleFG).Render(row.f.Value())
+	return display
+}
+
+func (s *generalSection) valueCell(row generalRow, selected bool) string {
+	style := render.Role(s.theme, s.tier, theme.RoleFG)
+	if selected {
+		style = render.WithBg(style, s.theme, s.tier, theme.RoleBGSelection)
+	}
+	if row.boolean {
+		style = render.Role(s.theme, s.tier, theme.RoleSuccess)
+		if row.f.Value() != "on" {
+			style = render.Role(s.theme, s.tier, theme.RoleFGMuted)
+		}
+		if selected {
+			style = render.WithBg(style, s.theme, s.tier, theme.RoleBGSelection)
+		}
+		return style.Render(boolControlText(row.f.Value() == "on"))
+	}
+	return style.Render("[ " + row.f.Value() + " ]")
 }
 
 func (s *generalSection) View() string {
@@ -315,25 +346,43 @@ func (s *generalSection) View() string {
 	if s.notice != "" && avail > 1 {
 		avail--
 	}
-	start, end := render.WindowSlice(len(s.rows), s.cursor, avail)
+	display := s.displayRows()
+	selectedDisplay := 0
+	for i, item := range display {
+		if item.row != nil && item.rowIdx == s.cursor {
+			selectedDisplay = i
+			break
+		}
+	}
+	start, end := render.WindowSlice(len(display), selectedDisplay, avail)
 
 	// Columns aligns every row's label/value pair together, over the
 	// WHOLE row set rather than just the visible slice, so the column
 	// widths (and therefore the value column's start position) stay
 	// identical no matter which rows are currently scrolled into view -
 	// scrolling must not shift the alignment the operator is reading by.
-	cells := make([][]string, len(s.rows))
-	for i, row := range s.rows {
-		label := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(row.label)
-		cells[i] = []string{label, s.valueCell(row)}
+	cells := make([][]string, len(display))
+	for i, item := range display {
+		if item.row == nil {
+			cells[i] = []string{render.Role(s.theme, s.tier, theme.RoleAccent).Bold(true).Render("[" + item.header + "]"), ""}
+			continue
+		}
+		selected := item.rowIdx == s.cursor
+		labelStyle := render.Role(s.theme, s.tier, theme.RoleFGSubtle)
+		if selected {
+			labelStyle = render.WithBg(labelStyle, s.theme, s.tier, theme.RoleBGSelection)
+		}
+		cells[i] = []string{labelStyle.Render(item.row.label), s.valueCell(*item.row, selected)}
 	}
 	aligned := render.Columns(2, cells)
 
 	var b []byte
 	for i := start; i < end; i++ {
 		line := aligned[i]
-		if i == s.cursor {
-			line = "> " + line
+		if display[i].row == nil {
+			line = "  " + line
+		} else if display[i].rowIdx == s.cursor {
+			line = render.Role(s.theme, s.tier, theme.RoleAccent).Render("> ") + line
 		} else {
 			line = "  " + line
 		}
