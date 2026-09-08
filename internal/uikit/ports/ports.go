@@ -390,6 +390,25 @@ type RemoteInputEvent struct {
 	SessionID  string
 	Body       string
 	ReceivedAt time.Time
+	// AckReceived, when non-nil, marks that this process took CUSTODY of
+	// the instruction - enqueued it, buffered it while a session mounts,
+	// or attempted to hand it to Send - regardless of whether that
+	// attempt ultimately succeeds. It is not that the instruction has
+	// finished executing, and it is not conditioned on the attempt's
+	// outcome either: a crash after this call but before the instruction
+	// actually runs (e.g. while still sitting in Screen.queue/
+	// sessionState.queue, both plain []string) is a real, documented gap,
+	// the same one internal/chatsync/poller.go's deliver doc comment
+	// (lines 232-244) already accepts for the pre-existing delivered-ids
+	// ledger. Must be invoked through a tea.Cmd (see ackCmd below), never
+	// called inline from an Update-path method - MarkReceived/
+	// MarkInputReceived do a durable (fsync-before-return) file write,
+	// the same shape delivered_ledger.go already uses for the sibling
+	// delivered-ids ledger, and Update must never block. Nil-safe:
+	// callers must check before invoking, since dozens of existing test
+	// fixtures construct RemoteInputEvent without setting it. Safe to
+	// call more than once (MarkReceived dedupes by id).
+	AckReceived func()
 }
 
 // RemoteInputs is the inbound steering surface: sibling to Notices, same

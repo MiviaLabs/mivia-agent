@@ -160,6 +160,20 @@ run means a regression, not known debt:
 The full run passes: lifecycle, validation and tenancy guards, SSE replay, SSE
 live push, and cursor resume.
 
+**Frame naming is intentional, not a defect.** Every SSE frame is named after
+its client-supplied event type rather than a fixed name, so a browser's
+`EventSource.onmessage` never fires; a web client must call
+`addEventListener` once per entry in `knownTypes`. This is recorded as
+intentional in `api/contracts/chat-sessions.v1.json`'s notes array and echoed
+in Go terms by `internal/chatsync/wire.go`'s `WireEventSpec.Type` doc
+comment; `live_sse_test.go`'s "names the frame after the event type" subtest
+confirms it against the live deployment. The open trade-off is forward
+compatibility: `knownTypes` is a closed, versioned list, so a type added in a
+later deploy is invisible to an already-shipped client's
+`addEventListener` list until that client updates. Changing this behavior -
+for example, to a default frame name - is a breaking, versioned decision
+owned by `apps/api`, not something this repo decides unilaterally.
+
 **`TestLiveChatSessionFanOutReachesEveryStream` is the multi-replica check.** It
 opens six concurrent SSE streams, each on its own connection with keep-alives
 off so the load balancer is free to place them, appends one event, and counts

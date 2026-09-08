@@ -483,6 +483,15 @@ func (s *SyncSession) Inputs() <-chan RemoteInput {
 	return nil
 }
 
+// MarkInputReceived records that id reached UI custody. Thin delegation to
+// the underlying poller's ledger, mirroring Inputs() above. A no-op if this
+// session has no poller.
+func (s *SyncSession) MarkInputReceived(id string) {
+	if s.poller != nil {
+		s.poller.MarkReceived(id)
+	}
+}
+
 // SetStatus forwards status updates to the heartbeat runner. Before the
 // first event attaches there is no runner and nothing to send to: a status
 // is API traffic, and a session with no message produces none.

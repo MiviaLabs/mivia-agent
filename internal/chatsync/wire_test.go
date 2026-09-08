@@ -27,6 +27,7 @@ type contractStruct struct {
 }
 
 type chatSessionsContract struct {
+	Notes        []string                  `json:"notes"`
 	KnownTypes   []string                  `json:"knownTypes"`
 	Structs      map[string]contractStruct `json:"structs"`
 	Events       contractEvents            `json:"events"`
@@ -239,6 +240,31 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestWireContractDocumentsEventSourceFrameNamingTradeOff pins the
+// contract's notes array to the exact sentence recording that SSE frames
+// are named after their event type (so EventSource.onmessage never fires
+// and a client must addEventListener per knownTypes entry) as intentional,
+// documented behavior - not an undiscovered defect. See wire.go's
+// WireEventSpec.Type doc comment and docs/development/agent-workflow.md's
+// "Live chat-session probe" section for the forward-compatibility trade-off
+// this implies. This test has no build tag and needs no live credentials:
+// it only guards that the sentence itself is not silently edited or
+// dropped from the contract.
+func TestWireContractDocumentsEventSourceFrameNamingTradeOff(t *testing.T) {
+	contract := loadChatSessionsContract(t)
+	const want = "Every SSE frame is NAMED after its event type, so EventSource.onmessage never fires; a client calls addEventListener once per entry in knownTypes."
+	found := false
+	for _, note := range contract.Notes {
+		if note == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("contract notes array no longer contains the EventSource/addEventListener sentence\n  want: %q\n  got:  %v", want, contract.Notes)
+	}
 }
 
 // TestBlockGrammarMatchesContractSnapshot holds the recorded block grammar

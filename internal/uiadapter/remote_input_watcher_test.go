@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -171,8 +172,8 @@ func TestRemoteInputWatcher_DeliversToRemoteInputs(t *testing.T) {
 		Seed: sess, Tokens: tokens, Res: res, WorkspaceRoot: wsRoot,
 		AuthorProvider: func(ctx context.Context) (string, error) { return "auth-1", nil },
 		Max:            8, IsPooled: func(id string) bool { return pool.IsActive(id) || id == "primary" },
-		Deliver: func(id string, in chatsync.RemoteInput) {
-			delivered <- ports.RemoteInputEvent{ID: in.ID, SessionID: id, Body: in.Body}
+		Deliver: func(id string, in chatsync.RemoteInput, ack func()) {
+			delivered <- ports.RemoteInputEvent{ID: in.ID, SessionID: id, Body: in.Body, AckReceived: ack}
 		},
 	}
 
@@ -184,12 +185,15 @@ func TestRemoteInputWatcher_DeliversToRemoteInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	poller := chatsync.NewInputPoller(client, "remote-saved-1", 1, cfg.AuthorProvider, t.TempDir())
+	stateDir := t.TempDir()
+	poller := chatsync.NewInputPoller(client, "remote-saved-1", 1, cfg.AuthorProvider, stateDir)
 	w.watching["saved-local-1"] = poller
 	poller.Start(ctx)
 	go func() {
 		for ri := range poller.Inputs() {
-			cfg.Deliver("saved-local-1", ri)
+			ri := ri
+			ack := func() { poller.MarkReceived(ri.ID) }
+			cfg.Deliver("saved-local-1", ri, ack)
 		}
 	}()
 
@@ -197,6 +201,27 @@ func TestRemoteInputWatcher_DeliversToRemoteInputs(t *testing.T) {
 	case ev := <-delivered:
 		if ev.SessionID != "saved-local-1" || ev.Body != "hello to unpooled session" {
 			t.Errorf("unexpected delivery: %+v", ev)
+		}
+		if ev.AckReceived == nil {
+			t.Fatal("delivered event carried a nil AckReceived")
+		}
+		ev.AckReceived()
+		data, err := os.ReadFile(filepath.Join(stateDir, "received_input_ids.json"))
+		if err != nil {
+			t.Fatalf("read received-ids ledger: %v", err)
+		}
+		var ids []string
+		if err := json.Unmarshal(data, &ids); err != nil {
+			t.Fatalf("decode received-ids ledger: %v", err)
+		}
+		found := false
+		for _, id := range ids {
+			if id == ev.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("AckReceived did not record %q in this session's own poller ledger: %v", ev.ID, ids)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for watcher to deliver input")
@@ -394,8 +419,8 @@ func TestRemoteInputWatcher_BackfillDiscoversAndWatchesRealCandidates(t *testing
 		Seed: sess, Tokens: tokens, Res: res, WorkspaceRoot: wsRoot,
 		AuthorProvider: func(ctx context.Context) (string, error) { return "auth-1", nil },
 		Max:            8, IsPooled: isPooled,
-		Deliver: func(id string, in chatsync.RemoteInput) {
-			delivered <- ports.RemoteInputEvent{ID: in.ID, SessionID: id, Body: in.Body}
+		Deliver: func(id string, in chatsync.RemoteInput, ack func()) {
+			delivered <- ports.RemoteInputEvent{ID: in.ID, SessionID: id, Body: in.Body, AckReceived: ack}
 		},
 	}
 	w := NewRemoteInputWatcher(cfg)

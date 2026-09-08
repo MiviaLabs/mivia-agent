@@ -573,7 +573,7 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 		p.syncSessions[id] = syncSess
 		p.pushNotice("chat sync is running, uploading to " + chatsync.ResolveEndpoint(p.res.Sync.APIURL).Describe())
 		if opts.EnablePolling {
-			go p.pumpRemoteInputs(id, syncSess.Inputs())
+			go p.pumpRemoteInputs(id, syncSess)
 		}
 		if SessionBusRegistrar != nil {
 			p.busReleases[id] = SessionBusRegistrar(id, sess.EventBus)
@@ -757,13 +757,14 @@ func (p *SessionPool) StartBackgroundWatch(ctx context.Context) {
 			_, pooled := p.sessions[sessionID]
 			return pooled
 		},
-		Deliver: func(sessionID string, in chatsync.RemoteInput) {
+		Deliver: func(sessionID string, in chatsync.RemoteInput, ack func()) {
 			p.remoteInputs <- ports.RemoteInputEvent{
-				ID:         in.ID,
-				Kind:       in.Kind,
-				SessionID:  sessionID,
-				Body:       in.Body,
-				ReceivedAt: in.Received,
+				ID:          in.ID,
+				Kind:        in.Kind,
+				SessionID:   sessionID,
+				Body:        in.Body,
+				ReceivedAt:  in.Received,
+				AckReceived: ack,
 			}
 		},
 	}

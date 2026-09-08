@@ -43,8 +43,12 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 		// leads with them: reporting only the error left the user's remote
 		// message silently gone, and the status row is width-truncated, so
 		// what was lost has to come before why.
+		cmds := []tea.Cmd{}
+		for _, ev := range events {
+			cmds = append(cmds, ackCmd(ev.AckReceived))
+		}
 		s.statusline.Notice(droppedRemoteInputNotice(msg.sessionID, msg.err, events))
-		return s, nil
+		return s, tea.Batch(cmds...)
 	}
 
 	if len(events) == 0 {
@@ -57,12 +61,14 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 
 	// Race check: if the user switched to this session while mount was in flight
 	if msg.sessionID == s.convID() {
-		next, cmd := s.sendOrQueueRemote(text, persisted)
+		next, cmd := s.sendOrQueueRemote(text, persisted, firstEvent.AckReceived)
 		sc := next.(Screen)
+		cmds := []tea.Cmd{cmd}
 		for _, remaining := range events[1:] {
 			sc.queue = append(sc.queue, remaining.Body)
+			cmds = append(cmds, ackCmd(remaining.AckReceived))
 		}
-		return sc, cmd
+		return sc, tea.Batch(cmds...)
 	}
 
 	if s.sessions == nil {
@@ -77,13 +83,16 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 		s.refreshTopbar()
 	}
 
+	cmds := []tea.Cmd{}
 	for _, remaining := range events[1:] {
 		st.queue = append(st.queue, remaining.Body)
+		cmds = append(cmds, ackCmd(remaining.AckReceived))
 	}
 
 	if st.active != nil {
 		st.queue = append(st.queue, text)
-		return s, nil
+		cmds = append(cmds, ackCmd(firstEvent.AckReceived))
+		return s, tea.Batch(cmds...)
 	}
 
 	handle, err := st.conv.Send(context.Background(), intent.Send{Text: text, PersistedText: persisted})
@@ -92,12 +101,14 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 			Kind: uievent.KindError,
 			Body: uievent.ErrorBody{Text: fmt.Sprintf("remote send failed: %v", err), Fatal: false},
 		})
-		return s, nil
+		cmds = append(cmds, ackCmd(firstEvent.AckReceived))
+		return s, tea.Batch(cmds...)
 	}
 	st.active = handle
 	st.statusline.Start("thinking", s.now())
 	s.refreshTopbar()
-	return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
+	cmds = append(cmds, s.awaitSessionEvent(msg.sessionID, handle.Events()), ackCmd(firstEvent.AckReceived))
+	return s, tea.Batch(cmds...)
 }
 
 // droppedRemoteInputNotice reports the remote inputs a failed mount
