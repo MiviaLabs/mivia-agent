@@ -143,8 +143,13 @@ func (s *generalSection) rebuild() {
 	// config - see SetFullDiskAccess for the contrast). Takes effect on
 	// the next session start - the live chatsync client is intentionally
 	// not re-armed, matching the ScreenReader/ReducedMotion precedent.
-	syncThinkingF := boolRowField(s, "sync: include reasoning", v.SyncIncludeThinking)
-	syncToolIOF := boolRowField(s, "sync: include tool i/o", v.SyncIncludeToolIO)
+	// Labels use the SAME word as the TOML key (include_thinking,
+	// include_tool_io, stream_assistant) so an operator matching a row
+	// to its setting has no translation step. (Earlier draft used
+	// "include reasoning" which silently renamed the key for the user;
+	// caught by architecture-review F2.)
+	syncThinkingF := boolRowField(s, "sync: include thinking", v.SyncIncludeThinking)
+	syncToolIOF := boolRowField(s, "sync: include tool io", v.SyncIncludeToolIO)
 	syncStreamF := boolRowField(s, "sync: stream assistant", v.SyncStreamAssistant)
 
 	s.rows = []generalRow{
@@ -160,8 +165,8 @@ func (s *generalSection) rebuild() {
 		{"screen reader", srF, func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }, true},
 		{"reduced motion", rmF, func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }, true},
 		{"full disk access", fdF, func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }, true},
-		{"sync: include reasoning", syncThinkingF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeThinking{On: val == "on"} }, true},
-		{"sync: include tool i/o", syncToolIOF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeToolIO{On: val == "on"} }, true},
+		{"sync: include thinking", syncThinkingF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeThinking{On: val == "on"} }, true},
+		{"sync: include tool io", syncToolIOF, func(val string) ports.GeneralEdit { return ports.SetSyncIncludeToolIO{On: val == "on"} }, true},
 		{"sync: stream assistant", syncStreamF, func(val string) ports.GeneralEdit { return ports.SetSyncStreamAssistant{On: val == "on"} }, true},
 	}
 	if s.cursor >= len(s.rows) {

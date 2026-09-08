@@ -46,7 +46,7 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 	for _, want := range []string{
 		"mouse capture", "show reasoning", "iteration notice", "prompt cache notice", "scroll lines",
 		"approval default", "screen reader", "reduced motion", "full disk access",
-		"sync: include reasoning", "sync: include tool i/o", "sync: stream assistant",
+		"sync: include thinking", "sync: include tool io", "sync: stream assistant",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("General view is missing %q:\n%s", want, plain)
@@ -74,8 +74,8 @@ func TestBooleanRowsRenderExplicitOnOffControls(t *testing.T) {
 		{"screen reader", v.ScreenReader},
 		{"reduced motion", v.ReducedMotion},
 		{"full disk access", v.FullDiskAccess},
-		{"sync: include reasoning", v.SyncIncludeThinking},
-		{"sync: include tool i/o", v.SyncIncludeToolIO},
+		{"sync: include thinking", v.SyncIncludeThinking},
+		{"sync: include tool io", v.SyncIncludeToolIO},
 		{"sync: stream assistant", v.SyncStreamAssistant},
 	} {
 		row := lineFor(t, plain, tc.label)

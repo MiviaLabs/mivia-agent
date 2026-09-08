@@ -236,10 +236,23 @@ func TestUpdateGeneralConfig_SyncConcurrentWritersSerialise(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
-			view := GeneralSettings{
-				SyncIncludeThinking: ptrBool(i%2 == 0),
-				SyncIncludeToolIO:   ptrBool(i%2 == 1),
-				SyncStreamAssistant: ptrBool(i%3 == 0),
+			// Each writer touches EXACTLY ONE sync key (the i%3-th),
+			// leaving the other two nil. With the per-path persist lock
+			// every key survives the concurrent RMW; without it a lost
+			// update drops the siblings and the all-three-keys-present
+			// assertion below fails. (Earlier versions had every writer
+			// set all three keys, which made the test vacuous: the
+			// presence assertion held in any final state, lock or no
+			// lock. Reproduced by the concurrency audit, which built a
+			// lock-free replica and saw it pass identically.)
+			view := GeneralSettings{}
+			switch i % 3 {
+			case 0:
+				view.SyncIncludeThinking = ptrBool(i%2 == 0)
+			case 1:
+				view.SyncIncludeToolIO = ptrBool(i%2 == 1)
+			case 2:
+				view.SyncStreamAssistant = ptrBool(i%3 == 0)
 			}
 			if err := UpdateGeneralConfig(path, view); err != nil {
 				t.Errorf("writer %d: %v", i, err)
