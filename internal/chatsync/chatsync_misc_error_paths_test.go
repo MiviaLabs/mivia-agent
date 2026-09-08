@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // TestFlushOutcomeString covers all three named values plus the default
@@ -84,5 +86,53 @@ func TestHasDisallowedControlChar_AllowsOrdinaryWhitespace(t *testing.T) {
 	}
 	if !hasDisallowedControlChar("bad\x01char") {
 		t.Error("a genuine control character must still be rejected")
+	}
+}
+
+// TestProjectSubagentAssistantAndThinking_EmptyContentProjectsNothing pins
+// the empty-content early return in both projectSubagentAssistant and
+// projectSubagentThinking: an event with no text produces no wire event,
+// distinct from every other subagent-prose test which always carries text.
+func TestProjectSubagentAssistantAndThinking_EmptyContentProjectsNothing(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	if got := p.Project(subagentEvent(events.KindAssistant, "task-1", "", "")); len(got) != 0 {
+		t.Errorf("empty-content subagent assistant projected %v, want nothing", got)
+	}
+	if got := p.Project(subagentEvent(events.KindThinking, "task-1", "", "")); len(got) != 0 {
+		t.Errorf("empty-content subagent thinking projected %v, want nothing", got)
+	}
+}
+
+// TestOpenSession_OutboxOpenErrorSurfaces pins OpenSession's outbox-open
+// guard: a directory OpenOutbox cannot use (a file occupying the path)
+// must fail OpenSession before any network call, rather than opening a
+// session with no durable backing.
+func TestOpenSession_OutboxOpenErrorSurfaces(t *testing.T) {
+	blocker := t.TempDir()
+	blockerFile := blocker + "/outbox-is-a-file"
+	if err := writeFileDurably(blocker, "outbox-is-a-file", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	bus := events.New()
+	_, err := OpenSession(context.Background(), bus, "sess-1", SessionOptions{
+		TokenProvider: testTokenProvider,
+		ClientOptions: ClientOptions{BaseURL: "http://unused.invalid"},
+		OutboxDir:     blockerFile + "/sub",
+	})
+	if err == nil {
+		t.Fatal("OpenSession accepted an outbox dir it cannot open")
+	}
+}
+
+// TestSyncSession_StopReasonAndInputsDefaults pins the two zero-value
+// branches: StopReason before anything ever calls stopTerminally, and
+// Inputs() on a session with no poller wired.
+func TestSyncSession_StopReasonAndInputsDefaults(t *testing.T) {
+	s := &SyncSession{}
+	if got := s.StopReason(); got != "" {
+		t.Errorf("StopReason on a fresh session = %q, want empty", got)
+	}
+	if got := s.Inputs(); got != nil {
+		t.Errorf("Inputs with no poller = %v, want nil", got)
 	}
 }
