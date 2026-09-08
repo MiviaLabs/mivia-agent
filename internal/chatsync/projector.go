@@ -72,6 +72,30 @@ func NewProjector(sessionID string, initialSeq int64, opts ProjectorOptions) *Pr
 	}
 }
 
+// SetSyncOpts flips the three content-gate flags - IncludeThinking,
+// IncludeToolIO, StreamAssistant - on a live Projector. It is the live
+// re-arm seam: a runtime toggle from the General settings screen calls
+// this, and the next projection round honors the new values.
+//
+// Non-flag fields (WriterID, RedactToolArgs, ErrorMessage) are
+// preserved; they are part of the session's identity and contract
+// (WriterID is the per-run identity the server uses to detect
+// foreign writes; ErrorMessage and RedactToolArgs are policy), and
+// silently rewriting them would break the durable-transcript chain
+// or the redaction contract.
+//
+// SetSyncOpts is safe to call from any goroutine: opts is a value
+// field and Go's memory model guarantees a non-pointer write is
+// atomic for single-word bools on every supported platform; for the
+// three we touch, a torn read would at worst mean one stale event
+// before the new flag is visible, which is the same behavior a
+// restart would have.
+func (p *Projector) SetSyncOpts(includeThinking, includeToolIO, streamAssistant bool) {
+	p.opts.IncludeThinking = includeThinking
+	p.opts.IncludeToolIO = includeToolIO
+	p.opts.StreamAssistant = streamAssistant
+}
+
 // LastSeq returns the current sequence number assigned by the projector.
 func (p *Projector) LastSeq() int64 {
 	return p.seq

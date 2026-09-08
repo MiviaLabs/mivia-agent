@@ -194,10 +194,17 @@ func (s *SettingsStore) snapshotGeneralPrior() generalPriorState {
 // same as every other apply* method in this file) - it must NOT lock
 // s.mu itself, or it deadlocks on Go's non-reentrant sync.Mutex. Every
 // field read/write below is safe unguarded for exactly that reason.
+//
+// Notifier firing order: the mouse notifier runs in its own goroutine
+// (matching the pre-existing comment at line 218); the sync notifier
+// also runs in its own goroutine so a slow fan-out across many pooled
+// sessions cannot stall the SaveHandle loop. Both fire ONLY after a
+// successful persist - on rollback neither runs, because the operator
+// never saw a Saved state.
 func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	prior := s.snapshotGeneralPrior()
 
-	mouseNotifier, err := s.mutateGeneral(e, prior)
+	mouseNotifier, syncNotifier, err := s.mutateGeneral(e, prior)
 	if err != nil {
 		return err
 	}
@@ -218,21 +225,35 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	if mouseNotifier != nil {
 		go mouseNotifier(s.general.Mouse)
 	}
+	if syncNotifier != nil {
+		go syncNotifier(s.general.SyncIncludeThinking, s.general.SyncIncludeToolIO, s.general.SyncStreamAssistant)
+	}
 	return nil
 }
 
 // mutateGeneral applies one edit to s.general/s.res/live runtime state
-// and returns the mouse notifier to fire (after a successful persist)
-// when the edit was SetMouse. It never touches disk - persistGeneral
-// (via applyGeneral) does that.
-func (s *SettingsStore) mutateGeneral(e ports.GeneralEdit, prior generalPriorState) (func(bool), error) {
-	var mouseNotifier func(bool)
+// and returns the notifier(s) to fire (after a successful persist):
+//   - mouseNotifier (func(bool)): the live mouse-mode toggle, set on
+//     SetMouse and fired by applyGeneral to flip the program's mouse
+//     capture on the fly.
+//   - syncNotifier (func(bool,bool,bool)): the live chat-sync projector
+//     re-arm, set on the three SetSync* variants and fired by
+//     applyGeneral to flip the in-flight chatsync.Client flags without
+//     a session restart.
+//
+// SetSync* does NOT mirror into s.res.Sync - the no-mirror invariant
+// is documented on each case below and pinned by the
+// TestMutateGeneral_SetSync*_UpdatesViewOnly tests in
+// settings_general_test.go. Resolved.Sync keeps reflecting the file
+// state on the next reload, which is exactly what the projector
+// already sees.
+func (s *SettingsStore) mutateGeneral(e ports.GeneralEdit, prior generalPriorState) (mouseNotifier func(bool), syncNotifier func(bool, bool, bool), err error) {
 	switch v := e.(type) {
 	case ports.SetTheme:
 		s.general.Theme = v.Name
 	case ports.SetMouse:
 		s.general.Mouse = v.On
-		mouseNotifier = s.mouseNotifier // fired by the caller, after the persist
+		mouseNotifier = s.mouseNotifier
 	case ports.SetShowReasoning:
 		s.general.ShowReasoning = v.On
 		if s.conv != nil {
@@ -262,7 +283,7 @@ func (s *SettingsStore) mutateGeneral(e ports.GeneralEdit, prior generalPriorSta
 		}
 	case ports.SetScrollLines:
 		if v.N <= 0 {
-			return nil, fmt.Errorf("scroll lines must be positive")
+			return nil, nil, fmt.Errorf("scroll lines must be positive")
 		}
 		s.general.ScrollLines = v.N
 		if s.conv != nil {
@@ -275,26 +296,26 @@ func (s *SettingsStore) mutateGeneral(e ports.GeneralEdit, prior generalPriorSta
 	case ports.SetReducedMotion:
 		s.general.ReducedMotion = v.On
 	case ports.SetSyncIncludeThinking:
-		// Matches the SetScreenReader/SetReducedMotion precedent: set the
-		// view field, do not mirror into s.res (the live chatsync client
-		// is intentionally not re-armed; takes effect on next session
-		// start). prior.general is a whole-struct copy captured before
-		// mutateGeneral ran, so rollback restores this field via the
-		// existing prior.general = ... assignment in rollbackGeneral
-		// without any new generalPriorState plumbing.
+		// No live runtime surface (s.res mirror is intentionally absent -
+		// the resolved config re-reads the file on next reload). The
+		// sync notifier is the only live effect; applyGeneral fires it
+		// after a successful persist.
 		s.general.SyncIncludeThinking = v.On
+		syncNotifier = s.syncOptsNotifier
 	case ports.SetSyncIncludeToolIO:
 		s.general.SyncIncludeToolIO = v.On
+		syncNotifier = s.syncOptsNotifier
 	case ports.SetSyncStreamAssistant:
 		s.general.SyncStreamAssistant = v.On
+		syncNotifier = s.syncOptsNotifier
 	case ports.SetFullDiskAccess:
 		// USER-config-only persistence, restart-to-apply - see
 		// applySetFullDiskAccess for the provenance rules (audit F2/AR-4).
-		return nil, s.applySetFullDiskAccess(v.On)
+		return nil, nil, s.applySetFullDiskAccess(v.On)
 	default:
-		return nil, fmt.Errorf("unknown general edit %T", e)
+		return nil, nil, fmt.Errorf("unknown general edit %T", e)
 	}
-	return mouseNotifier, nil
+	return mouseNotifier, syncNotifier, nil
 }
 
 // rollbackGeneral restores s.general, the resolved config, and every

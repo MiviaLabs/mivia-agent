@@ -57,7 +57,7 @@ func TestMutateGeneral_SetSyncIncludeThinking_UpdatesViewOnly(t *testing.T) {
 	s := NewSettingsStore(nil, res, nil)
 	prior := s.snapshotGeneralPrior()
 
-	_, err := s.mutateGeneral(ports.SetSyncIncludeThinking{On: false}, prior)
+	_, _, err := s.mutateGeneral(ports.SetSyncIncludeThinking{On: false}, prior)
 	if err != nil {
 		t.Fatalf("mutateGeneral failed: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestMutateGeneral_SetSyncIncludeToolIO_UpdatesViewOnly(t *testing.T) {
 	s := NewSettingsStore(nil, res, nil)
 	prior := s.snapshotGeneralPrior()
 
-	_, err := s.mutateGeneral(ports.SetSyncIncludeToolIO{On: false}, prior)
+	_, _, err := s.mutateGeneral(ports.SetSyncIncludeToolIO{On: false}, prior)
 	if err != nil {
 		t.Fatalf("mutateGeneral failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestMutateGeneral_SetSyncStreamAssistant_UpdatesViewOnly(t *testing.T) {
 	s := NewSettingsStore(nil, res, nil)
 	prior := s.snapshotGeneralPrior()
 
-	_, err := s.mutateGeneral(ports.SetSyncStreamAssistant{On: false}, prior)
+	_, _, err := s.mutateGeneral(ports.SetSyncStreamAssistant{On: false}, prior)
 	if err != nil {
 		t.Fatalf("mutateGeneral failed: %v", err)
 	}
@@ -111,6 +111,92 @@ func TestMutateGeneral_SetSyncStreamAssistant_UpdatesViewOnly(t *testing.T) {
 	}
 	if s.res.Sync.StreamAssistant != true {
 		t.Errorf("s.res.Sync.StreamAssistant changed to %v, want true (no mirror invariant)", s.res.Sync.StreamAssistant)
+	}
+}
+
+// TestMutateGeneral_SyncVariantsReturnSyncNotifier pins the live re-arm
+// seam: a SetSync* edit, when a syncOptsNotifier has been wired into
+// the store, must return that notifier so applyGeneral can fire it
+// after a successful persist. When no notifier is wired (the
+// pre-launcher state used by every other general test), the returned
+// syncNotifier is nil - applyGeneral's `if syncNotifier != nil` skips
+// the fan-out, which is correct. The shape of the notifier itself is
+// pinned by TestSettingsStore_ApplySync_FiresLiveReArmNotifier (an
+// integration test that wires a recording closure); this test pins
+// the mutateGeneral half.
+//
+// The three SetSync* variants all share the same notifier shape, so
+// one assertion per variant is enough.
+func TestMutateGeneral_SyncVariantsReturnSyncNotifier(t *testing.T) {
+	cases := []struct {
+		name  string
+		apply func(*SettingsStore, bool) (func(bool), func(bool, bool, bool), error)
+	}{
+		{
+			name: "SetSyncIncludeThinking",
+			apply: func(s *SettingsStore, on bool) (func(bool), func(bool, bool, bool), error) {
+				return s.mutateGeneral(ports.SetSyncIncludeThinking{On: on}, s.snapshotGeneralPrior())
+			},
+		},
+		{
+			name: "SetSyncIncludeToolIO",
+			apply: func(s *SettingsStore, on bool) (func(bool), func(bool, bool, bool), error) {
+				return s.mutateGeneral(ports.SetSyncIncludeToolIO{On: on}, s.snapshotGeneralPrior())
+			},
+		},
+		{
+			name: "SetSyncStreamAssistant",
+			apply: func(s *SettingsStore, on bool) (func(bool), func(bool, bool, bool), error) {
+				return s.mutateGeneral(ports.SetSyncStreamAssistant{On: on}, s.snapshotGeneralPrior())
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Variant 1: no notifier wired - returns nil syncNotifier.
+			// This is the default state of every other general test.
+			sNoNotif := NewSettingsStore(nil, &config.Resolved{
+				Sync: config.ResolvedSync{
+					IncludeThinking: true,
+					IncludeToolIO:   true,
+					StreamAssistant: true,
+				},
+			}, nil)
+			_, syncNoNotif, err := tc.apply(sNoNotif, false)
+			if err != nil {
+				t.Fatalf("mutateGeneral (no notifier wired): %v", err)
+			}
+			if syncNoNotif != nil {
+				t.Errorf("mutateGeneral(%s) returned a non-nil sync notifier when no launcher is wired; would call into nil and panic. nil is the expected default", tc.name)
+			}
+
+			// Variant 2: notifier wired - returns that exact closure so
+			// applyGeneral can fire it.
+			sWithNotif := NewSettingsStore(nil, &config.Resolved{
+				Sync: config.ResolvedSync{
+					IncludeThinking: true,
+					IncludeToolIO:   true,
+					StreamAssistant: true,
+				},
+			}, nil)
+			called := 0
+			sWithNotif.SetSyncOptsNotifier(func(includeThinking, includeToolIO, streamAssistant bool) {
+				called++
+			})
+			_, syncWithNotif, err := tc.apply(sWithNotif, false)
+			if err != nil {
+				t.Fatalf("mutateGeneral (notifier wired): %v", err)
+			}
+			if syncWithNotif == nil {
+				t.Fatalf("mutateGeneral(%s) returned a nil sync notifier even though one was wired; applyGeneral will not fan-out the toggle to live sessions", tc.name)
+			}
+			// Drive it - this is exactly what applyGeneral does in its
+			// `if syncNotifier != nil { go syncNotifier(...) }` block.
+			syncWithNotif(false, false, false)
+			if called != 1 {
+				t.Errorf("synced notifier call count = %d, want 1", called)
+			}
+		})
 	}
 }
 

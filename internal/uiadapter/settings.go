@@ -46,6 +46,14 @@ type SettingsStore struct {
 	// outside the store lock; only fires when a re-arm was actually wired.
 	fullDiskNotifier func(text string)
 
+	// syncOptsNotifier, when set by the launcher, receives the three
+	// [sync] opt-out flags (include_thinking, include_tool_io,
+	// stream_assistant) after a successful SetSync* persist, so the
+	// live chatsync.Client can be re-armed without a session restart.
+	// Mirrors mouseNotifier/fullDiskNotifier in shape and call site
+	// (applyGeneral fires it after persist, off the store lock).
+	syncOptsNotifier func(includeThinking, includeToolIO, streamAssistant bool)
+
 	saveSeq uint64
 }
 
@@ -101,6 +109,23 @@ func (s *SettingsStore) SetFullDiskNotifier(fn func(text string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fullDiskNotifier = fn
+}
+
+// SetSyncOptsNotifier wires the launcher-side bridge that re-arms the
+// live chat-sync projector flags when the operator toggles a [sync]
+// opt-out in Settings -> General. The launcher (newtui/run.go) wires
+// this to SessionPool.ApplySyncOpts; nil clears it.
+//
+// Unlike SetMouseNotifier and SetFullDiskNotifier, this notifier is
+// NOT a UI affordance - it has no on-screen effect. It exists so the
+// live chatsync.Client picks up the new flags without a session
+// restart. Without it, the operator would have to /new or restart to
+// see their toggle take effect, which the plan flagged as the
+// "next-session only" limitation that this seam removes.
+func (s *SettingsStore) SetSyncOptsNotifier(fn func(includeThinking, includeToolIO, streamAssistant bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncOptsNotifier = fn
 }
 
 // initFromConfig seeds every settings section from the resolved config.

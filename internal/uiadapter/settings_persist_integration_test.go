@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -410,6 +411,117 @@ func syncConfigFromMap(m map[string]any) config.SyncConfig {
 		StreamAssistant: get("stream_assistant"),
 	}
 }
+
+// TestSettingsStore_ApplySync_FiresLiveReArmNotifier pins the
+// end-to-end live re-arm: the settings store, on a successful
+// SetSync* persist, fires the syncOptsNotifier so the session pool can
+// re-arm every attached SyncSession without a restart. The test wires
+// a recording notifier into the store (mirroring how newtui/run.go
+// wires the real one) and asserts the captured arguments match the
+// post-toggle view values.
+//
+// Synchronization: applyGeneral fires the notifier in a separate
+// goroutine to keep the SaveHandle loop responsive. The test signals
+// the notifier fire via a buffered channel so the assertion only
+// runs after the closure has run, avoiding the data race a naive
+// shared-variable read would trigger under `-race`.
+func TestSettingsStore_ApplySync_FiresLiveReArmNotifier(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := &config.Resolved{
+		ConfigPath:   cfgPath,
+		ProviderName: "ollama",
+		Model:        "llama3.3",
+		Sync: config.ResolveSyncConfig(config.SyncConfig{
+			IncludeThinking: ptrTrue(),
+			IncludeToolIO:   ptrTrue(),
+			StreamAssistant: ptrTrue(),
+		}),
+	}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	// Recording notifier wired into the store. The launcher in
+	// newtui/run.go does this for real; tests wire their own to assert
+	// the fan-out without going through the real pool. Communicates
+	// the captured values to the test goroutine via a channel so the
+	// `-race` detector sees the happens-before through the channel
+	// send/receive rather than through a shared-variable read.
+	type capture struct {
+		thinking bool
+		toolIO   bool
+		stream   bool
+	}
+	captured := make(chan capture, 1)
+	store.SetSyncOptsNotifier(func(includeThinking, includeToolIO, streamAssistant bool) {
+		captured <- capture{includeThinking, includeToolIO, streamAssistant}
+	})
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	// Wait for the notifier to fire. A 5-second ceiling is generous -
+	// the closure runs in a goroutine spun by applyGeneral and is
+	// expected to be near-instant under -race.
+	select {
+	case got := <-captured:
+		if got.thinking != false || got.toolIO != true || got.stream != true {
+			t.Errorf("notifier fired with (%v,%v,%v); want (false, true, true) - only the touched key flipped", got.thinking, got.toolIO, got.stream)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync notifier did not fire within 5s; applyGeneral failed to fan-out the toggle")
+	}
+}
+
+// TestSettingsStore_ApplySync_NotFiredOnPersistFailure pins the
+// rollback contract: when UpdateGeneralConfig fails, the notifier
+// must NOT fire. A live re-arm that happens even on persist failure
+// would leave the in-flight sync session with flags that never
+// reached disk - the rollback's whole reason for being.
+func TestSettingsStore_ApplySync_NotFiredOnPersistFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	blocker := filepath.Join(tmpDir, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unwritablePath := filepath.Join(blocker, "mivia.toml")
+
+	res := &config.Resolved{
+		ConfigPath: unwritablePath,
+		Model:      "test-model",
+		Sync:       config.ResolveSyncConfig(config.SyncConfig{}),
+	}
+	sess := chat.NewSession(res, nil)
+	store := uiadapter.NewSettingsStore(sess, res, nil)
+
+	called := 0
+	store.SetSyncOptsNotifier(func(_, _, _ bool) { called++ })
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		return
+	}
+	for ev := range h.Events() {
+		if ev.State == ports.SaveFailed {
+			break
+		}
+	}
+	if called != 0 {
+		t.Errorf("sync notifier fired %d times on persist failure; want 0 (rollback contract)", called)
+	}
+	if got := store.Settings().General.General().SyncIncludeThinking; got != true {
+		t.Errorf("post-rollback SyncIncludeThinking = %v, want true (prior value)", got)
+	}
+}
+
+func ptrTrue() *bool { v := true; return &v }
 
 func TestSettingsStore_ApplySync_IncludeThinking_ToggleOff_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()

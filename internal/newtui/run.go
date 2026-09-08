@@ -110,6 +110,28 @@ func wireFullDiskNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
 	}
 }
 
+// wireSyncOptsNotifier bridges the Settings screen's three [sync]
+// opt-out toggles into the live chat-sync projector: a Settings ->
+// General operator action that flips include_thinking,
+// include_tool_io, or stream_assistant fires this notifier, which
+// fans out to every attached SyncSession in the pool. The pool call
+// runs synchronously and is bounded by the number of attached
+// sessions (one per logged-in chat), so a "go" wrapper is not needed
+// to keep the SaveHandle loop responsive.
+//
+// A nil store or nil pool skips wiring: the operator's toggle still
+// persists to disk via UpdateGeneralConfig; only the live re-arm
+// half is silent. The integration tests in
+// settings_persist_integration_test.go pin both halves.
+func wireSyncOptsNotifier(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool) {
+	if store == nil || pool == nil {
+		return
+	}
+	store.SetSyncOptsNotifier(func(includeThinking, includeToolIO, streamAssistant bool) {
+		pool.ApplySyncOpts(includeThinking, includeToolIO, streamAssistant)
+	})
+}
+
 // mouseEnabled resolves the startup mouse-capture decision:
 // MIVIA_MOUSE overrides [tui] mouse, which defaults to true. Capture ON
 // means in-app drag-select and wheel scrolling work from the first
@@ -174,6 +196,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
+	wireSyncOptsNotifier(settingsStore, pool)
 	runner.SetSettingsStore(settingsStore)
 	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
 

@@ -475,6 +475,41 @@ func (s *SyncSession) LastSeq() int64 {
 	return s.projector.LastSeq()
 }
 
+// SetSyncOpts flips the three content-gate flags on the live projector
+// without rebuilding the outbox, identity, or writer id. It is the
+// per-session live re-arm seam: the pool calls this for every attached
+// session when the operator toggles a [sync] opt-out in General
+// settings, and the next projection round honors the new values.
+//
+// Two no-op cases, both silent by design:
+//   - projector nil: the session is pre-attach (OpenSession has not yet
+//     finished the deferred remote attach that mints the projector).
+//     Record the values on s.opts so the next attach that consults opts
+//     sees the desired state.
+//   - remoteEnded true: the session has stopped (poison 400, fatal auth,
+//     recovery bound). The toggle cannot reach the wire, and the live
+//     session is going down anyway.
+//
+// Otherwise, flip the projector's opts in place under s.mu. Locking
+// matches LastSeq's; the projector read sites also lock s.mu, so a
+// concurrent HandleEvent either observes the old flags and projects
+// one more event under them, or observes the new flags - either way
+// the durable transcript is consistent with the operator's last
+// successful persist.
+func (s *SyncSession) SetSyncOpts(includeThinking, includeToolIO, streamAssistant bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.ProjectorOptions.IncludeThinking = includeThinking
+	s.opts.ProjectorOptions.IncludeToolIO = includeToolIO
+	s.opts.ProjectorOptions.StreamAssistant = streamAssistant
+	if s.remoteEnded.Load() {
+		return
+	}
+	if s.projector != nil {
+		s.projector.SetSyncOpts(includeThinking, includeToolIO, streamAssistant)
+	}
+}
+
 // Inputs returns the channel of remote inputs.
 func (s *SyncSession) Inputs() <-chan RemoteInput {
 	if s.poller != nil {
