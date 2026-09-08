@@ -76,7 +76,7 @@ func TestCleanRegistryDispatchesBuiltInAgent(t *testing.T) {
 	}
 	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: ledger.NewMemoryLedgerRepository(), agentReg: reg}
 
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"general-purpose","prompt":"work"}]}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"general-purpose","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("Execute error = %v", err)
 	}

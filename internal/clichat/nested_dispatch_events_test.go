@@ -90,7 +90,7 @@ func (t *nestedDispatchWrapperTool) Parameters() map[string]any {
 
 func (t *nestedDispatchWrapperTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	return t.inner.Execute(ctx, json.RawMessage(
-		`{"tasks":[{"id":"nested-leaf-1","agent":"leaf","prompt":"leaf work 1"},{"id":"nested-leaf-2","agent":"leaf","prompt":"leaf work 2"}]}`))
+		`{"tasks":[{"id":"nested-leaf-1","agent":"leaf","prompt":"leaf work 1"},{"id":"nested-leaf-2","agent":"leaf","prompt":"leaf work 2"}],"wait":"run"}`))
 }
 
 // eventRecorder captures every agent.Event a handler emits, race-safely.
@@ -180,7 +180,7 @@ func runNestedDispatchEventProbe(t *testing.T) ([]agent.Event, ledger.LedgerRepo
 	defer cancel()
 	go func() {
 		body, err := outer.Execute(ctx, json.RawMessage(
-			`{"tasks":[{"id":"mid-1","agent":"midagent","prompt":"do nested work"}]}`))
+			`{"tasks":[{"id":"mid-1","agent":"midagent","prompt":"do nested work"}],"wait":"run"}`))
 		done <- nestedDispatchEventProbeExecResult{body: body, err: err}
 	}()
 

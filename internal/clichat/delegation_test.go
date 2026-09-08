@@ -388,7 +388,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	if !ok {
 		t.Fatal("dispatch_tasks is not registered")
 	}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"check"}]}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"check"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("permissioned skill dispatch failed: %v (%s)", err, out)
 	}
@@ -429,7 +429,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 	if !ok {
 		t.Fatal("dispatch_tasks is not registered")
 	}
-	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"inspect"}]}`))
+	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"inspect"}],"wait":"run"}`))
 	if err != nil || !strings.Contains(out, "output_ref") {
 		t.Fatalf("out=%s err=%v", out, err)
 	}

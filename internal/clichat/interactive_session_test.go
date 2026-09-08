@@ -172,7 +172,7 @@ func TestInteractiveAgentSession_DispatchTasksTimesOutStructured(t *testing.T) {
 	root := t.TempDir()
 	comp := &interactiveScriptCompleter{
 		toolName:  "dispatch_tasks",
-		toolArgs:  `{"timeout_seconds":1,"tasks":[{"id":"t1","agent":"mivia","prompt":"block forever"}]}`,
+		toolArgs:  `{"timeout_seconds":1,"tasks":[{"id":"t1","agent":"mivia","prompt":"block forever"}],"wait":"run"}`,
 		blockChat: true, // oneshot Completer.Chat blocks until task ctx deadline
 	}
 	// A finite DefaultTimeout:1 keeps the dispatch budget observable (the
@@ -235,7 +235,7 @@ func TestInteractiveAgentSession_ParentCancelDoesNotHang(t *testing.T) {
 func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) {
 	// Pure configureChatWorkspace + attachSessionDispatcher (identical to runChat).
 	root := t.TempDir()
-	comp := &interactiveScriptCompleter{toolName: "dispatch_tasks", toolArgs: `{"tasks":[{"id":"t1","prompt":"ping"}]}`}
+	comp := &interactiveScriptCompleter{toolName: "dispatch_tasks", toolArgs: `{"tasks":[{"id":"t1","prompt":"ping"}],"wait":"run"}`}
 	res := &config.Resolved{Model: "test-model", SystemPrompt: "sys", Subagents: config.DefaultSubagentConfig}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
