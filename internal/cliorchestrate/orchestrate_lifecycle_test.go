@@ -21,6 +21,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+func TestAllTaskResultProducersUseSnapshotAgentForExactFullID(t *testing.T) {
+	tasks := []ledger.TaskSnapshot{{TaskID: "run-1:t1", RawID: "t1", AgentName: "reviewer", Status: "completed"}}
+	results := []subagents.Result{{TaskID: "run-1:t1", Status: "completed"}}
+	if got := ModelTaskResults(tasks, results, 4096)[0].Agent; got != "reviewer" {
+		t.Fatalf("live Agent = %q, want reviewer", got)
+	}
+	if got := RunTaskResults(&coordinator.RunResult{Snapshot: ledger.RunSnapshot{Tasks: tasks}, Results: results}, 4096)[0].Agent; got != "reviewer" {
+		t.Fatalf("joined Agent = %q, want reviewer", got)
+	}
+	recovered := results
+	recovered[0].Provenance.Kind = "recovered"
+	if got := RunTaskResults(&coordinator.RunResult{Snapshot: ledger.RunSnapshot{Tasks: tasks}, Results: recovered}, 4096)[0].Agent; got != "reviewer" {
+		t.Fatalf("recovered Agent = %q, want reviewer", got)
+	}
+}
+
 // TestModelVisibleRefsUseCanonicalMinter guards the invariant that a reference
 // handed to the model is the canonical, resolvable form: every model-visible ref
 // must be byte-identical to what ledger.Reference mints, and must parse back via

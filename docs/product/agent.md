@@ -125,7 +125,7 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 - Skill names are validated against the loaded skill catalog.
 - Workspace agent files always load. The user-owned `load_workspace_config` gate defaults to enabled. It controls only workspace prompt and project-skill surfaces. Set it to `false` to exclude project skills and workspace `[chat]`/`[subagents]` prompts from runtime activation.
 
-Every `dispatch_tasks` task may select a named `agent` and an optional separate `skill`. Omitting `agent` runs the task as a bare one-shot LLM call on the caller's own model, with no tools; setting `skill` without `agent` is rejected. mivia rejects the call if a selected agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Every `dispatch_tasks` task may select a named `agent` and an optional separate `skill`. If `agent` is omitted or blank, mivia uses the built-in `general-purpose` agent when it is available. If that built-in is unavailable, the task uses a bare one-shot LLM call with no tools; a skill then requires an available agent. mivia rejects the call if the effective agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 The task agent setting is separate from direct user-invoked skill slash handlers and prompt turns.
 

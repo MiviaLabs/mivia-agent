@@ -289,6 +289,24 @@ func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, r
 	return out
 }
 
+func matchTaskAgents(results []encodedTaskResult, tasks []parsedDispatchTask) []string {
+	byID := make(map[string]string, len(results))
+	for _, r := range results {
+		if r.TaskID != "" {
+			byID[r.TaskID] = r.Agent
+		}
+	}
+	out := make([]string, len(tasks))
+	for i, task := range tasks {
+		name, ok := byID[task.ID]
+		if !ok && len(results) == len(tasks) {
+			name = results[i].Agent
+		}
+		out[i] = name
+	}
+	return out
+}
+
 // matchTaskToolCalls pairs each dispatched task with its already-merged
 // tool-call summaries (see toolCallSummary), by task ID first and falling
 // back to positional matching when IDs are absent but the counts agree -
@@ -363,6 +381,7 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	}
 
 	outputs := matchTaskOutputs(results, args.Tasks, tc.Output)
+	agents := matchTaskAgents(results, args.Tasks)
 	toolCalls := matchTaskToolCalls(results, args.Tasks)
 	toolCallsRefs := matchTaskToolCallsRefs(results, args.Tasks)
 	for i, task := range args.Tasks {
@@ -375,6 +394,9 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 		// session's sidebar row (built by thread.go's LoadHistory, which
 		// namespaces the same way) resolves to this reconstruction.
 		keyed := task
+		if agents[i] != "" {
+			keyed.Agent = agents[i]
+		}
 		if namespaceIDs && keyed.ID != "" {
 			keyed.ID = namespacedTaskID(tc.ID, keyed.ID)
 		}

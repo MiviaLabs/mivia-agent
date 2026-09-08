@@ -76,6 +76,147 @@ func decodeStrictTaskJSON(args json.RawMessage, target any) error {
 	return nil
 }
 
+// decodeDispatchTaskJSON adds the presence checks that encoding/json cannot
+// express for optional string selectors. It also rejects duplicate keys before
+// DisallowUnknownFields decodes the request, so a duplicate cannot silently
+// change the route selected by the model.
+type dispatchTaskParams struct {
+	Tasks          []dispatchTaskParam `json:"tasks"`
+	TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
+	Wait           string              `json:"wait,omitempty"`
+	WaitTaskID     string              `json:"wait_task_id,omitempty"`
+}
+
+func decodeDispatchTaskJSON(args json.RawMessage, target *dispatchTaskParams) error {
+	if err := rejectDuplicateJSONKeys(args); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(args))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return validateDispatchTaskSelectors(args, target.Tasks)
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := scanJSONValue(dec); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanJSONValue(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := tok.(json.Delim); ok {
+		switch delim {
+		case '{':
+			seen := map[string]struct{}{}
+			for dec.More() {
+				key, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				name, ok := key.(string)
+				if !ok {
+					return fmt.Errorf("object key is not a string")
+				}
+				if _, exists := seen[name]; exists {
+					return fmt.Errorf("duplicate JSON key %q", name)
+				}
+				seen[name] = struct{}{}
+				if err := scanJSONValue(dec); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token()
+			return err
+		case '[':
+			for dec.More() {
+				if err := scanJSONValue(dec); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token()
+			return err
+		}
+	}
+	return nil
+}
+
+func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskParam) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(args, &root); err != nil {
+		return err
+	}
+	rawTasks, ok := root["tasks"]
+	if !ok || string(rawTasks) == "null" {
+		return fmt.Errorf("tasks must be a non-empty array")
+	}
+	var taskObjects []json.RawMessage
+	if err := json.Unmarshal(rawTasks, &taskObjects); err != nil || len(taskObjects) == 0 {
+		return fmt.Errorf("tasks must be a non-empty array")
+	}
+	for _, field := range []string{"timeout_seconds", "wait", "wait_task_id"} {
+		if value, present := root[field]; present && string(value) == "null" {
+			return fmt.Errorf("%s must not be null", field)
+		}
+	}
+	seenIDs := make(map[string]struct{}, len(tasks))
+	for i, raw := range taskObjects {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return err
+		}
+		for field, value := range fields {
+			if string(value) == "null" {
+				return fmt.Errorf("task %d: %s must not be null", i+1, field)
+			}
+		}
+		if i < len(tasks) {
+			id := strings.TrimSpace(tasks[i].ID)
+			if id != "" {
+				if _, exists := seenIDs[id]; exists {
+					return fmt.Errorf("duplicate task id %q", id)
+				}
+				seenIDs[id] = struct{}{}
+			}
+		}
+		for _, field := range []string{"agent", "skill"} {
+			value, present := fields[field]
+			if !present {
+				continue
+			}
+			var text string
+			if string(value) == "null" {
+				return fmt.Errorf("task %d: %s must be a string when present", i+1, field)
+			}
+			if err := json.Unmarshal(value, &text); err != nil {
+				return fmt.Errorf("task %d: %s must be a string when present: %w", i+1, field, err)
+			}
+		}
+	}
+	return nil
+}
+
 // ResolveTaskRoute resolves an agent name and optional skill into a
 // TaskRoute. This is the ONE production resolver for every dispatched
 // task - dispatch_tasks, spawn_agent, and referral/messaging spawning all
@@ -120,17 +261,34 @@ func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agen
 	return TaskRoute{agent: agent, digest: digest, skill: skillName}, nil
 }
 
+// resolveDispatchTaskRoute applies dispatch_tasks' convenience default while
+// leaving the shared resolver unchanged for referral and other callers.
+func resolveDispatchTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agentName, skillName string) (TaskRoute, error) {
+	if strings.TrimSpace(agentName) == "" && reg != nil {
+		if _, ok := reg.Get(agents.BuiltInGeneralPurposeName); ok {
+			agentName = agents.BuiltInGeneralPurposeName
+		}
+	}
+	return ResolveTaskRoute(reg, skillReg, agentName, skillName)
+}
+
 // taskItemSchema builds one task's schema. includeRoster controls whether the
 // agent property carries the full roster prose (agentRoutingDescription):
 // dispatch_tasks and spawn_agent both embed this schema in every request, so
 // the roster ships once - in dispatch_tasks, the primary router the compiled
 // prompt orders - and spawn_agent keeps only the enum for validation.
 //
-// "agent" is optional: an omitted agent runs the task as a bare one-shot
-// LLM call on the calling session's own model, with no tools (see
-// ResolveTaskRoute's Oneshot route). Only "id" and "prompt" are required.
+// "agent" is optional: when general-purpose is present, an omitted or blank
+// agent selects it; otherwise it selects the bare one-shot route. A skill
+// requires an agent. Only "id" and "prompt" are required.
 func taskItemSchema(reg *agents.AgentRegistry, includeRoster bool) map[string]any {
 	agentDescription := agentRoutingDescription(nil)
+	skillDescription := "Optional skill invoked under the effective agent's policy"
+	if reg == nil {
+		skillDescription += "; requires an explicit agent when no general-purpose default is available"
+	} else if _, ok := reg.Get(agents.BuiltInGeneralPurposeName); !ok {
+		skillDescription += "; requires an explicit agent when no general-purpose default is available"
+	}
 	if includeRoster {
 		agentDescription = agentRoutingDescription(reg)
 	}
@@ -144,9 +302,9 @@ func taskItemSchema(reg *agents.AgentRegistry, includeRoster bool) map[string]an
 	properties := map[string]any{
 		"id":              map[string]any{"type": "string", "description": "Unique task identifier within this run"},
 		"agent":           agentProp,
-		"skill":           map[string]any{"type": "string", "description": "Optional skill invoked under the selected agent's policy; requires agent"},
+		"skill":           map[string]any{"type": "string", "description": skillDescription},
 		"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs that must complete first"},
-		"prompt":          map[string]any{"type": "string", "description": "Natural language task description for the selected agent, or the bare prompt for an agent-less one-shot call"},
+		"prompt":          map[string]any{"type": "string", "description": "Natural language task description for the selected agent, or the prompt for the fallback one-shot call"},
 		"timeout_seconds": map[string]any{"type": "integer", "description": "Per-task timeout override in seconds. " + TimeoutHint()},
 		"budget":          map[string]any{"type": "integer", "minimum": 0, "description": "Budget for this task"},
 		"output_schema": map[string]any{
@@ -183,14 +341,17 @@ func agentNames(reg *agents.AgentRegistry) []string {
 }
 
 // agentRoutingBaseDescription states the contract of the task "agent" field
-// without a roster. The field is OPTIONAL: omitting it runs a tool-less
-// one-shot call. The "always available" clause for the compiled built-in is
+// without a roster. The field is OPTIONAL: general-purpose is the default
+// when present; otherwise omission runs a tool-less one-shot call. A skill
+// is checked against that effective agent when the default is available. The
+// "always available" clause for the compiled built-in is
 // appended by agentRoutingDescription only when the built-in actually
 // resolved into the registry (a same-name skill collision can skip it), so
 // the prose never promises a target the enum lacks.
 const agentRoutingBaseDescription = "Optional authorized agent for this task: " +
-	"name a listed agent, or omit the field for a tool-less one-shot call on " +
-	"the calling model."
+	"name a listed agent; when general-purpose is available, omission or a blank " +
+	"value selects it. If it is unavailable, omission uses a tool-less one-shot call " +
+	"on the calling model; skills still require an available agent."
 
 func agentRoutingDescription(reg *agents.AgentRegistry) string {
 	description := agentRoutingBaseDescription

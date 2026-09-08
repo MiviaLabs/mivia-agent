@@ -160,7 +160,7 @@ func translateSubagentBegin(ev agent.Event) []uievent.Event {
 			// Log carries the task text: Progress has no free-text field,
 			// and Log is what the row already renders for a run's latest
 			// human-readable note.
-			Progress: &uievent.Progress{Status: "running", Log: laneLog(ev.Detail)},
+			Progress: &uievent.Progress{AgentName: ev.Origin.Agent, Status: "running", Log: laneLog(ev.Detail)},
 		},
 	})
 }
@@ -235,7 +235,7 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
-			Progress:   &uievent.Progress{Status: status},
+			Progress:   &uievent.Progress{AgentName: ev.Origin.Agent, Status: status},
 		},
 	})
 }
@@ -274,6 +274,7 @@ func translateSubagentHeartbeat(ev agent.Event) []uievent.Event {
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
 			Progress: &uievent.Progress{
+				AgentName: ev.Origin.Agent,
 				Status:    "running",
 				Step:      heartbeatStep(ev.Detail),
 				ToolCalls: heartbeatToolCalls(ev.Detail),

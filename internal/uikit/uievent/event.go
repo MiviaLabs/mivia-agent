@@ -121,6 +121,7 @@ func (AssistantResetBody) isBody() {}
 // Progress carries subagent step progress. It is optional on
 // ToolOutputBody; nil means ordinary incremental tool output.
 type Progress struct {
+	AgentName      string   `json:"agent_name,omitempty"`
 	Step           int      `json:"step"`
 	TotalSteps     int      `json:"total_steps"`
 	ElapsedSeconds float64  `json:"elapsed_seconds"`

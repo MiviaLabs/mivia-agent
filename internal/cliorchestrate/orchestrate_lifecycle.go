@@ -22,6 +22,7 @@ import (
 type modelTaskResult struct {
 	TaskID      string `json:"task_id"`
 	Status      string `json:"status"`
+	Agent       string `json:"agent,omitempty"`
 	Output      any    `json:"output,omitempty"`
 	OutputRef   string `json:"output_ref,omitempty"`
 	OutputBytes int    `json:"output_bytes,omitempty"`
@@ -35,6 +36,24 @@ type modelTaskResult struct {
 	// tool-call trace; same contract as dispatchTaskResult.ToolCallsRef
 	// (read from the task record, never re-minted; page via ledger_read).
 	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
+}
+
+// MarshalJSON preserves the established dispatch envelope field order.
+func (r modelTaskResult) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		TaskID       string            `json:"task_id"`
+		Status       string            `json:"status"`
+		Output       any               `json:"output,omitempty"`
+		OutputRef    string            `json:"output_ref,omitempty"`
+		OutputBytes  int               `json:"output_bytes,omitempty"`
+		Synopsis     string            `json:"synopsis,omitempty"`
+		ReadHint     string            `json:"read_hint,omitempty"`
+		Error        string            `json:"error,omitempty"`
+		ErrorRef     string            `json:"error_ref,omitempty"`
+		Messages     []messageSynopsis `json:"messages,omitempty"`
+		ToolCallsRef string            `json:"tool_calls_ref,omitempty"`
+		Agent        string            `json:"agent,omitempty"`
+	}{r.TaskID, r.Status, r.Output, r.OutputRef, r.OutputBytes, r.Synopsis, r.ReadHint, r.Error, r.ErrorRef, r.Messages, r.ToolCallsRef, r.Agent})
 }
 
 // ModelTaskResults returns live orchestration results for model consumption.
@@ -60,7 +79,7 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 	msgIndex := TaskMessageIndex(context.Background(), repo, tasks)
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
-		out[i] = modelTaskResult{TaskID: taskRawIDByID(tasks, result.TaskID), Status: result.Status}
+		out[i] = modelTaskResult{TaskID: taskRawIDByID(tasks, result.TaskID), Status: result.Status, Agent: agentForTask(tasks, result.TaskID)}
 		if out[i].Status == "" {
 			out[i].Status = "completed"
 		}
@@ -107,6 +126,7 @@ func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
 	for i, task := range tasks {
 		out[i] = modelTaskResult{
 			TaskID: modelVisibleTaskID(task), Status: task.Status,
+			Agent:     task.AgentName,
 			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
 		}
 		// Attachments come only from attachTaskRecord, keyed off the

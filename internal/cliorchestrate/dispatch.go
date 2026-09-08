@@ -70,11 +70,11 @@ func (t *dispatchTasksTool) Description() string {
 	// same-name skill collision can skip it), so the prose never promises a
 	// target the enum lacks.
 	if _, ok := t.agentReg.Get(agents.BuiltInGeneralPurposeName); ok {
-		desc += "The agent field is optional: the built-in general-purpose agent is always available and carries " +
-			"the default toolset; omitting agent runs a tool-less one-shot call, so name an agent for any task that needs tools. "
+		desc += "The agent field is optional: when general-purpose is available, an omitted or blank agent uses it and its " +
+			"default toolset; name an agent only to select another route. A skill is checked against the effective agent. "
 	} else {
 		desc += "The agent field is optional: name a listed agent for any task that needs tools; " +
-			"omitting agent runs a tool-less one-shot call. "
+			"when general-purpose is unavailable, omitting or blanking agent runs a tool-less one-shot call; a skill still requires an agent. "
 	}
 	desc += "Tasks without dependencies (depends_on) run concurrently. " +
 		"Every task always reports its own result and status, so one failure never " +
@@ -121,17 +121,9 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 }
 
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var params struct {
-		Tasks          []dispatchTaskParam `json:"tasks"`
-		TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
-		Wait           string              `json:"wait,omitempty"`
-		WaitTaskID     string              `json:"wait_task_id,omitempty"`
-	}
-	if err := decodeStrictTaskJSON(args, &params); err != nil {
+	var params dispatchTaskParams
+	if err := decodeDispatchTaskJSON(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
-	}
-	if len(params.Tasks) == 0 {
-		return `{"tasks":[]}`, nil
 	}
 	wait, err := normalizedDispatchWait(params.Wait, params.WaitTaskID)
 	if err != nil {
@@ -312,6 +304,7 @@ type dispatchTaskParam struct {
 
 func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskParam, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
+	seenIDs := make(map[string]struct{}, len(params))
 	for i, pt := range params {
 		// id is declared required by taskItemSchema, but decodeStrictTaskJSON
 		// only rejects unknown fields - JSON Schema "required" is advisory to
@@ -331,10 +324,15 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 		// fast here, before any subagent spawns, turns a silently stuck
 		// batch member into an immediate, actionable tool error the model
 		// can retry from.
-		if strings.TrimSpace(pt.ID) == "" {
+		canonicalID := strings.TrimSpace(pt.ID)
+		if canonicalID == "" {
 			return nil, fmt.Errorf("dispatch_tasks: task %d: id is required (every task needs a unique id so its progress can be tracked)", i+1)
 		}
-		route, err := ResolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
+		if _, exists := seenIDs[canonicalID]; exists {
+			return nil, fmt.Errorf("dispatch_tasks: duplicate task id %q", canonicalID)
+		}
+		seenIDs[canonicalID] = struct{}{}
+		route, err := resolveDispatchTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
 		if err != nil {
 			return nil, fmt.Errorf("dispatch_tasks: %w", err)
 		}
@@ -356,7 +354,7 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 			}
 		}
 		tasks[i] = subagents.Task{
-			ID: namespacedTaskID(namespace, pt.ID), RawID: pt.ID, InvocationKey: namespace + ":" + pt.ID,
+			ID: namespacedTaskID(namespace, canonicalID), RawID: canonicalID, InvocationKey: namespace + ":" + canonicalID,
 			Name: name, AgentName: agentName, AgentDigest: digest,
 			Skill: route.skill, Owner: DefaultToolOwner,
 			ProviderName: providerName, Model: model,

@@ -88,6 +88,42 @@ func TestCleanRegistryDispatchesBuiltInAgent(t *testing.T) {
 	}
 }
 
+func TestDispatchTasksDefaultsBlankAgentToGeneralPurpose(t *testing.T) {
+	reg := agents.NewRegistry()
+	if err := reg.Publish(agents.ResolvedAgent{Name: agents.BuiltInGeneralPurposeName}); err != nil {
+		t.Fatal(err)
+	}
+	tool := &dispatchTasksTool{agentReg: reg, cfg: config.DefaultSubagentConfig}
+	tasks, err := tool.buildTasks("call", []dispatchTaskParam{{ID: "t1", Prompt: "work"}, {ID: "t2", Agent: " ", Prompt: "more"}}, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range tasks {
+		if task.AgentName != agents.BuiltInGeneralPurposeName || task.Name != agents.BuiltInGeneralPurposeName {
+			t.Fatalf("task route = name %q agent %q, want general-purpose", task.Name, task.AgentName)
+		}
+	}
+}
+
+func TestDispatchTasksUsesOneshotOnlyWhenGeneralPurposeUnavailable(t *testing.T) {
+	tool := &dispatchTasksTool{agentReg: agents.NewRegistry(), cfg: config.DefaultSubagentConfig}
+	tasks, err := tool.buildTasks("call", []dispatchTaskParam{{ID: "t1", Prompt: "work"}}, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tasks[0].Name != HandlerOneshot || tasks[0].AgentName != "" {
+		t.Fatalf("task = %+v, want one-shot route", tasks[0])
+	}
+}
+
+func TestDispatchTasksRejectsDuplicateCanonicalTaskIDsBeforeSpawn(t *testing.T) {
+	tool := &dispatchTasksTool{agentReg: agents.NewRegistry(), cfg: config.DefaultSubagentConfig}
+	_, err := tool.buildTasks("call", []dispatchTaskParam{{ID: "same", Prompt: "one"}, {ID: " same ", Prompt: "two"}}, 60)
+	if err == nil || !strings.Contains(err.Error(), "duplicate task id") {
+		t.Fatalf("err = %v, want duplicate canonical task id rejection", err)
+	}
+}
+
 // TestRoutingProseDropsAlwaysAvailableClaimWhenBuiltInSkipped pins that the
 // schema prose never promises the built-in when it did not resolve (e.g. a
 // same-name skill collision skips it with a warning).

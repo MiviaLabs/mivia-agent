@@ -118,6 +118,7 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 							} `json:"tasks"`
 						}
 						if json.Unmarshal([]byte(tc.Arguments), &args) == nil && len(args.Tasks) > 0 {
+							resultAgents := historicalTaskAgents(tc.Output, tc.ID)
 							for i, t := range args.Tasks {
 								tid := t.ID
 								if tid == "" {
@@ -132,13 +133,13 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 									// was tc.ID+":"+t.ID, not t.ID verbatim.
 									tid = namespacedTaskID(tc.ID, tid)
 								}
-								s.panel.observeAgentHistory(tid, status)
+								s.panel.observeAgentHistory(tid, status, resultAgents[tid])
 							}
 						} else {
-							s.panel.observeAgentHistory(tc.ID, status)
+							s.panel.observeAgentHistory(tc.ID, status, "")
 						}
 					} else {
-						s.panel.observeAgentHistory(tc.ID, status)
+						s.panel.observeAgentHistory(tc.ID, status, "")
 					}
 				}
 			}
@@ -152,6 +153,41 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 		}
 	}
 	s.refreshTopbar()
+}
+
+// historicalTaskAgents reconstructs routed names from a persisted
+// dispatch_tasks result. The result task_id is the full namespaced identity;
+// matching that identity avoids assigning one parallel task's agent to
+// another task with the same legacy suffix.
+func historicalTaskAgents(output, namespace string) map[string]string {
+	var rows []struct {
+		TaskID string `json:"task_id"`
+		Agent  string `json:"agent"`
+	}
+	if json.Unmarshal([]byte(output), &rows) != nil {
+		var envelope struct {
+			TaskResults []struct {
+				TaskID string `json:"task_id"`
+				Agent  string `json:"agent"`
+			} `json:"task_results"`
+		}
+		if json.Unmarshal([]byte(output), &envelope) != nil {
+			return nil
+		}
+		rows = envelope.TaskResults
+	}
+	result := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if row.TaskID == "" || row.Agent == "" {
+			continue
+		}
+		fullID := row.TaskID
+		if namespace == "" || !strings.HasPrefix(fullID, namespace+":") {
+			fullID = namespacedTaskID(namespace, fullID)
+		}
+		result[fullID] = row.Agent
+	}
+	return result
 }
 
 // setSurface is the embedded screen's resize entry point: the dialog

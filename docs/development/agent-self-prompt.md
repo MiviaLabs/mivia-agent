@@ -82,7 +82,9 @@ skills = [
 
 Root `mivia.toml` omits `skills` so the orchestrator may invoke any trusted
 skill. Enforcement is at the task boundary when the model selects the task's
-explicit `agent` and optional `skill` fields.
+explicit `agent` and optional `skill` fields. If `agent` is omitted or blank,
+the dispatcher uses `general-purpose` when it is loaded; otherwise it uses the
+tool-less one-shot fallback, and a skill requires an available agent.
 
 ## User gate (`load_workspace_config`)
 

@@ -31,6 +31,37 @@ func matchesAgentID(aID, id string) bool {
 	return false
 }
 
+// agentIndex prefers the exact full ID. A namespace-stripped legacy ID may
+// fall back only when one row has that suffix; otherwise attribution would
+// update an arbitrary task in a parallel batch.
+func agentIndex(rows []subagentRow, id string) int {
+	for i, row := range rows {
+		if row.ID == id {
+			return i
+		}
+	}
+	found := -1
+	for i, row := range rows {
+		if matchesAgentID(row.ID, id) {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	return found
+}
+
+func ambiguousAgentID(rows []subagentRow, id string) bool {
+	count := 0
+	for _, row := range rows {
+		if row.ID != id && matchesAgentID(row.ID, id) {
+			count++
+		}
+	}
+	return id != "" && count > 1
+}
+
 // observeAgentStart records or updates one subagent's running status. A
 // start means a NEW task under an old id - not history. Leaving it
 // terminal would badge a genuinely running dispatch as already finished.
@@ -40,26 +71,24 @@ func matchesAgentID(aID, id string) bool {
 // running until its end event re-terminates it.
 func (p *panel) observeAgentStart(id, name string) {
 	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			if name != "" {
-				p.agents[i].Name = name
-			}
-			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
-				p.agents[i].Status = "running"
-				// A (re)created row is a NEW run under a reused id: anchor
-				// its stall clock and its elapsed-time clock now, so the
-				// fresh row never renders instantly "stalled", nor reports
-				// the elapsed time of the run that already ended.
-				now := time.Now()
-				p.agents[i].LastProgress = now
-				p.agents[i].StartedAt = now
-			}
-			p.rebindIfOpen()
-			return
+	if i := agentIndex(p.agents, id); i >= 0 {
+		a := p.agents[i]
+		if name != "" {
+			p.agents[i].Name = name
 		}
+		if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
+			p.agents[i].Status = "running"
+			now := time.Now()
+			p.agents[i].LastProgress = now
+			p.agents[i].StartedAt = now
+		}
+		p.rebindIfOpen()
+		return
 	}
 	now := time.Now()
+	if ambiguousAgentID(p.agents, id) {
+		return
+	}
 	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: "running", LastProgress: now, StartedAt: now})
 	p.rebindIfOpen()
 }
@@ -71,13 +100,14 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 		status = "failed"
 	}
 	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			p.agents[i].Status = status
-			p.agents[i].LastProgress = time.Now()
-			p.rebindIfOpen()
-			return
-		}
+	if i := agentIndex(p.agents, id); i >= 0 {
+		p.agents[i].Status = status
+		p.agents[i].LastProgress = time.Now()
+		p.rebindIfOpen()
+		return
+	}
+	if ambiguousAgentID(p.agents, id) {
+		return
 	}
 }
 
@@ -135,13 +165,11 @@ func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, 
 // observeAgentEnd, which only ever writes "completed" or "failed".
 func (p *panel) setAgentStatus(id, status string) {
 	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			p.agents[i].Status = status
-			p.agents[i].LastProgress = time.Now()
-			p.rebindIfOpen()
-			return
-		}
+	if i := agentIndex(p.agents, id); i >= 0 {
+		p.agents[i].Status = status
+		p.agents[i].LastProgress = time.Now()
+		p.rebindIfOpen()
+		return
 	}
 }
 
@@ -201,18 +229,23 @@ func (p *panel) reconcileTerminal(reason string) {
 }
 
 // observeAgentHistory idempotently registers or updates a subagent from replayed history.
-func (p *panel) observeAgentHistory(id, status string) {
-	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			if isNonTerminalStatus(a.Status) {
-				p.agents[i].Status = status
-			}
-			p.rebindIfOpen()
-			return
-		}
+func (p *panel) observeAgentHistory(id, status string, names ...string) {
+	name := ""
+	if len(names) > 0 {
+		name = names[0]
 	}
-	p.agents = append(p.agents, subagentRow{ID: id, Status: status})
+	p.agents = slices.Clone(p.agents)
+	if i := agentIndex(p.agents, id); i >= 0 {
+		if isNonTerminalStatus(p.agents[i].Status) {
+			p.agents[i].Status = status
+		}
+		if name != "" {
+			p.agents[i].Name = name
+		}
+		p.rebindIfOpen()
+		return
+	}
+	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: status})
 	p.rebindIfOpen()
 }
 
@@ -233,41 +266,47 @@ func (p panel) activeAgentCount() int {
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	log := slices.Clone(pr.Log)
 	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
-				return
-			}
-			row := a
-			if pr.Status != "" {
-				row.Status = pr.Status
-			}
-			if pr.Step > 0 {
-				row.Step = pr.Step
-			}
-			if pr.TotalSteps > 0 {
-				row.Total = pr.TotalSteps
-			}
-			if pr.ToolCalls > 0 {
-				row.ToolCalls = pr.ToolCalls
-			}
-			if len(log) > 0 {
-				combinedLog := make([]string, 0, len(a.Log)+len(log))
-				combinedLog = append(combinedLog, a.Log...)
-				combinedLog = append(combinedLog, log...)
-				row.Log = combinedLog
-			}
-			if progressAdvances(a, row) {
-				row.LastProgress = time.Now()
-			}
-			p.agents[i] = row
-			p.rebindIfOpen()
+	if i := agentIndex(p.agents, id); i >= 0 {
+		a := p.agents[i]
+		if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
 			return
 		}
+		row := a
+		if pr.AgentName != "" {
+			row.Name = pr.AgentName
+		}
+		if pr.Status != "" {
+			row.Status = pr.Status
+		}
+		if pr.Step > 0 {
+			row.Step = pr.Step
+		}
+		if pr.TotalSteps > 0 {
+			row.Total = pr.TotalSteps
+		}
+		if pr.ToolCalls > 0 {
+			row.ToolCalls = pr.ToolCalls
+		}
+		if len(log) > 0 {
+			combinedLog := make([]string, 0, len(a.Log)+len(log))
+			combinedLog = append(combinedLog, a.Log...)
+			combinedLog = append(combinedLog, log...)
+			row.Log = combinedLog
+		}
+		if progressAdvances(a, row) {
+			row.LastProgress = time.Now()
+		}
+		p.agents[i] = row
+		p.rebindIfOpen()
+		return
 	}
 	now := time.Now()
+	if ambiguousAgentID(p.agents, id) {
+		return
+	}
 	row := subagentRow{
 		ID:           id,
+		Name:         pr.AgentName,
 		Status:       pr.Status,
 		Step:         pr.Step,
 		Total:        pr.TotalSteps,

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	uiadapter "github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -71,7 +72,7 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 2, ToolCalls: 5,
+						AgentName: "auditor", Status: "running", Step: 2, ToolCalls: 5,
 						Log: []string{"elapsed=30s steps=2 toolcalls=5"},
 					},
 				},
@@ -88,7 +89,7 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 2,
+						AgentName: "auditor", Status: "running", Step: 2,
 						Log: []string{"elapsed=30s steps=2"},
 					},
 				},
@@ -105,7 +106,7 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 0,
+						AgentName: "auditor", Status: "running", Step: 0,
 						Log: []string{"raw loop step remap"},
 					},
 				},
@@ -121,7 +122,7 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 				Kind: uievent.KindToolOutput,
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
-					Progress:   &uievent.Progress{Status: "running"},
+					Progress:   &uievent.Progress{AgentName: "auditor", Status: "running"},
 				},
 			}},
 		},
@@ -131,6 +132,25 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 			want: nil,
 		},
 	})
+}
+
+func TestTranslateEvent_SubagentProgressCarriesAgentName(t *testing.T) {
+	for _, kind := range []agent.EventKind{agent.EventSubagentBegin, agent.EventSubagentHeartbeat, agent.EventSubagentDone} {
+		ev := agent.Event{Kind: kind, Detail: "elapsed=1s steps=1", Status: "completed", Origin: agent.EventOrigin{TaskID: "run:t1", Agent: "reviewer"}}
+		out := uiadapter.TranslateEvent(ev)
+		found := false
+		for _, item := range out {
+			if body, ok := item.Body.(uievent.ToolOutputBody); ok && body.Progress != nil {
+				found = true
+				if body.Progress.AgentName != "reviewer" {
+					t.Fatalf("%s AgentName = %q, want reviewer", kind, body.Progress.AgentName)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s produced no progress body", kind)
+		}
+	}
 }
 
 // TestTranslateEvent_SubagentHeartbeatBadCounts pins the two malformed
@@ -151,7 +171,7 @@ func TestTranslateEvent_SubagentHeartbeatBadCounts(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 0,
+						AgentName: "auditor", Status: "running", Step: 0,
 						Log: []string{"elapsed=30s steps=not-a-number"},
 					},
 				},
@@ -168,7 +188,7 @@ func TestTranslateEvent_SubagentHeartbeatBadCounts(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 0,
+						AgentName: "auditor", Status: "running", Step: 0,
 						Log: []string{"elapsed=30s steps=-3"},
 					},
 				},
@@ -185,7 +205,7 @@ func TestTranslateEvent_SubagentHeartbeatBadCounts(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 2,
+						AgentName: "auditor", Status: "running", Step: 2,
 						Log: []string{"elapsed=30s steps=2 toolcalls=not-a-number"},
 					},
 				},
@@ -202,7 +222,7 @@ func TestTranslateEvent_SubagentHeartbeatBadCounts(t *testing.T) {
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
 					Progress: &uievent.Progress{
-						Status: "running", Step: 2,
+						AgentName: "auditor", Status: "running", Step: 2,
 						Log: []string{"elapsed=30s steps=2 toolcalls=-7"},
 					},
 				},
@@ -236,7 +256,7 @@ func TestTranslateEvent_SubagentDone(t *testing.T) {
 					Kind: uievent.KindToolOutput,
 					Body: uievent.ToolOutputBody{
 						ToolCallID: "wft-1",
-						Progress:   &uievent.Progress{Status: "completed"},
+						Progress:   &uievent.Progress{AgentName: "audit", Status: "completed"},
 					},
 				},
 			},
@@ -256,7 +276,7 @@ func TestTranslateEvent_SubagentDone(t *testing.T) {
 					Kind: uievent.KindToolOutput,
 					Body: uievent.ToolOutputBody{
 						ToolCallID: "wft-1",
-						Progress:   &uievent.Progress{Status: "completed"},
+						Progress:   &uievent.Progress{AgentName: "audit", Status: "completed"},
 					},
 				},
 			},
@@ -309,7 +329,7 @@ func TestTranslateEvent_SubagentDoneStatusVocabulary(t *testing.T) {
 							Kind: uievent.KindToolOutput,
 							Body: uievent.ToolOutputBody{
 								ToolCallID: "wft-st",
-								Progress:   &uievent.Progress{Status: st.rowStatus},
+								Progress:   &uievent.Progress{AgentName: "audit", Status: st.rowStatus},
 							},
 						},
 					},

@@ -24,10 +24,6 @@ type dispatchTaskResult struct {
 	StepCount int64  `json:"step_count,omitempty"`
 	// Schema is ok|violation when a schema was in force; omitted when none.
 	Schema string `json:"schema,omitempty"`
-	// Agent is the routed definition that produced this result. Parallel
-	// research aggregates results from several agents, and without
-	// provenance a caller cannot tell whose evidence it is holding.
-	Agent string `json:"agent,omitempty"`
 	// Reason is the typed termination cause. Status alone collapses
 	// distinct outcomes - an operator cancel, a task deadline, an agent's
 	// own ceiling, and a dependency that never ran all look alike - which
@@ -94,8 +90,7 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 // result, applying the inline-by-reference threshold for both output and error.
 func EncodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, threshold int) dispatchTaskResult {
 	tr := dispatchTaskResult{
-		modelTaskResult: modelTaskResult{TaskID: r.TaskID, Status: r.Status},
-		Agent:           agentForTask(tasks, r.TaskID),
+		modelTaskResult: modelTaskResult{TaskID: r.TaskID, Status: r.Status, Agent: agentForTask(tasks, r.TaskID)},
 		Reason:          terminationReason(r),
 	}
 	// Only an unerrored result defaults to completed. Defaulting first and
