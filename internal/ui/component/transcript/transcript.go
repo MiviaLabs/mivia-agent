@@ -302,6 +302,20 @@ func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 }
 
 func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cmd) {
+	// Providers may return reasoning only after they streamed answer text.
+	// That text is still pending and text.end will commit it. Do not switch
+	// the shared pending span to reasoning: appendPending would flush the
+	// answer early, then text.end would commit the same answer again.
+	if m.pendingKind == uievent.KindTextDelta {
+		if b.Text == "" {
+			return m, nil
+		}
+		words := b.WordCount
+		if words == 0 {
+			words = len(strings.Fields(b.Text))
+		}
+		return m.pushBlock(reasoningBlock(b.Text, words))
+	}
 	if b.WordCount == 0 {
 		return m, m.appendPending(uievent.KindReasoning, b.Text)
 	}
@@ -310,21 +324,25 @@ func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cm
 		raw = b.Text
 	}
 	m.clearPending()
+	return m.pushBlock(reasoningBlock(raw, b.WordCount))
+}
+
+func reasoningBlock(text string, words int) Block {
 	var body []string
-	if raw != "" {
-		body = strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	if text != "" {
+		body = strings.Split(strings.TrimRight(text, "\n"), "\n")
 	}
-	return m.pushBlock(Block{
+	return Block{
 		Kind:        uievent.KindReasoning,
 		Collapsible: true,
 		Collapsed:   true,
 		Header: Header{
 			Label: "reasoning",
-			Meta:  fmt.Sprintf("%d words", b.WordCount),
+			Meta:  fmt.Sprintf("%d words", words),
 			State: "hidden",
 		},
 		Body: body,
-	})
+	}
 }
 
 func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {

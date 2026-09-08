@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -32,11 +34,10 @@ func blockText(m Model, kind uievent.Kind) string {
 // Reasoning deltas accumulate into a PENDING span that only becomes a block
 // when something flushes it, and the flush was driven by tool and turn
 // events. text.end discarded the pending span outright. An agent that reasons
-// and then answers - with no tool call in between, which is the ordinary
-// shape of a subagent run - therefore had its whole reasoning block wiped the
-// moment its answer arrived. Reopening the thread showed the reasoning again,
-// because history replay takes a different branch, which is what made the
-// loss look random rather than systematic.
+// and then answers - with no tool call in between - therefore had its whole
+// reasoning block wiped the moment its answer arrived. Reopening the thread
+// showed the reasoning again, because history replay takes a different branch,
+// which is what made the loss look random rather than systematic.
 func TestReasoningSurvivesAnAnswerWithNoToolCallBetween(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 
@@ -104,5 +105,27 @@ func TestReasoningDoesNotBleedIntoTheAnswer(t *testing.T) {
 	answer := blockText(m, uievent.KindTextEnd)
 	if strings.Contains(answer, "private thought") {
 		t.Errorf("answer = %q, carries reasoning text that was never part of the reply", answer)
+	}
+}
+
+func TestLateReasoningDoesNotCommitPendingAnswerTwice(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+
+	for _, ev := range []uievent.Event{
+		{Body: uievent.TurnStartBody{Input: "hi"}},
+		{Body: uievent.TextDeltaBody{Text: "The answer."}},
+		{Body: uievent.ReasoningDeltaBody{Text: "Some thinking."}},
+		{Body: uievent.TextEndBody{Text: "The answer."}},
+		{Body: uievent.TurnEndBody{Reason: "completed"}},
+	} {
+		m, _ = m.HandleEvent(ev)
+	}
+
+	if got := strings.Count(ansi.Strip(m.Dump()), "The answer."); got != 1 {
+		t.Fatalf("answer rendered %d times, want once:\n%s", got, m.Dump())
+	}
+	if got := blockText(m, uievent.KindReasoning); got != "Some thinking." {
+		t.Fatalf("reasoning block = %q, want late reasoning", got)
 	}
 }
