@@ -404,7 +404,7 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
-	w := m.width - uikitconfig.BodyIndent
+	w := m.width - groupIndent - uikitconfig.BodyIndent
 	if w <= 0 {
 		w = 80
 	}
@@ -548,7 +548,7 @@ func (m Model) restyle(b Block) Block {
 		// styled at push time, so the theme change must restyle it.
 		b.Body = usageBlockValue(m.Theme, m.Tier, *b.Usage).Body
 	case b.Diff != nil:
-		w := m.width - uikitconfig.BodyIndent
+		w := m.width - groupIndent - uikitconfig.BodyIndent
 		if w <= 0 {
 			w = 80
 		}

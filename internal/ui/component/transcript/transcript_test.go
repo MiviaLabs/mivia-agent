@@ -78,6 +78,39 @@ func TestRenderGolden(t *testing.T) {
 	}
 }
 
+func TestLiveSplitDiffDoesNotInsertBlankRows(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(80, 30)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "diff-1", Name: "edit"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{
+			ToolCallID: "diff-1",
+			Name:       "edit",
+			OK:         true,
+			Diff: &uievent.Diff{Path: "file.go", Hunks: []uievent.DiffHunk{{
+				Header: "@@ -1,1 +1,3 @@",
+				Lines: []uievent.DiffLine{
+					{Kind: uievent.DiffLineAdd, Text: "first"},
+					{Kind: uievent.DiffLineAdd, Text: "second"},
+					{Kind: uievent.DiffLineAdd, Text: "third"},
+				},
+			}}},
+		}})
+
+	m.blocks[0].Collapsed = false
+	rows := m.Rows()
+	for i := 1; i < len(rows); i++ {
+		if ansi.Strip(rows[i-1]) == "" || ansi.Strip(rows[i]) == "" {
+			continue
+		}
+		if strings.Contains(ansi.Strip(rows[i-1]), "+first") && strings.Contains(ansi.Strip(rows[i]), "+second") {
+			return
+		}
+	}
+	t.Fatalf("adjacent diff rows were separated or not rendered: %q", rows)
+}
+
 func compareGolden(t *testing.T, path, got string) {
 	t.Helper()
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
@@ -363,7 +396,7 @@ func TestSetThemeReRendersADiffMergedIntoALiveBlock(t *testing.T) {
 	m.SetTheme(light, theme.TierTrueColor)
 	after := strings.Join(m.Blocks()[0].Body, "\n")
 
-	want := render.SplitDiff(light, theme.TierTrueColor, 80-uikitconfig.BodyIndent, *sampleDiff())
+	want := render.SplitDiff(light, theme.TierTrueColor, 80-groupIndent-uikitconfig.BodyIndent, *sampleDiff())
 	if !strings.Contains(after, want) {
 		t.Errorf("the diff was not re-rendered in the new theme:\ngot  %q\nwant %q", after, want)
 	}
