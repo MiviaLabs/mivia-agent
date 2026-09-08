@@ -72,6 +72,30 @@ func TestNewSessionState_ReplaysHistoricalToolDiff(t *testing.T) {
 	}
 }
 
+func TestNewSessionState_ReplaysFailedCommandAsFailed(t *testing.T) {
+	conv := &backgroundTestConversation{history: []ports.Message{
+		{Role: "user", Text: "run tests"},
+		{Role: "assistant", ToolCalls: []ports.ToolCall{{
+			ID: "call-1", Name: "run_command", Arguments: `{"command":"go test"}`,
+			Output: "command: go test\ncwd: /workspace\nexit=1\nstderr:\ncompile error",
+		}}},
+	}}
+	s := New(loadTheme(t), theme.TierASCII, nil, conv, nil, 80, fixedNow)
+	st := s.newSessionState(conv)
+	blocks := st.transcript.Blocks()
+	if len(blocks) == 0 {
+		t.Fatal("replay produced no tool block")
+	}
+	block := blocks[len(blocks)-1]
+	if block.Header.State != "failed" {
+		t.Fatalf("replayed command state = %q, want failed", block.Header.State)
+	}
+	body := strings.Join(block.Body, "\n")
+	if !strings.Contains(body, "compile error") {
+		t.Fatalf("replayed command lost diagnostic: %q", body)
+	}
+}
+
 // TestNewSessionState_ReplaysHistoryIntoTranscriptAndComposer drives
 // Screen.newSessionState through the real public surface used in
 // production (mount.go's handleSessionMountedMsg calls the same

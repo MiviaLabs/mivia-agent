@@ -74,6 +74,39 @@ func TestSubagentThreads_RegisterAndLookup(t *testing.T) {
 	}
 }
 
+func TestSubagentThreads_BeginRecordsInitialTaskOnce(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	origin := agent.EventOrigin{
+		TaskID:          "task-begin",
+		Agent:           "auditor",
+		TaskDescription: "audit the diff",
+	}
+	begin := agent.Event{Kind: agent.EventSubagentBegin, Origin: origin, Detail: origin.TaskDescription}
+
+	threads.HandleEvent(begin, uiadapter.TranslateOptions{})
+	threads.HandleEvent(begin, uiadapter.TranslateOptions{})
+	threads.HandleEvent(agent.Event{
+		Kind:    agent.EventAssistant,
+		Content: "the diff is clean",
+		Origin:  origin,
+	}, uiadapter.TranslateOptions{})
+
+	conv, ok := threads.Thread(origin.TaskID)
+	if !ok {
+		t.Fatal("expected subagent thread after begin")
+	}
+	history := conv.History()
+	if len(history) != 2 {
+		t.Fatalf("history length = %d, want one task and one assistant message: %+v", len(history), history)
+	}
+	if history[0].Role != "user" || history[0].Text != origin.TaskDescription {
+		t.Fatalf("initial history message = %+v, want user task %q", history[0], origin.TaskDescription)
+	}
+	if history[1].Role != "assistant" || history[1].Text != "the diff is clean" {
+		t.Fatalf("assistant history message = %+v, want assistant response", history[1])
+	}
+}
+
 func TestSubagentTranscriptConversation_ActiveTurn(t *testing.T) {
 	conv := uiadapter.NewSubagentTranscriptConversation("worker", ports.ModelInfo{}, nil)
 

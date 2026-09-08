@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -31,5 +32,24 @@ func TestErrorBlockValueLongFirstLineMovesToBody(t *testing.T) {
 	short := errorBlockValue(uievent.ErrorBody{Text: "boom"})
 	if short.Header.Detail != "boom" || len(short.Body) != 0 {
 		t.Fatalf("short error changed shape: %+v", short)
+	}
+}
+
+func TestToolEndFailureKeepsCommandOutput(t *testing.T) {
+	b := toolEndBlockValue(loadTheme(t), theme.TierASCII, 80, uievent.ToolEndBody{
+		Name:   "run_command",
+		OK:     false,
+		Err:    "failed",
+		Result: "command: go test\ncwd: /workspace\nexit=1\nstderr:\ncompile error",
+	}, nil)
+
+	got := strings.Join(b.Body, "\n")
+	for _, want := range []string{"command: go test", "exit=1", "compile error"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("failed command body does not contain %q: %q", want, got)
+		}
+	}
+	if got == "failed" || strings.TrimSpace(got) == "" {
+		t.Fatalf("failed command output was replaced by status: %q", got)
 	}
 }

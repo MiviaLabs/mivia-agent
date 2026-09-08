@@ -154,7 +154,7 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		role, status = theme.RoleDanger, "failed"
 	}
 	summary := b.Result
-	if b.Err != "" {
+	if summary == "" && b.Err != "" {
 		summary = b.Err
 	}
 	if w <= 0 {

@@ -265,10 +265,41 @@ func (s *SubagentThreads) HandleEvent(ev agent.Event, opts TranslateOptions) {
 	}
 
 	conv := s.getOrCreate(keys, ev.Origin.Agent)
+	if ev.Kind == agent.EventSubagentBegin {
+		description := ev.Origin.TaskDescription
+		if description == "" {
+			description = ev.Detail
+		}
+		conv.recordInitialTask(description, time.Now())
+	}
 	translated := TranslateEventWithOptions(ev, opts)
 	for _, e := range translated {
 		conv.RecordEvent(e)
 	}
+}
+
+// recordInitialTask adds the parent task as the first user message on the
+// live thread. EventSubagentBegin is emitted before the nested loop starts,
+// but its translated notice/progress events are not conversation content.
+// Recording the event here keeps a dialog opened before the first assistant
+// event in sync with a dialog rebuilt from persisted dispatch arguments.
+func (c *SubagentTranscriptConversation) recordInitialTask(text string, at time.Time) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.history) > 0 && c.history[0].Role == "user" && c.history[0].Text == text {
+		return
+	}
+	c.active = true
+	c.history = append([]ports.Message{{Role: "user", Text: text, At: at}}, c.history...)
+	c.reconstructed = false
+	c.notifyListeners(uievent.Event{
+		Kind: uievent.KindTurnStart,
+		At:   at,
+		Body: uievent.TurnStartBody{Input: text},
+	})
 }
 
 func (s *SubagentThreads) getOrCreate(keys []string, title string) *SubagentTranscriptConversation {
