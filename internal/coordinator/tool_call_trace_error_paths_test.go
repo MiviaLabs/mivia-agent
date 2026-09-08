@@ -111,3 +111,14 @@ func TestRunHandle_SubagentToolCanceler_NilReceiverIsNoop(t *testing.T) {
 		t.Fatal("a nil RunHandle must report no registered canceler, not panic or claim one exists")
 	}
 }
+
+// TestCancelTask_InvalidHandlePropagates pins CancelTask's own
+// validateHandle guard directly.
+func TestCancelTask_InvalidHandlePropagates(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	if err := c.CancelTask(context.Background(), nil, "t1"); err == nil {
+		t.Fatal("CancelTask accepted a nil run handle")
+	}
+}
