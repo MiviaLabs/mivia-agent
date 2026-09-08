@@ -272,3 +272,28 @@ func styleHeader(t theme.Theme, tier theme.Tier, spec HeaderSpec, lead, detail, 
 	out += strings.Join(rightParts, "  ")
 	return out
 }
+
+// SectionHeader renders an accented modern section header with a glyph badge and
+// a trailing divider rule (e.g. "◆ Behavior ──────────────────────────").
+// Fits within available width without wrapping.
+func SectionHeader(t theme.Theme, tier theme.Tier, title string, width int) string {
+	icon := "◆"
+	if tier == theme.TierASCII {
+		icon = ">"
+	}
+	label := Role(t, tier, theme.RoleAccent).Bold(true).Render(icon + " " + title)
+	labelWidth := ansi.StringWidth(label)
+	if width <= 0 || width <= labelWidth+2 {
+		return label
+	}
+	ruleRune := "─"
+	if tier == theme.TierASCII {
+		ruleRune = "-"
+	}
+	ruleLen := width - labelWidth - 1
+	if ruleLen < 1 {
+		return label
+	}
+	rule := Role(t, tier, theme.RoleBorder).Render(" " + strings.Repeat(ruleRune, ruleLen))
+	return clampWidth(label+rule, width)
+}

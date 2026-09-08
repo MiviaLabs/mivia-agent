@@ -364,7 +364,12 @@ func (s *generalSection) View() string {
 	cells := make([][]string, len(display))
 	for i, item := range display {
 		if item.row == nil {
-			cells[i] = []string{render.Role(s.theme, s.tier, theme.RoleAccent).Bold(true).Render("[" + item.header + "]"), ""}
+			headerWidth := s.width - 4
+			if headerWidth <= 0 {
+				headerWidth = 40
+			}
+			hdr := render.SectionHeader(s.theme, s.tier, item.header, headerWidth)
+			cells[i] = []string{hdr, ""}
 			continue
 		}
 		selected := item.rowIdx == s.cursor
