@@ -18,6 +18,12 @@
         "reason": "uses a POSIX command (true); no Windows equivalent wired here"
       }
     ],
+    "internal/agent/audit_dump_test.go": [
+      {
+        "line": 279,
+        "reason": "POSIX modes are not representable on Windows"
+      }
+    ],
     "internal/agent/advertised_tool_specs_test.go": [
       {
         "line": 129,
@@ -121,6 +127,16 @@
         "line": 44,
         "reason": "fuzz corpus size guard: input exceeds the 64KiB safety bound"
       }
+    ],
+    "internal/worktreeroute/worktreeroute_test.go": [
+      {
+        "line": 185,
+        "reason": "platform cannot chdir into a tempdir"
+      },
+      {
+        "line": 189,
+        "reason": "platform cannot remove the working directory"
+      }
     ]
   },
   "allowedDeletions": [
@@ -210,6 +226,7 @@
     "TestClassicSlashAgentDirect",
     "TestClipPreviewLineNeverNegative",
     "TestClipPreviewLineUTF8Safe",
+    "TestContinuedHistoryAppendsTheNotice",
     "TestClipboardPrefersLocalToolThenOSC52",
     "TestClipboardReadCommandPrefersAvailableTool",
     "TestClipboardReadReportsFailureWhenNoToolExists",
@@ -346,6 +363,8 @@
     "TestEmptyContentToolsGetStatusLine",
     "TestEmptyEffortDialogSurvivesNavigation",
     "TestEmptyTurnDividerRendersNothing",
+    "TestEncodeResultsCapsToolCallsToCompletePairs",
+    "TestEncodeResultsMergesToolCallsByID",
     "TestEndMovesCaretWithWhitespaceOnlyDraft",
     "TestEnterAndSpaceToggleCommittedThinkingBlock",
     "TestEphemeralSiblingAfterRefOnlyElision",
@@ -384,6 +403,7 @@
     "TestFocusableBlockIDs_OrderAndExcludesDivider",
     "TestFollowPreservesOffsetWhenContentGrows",
     "TestForbiddenKeysAreInertInTheRouter",
+    "TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpen",
     "TestFormatEffortStatusNamesEachState",
     "TestFormatEffortStatusPrintsBareWhenNoDialectResolves",
     "TestFormatLiveToolWaveSummary",
@@ -599,6 +619,10 @@
     "TestLoadMoreMessages_PreservesOffsetWhenContentFits",
     "TestLoadSessionSkillsMergesUserAndProjectScopes",
     "TestLoadSurfacesModelRestoreNotice",
+    "TestLoadToolCallSummariesNeverFragmentsPairAtCap",
+    "TestLoadToolCallSummariesPairCountBoundaries",
+    "TestLoadToolCallSummariesPreservesGenuineIncompleteNearCap",
+    "TestLoadToolCallSummariesTruncatesAtRuneBoundary",
     "TestLoginNon200ReturnsStatusError",
     "TestLoginSessionWithoutUserReturnsParseError",
     "TestLoginSuccessParsesTokenAndSendsHeaders",
@@ -819,6 +843,8 @@
     "TestRunOnceSDKFailClosedSurfacesThroughRun",
     "TestRunTUIReturnsRequestedWorkspaceRestart",
     "TestRunTUI_MouseOptionFollowsAvailability",
+    "TestRunTaskResultsWithRepoCapsToolCallsToCompletePairs",
+    "TestRunTaskResultsWithRepoMergesToolCallsByID",
     "TestSQLiteSessionsAreSelectableThroughSplashAndDialog",
     "TestSafeChatBlockTextRedactsTerminalControlsAndCaps",
     "TestScrollAccept_ComposerCursorKeysDoNotScrollTranscript",
@@ -881,6 +907,8 @@
     "TestServiceVerifySessionlessReturnsErrVerifiedNoSessionWithoutSaving",
     "TestServiceVerifySuccessSavesToken",
     "TestSessionPickerShowsWorktreeMarker",
+    "TestSessionPickerWorktreeEnterWithoutRunner",
+    "TestSessionPickerWorktreeRowsDispatchThroughTheRunner",
     "TestSessionsSidebarActiveRowShowsStatusDotInEveryStatus",
     "TestSessionsSidebarDoesNotHitClippedRows",
     "TestSessionsSidebarDoubleClickRequiresSameRecentRow",
@@ -1091,6 +1119,7 @@
     "TestTokenUsageEventReachesBridgeAsCtxTokens",
     "TestToolBatchHeartbeatEmitsWhileToolsRun",
     "TestToolBlockHistoryKeepsAgent",
+    "TestToolCallsWireContractGoldenBytes",
     "TestToolIconForName",
     "TestToolIndexAtY",
     "TestToolKindIcon",
@@ -1337,7 +1366,64 @@
     "TestWorktreeSessionListRestartsToResumeMainRepositorySession",
     "TestWritePreviewSectionRedactsSensitiveValuesAndCapsLines",
     "TestWritePreviewSectionWithoutPolicyShowsValues",
-    "TestYankKeyCopiesSelectedBlock"
+    "TestYankKeyCopiesSelectedBlock",
+    "TestSQLiteChatSessionCatalogHidesRouteWhenWorktreeHasSession",
+    "TestSessionPool_BoundEntriesInstallSurfaceWidener",
+    "TestInDir_BuilderFailureKeepsInheritedTools",
+    "TestFenceTextBuilders",
+    "TestCommandRunner_StartInNewWorktree_CreateFailureSurfacesError",
+    "TestCommandRunner_StartInNewWorktree_GuardArms",
+    "TestCommandRunner_StartInNewWorktree_GeneratesNameAndStarts",
+    "TestCommandRunner_StartInNewWorktree_ExplicitNameSanitizes",
+    "TestCommandRunner_StartInNewWorktree_DuplicateSurfacesError",
+    "TestCommandRunner_StartInNewWorktree_SanitizeErrorNamesTheInput",
+    "TestCommandRunner_StartInNewWorktree_SameSecondNamesDoNotCollide",
+    "TestSessionPickerSeparatorDrawsOnceAndKeepsSelectionVisible",
+    "TestSessionPickerWindowHeadInsideRouteBlock",
+    "TestSessionPickerSaturatedWorktreeRowStaysInBudget",
+    "TestSessionPickerWindowFillsBudgetWhenBoundaryOffWindow",
+    "TestSessionPickerDegenerateHeightsNeverOverflow",
+    "TestSeparatorVisible_EmptyWindow",
+    "TestComposerSelectionRowsPadWhenShorterThanHeight",
+    "TestOpenAPITypesFreshness",
+    "TestRegisterMissingEmailIsUsageError",
+    "TestRegisterMissingOrganizationNameIsUsageError",
+    "TestRegisterWhitespaceOnlyOrganizationNameIsUsageError",
+    "TestRegisterRejectsPlainPasswordFlag",
+    "TestRegisterRejectsBarePasswordFlag",
+    "TestRegisterShortPasswordIsRejectedLocally",
+    "TestRegisterSucceedsAndNeverPrintsSecrets",
+    "TestRegisterConflictReturnsTailoredMessage",
+    "TestRegisterRateLimitedReturnsTailoredMessage",
+    "TestRegisterExplicitEmptyServerURLIsRejected",
+    "TestRegisterUnknownFlagIsRejected",
+    "TestVerifyMissingCodeIsUsageError",
+    "TestVerifyWhitespaceOnlyCodeIsUsageError",
+    "TestVerifySucceedsPersistsTokenAndTrimsCode",
+    "TestVerifySessionlessSuccessPrintsLoginHintAndPersistsNothing",
+    "TestVerifyInvalidCodeReturnsHonestMessage",
+    "TestVerifyExplicitEmptyServerURLIsRejected",
+    "TestVerifyUnknownFlagIsRejected",
+    "TestExecuteRegisterDispatchesToRunRegister",
+    "TestExecuteVerifyDispatchesToRunVerify",
+    "TestRegisterSuccessSendsCorrectRequestAndBody",
+    "TestRegisterNon202ReturnsStatusError",
+    "TestVerifySuccessSendsCorrectRequestAndParsesToken",
+    "TestVerifyNon200ReturnsStatusError",
+    "TestVerifySessionlessSuccessReturnsErrVerifiedNoSession",
+    "TestLoginSuccessParsesTokenAndSendsHeaders",
+    "TestLoginSessionWithoutUserReturnsParseError",
+    "TestLoginNon200ReturnsStatusError",
+    "TestRefreshSendsBearerAndNoBodyAndParses",
+    "TestRevokeNon204ReturnsStatusError",
+    "TestServiceVerifySuccessSavesToken",
+    "TestServiceVerifySessionlessReturnsErrVerifiedNoSessionWithoutSaving",
+    "TestServiceVerifyClientErrorWraps",
+    "TestServiceEnsureAlreadyExpiredNeverCallsRefresh",
+    "TestServiceEnsureRefreshSucceedsButSaveFailsReturnsNewBearerAndError",
+    "TestLogoutWithStoredTokenAndRevoke204Succeeds",
+    "TestUsageTextDocumentsLoginLogout",
+    "TestRevokeSuccessReturnsNil"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",
@@ -1392,6 +1478,7 @@
     "TestSessionApprovalPolicy_ConcurrentSafety",
     "TestTranslateEvent_Assistant",
     "TestTranslateEvent_Dropped",
+    "TestTranslateEvent_Hook",
     "TestTranslateEvent_Notice",
     "TestTranslateEvent_NoticeMetrics",
     "TestTranslateEvent_Reasoning",
@@ -1403,6 +1490,7 @@
     "TestWaitForSessionEngineIdleImmediateReturn",
     "TestWireWorkflowToolOptionsNilOptionsNoop",
     "TestWorkflowBusProgressSinkNilBusSafe",
-    "TestWorktreeLifecycleLockSurvivesRemovingParentExit"
+    "TestWorktreeLifecycleLockSurvivesRemovingParentExit",
+    "TestMCPStdioHelper"
   ]
 }

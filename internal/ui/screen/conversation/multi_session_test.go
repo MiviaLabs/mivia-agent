@@ -82,6 +82,7 @@ func (r *testMultiSessionRunner) StartInNewWorktree(context.Context, string) por
 func (r *testMultiSessionRunner) ResumeInWorktree(context.Context, ports.SessionSummary) ports.CommandOutcome {
 	return ports.CommandOutcome{}
 }
+
 func (r *testMultiSessionRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
 	conv, ok := r.convs[id]
 	if !ok {

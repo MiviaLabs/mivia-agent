@@ -29,6 +29,20 @@ CONFIG = ROOT / "semgrep" / "agent-standards.yml"
 # rule's `paths.include` globs (checked against the actual YAML below).
 PROBES = [
     (
+        "mivia.go.no-test-func-outside-test-file",
+        "internal/probe-test-husk/viol.go",
+        'package probe\n\nimport "testing"\n\nfunc TestRelocatedButNeverRun(t *testing.T) {\n\tt.Fatal("never executed")\n}\n',
+        "internal/probe-test-husk/clean.go",
+        'package probe\n\nimport "testing"\n\n// WaitForIdle is a legitimate exported test helper (test_exports.go pattern).\nfunc WaitForIdle(t *testing.T) {\n\tt.Helper()\n}\n',
+    ),
+    (
+        "mivia.go.no-test-func-outside-test-file",
+        "internal/probe-testmain-husk/viol.go",
+        'package probe\n\nimport "testing"\n\nfunc TestMain(m *testing.M) {\n\t_ = m\n}\n\nfunc Test(t *testing.T) {\n\tt.Fatal("never executed")\n}\n',
+        "internal/probe-testmain-husk/clean.go",
+        'package probe\n\nimport "testing"\n\n// RunSuite is a legitimate helper: not a Test-shaped name.\nfunc RunSuite(m *testing.M) {\n\t_ = m\n}\n\n// Testify is not runnable by go test (lowercase after Test).\nfunc Testify(t *testing.T) {\n\tt.Helper()\n}\n',
+    ),
+    (
         "mivia.go.no-validstring-rune-boundary-backoff",
         "internal/probe-utf8-backoff/viol.go",
         'package probe\n\nimport "unicode/utf8"\n\n'

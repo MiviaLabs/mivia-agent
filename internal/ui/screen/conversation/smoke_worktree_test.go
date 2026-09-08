@@ -44,8 +44,8 @@ func (smokeNullCompleter) ChatTurn(context.Context, provider.Request) (*provider
 	return &provider.Response{FinishReason: "stop"}, nil
 }
 
-// smokeWorktreeFixture registers managed worktree wt1 (instance + route)
-// in a fresh repository store over a real temp git repo.
+// smokeWorktreeCatalog names the fixture's parts so call sites bind them
+// by field, not by position (see worktreeCatalog in internal/uiadapter).
 type smokeWorktreeCatalog struct {
 	Store       *storage.SQLite
 	MainDir     string
@@ -53,6 +53,8 @@ type smokeWorktreeCatalog struct {
 	DBPath      string
 }
 
+// smokeWorktreeFixture registers managed worktree wt1 (instance + route)
+// in a fresh repository store over a real temp git repo.
 func smokeWorktreeFixture(t *testing.T) smokeWorktreeCatalog {
 	t.Helper()
 	mainDir := filepath.Join(t.TempDir(), "main")

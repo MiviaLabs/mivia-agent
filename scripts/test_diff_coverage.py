@@ -141,6 +141,42 @@ def test_unreferenced_package_still_reported_uncovered() -> None:
         assert "pkg2/orphan.go" in proc.stdout
 
 
+def test_known_uncovered_entry_in_an_untested_package_does_not_crash() -> None:
+    """Findings from the never-linked arm carry a trailing note, so parsing
+    the line number back out of the formatted string handed int() "3
+    (package produced no coverage data)" and raised. Reachable for any
+    knownUncovered path whose package produces no coverage data at all."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        # Excuse the statement line of a file no build ever links, which is
+        # the arm that appends the trailing note. Policy is committed FIRST
+        # so it is not base-pinned away before the accept-check runs.
+        (policy_dir / "diff-coverage.json").write_text(
+            '{\n  "knownUncovered": {\n    "pkg3/excluded.go": {\n'
+            '      "lines": [6],\n      "reason": "fixture: never built"\n'
+            "    }\n  }\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "policy excusing the excluded file", cwd=root)
+
+        excluded_dir = root / "pkg3"
+        excluded_dir.mkdir()
+        (excluded_dir / "excluded.go").write_text(
+            "//go:build ignore\n\npackage pkg3\n\nfunc NeverBuilt() int {\n\treturn 4\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        combined = proc.stdout + proc.stderr
+        assert "Traceback" not in combined, f"gate crashed:\n{combined}"
+        assert "invalid literal for int()" not in combined, combined
+        assert proc.returncode in (0, 1), f"unexpected exit {proc.returncode}:\n{combined}"
+
+
 def test_build_excluded_file_with_no_profile_entry_is_flagged() -> None:
     """A file excluded from every build (all Go files build-constrained out)
     never appears in the coverage profile at all; the file-level fallback
@@ -382,20 +418,28 @@ def test_missing_supplied_profile_is_a_usage_error() -> None:
         assert "does not exist" in proc.stderr
 
 
-def test_known_uncovered_policy_line_passes_gate() -> None:
-    """A line listed in .mivia/policy/diff-coverage.json with a reason is
-    reported as accepted (stderr) and does not fail the gate; an unlisted
-    uncovered line still fails it."""
+def test_known_uncovered_policy_line_passes_range_gate() -> None:
+    """A line listed with a reason is reported as accepted and does not fail
+    the RANGE gate; an unlisted uncovered line still fails it.
+
+    Range mode is where residue is honored. It cannot be proved through
+    --staged: a newly added line has no base preimage, so the enforcement
+    mode refuses an entry added by the same change on principle. This test
+    previously ran --staged and passed only because it left the policy file
+    UNSTAGED - the gate then asked `git diff --cached -- <policy>`, saw
+    nothing, and read the policy from disk. That was the bypass, not the
+    feature."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_fixture(root)
+        baseline = git("rev-parse", "HEAD", cwd=root).stdout.strip()
         add_uncovered_function(root)
         git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "add uncovered fn", cwd=root)
         # First run without the policy: must fail and name the line.
-        proc = run_script(["--staged"], root)
+        proc = run_script(["--base", baseline], root)
         assert proc.returncode == 1, proc.stdout + proc.stderr
         assert "pkg/lib.go:" in proc.stdout
-        # Write the policy accepting every line the first run reported.
         import re as _re
         uncovered_lines = sorted({
             int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
@@ -415,11 +459,16 @@ def test_known_uncovered_policy_line_passes_gate() -> None:
             "}\n",
             encoding="utf-8",
         )
-        proc = run_script(["--staged"], root)
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "accept the residue", cwd=root)
+        proc = run_script(["--base", baseline], root)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "accepted as known-uncovered" in proc.stderr
         assert f"pkg/lib.go:{uncovered_lines[0]}" in proc.stderr
         assert "branch unreachable by construction" in proc.stderr
+        # New residue is honored in review mode but never silently: it must
+        # be named so a human sees what the branch excused.
+        assert "added in this range" in proc.stderr, proc.stderr
         # A second uncovered line NOT in the policy must still fail.
         lib = root / "pkg" / "lib.go"
         lib.write_text(
@@ -427,10 +476,41 @@ def test_known_uncovered_policy_line_passes_gate() -> None:
             encoding="utf-8",
         )
         git("add", "-A", cwd=root)
-        proc = run_script(["--staged"], root)
+        git("commit", "-q", "-m", "second uncovered fn", cwd=root)
+        proc = run_script(["--base", baseline], root)
         assert proc.returncode == 1, proc.stdout + proc.stderr
         assert "AlsoUncovered" not in proc.stdout  # findings are line numbers only
         assert "pkg/lib.go:" in proc.stdout
+
+
+def test_unstaged_policy_edit_cannot_excuse_staged_code() -> None:
+    """The bypass the old contract test enshrined: leaving the policy edit
+    unstaged made `git diff --cached -- <policy>` report nothing, so the
+    gate skipped its base comparison and read the excuse straight off disk.
+    The policy must be read from the same state as the source it judges."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        import re as _re
+        lines = sorted({int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)})
+        assert lines, proc.stdout
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True)
+        (policy_dir / "diff-coverage.json").write_text(
+            '{\n  "knownUncovered": {\n    "pkg/lib.go": {\n'
+            f'      "lines": {lines},\n'
+            '      "reason": "unstaged self-approval"\n    }\n  }\n}\n',
+            encoding="utf-8",
+        )
+        # Deliberately NOT staged.
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, (
+            "an unstaged policy edit excused staged code:\n" + proc.stdout + proc.stderr
+        )
 
 
 def test_same_diff_policy_edit_cannot_bypass_uncovered_lines() -> None:
@@ -471,6 +551,18 @@ def test_same_diff_policy_edit_cannot_bypass_uncovered_lines() -> None:
         )
         git("add", "-A", cwd=root)
         proc = run_script(["--staged"], root)
+        # The assertion this test is named for. Without it the bypass
+        # attempt was run and its result discarded, so the test could not
+        # fail and the property was unverified for its whole life.
+        assert proc.returncode == 1, (
+            "same-change policy edit self-approved its own uncovered lines:\n"
+            f"{proc.stdout}\n{proc.stderr}"
+        )
+        assert "cannot approve its own uncovered lines" in proc.stderr, (
+            "gate refused the bypass without saying why: " + proc.stderr
+        )
+
+
 def test_newly_created_policy_file_fails_closed() -> None:
     import re as _re
     with tempfile.TemporaryDirectory() as td:

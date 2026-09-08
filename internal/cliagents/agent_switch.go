@@ -410,7 +410,7 @@ func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	}
 	var candidate *agentSurface
 	var err error
-	if sess.Tools != nil && state.ToolBase != nil {
+	if base := entryBase(sess, state); sess.Tools != nil && base != nil {
 		candidate, err = buildAgentScopedSurface(sess, res, state, nil)
 		if err != nil {
 			return fmt.Errorf("root surface: %w", err)
@@ -482,12 +482,12 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 	}
 	prompt, maxSteps := selectedAgentSettings(&selected, state)
 	var candidate *agentSurface
-	if sess.Tools != nil && state.ToolBase != nil {
+	if base := entryBase(sess, state); sess.Tools != nil && base != nil {
 		candidate, err = buildAgentScopedSurface(sess, res, state, &selected)
 		if err != nil {
 			return err
 		}
-		WarnDisabledAgentTools(&selected, DisabledForAgent(&selected, entryBase(sess, state)))
+		WarnDisabledAgentTools(&selected, DisabledForAgent(&selected, base))
 		warnAdvertisedToolsTruncated(&selected, candidate.advertisedDropped)
 	}
 	// Commit selection and every session-owned surface only after all candidate

@@ -75,66 +75,147 @@ def load_exclude_globs(root: Path) -> list[str]:
     return policy.get("excludeGlobs") or []
 
 
-def load_known_uncovered(root: Path, diff_args: list[str] | None = None) -> dict[str, tuple[set[int], str]]:
-    """Per-line accepted residue from .mivia/policy/diff-coverage.json.
+POLICY_REL = ".mivia/policy/diff-coverage.json"
 
-    Maps file path -> (line numbers, reason). Lines listed there are
-    provably unreachable or not unit-testable; the gate still prints every
-    accepted line so the residue stays reviewable, but does not fail on it.
-    If the policy file is modified in the active diff, loads from base ref
-    to prevent same-commit self-approval of uncovered code.
-    """
-    policy_path = root / ".mivia" / "policy" / "diff-coverage.json"
-    if not policy_path.is_file():
-        return {}
 
-    raw_text = ""
-    is_modified_in_diff = False
-    if diff_args is not None:
-        r = subprocess.run(
-            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/diff-coverage.json"],
-            cwd=root, capture_output=True, text=True, check=False,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            is_modified_in_diff = True
-            base_ref = "HEAD"
-            if len(diff_args) >= 2 and not diff_args[0].startswith("-"):
-                base_ref = diff_args[0]
-            elif len(diff_args) == 1 and ".." in diff_args[0]:
-                base_ref = diff_args[0].split("..")[0]
-            elif len(diff_args) == 1 and not diff_args[0].startswith("-"):
-                base_ref = diff_args[0]
-
-            show_res = subprocess.run(
-                ["git", "show", f"{base_ref}:.mivia/policy/diff-coverage.json"],
-                cwd=root, capture_output=True, text=True, check=False,
-            )
-            print(
-                "diff_coverage: .mivia/policy/diff-coverage.json is modified in this diff; "
-                "evaluating against base policy to prevent same-commit bypass",
-                file=sys.stderr,
-            )
-            if show_res.returncode == 0 and show_res.stdout.strip():
-                raw_text = show_res.stdout
-            else:
-                # File did not exist at base ref: base policy has zero allowlisted residue
-                return {}
-
-    if not is_modified_in_diff:
-        raw_text = policy_path.read_text(encoding="utf-8")
-
+def parse_policy(raw_text: str) -> dict[str, tuple[set[int], str]]:
+    """knownUncovered as path -> (line numbers, reason). Entries missing a
+    reason are dropped: unexplained residue is not reviewable residue."""
     try:
         policy = json.loads(raw_text)
     except Exception:
         return {}
-
     out: dict[str, tuple[set[int], str]] = {}
     for path, entry in (policy.get("knownUncovered") or {}).items():
-        lines = set(int(n) for n in entry.get("lines", []))
+        lines = {int(n) for n in entry.get("lines", [])}
         reason = str(entry.get("reason", "")).strip()
         if lines and reason:
             out[path] = (lines, reason)
     return out
+
+
+def blob_at(root: Path, spec: str) -> str | None:
+    r = subprocess.run(
+        ["git", "show", spec], cwd=root, capture_output=True, text=True, check=False,
+    )
+    return r.stdout if r.returncode == 0 else None
+
+
+def policy_specs(diff_args: list[str]) -> tuple[str, str]:
+    """(base spec, tip spec) for the policy blob, mirroring tip_file_text so
+    the policy is read from the SAME state as the source it judges."""
+    if diff_args[0] == "--cached":
+        return f"HEAD:{POLICY_REL}", f":{POLICY_REL}"
+    return f"{diff_args[0]}:{POLICY_REL}", f"{diff_args[-1]}:{POLICY_REL}"
+
+
+BOTH_SIDES_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def base_to_tip_lines(root: Path, diff_args: list[str], path: str) -> list[tuple[int, int, int, int]]:
+    """Map base-side line numbers of path to their tip-side numbers.
+
+    Excuses are approvals of a STATEMENT, not of an integer. When a branch
+    inserts code above an excused line, the statement moves; comparing the
+    stored number against tip-coordinate findings would both drop the real
+    excuse and, worse, silently excuse whichever different statement landed
+    on the old number. Lines inside a deleted/replaced hunk map to nothing:
+    the excused statement was itself rewritten, so the approval lapses.
+    """
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "-U0", "--", path],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return []
+    hunks: list[tuple[int, int, int, int]] = []
+    for line in r.stdout.splitlines():
+        m = BOTH_SIDES_HUNK_RE.match(line)
+        if m:
+            hunks.append((
+                int(m.group(1)), int(m.group(2) or 1),
+                int(m.group(3)), int(m.group(4) or 1),
+            ))
+    return hunks
+
+
+def map_line(hunks: list[tuple[int, int, int, int]], line: int) -> int | None:
+    """Resolve one base line through the hunk list, or None when it did not
+    survive. Hunks arrive in ascending base order from git."""
+    offset = 0
+    for old_start, old_len, new_start, new_len in hunks:
+        if line < old_start:
+            break
+        if line < old_start + old_len:
+            return None  # inside a replaced/deleted range
+        offset += new_len - old_len
+    return line + offset
+
+
+def load_known_uncovered(root: Path, diff_args: list[str] | None = None) -> dict[str, tuple[set[int], str]]:
+    """Per-line accepted residue from .mivia/policy/diff-coverage.json.
+
+    Maps file path -> (line numbers in TIP coordinates, reason). The gate
+    prints every accepted line so the residue stays reviewable.
+
+    The policy is read from the SAME state as the source it judges, so an
+    edit that is merely on disk cannot excuse code in a staged or committed
+    evaluation. That alone closes a bypass: the old code asked `git diff
+    ... -- <policy>`, which cannot see an unstaged file, and then read the
+    policy from disk - so leaving the edit unstaged honored it in full.
+
+    Two modes, because one rule cannot serve both:
+
+    - UNCOMMITTED (--cached): the enforcement point. Only residue already
+      approved at HEAD is honored, carried into index coordinates through
+      the file's own diff. A change cannot approve its own uncovered lines.
+    - COMMITTED RANGE: a review of the branch's end state. Entries are
+      honored in tip coordinates, and every entry NEW in the range is
+      printed so whoever reads the diff sees exactly what is excused.
+      Refusing them here would make knownUncovered dead rather than strict:
+      a newly added line has no base preimage by construction, and newly
+      added lines are the ONLY lines this gate examines, so a
+      grandfathered-only rule could never excuse anything a branch needs.
+
+    Grandfathering is per ENTRY, not per file: adding an entry for one file
+    no longer silently drops every excuse for the others.
+    """
+    if diff_args is None:
+        policy_path = root / POLICY_REL
+        if not policy_path.is_file():
+            return {}
+        return parse_policy(policy_path.read_text(encoding="utf-8"))
+
+    base_spec, tip_spec = policy_specs(diff_args)
+    current = parse_policy(blob_at(root, tip_spec) or "")
+    base = parse_policy(blob_at(root, base_spec) or "")
+    enforcing = diff_args[0] == "--cached"
+
+    honored: dict[str, tuple[set[int], str]] = {}
+    fresh: list[str] = []
+    for path, (lines, reason) in sorted(current.items()):
+        base_lines = base.get(path, (set(), ""))[0]
+        hunks = base_to_tip_lines(root, diff_args, path) if base_lines else []
+        carried = {m for m in (map_line(hunks, n) for n in base_lines) if m is not None}
+        added = lines - carried
+        keep = carried if enforcing else (carried | lines)
+        if keep:
+            honored[path] = (keep, reason)
+        if added:
+            fresh.append(f"{path}: {sorted(added)}")
+
+    if fresh:
+        if enforcing:
+            head = ("diff_coverage: knownUncovered entries added by this change are "
+                    "NOT honored - a change cannot approve its own uncovered lines; "
+                    "commit them, then the range gate reports them for review:")
+        else:
+            head = ("diff_coverage: knownUncovered entries added in this range - "
+                    "review each one, they excuse uncovered code:")
+        print(head, file=sys.stderr)
+        for entry in fresh:
+            print(f"  {entry}", file=sys.stderr)
+    return honored
 
 
 def changed_go_files(root: Path, diff_args: list[str]) -> list[str]:
@@ -489,7 +570,12 @@ def main(argv: list[str] | None = None) -> int:
 
     total_checked = 0
     total_uncovered = 0
-    findings: list[str] = []
+    # (path, line, note): carried structurally so the accept-check reads
+    # the real line number instead of re-parsing a formatted string. The
+    # never-linked arm appends a trailing note, which made rpartition(":")
+    # hand int() "12 (package produced no coverage data)" and raise -
+    # reachable for any knownUncovered path in an untested package.
+    findings: list[tuple[str, int, str]] = []
     covered_packages = {str(Path(f).parent) for f in blocks_by_file}
     no_statements: list[str] = []
     for f, lines in sorted(per_file_lines.items()):
@@ -509,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
             # Package never linked into any tested binary: every changed line
             # in it is unproven, not merely blank/comment.
             for line in sorted(lines):
-                findings.append(f"{f}:{line} (package produced no coverage data)")
+                findings.append((f, line, " (package produced no coverage data)"))
                 total_uncovered += 1
                 total_checked += 1
             continue
@@ -517,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
         total_checked += checkable
         total_uncovered += len(uncovered)
         for line in uncovered:
-            findings.append(f"{f}:{line}")
+            findings.append((f, line, ""))
 
     # Say what was not checked. A gate that silently narrows its own scope
     # reads as "all clear" when it means "I did not look".
@@ -529,12 +615,12 @@ def main(argv: list[str] | None = None) -> int:
         known = load_known_uncovered(root, diff_args)
         accepted: list[str] = []
         remaining: list[str] = []
-        for finding in findings:
-            path, _, lineno = finding.rpartition(":")
-            if path in known and int(lineno) in known[path][0]:
-                accepted.append(f"{finding} ({known[path][1]})")
+        for path, lineno, note in findings:
+            rendered = f"{path}:{lineno}{note}"
+            if path in known and lineno in known[path][0]:
+                accepted.append(f"{rendered} ({known[path][1]})")
             else:
-                remaining.append(finding)
+                remaining.append(rendered)
         if accepted:
             print(f"diff_coverage: {len(accepted)} line(s) accepted as known-uncovered "
                   f"(.mivia/policy/diff-coverage.json):", file=sys.stderr)

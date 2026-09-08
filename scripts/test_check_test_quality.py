@@ -406,6 +406,120 @@ func TestSkipped(t *testing.T) {
         assert "unreviewed_test_skip" in r.stdout
 
 
+def _range_fixture(root: Path) -> str:
+    """init_fixture plus an empty committed policy; returns the base sha."""
+    init_fixture(root)
+    policy_dir = root / ".mivia" / "policy"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    (policy_dir / "test-skips.json").write_text(
+        '{\n  "knownSkips": {},\n  "allowedDeletions": []\n}\n', encoding="utf-8"
+    )
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "empty policy", cwd=root)
+    return git("rev-parse", "HEAD", cwd=root).stdout.strip()
+
+
+def test_range_two_commit_skip_landing_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        base = _range_fixture(root)
+        (root / ".mivia" / "policy" / "test-skips.json").write_text(
+            '{\n  "knownSkips": {\n    "pkg/skip_test.go": [{"reason": "platform gap documented"}]\n  },\n  "allowedDeletions": []\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "policy entry first", cwd=root)
+        (root / "pkg" / "skip_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSkipped(t *testing.T) {
+    t.Skip("platform gap documented")
+    if 1 != 2 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "skip second", cwd=root)
+        r = run_script(["--base", base], cwd=root)
+        assert r.returncode == 0, f"two-commit landing must pass over the range: {r.stdout}"
+
+
+def test_range_retroactive_deletion_entry_passes() -> None:
+    """A range is reviewed on its END STATE: an entry added later in the
+    branch still covers a deletion made earlier in it."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        base = _range_fixture(root)
+        (root / "pkg" / "lib_test.go").write_text(
+            """package pkg
+import "testing"
+func TestAddStillHere(t *testing.T) {
+    if Add(1, 2) != 3 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "delete TestAdd via rewrite", cwd=root)
+        (root / ".mivia" / "policy" / "test-skips.json").write_text(
+            '{\n  "knownSkips": {},\n  "allowedDeletions": ["TestAdd"]\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "reviewed deletion entry afterwards", cwd=root)
+        r = run_script(["--base", base], cwd=root)
+        assert r.returncode == 0, f"retroactively reviewed deletion must pass: {r.stdout}"
+
+
+def test_unreadable_base_ref_fails_loudly_instead_of_greening() -> None:
+    """A well-formed range naming a ref git cannot resolve must report that
+    it could not evaluate. Swallowing git's exit code yielded an empty file
+    list, which reads as "nothing to check" and passes - and `make` feeds
+    --base from a `git merge-base` substitution that can produce exactly
+    this when there is no upstream."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _range_fixture(root)
+        r = run_script(["--base", "no-such-ref", "--tip", "HEAD"], cwd=root)
+        assert r.returncode != 0, f"unreadable base ref greened the gate: {r.stdout}"
+        combined = r.stdout + r.stderr
+        assert "no-such-ref" in combined, f"failure does not name the bad ref: {combined}"
+
+
+def test_range_rejects_unsupported_range_shapes() -> None:
+    """Three-dot and multi-dot specs must fail loudly, not silently parse
+    into a wrong base."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        base = _range_fixture(root)
+        r = run_script(["--base", base + ".", "--tip", "HEAD"], cwd=root)
+        assert r.returncode != 0, "a malformed range was accepted silently"
+
+
+def test_staged_same_change_deletion_self_approval_is_rejected() -> None:
+    """The anti-bypass property lives at the ENFORCEMENT point: a deletion
+    and its allowedDeletions entry in one uncommitted change cannot
+    self-approve, because the policy is read from HEAD. Range mode does not
+    re-litigate this - history can be squashed or rewritten, so which
+    commit a change landed in is not a stable property to gate on."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _range_fixture(root)
+        (root / "pkg" / "lib_test.go").write_text(
+            'package pkg\nimport "testing"\n'
+            'func TestRenamed(t *testing.T) {\n    if Add(1, 2) != 3 { t.Fatal("fail") }\n}\n',
+            encoding="utf-8",
+        )
+        (root / ".mivia" / "policy" / "test-skips.json").write_text(
+            '{\n  "knownSkips": {},\n  "allowedDeletions": ["TestAdd"]\n}\n', encoding="utf-8"
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"same-change deletion self-approval passed: {r.stdout}"
+        assert "deleted_test_function" in r.stdout
+
+
 def main() -> int:
     tests = [
         v
@@ -414,7 +528,7 @@ def main() -> int:
     ]
     for t in tests:
         t()
-    print("test_check_test_quality: ok")
+    print(f"test_check_test_quality: ok ({len(tests)} tests)")
     return 0
 
 

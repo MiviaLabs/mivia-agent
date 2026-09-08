@@ -408,6 +408,50 @@ def run_go_inspector(files: list[Path]) -> list[dict]:
             pass
 
 
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's empty tree
+
+
+def committed_range(diff_args: list[str] | None) -> tuple[str, str] | None:
+    """Return (base, tip) for a COMMITTED range spelled exactly "A..B".
+
+    Uncommitted shapes (--cached, ["HEAD"]) return None: there the change
+    is one unit and load_skip_policy's base-policy comparison applies -
+    that is the ENFORCEMENT point, and it cannot be laundered because the
+    change has no history yet. A committed range is a review aid instead
+    (see check_paths).
+
+    Anything else - three-dot ranges, "A..B..C", empty sides - raises, so
+    an unrecognized shape fails loudly instead of silently degrading to a
+    wrong base and a wall of bogus violations.
+    """
+    if not diff_args or len(diff_args) != 1 or ".." not in diff_args[0]:
+        return None
+    spec = diff_args[0]
+    if "..." in spec or spec.count("..") != 1:
+        raise ValueError(
+            f"unsupported range {spec!r}: use exactly BASE..TIP (two dots)"
+        )
+    base, _, tip = spec.partition("..")
+    if not base or not tip:
+        raise ValueError(f"unsupported range {spec!r}: both ends are required")
+    return base, tip
+
+
+def policy_at(root: Path, ref: str) -> dict:
+    """The skip policy as of ref. A missing or unparseable file yields {},
+    i.e. no entry is allowlisted - fail closed."""
+    r = subprocess.run(
+        ["git", "show", f"{ref}:.mivia/policy/test-skips.json"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return {}
+    try:
+        return json.loads(r.stdout)
+    except Exception:
+        return {}
+
+
 def load_skip_policy(root: Path, diff_args: list[str] | None = None) -> dict:
     policy_file = root / ".mivia" / "policy" / "test-skips.json"
     if not policy_file.is_file():
@@ -422,13 +466,9 @@ def load_skip_policy(root: Path, diff_args: list[str] | None = None) -> dict:
         )
         if r.returncode == 0 and r.stdout.strip():
             is_modified_in_diff = True
+            # Only uncommitted shapes reach here (committed ranges returned
+            # above), so the pre-change state is always HEAD.
             base_ref = "HEAD"
-            if len(diff_args) >= 2 and not diff_args[0].startswith("-"):
-                base_ref = diff_args[0]
-            elif len(diff_args) == 1 and ".." in diff_args[0]:
-                base_ref = diff_args[0].split("..")[0]
-            elif len(diff_args) == 1 and not diff_args[0].startswith("-"):
-                base_ref = diff_args[0]
 
             show_res = subprocess.run(
                 ["git", "show", f"{base_ref}:.mivia/policy/test-skips.json"],
@@ -455,7 +495,7 @@ def load_skip_policy(root: Path, diff_args: list[str] | None = None) -> dict:
 
 
 def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str, int, str]]:
-    cmd = ["git", "diff", "-U0"] + diff_args + ["--", "*_test.go"]
+    cmd = ["git", "-c", "core.quotepath=false", "diff", "-U0"] + diff_args + ["--", "*_test.go"]
     res = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
     if res.returncode != 0:
         return []
@@ -476,6 +516,9 @@ def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str
             if re.search(r"\b\w+\.Skip(f|Now)?\(", content):
                 added_skips.append((current_file, current_line, content))
             current_line += 1
+        elif line.startswith("\\"):
+            # "\ No newline at end of file" is a marker, not a context line
+            continue
         elif not line.startswith("-"):
             current_line += 1
 
@@ -483,7 +526,7 @@ def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str
 
 
 def get_git_diff_deleted_tests(diff_args: list[str], root: Path) -> list[tuple[str, str]]:
-    cmd = ["git", "diff", "-U0"] + diff_args + ["--", "*_test.go"]
+    cmd = ["git", "-c", "core.quotepath=false", "diff", "-U0"] + diff_args + ["--", "*_test.go"]
     res = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
     if res.returncode != 0:
         return []
@@ -502,11 +545,41 @@ def get_git_diff_deleted_tests(diff_args: list[str], root: Path) -> list[tuple[s
     return deleted_tests
 
 
+def unit_violations(root: Path, diff_args: list[str], policy: dict) -> list[str]:
+    """Evaluate ONE change unit (a staged set, a dirty tree, or a single
+    commit) against the policy as it stood BEFORE that unit. An entry added
+    inside the unit is invisible here, which is exactly the two-commit
+    discipline: the reviewed entry must land first."""
+    out: list[str] = []
+    known_skips = policy.get("knownSkips", {})
+    for file_path, line, content in get_git_diff_added_skips(diff_args, root):
+        entries = known_skips.get(file_path, [])
+        if not any(e.get("reason") and e["reason"] in content for e in entries):
+            out.append(
+                f"{file_path}:{line}: [unreviewed_test_skip] newly added skip in diff without matching entry in .mivia/policy/test-skips.json: {content}"
+            )
+    allowed = set(policy.get("allowedDeletions", []))
+    for file_path, test_name in get_git_diff_deleted_tests(diff_args, root):
+        if test_name not in allowed:
+            out.append(
+                f"{file_path}: [deleted_test_function] test function {test_name} was deleted in diff without allowlist in .mivia/policy/test-skips.json (allowedDeletions)"
+            )
+    return out
+
+
 def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | None = None) -> tuple[list[str], int]:
     reports = run_go_inspector(target_files)
     violations: list[str] = []
 
-    policy = load_skip_policy(root, diff_args)
+    # One policy per mode. A committed range is a REVIEW of a branch's end
+    # state, so it reads the policy at TIP. Every uncommitted shape is the
+    # ENFORCEMENT point and reads the policy as of HEAD, so a change cannot
+    # approve itself. (Range mode does not re-litigate that: history can be
+    # squashed or rewritten, so which commit a change landed in is not a
+    # stable property to gate on - and the six ways a same-commit probe was
+    # evaded are recorded in this file's git history.)
+    rng = committed_range(diff_args) if diff_args is not None else None
+    policy = policy_at(root, rng[1]) if rng is not None else load_skip_policy(root, diff_args)
     known_zero_assertions = set(policy.get("knownZeroAssertions", []))
 
     for rep in reports:
@@ -517,34 +590,43 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
             violations.append(f"{rel_file}:{issue['line']}: [{issue['kind']}] {issue['message']}")
 
     if diff_args is not None:
-        known_skips = policy.get("knownSkips", {})
-        added_skips = get_git_diff_added_skips(diff_args, root)
-        for file_path, line, content in added_skips:
-            file_entries = known_skips.get(file_path, [])
-            matched = False
-            for entry in file_entries:
-                reason = entry.get("reason", "")
-                if reason and reason in content:
-                    matched = True
-                    break
-            if not matched:
-                violations.append(
-                    f"{file_path}:{line}: [unreviewed_test_skip] newly added skip in diff without matching entry in .mivia/policy/test-skips.json: {content}"
-                )
-
-        deleted_tests = get_git_diff_deleted_tests(diff_args, root)
-        allowed_deletions = set(policy.get("allowedDeletions", []))
-        for file_path, test_name in deleted_tests:
-            if test_name not in allowed_deletions:
-                violations.append(
-                    f"{file_path}: [deleted_test_function] test function {test_name} was deleted in diff without allowlist in .mivia/policy/test-skips.json (allowedDeletions)"
-                )
+        violations.extend(unit_violations(root, diff_args, policy))
 
     total_funcs = sum(len(r.get("functions") or []) for r in reports)
     return violations, total_funcs
 
 
 def main() -> int:
+    try:
+        return run_main()
+    except ValueError as exc:
+        print(f"check_test_quality: {exc}", file=sys.stderr)
+        return 2
+
+
+def diff_names(root: Path, *rev_args: str) -> list[str]:
+    """`git diff --name-only <rev_args>`, raising when git itself fails.
+
+    An unreadable ref must not degrade into an empty file list: that reads
+    as "nothing to check" and greens the gate. `make` supplies --base from
+    a `git merge-base` substitution, so a missing upstream or an unrelated
+    history would otherwise pass silently rather than report it could not
+    evaluate anything.
+    """
+    res = subprocess.run(
+        ["git", "-c", "core.quotepath=false", "diff", "--name-only", *rev_args],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    if res.returncode != 0:
+        detail = res.stderr.strip().splitlines()
+        raise ValueError(
+            f"git diff --name-only {' '.join(rev_args)} failed "
+            f"(exit {res.returncode}): {detail[0] if detail else 'no output'}"
+        )
+    return [f for f in res.stdout.splitlines() if f.strip()]
+
+
+def run_main() -> int:
     parser = argparse.ArgumentParser(description="Check Go test quality (anti-fake-test enforcement).")
     parser.add_argument("--staged", action="store_true", help="Inspect staged _test.go files vs HEAD")
     parser.add_argument("--diff", action="store_true", help="Inspect modified _test.go files vs HEAD")
@@ -568,34 +650,32 @@ def main() -> int:
         target_files = [Path(p) for p in args.paths]
     elif args.staged:
         diff_args = ["--cached"]
-        res = subprocess.run(["git", "diff", "--name-only", "--cached"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
+        target_files = [root / f for f in diff_names(root, "--cached") if f.endswith("_test.go")]
         if not target_files:
             # On clean checkout (e.g. CI checkout), inspect HEAD~1..HEAD if available
             rev_check = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=root, capture_output=True, text=True, check=False)
             if rev_check.returncode == 0:
                 diff_args = ["HEAD~1..HEAD"]
-                res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD"], cwd=root, capture_output=True, text=True, check=False)
-                target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
+                target_files = [root / f for f in diff_names(root, "HEAD~1..HEAD") if f.endswith("_test.go")]
     elif args.diff:
         # Check uncommitted diff vs HEAD first
-        res = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
+        target_files = [root / f for f in diff_names(root, "HEAD") if f.endswith("_test.go")]
         diff_args = ["HEAD"]
         if not target_files:
             # On clean working tree, inspect HEAD~1..HEAD if available
             rev_check = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=root, capture_output=True, text=True, check=False)
             if rev_check.returncode == 0:
                 diff_args = ["HEAD~1..HEAD"]
-                res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD"], cwd=root, capture_output=True, text=True, check=False)
-                target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
+                target_files = [root / f for f in diff_names(root, "HEAD~1..HEAD") if f.endswith("_test.go")]
     elif args.base:
-        diff_args = [f"{args.base}..{args.tip}"]
-        res = subprocess.run(["git", "diff", "--name-only", f"{args.base}..{args.tip}"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
+        spec = f"{args.base}..{args.tip}"
+        # Parse BEFORE touching git so a malformed range names itself
+        # rather than surfacing as a confusing revision error.
+        committed_range([spec])
+        diff_args = [spec]
+        target_files = [root / f for f in diff_names(root, spec) if f.endswith("_test.go")]
     elif args.worktree:
-        res = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
+        target_files = [root / f for f in diff_names(root, "HEAD") if f.endswith("_test.go")]
     elif args.all:
         skip_dirs = {".git", "node_modules", "vendor", "testdata"}
         for p in root.rglob("*_test.go"):
@@ -603,8 +683,7 @@ def main() -> int:
                 target_files.append(p)
     else:
         # Default behavior: if staged files exist, check staged; otherwise check all
-        res = subprocess.run(["git", "diff", "--name-only", "--cached", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-        staged = [root / f for f in res.stdout.splitlines() if f.strip()]
+        staged = [root / f for f in diff_names(root, "--cached", "--", "*_test.go")]
         if staged:
             diff_args = ["--cached"]
             target_files = staged

@@ -686,6 +686,16 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert helper_call in push
 
 
+def test_ci_verify_fetches_history_for_changed_line_gates() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    verify_start = workflow.index("  verify:\n")
+    verify_end = workflow.index("  commit-lint:\n", verify_start)
+    verify_job = workflow[verify_start:verify_end]
+    assert "fetch-depth: 0" in verify_job
+
+
 def test_pre_commit_full_script_auto_stages_memories(root: Path) -> None:
     """Run the REAL scripts/git-hooks/pre-commit end to end in a linked git
     worktree of this repo with an UNTRACKED new memory and a DELETED tracked
@@ -750,6 +760,69 @@ def test_pre_commit_full_script_auto_stages_memories(root: Path) -> None:
         ), f"the deleted memory was not staged as a deletion:\n{status}"
         combined = result.stdout + result.stderr
         assert "one or more parallel pre-commit gates failed" not in combined
+        assert "Running exec pipe-bound gate..." in combined
+    finally:
+        run(["git", "worktree", "remove", "--force", str(root)], ROOT, check=False)
+
+
+def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path) -> None:
+    """Run the REAL scripts/git-hooks/pre-commit end to end in a linked git
+    worktree of this repo, with a genuinely staged .mivia/memory.db change,
+    confirming a staged db coexists with every other gate (config, secrets,
+    size, structure, semgrep, invariants) running together.
+
+    A linked worktree (not a synthetic fixture) is required: the script's
+    other gates live at $ROOT/scripts/... and must actually be present.
+    """
+    if os.name == "nt" or shutil.which("go") is None:
+        return
+    root.parent.mkdir(parents=True, exist_ok=True)
+    run(["git", "config", "extensions.worktreeConfig", "true"], ROOT)
+    run(["git", "worktree", "add", "--detach", str(root)], ROOT)
+    try:
+        run(["git", "config", "--worktree", "user.email", "hook-test@example.invalid"], root)
+        run(["git", "config", "--worktree", "user.name", "Hook Test"], root)
+        run(["git", "config", "--worktree", "commit.gpgsign", "false"], root)
+
+        mivia_db = root / ".mivia" / "memory.db"
+        assert mivia_db.is_file(), "worktree must carry the real committed memory.db"
+
+        # Real, valid mutation via the actual CLI (not a byte-level edit):
+        # find a real existing id, then promote it - a genuine read-write
+        # open plus (if not already core) a real row change.
+        found = run(
+            ["go", "run", "./cmd/mivia", "memory", "search", "the",
+             "--workspace", str(root), "--limit", "1", "--json"],
+            root,
+        )
+        results = json.loads(found.stdout)
+        assert results, "expected at least one existing memory entry to promote"
+        entry_id = results[0]["id"]
+        run(
+            ["go", "run", "./cmd/mivia", "memory", "promote", entry_id, "--workspace", str(root)],
+            root,
+        )
+        run(["git", "add", ".mivia/memory.db"], root)
+        probe = root / "internal" / "evidencecheck" / "hook_probe_test.go"
+        probe.write_text(
+            "package evidencecheck\n\nimport \"testing\"\n\nfunc TestHookProbe(t *testing.T) {}\n",
+            encoding="utf-8",
+        )
+        run(["git", "add", str(probe)], root)
+
+        result = run(
+            [str(ROOT / "scripts" / "git-hooks" / "pre-commit")],
+            root,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"pre-commit failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
+        assert ".mivia/memory.db" in cached, "staged memory.db did not survive the hook"
+        combined = result.stdout + result.stderr
+        assert "one or more parallel pre-commit gates failed" not in combined
+        assert "Running exec pipe-bound gate..." in combined
     finally:
         run(["git", "worktree", "remove", "--force", str(root)], ROOT, check=False)
 
@@ -1093,6 +1166,7 @@ def main() -> None:
         (test_install_sets_first_push_upstream_in_linked_worktree, "first-push"),
         (test_pre_commit_does_not_overstage_partially_staged_go_file, "partial-staging"),
         (test_pre_commit_full_script_auto_stages_memories, "full-script-worktree"),
+        (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-memory-db"),
         (test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched, "tree-guard-clean"),
         (test_assert_staged_tree_unchanged_refuses_a_restaged_mutant, "tree-guard-mutated"),
         (test_pre_push_sweeps_the_pushed_ref_not_head, "push-ref"),

@@ -90,3 +90,6 @@ codegraph.db*
 
 # zcode session scratch state
 .zcode/
+
+# Local planning notes (never committed; ADLC keeps plans out of history)
+plans/

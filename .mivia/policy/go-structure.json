@@ -20,11 +20,9 @@
       "internal/clichat/e2e_ask_chain_test.go": 51,
       "internal/ledger/storage_schema.go": 37,
       "internal/clichat/e2e_ask_messaging_test.go": 34,
-      "internal/clichat/workflow_session_settle.go": 33,
       "internal/workflows/delivery/repair.go": 33,
       "internal/workflows/controller/linear_bindings.go": 32,
-      "internal/config/tools_config.go": 31,
-      "internal/workflows/verifier/sandbox_buildcache.go": 31
+      "internal/config/tools_config.go": 31
     }
   },
   "excludeGlobs": [

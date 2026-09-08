@@ -1157,3 +1157,13 @@ func TestRunSlashCommandEffortOpensPickerAndSelects(t *testing.T) {
 		t.Errorf("view missing effort notice:\n%s", view)
 	}
 }
+
+// TestSessionPickerWorktreeRowsDispatchThroughTheRunner pins the dispatch
+// split in handleSessionPickerKey: enter on a route row calls
+// StartInWorktree, enter on a bound (non-route) worktree row calls
+// ResumeInWorktree. A regression that swaps or drops either arm would
+// otherwise compile and pass everything.
+
+// TestSessionPickerWorktreeEnterWithoutRunner pins the nil-runner guard on
+// the resumePickMsg arm so a miswired screen degrades to an error notice,
+// never a panic, when enter lands on a worktree row.

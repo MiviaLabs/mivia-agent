@@ -542,6 +542,36 @@ rules:
       - pattern: bufio.NewReader($RESP.Body)
       - pattern: json.NewDecoder($RESP.Body)
 
+  - id: mivia.go.no-test-func-outside-test-file
+    languages:
+      - go
+    severity: ERROR
+    message: >
+      A Test/Benchmark/Fuzz-shaped function (TestMain included) outside a
+      _test.go file compiles into the production package and is never
+      executed by `go test` - the test silently stops running. Move it into
+      a _test.go file. (Class seen as dev-merge residue: a "relocated
+      tests" file that was not _test.go.)
+    paths:
+      include:
+        - /cmd/**/*.go
+        - /internal/**/*.go
+        - /pkg/**/*.go
+      exclude:
+        - "*_test.go"
+    patterns:
+      - pattern-either:
+          - pattern: func $FN($T *testing.T) { ... }
+          - pattern: func $FN($T *testing.B) { ... }
+          - pattern: func $FN($T *testing.F) { ... }
+          - pattern: func $FN($T *testing.M) { ... }
+      - metavariable-regex:
+          metavariable: $FN
+          # Bare Test/Benchmark/Fuzz names run under `go test` too, so the
+          # name may end right after the prefix ($) - only a lowercase
+          # continuation (Testify) marks a legitimate non-test helper.
+          regex: ^(Test|Benchmark|Fuzz)($|[A-Z_])
+
   - id: mivia.go.hub-wire-no-raw-error-text
     languages:
       - go
