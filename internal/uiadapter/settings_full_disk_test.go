@@ -208,6 +208,48 @@ func TestSettingsFullDiskAccessRefusesSameFile(t *testing.T) {
 	}
 }
 
+// TestSettingsFullDiskAccessNeverFallsThroughToGenericPersist pins the
+// applyGeneral control-flow contract directly: SetFullDiskAccess must
+// return before reaching the generic UpdateGeneralConfig write, exactly
+// like the pre-refactor single-function switch's bare
+// `return s.applySetFullDiskAccess(v.On)`, which returned out of the whole
+// method rather than falling through. Regression for a refactor that
+// turned that bare return into a `case` inside a helper (mutateGeneral)
+// whose own return only exits the helper, silently re-opening the
+// generic-persist fall-through the bare return had closed off. wsConfig
+// here already has stale content (`[tui]\ntheme = "mivia-dark"\n`); if
+// applyGeneral falls through, UpdateGeneralConfig rewrites wsConfig with a
+// fresh general view (still no full_disk key, since generalViewToSettings
+// deliberately omits it) and the theme line is byte-for-byte preserved
+// either way, so the workspace file alone can't distinguish the two code
+// paths. Assert file mtime is unchanged instead: a rewrite always touches
+// mtime, a same-file no-op read never does.
+func TestSettingsFullDiskAccessNeverFallsThroughToGenericPersist(t *testing.T) {
+	store, wsConfig, _ := fullDiskFixture(t)
+
+	before, err := os.Stat(wsConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeMtime := before.ModTime()
+
+	handle, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetFullDiskAccess{On: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := drainFullDiskSave(t, handle); last.State != ports.SaveSaved {
+		t.Fatalf("save state = %v (%s), want SaveSaved", last.State, last.Message)
+	}
+
+	after, err := os.Stat(wsConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(beforeMtime) {
+		t.Fatalf("workspace config was rewritten by the full-disk toggle (mtime %v -> %v): applyGeneral fell through to the generic UpdateGeneralConfig persist instead of returning after applySetFullDiskAccess", beforeMtime, after.ModTime())
+	}
+}
+
 // TestSettingsGeneralViewSeedsFullDiskFromUserConfig pins the view's read
 // provenance: the row reflects the operator's user config, and a workspace
 // config claiming the key does NOT turn it on (the F1 clone attack, at the

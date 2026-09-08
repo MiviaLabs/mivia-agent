@@ -209,6 +209,20 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 		return err
 	}
 
+	// SetFullDiskAccess owns its entire persist+notify lifecycle inside
+	// mutateGeneral -> applySetFullDiskAccess (USER-config-only, audit
+	// F2/AR-4) and must never fall through to the generic path below:
+	// UpdateGeneralConfig's configPath() can resolve to the workspace's
+	// own committable .mivia/mivia.toml, and writing the general view
+	// there on a full-disk toggle would leak [tui]/[chat]/[approvals]
+	// into a file the operator did not ask to change. This mirrors the
+	// pre-refactor code's bare `return s.applySetFullDiskAccess(v.On)`
+	// inside the old single-function switch, which returned out of the
+	// whole method, not just the switch.
+	if _, ok := e.(ports.SetFullDiskAccess); ok {
+		return nil
+	}
+
 	if cfgPath := s.configPath(); cfgPath != "" {
 		settings := generalViewToSettings(s.general)
 		// syncEditToSettings sets exactly one sync pointer for a sync
