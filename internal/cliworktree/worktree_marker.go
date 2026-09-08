@@ -128,11 +128,36 @@ func publishWorktreeMarker(name, target string) error {
 	return err
 }
 
+const maxMarkerExcludeAttempts = 5
+
+// ensureWorktreeMarkerExcluded prepares .git/info/exclude for the marker
+// line. It retries the whole operation, fresh os.Root and all, on a
+// not-exist error: TestWorktreeMarkerExcludeIsConcurrentAndIdempotent drives
+// 8 goroutines through this path against one shared .git directory, and
+// under CI-runner load an "info" lookup can transiently miss a sibling
+// goroutine's still-committing mkdir even though this goroutine's own
+// preceding Lstat just confirmed it - the same class of spurious
+// concurrent-access race publishWorktreeMarker below already retries for
+// Windows renames. ensureRegularGitInfoDir is idempotent (it recreates
+// "info" if missing), so a retry here is self-healing rather than papering
+// over a directory that never gets created.
 func ensureWorktreeMarkerExcluded(root string) error {
 	commonDir, err := worktreeGitCommonDir(root)
 	if err != nil {
 		return err
 	}
+	var lastErr error
+	for attempt := 0; attempt < maxMarkerExcludeAttempts; attempt++ {
+		lastErr = ensureWorktreeMarkerExcludedOnce(commonDir)
+		if lastErr == nil || !errors.Is(lastErr, os.ErrNotExist) {
+			return lastErr
+		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	return lastErr
+}
+
+func ensureWorktreeMarkerExcludedOnce(commonDir string) error {
 	gitRoot, err := os.OpenRoot(commonDir)
 	if err != nil {
 		return fmt.Errorf("open Git common directory: %w", err)
