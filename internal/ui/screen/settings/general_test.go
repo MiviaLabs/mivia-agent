@@ -10,7 +10,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -51,6 +53,242 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 	}
 }
 
+// TestBooleanRowsRenderExplicitOnOffControls pins the semantic control
+// itself: every boolean row must show the explicit "[ ON  ]"/"[ OFF ]"
+// word, not the bare "on"/"off" choice text a KindChoice field renders
+// by default - the word is what carries the state, so it must be
+// visible in the plain (ANSI-stripped) view on its own.
+func TestBooleanRowsRenderExplicitOnOffControls(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	plain := ansi.Strip(s.sections[0].View())
+	v := h.SettingsAdapters().General.General()
+	for _, tc := range []struct {
+		label string
+		on    bool
+	}{
+		{"mouse capture", v.Mouse},
+		{"show reasoning", v.ShowReasoning},
+		{"iteration notice", v.ShowIterationNotices},
+		{"prompt cache notice", v.ShowPromptCacheNotices},
+		{"screen reader", v.ScreenReader},
+		{"reduced motion", v.ReducedMotion},
+		{"full disk access", v.FullDiskAccess},
+	} {
+		row := lineFor(t, plain, tc.label)
+		want := boolControlText(tc.on)
+		if !strings.Contains(row, want) {
+			t.Errorf("row %q = %q, want to contain %q", tc.label, row, want)
+		}
+	}
+}
+
+// TestBooleanRowsAreNotBareOnOffText: the value column must not fall
+// back to the plain "on"/"off" choice text field.View() would otherwise
+// produce for a KindChoice row - the row must go through the semantic
+// control, not the field's own default rendering.
+func TestBooleanRowsAreNotBareOnOffText(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	plain := ansi.Strip(s.sections[0].View())
+	row := lineFor(t, plain, "mouse capture")
+	if strings.Contains(row, "[ ON  ]") && strings.Contains(row, " on ") {
+		t.Errorf("row mixes semantic control and bare choice text: %q", row)
+	}
+	// The row must contain the control's brackets, not a bare word.
+	if !strings.Contains(row, "[") || !strings.Contains(row, "]") {
+		t.Errorf("row %q does not use the bracketed semantic control", row)
+	}
+}
+
+// TestScrollLinesAndApprovalStayExplicitValues: the two non-boolean rows
+// must keep showing their raw value (a number, a posture name) rather
+// than an ON/OFF control, which would misdescribe a preset choice.
+func TestScrollLinesAndApprovalStayExplicitValues(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	plain := ansi.Strip(s.sections[0].View())
+	v := h.SettingsAdapters().General.General()
+
+	scrollRow := lineFor(t, plain, "scroll lines")
+	if strings.Contains(scrollRow, "[ ON") || strings.Contains(scrollRow, "[ OFF") {
+		t.Errorf("scroll lines row rendered a boolean control: %q", scrollRow)
+	}
+	if !strings.Contains(scrollRow, strconv.Itoa(v.ScrollLines)) {
+		t.Errorf("scroll lines row = %q, want to contain %d", scrollRow, v.ScrollLines)
+	}
+
+	approvalRow := lineFor(t, plain, "approval default")
+	if strings.Contains(approvalRow, "[ ON") || strings.Contains(approvalRow, "[ OFF") {
+		t.Errorf("approval default row rendered a boolean control: %q", approvalRow)
+	}
+	if !strings.Contains(approvalRow, v.ApprovalDefault) {
+		t.Errorf("approval default row = %q, want to contain %q", approvalRow, v.ApprovalDefault)
+	}
+}
+
+// TestOnRowsUseSuccessRoleOffRowsUseMutedRole pins the styling half of
+// the semantic control: an enabled row's ANSI SGR must resolve to the
+// theme's RoleSuccess colour and a disabled row's to RoleFGMuted -
+// checked by comparing each row's raw (unstripped) rendering against
+// render.Role's own output for that role, so the assertion tracks the
+// theme rather than a hard-coded escape sequence.
+func TestOnRowsUseSuccessRoleOffRowsUseMutedRole(t *testing.T) {
+	th := loadTheme(t)
+	s, h := newHarnessScreen(t, 100, 30)
+	v := h.SettingsAdapters().General.General()
+
+	raw := s.sections[0].View()
+	lines := strings.Split(raw, "\n")
+
+	successPrefix := styledPrefix(render.Role(th, theme.TierTrueColor, theme.RoleSuccess).Render(boolControlText(true)))
+	mutedPrefix := styledPrefix(render.Role(th, theme.TierTrueColor, theme.RoleFGMuted).Render(boolControlText(false)))
+
+	for _, tc := range []struct {
+		label string
+		on    bool
+	}{
+		{"mouse capture", v.Mouse},
+		{"screen reader", v.ScreenReader},
+	} {
+		line := rawLineFor(t, lines, tc.label)
+		if tc.on {
+			if !strings.Contains(line, successPrefix) {
+				t.Errorf("row %q (on) does not carry the RoleSuccess SGR prefix %q:\n%q", tc.label, successPrefix, line)
+			}
+		} else {
+			if !strings.Contains(line, mutedPrefix) {
+				t.Errorf("row %q (off) does not carry the RoleFGMuted SGR prefix %q:\n%q", tc.label, mutedPrefix, line)
+			}
+		}
+	}
+}
+
+// TestBooleanControlsReadableInASCIITier pins the NO_COLOR/ASCII
+// degradation: with TierASCII (no colour resolves for any role), the
+// ON/OFF word itself - not colour - must still distinguish the two
+// states in the plain view.
+func TestBooleanControlsReadableInASCIITier(t *testing.T) {
+	th := loadTheme(t)
+	store := &failingGeneralStore{view: ports.GeneralView{Mouse: true, FullDiskAccess: false}}
+	sec := newGeneralSection(store)
+	sec.SetSize(100, 30)
+	sec.SetTheme(th, theme.TierASCII)
+
+	plain := ansi.Strip(sec.View())
+	if !strings.Contains(plain, boolControlText(true)) {
+		t.Errorf("ASCII-tier view missing the ON control:\n%s", plain)
+	}
+	if !strings.Contains(plain, boolControlText(false)) {
+		t.Errorf("ASCII-tier view missing the OFF control:\n%s", plain)
+	}
+}
+
+// TestSelectedRowMarkerSurvivesTheSemanticControl: the "> " cursor
+// marker on the highlighted row must still be present and lead the
+// line once boolean rows render through the semantic control instead of
+// field.View()'s own text - the marker is drawn by the section, not the
+// field, so this should be unaffected, but it is the kind of thing a
+// Columns-based rewrite could silently break.
+func TestSelectedRowMarkerSurvivesTheSemanticControl(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	plain := ansi.Strip(s.sections[0].View())
+	lines := strings.Split(plain, "\n")
+	found := false
+	for _, l := range lines {
+		if strings.HasPrefix(l, "> ") && strings.Contains(l, "mouse capture") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the initially-selected row (mouse capture) to lead with \"> \":\n%s", plain)
+	}
+	// Every non-selected visible row must lead with the "  " (two-space)
+	// non-marker instead.
+	for _, l := range lines {
+		if l == "" {
+			continue
+		}
+		if !strings.HasPrefix(l, "> ") && !strings.HasPrefix(l, "  ") {
+			t.Errorf("row %q does not lead with a marker or its two-space placeholder", l)
+		}
+	}
+}
+
+// TestNarrowWidthKeepsRowsReadable: at a narrow width the label and
+// value must still both render legibly and no row may exceed the
+// available width - the Columns-based alignment must not force a wide
+// minimum.
+func TestNarrowWidthKeepsRowsReadable(t *testing.T) {
+	s, _ := newHarnessScreen(t, 40, 20)
+	plain := ansi.Strip(s.sections[0].View())
+	if !strings.Contains(plain, "mouse capture") {
+		t.Errorf("narrow view missing the mouse capture label:\n%s", plain)
+	}
+	if !strings.Contains(plain, boolControlText(false)) && !strings.Contains(plain, boolControlText(true)) {
+		t.Errorf("narrow view missing a boolean control:\n%s", plain)
+	}
+}
+
+// TestHintsIncludesCycleBack pins the plan requirement: "-" is a
+// supported key on every row (commit(-1)), so Hints must advertise
+// keymap.IDSettingsCycleBack alongside the existing up/down/toggle
+// hints, not just the forward-cycling toggle.
+func TestHintsIncludesCycleBack(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	sec := s.sections[0].(*generalSection)
+	hints := sec.Hints()
+	found := false
+	for _, h := range hints {
+		if h == keymap.IDSettingsCycleBack {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Hints() = %v, want it to include keymap.IDSettingsCycleBack", hints)
+	}
+}
+
+// lineFor returns the single line of plain (ANSI-stripped) view text
+// containing label, failing the test if there isn't exactly one.
+func lineFor(t *testing.T, plain, label string) string {
+	t.Helper()
+	for _, l := range strings.Split(plain, "\n") {
+		if strings.Contains(l, label) {
+			return l
+		}
+	}
+	t.Fatalf("no line found containing %q in:\n%s", label, plain)
+	return ""
+}
+
+// rawLineFor is lineFor's raw (ANSI-carrying) counterpart: it matches by
+// searching the ANSI-stripped form of each raw line for label, so ANSI
+// codes surrounding the label do not break the match, and returns the
+// RAW (unstripped) line so the caller can inspect its SGR codes.
+func rawLineFor(t *testing.T, rawLines []string, label string) string {
+	t.Helper()
+	for _, l := range rawLines {
+		if strings.Contains(ansi.Strip(l), label) {
+			return l
+		}
+	}
+	t.Fatalf("no raw line found containing %q in:\n%s", label, strings.Join(rawLines, "\n"))
+	return ""
+}
+
+// styledPrefix returns the leading SGR escape sequence(s) of a
+// lipgloss-rendered string - the part before its first plain
+// character - so a test can assert two renderings share the same
+// colour code without hard-coding the escape sequence itself.
+func styledPrefix(rendered string) string {
+	stripped := ansi.Strip(rendered)
+	if stripped == "" {
+		return rendered
+	}
+	if idx := strings.Index(rendered, stripped[:1]); idx > 0 {
+		return rendered[:idx]
+	}
+	return ""
+}
+
 // TestSpaceCommitsTheFullDiskRow drives the real path for the full-disk
 // row (the LAST row): cycling it must reach the store as
 // ports.SetFullDiskAccess and round-trip through General() - the row is
@@ -73,7 +311,7 @@ func TestSpaceCommitsTheFullDiskRow(t *testing.T) {
 		t.Errorf("full disk did not change after committing the row: still %v", after)
 	}
 	plain := ansi.Strip(s.sections[0].View())
-	if !strings.Contains(plain, boolChoice(after)) {
+	if !strings.Contains(plain, boolControlText(after)) {
 		t.Errorf("the section did not rebuild to show the new value %v:\n%s", after, plain)
 	}
 }
@@ -161,7 +399,7 @@ func TestSpaceCommitsTheHighlightedRow(t *testing.T) {
 		t.Errorf("mouse capture did not change after committing the row: still %v", after)
 	}
 	plain := ansi.Strip(s.sections[0].View())
-	if !strings.Contains(plain, boolChoice(after)) {
+	if !strings.Contains(plain, boolControlText(after)) {
 		t.Errorf("the section did not rebuild to show the new value %v:\n%s", after, plain)
 	}
 }

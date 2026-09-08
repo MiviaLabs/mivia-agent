@@ -103,37 +103,16 @@ func (s *SettingsStore) SetFullDiskNotifier(fn func(text string)) {
 	s.fullDiskNotifier = fn
 }
 
+// initFromConfig seeds every settings section from the resolved config.
+// The General section's own seeding lives in buildGeneralView
+// (settings_general.go) since it has enough field-by-field fallback
+// logic to be its own unit.
 func (s *SettingsStore) initFromConfig() {
-	showIter := false
-	showCache := false
-	approvalDefault := "always"
-	fullDisk := false
 	workspaceRoot := ""
 	if s.agentState != nil {
 		workspaceRoot = s.agentState.WorkspaceRoot
 	}
-	if s.res != nil {
-		showIter = s.res.ShowIterationNotices
-		showCache = s.res.ShowPromptCacheNotices
-		approvalDefault = approvalModeToView(s.res.Approvals.ApprovalPolicy())
-	}
-	// Full disk comes from the operator's user config, never from res: res
-	// is the workspace-overlay-merged view, and this grant must only ever
-	// reflect the operator's own file (config.UserFullDiskAccessForWorkspace
-	// enforces that provenance and fails closed).
-	fullDisk = config.UserFullDiskAccessForWorkspace(workspaceRoot)
-	s.general = ports.GeneralView{
-		Theme:                  "mivia-dark",
-		Mouse:                  true,
-		ShowReasoning:          true,
-		ShowIterationNotices:   showIter,
-		ShowPromptCacheNotices: showCache,
-		ScrollLines:            3,
-		ApprovalDefault:        approvalDefault,
-		ScreenReader:           false,
-		ReducedMotion:          false,
-		FullDiskAccess:         fullDisk,
-	}
+	s.general = s.buildGeneralView(workspaceRoot)
 	s.initProjectsFromConfig()
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
@@ -448,32 +427,9 @@ func (s *SettingsStore) newSaveHandle(apply func() error) ports.SaveHandle {
 	return &saveHandle{id: id, events: ch, cancel: func() { close(done) }}
 }
 
-// settingsGeneral
-type settingsGeneral struct{ *SettingsStore }
-
-func (g settingsGeneral) General() ports.GeneralView {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.general
-}
-
-func (g settingsGeneral) Apply(_ context.Context, _ ports.Scope, e ports.GeneralEdit) (ports.SaveHandle, error) {
-	return g.newSaveHandle(func() error { return g.applyGeneral(e) }), nil
-}
-
-func generalViewToSettings(v ports.GeneralView) config.GeneralSettings {
-	return config.GeneralSettings{
-		Theme:                  v.Theme,
-		Mouse:                  v.Mouse,
-		ShowReasoning:          v.ShowReasoning,
-		ShowIterationNotices:   v.ShowIterationNotices,
-		ShowPromptCacheNotices: v.ShowPromptCacheNotices,
-		ScrollLines:            v.ScrollLines,
-		ApprovalDefault:        v.ApprovalDefault,
-		ScreenReader:           v.ScreenReader,
-		ReducedMotion:          v.ReducedMotion,
-	}
-}
+// settingsGeneral, buildGeneralView, generalViewToSettings,
+// applySetFullDiskAccess, applyApprovalDefault, applyGeneral, and
+// persistGeneral all live in settings_general.go.
 
 func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 	return config.MCPServerSettings{
@@ -484,123 +440,6 @@ func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 		Endpoint:  v.Endpoint,
 		EnvNames:  v.EnvNames,
 	}
-}
-
-// applySetFullDiskAccess persists the full-disk grant to the operator's
-// USER config only - never the generic UpdateGeneralConfig path, whose
-// configPath() may resolve to the workspace's own committable
-// .mivia/mivia.toml (audit F2) - and then re-arms the LIVE session root
-// so the change lands without a restart (AR-4's sanctioned synchronized
-// re-arm; Root.SetUnrestricted is atomic). A live lift is always
-// announced through fullDiskNotifier with the single-sourced disclosure
-// line - lifting confinement is never silent, live or at launch.
-func (s *SettingsStore) applySetFullDiskAccess(on bool) error {
-	workspaceRoot := ""
-	if s.agentState != nil {
-		workspaceRoot = s.agentState.WorkspaceRoot
-	}
-	if err := config.SetUserFullDiskAccess(workspaceRoot, on); err != nil {
-		return fmt.Errorf("persist full-disk setting: %w", err)
-	}
-	s.general.FullDiskAccess = on
-	if s.agentState.ApplyFullDisk(on) {
-		text := config.FullDiskNoticeText
-		if !on {
-			text = "workspace: full disk access disabled — file tools are confined to the workspace again"
-		}
-		if fn := s.fullDiskNotifier; fn != nil {
-			go fn(text)
-		}
-	}
-	return nil
-}
-
-// applyApprovalDefault records the operator's approval posture and applies it
-// immediately, so "accept always" (and "deny") take effect without a restart -
-// the runtime half of the setting; persistence is UpdateGeneralConfig's. Every
-// POOLED session is re-armed, not just the focused one: an operator tightening
-// the gate means it everywhere, exactly as the full-disk toggle fans out.
-func (s *SettingsStore) applyApprovalDefault(mode string) {
-	s.general.ApprovalDefault = mode
-	if s.res != nil {
-		s.res.Approvals.DefaultMode = mode
-	}
-	if s.pool != nil {
-		s.pool.ApplyApprovalDefault(mode)
-		return
-	}
-	if s.sess != nil {
-		s.sess.SetApprovalPolicy(config.NormalizeDefaultMode(mode))
-	}
-}
-
-func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
-	var mouseNotifier func(bool)
-	switch v := e.(type) {
-	case ports.SetTheme:
-		s.general.Theme = v.Name
-	case ports.SetMouse:
-		s.general.Mouse = v.On
-		mouseNotifier = s.mouseNotifier // fired below, after the persist, outside any lock
-	case ports.SetShowReasoning:
-		s.general.ShowReasoning = v.On
-		if s.conv != nil {
-			s.conv.SetShowReasoning(v.On)
-		}
-	case ports.SetShowIterationNotices:
-		s.general.ShowIterationNotices = v.On
-		if s.res != nil {
-			s.res.ShowIterationNotices = v.On
-		}
-		if s.conv != nil {
-			s.conv.SetNoticeOptions(TranslateOptions{
-				ShowIterationNotices:   s.general.ShowIterationNotices,
-				ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
-			})
-		}
-	case ports.SetShowPromptCacheNotices:
-		s.general.ShowPromptCacheNotices = v.On
-		if s.res != nil {
-			s.res.ShowPromptCacheNotices = v.On
-		}
-		if s.conv != nil {
-			s.conv.SetNoticeOptions(TranslateOptions{
-				ShowIterationNotices:   s.general.ShowIterationNotices,
-				ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
-			})
-		}
-	case ports.SetScrollLines:
-		if v.N <= 0 {
-			return fmt.Errorf("scroll lines must be positive")
-		}
-		s.general.ScrollLines = v.N
-		if s.conv != nil {
-			s.conv.SetScrollLines(v.N)
-		}
-	case ports.SetApprovalDefault:
-		s.applyApprovalDefault(v.Mode)
-	case ports.SetScreenReader:
-		s.general.ScreenReader = v.On
-	case ports.SetReducedMotion:
-		s.general.ReducedMotion = v.On
-	case ports.SetFullDiskAccess:
-		// USER-config-only persistence, restart-to-apply - see
-		// applySetFullDiskAccess for the provenance rules (audit F2/AR-4).
-		return s.applySetFullDiskAccess(v.On)
-	default:
-		return fmt.Errorf("unknown general edit %T", e)
-	}
-
-	if cfgPath := s.configPath(); cfgPath != "" {
-		if err := config.UpdateGeneralConfig(cfgPath, generalViewToSettings(s.general)); err != nil {
-			return fmt.Errorf("persist general settings: %w", err)
-		}
-	}
-	if mouseNotifier != nil {
-		on := s.general.Mouse
-		go mouseNotifier(on)
-	}
-	return nil
 }
 
 func (s *SettingsStore) initMCPFromConfig() {

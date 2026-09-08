@@ -161,6 +161,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Memory:                  memCfg,
 		Harness:                 file.Harness,
 		Approvals:               file.Approvals,
+		TUI:                     file.TUI,
 		Workflows:               file.Workflows,
 		Verifiers:               cloneVerifierProfiles(file.Verifiers),
 		MCP:                     mcpConfig,

@@ -325,7 +325,7 @@ func settingsBindings() []Binding {
 		{ID: IDSettingsDefault, Context: ContextSettings, Keys: []string{"d"}, Help: "set as default model", Short: "default"},
 		{ID: IDSettingsProjectDefault, Context: ContextSettings, Keys: []string{"p"}, Help: "make default for this project", Short: "project default"},
 		{ID: IDSettingsClearOverride, Context: ContextSettings, Keys: []string{"c"}, Help: "clear this project's default override", Short: "clear override"},
-		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled"},
+		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled", Short: "toggle"},
 		{ID: IDSettingsCycleBack, Context: ContextSettings, Keys: []string{"-"}, Help: "previous value", Short: "prev"},
 		// Automations-only today: fires a manual run and opens a live
 		// watch on it. Harmless no-op on any other section (their

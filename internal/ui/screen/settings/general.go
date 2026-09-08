@@ -23,8 +23,17 @@ import (
 // (KindText stays reserved for a section that actually needs free
 // text, e.g. Models' base_url in a later slice).
 type generalRow struct {
+	label string
 	f     field.Model
 	apply func(value string) ports.GeneralEdit
+	// boolean marks a row whose value is one of "on"/"off". View renders
+	// these as an explicit `[ ON  ]`/`[ OFF ]` control (RoleSuccess when
+	// enabled, RoleFGMuted when disabled) instead of the field's bare
+	// value text, so the state reads from the word itself - not from
+	// colour alone, which stays readable in ASCII/NO_COLOR - while a
+	// non-boolean row (scroll lines, approval default) keeps showing its
+	// value directly, since "ON"/"OFF" would misdescribe a preset choice.
+	boolean bool
 }
 
 // generalSection is the General settings section.
@@ -131,18 +140,18 @@ func (s *generalSection) rebuild() {
 	fdF.SetChoices([]string{"on", "off"}, boolChoice(v.FullDiskAccess))
 
 	s.rows = []generalRow{
-		{mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }},
-		{reasonF, func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }},
-		{iterF, func(val string) ports.GeneralEdit { return ports.SetShowIterationNotices{On: val == "on"} }},
-		{cacheF, func(val string) ports.GeneralEdit { return ports.SetShowPromptCacheNotices{On: val == "on"} }},
-		{scrollF, func(val string) ports.GeneralEdit {
+		{"mouse capture", mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }, true},
+		{"show reasoning", reasonF, func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }, true},
+		{"iteration notice", iterF, func(val string) ports.GeneralEdit { return ports.SetShowIterationNotices{On: val == "on"} }, true},
+		{"prompt cache notice", cacheF, func(val string) ports.GeneralEdit { return ports.SetShowPromptCacheNotices{On: val == "on"} }, true},
+		{"scroll lines", scrollF, func(val string) ports.GeneralEdit {
 			n, _ := strconv.Atoi(val) // val is always one of scrollChoices; Atoi cannot fail
 			return ports.SetScrollLines{N: n}
-		}},
-		{approvalF, func(val string) ports.GeneralEdit { return ports.SetApprovalDefault{Mode: val} }},
-		{srF, func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }},
-		{rmF, func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }},
-		{fdF, func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }},
+		}, false},
+		{"approval default", approvalF, func(val string) ports.GeneralEdit { return ports.SetApprovalDefault{Mode: val} }, false},
+		{"screen reader", srF, func(val string) ports.GeneralEdit { return ports.SetScreenReader{On: val == "on"} }, true},
+		{"reduced motion", rmF, func(val string) ports.GeneralEdit { return ports.SetReducedMotion{On: val == "on"} }, true},
+		{"full disk access", fdF, func(val string) ports.GeneralEdit { return ports.SetFullDiskAccess{On: val == "on"} }, true},
 	}
 	if s.cursor >= len(s.rows) {
 		s.cursor = len(s.rows) - 1
@@ -168,6 +177,13 @@ func awaitSave(handle ports.SaveHandle) tea.Cmd {
 		}
 		if last.State == ports.SaveFailed {
 			return generalFailedMsg{message: last.Message}
+		}
+		if last.State != ports.SaveSaved {
+			msg := last.Message
+			if msg == "" {
+				msg = "save incomplete"
+			}
+			return generalFailedMsg{message: msg}
 		}
 		return generalSavedMsg{}
 	}
@@ -227,6 +243,7 @@ func (s *generalSection) commit(delta int) (section, tea.Cmd) {
 	handle, err := s.store.Apply(context.Background(), ports.ScopeUser, edit)
 	if err != nil {
 		s.notice = err.Error()
+		s.rebuild()
 		return s, nil
 	}
 	return s, awaitSave(handle)
@@ -238,6 +255,42 @@ func (s *generalSection) commit(delta int) (section, tea.Cmd) {
 // than both the one they left and the one they are heading for.
 var approvalChoicesByStrength = []string{"deny", "once", "always"}
 
+// boolControlText is the plain, unstyled text boolControl renders: an
+// explicit `[ ON  ]`/`[ OFF ]` word rather than the bare "on"/"off"
+// value text, so the state reads from the word itself - not from colour
+// alone - which keeps it readable in ASCII/NO_COLOR tiers where
+// RoleSuccess/RoleFGMuted resolve to no colour at all. Exposed
+// separately from boolControl so call sites (tests, mainly) can find
+// the rendered word without re-deriving the literal.
+func boolControlText(on bool) string {
+	if on {
+		return "[ ON  ]"
+	}
+	return "[ OFF ]"
+}
+
+// boolControl renders a boolean row's semantic value control, styled
+// with RoleSuccess when enabled and RoleFGMuted when disabled - colour
+// as reinforcement on top of boolControlText's self-describing word,
+// never as the only signal.
+func boolControl(t theme.Theme, tier theme.Tier, on bool) string {
+	if on {
+		return render.Role(t, tier, theme.RoleSuccess).Render(boolControlText(true))
+	}
+	return render.Role(t, tier, theme.RoleFGMuted).Render(boolControlText(false))
+}
+
+// valueCell renders one row's value column: the semantic ON/OFF control
+// for a boolean row, or the plain field value (scroll lines, approval
+// default) for anything else - "[ ON  ]" would misdescribe a preset
+// choice, so only boolean rows get the control treatment.
+func (s *generalSection) valueCell(row generalRow) string {
+	if row.boolean {
+		return boolControl(s.theme, s.tier, row.f.Value() == "on")
+	}
+	return render.Role(s.theme, s.tier, theme.RoleFG).Render(row.f.Value())
+}
+
 func (s *generalSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("General is unavailable.")
@@ -247,11 +300,23 @@ func (s *generalSection) View() string {
 		avail--
 	}
 	start, end := render.WindowSlice(len(s.rows), s.cursor, avail)
+
+	// Columns aligns every row's label/value pair together, over the
+	// WHOLE row set rather than just the visible slice, so the column
+	// widths (and therefore the value column's start position) stay
+	// identical no matter which rows are currently scrolled into view -
+	// scrolling must not shift the alignment the operator is reading by.
+	cells := make([][]string, len(s.rows))
+	for i, row := range s.rows {
+		label := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(row.label)
+		cells[i] = []string{label, s.valueCell(row)}
+	}
+	aligned := render.Columns(2, cells)
+
 	var b []byte
-	for i, row := range s.rows[start:end] {
-		actualIdx := start + i
-		line := row.f.View()
-		if actualIdx == s.cursor {
+	for i := start; i < end; i++ {
+		line := aligned[i]
+		if i == s.cursor {
 			line = "> " + line
 		} else {
 			line = "  " + line
@@ -266,5 +331,5 @@ func (s *generalSection) View() string {
 }
 
 func (s *generalSection) Hints() []keymap.ID {
-	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle}
+	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle, keymap.IDSettingsCycleBack}
 }
