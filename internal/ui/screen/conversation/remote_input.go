@@ -21,6 +21,20 @@ import (
 // PersistedText for the transcript line and Text for the provider request.
 const remoteInputTagPrefix = "(via web) "
 
+// ackCmd wraps ack as a tea.Cmd so its durable-write ledger I/O never runs
+// on bubbletea's Update goroutine. A nil ack returns a nil Cmd, matching
+// every other optional-Cmd pattern in this package: no goroutine is armed,
+// nothing runs. tea.Batch already skips nil Cmds safely.
+func ackCmd(ack func()) tea.Cmd {
+	if ack == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ack()
+		return nil
+	}
+}
+
 // remoteInputMsg wraps one already-validated ports.RemoteInputEvent for
 // bubbletea message delivery. Everything this screen needs to trust about
 // the event was already checked in internal/chatsync before it ever reached
@@ -88,7 +102,7 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 	persisted := remoteInputTagPrefix + ev.Body
 
 	if ev.SessionID == "" || ev.SessionID == s.convID() {
-		next, cmd := s.sendOrQueueRemote(text, persisted)
+		next, cmd := s.sendOrQueueRemote(text, persisted, ev.AckReceived)
 		return next, tea.Batch(rearm, cmd)
 	}
 
@@ -118,20 +132,23 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 		// Not a new gap this feature introduces - see sendOrQueueRemote's
 		// identical note on the foreground path.
 		st.queue = append(st.queue, text)
-		return s, rearm
+		return s, tea.Batch(rearm, ackCmd(ev.AckReceived))
 	}
 
+	// See sendOrQueueRemote's non-busy tail and handleSessionMountedMsg's
+	// background direct-Send branch for the other two sites sharing this
+	// "send, then ack unconditionally" shape.
 	handle, err := st.conv.Send(context.Background(), intent.Send{Text: text, PersistedText: persisted})
 	if err != nil {
 		st.handleTurnEvent(uievent.Event{
 			Kind: uievent.KindError,
 			Body: uievent.ErrorBody{Text: fmt.Sprintf("remote send failed: %v", err), Fatal: false},
 		})
-		return s, rearm
+		return s, tea.Batch(rearm, ackCmd(ev.AckReceived))
 	}
 	st.active = handle
 	st.statusline.Start("thinking", s.now())
-	return s, tea.Batch(rearm, s.awaitSessionEvent(ev.SessionID, handle.Events()))
+	return s, tea.Batch(rearm, s.awaitSessionEvent(ev.SessionID, handle.Events()), ackCmd(ev.AckReceived))
 }
 
 // handleRemoteCancel stops the targeted session's active turn, mirroring
@@ -173,14 +190,23 @@ func (s Screen) handleRemoteCancel(ev ports.RemoteInputEvent) Screen {
 // full once eventually delivered. This matches the pre-existing behavior
 // every queued submission has always had; it is not specific to remote
 // input.
-func (s Screen) sendOrQueueRemote(text, persisted string) (app.Screen, tea.Cmd) {
+func (s Screen) sendOrQueueRemote(text, persisted string, ack func()) (app.Screen, tea.Cmd) {
 	if s.active != nil {
 		s.queue = append(s.queue, text)
 		if s.queueOverlay.Active() {
 			s.queueOverlay.SetItems(s.queue)
 		}
 		s.statusline.SetQueued(len(s.queue))
-		return s, nil
+		return s, ackCmd(ack)
 	}
-	return s.sendTextWithPersisted(text, persisted)
+	// Ack fires regardless of Send's outcome below: custody was taken the
+	// moment this function decided to dispatch rather than queue,
+	// independent of whether the dispatch itself succeeds. See
+	// handleRemoteInput's direct-Send branch and
+	// handleSessionMountedMsg's background direct-Send branch for the
+	// other two call sites of this exact "send, then ack unconditionally"
+	// shape - a future change to one should be checked against the other
+	// two.
+	next, cmd := s.sendTextWithPersisted(text, persisted)
+	return next, tea.Batch(cmd, ackCmd(ack))
 }

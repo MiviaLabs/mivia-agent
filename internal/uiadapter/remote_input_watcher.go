@@ -19,7 +19,7 @@ type WatcherConfig struct {
 	AuthorProvider chatsync.AuthorUserIDProvider
 	Max            int
 	IsPooled       func(sessionID string) bool
-	Deliver        func(sessionID string, in chatsync.RemoteInput)
+	Deliver        func(sessionID string, in chatsync.RemoteInput, ack func())
 }
 
 // RemoteInputWatcher runs standalone chatsync.InputPoller instances for saved
@@ -197,7 +197,9 @@ func (w *RemoteInputWatcher) Backfill(ctx context.Context) {
 		go func(sessID string, p *chatsync.InputPoller) {
 			for ri := range p.Inputs() {
 				if w.cfg.Deliver != nil {
-					w.cfg.Deliver(sessID, ri)
+					ri := ri
+					ack := func() { p.MarkReceived(ri.ID) }
+					w.cfg.Deliver(sessID, ri, ack)
 				}
 			}
 		}(cand.sessionID, poller)

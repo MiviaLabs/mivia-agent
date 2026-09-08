@@ -128,7 +128,12 @@ const (
 type WireEventSpec struct {
 	// Type is the mivia.chat.v1.* type string. The API names each SSE frame
 	// after this exact string, so a browser client must register a listener
-	// per entry: EventSource.onmessage never fires for these events.
+	// per entry: EventSource.onmessage never fires for these events. This is
+	// confirmed live by live_sse_test.go's "names the frame after the event
+	// type" subtest (build tag livechat) and is intentional, documented
+	// behavior per api/contracts/chat-sessions.v1.json's notes array; see
+	// docs/development/agent-workflow.md's "Live chat-session probe" section
+	// for the forward-compatibility trade-off this implies.
 	Type string
 	// Payload is a zero value of the struct that models this type's payload.
 	Payload any

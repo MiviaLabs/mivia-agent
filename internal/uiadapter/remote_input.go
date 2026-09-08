@@ -41,16 +41,23 @@ func (p *SessionPool) RemoteInputs() <-chan ports.RemoteInputEvent {
 // stream onto the pool-wide RemoteInputs channel, tagging each with the
 // LOCAL chat session id (id) - the same id conversation.Screen's
 // s.convID()/s.sessions map already key on for turn events
-// (uievent.EventMsg.SessionID). It returns when inputs closes, which
-// chatsync.InputPoller does exactly once, when the sync session stops.
-func (p *SessionPool) pumpRemoteInputs(id string, inputs <-chan chatsync.RemoteInput) {
-	for ri := range inputs {
+// (uievent.EventMsg.SessionID). It returns when syncSess.Inputs() closes,
+// which chatsync.InputPoller does exactly once, when the sync session
+// stops. Each constructed event's AckReceived closes over syncSess so the
+// consumer can mark custody through the exact poller instance this input
+// came from.
+func (p *SessionPool) pumpRemoteInputs(id string, syncSess *chatsync.SyncSession) {
+	for ri := range syncSess.Inputs() {
+		ri := ri
 		p.remoteInputs <- ports.RemoteInputEvent{
 			ID:         ri.ID,
 			Kind:       ri.Kind,
 			SessionID:  id,
 			Body:       ri.Body,
 			ReceivedAt: ri.Received,
+			AckReceived: func() {
+				syncSess.MarkInputReceived(ri.ID)
+			},
 		}
 	}
 }
