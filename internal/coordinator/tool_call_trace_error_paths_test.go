@@ -101,3 +101,13 @@ func TestShouldSkipCanceledTask_NilCoordinatorAndUnstampedContextFailOpen(t *tes
 		t.Fatal("an unstamped context must fail open (false)")
 	}
 }
+
+// TestRunHandle_SubagentToolCanceler_NilReceiverIsNoop pins the RunHandle
+// method's own nil-receiver guard, distinct from the Coordinator-level nil
+// checks tool_cancel_guard_test.go already covers.
+func TestRunHandle_SubagentToolCanceler_NilReceiverIsNoop(t *testing.T) {
+	var h *RunHandle
+	if _, ok := h.subagentToolCanceler("t1"); ok {
+		t.Fatal("a nil RunHandle must report no registered canceler, not panic or claim one exists")
+	}
+}
