@@ -207,3 +207,33 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 		t.Errorf("expected the dispatched subagent's output to render in the dialog, got:\n%s", view)
 	}
 }
+
+// TestLoadAllThemes_EmbeddedAndUserErrorsSurface pins loadAllThemes' own
+// two error branches directly (not via the loadThemes indirection
+// TestBuildAppPropagatesThemeLoadError swaps out entirely).
+func TestLoadAllThemes_EmbeddedAndUserErrorsSurface(t *testing.T) {
+	oldEmbedded, oldUser, oldDir := loadEmbeddedThemes, loadUserThemes, userThemesDir
+	defer func() { loadEmbeddedThemes, loadUserThemes, userThemesDir = oldEmbedded, oldUser, oldDir }()
+
+	embeddedErr := errors.New("embedded broken")
+	loadEmbeddedThemes = func() ([]theme.Theme, error) { return nil, embeddedErr }
+	if _, err := loadAllThemes(); !errors.Is(err, embeddedErr) {
+		t.Fatalf("loadAllThemes err = %v, want the embedded-load error", err)
+	}
+
+	userErr := errors.New("user dir broken")
+	loadEmbeddedThemes = func() ([]theme.Theme, error) { return []theme.Theme{{Name: "built-in"}}, nil }
+	loadUserThemes = func(string) ([]theme.Theme, error) { return nil, userErr }
+	userThemesDir = func() string { return "/custom/themes" }
+	if _, err := loadAllThemes(); !errors.Is(err, userErr) {
+		t.Fatalf("loadAllThemes err = %v, want the user-load error", err)
+	}
+}
+
+// TestChooseTheme_NoMatchAndNoDefaultIsAnError pins the final error branch:
+// neither the requested name nor the mivia-dark fallback is present.
+func TestChooseTheme_NoMatchAndNoDefaultIsAnError(t *testing.T) {
+	if _, err := chooseTheme([]theme.Theme{{Name: "other"}}, "missing"); err == nil {
+		t.Fatal("chooseTheme accepted a theme set with no match and no default")
+	}
+}
