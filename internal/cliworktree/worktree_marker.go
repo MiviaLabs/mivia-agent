@@ -157,7 +157,12 @@ func ensureWorktreeMarkerExcluded(root string) error {
 	return lastErr
 }
 
-func ensureWorktreeMarkerExcludedOnce(commonDir string) error {
+// ensureWorktreeMarkerExcludedOnce is a var so
+// TestMarkerExcludeRetriesTransientNotExist can inject controlled failures,
+// the same seam pattern renameWorktreeMarker uses for the publish retry.
+var ensureWorktreeMarkerExcludedOnce = ensureWorktreeMarkerExcludedOnceImpl
+
+func ensureWorktreeMarkerExcludedOnceImpl(commonDir string) error {
 	gitRoot, err := os.OpenRoot(commonDir)
 	if err != nil {
 		return fmt.Errorf("open Git common directory: %w", err)

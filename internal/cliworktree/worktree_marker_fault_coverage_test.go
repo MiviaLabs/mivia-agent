@@ -2,7 +2,9 @@ package cliworktree
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -267,5 +269,75 @@ func TestMarkerPublishRetriesTransientRenameContention(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("rename attempts without retry = %d, want 1", calls)
+	}
+}
+
+// TestMarkerExcludeRetriesTransientNotExist pins ensureWorktreeMarkerExcluded's
+// retry contract deterministically. See ensureWorktreeMarkerExcluded's doc
+// comment: under CI-runner load, 8 goroutines racing WriteWorktreeMarker
+// against one shared .git directory intermittently hit a spurious not-exist
+// error opening the exclude lock. Without this test the retry loop's bounds
+// and its not-exist gate are exercised only by that intermittent contention.
+func TestMarkerExcludeRetriesTransientNotExist(t *testing.T) {
+	original := ensureWorktreeMarkerExcludedOnce
+	t.Cleanup(func() { ensureWorktreeMarkerExcludedOnce = original })
+
+	// worktreeGitCommonDir shells out to `git`, so the loop under test needs
+	// a real repository root; the retry itself is exercised through the
+	// stubbed seam below, not through this fixture.
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	// Fails on every attempt up to and including the last one the budget
+	// allows (attempts 0..maxMarkerExcludeAttempts-1): the loop must exhaust
+	// its budget and return the error, never reaching a call the budget
+	// does not grant. attempt<max off-by-one (<=) would let a 6th call
+	// through and see it "succeed" on a call this contract never makes.
+	calls := 0
+	ensureWorktreeMarkerExcludedOnce = func(string) error {
+		calls++
+		if calls > maxMarkerExcludeAttempts {
+			return nil
+		}
+		return fmt.Errorf("wrap: %w", os.ErrNotExist)
+	}
+	if err := ensureWorktreeMarkerExcluded(root); err == nil {
+		t.Fatal("a not-exist error persisting past the attempt budget must surface, not succeed")
+	}
+	if calls != maxMarkerExcludeAttempts {
+		t.Fatalf("attempts = %d, want exactly %d", calls, maxMarkerExcludeAttempts)
+	}
+
+	// Recovers within the budget: fails twice, then succeeds on the third
+	// call.
+	calls = 0
+	ensureWorktreeMarkerExcludedOnce = func(string) error {
+		calls++
+		if calls < 3 {
+			return fmt.Errorf("wrap: %w", os.ErrNotExist)
+		}
+		return nil
+	}
+	if err := ensureWorktreeMarkerExcluded(root); err != nil {
+		t.Fatalf("transient not-exist within the budget must be absorbed, got %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("attempts = %d, want 3", calls)
+	}
+
+	// A non-not-exist error must stop immediately, never retried: this is
+	// the branch the ==/||/! mutants each flip.
+	calls = 0
+	ensureWorktreeMarkerExcludedOnce = func(string) error {
+		calls++
+		return errors.New("permission denied")
+	}
+	if err := ensureWorktreeMarkerExcluded(root); err == nil {
+		t.Fatal("a non-not-exist error must surface")
+	}
+	if calls != 1 {
+		t.Fatalf("attempts = %d, want 1: a non-not-exist error must not be retried", calls)
 	}
 }
