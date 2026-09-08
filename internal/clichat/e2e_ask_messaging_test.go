@@ -300,6 +300,7 @@ func TestE2E_DispatchAskAnswerRoundTrip(t *testing.T) {
 			{"id": "aud-1", "agent": "auditor",
 				"prompt": auditorAskMarker + " you are the auditor; answer any ask from the reviewer"},
 		},
+		"wait": "run",
 	})
 	body, err := tool.Execute(context.Background(), args)
 	if err != nil {

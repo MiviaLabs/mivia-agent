@@ -53,7 +53,7 @@ func routingTools(t *testing.T) *dispatchTasksTool {
 // cliorchestrate.HandlerOneshot, not through a named agent's handler.
 func TestAgentFieldOptionalRunsOneshot(t *testing.T) {
 	dispatch := routingTools(t)
-	out, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
+	out, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("Execute error = %v, want nil", err)
 	}

@@ -187,7 +187,7 @@ func runNestedSyncDispatchCase(t *testing.T, name string, cfg config.SubagentCon
 	nested := NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "leaf"))
 	if err := d.Register(runtime.Subagent, "mid", handlerFunc(func(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
 		body, err := nested.Execute(ctx, json.RawMessage(
-			`{"tasks":[{"id":"leaf-a","agent":"leaf","prompt":"a"},{"id":"leaf-b","agent":"leaf","prompt":"b"}]}`))
+			`{"tasks":[{"id":"leaf-a","agent":"leaf","prompt":"a"},{"id":"leaf-b","agent":"leaf","prompt":"b"}],"wait":"run"}`))
 		if err != nil {
 			return nil, fmt.Errorf("nested dispatch: %w", err)
 		}
@@ -207,7 +207,7 @@ func runNestedSyncDispatchCase(t *testing.T, name string, cfg config.SubagentCon
 	done := make(chan execResult, 1)
 	go func() {
 		body, err := outer.Execute(outerCallerCtx(context.Background()),
-			json.RawMessage(`{"tasks":[{"id":"m1","agent":"mid","prompt":"1"},{"id":"m2","agent":"mid","prompt":"2"},{"id":"m3","agent":"mid","prompt":"3"}]}`))
+			json.RawMessage(`{"tasks":[{"id":"m1","agent":"mid","prompt":"1"},{"id":"m2","agent":"mid","prompt":"2"},{"id":"m3","agent":"mid","prompt":"3"}],"wait":"run"}`))
 		done <- execResult{body: body, err: err}
 	}()
 
@@ -266,7 +266,7 @@ func TestNestedConcurrentSiblingsLedgerTerminal(t *testing.T) {
 	if err := d.Register(runtime.Subagent, "mid", handlerFunc(func(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
 		var prompt string
 		_ = json.Unmarshal(req.Input, &prompt)
-		args := fmt.Sprintf(`{"tasks":[{"id":"l-%s-1","agent":"leaf","prompt":"x"},{"id":"l-%s-2","agent":"leaf","prompt":"y"},{"id":"l-%s-3","agent":"leaf","prompt":"z"}]}`, prompt, prompt, prompt)
+		args := fmt.Sprintf(`{"tasks":[{"id":"l-%s-1","agent":"leaf","prompt":"x"},{"id":"l-%s-2","agent":"leaf","prompt":"y"},{"id":"l-%s-3","agent":"leaf","prompt":"z"}],"wait":"run"}`, prompt, prompt, prompt)
 		body, err := nested.Execute(ctx, json.RawMessage(args))
 		if err != nil {
 			return nil, err
@@ -287,7 +287,7 @@ func TestNestedConcurrentSiblingsLedgerTerminal(t *testing.T) {
 	done := make(chan execResult, 1)
 	go func() {
 		body, err := outer.Execute(outerCallerCtx(context.Background()),
-			json.RawMessage(`{"tasks":[{"id":"m1","agent":"mid","prompt":"m1"},{"id":"m2","agent":"mid","prompt":"m2"},{"id":"m3","agent":"mid","prompt":"m3"}]}`))
+			json.RawMessage(`{"tasks":[{"id":"m1","agent":"mid","prompt":"m1"},{"id":"m2","agent":"mid","prompt":"m2"},{"id":"m3","agent":"mid","prompt":"m3"}],"wait":"run"}`))
 		done <- execResult{body: body, err: err}
 	}()
 
@@ -376,7 +376,7 @@ func setupNestedCancelProbe(t *testing.T) *nestedCancelProbeHarness {
 	if err := d.Register(runtime.Subagent, "mid", handlerFunc(func(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
 		var prompt string
 		_ = json.Unmarshal(req.Input, &prompt)
-		args := fmt.Sprintf(`{"tasks":[{"id":"l-%s-1","agent":"leaf","prompt":"x"},{"id":"l-%s-2","agent":"leaf","prompt":"y"}]}`, prompt, prompt)
+		args := fmt.Sprintf(`{"tasks":[{"id":"l-%s-1","agent":"leaf","prompt":"x"},{"id":"l-%s-2","agent":"leaf","prompt":"y"}],"wait":"run"}`, prompt, prompt)
 		body, err := nested.Execute(ctx, json.RawMessage(args))
 		if err != nil {
 			return nil, err
@@ -392,7 +392,7 @@ func setupNestedCancelProbe(t *testing.T) *nestedCancelProbeHarness {
 	done := make(chan nestedCancelProbeResult, 1)
 	go func() {
 		body, err := outer.Execute(ctx, json.RawMessage(
-			`{"tasks":[{"id":"m1","agent":"mid","prompt":"m1"},{"id":"m2","agent":"mid","prompt":"m2"},{"id":"m3","agent":"mid","prompt":"m3"}]}`))
+			`{"tasks":[{"id":"m1","agent":"mid","prompt":"m1"},{"id":"m2","agent":"mid","prompt":"m2"},{"id":"m3","agent":"mid","prompt":"m3"}],"wait":"run"}`))
 		done <- nestedCancelProbeResult{body: body, err: err}
 	}()
 
@@ -501,7 +501,7 @@ func TestNestedDispatchShortTimeoutDoesNotPoisonOuter(t *testing.T) {
 	if err := d.Register(runtime.Subagent, "mid", handlerFunc(func(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
 		start := time.Now()
 		body, err := nested.Execute(ctx, json.RawMessage(
-			`{"tasks":[{"id":"slow-leaf","agent":"leaf","prompt":"block"}],"timeout_seconds":1}`))
+			`{"tasks":[{"id":"slow-leaf","agent":"leaf","prompt":"block"}],"timeout_seconds":1,"wait":"run"}`))
 		if err != nil {
 			return nil, fmt.Errorf("nested dispatch transport error: %w", err)
 		}
@@ -519,7 +519,7 @@ func TestNestedDispatchShortTimeoutDoesNotPoisonOuter(t *testing.T) {
 	done := make(chan execResult, 1)
 	go func() {
 		body, err := outer.Execute(outerCallerCtx(context.Background()),
-			json.RawMessage(`{"tasks":[{"id":"m1","agent":"mid","prompt":"m1"}]}`))
+			json.RawMessage(`{"tasks":[{"id":"m1","agent":"mid","prompt":"m1"}],"wait":"run"}`))
 		done <- execResult{body: body, err: err}
 	}()
 
