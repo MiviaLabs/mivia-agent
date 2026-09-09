@@ -60,26 +60,11 @@ func resolvedTaskBinding(route TaskRoute, sessionProvider, sessionModel string) 
 	return strings.ToLower(strings.TrimSpace(providerName)), strings.TrimSpace(model)
 }
 
-func decodeStrictTaskJSON(args json.RawMessage, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(args))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("multiple JSON values")
-		}
-		return err
-	}
-	return nil
-}
-
 // decodeDispatchTaskJSON adds the presence checks that encoding/json cannot
-// express for optional string selectors. It also rejects duplicate keys before
-// DisallowUnknownFields decodes the request, so a duplicate cannot silently
-// change the route selected by the model.
+// express for optional string selectors. It rejects duplicate keys before
+// decoding, so a duplicate cannot silently change the route selected by the
+// model, and validateDispatchTaskSelectors then refuses reserved selectors and
+// misspellings of declared fields; every other unknown field is ignored.
 type dispatchTaskParams struct {
 	Tasks          []dispatchTaskParam `json:"tasks"`
 	TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
@@ -166,32 +151,17 @@ func scanJSONValue(dec *json.Decoder) error {
 	return nil
 }
 
-// reservedTaskSelectors are field names a task must never carry. Every one of
-// them selected a route in an older task API or names a knob the task schema
-// deliberately does not expose, so accepting and ignoring one would run the
-// task somewhere the model did not ask for - the single case where refusing
-// beats being permissive. The refusal names the field, so the model can drop
-// it and retry instead of guessing.
-var reservedTaskSelectors = []string{"handler", "name", "role", "model", "provider", "tools"}
-
-// reservedSelectorFor returns the reserved selector field matches, or "" when
-// it is an ordinary unread field.
-func reservedSelectorFor(field string) string {
-	lowered := strings.ToLower(strings.TrimSpace(field))
-	for _, reserved := range reservedTaskSelectors {
-		if lowered == reserved {
-			return reserved
-		}
-	}
-	return ""
-}
-
 func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskParam) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(args, &root); err != nil {
 		return err
 	}
-	rawTasks, ok := root["tasks"]
+	// Case-insensitively, the way encoding/json already resolved it into
+	// target.Tasks: an exact-cased index answered "tasks must be a non-empty
+	// array" for {"Tasks":[...]} while the array sat decoded and populated -
+	// a false statement with no spelling to correct toward, on the one field
+	// the request requires.
+	rawTasks, ok := lookupJSONField(root, "tasks")
 	if !ok || string(rawTasks) == "null" {
 		return fmt.Errorf("tasks must be a non-empty array")
 	}
@@ -200,8 +170,22 @@ func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskPar
 		return fmt.Errorf("tasks must be a non-empty array")
 	}
 	for _, field := range []string{"timeout_seconds", "wait", "wait_task_id"} {
-		if value, present := root[field]; present && string(value) == "null" {
+		if value, present := lookupJSONField(root, field); present && string(value) == "null" {
 			return fmt.Errorf("%s must not be null", field)
+		}
+	}
+	// Sorted, not map order: a request carrying two bad fields must name the
+	// same one on every run, or the same call produces a different error each
+	// time it is retried and no operator can reproduce a report.
+	//
+	// Near-miss only, no reserved-selector check: the reserved names are
+	// ROUTE selectors and the request object routes nothing, so a top-level
+	// "name" or "role" is an ordinary decoration. Refusing it would cost a
+	// whole batch for no safety - the asymmetry with the per-task check is
+	// deliberate.
+	for _, present := range sortedKeys(root) {
+		if declared := nearMissOf(present, declaredRequestFields); declared != "" {
+			return fmt.Errorf("%q is not a request field; the field you mean is spelled %q", present, declared)
 		}
 	}
 	seenIDs := make(map[string]struct{}, len(tasks))
@@ -210,11 +194,7 @@ func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskPar
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			return err
 		}
-		for field, value := range fields {
-			if string(value) == "null" {
-				return fmt.Errorf("task %d: %s must not be null", i+1, field)
-			}
-		}
+
 		if i < len(tasks) {
 			id := strings.TrimSpace(tasks[i].ID)
 			if id != "" {
@@ -224,27 +204,8 @@ func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskPar
 				seenIDs[id] = struct{}{}
 			}
 		}
-		// Case-insensitively, because encoding/json matches field names that
-		// way too: a "Handler" the decode would have ignored must not slip
-		// past a check that only knows the lowercase spelling.
-		for present := range fields {
-			if reserved := reservedSelectorFor(present); reserved != "" {
-				return fmt.Errorf("task %d: %q is not a task field; "+
-					"route with \"agent\" (and optionally \"skill\") instead", i+1, present)
-			}
-		}
-		for _, field := range []string{"agent", "skill"} {
-			value, present := fields[field]
-			if !present {
-				continue
-			}
-			var text string
-			if string(value) == "null" {
-				return fmt.Errorf("task %d: %s must be a string when present", i+1, field)
-			}
-			if err := json.Unmarshal(value, &text); err != nil {
-				return fmt.Errorf("task %d: %s must be a string when present: %w", i+1, field, err)
-			}
+		if err := validateTaskObject(i+1, fields); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -305,32 +266,36 @@ func resolveDispatchTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Regist
 	return ResolveTaskRoute(reg, skillReg, agentName, skillName)
 }
 
-// taskItemSchema builds one task's schema. includeRoster controls whether the
-// agent property carries the full roster prose (agentRoutingDescription):
-// dispatch_tasks and spawn_agent both embed this schema in every request, so
-// the roster ships once - in dispatch_tasks, the primary router the compiled
-// prompt orders - and spawn_agent keeps only the enum for validation.
+// taskItemSchema builds one task's schema, with the roster prose
+// (agentRoutingDescription) on the agent property. dispatch_tasks is the only
+// embedder; a second one that wanted the roster omitted would take a
+// parameter back, but an unused knob no caller exercises is a knob nothing
+// tests.
 //
 // "agent" is optional: when general-purpose is present, an omitted or blank
 // agent selects it; otherwise it selects the bare one-shot route. A skill
 // requires an agent. Only "id" and "prompt" are required.
-func taskItemSchema(reg *agents.AgentRegistry, includeRoster bool) map[string]any {
-	agentDescription := agentRoutingDescription(nil)
+func taskItemSchema(reg *agents.AgentRegistry) map[string]any {
 	skillDescription := "Optional skill invoked under the effective agent's policy"
 	if reg == nil {
 		skillDescription += "; requires an explicit agent when no general-purpose default is available"
 	} else if _, ok := reg.Get(agents.BuiltInGeneralPurposeName); !ok {
 		skillDescription += "; requires an explicit agent when no general-purpose default is available"
 	}
-	if includeRoster {
-		agentDescription = agentRoutingDescription(reg)
-	}
+	agentDescription := agentRoutingDescription(reg)
+	// No "enum" here, on purpose. An enum is enforced by the provider's
+	// validator and by the SDK's compiled schema, both BEFORE the tool runs,
+	// so a name the roster does not carry died as a pre-execution failure
+	// counted toward the loop's failure-spiral bound - and all the model was
+	// told is where it went wrong ("enum mismatch at /tasks/0/agent"), never
+	// which names exist. Routed through the tool instead, the same call
+	// reaches ResolveTaskRoute, whose error names the bad agent AND lists the
+	// available ones, so the model can correct itself on the next turn. The
+	// roster the model composes against still travels in the description
+	// below (agentRoutingDescription).
 	agentProp := map[string]any{
 		"type":        "string",
 		"description": agentDescription,
-	}
-	if names := agentNames(reg); len(names) > 0 {
-		agentProp["enum"] = names
 	}
 	properties := map[string]any{
 		"id":              map[string]any{"type": "string", "description": "Unique task identifier within this run"},
@@ -360,27 +325,6 @@ func taskItemSchema(reg *agents.AgentRegistry, includeRoster bool) map[string]an
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"id", "prompt"}, "additionalProperties": true}
 }
 
-func agentNames(reg *agents.AgentRegistry) []string {
-	if reg == nil {
-		return []string{}
-	}
-	// AgentRegistry.Names() returns nil, not an empty slice, when zero
-	// agents are registered (slices.Clone of a nil backing slice stays
-	// nil). This value is marshaled straight into the dispatch_tasks tool
-	// schema's "enum" field below, and encoding/json renders a nil []string
-	// as JSON null rather than []. Some providers' function-schema
-	// validators (DeepSeek's, confirmed) reject "enum": null outright,
-	// failing every tool-enabled request in a workspace with no named
-	// agents - the common case. Coalesce here rather than in Names()
-	// itself, since this is the only caller that puts the result on the
-	// wire as JSON; other callers only range over or Join() it, where nil
-	// and empty behave identically.
-	if names := reg.Names(); names != nil {
-		return names
-	}
-	return []string{}
-}
-
 // agentRoutingBaseDescription states the contract of the task "agent" field
 // without a roster. The field is OPTIONAL: general-purpose is the default
 // when present; otherwise omission runs a tool-less one-shot call. A skill
@@ -388,7 +332,7 @@ func agentNames(reg *agents.AgentRegistry) []string {
 // "always available" clause for the compiled built-in is
 // appended by agentRoutingDescription only when the built-in actually
 // resolved into the registry (a same-name skill collision can skip it), so
-// the prose never promises a target the enum lacks.
+// the prose never promises a target the registry lacks.
 const agentRoutingBaseDescription = "Optional authorized agent for this task: " +
 	"name a listed agent; when general-purpose is available, omission or a blank " +
 	"value selects it. If it is unavailable, omission uses a tool-less one-shot call " +

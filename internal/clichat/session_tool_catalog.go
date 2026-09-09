@@ -62,9 +62,8 @@ var sessionToolCatalog = []sessionToolSpec{
 
 // advertisedSessionToolSpecs renders the catalog's advertised schemas for one
 // binding. agentReg is the binding's immutable resolved agent snapshot; it is
-// what lets dispatch_tasks advertise its REAL agent enum and roster prose at
-// turn zero instead of a degraded empty enum (agentNames(nil) returns
-// []string{}, never JSON null). DeferredOnly entries ship only when the plan
+// what lets dispatch_tasks advertise its REAL agent roster prose at turn
+// zero instead of a description with no roster at all. DeferredOnly entries ship only when the plan
 // defers something. Every entry's Name/Description/Parameters reads no
 // runtime state beyond that immutable snapshot.
 func advertisedSessionToolSpecs(plan toolTierPlan, agentReg *agents.AgentRegistry) []provider.ToolSpec {

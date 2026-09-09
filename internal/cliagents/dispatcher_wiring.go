@@ -55,7 +55,7 @@ var SummaryWiringVar func(*chat.Session, *config.Resolved) (*contextmgr.Summariz
 // to append the session-owned dispatcher tools to the advertised wire array.
 // The *agents.AgentRegistry argument is the binding's immutable resolved
 // agent snapshot, passed as data (never a global) so dispatch_tasks can
-// advertise its real agent enum and roster at turn zero.
+// advertise its real agent roster at turn zero.
 var AdvertisedSessionToolSpecsVar func(ToolTierPlan, *agents.AgentRegistry) []provider.ToolSpec
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions.

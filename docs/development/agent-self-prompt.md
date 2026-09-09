@@ -31,8 +31,11 @@ The orchestrator learns the roster at its first turn, without searching:
 1. The root system prompt carries a `# Subagents` section (one line per
    agent, capped, appended additively - also on customized
    `[chat].system_prompt`).
-2. The advertised `dispatch_tasks` schema carries the real `agent` enum plus
-   optional-field prose from the resolved registry.
+2. The advertised `dispatch_tasks` schema carries the real roster and the
+   optional-field prose in the `agent` field description, from the resolved
+   registry. The field publishes no `enum`: an enum is enforced by the
+   provider before the tool runs, which turns a misspelled name into a
+   pre-execution tool failure that never names the valid alternatives.
 3. Selecting an unknown name errors with `(available: ...)` naming the
    roster.
 

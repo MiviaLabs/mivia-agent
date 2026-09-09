@@ -14,7 +14,7 @@ import (
 
 // TestCleanLoadShipsBuiltInInRoutingSchema pins the production load path: a
 // clean workspace resolves the compiled general-purpose agent, and the
-// dispatch_tasks schema then offers it in the agent enum and roster prose.
+// dispatch_tasks schema then offers it in the agent roster prose.
 func TestCleanLoadShipsBuiltInInRoutingSchema(t *testing.T) {
 	home, ws := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -30,25 +30,22 @@ func TestCleanLoadShipsBuiltInInRoutingSchema(t *testing.T) {
 	tool := &dispatchTasksTool{agentReg: reg, cfg: config.DefaultSubagentConfig, repo: ledger.NewMemoryLedgerRepository()}
 	items := tool.Parameters()["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
 	agent := items["properties"].(map[string]any)["agent"].(map[string]any)
-	enum, ok := agent["enum"].([]string)
-	if !ok {
-		t.Fatalf("agent enum missing on a clean load: %#v", agent)
-	}
-	found := false
-	for _, name := range enum {
-		if name == "general-purpose" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("agent enum = %v, want it to offer general-purpose", enum)
+	// The roster is prose, not an enum: see taskItemSchema.
+	if enum, found := agent["enum"]; found {
+		t.Fatalf("agent enum = %#v; the roster travels in the description", enum)
 	}
 	description := agent["description"].(string)
 	if !strings.Contains(description, "Optional") {
 		t.Fatalf("agent description must state the field is optional: %q", description)
 	}
-	if !strings.Contains(description, "general-purpose") {
-		t.Fatalf("agent roster prose must name the built-in: %q", description)
+	// The always-available clause, NOT the bare name: agentRoutingBaseDescription
+	// already contains "general-purpose" ("when general-purpose is available"),
+	// and it ships even for a nil registry - so asserting the name alone passes
+	// with the roster entirely gone. agentRoutingDescription emits this clause
+	// only when reg.Get(BuiltInGeneralPurposeName) succeeds, which is the
+	// resolution this test exists to prove.
+	if !strings.Contains(description, "Built-in general-purpose is always available.") {
+		t.Fatalf("agent roster prose must record that the built-in resolved: %q", description)
 	}
 }
 

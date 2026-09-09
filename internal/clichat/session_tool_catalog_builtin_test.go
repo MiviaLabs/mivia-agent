@@ -2,7 +2,6 @@ package clichat
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
 
@@ -52,10 +51,12 @@ func dispatchAgentProperty(t *testing.T, fn map[string]any) map[string]any {
 
 // TestAdvertisedDispatchTasksShipsRosterAtTurnZero pins the D2 seam: the
 // ADVERTISED dispatch_tasks schema (what ships on the first request, before
-// any load_tools admission) carries the REAL agent enum and roster prose from
-// the binding's resolved registry. Kill mutation: stop threading the
-// snapshot into the catalog constructor - the enum degrades to empty and
-// this fails.
+// any load_tools admission) carries the REAL agent roster from the binding's
+// resolved registry. Kill mutation: stop threading the snapshot into the
+// catalog constructor - the roster prose degrades to the registry-less base
+// description and this fails.
+//
+// The roster is prose, not a schema enum: see cliorchestrate.taskItemSchema.
 func TestAdvertisedDispatchTasksShipsRosterAtTurnZero(t *testing.T) {
 	home, ws := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -72,21 +73,20 @@ func TestAdvertisedDispatchTasksShipsRosterAtTurnZero(t *testing.T) {
 	fn := findAdvertisedFunction(t, specs, "dispatch_tasks")
 	agent := dispatchAgentProperty(t, fn)
 
-	enumRaw, ok := agent["enum"]
-	if !ok {
-		t.Fatalf("advertised agent enum missing at turn zero: %v", agent)
-	}
-	var enum []string
-	raw, _ := json.Marshal(enumRaw)
-	if err := json.Unmarshal(raw, &enum); err != nil {
-		t.Fatalf("agent enum not a string array: %v", raw)
-	}
-	if !slices.Equal(enum, []string{"general-purpose"}) {
-		t.Fatalf("turn-zero agent enum = %v, want [general-purpose]", enum)
+	if enum, found := agent["enum"]; found {
+		t.Fatalf("advertised agent enum = %#v; the roster travels in the description", enum)
 	}
 	description := agent["description"].(string)
-	if !strings.Contains(description, "Optional") || !strings.Contains(description, "general-purpose") {
-		t.Fatalf("turn-zero routing prose must be optional-aware and name the built-in: %q", description)
+	if !strings.Contains(description, "Optional") {
+		t.Fatalf("turn-zero routing prose must be optional-aware: %q", description)
+	}
+	// The snapshot-derived half: both clauses come from the resolved registry
+	// and are absent from the registry-less base description, so a dropped
+	// snapshot fails here.
+	for _, want := range []string{"Available agents:", "general-purpose", "always available"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("turn-zero routing prose missing %q: %q", want, description)
+		}
 	}
 }
 

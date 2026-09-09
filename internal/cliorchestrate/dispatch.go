@@ -98,7 +98,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array", "items": taskItemSchema(t.agentReg, true),
+				"type": "array", "items": taskItemSchema(t.agentReg),
 				"description": "Array of 1-16 tasks. Tasks without depends_on run concurrently.",
 			},
 			"timeout_seconds": map[string]any{
@@ -114,8 +114,11 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 		},
 		"required": []string{"tasks"},
-		// True for the same reason taskItemSchema is: a decoration on the
-		// request object must not refuse the batch before it runs.
+		// True for the same reason taskItemSchema is: a decoration must not
+		// refuse the batch before it runs. This level is belt-and-braces -
+		// sdkadapter's relaxTopLevelAdditionalProperties already strips a
+		// top-level false before the schema reaches a provider, so the nested
+		// item schema was the one actually enforcing rejection.
 		"additionalProperties": true,
 	}
 
@@ -318,9 +321,8 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 	tasks := make([]subagents.Task, len(params))
 	seenIDs := make(map[string]struct{}, len(params))
 	for i, pt := range params {
-		// id is declared required by taskItemSchema, but decodeStrictTaskJSON
-		// only rejects unknown fields - JSON Schema "required" is advisory to
-		// the model, never enforced on decode. A task the model left
+		// id is declared required by taskItemSchema, but JSON Schema "required"
+		// is advisory to the model, never enforced on decode. A task the model left
 		// unnamed used to fall through to namespacedTaskID(namespace, "")
 		// (an empty rawID short-circuits to ""), so subagents.Task.ID stayed
 		// "" all the way to coordinator.createTask, which then minted an

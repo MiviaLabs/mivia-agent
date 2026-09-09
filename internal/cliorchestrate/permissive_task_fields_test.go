@@ -19,33 +19,10 @@ import (
 // whose prompt went missing - the shape a "promt" typo now produces, since the
 // typo is no longer caught as an unknown field - is refused before it spawns.
 
-// TestDecorativeTaskFieldsAreAccepted pins the permissive half at the task
-// level: unread fields are ignored and the batch runs.
-func TestDecorativeTaskFieldsAreAccepted(t *testing.T) {
-	dispatch := routingTools(t)
-	args := `{"tasks":[{"id":"x","prompt":"work","description":"a note","priority":3,"metadata":{"k":"v"}}],"wait":"run"}`
-	out, err := dispatch.Execute(context.Background(), json.RawMessage(args))
-	if err != nil {
-		t.Fatalf("Execute error = %v, want nil: a decorative field must not refuse the batch", err)
-	}
-	if !strings.Contains(out, "oneshot-ok") {
-		t.Fatalf("Execute output = %q, want the task's result", out)
-	}
-}
-
-// TestDecorativeTopLevelFieldsAreAccepted pins the same rule for the request
-// object itself.
-func TestDecorativeTopLevelFieldsAreAccepted(t *testing.T) {
-	dispatch := routingTools(t)
-	args := `{"tasks":[{"id":"x","prompt":"work"}],"wait":"run","parallel":true,"reason":"fan out"}`
-	out, err := dispatch.Execute(context.Background(), json.RawMessage(args))
-	if err != nil {
-		t.Fatalf("Execute error = %v, want nil", err)
-	}
-	if !strings.Contains(out, "oneshot-ok") {
-		t.Fatalf("Execute output = %q, want the task's result", out)
-	}
-}
+// The two decoration tests that lived here (task-level and top-level) are
+// subsumed by TestDecorationsSurviveTheNearMissCheck in near_miss_field_test.go,
+// whose single request carries both and has to survive the harder rule.
+// This file owns "unknown fields are ignored"; that file owns the carve-out.
 
 // TestRoutingSelectorsStayRejected is the half permissiveness must not eat.
 // handler/name/role are selectors from an older task API: silently ignoring
@@ -65,6 +42,13 @@ func TestRoutingSelectorsStayRejected(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), field) {
 				t.Fatalf("error = %v, want the offending field named", err)
+			}
+			// The reserved-selector message, not the near-miss one: both name
+			// the field, so without this the test no longer says WHICH gate
+			// refused the call.
+			if !strings.Contains(err.Error(), "route with") {
+				t.Fatalf("error = %v, want the reserved-selector refusal naming "+
+					"the replacement field", err)
 			}
 		})
 	}

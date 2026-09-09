@@ -129,16 +129,17 @@ func TestAgentPromptsNameTheEditTools(t *testing.T) {
 
 // TestAgentPromptsNeverSetHandlerField is a regression test for the plan 07.1
 // prompt/rules drift: dispatch_tasks/spawn_agent task objects have no `handler`
-// field. decodeStrictTaskJSON uses DisallowUnknownFields and taskItemSchema sets
-// additionalProperties:false, so sending `handler:"multi_step"` on a task fails
-// the WHOLE call with `json: unknown field "handler"` (agent is the sole
-// model-facing selector). The compiled prompt may not instruct setting one, and
+// field. The task schema accepts unread fields, but `handler` is a reserved
+// ROUTE selector (reservedTaskSelectors), so sending `handler:"multi_step"`
+// fails the WHOLE call with `"handler" is not a task field; route with
+// "agent"...` rather than silently routing the task somewhere else (agent is
+// the sole model-facing selector). The compiled prompt may not instruct setting one, and
 // failure-recovery guidance must point at the real selector (`agent` + optional
 // `skill`).
 func TestAgentPromptsNeverSetHandlerField(t *testing.T) {
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	if strings.Contains(prompt, `handler:"multi_step"`) {
-		t.Error("buildAgentPrompt must not contain handler:\"multi_step\": dispatch_tasks/spawn_agent tasks have no handler field (decodeStrictTaskJSON rejects it)")
+		t.Error("buildAgentPrompt must not contain handler:\"multi_step\": dispatch_tasks/spawn_agent tasks have no handler field (reservedTaskSelectors refuses it)")
 	}
 	// No handler-field task-selector instruction may appear anywhere in the
 	// prompt - neither "verify handler is set on every task" nor any other
