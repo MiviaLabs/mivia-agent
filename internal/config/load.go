@@ -604,7 +604,7 @@ func loadFile(opts LoadOptions) (loadedFile, error) {
 	}
 	if path == "" {
 		if !opts.AllowMissingConfig {
-			return loadedFile{}, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create .mivia/mivia.toml", strings.Join(DefaultConfigCandidates(), ", "))
+			return loadedFile{}, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create %s", strings.Join(DefaultConfigCandidates(), ", "), filepath.Join(workspace.Namespace, "mivia.toml"))
 		}
 		return loadedFile{}, nil
 	}
