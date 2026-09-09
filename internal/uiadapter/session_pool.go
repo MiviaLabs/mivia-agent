@@ -461,6 +461,20 @@ func (p *SessionPool) inheritEntryStateLocked(sess *chat.Session, withPolicies b
 // context store, context manager, event bus) from the first existing pool
 // member. It does NOT call Load — the session starts empty.
 // The new conversation is registered in the pool and returned.
+//
+// The wiring goes through wireEntryLocked, the SAME path every other pooled
+// entry takes (CreateFreshInDir, GetOrCreateInDir), rather than a hand-rolled
+// copy of it. The copy this replaces omitted the surface publication, and a
+// /new session was the one pooled entry that ran without a dispatcher of its
+// own: the agent loop then fell back to a bare
+// runtime.NewToolDispatcher(registry, runtime.Policy{}) (agentloop_run.go's
+// ensureSDKDispatcher), so its tool calls ran with no approval snapshot, no
+// PreToolUse/PostToolUse lifecycle hooks, no operator denylist and no result
+// caps - while the dispatcher-owned session tools it inherited from the
+// LAUNCH registry (dispatch_tasks and the messaging/ledger catalog) still
+// executed against the LAUNCH session, so work dispatched from the new
+// conversation reported into the old one. Same defect class as
+// c20e7b1b's worktree adoption fix, on the path that fix did not cover.
 func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -469,21 +483,8 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 		return nil, fmt.Errorf("no config provided")
 	}
 
-	var comp provider.Completer
-	if p.res.ProviderName != "" {
-		comp, _ = provider.New(p.res)
-	}
-	sess := chat.NewSession(p.res, comp)
-	sess.UseTools = p.toolsOn
-
-	sibling := p.inheritRuntimeStateLocked(sess)
-	inheritApprovalLocked(sess, sibling, p.res)
-
-	entryState := p.forkEntryStateLocked()
-	if entryState != nil && p.res != nil {
-		sess.SetSurfaceWidener(newSurfaceWidenerVar(sess, p.res, entryState))
-	}
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, entryState))
+	sess := p.newEntrySessionLocked()
+	entryState := p.wireEntryLocked(sess, "", "", true)
 
 	conv := NewConversation(sess)
 	p.wireContentResolver(entryState)

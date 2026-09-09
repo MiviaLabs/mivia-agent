@@ -605,6 +605,10 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 			return r.ResumeInWorktree(ctx, summary)
 		}
 		conv, err := r.pool.GetOrCreate(id)
+		// See handleNew: drained after the build, so a resumed session that
+		// could not rebuild its own tool surface says so instead of leaving
+		// the reason for a later, unrelated command to report.
+		toolScope := r.pool.takeToolScopeNotice()
 		if err != nil {
 			return ports.CommandOutcome{Err: resumeErrorText(id, err)}
 		}
@@ -614,7 +618,7 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 		return ports.CommandOutcome{
 			Conversation:    conv,
 			ClearTranscript: true,
-			Notice:          fmt.Sprintf("Resumed session %s.", id),
+			Notice:          appendToolScope(fmt.Sprintf("Resumed session %s.", id), toolScope),
 		}
 	}
 	sess := r.activeSession()
@@ -654,6 +658,12 @@ func (r *CommandRunner) handleNew() ports.CommandOutcome {
 		return ports.CommandOutcome{Err: "no session pool available"}
 	}
 	conv, err := r.pool.CreateFresh()
+	// Drained AFTER the build, like the worktree route does: the slot holds
+	// whatever reason this entry could not get its own tool surface. Left
+	// undrained, the operator kept typing into a silently degraded session
+	// and the stranded string later appended itself to an unrelated command's
+	// outcome.
+	toolScope := r.pool.takeToolScopeNotice()
 	if err != nil {
 		return ports.CommandOutcome{Err: "failed to create new session: " + err.Error()}
 	}
@@ -663,7 +673,7 @@ func (r *CommandRunner) handleNew() ports.CommandOutcome {
 	return ports.CommandOutcome{
 		Conversation:    conv,
 		ClearTranscript: true,
-		Notice:          "New session started.",
+		Notice:          appendToolScope("New session started.", toolScope),
 	}
 }
 
