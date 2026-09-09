@@ -78,10 +78,7 @@ func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnS
 		// silently drops the outcome for every such call, and
 		// bridgeToolCallEnd (agentloop_events.go) then finds nothing under
 		// the name key and reports the failure as a served duplicate.
-		callKey := call.ID
-		if callKey == "" {
-			callKey = call.Name
-		}
+		callKey := toolCallKey(call)
 		if turn != nil && callKey != "" {
 			turn.recordToolOutcome(callKey, call.Name, body, true)
 		}
@@ -127,10 +124,7 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		if strings.TrimSpace(string(call.Arguments)) != "" && !json.Valid(call.Arguments) {
 			return sdkshape.Message{}, nil
 		}
-		callKey := call.ID
-		if callKey == "" {
-			callKey = call.Name
-		}
+		callKey := toolCallKey(call)
 		msg := ""
 		if opts.StagedToolMessage != nil {
 			if m, ok := opts.StagedToolMessage(call.Name); ok {
@@ -185,6 +179,18 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 	}
 }
 
+// toolCallKey is the outcome-map key for one call: its ID, or its Name when
+// the ID is empty. call.ID goes empty when a provider stream sends the
+// tool-call NAME delta before, or without, the ID delta, and every recorder
+// in this file has to agree on the fallback or an outcome lands under a key
+// bridgeToolCallEnd never looks up.
+func toolCallKey(call sdkshape.ToolCall) string {
+	if call.ID != "" {
+		return call.ID
+	}
+	return call.Name
+}
+
 // recordPreShimFailure records the operator outcome for a tool call the SDK
 // failed outside the dispatcher shim: a rejection before the shim (scope
 // denial, schema violation, undecodable payload) or a render failure after
@@ -192,36 +198,34 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 // not a call that succeeded - and a render failure legitimately overwrites
 // the shim's own recorded outcome for the same key.
 //
-// Without this record nothing at all is stored for the call, and
-// bridgeToolCallEnd's no-outcome fallback reports a call that never ran. The
-// SDK counts each of these as a reported failure toward
-// Bounds.MaxConsecutiveToolFailures, and three in a row stop the turn, so
-// the operator surfaces must agree with that judgement.
+// Without it nothing is stored for the call and bridgeToolCallEnd's
+// no-outcome fallback reports a call that never ran. The SDK counts these as
+// reported failures toward Bounds.MaxConsecutiveToolFailures, so the operator
+// surfaces must agree with that judgement.
 //
-// The body mirrors the SDK's own
-// ErrorPolicyReport rendering (agentloop's errorReportContent: the
-// ToolErrorPrefix marker plus, for a schema violation, the bounded corrective
-// message) so the operator row and the model's tool result carry the same
-// text. The reporter still returns the zero Message, leaving the SDK to
-// render that body itself - this records what happened, it does not replace
-// the answer.
+// The body mirrors the SDK's own ErrorPolicyReport rendering (errorReportContent:
+// the ToolErrorPrefix marker plus, for a schema violation, the bounded
+// corrective message), so the operator row and the model's tool result carry
+// the same text. The reporter still returns the zero Message: this records
+// what happened, it does not replace the answer.
+//
+// The record REPLACES any outcome already stored under the key rather than
+// merging into it, so the render-failure path also drops the shim's
+// previewOverride, duplicate and originalBody. The only outcome that can
+// already exist under the key is one composeRunOutput recorded, and a body
+// the model never received has no preview worth keeping. (Run's own
+// marshal-argument error records nothing beforehand, so it overwrites
+// nothing.)
 func recordPreShimFailure(turn *sdkTurnState, call sdkshape.ToolCall, runErr error) {
 	if turn == nil || runErr == nil {
 		return
 	}
-	// call.ID is empty when a provider stream sends the tool-call NAME delta
-	// before, or without, the ID delta; the name fallback mirrors every other
-	// recorder in this file.
-	callKey := call.ID
-	if callKey == "" {
-		callKey = call.Name
-	}
-	if callKey == "" {
-		return
-	}
+	// No callKey == "" guard: recordToolOutcomeWithPreview owns that invariant
+	// and drops an outcome with an empty id, so a second check here would be a
+	// branch no test can observe.
 	body := sdkagentloop.ToolErrorPrefix + runErr.Error()
 	if errors.Is(runErr, sdkagentloop.ErrArgumentValidation) {
 		body = sdkagentloop.ToolErrorPrefix + sdkschema.Corrective(runErr)
 	}
-	turn.recordToolOutcomeWithPreview(callKey, call.Name, body, true, "", false, "")
+	turn.recordToolOutcomeWithPreview(toolCallKey(call), call.Name, body, true, "", false, "")
 }

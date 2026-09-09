@@ -22,6 +22,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -194,4 +195,49 @@ func TestEnvelopeFailureIsRecordedAsFailed(t *testing.T) {
 	if detail := sdkToolEndDetail(*outcome); !strings.HasPrefix(detail, "failed") {
 		t.Errorf("detail = %q, want the failed vocabulary", detail)
 	}
+}
+
+// TestRecordPreShimFailureGuards drives the recorder's degenerate inputs. The
+// name fallback is the load-bearing one: call.ID goes empty when a provider
+// stream sends the tool-call NAME delta before, or without, the ID delta, and
+// an outcome recorded under the wrong key is invisible to bridgeToolCallEnd,
+// which looks up the same fallback.
+func TestRecordPreShimFailureGuards(t *testing.T) {
+	boom := errors.New("boom")
+
+	t.Run("id empty falls back to the name", func(t *testing.T) {
+		turn := newSDKTurnState()
+		recordPreShimFailure(turn, sdkshape.ToolCall{Name: "dispatch_tasks"}, boom)
+		outcome := turn.takeToolCallOutcome("dispatch_tasks")
+		if outcome == nil || !outcome.failed {
+			t.Fatalf("outcome = %+v, want a failure recorded under the name key", outcome)
+		}
+	})
+
+	t.Run("an unidentifiable call records nothing anywhere", func(t *testing.T) {
+		// takeToolCallOutcome("") answers nil unconditionally, so asking it
+		// proves nothing. Assert instead that the map stayed EMPTY: a call
+		// with no ID and no name must not leave an outcome under any key, or
+		// bridgeToolCallEnd would render a tool_end it cannot attribute.
+		turn := newSDKTurnState()
+		recordPreShimFailure(turn, sdkshape.ToolCall{}, boom)
+		turn.toolMu.Lock()
+		stored := len(turn.toolOutcomes)
+		turn.toolMu.Unlock()
+		if stored != 0 {
+			t.Fatalf("recorded %d outcome(s) for a call with no ID and no name", stored)
+		}
+	})
+
+	t.Run("nil turn and nil error are no-ops", func(t *testing.T) {
+		// Both are defensive: the SDK only fires the hook with a non-nil
+		// error, and every production caller threads a turn. Neither may
+		// panic.
+		recordPreShimFailure(nil, sdkshape.ToolCall{ID: "c"}, boom)
+		turn := newSDKTurnState()
+		recordPreShimFailure(turn, sdkshape.ToolCall{ID: "c"}, nil)
+		if outcome := turn.takeToolCallOutcome("c"); outcome != nil {
+			t.Fatalf("outcome = %+v, want nothing recorded without an error", outcome)
+		}
+	})
 }

@@ -52,22 +52,16 @@ func bridgeToolCallEnd(opts Options, turn *sdkTurnState, ctx context.Context) {
 		// dispatcher shim: the SDK rejected it inside decodeAndRun
 		// (unknown tool, scope denial, argument-schema violation,
 		// undecodable payload) or a PointPreTool hook vetoed it.
-		// Every one of those is a call that did NOT run, and the SDK
-		// counts the rejections toward its failure-spiral bound, so
-		// the operator row must read "failed".
+		// Every one of those is a call that did NOT run, so the
+		// operator row must read "failed". The rejections also feed
+		// the SDK's failure-spiral bound; a veto does not (it returns
+		// reported=nil), but it is still a call that produced no
+		// result, which is what this row reports.
 		//
-		// This used to read "completed (duplicate)", on the theory
-		// that the SDK's own dedup short-circuits a repeat call
-		// before runOneToolCall. It cannot reach here: that dedup is
-		// off (the host never sets Extensions.DedupWithinTurn) and,
-		// being short-circuited ahead of runOneToolCall, it fires no
-		// ToolCallEnd at all. A DISPATCHER-level duplicate does reach
-		// the shim and records its own outcome, so it renders from
-		// the outcome branch above and keeps the duplicate
-		// vocabulary. The fallback was therefore reporting rejected
-		// calls as successes on every surface - the TUI computed
-		// OK = true and the NDJSON writer wrote "ok" - while the turn
-		// died of repeated tool failures.
+		// It used to read "completed (duplicate)", which reported
+		// every rejected call as a success; the SDK dedup that
+		// theory rested on is off here and fires no ToolCallEnd
+		// anyway. See pre_shim_failure_reporting_test.go.
 		emit(opts, Event{
 			Kind:       EventToolEnd,
 			ToolCallID: callKey,
