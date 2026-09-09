@@ -245,7 +245,7 @@ recognize. This includes `read_skill_resource` itself: a skill or agent cannot
 self-declare the ephemeral resource-reader tool as a required tool, since the
 host — not skill authoring — grants it during activation.
 
-`checkSkillDefinition` fails closed on an origin mismatch: if the skill
+`AgentSkillScope.CheckSkillDefinition` fails closed on an origin mismatch: if the skill
 selected at activation time does not match the origin (user vs. project)
 recorded when the agent's allowlist was resolved, the request is rejected
 rather than silently falling back to a same-named skill from the other

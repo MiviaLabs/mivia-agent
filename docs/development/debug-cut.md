@@ -123,6 +123,6 @@ stays in place:
    (`pinnedPreFeatureDigest` in
    `internal/cliworkflow/workflows_step_defaults_integration_test.go`,
    current path) - it will change the moment the TOML is edited.
-4. Run the structure gate (`make gate` or the pre-commit hook) so the
+4. Run the structure gate (`make structure-check` or the pre-commit hook) so the
    re-enabled comment blocks stay within the 30-line comment-block limit.
 5. Delete this page and its `debug-cut` topic from `docs/OWNERS.yaml`.

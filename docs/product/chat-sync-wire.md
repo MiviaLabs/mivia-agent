@@ -31,9 +31,11 @@ remote transcript, on every run.
 
 ## Fail-Closed Privacy Model
 
-Remote synchronization uses a fail-closed posture for CONTENT. Activation
-itself is not fail-closed - being logged in is the decision - but everything
-sensitive inside a synced session is withheld unless you ask for it:
+Remote synchronization authenticates before it sends anything, and every
+redaction policy applies uniformly across content types. It is not
+fail-closed for CONTENT volume: tool I/O and reasoning text stream by
+default once sync is on, matching the "live view of the session" contract.
+Opting a category out is one explicit `false` away:
 
 1. **Authentication required**: an upload without a resolvable token is
    refused before it is attempted, rather than sent anonymously.
@@ -43,8 +45,9 @@ sensitive inside a synced session is withheld unless you ask for it:
    omit them entirely; the envelope's `redacted` array then records the
    omission. A hook's captured stdout is withheld outright whenever a redaction
    policy is active, and reports only its byte count.
-3. **Thinking withheld**: The system withholds model reasoning text by default
-   (`sync.include_thinking = false`).
+3. **Thinking sent by default**: The system streams model reasoning text by
+   default, exactly as it streams the answer. Set `sync.include_thinking =
+   false` to withhold it.
 
 These controls apply to a subagent's own output exactly as they apply to the
 root loop's. A subagent runs in its own session, but its prose passes through

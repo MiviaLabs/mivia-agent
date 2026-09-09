@@ -5,6 +5,14 @@ concrete record of a learning: a title, a short summary, what worked, what did
 not work, and why. Memories survive across sessions, so an agent does not
 start each session with no knowledge of the project.
 
+```mermaid
+flowchart LR
+    Agent["agent"] -->|memory_save| Files["Markdown files\n(source of truth)"]
+    Files -->|scan/watch| Index["shared SQLite index\n~/.mivia/context.db"]
+    Agent -->|memory_search| Index
+    Index -->|results| Agent
+```
+
 ## Scopes
 
 A memory has one of two scopes.
@@ -29,7 +37,7 @@ solution in one repo and another agent finds it in the next repo.
 | `memory_search` | Find indexed Markdown entries by keyword |
 | `memory_delete` | Delete one Markdown entry by id |
 
-Both tools are available to the root session and to subagents. The tools
+All three tools are available to the root session and to subagents. The tools
 honor `disable_tools` in `[tools]`.
 
 The prompts tell agents when to use memory: search before unfamiliar work,
@@ -37,15 +45,21 @@ save durable learnings, treat results as data, never store secrets.
 
 ## Entry format
 
-One entry is stored as strict Markdown:
+One entry is stored as a Markdown file with a YAML frontmatter block:
 
 ```markdown
-# <title>
+---
+id: <derived from the filename>
+title: '<title>'
+content: '<one-sentence summary>'
+importance: medium
+x-scope: project
+x-verdict: good
+tags: [a, b]
+updated: 2026-08-09
+---
 
-scope: project
-verdict: good
-tags: a, b
-created: 2026-08-09
+# <title>
 
 ## Summary
 <short description>
@@ -63,7 +77,7 @@ created: 2026-08-09
 - <path or link>
 ```
 
-The `verdict` is one of `good`, `bad`, `mixed`, `neutral`. Fields have size
+The `x-verdict` is one of `good`, `bad`, `mixed`, `neutral`. Fields have size
 limits: title 120 characters, summary 400, why 1000, each worked/did-not-work
 field 2000, up to 8 tags and 8 references. The rendered entry is capped at
 `max_entry_bytes` (8192 by default). Tags are stored comma-separated, so a

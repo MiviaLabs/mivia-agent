@@ -220,7 +220,7 @@ edges (`chunkPlanRepairRoute` / `settleSucceededRoute`).
 ### Generic task ledger (D8) as durable stack state
 
 Plans and task statuses are engine-ledger artifacts with scope bindings,
-not stacking-specific state. The generic task ledger (`internal/workflows/tasks`)
+not stacking-specific state. The generic task ledger (`internal/workflows/ledger`)
 provides one mechanism for many scopes: `session:<id>`, `step:<run>:<step>`,
 `agent:<name>`, `workflow:<name>`, `run:<id>`. Stacking binds chunk tasks
 to `run:<plan-run-id>`.

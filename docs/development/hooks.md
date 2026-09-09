@@ -32,25 +32,29 @@ This sets `core.hooksPath=.githooks`.
 - `verify_agent_config.py`
 - `secret_scan.py --staged`
 - **`file-size-check`** - staged files must be ≤ **500 KiB** (binary databases `*.db`, `*.sqlite`, `*.sqlite3` are exempt: opaque blobs that cannot be split)
-- **`check_go_structure.py --staged`** - Go file/function LOC limits (see below)
+- **`check_go_structure.py --strict --worktree`** - Go file/function LOC limits (see below), run against a materialized copy of the staged tree
 - docs ownership when docs staged
+- chat-sync wire vocabulary check when Markdown or the contract changed
 - `gofmt` on staged Go
 - `git diff --check`
-- contract tests (hooks, guard, docs, secrets, semgrep rules, **go-structure**)
 - Semgrep on staged files
+- area-specific invariant tests, auto-selected by which packages are staged (TUI, agent, tools, provider, events, hub, coordinator, storage, config, and more)
+- mutation sweep is **deferred to pre-push** (a broad staged change could run past ten minutes here)
 
 ## Pre-push
 
 - Full config + **`file-size-check --tracked`** (all tracked files ≤ 500 KiB)
-- **`check_go_structure.py --all`** (full tree; hard failures block push)
-- Secret scan (tracked / range) + docs ownership + **provider-docs↔registry** (`check_provider_docs.py`).
-  The range is per pushed ref, from the `<local ref> <local sha> <remote ref> <remote sha>`
+- **`check_go_structure.py --strict --all`** (full tree; hard failures block push)
+- Secret scan (tracked / range). The range is per pushed ref, from the `<local ref> <local sha> <remote ref> <remote sha>`
   lines git hands the hook on stdin (read before any child process runs; the
   `run_with_timeout` supervisor forwards its stdin to the hook). With no ref lines the hook
   prints `pre-push: no ref lines on stdin; sweeping HEAD` and falls back to HEAD.
   The mutation sweep uses the same ranges.
+- docs ownership (`check_docs_ownership.py`)
+- The contract test suites for the Git hooks, the agent hook guard, secret scan, docs ownership, gate scripts, and **provider-docs↔registry** (`test_check_provider_docs.py`, which runs `check_provider_docs.py` itself)
 - Full Semgrep
-- `gofmt -l`, `go test`, `go vet`, `go build -o mivia ./cmd/mivia`
+- `gofmt -l`, `go test ./...`, `go vet ./...`, `go build -o /dev/null ./cmd/mivia` (no binary is produced or kept)
+- Mutation sweep over the full push range
 
 ## Structure limits (anti-spaghetti)
 
@@ -66,7 +70,7 @@ Limits are enforced by the pre-commit and pre-push hooks (500/800 LOC for files,
 Grandfathered oversized files cannot grow past baseline `maxLines`. Lower baseline after splits; never raise it to silence the gate.
 
 ```bash
-make structure-check   # file-size + go structure + contract tests
+make structure-check   # file-size + go structure (no contract tests)
 ```
 
 ## Post-commit

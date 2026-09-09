@@ -26,7 +26,7 @@ mivia is built on [mivia-ai-sdk](https://github.com/MiviaLabs/mivia-ai-sdk), our
 
 ## 🚀 Quick start
 
-Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider. See [Supported providers](#-supported-providers) below.
+Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider. See [Supported providers](#supported-providers) below.
 
 ### Install
 
@@ -106,7 +106,7 @@ One-shot mode:
 
 Shell completions: `mivia completion bash|zsh|fish` prints a completion script for your shell.
 
-## 🔌 Supported providers
+## Supported providers
 
 Mivia is a local-first agent: prompts and selected context go to exactly one
 configured AI provider. Eight providers are built in:

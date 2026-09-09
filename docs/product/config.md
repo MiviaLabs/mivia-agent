@@ -290,7 +290,7 @@ If you change the prefix, branches with the old prefix remain. Remove them manua
 
 ## Named agents
 
-Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.agents/agents/<name>.md`. Workspace definitions live in `<workspace>/.agents/agents/<name>.md`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
+Named agents are separate definition files, one definition per file. User-owned definitions live in `~/.agents/agents/<name>.md`. Workspace definitions live in `<workspace>/.agents/agents/<name>.md`. Create those two directories as needed. The filename is canonical: `<name>.md` (Markdown with a YAML frontmatter block) or `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
 ## MCP servers
 

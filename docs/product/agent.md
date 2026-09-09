@@ -68,7 +68,7 @@ The tool is registered only when at least one command is configured and its argv
 | `fetch_url` | Fetch and read a public web page; private and internal addresses are blocked |
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
-The built-in tool catalog is `read_file`, `list_dir`, `grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `get_diagnostics`, `search`, `fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, and `read_skill_resource`. When memory is enabled, `memory_save` and `memory_search` are also available. Configured MCP servers add scoped remote tools after discovery. Workflow tools are a separate surface; see the [Workflow guide](workflows-guide.md).
+The built-in tool catalog is `read_file`, `list_dir`, `grep`, `glob`, `inspect_repository`, `write_file`, `search_replace`, `multi_edit`, `delete_file`, `run_command`, `get_diagnostics`, `search`, `fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, `find_symbol_context`, and `read_skill_resource`. When memory is enabled, `memory_save`, `memory_search`, and `memory_delete` are also available. Configured MCP servers add scoped remote tools after discovery. Workflow tools are a separate surface; see the [Workflow guide](workflows-guide.md).
 
 Session tools and run-record tools are separate surfaces. They are not valid agent-file allowlist names.
 
@@ -95,7 +95,7 @@ Named agents are file-backed definitions. They live in two places:
 
 Select an agent with `mivia chat --agent <name>` or `/agent <name>`. If a file-backed `mivia` definition exists, it is selected as the root session when no agent is specified. Otherwise mivia uses a built-in default agent. The built-in default is not a file-backed definition and cannot be selected with `--agent`.
 
-Each filename is `<name>.toml`. The in-file `name` must match the lowercase filename. The parser rejects unknown keys and malformed or unsafe names. Definitions may inherit only from another definition of the same source, user or workspace. Cross-source inheritance is not allowed. The authored fields are:
+Each definition file is `<name>.md` (Markdown with a YAML frontmatter block) or `<name>.toml`. The in-file `name` must match the lowercase filename. The parser rejects unknown keys and malformed or unsafe names. Definitions may inherit only from another definition of the same source, user or workspace. Cross-source inheritance is not allowed. The authored fields are:
 
 | Field | Role |
 |-------|------|
