@@ -86,3 +86,19 @@ func TestIDLessCallIsRecordedByNameButNeverPrompted(t *testing.T) {
 			pendingID)
 	}
 }
+
+// TestRecordKeyWithoutAToolCall covers the branch for a ctx that carries no
+// tool call at all: a direct caller, or a hand-built fixture outside the loop.
+// It must answer "" rather than inventing a key, because recordToolOutcome
+// drops an empty id - dropping the record is the honest outcome when there is
+// no call to attribute it to, and a synthesised key would attach the denial to
+// whatever row happened to share it.
+func TestRecordKeyWithoutAToolCall(t *testing.T) {
+	if got := recordKeyFromContext(context.Background()); got != "" {
+		t.Errorf("recordKeyFromContext(bare ctx) = %q, want empty", got)
+	}
+	// And the prompt key agrees, for the same reason.
+	if got := callIDFromContext(context.Background()); got != "" {
+		t.Errorf("callIDFromContext(bare ctx) = %q, want empty", got)
+	}
+}
