@@ -192,6 +192,20 @@ run_go_gates() {
     for i in "${!PUSH_TIPS[@]}"; do
       if [[ -n "${PUSH_BASES[$i]}" ]]; then
         run_verify python3 "$ROOT/scripts/check_mutation.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+        # test-quality and diff-coverage, on the SAME push range. Both are
+        # part of CI's `verify` job (make verify -> test-quality, and
+        # verify-go -> diff-coverage), and neither ran here before, so the
+        # two failure classes they own reached CI unfiltered: an unregistered
+        # t.Skip and an uncovered changed line. Both are cheap to fix and
+        # expensive to discover from a red pipeline fifteen minutes later.
+        #
+        # Range-scoped, not --diff/--staged, for the same reason the mutation
+        # sweep is: those modes read the working tree or the index, which are
+        # empty at push time, so they inspect at most the last commit while CI
+        # judges every commit being pushed. A local pass that looked at less
+        # than CI is what made "green locally, red in CI" the normal outcome.
+        run_verify python3 "$ROOT/scripts/check_test_quality.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+        run_verify python3 "$ROOT/scripts/diff_coverage.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
       else
         printf 'pre-push: no base for a mutation range; skipping sweep\n' >&2
       fi

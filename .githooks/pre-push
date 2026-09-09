@@ -12,5 +12,10 @@ ROOT="$(git rev-parse --show-toplevel)"
 # verdict. A gate that cannot finish enforces nothing, so the ceiling is set
 # above the real cost instead of trimming the gate. It is still a ceiling, not
 # a budget: it exists to kill a hung child, not to bound honest work.
-TIMEOUT="${MIVIA_PRE_PUSH_TIMEOUT_SECONDS:-1800}"
+# Raised from 1800s when test-quality and diff-coverage joined the sweep
+# (scripts/git-hooks/pre-push). diff-coverage runs the suite a second time
+# under -coverpkg=./..., which on a cold build cache costs about as much as
+# the plain `go test ./...` above it, so the honest ceiling roughly doubled.
+# Still a ceiling and not a budget: it exists to kill a hung child.
+TIMEOUT="${MIVIA_PRE_PUSH_TIMEOUT_SECONDS:-3600}"
 exec "$ROOT/scripts/git-hooks/run_with_timeout" "$TIMEOUT" "$ROOT/scripts/git-hooks/pre-push" "$@"
