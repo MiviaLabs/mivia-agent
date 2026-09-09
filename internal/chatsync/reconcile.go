@@ -297,7 +297,13 @@ func (s *SyncSession) reconcileDangling(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("scan dangling events: %w", err)
 	}
-	if len(tools) == 0 && len(subs) == 0 && len(subTools) == 0 {
+	// A bare turn (turn.started with no tool or subagent activity) still
+	// needs a closing event. Without the openTurn check here, a plain
+	// question-and-answer turn interrupted mid-answer never gets a
+	// turn.failed event: buildClosingEvents below already handles it, but
+	// this guard used to return before ever calling it, leaving the turn
+	// permanently open in the durable record.
+	if openTurn == "" && len(tools) == 0 && len(subs) == 0 && len(subTools) == 0 {
 		return nil
 	}
 

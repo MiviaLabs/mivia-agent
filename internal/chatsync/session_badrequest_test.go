@@ -73,6 +73,21 @@ func TestFlush_SequenceGap400RebasesAndContinues(t *testing.T) {
 		t.Fatalf("OpenOutbox: %v", err)
 	}
 	for seq := int64(1); seq <= 7; seq++ {
+		// Close "turn:1" on the last seeded event so this fixture models a
+		// clean crash window (unsent but fully closed turns), not a
+		// dangling open turn - reconcileDangling runs on attach and would
+		// otherwise synthesize an extra turn.failed event that this test
+		// is not about.
+		if seq == 7 {
+			if err := ob.Append(WireEvent{
+				Seq:     seq,
+				Type:    TypeTurnEnded,
+				Payload: &TurnEndedPayload{Envelope: Envelope{V: 1, Turn: "turn:1"}, Reason: "done"},
+			}); err != nil {
+				t.Fatalf("seed Append: %v", err)
+			}
+			continue
+		}
 		if err := ob.Append(WireEvent{
 			Seq:     seq,
 			Type:    TypeTurnStarted,

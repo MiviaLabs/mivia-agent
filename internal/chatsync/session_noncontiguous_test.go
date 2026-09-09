@@ -66,12 +66,37 @@ func seedOutboxSeqs(t *testing.T, dir string, seqs ...int64) {
 	if err != nil {
 		t.Fatalf("OpenOutbox: %v", err)
 	}
-	for _, seq := range seqs {
-		if err := ob.Append(WireEvent{
+
+	// A gap anywhere in seqs makes repairEventsFile drop everything past
+	// the last contiguous prefix, on the very next open (every caller
+	// reopens this outbox for AdvanceCursor before attach). Close
+	// "turn:seed" at the end of THAT surviving prefix, not at the end of
+	// the whole slice, so what actually lands on disk is never a
+	// dangling open turn - reconcileDangling runs on attach and would
+	// otherwise synthesize an extra turn.failed event these rebase tests
+	// are not about.
+	closeAt := len(seqs) - 1
+	for i := 1; i < len(seqs); i++ {
+		if seqs[i] != seqs[i-1]+1 {
+			closeAt = i - 1
+			break
+		}
+	}
+
+	for i, seq := range seqs {
+		ev := WireEvent{
 			Seq:     seq,
 			Type:    TypeTurnStarted,
 			Payload: &TurnStartedPayload{Envelope: Envelope{V: 1, Turn: "turn:seed"}, Text: "e"},
-		}); err != nil {
+		}
+		if i == closeAt {
+			ev = WireEvent{
+				Seq:     seq,
+				Type:    TypeTurnEnded,
+				Payload: &TurnEndedPayload{Envelope: Envelope{V: 1, Turn: "turn:seed"}, Reason: "done"},
+			}
+		}
+		if err := ob.Append(ev); err != nil {
 			t.Fatalf("seed Append seq %d: %v", seq, err)
 		}
 	}

@@ -112,7 +112,17 @@ func seedCrashedOutbox(t *testing.T, outboxDir string) {
 	if err != nil {
 		t.Fatalf("OpenOutbox: %v", err)
 	}
-	if err := ob.Append(ourEvents(1, 2, 3, 4, 5, 6)...); err != nil {
+	// ourEvents only emits turn.started; close "turn:1" on the last seeded
+	// event so the fixture is a clean crash window, not a dangling open
+	// turn. reconcileDangling runs on attach and would otherwise
+	// synthesize an extra turn.failed event this test is not about.
+	seeded := append([]WireEvent{}, ourEvents(1, 2, 3, 4, 5)...)
+	seeded = append(seeded, WireEvent{
+		Seq:     6,
+		Type:    TypeTurnEnded,
+		Payload: &TurnEndedPayload{Envelope: Envelope{V: 1, Turn: "turn:1"}, Reason: "done"},
+	})
+	if err := ob.Append(seeded...); err != nil {
 		t.Fatalf("seed Append: %v", err)
 	}
 	if err := ob.AdvanceCursor(3); err != nil {
