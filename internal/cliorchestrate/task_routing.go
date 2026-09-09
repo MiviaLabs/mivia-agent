@@ -156,6 +156,12 @@ func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskPar
 	if err := json.Unmarshal(args, &root); err != nil {
 		return err
 	}
+	// Before anything is looked up: two spellings of one field mean the value
+	// this function reads and the value the decoder kept can differ, and every
+	// check below would then run over a value nothing dispatches.
+	if first, second, found := duplicateFoldedKey(args); found {
+		return fmt.Errorf("%q and %q resolve to one field; keep one", first, second)
+	}
 	// Case-insensitively, the way encoding/json already resolved it into
 	// target.Tasks: an exact-cased index answered "tasks must be a non-empty
 	// array" for {"Tasks":[...]} while the array sat decoded and populated -
@@ -204,7 +210,7 @@ func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskPar
 				seenIDs[id] = struct{}{}
 			}
 		}
-		if err := validateTaskObject(i+1, fields); err != nil {
+		if err := validateTaskObject(i+1, raw, fields); err != nil {
 			return err
 		}
 	}

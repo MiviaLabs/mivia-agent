@@ -10,11 +10,53 @@ package cliorchestrate
 // the tool actually reads. Everything else is ignored on purpose.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+// duplicateFoldedKey reports two keys of ONE object that resolve to the same
+// struct field, naming both. It reads only this object's own keys - nested
+// values are skipped whole - because the fold is a decoder rule, and only the
+// levels decoded into structs (the request and each task) obey it. An
+// output_schema is arbitrary caller JSON where "Type" and "type" are two
+// honest members, and refusing those would break schemas the tool never reads.
+//
+// rejectDuplicateJSONKeys already refuses byte-identical keys; this catches
+// the case variants it cannot see. They matter because encoding/json lets the
+// LAST spelling win while a validator that re-parses the raw arguments can
+// resolve a different one - so every guard runs over a value that was never
+// used. That turns one extra key into a bypass of the whole guard layer.
+func duplicateFoldedKey(raw json.RawMessage) (first, second string, found bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return "", "", false
+	}
+	seen := make(map[string]string)
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return "", "", false
+		}
+		name, ok := key.(string)
+		if !ok {
+			return "", "", false
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return "", "", false
+		}
+		folded := strings.ToLower(name)
+		if prev, exists := seen[folded]; exists {
+			return prev, name, true
+		}
+		seen[folded] = name
+	}
+	return "", "", false
+}
 
 // declaredTaskFields and declaredRequestFields are the JSON names each object
 // decodes. They exist for the near-miss check below, not for decoding: keep
@@ -135,7 +177,10 @@ func reservedSelectorFor(field string) string {
 // (b sorts before d) and invert the rule.
 //
 // index is the task's 1-based position, for messages the model can act on.
-func validateTaskObject(index int, fields map[string]json.RawMessage) error {
+func validateTaskObject(index int, raw json.RawMessage, fields map[string]json.RawMessage) error {
+	if first, second, found := duplicateFoldedKey(raw); found {
+		return fmt.Errorf("task %d: %q and %q resolve to one field; keep one", index, first, second)
+	}
 	// Sorted: a task carrying two bad fields must name the same one on every
 	// run, or a retry of the identical call reports a different error and no
 	// operator can reproduce what the model saw.

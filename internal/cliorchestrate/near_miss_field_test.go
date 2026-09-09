@@ -311,3 +311,54 @@ func TestExoticSeparatorsAreRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestCaseVariantDuplicateKeysAreRefused closes a bypass of every per-task
+// guard in this file.
+//
+// encoding/json resolves keys case-insensitively and lets the LAST one win, so
+// {"tasks":[...],"TASKS":[...]} decodes the second array. The validator
+// re-unmarshals the raw arguments into its own map and looked up "tasks"
+// exact-first, so it walked the FIRST array: the reserved-selector check, the
+// near-miss check and the null check all ran over objects that were never
+// dispatched, while the array that did run carried whatever the model liked.
+// rejectDuplicateJSONKeys did not catch it because it compares raw key bytes,
+// and "tasks" != "TASKS" as bytes even though they are one field to the
+// decoder.
+//
+// The same shape inside a task object nils a slice: "DEPENDS_ON":["t1"] with a
+// later "Depends_On":null decodes to an empty DependsOn while the null check
+// reads the non-null sibling.
+func TestCaseVariantDuplicateKeysAreRefused(t *testing.T) {
+	for name, args := range map[string]string{
+		"decoy task array": `{"tasks":[{"id":"a","prompt":"good"}],"TASKS":[{"id":"b","prompt":"bad","dependsOn":["a"],"handler":"x"}]}`,
+		"nulled dependency": `{"tasks":[{"id":"a","prompt":"p"},` +
+			`{"id":"b","prompt":"q","DEPENDS_ON":["a"],"Depends_On":null}]}`,
+		"decoy wait": `{"tasks":[{"id":"a","prompt":"p"}],"wait":"run","WAIT":"none"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := routingTools(t).Execute(context.Background(), json.RawMessage(args))
+			if err == nil {
+				t.Fatal("two spellings of one field were accepted; the guards ran over " +
+					"a value the decoder discarded")
+			}
+			if !strings.Contains(err.Error(), "resolve to one field") {
+				t.Fatalf("error = %v, want the two spellings named", err)
+			}
+		})
+	}
+}
+
+// TestNestedSchemaKeepsItsOwnCaseVariants scopes the fold check. An
+// output_schema is arbitrary caller JSON that the tool passes through without
+// decoding into a struct, so "Type" and "type" inside it are two honest
+// members, not two spellings of one field. Folding keys at every depth would
+// refuse schemas the tool never reads - the whole-batch refusal this work
+// exists to remove.
+func TestNestedSchemaKeepsItsOwnCaseVariants(t *testing.T) {
+	args := `{"tasks":[{"id":"x","prompt":"work","output_schema":` +
+		`{"type":"object","Type":"not a duplicate here","properties":{"a":{"type":"string"}}}}],"wait":"run"}`
+	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatalf("Execute error = %v; case variants inside a pass-through schema are "+
+			"not duplicate struct fields", err)
+	}
+}
