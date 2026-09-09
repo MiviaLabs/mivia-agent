@@ -25,6 +25,7 @@
     ],
     "internal/automation": [
       "internal/chat",
+      "internal/cronschedule",
       "internal/storage",
       "internal/uikit/intent",
       "internal/uikit/ports",

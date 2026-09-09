@@ -493,8 +493,15 @@ Sequenced so the wiring shape is proven before anything expensive is built on it
 - **Slash surface (D15):** resolution uses `SlashSurfaceTUI`, proven by a test that a
   skill-backed `StepSlash` resolves through `FindSlashCommand` and that an alias (`/h`)
   inherits its canonical command's classification.
-- **Cron (D10):** DST spring-forward (nonexistent local time is skipped forward, not
-  doubled), fall-back fires once, day-of-month + day-of-week OR semantics, invalid TZ and
+- **Cron (D10):** DST spring-forward (a schedule anchored inside the skipped hour is
+  never returned for the transition day; robfig/cron skips the whole day rather than
+  shifting later the same day — verified empirically, not assumed). DST fall-back:
+  ground truth, verified against the real `robfig/cron/v3` implementation, is the
+  **opposite** of the naive assumption below this bullet's original wording — a
+  schedule anchored inside the repeated hour fires **twice** that day, once at each UTC
+  offset, because `cron.Schedule.Next` matches local wall-clock fields only with no
+  offset awareness and has no "already fired this wall time" state to dedupe against.
+  `internal/cronschedule`'s tests assert this real behavior; day-of-month + day-of-week
   invalid expression rejected, `Next` strictly after `after`.
 - **Atomic write (D1):** a write interrupted before rename leaves the previous
   `automations.toml` intact and parseable.
@@ -536,6 +543,17 @@ go list -deps ./internal/uiadapter | grep internal/automation   # expect NO outp
   the compile-level test pins it.
 - Skip-not-catch-up is a real behaviour choice a user may read as a bug ("my 2am job did
   not run because the laptop was closed"). Must be surfaced in the detail view.
+- **DST fall-back double-fire (found during chunk 4's implementation, not anticipated at
+  design time):** a cron schedule anchored inside a repeated local hour (e.g.
+  `America/New_York`'s November fall-back 1:00-1:59am) fires **twice** on that calendar
+  day under `robfig/cron/v3`'s wall-clock-only matching (`internal/cronschedule`'s
+  `TestDSTFallBackFiresTwiceForWallClockOnlySchedule` asserts this against the real
+  library). D7's per-fire `ClaimRunFenced` dedup prevents a *double-admitted run* only if
+  the two fires collide on the same claim key within the claim's lifetime; two fires an
+  hour apart do not collide and will legitimately produce two runs. Chunk 5/6 must decide
+  whether this is accepted (rare, once a year, matches the underlying library's behavior)
+  or worth a narrower mitigation (e.g. a per-automation minimum inter-fire spacing) before
+  `automations serve` ships.
 - Worktree accumulation with no GC is a known, accepted v1 cost.
 - Without `automations serve` wired into an OS scheduler, nothing fires while the app is
   closed. This is the accepted v1 boundary; a standalone always-on daemon is deferred
