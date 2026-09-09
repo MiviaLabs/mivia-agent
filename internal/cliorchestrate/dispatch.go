@@ -113,8 +113,10 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 				"type": "string", "description": "Required when wait=task",
 			},
 		},
-		"required":             []string{"tasks"},
-		"additionalProperties": false,
+		"required": []string{"tasks"},
+		// True for the same reason taskItemSchema is: a decoration on the
+		// request object must not refuse the batch before it runs.
+		"additionalProperties": true,
 	}
 
 	return result
@@ -340,6 +342,16 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 		}
 		if _, exists := seenIDs[canonicalID]; exists {
 			return nil, fmt.Errorf("dispatch_tasks: duplicate task id %q", canonicalID)
+		}
+		// The safety net for the permissive decode (task_routing.go): an
+		// unknown field is ignored now, so a "promt" typo no longer fails the
+		// decode - it arrives here as a task with an empty prompt. Spawning it
+		// would burn the batch's budget on a subagent with nothing to do and
+		// report an empty result, so refuse it here, before anything spawns,
+		// with an error the model can act on. Same reasoning as the id guard
+		// above.
+		if strings.TrimSpace(pt.Prompt) == "" {
+			return nil, fmt.Errorf("dispatch_tasks: task %q: prompt is required (a task with no prompt has nothing to do; check for a misspelled field name)", canonicalID)
 		}
 		seenIDs[canonicalID] = struct{}{}
 		route, err := resolveDispatchTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)

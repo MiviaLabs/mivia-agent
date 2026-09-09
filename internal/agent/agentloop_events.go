@@ -48,21 +48,31 @@ func bridgeToolCallEnd(opts Options, turn *sdkTurnState, ctx context.Context) {
 	case outcome != nil:
 		emit(opts, toolEndEventFor(*outcome))
 	case callKey != "":
-		// No recorded outcome means the SDK's dedup short-circuited
-		// the call BEFORE the dispatcher shim could record one
-		// (sdkagentloop.runToolCalls.planCalls returns the cached
-		// DuplicateCallNotice without invoking runOneToolCall). The
-		// model still saw a successful tool message - the dedup
-		// cache served it - so the operator-facing detail must
-		// not read "failed". Emit "completed (duplicate)" to match
-		// the legacy toolEndDetail vocabulary, with an empty body
-		// because the suppression notice is model-side, not
-		// operator-side.
+		// No recorded outcome means the call never reached the
+		// dispatcher shim: the SDK rejected it inside decodeAndRun
+		// (unknown tool, scope denial, argument-schema violation,
+		// undecodable payload) or a PointPreTool hook vetoed it.
+		// Every one of those is a call that did NOT run, and the SDK
+		// counts the rejections toward its failure-spiral bound, so
+		// the operator row must read "failed".
+		//
+		// This used to read "completed (duplicate)", on the theory
+		// that the SDK's own dedup short-circuits a repeat call
+		// before runOneToolCall. It cannot reach here: that dedup is
+		// off (the host never sets Extensions.DedupWithinTurn) and,
+		// being short-circuited ahead of runOneToolCall, it fires no
+		// ToolCallEnd at all. A DISPATCHER-level duplicate does reach
+		// the shim and records its own outcome, so it renders from
+		// the outcome branch above and keeps the duplicate
+		// vocabulary. The fallback was therefore reporting rejected
+		// calls as successes on every surface - the TUI computed
+		// OK = true and the NDJSON writer wrote "ok" - while the turn
+		// died of repeated tool failures.
 		emit(opts, Event{
 			Kind:       EventToolEnd,
 			ToolCallID: callKey,
 			Name:       callName,
-			Detail:     "completed (duplicate)",
+			Detail:     "failed",
 			Output:     "",
 		})
 	}

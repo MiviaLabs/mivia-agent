@@ -91,8 +91,12 @@ func decodeDispatchTaskJSON(args json.RawMessage, target *dispatchTaskParams) er
 	if err := rejectDuplicateJSONKeys(args); err != nil {
 		return err
 	}
+	// No DisallowUnknownFields: an unread field is ignored, not fatal. See
+	// taskItemSchema for why, and validateDispatchTaskSelectors for the fields
+	// that stay refused because ignoring them would silently re-route a task.
+	// Duplicate keys are still rejected above, so a repeated key cannot pick a
+	// route the model did not write.
 	decoder := json.NewDecoder(bytes.NewReader(args))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
@@ -162,6 +166,26 @@ func scanJSONValue(dec *json.Decoder) error {
 	return nil
 }
 
+// reservedTaskSelectors are field names a task must never carry. Every one of
+// them selected a route in an older task API or names a knob the task schema
+// deliberately does not expose, so accepting and ignoring one would run the
+// task somewhere the model did not ask for - the single case where refusing
+// beats being permissive. The refusal names the field, so the model can drop
+// it and retry instead of guessing.
+var reservedTaskSelectors = []string{"handler", "name", "role", "model", "provider", "tools"}
+
+// reservedSelectorFor returns the reserved selector field matches, or "" when
+// it is an ordinary unread field.
+func reservedSelectorFor(field string) string {
+	lowered := strings.ToLower(strings.TrimSpace(field))
+	for _, reserved := range reservedTaskSelectors {
+		if lowered == reserved {
+			return reserved
+		}
+	}
+	return ""
+}
+
 func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskParam) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(args, &root); err != nil {
@@ -198,6 +222,15 @@ func validateDispatchTaskSelectors(args json.RawMessage, tasks []dispatchTaskPar
 					return fmt.Errorf("duplicate task id %q", id)
 				}
 				seenIDs[id] = struct{}{}
+			}
+		}
+		// Case-insensitively, because encoding/json matches field names that
+		// way too: a "Handler" the decode would have ignored must not slip
+		// past a check that only knows the lowercase spelling.
+		for present := range fields {
+			if reserved := reservedSelectorFor(present); reserved != "" {
+				return fmt.Errorf("task %d: %q is not a task field; "+
+					"route with \"agent\" (and optionally \"skill\") instead", i+1, present)
 			}
 		}
 		for _, field := range []string{"agent", "skill"} {
@@ -316,7 +349,15 @@ func taskItemSchema(reg *agents.AgentRegistry, includeRoster bool) map[string]an
 			"description": "Optional JSON Schema validating this task's input at admission",
 		},
 	}
-	return map[string]any{"type": "object", "properties": properties, "required": []string{"id", "prompt"}, "additionalProperties": false}
+	// additionalProperties is TRUE on purpose. A false here is enforced by the
+	// provider's own validator (and by the SDK's compiled schema) BEFORE the
+	// tool runs, so one decorative field the model attached - "description",
+	// "notes", "priority" - refused the whole batch as a pre-execution tool
+	// failure, which counts toward the loop's failure-spiral bound. The tool
+	// reads the fields it declares and ignores the rest; the fields that would
+	// change ROUTING if ignored are refused by name in
+	// validateDispatchTaskSelectors, where the error can say which one and why.
+	return map[string]any{"type": "object", "properties": properties, "required": []string{"id", "prompt"}, "additionalProperties": true}
 }
 
 func agentNames(reg *agents.AgentRegistry) []string {

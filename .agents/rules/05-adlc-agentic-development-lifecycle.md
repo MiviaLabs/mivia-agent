@@ -175,7 +175,7 @@ tool-resolved reference. Do this explicitly on every repeat round:
 
 ### Handler Types - Critical
 
-`dispatch_tasks` tasks have **no `handler` field** - do not pass one. The strict task schema rejects unknown fields, so a stray `handler: "multi_step"` on a `dispatch_tasks` task fails the **whole** batch with `json: unknown field "handler"`. The routed agent definition - selected by `agent` plus an optional `skill` - determines the loop and tools: every defined agent/skill runs a multi-step loop with tool access scoped to its definition. Omitting `agent` runs a bare one-shot LLM call on the caller's model with no tools.
+`dispatch_tasks` tasks have **no `handler` field** - do not pass one. The task schema ignores fields it does not read, but `handler` is a reserved routing selector: a stray `handler: "multi_step"` on a task fails the **whole** batch by name, because accepting it would run the task on a route you did not select. The same holds for `name`, `role`, `model`, `provider`, and `tools`. The routed agent definition - selected by `agent` plus an optional `skill` - determines the loop and tools: every defined agent/skill runs a multi-step loop with tool access scoped to its definition. Omitting `agent` runs a bare one-shot LLM call on the caller's model with no tools.
 
 **One agent timing out or hanging never costs you the others.** Every task reports
 its own result and status, so a challenge or audit round returns what the surviving

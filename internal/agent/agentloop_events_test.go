@@ -65,8 +65,13 @@ func TestBridgeToolCallEndFallsBackToToolName(t *testing.T) {
 			if got.Name != "my_tool" {
 				t.Fatalf("Name = %q, want my_tool", got.Name)
 			}
-			if got.Detail != "completed (duplicate)" {
-				t.Fatalf("Detail = %q, want the dedup-served vocabulary", got.Detail)
+			// A call with no recorded outcome never reached the dispatcher
+			// shim, so it never ran: the SDK rejected it (unknown tool,
+			// scope denial, schema violation) or a hook vetoed it. See
+			// pre_shim_failure_reporting_test.go for why this is not the
+			// dedup-served vocabulary.
+			if got.Detail != "failed" {
+				t.Fatalf("Detail = %q, want failed for a call that never ran", got.Detail)
 			}
 		})
 	}

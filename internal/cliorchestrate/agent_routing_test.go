@@ -75,8 +75,16 @@ func TestHandlerAndNameSelectorsRejected(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.tool(json.RawMessage(tc.args)); err == nil || !strings.Contains(err.Error(), "unknown field") {
-				t.Fatalf("error = %v, want strict selector rejection", err)
+			// The rejection is no longer encoding/json's "unknown field": the
+			// decode is permissive now, and these selectors are refused BY
+			// NAME instead (reservedTaskSelectors). What is pinned here is
+			// unchanged - a routing selector never silently re-routes a task.
+			err := tc.tool(json.RawMessage(tc.args))
+			if err == nil {
+				t.Fatalf("error = nil, want strict selector rejection")
+			}
+			if !strings.Contains(err.Error(), "is not a task field") {
+				t.Fatalf("error = %v, want the selector refused by name", err)
 			}
 		})
 	}

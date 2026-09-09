@@ -251,13 +251,19 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 		})
 	}
 	body := appendHookContext(capped, hookContext)
+	// One failure judgement, read by both the loop breaker and the operator
+	// row. They used to disagree: the breaker counted r.Err OR the body scan,
+	// while the recorded outcome counted r.Err alone - so a dispatch_tasks
+	// whole-batch rejection envelope (returned with a NIL Go error on
+	// purpose, to keep its run_id/hint fields) fed the breaker while every
+	// viewer was told the call completed.
+	failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
 	if d.turn != nil {
-		failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
 		if reminder := d.turn.recordProgress(failed, d.inner.Name(), args, capability); reminder != "" {
 			body = AppendSystemReminder(body, reminder)
 		}
 	}
-	d.recordToolEventOutcome(callKey, args, body, r.Err, ephemeral, r.IsDuplicate(), originalBody)
+	d.recordToolEventOutcome(callKey, args, body, failed, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
 }
 
@@ -300,7 +306,7 @@ func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
 // (loop_tools.go emitToolEnd's rule); a later shim (ref-only notice,
 // turn-shaping re-cut) that rewrites the body overwrites the record so
 // tool_end matches the post-shaping body.
-func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body string, dispatchErr error, ephemeral bool, isDuplicate bool, originalBody string) {
+func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body string, failed bool, ephemeral bool, isDuplicate bool, originalBody string) {
 	if d.turn == nil || callID == "" {
 		return
 	}
@@ -310,7 +316,7 @@ func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body
 			preview = et.EphemeralResultMarker(args)
 		}
 	}
-	d.turn.recordToolOutcomeWithPreview(callID, d.inner.Name(), body, dispatchErr != nil, preview, isDuplicate, originalBody)
+	d.turn.recordToolOutcomeWithPreview(callID, d.inner.Name(), body, failed, preview, isDuplicate, originalBody)
 }
 
 // applyDispatcherShim wraps every tool in the converted SDK registry

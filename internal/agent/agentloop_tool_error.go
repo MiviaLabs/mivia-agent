@@ -19,6 +19,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	sdkschema "github.com/MiviaLabs/mivia-ai-sdk/schema"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -31,7 +32,7 @@ import (
 // SAME body, exactly like the shim's capped+appended body.
 //
 // "Like an admitted call" includes its FAILURES. The outcome is recorded
-// with result.Failed, mirroring the shim's recordToolEventOutcome(..., r.Err,
+// with result.Failed, mirroring the shim's recordToolEventOutcome(..., failed,
 // ...): a deferred call that ran and errored, or that a hook blocked, or that
 // approval refused, is a failed call and must render as one.
 func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdkshape.ToolCall, result UnadmittedToolResult) sdkshape.Message {
@@ -112,6 +113,9 @@ func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnS
 func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.ErrorFunc {
 	return func(ctx context.Context, call sdkshape.ToolCall, runErr error) (sdkshape.Message, error) {
 		if !(errors.Is(runErr, sdktools.ErrUnknownName) || errors.Is(runErr, sdkagentloop.ErrToolNotOffered)) {
+			// Every OTHER failure outside the shim still needs an outcome,
+			// or it reaches the operator as a success. See below.
+			recordPreShimFailure(turn, call, runErr)
 			return sdkshape.Message{}, nil
 		}
 		// Legacy precedence: processToolCalls filters malformed-JSON
@@ -179,4 +183,45 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 			Content:    "error: " + msg,
 		}, nil
 	}
+}
+
+// recordPreShimFailure records the operator outcome for a tool call the SDK
+// failed outside the dispatcher shim: a rejection before the shim (scope
+// denial, schema violation, undecodable payload) or a render failure after
+// it. Both are failures of the CALL - a result the model never received is
+// not a call that succeeded - and a render failure legitimately overwrites
+// the shim's own recorded outcome for the same key.
+//
+// Without this record nothing at all is stored for the call, and
+// bridgeToolCallEnd's no-outcome fallback reports a call that never ran. The
+// SDK counts each of these as a reported failure toward
+// Bounds.MaxConsecutiveToolFailures, and three in a row stop the turn, so
+// the operator surfaces must agree with that judgement.
+//
+// The body mirrors the SDK's own
+// ErrorPolicyReport rendering (agentloop's errorReportContent: the
+// ToolErrorPrefix marker plus, for a schema violation, the bounded corrective
+// message) so the operator row and the model's tool result carry the same
+// text. The reporter still returns the zero Message, leaving the SDK to
+// render that body itself - this records what happened, it does not replace
+// the answer.
+func recordPreShimFailure(turn *sdkTurnState, call sdkshape.ToolCall, runErr error) {
+	if turn == nil || runErr == nil {
+		return
+	}
+	// call.ID is empty when a provider stream sends the tool-call NAME delta
+	// before, or without, the ID delta; the name fallback mirrors every other
+	// recorder in this file.
+	callKey := call.ID
+	if callKey == "" {
+		callKey = call.Name
+	}
+	if callKey == "" {
+		return
+	}
+	body := sdkagentloop.ToolErrorPrefix + runErr.Error()
+	if errors.Is(runErr, sdkagentloop.ErrArgumentValidation) {
+		body = sdkagentloop.ToolErrorPrefix + sdkschema.Corrective(runErr)
+	}
+	turn.recordToolOutcomeWithPreview(callKey, call.Name, body, true, "", false, "")
 }
