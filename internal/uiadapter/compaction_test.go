@@ -2,6 +2,7 @@ package uiadapter_test
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -71,10 +72,20 @@ func TestCommandRunner_StartCompaction_NilSessionErrors(t *testing.T) {
 // with "compaction already in progress" - proving real overlap protection,
 // not just a check that happens to race the same way in this test.
 func TestCommandRunner_StartCompaction_RejectsOverlapping(t *testing.T) {
-	comp := &nullCompleter{}
+	// The first compaction must still be IN FLIGHT when the second call
+	// lands, or there is no overlap to reject. Nothing else holds it open:
+	// the handle's event channel is buffered wide enough that the worker
+	// never blocks on a send, so with an instant completer the worker can
+	// reach its onDone (clearing compactionActive) before the second call
+	// runs - which is exactly how this test failed under -race, where the
+	// worker goroutine won that footrace. Block the completer instead and
+	// release it only after the overlap has been rejected.
+	release := make(chan struct{})
+	comp := &blockingCompleter{release: release}
 	res := &config.Resolved{ProviderName: "test", Model: "m1"}
 	sess := chat.NewSession(res, comp)
 	runner := uiadapter.NewCommandRunner(sess, res, nil)
+	defer close(release)
 
 	first, err := runner.StartCompaction(context.Background(), "")
 	if err != nil {
@@ -215,4 +226,39 @@ func TestCommandRunner_StartCompaction_CancelIsSafeAndUnblocksEvents(t *testing.
 	h.Cancel() // must not panic
 
 	waitForCompactionDone(t, h)
+}
+
+// blockingCompleter parks every completion until release is closed, so a
+// caller can hold an async operation open for as long as a test needs it
+// in flight. Reads of release are safe from any goroutine: a closed channel
+// is the only signal, and it is closed exactly once.
+type blockingCompleter struct{ release chan struct{} }
+
+func (c *blockingCompleter) Name() string { return "blocking" }
+
+func (c *blockingCompleter) ChatStream(ctx context.Context, _ provider.Request, _ io.Writer) (string, error) {
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return "", nil
+}
+
+func (c *blockingCompleter) Chat(ctx context.Context, _ provider.Request) (string, error) {
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return "", nil
+}
+
+func (c *blockingCompleter) ChatTurn(ctx context.Context, _ provider.Request) (*provider.Response, error) {
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return &provider.Response{FinishReason: "stop"}, nil
 }
