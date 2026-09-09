@@ -50,13 +50,32 @@ func parseRemoteCancelTarget(body string) (remoteCancelTarget, bool) {
 
 // remoteCancelSeams are the one target session's cancel surfaces: its active
 // turn handle (for a MAIN-turn tool call), its subagent route seam (for
-// anything inside a dispatched task), and its own statusline, so a notice
-// lands on the session the instruction targeted rather than on whichever
-// session happens to be on screen.
+// anything inside a dispatched task), and two statusline pointers that
+// exist because a targeted cancel writes a notice at two different times -
+// see the field comments.
 type remoteCancelSeams struct {
-	active     ports.TurnHandle
-	threads    ports.SubagentThreads
+	active  ports.TurnHandle
+	threads ports.SubagentThreads
+
+	// statusline is for SYNCHRONOUS use only, inside the same Update call
+	// that resolved these seams (for example the "cancelling <id>" notice
+	// on the main-turn tool-call leg, or a refusal notice). That call
+	// returns its receiver's Screen value, so a mutation through this
+	// pointer survives exactly because caller and pointer target are the
+	// same Screen copy for the rest of that one call.
 	statusline *statusline.Model
+
+	// deferred is for the notice written LATER, from the tea.Cmd's result
+	// message on a separate Update call. By then bubbletea has moved on to
+	// a new Screen copy (value receivers copy Screen on every method call,
+	// Update included), so a pointer into THIS call's local copy - the
+	// mistake statusline above would be if reused here - would write into a
+	// copy nothing renders and the notice would silently vanish. nil means
+	// "the foreground screen the message eventually lands on", which
+	// noticeOn already resolves through its own receiver at delivery time;
+	// a background session's own *statusline.Model still works because
+	// s.sessions stores it by pointer and outlives any one Screen copy.
+	deferred *statusline.Model
 }
 
 // resolveRemoteCancelSeams resolves the session a remote instruction
@@ -66,9 +85,14 @@ type remoteCancelSeams struct {
 // false for a session that is neither - there is nothing here to cancel
 // through.
 //
-// Pointer receiver on purpose: the returned *statusline.Model must point at
-// the SAME Screen copy the calling value-receiver method returns, so a
-// notice written through it survives.
+// Pointer receiver on purpose, but ONLY for the synchronous statusline
+// field: it must point at the SAME Screen copy the calling value-receiver
+// method returns, so a notice written through it during that one call
+// survives. deferred is deliberately not given that same property for the
+// foreground case - see its doc comment - because a pointer with that
+// property does not exist for a foreground call once the current Update
+// call returns; the field is nil there on purpose, and noticeOn falls back
+// to the live Screen at delivery time instead.
 func (s *Screen) resolveRemoteCancelSeams(sessionID string) (remoteCancelSeams, bool) {
 	if sessionID == "" || sessionID == s.convID() {
 		return remoteCancelSeams{active: s.active, threads: s.threads, statusline: &s.statusline}, true
@@ -77,7 +101,10 @@ func (s *Screen) resolveRemoteCancelSeams(sessionID string) (remoteCancelSeams, 
 	if !ok {
 		return remoteCancelSeams{}, false
 	}
-	return remoteCancelSeams{active: st.active, threads: st.threads, statusline: &st.statusline}, true
+	return remoteCancelSeams{
+		active: st.active, threads: st.threads,
+		statusline: &st.statusline, deferred: &st.statusline,
+	}, true
 }
 
 // handleRemoteTargetedCancel routes one "cancel_task" or "cancel_tool_call"
@@ -122,7 +149,7 @@ func (s Screen) remoteCancelSubagentTask(ev ports.RemoteInputEvent, target remot
 	if seams.threads == nil {
 		return s, nil
 	}
-	threads, rowID, on := seams.threads, target.id, seams.statusline
+	threads, rowID, on := seams.threads, target.id, seams.deferred
 	return s, func() tea.Msg {
 		ok, err := threads.CancelSubagentTask(rowID)
 		return subagentTaskCancelResultMsg{name: rowID, ok: ok, err: err, on: on}
@@ -157,7 +184,7 @@ func (s Screen) remoteCancelToolCall(ev ports.RemoteInputEvent, target remoteCan
 	if seams.threads == nil {
 		return s, nil
 	}
-	threads, rowID, toolCallID, on := seams.threads, target.id, target.toolCallID, seams.statusline
+	threads, rowID, toolCallID, on := seams.threads, target.id, target.toolCallID, seams.deferred
 	return s, func() tea.Msg {
 		ok, err := threads.CancelSubagentToolCall(rowID, toolCallID)
 		return threadToolCallCancelResultMsg{label: toolCallID, ok: ok, err: err, on: on}
