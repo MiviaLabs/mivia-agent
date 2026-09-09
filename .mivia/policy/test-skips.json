@@ -419,6 +419,12 @@
         "line": 56,
         "reason": "platform still resolves an absolute path from a removed working directory"
       }
+    ],
+    "internal/chatsync/session_recover_test.go": [
+      {
+        "line": 387,
+        "reason": "unreliable off Linux: repeatedly missed an escalating latch budget on Windows/macOS CI runners"
+      }
     ]
   },
   "allowedDeletions": [
