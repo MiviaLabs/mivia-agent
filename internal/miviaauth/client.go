@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
@@ -299,7 +300,16 @@ func sanitizeDetail(msg string) string {
 	}, msg)
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
 	if len(cleaned) > detailLimit {
-		cleaned = cleaned[:detailLimit] + "..."
+		// detailLimit is a byte count, but the server's text is UTF-8: a
+		// multi-byte rune can straddle that offset. Slicing on the raw byte
+		// index would then split the rune and hand the terminal invalid
+		// UTF-8 (mojibake or a stray continuation byte). Back off to the
+		// nearest rune boundary before cutting.
+		cut := detailLimit
+		for cut > 0 && !utf8.RuneStart(cleaned[cut]) {
+			cut--
+		}
+		cleaned = cleaned[:cut] + "..."
 	}
 	return cleaned
 }

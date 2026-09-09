@@ -13,6 +13,7 @@ import (
 	"testing"
 	"testing/iotest"
 	"time"
+	"unicode/utf8"
 )
 
 // fixture reads a checked-in response body from testdata/contract. Tests
@@ -643,5 +644,36 @@ func TestSanitizeDetail_TruncatesPastDetailLimit(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "...") {
 		t.Fatalf("got = %q, want it to end with ...", got)
+	}
+}
+
+// TestSanitizeDetail_TruncatesOnRuneBoundary pins the fix for a byte-offset
+// cut splitting a multi-byte rune. A server-controlled message can put any
+// UTF-8 text at the truncation boundary; slicing on a raw byte count can
+// land mid-rune and hand the operator's terminal invalid UTF-8 (mojibake or
+// a stray continuation byte). The cut must back off to the nearest rune
+// start instead.
+func TestSanitizeDetail_TruncatesOnRuneBoundary(t *testing.T) {
+	// 399 ASCII bytes plus a 2-byte "e" puts that rune's first byte at
+	// offset 399 and its continuation byte at offset 400 -- exactly the
+	// detailLimit boundary, so a naive cleaned[:400] splits it in half.
+	msg := strings.Repeat("a", detailLimit-1) + "é"
+	got := sanitizeDetail(msg)
+
+	body := strings.TrimSuffix(got, "...")
+	if !utf8.ValidString(body) {
+		t.Fatalf("sanitizeDetail(%d bytes ending in multi-byte rune) = %q, not valid UTF-8", len(msg), got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("got = %q, want it to end with ...", got)
+	}
+
+	// The plain-ASCII path (already covered above) must keep behaving the
+	// same: this fix must not change the cap for text with no multi-byte
+	// runes near the boundary.
+	ascii := strings.Repeat("b", detailLimit+50)
+	gotASCII := sanitizeDetail(ascii)
+	if len(gotASCII) != detailLimit+len("...") {
+		t.Fatalf("len(gotASCII) = %d, want %d (ASCII cap unchanged)", len(gotASCII), detailLimit+3)
 	}
 }
