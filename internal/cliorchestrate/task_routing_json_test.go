@@ -196,6 +196,13 @@ func TestDuplicateFoldedKeyOnBytesItsCallersNeverSend(t *testing.T) {
 		`{"a":tru`,   // truncated value: the skip Decode errors
 		`{"a":1,`,    // truncated after a pair
 		``,           // no tokens at all
+		// An ARRAY whose elements happen to be two spellings of one declared
+		// field. This is the shape that distinguishes returning early on a
+		// non-object from walking one as though it were an object: walked, its
+		// elements read as alternating keys and values and the two spellings
+		// "collide", reporting a duplicate in a document that has no fields at
+		// all.
+		`["wait","x","WAIT","y"]`,
 	} {
 		t.Run(raw, func(t *testing.T) {
 			first, second, found := duplicateFoldedKey(json.RawMessage(raw), declaredRequestFields)

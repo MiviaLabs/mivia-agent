@@ -511,6 +511,24 @@ func TestShortForeignNamesAreNotMisses(t *testing.T) {
 	}
 }
 
+// TestDecorationsEndingInTheRangeBoundsAreIgnored covers the top of the two
+// character ranges the squash keeps. No declared field contains a "z" or a
+// digit, so nothing else in this file exercises those bounds - and dropping
+// either one turns a decoration into a false misspelling: without "z",
+// "skillz" squashes to "skill" and reads as the declared field; without "9",
+// "budget9" squashes to "budget".
+func TestDecorationsEndingInTheRangeBoundsAreIgnored(t *testing.T) {
+	for _, field := range []string{`"skillz":"a"`, `"output_schemaz":{"a":1}`, `"budget9":1`, `"id0":"x"`} {
+		t.Run(field, func(t *testing.T) {
+			args := `{"tasks":[{"id":"x","prompt":"work",` + field + `}],"wait":"run"}`
+			if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+				t.Fatalf("Execute error = %v; %s names no field the tool reads, so it is a "+
+					"decoration and must be ignored", err, field)
+			}
+		})
+	}
+}
+
 // TestMultipleLookalikesAreCaught pins where the line sits. What marks a
 // lookalike is the ASCII that remains, not how many non-ASCII runes were used:
 // "budgeмт" reads as "budget", decodes into nothing, and is no more deliberate
