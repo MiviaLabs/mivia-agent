@@ -23,6 +23,10 @@
     "internal/agentmsg": [
       "internal/sdkadapter"
     ],
+    "internal/automation": [
+      "internal/uikit/ports",
+      "internal/workspace"
+    ],
     "internal/agents": [
       "internal/config",
       "internal/providerregistry",

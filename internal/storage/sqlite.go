@@ -75,23 +75,13 @@ func OpenSQLiteWithOptions(path string, opts Options) (*SQLite, error) {
 		db.Close()
 		return nil, err
 	}
-	for _, q := range []string{`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(run_id, sequence))`, `CREATE TABLE IF NOT EXISTS run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL, fence INTEGER NOT NULL DEFAULT 1)`, `CREATE TABLE IF NOT EXISTS content (ref TEXT PRIMARY KEY, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, `CREATE TABLE IF NOT EXISTS spool_grants (ref TEXT NOT NULL, principal TEXT NOT NULL, PRIMARY KEY (ref, principal))`} {
-		if _, err = db.Exec(q); err != nil {
-			db.Close()
-			return nil, err
-		}
-	}
-	if _, err = db.Exec(`ALTER TABLE run_claims ADD COLUMN fence INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+	if err := migrateBaseSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate run claim fence: %w", err)
+		return nil, err
 	}
-	if _, err = db.Exec(`ALTER TABLE run_claims ADD COLUMN fence_generation INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+	if err := migrateAutomationRunsSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate run claim fence_generation: %w", err)
-	}
-	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS fenced_tokens (run_id TEXT NOT NULL, token TEXT NOT NULL, fenced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id, token))`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("create fenced_tokens: %w", err)
+		return nil, err
 	}
 	if err := migrateContextSchema(db); err != nil {
 		db.Close()
@@ -119,6 +109,30 @@ func OpenSQLiteWithOptions(path string, opts Options) (*SQLite, error) {
 		}
 	}
 	return &SQLite{db: db, writeDB: writeDB, path: path}, nil
+}
+
+// migrateBaseSchema creates the store's original tables (events, run_claims,
+// content, spool_grants) and the run_claims fence/fence_generation columns
+// and fenced_tokens table added after those tables first shipped. Split out
+// of OpenSQLiteWithOptions so the constructor stays under the file's own
+// per-function LOC cap as new schema pieces (automation_runs and beyond)
+// are added; this is pre-existing schema logic moved, not new behavior.
+func migrateBaseSchema(db *sql.DB) error {
+	for _, q := range []string{`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(run_id, sequence))`, `CREATE TABLE IF NOT EXISTS run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL, fence INTEGER NOT NULL DEFAULT 1)`, `CREATE TABLE IF NOT EXISTS content (ref TEXT PRIMARY KEY, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, `CREATE TABLE IF NOT EXISTS spool_grants (ref TEXT NOT NULL, principal TEXT NOT NULL, PRIMARY KEY (ref, principal))`} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE run_claims ADD COLUMN fence INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migrate run claim fence: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE run_claims ADD COLUMN fence_generation INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migrate run claim fence_generation: %w", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS fenced_tokens (run_id TEXT NOT NULL, token TEXT NOT NULL, fenced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id, token))`); err != nil {
+		return fmt.Errorf("create fenced_tokens: %w", err)
+	}
+	return nil
 }
 
 // beginWrite starts a write transaction that holds SQLite's write lock for its
