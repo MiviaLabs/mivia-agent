@@ -384,3 +384,44 @@ func TestCommandRunner_StartInNewWorktree_SameSecondNamesDoNotCollide(t *testing
 		t.Fatalf("both presses produced the same worktree: %q", first.Notice)
 	}
 }
+
+// TestCommandRunner_StartInNewWorktree_LaunchCheckoutDirErrorSurfaces
+// pins StartInNewWorktree's own error wrap around r.launchCheckoutDir():
+// a relative WorkspaceRoot whose filepath.Abs cannot resolve (the
+// process's working directory removed out from under it) must surface
+// as "resolve launch checkout: ...", not silently proceed with an
+// unresolved directory.
+func TestCommandRunner_StartInNewWorktree_LaunchCheckoutDirErrorSurfaces(t *testing.T) {
+	stubWorkflowWiring(t)
+	fx := worktreeCatalogFixtureReopenable(t)
+	store, mainDir := fx.Store, fx.MainDir
+	gitInitTempRepo(t, mainDir)
+
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess, _ := catalogSession(t, store, mainDir)
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := t.TempDir()
+	if err := os.Chdir(gone); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.RemoveAll(gone); err != nil {
+		t.Skipf("platform will not remove its own working directory: %v", err)
+	}
+	if _, probeErr := filepath.Abs("relative-root"); probeErr == nil {
+		t.Skip("platform still resolves an absolute path from a removed working directory")
+	}
+
+	state := &cliagents.AgentSessionState{WorkspaceRoot: "relative-root"}
+	runner := uiadapter.NewCommandRunner(sess, res, state)
+	t.Cleanup(runner.Pool().CloseAll)
+
+	out := runner.StartInNewWorktree(context.Background(), "some-name")
+	if !strings.Contains(out.Err, "resolve launch checkout") {
+		t.Fatalf("StartInNewWorktree error = %q, want the resolve-launch-checkout wrap", out.Err)
+	}
+}

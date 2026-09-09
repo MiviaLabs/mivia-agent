@@ -23,6 +23,11 @@ type mockSettings struct {
 	runs        map[string][]ports.Run
 	watchers    map[string][]chan ports.Run
 	skills      []ports.SkillView
+
+	// generalApplyErr, when set, makes the next mockGeneral.Apply call
+	// return it directly instead of a SaveHandle - the Apply-itself-fails
+	// path, distinct from a SaveHandle resolving to a Failed SaveEvent.
+	generalApplyErr error
 }
 
 func newMockSettings() *mockSettings {
@@ -114,6 +119,12 @@ func (g mockGeneral) General() ports.GeneralView {
 }
 
 func (g mockGeneral) Apply(_ context.Context, _ ports.Scope, e ports.GeneralEdit) (ports.SaveHandle, error) {
+	g.mu.Lock()
+	applyErr := g.generalApplyErr
+	g.mu.Unlock()
+	if applyErr != nil {
+		return nil, applyErr
+	}
 	return g.newSaveHandle(func() error { return g.applyGeneral(e) }), nil
 }
 

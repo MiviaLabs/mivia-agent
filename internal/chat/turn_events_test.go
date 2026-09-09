@@ -238,3 +238,24 @@ func parseTurnEventID(id string) (string, bool) {
 	}
 	return id[len(turnIDPrefix):], true
 }
+
+// TestPublishTurnEnd_CancelledContextReportsCancelledReason pins
+// publishTurnEnd's own cancelled branch: a canceled context with a nil
+// (or cancellation-equivalent) error publishes turn_end with the
+// Cancelled reason, not Completed.
+func TestPublishTurnEnd_CancelledContextReportsCancelledReason(t *testing.T) {
+	sess, bus := turnEventSession(t, &fakeCompleter{out: "unused"})
+	drain := collectTurnEvents(t, bus, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sess.publishTurnEnd(ctx, "sess-1", 1, nil)
+
+	_, ends, _ := partitionByKind(drain())
+	if len(ends) != 1 {
+		t.Fatalf("got %d turn_end events, want 1", len(ends))
+	}
+	if ends[0].Detail != TurnEndCancelled {
+		t.Fatalf("turn_end reason = %q, want %q", ends[0].Detail, TurnEndCancelled)
+	}
+}

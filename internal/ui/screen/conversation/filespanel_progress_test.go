@@ -427,3 +427,96 @@ func TestSubagentMarkEveryStatusBranch(t *testing.T) {
 		}
 	}
 }
+
+// TestMatchesAgentID_ExactMatch pins matchesAgentID's own exact-equality
+// fast path, distinct from TestMatchesAgentID_ReverseNamespaced (which
+// covers the namespace-stripped fallback).
+func TestMatchesAgentID_ExactMatch(t *testing.T) {
+	if !matchesAgentID("task-1", "task-1") {
+		t.Fatal("matchesAgentID(x, x) = false, want true")
+	}
+}
+
+// TestAgentIndex_TwoAmbiguousSuffixMatchesReturnsMiss pins agentIndex's
+// own ambiguity guard: two rows whose namespaced ids share the SAME bare
+// suffix as id must not let a second match silently pick the first one.
+func TestAgentIndex_TwoAmbiguousSuffixMatchesReturnsMiss(t *testing.T) {
+	rows := []subagentRow{{ID: "call-a:task-1"}, {ID: "call-b:task-1"}}
+	if got := agentIndex(rows, "task-1"); got != -1 {
+		t.Fatalf("agentIndex() = %d, want -1 for an ambiguous bare id", got)
+	}
+}
+
+// TestAmbiguousAgentID_TrueWithTwoMatches pins ambiguousAgentID's own
+// count++ branch: it is only exercised by an id with more than one
+// distinct-ID namespaced match.
+func TestAmbiguousAgentID_TrueWithTwoMatches(t *testing.T) {
+	rows := []subagentRow{{ID: "call-a:task-1"}, {ID: "call-b:task-1"}}
+	if !ambiguousAgentID(rows, "task-1") {
+		t.Fatal("ambiguousAgentID() = false, want true for two namespaced matches")
+	}
+}
+
+// TestObserveAgentStart_AmbiguousIDIsANoop pins observeAgentStart's own
+// ambiguous-id early return: a start event for a bare id that matches two
+// existing namespaced rows must not append a spurious third row.
+func TestObserveAgentStart_AmbiguousIDIsANoop(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-a:task-1", "worker-a")
+	p.observeAgentStart("call-b:task-1", "worker-b")
+	p.observeAgentStart("task-1", "ambiguous")
+	if len(p.agents) != 2 {
+		t.Fatalf("expected the ambiguous bare-id start to be a no-op, got %d rows: %+v", len(p.agents), p.agents)
+	}
+}
+
+// TestObserveAgentEnd_AmbiguousIDIsANoop mirrors the start-side guard
+// above for observeAgentEnd: an end event for an ambiguous bare id must
+// not mutate either matching row's status.
+func TestObserveAgentEnd_AmbiguousIDIsANoop(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-a:task-1", "worker-a")
+	p.observeAgentStart("call-b:task-1", "worker-b")
+	p.observeAgentEnd("task-1", true)
+	for _, a := range p.agents {
+		if a.Status != "running" {
+			t.Fatalf("ambiguous end changed a row's status: %+v", p.agents)
+		}
+	}
+}
+
+// TestObserveAgentHistory_RenamesAnExistingRow pins the name != "" branch
+// of observeAgentHistory's existing-row update path (as opposed to the
+// status-only update TestObserveAgentHistory_UpdatesRunningAgent covers).
+func TestObserveAgentHistory_RenamesAnExistingRow(t *testing.T) {
+	var p panel
+	p.observeAgentStart("task-1", "old-name")
+	p.observeAgentHistory("task-1", "completed", "new-name")
+	if p.agents[0].Name != "new-name" {
+		t.Fatalf("Name = %q, want the history rename to take", p.agents[0].Name)
+	}
+}
+
+// TestObserveAgent_RenamesAnExistingRunningRow pins observeAgent's own
+// pr.AgentName != "" branch on an already-tracked row.
+func TestObserveAgent_RenamesAnExistingRunningRow(t *testing.T) {
+	var p panel
+	p.observeAgentStart("task-1", "old-name")
+	p.observeAgent("task-1", &uievent.Progress{AgentName: "renamed", Status: "running"})
+	if p.agents[0].Name != "renamed" {
+		t.Fatalf("Name = %q, want the progress rename to take", p.agents[0].Name)
+	}
+}
+
+// TestObserveAgent_AmbiguousNewIDIsANoop pins observeAgent's own
+// ambiguous-id guard on the NEW-row path (distinct from the
+// already-tracked-row path every other observeAgent test drives).
+func TestObserveAgent_AmbiguousNewIDIsANoop(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-a:task-1", "worker-a")
+	p.observeAgentStart("call-b:task-1", "worker-b")
+	p.observeAgent("task-1", &uievent.Progress{Status: "running"})
+	if len(p.agents) != 2 {
+		t.Fatalf("expected the ambiguous bare-id progress event to be a no-op, got %d rows: %+v", len(p.agents), p.agents)
+	}
+}

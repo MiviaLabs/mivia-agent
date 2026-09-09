@@ -237,3 +237,43 @@ func TestChooseTheme_NoMatchAndNoDefaultIsAnError(t *testing.T) {
 		t.Fatal("chooseTheme accepted a theme set with no match and no default")
 	}
 }
+
+// TestBuildAppPropagatesChooseThemeError pins buildApp's own error wrap
+// around chooseTheme, distinct from TestChooseTheme_NoMatchAndNoDefaultIsAnError
+// (which calls chooseTheme directly): a configured theme name that matches
+// nothing, with no "mivia-dark" default present either, must fail buildApp
+// rather than falling through with a zero-value theme.
+func TestBuildAppPropagatesChooseThemeError(t *testing.T) {
+	original := loadThemes
+	loadThemes = func() ([]theme.Theme, error) { return []theme.Theme{{Name: "other"}}, nil }
+	defer func() { loadThemes = original }()
+
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	res := &config.Resolved{TUI: config.TUIConfig{Theme: "missing-theme"}}
+	agentState := &cli.AgentSessionState{}
+	if _, _, _, err := buildApp(sess, res, true, agentState, ""); err == nil {
+		t.Fatal("buildApp accepted an unresolvable theme name with no default available")
+	}
+}
+
+// TestPersistTheme_SaveFailureSurfacesAsNotice pins persistTheme's own
+// error branch: a config path PersistTheme cannot write to must return a
+// SettingsNoticeMsg naming the failure rather than a silent nil.
+func TestPersistTheme_SaveFailureSurfacesAsNotice(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(blocker, "mivia.toml")
+	store := uiadapter.NewSettingsStore(nil, &config.Resolved{ConfigPath: configPath}, nil)
+
+	msg := persistTheme(store, "mivia-light")()
+	notice, ok := msg.(app.SettingsNoticeMsg)
+	if !ok {
+		t.Fatalf("persistTheme() = %#v, want a SettingsNoticeMsg", msg)
+	}
+	if !strings.Contains(notice.Text, "theme save failed") {
+		t.Fatalf("notice text = %q, want it to name the save failure", notice.Text)
+	}
+}

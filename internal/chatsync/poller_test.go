@@ -252,3 +252,33 @@ func TestInputPoller_CrashRecovery_UnconsumedInputDiscarded(t *testing.T) {
 		t.Errorf("expected unconsumed pending file to be cleared, got err = %v", err)
 	}
 }
+
+// TestInputPoller_LoopExitsOnContextCancel pins loop's own ctx.Done() exit
+// branch, distinct from the stopCh branch every other test drives via
+// Stop(): here the context passed to Start is cancelled directly and Stop
+// is never called.
+func TestInputPoller_LoopExitsOnContextCancel(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-p-ctx", 1, fixedAuthorUserIDProvider("user-1"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	poller.Start(ctx)
+	cancel()
+
+	select {
+	case _, ok := <-poller.Inputs():
+		if ok {
+			t.Fatal("expected closed channel, got value")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for inputs channel to close after ctx cancel")
+	}
+}

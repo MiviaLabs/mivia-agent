@@ -230,3 +230,114 @@ func TestOpenOutbox_RepairsTornAndDuplicatedTail(t *testing.T) {
 func line(seq int64) string {
 	return `{"seq":` + strconv.FormatInt(seq, 10) + `,"type":"turn.started","payload":{"text":"x"}}` + "\n"
 }
+
+// TestTruncateToMarkLocked_SyncErrorSurfaces pins truncateToMarkLocked's
+// own outboxSyncFile error wrap, distinct from its truncate-error wrap
+// TestOutboxAppend_DoubleFaultLeavesNoDuplicateSeq already covers.
+func TestTruncateToMarkLocked_SyncErrorSurfaces(t *testing.T) {
+	ob, _ := openTestOutbox(t)
+	restore := failSyncFor(t, eventsFileName)
+	defer restore()
+	if err := ob.truncateToMarkLocked(0); err == nil {
+		t.Fatal("truncateToMarkLocked hid a sync failure")
+	}
+}
+
+// TestRepairEventsFile_OpenErrorSurfaces pins repairEventsFile's own
+// non-ErrNotExist open-error wrap. os.Open on a directory (the earlier
+// attempt) succeeds - opening a directory does not itself fail - so the
+// precondition here instead denies traversal into the parent directory
+// entirely (chmod 0000), which makes os.Open fail with a permission
+// error rather than ErrNotExist.
+func TestRepairEventsFile_OpenErrorSurfaces(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "events-dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, eventsFileName), []byte("{\"seq\":1}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, probeErr := os.Open(filepath.Join(dir, eventsFileName)); probeErr == nil {
+		t.Skip("platform still allows traversal into a 0000 directory")
+	}
+	if err := repairEventsFile(dir); err == nil {
+		t.Fatal("repairEventsFile hid a non-ErrNotExist open failure")
+	}
+}
+
+// TestRepairEventsFile_MissingFileIsANoop pins the os.IsNotExist branch:
+// no events file at all is healthy, not an error.
+func TestRepairEventsFile_MissingFileIsANoop(t *testing.T) {
+	if err := repairEventsFile(t.TempDir()); err != nil {
+		t.Fatalf("repairEventsFile() = %v, want nil for a missing events file", err)
+	}
+}
+
+// TestScanGoodPrefix_StatErrorSurfaces pins scanGoodPrefix's own Stat
+// error wrap, forced by closing the file's fd out from under it before
+// the scan runs.
+func TestScanGoodPrefix_StatErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, eventsFileName)
+	if err := os.WriteFile(path, []byte(`{"seq":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := scanGoodPrefix(f); err == nil {
+		t.Fatal("scanGoodPrefix hid a Stat failure on a closed file")
+	}
+}
+
+// TestTruncateEventsFileTo_OpenErrorSurfaces pins truncateEventsFileTo's
+// own open-error wrap.
+func TestTruncateEventsFileTo_OpenErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, eventsFileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := truncateEventsFileTo(filepath.Join(dir, eventsFileName), 0); err == nil {
+		t.Fatal("truncateEventsFileTo hid an open failure")
+	}
+}
+
+// TestTruncateEventsFileTo_TruncateErrorSurfaces pins truncateEventsFileTo's
+// own outboxTruncateFile error wrap, distinct from its open-error and
+// sync-error wraps.
+func TestTruncateEventsFileTo_TruncateErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, eventsFileName)
+	if err := os.WriteFile(path, []byte(`{"seq":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restore := failTruncateFor(t, eventsFileName)
+	defer restore()
+	if err := truncateEventsFileTo(path, 0); err == nil {
+		t.Fatal("truncateEventsFileTo hid a truncate failure")
+	}
+}
+
+// TestTruncateEventsFileTo_SyncErrorSurfaces pins truncateEventsFileTo's
+// own outboxSyncFile error wrap, distinct from its truncate-error wrap.
+func TestTruncateEventsFileTo_SyncErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, eventsFileName)
+	if err := os.WriteFile(path, []byte(`{"seq":1}`+"\n{"+`"seq":2}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restore := failSyncFor(t, eventsFileName)
+	defer restore()
+	if err := truncateEventsFileTo(path, 0); err == nil {
+		t.Fatal("truncateEventsFileTo hid a sync failure")
+	}
+}

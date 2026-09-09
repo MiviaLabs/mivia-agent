@@ -491,3 +491,19 @@ func TestSubscribeAcrossCountsHandlerPanics(t *testing.T) {
 		t.Errorf("Panics = %d, want 1", got)
 	}
 }
+
+// TestDedupeKinds_SkipsEmptyAndDuplicateEntries pins dedupeKinds' own
+// empty-kind skip directly, alongside its duplicate-collapse behaviour: an
+// empty Kind must never survive into the returned list.
+func TestDedupeKinds_SkipsEmptyAndDuplicateEntries(t *testing.T) {
+	got := dedupeKinds([]Kind{KindToolStart, "", KindToolStart, KindToolEnd, ""})
+	want := []Kind{KindToolStart, KindToolEnd}
+	if len(got) != len(want) {
+		t.Fatalf("dedupeKinds = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dedupeKinds = %v, want %v", got, want)
+		}
+	}
+}

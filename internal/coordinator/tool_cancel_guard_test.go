@@ -143,3 +143,21 @@ func TestCancelSubagentToolCall_RegisteredNilCancelerIsSafeNoop(t *testing.T) {
 		t.Fatal("CancelSubagentToolCall with a registered-but-nil canceler returned true, want false")
 	}
 }
+
+// TestCoordinatorRegisterSubagentToolCanceler_UnknownRunIDIsNoop pins the
+// HandleForRun==nil guard: a non-empty runID with no registered handle
+// (unknown, not yet visible, or already evicted) must not panic and must
+// register nothing.
+func TestCoordinatorRegisterSubagentToolCanceler_UnknownRunIDIsNoop(t *testing.T) {
+	c := &Coordinator{handlesByRun: map[string]*RunHandle{}}
+	c.RegisterSubagentToolCanceler("run-never-spawned", "task-1", agent.ToolCanceler(validTestCanceler)) // must not panic
+}
+
+// TestCancelSubagentToolCall_InvalidHandlePropagates pins
+// CancelSubagentToolCall's own validateHandle error wrap.
+func TestCancelSubagentToolCall_InvalidHandlePropagates(t *testing.T) {
+	c := &Coordinator{handlesByRun: map[string]*RunHandle{}}
+	if _, err := c.CancelSubagentToolCall(context.Background(), nil, "task-1", "call-1"); err == nil {
+		t.Fatal("CancelSubagentToolCall accepted a nil run handle")
+	}
+}

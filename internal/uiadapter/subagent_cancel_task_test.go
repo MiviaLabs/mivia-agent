@@ -144,3 +144,53 @@ func TestSubagentThreads_RegisterTaskRoute_BlankFieldsAreRejected(t *testing.T) 
 		})
 	}
 }
+
+// TestSubagentThreads_CancelSubagentTask_CoordinatorErrorSurfaces pins
+// CancelSubagentTask's own coord.CancelTask error wrap: a registered
+// route naming a taskID the coordinator's run does not actually have
+// makes the real coordinator's CancelTask fail (task not found), and
+// that error must propagate rather than being swallowed.
+func TestSubagentThreads_CancelSubagentTask_CoordinatorErrorSurfaces(t *testing.T) {
+	c, h, _, started := newTestCoordinatorRun(t)
+	<-started
+
+	threads := NewSubagentThreads()
+	threads.RegisterTaskRoute(c, "call-bad-task", h.RunID(), "no-such-task")
+
+	ok, err := threads.CancelSubagentTask("call-bad-task")
+	if err == nil {
+		t.Fatal("CancelSubagentTask accepted a task id the coordinator's run does not have")
+	}
+	if ok {
+		t.Fatal("CancelSubagentTask reported ok=true despite the coordinator error")
+	}
+}
+
+// TestSubagentThreads_ResolveTaskRoute_InactiveRunSurfacesError pins
+// resolveTaskRoute's own HandleForRun==nil branch: a registered route
+// naming a runID the coordinator never spawned (or has already
+// forgotten) must surface a clear error, not silently report "no
+// route".
+func TestSubagentThreads_ResolveTaskRoute_InactiveRunSurfacesError(t *testing.T) {
+	c, _, _, _ := newTestCoordinatorRun(t)
+
+	threads := NewSubagentThreads()
+	threads.RegisterTaskRoute(c, "call-stale-run", "run-never-spawned", "t1")
+
+	_, _, _, err := threads.resolveTaskRoute("call-stale-run")
+	if err == nil {
+		t.Fatal("resolveTaskRoute accepted a runID the coordinator has no active handle for")
+	}
+}
+
+// TestSubagentTurnHandle_CancelToolCallAlwaysFalse pins the trivial
+// method ports.TurnHandle requires but this handle never implements:
+// per-tool-call cancellation for subagents goes through
+// SubagentThreads.CancelSubagentToolCall instead (see the method's own
+// doc comment).
+func TestSubagentTurnHandle_CancelToolCallAlwaysFalse(t *testing.T) {
+	h := &subagentTurnHandle{}
+	if h.CancelToolCall("any-call-id") {
+		t.Fatal("subagentTurnHandle.CancelToolCall must always report false")
+	}
+}

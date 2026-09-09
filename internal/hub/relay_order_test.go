@@ -172,3 +172,35 @@ func attachIdleClient(t *testing.T, o *owner, id uint64) *conn {
 	o.mu.Unlock()
 	return c
 }
+
+// TestClientSubscribeRelay_NilEventBusIsNoOp pins subscribeRelay's own
+// nil-EventBus guard: a session with no EventBus attached must return
+// immediately rather than panic on SubscribeAcross.
+func TestClientSubscribeRelay_NilEventBusIsNoOp(t *testing.T) {
+	sess := newTestSession(t, "sess-nil-bus")
+	sess.EventBus = nil
+	local, remote := net.Pipe()
+	t.Cleanup(func() { _ = local.Close(); _ = remote.Close() })
+
+	cl := newClient(local, sess, nil)
+	cl.subscribeRelay()
+
+	if cl.sub != nil {
+		t.Fatalf("subscribeRelay set cl.sub = %v, want nil for a nil EventBus", cl.sub)
+	}
+}
+
+// TestOwnerSubscribeRelay_NilEventBusIsNoOp mirrors
+// TestClientSubscribeRelay_NilEventBusIsNoOp for the owner side: a session
+// with no EventBus attached must return immediately rather than panic on
+// SubscribeAcross.
+func TestOwnerSubscribeRelay_NilEventBusIsNoOp(t *testing.T) {
+	sess := newTestSession(t, "sess-owner-nil-bus")
+	sess.EventBus = nil
+	o := newOwner(sess, nil)
+	o.subscribeRelay()
+
+	if o.sub != nil {
+		t.Fatalf("subscribeRelay set o.sub = %v, want nil for a nil EventBus", o.sub)
+	}
+}

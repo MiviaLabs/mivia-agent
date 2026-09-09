@@ -208,3 +208,19 @@ func TestConversationPaceDelaysBetweenEvents(t *testing.T) {
 		t.Errorf("paced replay finished in %v, want at least %v at pace %v", elapsed, 2*pace, pace)
 	}
 }
+
+// TestConversationCancelToolCallAlwaysMisses pins turnHandle's own
+// CancelToolCall: the fixture player has no in-flight tool calls to
+// cancel, so every call must report a miss.
+func TestConversationCancelToolCallAlwaysMisses(t *testing.T) {
+	c := New(fixtureEvents(), 0)
+	handle, err := c.Send(context.Background(), intent.Send{Text: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := handle.CancelToolCall("any-call-id"); got {
+		t.Fatalf("CancelToolCall = %v, want false", got)
+	}
+	for range handle.Events() {
+	}
+}

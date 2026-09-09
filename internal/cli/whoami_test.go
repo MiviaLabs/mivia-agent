@@ -315,3 +315,32 @@ func TestWhoamiInvalidServerURLSurfacesNewClientError(t *testing.T) {
 		t.Fatalf("err = %v, want a whoami-prefixed error", err)
 	}
 }
+
+// TestWhoami_NoServerURLFlagUsesEnv pins runWhoamiWithIO's own
+// ServerURLFromEnv fallback: with no --server-url flag, serverURL stays ""
+// and the function must resolve it from MIVIA_API_BASE_URL rather than
+// hitting an empty base URL.
+func TestWhoami_NoServerURLFlagUsesEnv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	expires := time.Now().Add(42 * time.Minute)
+	storeSession(t, miviaauth.Token{
+		Bearer:       "stored-bearer",
+		RefreshToken: "rt-1",
+		ExpiresAt:    expires,
+	})
+	srv := meServer(t, http.StatusOK, `{
+	  "id": "550e8400-e29b-41d4-a716-446655440000",
+	  "email": "env-user@example.com",
+	  "organizationId": "org-9",
+	  "role": "member"
+	}`)
+	t.Setenv("MIVIA_API_BASE_URL", srv.URL)
+
+	stdout, _, err := runWhoamiCapture(t, nil)
+	if err != nil {
+		t.Fatalf("whoami error = %v", err)
+	}
+	if !strings.Contains(stdout, "env-user@example.com") {
+		t.Errorf("stdout = %q, want the identity resolved via the env-provided server URL", stdout)
+	}
+}

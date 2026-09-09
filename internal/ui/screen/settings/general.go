@@ -292,17 +292,6 @@ func boolControlText(on bool) string {
 	return "[ OFF ]"
 }
 
-// boolControl renders a boolean row's semantic value control, styled
-// with RoleSuccess when enabled and RoleFGMuted when disabled - colour
-// as reinforcement on top of boolControlText's self-describing word,
-// never as the only signal.
-func boolControl(t theme.Theme, tier theme.Tier, on bool) string {
-	if on {
-		return render.Role(t, tier, theme.RoleSuccess).Render(boolControlText(true))
-	}
-	return render.Role(t, tier, theme.RoleFGMuted).Render(boolControlText(false))
-}
-
 // valueCell renders one row's value column. Every value is now a visible
 // control: boolean rows use the semantic ON/OFF word, while preset choices
 // use the same bracketed affordance with their actual value.

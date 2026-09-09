@@ -131,3 +131,20 @@ func TestPopulateDispatchTasks_ThreadsToolCallsRefIntoConversation(t *testing.T)
 		t.Errorf("History() notice changed: got %q, want %q - this slice must not alter behavior", hist[1].Text, "(tool calls recorded)")
 	}
 }
+
+// TestMatchTaskAgents_PositionalFallbackWhenIDAbsent mirrors
+// TestMatchTaskToolCallsRefs_PositionalFallbackWhenIDAbsent for
+// matchTaskAgents' own positional fallback: a result with no TaskID
+// pairs by position when the counts agree.
+func TestMatchTaskAgents_PositionalFallbackWhenIDAbsent(t *testing.T) {
+	results := []encodedTaskResult{
+		{Agent: "writer"},
+		{Agent: "reviewer"},
+	}
+	tasks := []parsedDispatchTask{{ID: "task-a"}, {ID: "task-b"}}
+	got := matchTaskAgents(results, tasks)
+	want := []string{"writer", "reviewer"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

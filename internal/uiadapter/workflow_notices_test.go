@@ -341,3 +341,23 @@ func TestWatchWorkflowProgressLockedIsIdempotentPerBus(t *testing.T) {
 		t.Fatalf("workflowSubs count = %d before, %d after a repeat watch of the same bus; want 1, 1 (NewSessionPool already watches the seed's bus)", before, after)
 	}
 }
+
+// TestWatchWorkflowProgressLocked_InitializesNilMap pins the
+// p.workflowSubs == nil branch directly: NewSessionPool always
+// pre-initializes the map, so this guard is unreachable through the
+// public constructor - exercised here on a bare *SessionPool value with
+// no map at all.
+func TestWatchWorkflowProgressLocked_InitializesNilMap(t *testing.T) {
+	p := &SessionPool{}
+	bus := events.New()
+	t.Cleanup(bus.Close)
+
+	p.mu.Lock()
+	p.watchWorkflowProgressLocked(bus)
+	_, ok := p.workflowSubs[bus]
+	p.mu.Unlock()
+
+	if !ok {
+		t.Fatal("watchWorkflowProgressLocked did not register the subscription on a nil-initialized workflowSubs map")
+	}
+}

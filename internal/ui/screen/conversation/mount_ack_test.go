@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -293,3 +294,85 @@ var errBoom = &boomError{}
 type boomError struct{}
 
 func (*boomError) Error() string { return "boom" }
+
+// TestHandleRemoteInput_TrackedBackgroundBusy_QueuesAndAcks pins
+// handleRemoteInput's own st.active != nil branch (as opposed to
+// TestHandleSessionMountedMsg_BackgroundSuccess_AcksAtQueueAppend, which
+// drives the mount flow's copy of the same shape): a remote input for an
+// already-tracked, busy background session must queue the text and ack
+// immediately, without calling Send.
+func TestHandleRemoteInput_TrackedBackgroundBusy_QueuesAndAcks(t *testing.T) {
+	th := testTheme()
+	primary := &fakeMountConv{id: "primary"}
+	s := New(th, theme.TierTrueColor, []theme.Theme{th}, primary, nil, 80, nil)
+
+	bgConv := &fakeMountConv{id: "bg-tracked-busy"}
+	st := s.newSessionState(bgConv)
+	st.active = &fakeTurnHandle{}
+	s.sessions = map[string]*sessionState{"bg-tracked-busy": st}
+
+	ackCount := &ackCounter{}
+	ev := ports.RemoteInputEvent{SessionID: "bg-tracked-busy", Body: "queued while busy", AckReceived: ackCount.inc}
+
+	next, cmd := s.handleRemoteInput(ev)
+	if cmd == nil {
+		t.Fatal("expected a non-nil batched Cmd")
+	}
+	runAllCmds(t, cmd)
+
+	if got := ackCount.load(); got != 1 {
+		t.Fatalf("ackCount = %d, want 1", got)
+	}
+	if len(bgConv.sends) != 0 {
+		t.Fatal("Send must not run while the tracked background session is busy")
+	}
+	gotSt := next.(Screen).sessions["bg-tracked-busy"]
+	if gotSt == nil || len(gotSt.queue) != 1 || gotSt.queue[0] != "queued while busy" {
+		t.Fatalf("expected queue [\"queued while busy\"], got %v", gotSt)
+	}
+}
+
+// TestAwaitRemoteInput_ClosedChannelReturnsNilMsg pins awaitRemoteInput's
+// own closed-channel branch: once the inbound steering channel closes
+// (SessionPool shutdown), the read continuation must return a nil Msg
+// rather than a zero-value remoteInputMsg, so the program loop does not
+// route a fake empty event.
+func TestAwaitRemoteInput_ClosedChannelReturnsNilMsg(t *testing.T) {
+	th := testTheme()
+	conv := &fakeMountConv{id: "primary"}
+	s := New(th, theme.TierTrueColor, []theme.Theme{th}, conv, nil, 80, nil)
+
+	ch := make(chan ports.RemoteInputEvent)
+	s.remoteInputs = ch
+	close(ch)
+
+	cmd := s.awaitRemoteInput()
+	if cmd == nil {
+		t.Fatal("expected a non-nil Cmd for a non-nil channel")
+	}
+	if msg := cmd(); msg != nil {
+		t.Fatalf("awaitRemoteInput() on a closed channel = %#v, want nil", msg)
+	}
+}
+
+// TestSendOrQueueRemote_RefreshesOpenQueueOverlay pins sendOrQueueRemote's
+// own queueOverlay.Active() branch: a remote instruction queued while the
+// operator has the queue overlay OPEN must refresh its item list live,
+// not leave it showing the stale queue until the next manual toggle.
+func TestSendOrQueueRemote_RefreshesOpenQueueOverlay(t *testing.T) {
+	th := testTheme()
+	conv := &fakeMountConv{id: "primary"}
+	s := New(th, theme.TierTrueColor, []theme.Theme{th}, conv, nil, 80, nil)
+	s.active = &fakeTurnHandle{}
+	s.queueOverlay.Open(s.queue)
+	if !s.queueOverlay.Active() {
+		t.Fatal("precondition: queueOverlay did not open")
+	}
+
+	next, _ := s.sendOrQueueRemote("queued via remote", "", func() {})
+	scr := next.(Screen)
+
+	if !strings.Contains(scr.queueOverlay.View(), "queued via remote") {
+		t.Fatalf("queueOverlay view = %q, want it refreshed with the newly queued text", scr.queueOverlay.View())
+	}
+}

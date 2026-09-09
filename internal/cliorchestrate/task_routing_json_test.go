@@ -108,3 +108,33 @@ func TestValidateDispatchTaskSelectors(t *testing.T) {
 		t.Fatalf("validateDispatchTaskSelectors on well-formed input: %v", err)
 	}
 }
+
+// TestScanJSONValue_TruncatedKeyReadSurfacesTheTokenError pins the object
+// key Token() error branch: truncated input mid-key must propagate the
+// EOF/syntax error rather than looping forever or panicking.
+func TestScanJSONValue_TruncatedKeyReadSurfacesTheTokenError(t *testing.T) {
+	if err := rejectDuplicateJSONKeys([]byte(`{"a":1,`)); err == nil {
+		t.Fatal("rejectDuplicateJSONKeys accepted an object truncated mid-key")
+	}
+}
+
+// TestValidateDispatchTaskSelectors_MalformedTopLevelJSONSurfaces pins the
+// json.Unmarshal(args, &root) guard directly: production only reaches this
+// function with already-validated JSON (via decodeDispatchTaskJSON), so
+// this exercises the guard at the function's own boundary.
+func TestValidateDispatchTaskSelectors_MalformedTopLevelJSONSurfaces(t *testing.T) {
+	if err := validateDispatchTaskSelectors(json.RawMessage(`not json`), nil); err == nil {
+		t.Fatal("validateDispatchTaskSelectors accepted malformed top-level JSON")
+	}
+}
+
+// TestValidateDispatchTaskSelectors_NonObjectTaskElementSurfaces pins the
+// per-task json.Unmarshal(raw, &fields) guard: a tasks array element that
+// is syntactically valid JSON but not an object (a bare string here) fails
+// the map decode, distinct from a top-level JSON syntax error.
+func TestValidateDispatchTaskSelectors_NonObjectTaskElementSurfaces(t *testing.T) {
+	err := validateDispatchTaskSelectors(json.RawMessage(`{"tasks":["not an object"]}`), nil)
+	if err == nil {
+		t.Fatal("validateDispatchTaskSelectors accepted a non-object task element")
+	}
+}

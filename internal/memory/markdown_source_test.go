@@ -602,3 +602,47 @@ func TestParseProtocolMemoryRejectsMalformedFrontmatter(t *testing.T) {
 		t.Fatal("parseProtocolMemory accepted frontmatter missing id/title/content")
 	}
 }
+
+// TestRejectSymlinkComponents_AbsFailsWithRemovedCwd pins the
+// filepath.Abs error branch: Abs on a relative path calls os.Getwd, which
+// fails once the process's working directory has been removed out from
+// under it - the only deterministic, in-process way to make Abs itself
+// fail (a bad path string alone never does).
+func TestRejectSymlinkComponents_AbsFailsWithRemovedCwd(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := t.TempDir()
+	if err := os.Chdir(gone); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.RemoveAll(gone); err != nil {
+		t.Skipf("platform will not remove its own working directory: %v", err)
+	}
+	if _, probeErr := filepath.Abs("relative"); probeErr == nil {
+		t.Skip("platform still resolves an absolute path from a removed working directory")
+	}
+	if err := rejectSymlinkComponents("relative/path.md"); err == nil {
+		t.Fatal("rejectSymlinkComponents accepted an unresolvable relative path")
+	}
+}
+
+// TestAtomicWrite_RenameFailsWhenDestinationIsADirectory pins atomicWrite's
+// own os.Rename error wrap: renaming the temp file over a path that is
+// already a directory always fails, with no fault-injection trick needed.
+func TestAtomicWrite_RenameFailsWhenDestinationIsADirectory(t *testing.T) {
+	dir := t.TempDir()
+	destAsDir := filepath.Join(dir, "taken.md")
+	if err := os.Mkdir(destAsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := atomicWrite(context.Background(), destAsDir, []byte("data"))
+	if err == nil {
+		t.Fatal("atomicWrite renamed a temp file over an existing directory")
+	}
+	if !strings.Contains(err.Error(), "replace memory") {
+		t.Fatalf("error = %v, want the wrapped replace-memory error", err)
+	}
+}

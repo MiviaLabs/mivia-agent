@@ -129,3 +129,25 @@ func TestLateReasoningDoesNotCommitPendingAnswerTwice(t *testing.T) {
 		t.Fatalf("reasoning block = %q, want late reasoning", got)
 	}
 }
+
+// TestLateReasoningWithEmptyTextIsANoop pins handleReasoningDelta's own
+// empty-text guard while a text delta is pending: an empty reasoning
+// delta must not flush the pending answer early or commit anything.
+func TestLateReasoningWithEmptyTextIsANoop(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+
+	for _, ev := range []uievent.Event{
+		{Body: uievent.TurnStartBody{Input: "hi"}},
+		{Body: uievent.TextDeltaBody{Text: "The answer."}},
+		{Body: uievent.ReasoningDeltaBody{Text: ""}},
+		{Body: uievent.TextEndBody{Text: "The answer."}},
+		{Body: uievent.TurnEndBody{Reason: "completed"}},
+	} {
+		m, _ = m.HandleEvent(ev)
+	}
+
+	if got := strings.Count(ansi.Strip(m.Dump()), "The answer."); got != 1 {
+		t.Fatalf("answer rendered %d times, want once:\n%s", got, m.Dump())
+	}
+}

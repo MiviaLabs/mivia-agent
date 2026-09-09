@@ -1,12 +1,222 @@
 {
   "description": "Per-line accepted residue for the diff-coverage gate (scripts/diff_coverage.py). Each entry names exact line numbers that are provably unreachable or not unit-testable, with the reason a test cannot execute them. The gate subtracts these from the failing set and prints every accepted line, so the residue stays explicit and reviewable. Entries whose lines become covered are reported as stale and should be pruned. Never use this to silence a line a test COULD cover - add the test instead. The list is expected to shrink toward zero or be deleted with the code it describes. Residue provenance: the SDK-convergence cli split (slices 1-6) moved and lightly edited ~6300 changed-statement lines; every line a test could reach was covered across the slices - what remains below is the audited tail.",
   "knownUncovered": {
+    "internal/cliorchestrate/task_routing.go": {
+      "lines": [
+        67,
+        68,
+        101,
+        102,
+        103,
+        104,
+        138,
+        139,
+        140,
+        141,
+        210,
+        211
+      ],
+      "reason": "Four unreachable branches. (0) 67: digest-marshal error unreachable - agents.Select sanitizes schema maps through a JSON round-trip, so DefinitionDigest cannot fail on a selected agent. (1) 101-104: decodeDispatchTaskJSON's own multiple-JSON-values check, unreachable given its own precondition - it calls rejectDuplicateJSONKeys(args) first (line 91) and returns early on its error, and rejectDuplicateJSONKeys walks the SAME byte slice with the identical trailing-decode check (lines 115-119) before decodeDispatchTaskJSON's own decoder ever runs. JSON parsing is deterministic over one input, so any args that reaches decodeDispatchTaskJSON's own check already passed the identical check on the identical bytes and cannot fail it differently the second time. TestDecodeDispatchTaskJSON_MultipleValuesRejected and TestDecodeDispatchTaskJSON_TrailingGarbageSurfacesTheScanError both exercise this class of rejection at the public entry point; they are satisfied by rejectDuplicateJSONKeys's copy, confirming this one never runs. (2) 138-140: scanJSONValue's key,ok := key.(string) type-assertion failure inside the object-key branch. encoding/json's Decoder.Token() enforces string-ness for an object key position itself: JSON grammar requires a key to be a quoted string, and the decoder's own tokenizer returns a *json.SyntaxError from Token() (caught by the err != nil branch two lines above, which TestScanJSONValue_TruncatedKeyReadSurfacesTheTokenError covers) rather than successfully returning a non-string token for a malformed key. No input makes Token() return a non-string, non-error value at a key position, so the type assertion here cannot fail. (3) 210: the agent/skill-specific null check inside the per-field loop starting at line 203. The generic per-field null check earlier in the same task iteration (line 190, `for field, value := range fields`) already covers every field name including \"agent\" and \"skill\" and returns immediately on any null value, so by the time the agent/skill-specific loop runs, no field in `fields` can be null. TestValidateDispatchTaskSelectors's \"agent null\" case confirms the generic check fires first (asserts \"agent must not be null\", not \"agent must be a string when present\")."
+    },
     "internal/memory/markdown_source.go": {
       "lines": [
+        93,
+        94,
         149,
-        150
+        150,
+        151,
+        399,
+        400,
+        401,
+        403,
+        404,
+        405,
+        407,
+        408,
+        409,
+        411,
+        412
       ],
-      "reason": "Scan's Parse(data) error branch. Parse (internal/memory/entry.go) has exactly two return statements, both `return e, nil`; grep over the function body confirms no other return exists. Its (Entry, error) signature carries an error return the current line-based implementation never produces - every malformed input (empty title, missing sections) falls back to a zero-value or partial Entry rather than failing. No input reaches a non-nil error from this call site."
+      "reason": "Four unreachable-or-untriggerable clusters. (1) 93-94: the write-directory's SECOND rejectSymlinkComponents(dir) call, immediately after MkdirAll succeeds on the SAME dir value the first call (a few lines above) already passed. MkdirAll only creates plain directories, never symlinks, and no code runs between the two calls that could swap a path component for a symlink - the second check is TOCTOU defense against a concurrent external actor racing a symlink into the path in that window, which cannot be deterministically synchronized from an in-process test. (2) 149-151: Scan's Parse(data) error branch (149-150) plus the closing brace the coverage gate counts as part of the same block (151). Parse (internal/memory/entry.go) has exactly two return statements, both `return e, nil`; its (Entry, error) signature carries an error return the current line-based implementation never produces. (3) 399-412: atomicWrite's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it. Triggering a live fd's Write/Sync/Close failure deterministically and portably (without an OS-specific unsafe technique such as an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default) is not achievable from this test package; TestAtomicWriteRejectsCanceledContext and TestAtomicWrite_RenameFailsWhenDestinationIsADirectory already cover the two atomicWrite error paths that ARE reachable (context cancellation before CreateTemp, and os.Rename's error after a real directory-collision precondition)."
+    },
+    "internal/ui/screen/conversation/thread.go": {
+      "lines": [
+        291,
+        292,
+        293,
+        294,
+        298,
+        299,
+        300,
+        301
+      ],
+      "reason": "threadDialogKey's post-hideComposer fallthrough (routeThreadDialogArrows then s.thread.Update). Dead given the current call graph: openThread's only two SetHideComposer calls (lines 219, 247) both pass true, and nothing ever flips s.thread.hideComposer back to false while s.thread is non-nil - dismissModals resets hideComposer only on the OUTER screen (session.go:115) after calling closeThread(), which nils s.thread rather than un-hiding its composer. So the guard three lines above (`if s.thread.hideComposer { return s, nil }`) is unconditionally true whenever this function is reached with a non-nil thread, and this block can never run. TestThreadDialogScrollKey_TabFocusesNextInHiddenComposerDialog and its shift+tab sibling pin the hidden-composer path this guard always takes instead."
+    },
+    "internal/chatsync/identity.go": {
+      "lines": [
+        269,
+        270,
+        277,
+        278,
+        279,
+        281,
+        282,
+        283,
+        285,
+        286
+      ],
+      "reason": "Two clusters. (1) 269-270: SaveIdentity's json.Marshal(id) error wrap. SyncIdentity (identity.go:95-99) has exactly three fields, all plain strings; json.Marshal only fails for channels, funcs, complex numbers, or a cyclic map/pointer graph, none of which a string-only struct can produce, so no SyncIdentity value can make Marshal return an error. (2) 277-286: the tmp file's own Write/Sync/Close error wraps on an *os.File local to SaveIdentity, with no seam to intercept it - the same class of untriggerable live-fd failure as the accepted internal/memory/markdown_source.go atomicWrite entry; TestSaveIdentity_ErrorChain already covers every OTHER write-path guard (bad key, MkdirAll-over-a-file, a read-only tmp-create directory, and a directory blocking the final rename)."
+    },
+    "internal/chatsync/outbox_recover.go": {
+      "lines": [
+        70,
+        71
+      ],
+      "reason": "repairEventsFile's own f.Close() error wrap, on an *os.File opened and closed entirely inside the function with no seam to intercept it between scanGoodPrefix's read and this Close call - unlike TestOutboxClose_EventsFileCloseErrorSurfaces (outbox_close_error_unix_test.go), which can reach into ob.eventsFile because the Outbox struct holds it, there is no external reference to repairEventsFile's local f to close out from under it via syscall.Close. Same class as the accepted markdown_source.go/identity.go live-fd-Close entries."
+    },
+    "internal/chatsync/session_badrequest.go": {
+      "lines": [
+        121,
+        122,
+        126,
+        127
+      ],
+      "reason": "rebaseOn's advance-cursor shape reads the SAME events.jsonl content twice (line 102's first UnflushedEvents call, then line 119's second, with only AdvanceCursor's cursor.json write - not events.jsonl - in between). A scan/read failure on that file strikes both calls identically, so isolating the SECOND read failing while the first succeeded (121-122) requires the file to change identity strictly between the two calls with no test-controllable hook in that window. The Rebase-error branch immediately after (126-127) inherits the same problem: reaching it needs the second read (rest) to succeed with a real gap, which by construction means the file was healthy for both prior reads, so forcing ONLY the subsequent Rebase write to fail (as opposed to also failing AdvanceCursor's earlier write, which returns at 108-109 instead) needs the outbox directory to become read-only strictly between AdvanceCursor and Rebase - again no seam in that window. TestRebaseOn_BehindShapeRebaseErrorSurfaces covers the OTHER Rebase call site (line 133), which is rebaseOn's first outbox write on that shape and so has no such ordering conflict; TestRebaseOn_AdvanceCursorBranchResetsProjectorSeq covers this shape's own success path."
+    },
+    "internal/chatsync/delivered_ledger.go": {
+      "lines": [
+        49,
+        50,
+        67,
+        68,
+        69,
+        71,
+        72,
+        73,
+        75,
+        76
+      ],
+      "reason": "Two clusters, same class as the accepted identity.go/markdown_source.go entries. (1) 49-50: recordDelivered's json.Marshal(ids) error wrap - ids is []string, and Marshal cannot fail on a plain string slice. (2) 67-76: writeFileDurably's tmp file Write/Sync/Close error wraps on an *os.File local to the function, with no seam to intercept it."
+    },
+    "internal/ui/component/composer/composer.go": {
+      "lines": [
+        533
+      ],
+      "reason": "markCommandToken's own len(lines)==0 guard, and the code's own preceding comment already states why it is unreachable: strings.Split never returns an empty slice (even Split(\"\", \"\\n\") yields [\"\"], len 1), so this is defensive-only dead code kept as a guard against a future stdlib-contract change, not a reachable branch."
+    },
+    "internal/storage/sqlite_readonly.go": {
+      "lines": [
+        20,
+        21
+      ],
+      "reason": "OpenSQLiteReadOnly's sql.Open error wrap. The registered \"sqlite\" driver (modernc.org/sqlite) does not implement driver.DriverContext/OpenConnector, so database/sql.Open (src/database/sql/sql.go:863-880) takes the plain dsnConnector path, which only wraps the driver name and DSN string without validating or connecting - it cannot fail. The subsequent db.Ping() (already covered) is where a bad DSN or missing file actually surfaces."
+    },
+    "internal/redact/partial.go": {
+      "lines": [
+        33,
+        34
+      ],
+      "reason": "compilePartial's syntax.Compile error wrap. The standard library's regexp/syntax.Compile (Go 1.26 src/regexp/syntax/compile.go:71-78) unconditionally returns `c.p, nil` - it has no error-producing path at all, only a panic for a re.Op case its own switch cannot reach for a tree syntax.Parse ever produces. A hardcoded literal nil return, never a variable, same unreachable class as the accepted LoadMarkdownSources entries."
+    },
+    "internal/redact/redact.go": {
+      "lines": [
+        65,
+        66
+      ],
+      "reason": "Compile's compilePartial error wrap, and the code's own preceding comment already states why: 'The same parse regexp.Compile just ran, so this cannot fail where that succeeded.' Independently confirmed via internal/redact/partial.go's own accepted entry: compilePartial's only fallible step, syntax.Compile, never actually returns a non-nil error in the standard library's current implementation."
+    },
+    "internal/contextmgr/planner_idempotency.go": {
+      "lines": [
+        64,
+        65
+      ],
+      "reason": "planIdempotencyKey's contextstate.MarshalCanonical error wrap. The marshaled struct's only variable-content fields are plain strings (retained message Content/ReasoningContent/tool-call Arguments etc.) plus ints and a Revision struct - json.Marshal cannot fail on that shape (it escapes invalid UTF-8 in strings rather than erroring). MarshalCanonical's second stage, canonicalizeJSON, re-parses Marshal's own output; since encoding/json always emits well-formed, valid-UTF-8 JSON, that re-parse cannot fail either. Same unreachable-error class as the accepted json.Marshal([]string) entries elsewhere in this file."
+    },
+    "internal/chatsync/truncate.go": {
+      "lines": [
+        78
+      ],
+      "reason": "truncateString's final fallback return, reached only if the rune loop completes without spent+cost ever exceeding maxBytes. totalBytes (computed by escapedLen up front) sums jsonEscapedLen over the identical rune sequence the loop walks, so by the loop's last iteration spent equals totalBytes; the two guards above (totalBytes<=maxBytes, maxBytes<=0) already returned for every case where that would not force spent+cost>maxBytes before or at the final rune. Arithmetic identity, not a reachable branch."
+    },
+    "internal/chatsync/reconcile.go": {
+      "lines": [
+        307,
+        308
+      ],
+      "reason": "reconcileDangling's len(closingEvents)==0 guard is unreachable given the earlier len(tools)==0 && len(subs)==0 && len(subTools)==0 guard at line 300: buildClosingEvents (via buildSubagentClosingEvents/buildToolClosingEvents) appends exactly one WireEvent per item in tools/subs/subTools unconditionally, so once line 300 lets execution through at least one of those slices is non-empty and closingEvents is guaranteed non-empty. Defensive double-check, not a reachable branch."
+    },
+    "internal/chatsync/received_ledger.go": {
+      "lines": [
+        59,
+        60
+      ],
+      "reason": "MarkReceived's json.Marshal(ids) error wrap - ids is []string, same as the accepted delivered_ledger.go 49-50 entry; Marshal cannot fail on a plain string slice."
+    },
+    "internal/chatsync/sync_status.go": {
+      "lines": [
+        215,
+        216,
+        217,
+        218,
+        219,
+        226,
+        227,
+        228
+      ],
+      "reason": "writeFileAtomic's tmp file Write and Close error wraps on an *os.File local to the function, with no seam to intercept it - same class as the accepted identity.go/markdown_source.go/delivered_ledger.go entries."
+    },
+    "internal/uiadapter/settings_general.go": {
+      "lines": [
+        330
+      ],
+      "reason": "mutateGeneral's default case for an unknown ports.GeneralEdit. ports.GeneralEdit's marker method (isGeneralEdit) is unexported to package ports, so only types declared in that package can implement it - no type constructible from internal/uiadapter (or any test package) can reach this switch with a value the earlier cases do not already match. Confirmed by a compile error when attempting exactly this from a uiadapter-side test (unexported method isGeneralEdit)."
+    },
+    "internal/cliagents/agent_surface.go": {
+      "lines": [
+        56,
+        57
+      ],
+      "reason": "buildAgentScopedSurface's LoadSessionSkills error check, same unreachable class as the accepted attach_rebuilt_surface.go 62-64 entry: LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error, so LoadSessionSkills can never return a non-nil error for this check to catch."
+    },
+    "internal/cliagents/markdown_store.go": {
+      "lines": [
+        276,
+        277
+      ],
+      "reason": "Delete's FindMemoryIndexEntry non-NotFound error branch, already flagged in-source (the line above carries a \"Not diff-covered\" comment): forcing the shared *storage.SQLite to fail HERE specifically - after the refresh calls above succeed but before this lookup - needs a test-only failure-injection seam that does not exist on the shared store. Not forceable deterministically in-process."
+    },
+    "internal/cliagents/attach_rebuilt_surface.go": {
+      "lines": [
+        62,
+        63,
+        64
+      ],
+      "reason": "LoadSessionSkills' error return, unreachable given skills.LoadMarkdownSources' own contract: every failure inside loadMarkdownSource (an unopenable source dir, a broken skill directory) is converted to a warning string and folded into the returned warnings slice - LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error. Confirmed with a WorkspaceRoot whose .agents path is a blocking file: the load returns a \"skip skills directory\" warning and a nil error, not an error."
+    },
+    "internal/miviaauth/lock.go": {
+      "lines": [
+        117,
+        118
+      ],
+      "reason": "withRefreshLock's `if !locked` branch after lock.TryLockContext returns a nil error. github.com/gofrs/flock's tryCtx (flock.go) has exactly three return statements: ctx already done at entry (returns a non-nil ctx.Err()), the inner fn() call returning ok||err!=nil (an error, or ok==true - never ok==false with a nil error, since the loop only breaks on ok||err!=nil), and the select's ctx.Done() case (again a non-nil ctx.Err()). No path in tryCtx returns (false, nil), so TryLockContext can only return (true, nil) or (false, non-nil-error) - `locked` is true whenever `err` is nil. TestWithRefreshLock_RealContentionReportsLockBusy and TestWithRefreshLock_ImmediateOpenErrorSurfacesLockUnavailable cover the two error shapes tryCtx can actually produce."
+    },
+    "internal/agent/sdk_dispatcher_shim.go": {
+      "lines": [
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        368,
+        369,
+        422,
+        423
+      ],
+      "reason": "Three unreachable/gap branches. (0) 104-112: recordBridgeError body (commit 76fb29e2) - the function only executes when a mid-run surface rotation's buildSDKToolRegistry fails, and every turn then fails through the partial-Result bridge-error carry in agentloop_adapter.go; the known preparation-error-shape gap from the session unpin, no test injects a failing registry conversion during rotation. (1) 368-369: sdkReg.Add(wrapped) error branch, same class as the accepted internal/agent/refonly_shim.go:204 and sdk_shaping.go:348 entries - sdkReg.Remove(name) runs on the identical name one statement earlier in the same loop iteration (line 363), so the name cannot already be present when Add runs. (2) 422-423: RunUnadmittedTool's runner.Run error wrap. runner is wrapTurnShaping(wrapRefOnly(shim, ...)); wrapTurnShaping returns its inner unchanged whenever opts.BatchResultBudgetBytes is zero (the default RunUnadmittedTool's own Options{} always has, since batchShapingBudget's default case returns active=false), and wrapRefOnly likewise returns inner unchanged outside its own narrow spool-floor guard - so the call this test can drive always resolves to dispatcherShim.Run itself. dispatcherShim.Run's ONLY non-nil-error return is its own json.Marshal(in.Value) (line ~150), and in.Value is a json.RawMessage that DecodeArguments (sdkadapter/tool_registry.go) only ever populates after checking json.Valid(raw) - a validated, non-empty json.RawMessage's MarshalJSON always succeeds. Every other outcome dispatcherShim.Run can produce (a tool execution error, a closed dispatcher) is folded into the returned body by composeRunOutput, whose only return statement is `return sdktools.Out{Value: body}, nil`. TestRunUnadmittedTool_ConvertToolErrorSurfaces already covers the one real error RunUnadmittedTool can surface (an earlier, unrelated guard)."
     },
     "internal/agent/sdk_shaping.go": {
       "lines": [
@@ -16,9 +226,11 @@
     },
     "internal/agent/refonly_shim.go": {
       "lines": [
-        204
+        204,
+        237,
+        238
       ],
-      "reason": "applyRefOnlyShim's sdkReg.Add(wrapped) error branch, explicitly called out as unreachable by the comment directly above it: Add only fails on a duplicate name, and this call site removes that exact name from sdkReg (sdkReg.Remove(name), line 187) two statements earlier in the same loop iteration, so the name cannot already be present when Add runs. No input reaches this branch through the loop's own precondition."
+      "reason": "Two unreachable branches. (1) 204: applyRefOnlyShim's sdkReg.Add(wrapped) error branch, explicitly called out as unreachable by the comment directly above it: Add only fails on a duplicate name, and this call site removes that exact name from sdkReg (sdkReg.Remove(name), line 187) two statements earlier in the same loop iteration, so the name cannot already be present when Add runs. (2) 237-238: wrapRefOnly's own inner.(sdktools.SchemaTool) type-assertion failure. Every concrete adapter type internal/sdkadapter produces for an sdktools.Tool - sdkToolAdapter, admissionCheckedToolAdapter, approvalGatedToolAdapter - carries a compile-time `var _ sdktools.SchemaTool = (*T)(nil)` assertion (tool_registry.go:107,304, approver.go:57), and wrapRefOnly's inner argument is always one of those three across the whole codebase (every sdkReg population path routes through ConvertTool/ConvertToolRegistry/ConvertToolRegistryWithAdmission). No tool value this code can be called with fails the assertion."
     },
     "internal/storage/memory_index.go": {
       "lines": [
@@ -26,12 +238,6 @@
         63
       ],
       "reason": "syncMemoryIndexTx's own doc.Scope != scope check inside the per-doc loop, reached only after the transaction has begun. validateMemoryIndexDocuments (called at the top of SyncMemoryIndex, the only production caller of this transaction body) already checks the identical condition - doc.Scope != scope, line 167-169 - for every doc in the same slice before the transaction opens, and returns the same error. No doc that fails this check can reach the transaction body at all: the precondition validateMemoryIndexDocuments enforces makes this line's condition always false by the time it runs. TestSyncMemoryIndexRejectsDocScopeNotMatchingScan pins the reachable copy of this check at validateMemoryIndexDocuments."
-    },
-    "internal/agent/agentloop_adapter.go": {
-      "lines": [
-        102
-      ],
-      "reason": "buildAgentLoopOptions's adoptSDKRows error return. adoptSDKRows returns a non-nil error only from adoptSDKCompaction, whose single error site is the failed type assertion completer.(sdkshape.TokenEstimator). The completer argument here is newSDKTurnCompleter's return, whose static type is the concrete *agentLoopCompleter and which is non-nil because the error branch above returns first. *agentLoopCompleter declares EstimateTokens(sdkshape.Request) (int, error) with a pointer receiver, so it always satisfies sdkshape.TokenEstimator and the assertion cannot fail on this path. TestAdoptSDKRowsWrapsCompactionError covers the guarded contract directly at the shared helper, with an estimator-free completer no production call site can construct."
     },
     "internal/agent/agentloop_adoption.go": {
       "lines": [
@@ -103,12 +309,6 @@
       ],
       "reason": "defensive type-assertion guard in ActiveCoordinator: every writer of the coordinators map stores coordinator.Coordinator values, so the non-coordinator continue branch cannot execute without a test poking the unexported map"
     },
-    "internal/cliorchestrate/task_routing.go": {
-      "lines": [
-        67
-      ],
-      "reason": "digest-marshal error unreachable: agents.Select sanitizes schema maps through a JSON round-trip, so DefinitionDigest cannot fail on a selected agent"
-    },
     "internal/cliworkflow/test_exports.go": {
       "lines": [
         34
@@ -155,23 +355,101 @@
       ],
       "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
     },
-    "internal/agent/sdk_dispatcher_shim.go": {
+    "internal/uiadapter/session_pool_worktree.go": {
       "lines": [
-        104,
-        105,
-        106,
-        107,
-        108,
-        109,
-        110,
-        111,
-        112
+        284,
+        285
       ],
-      "reason": "recordBridgeError body (commit 76fb29e2): the function only executes when a mid-run surface rotation's buildSDKToolRegistry fails, and every turn then fails through the partial-Result bridge-error carry in agentloop_adapter.go. This is the known preparation-error-shape gap from the session unpin: no test injects a failing registry conversion during rotation, so the record path has zero hits. Earlier clamp/fallback entries that lived at these line numbers were renumbered away by the same commits and their paths are now covered."
+      "reason": "storedRouteLocked's worktreeroute.Principal error branch, explicitly called out as unreachable by the comment directly above it: Principal's only error paths are crypto/rand.Read failing (an OS-level entropy failure) and Principal.Validate's identifier-length bound, which the fixed literal owner strings (\"worktree-routes\", \"local-user\") and the always-short WorkspaceID digest never exceed."
+    },
+    "internal/memory/markdown_dirsync_unix.go": {
+      "lines": [
+        20,
+        21
+      ],
+      "reason": "syncMemoryDir's own handle.Sync() error wrap on a directory *os.File opened and synced entirely inside the function, with no seam to intercept it between os.Open and Sync - same class as the accepted markdown_source.go/identity.go live-fd entries."
+    },
+    "internal/chatsync/poller.go": {
+      "lines": [
+        275,
+        276,
+        338
+      ],
+      "reason": "Two unreachable branches. (1) 275-276: writePendingInput's json.Marshal(state) error wrap. pendingInputState wraps only a *SessionInput (plain strings and a *string) and a bool; no channel, func, complex, cyclic, or Marshaler value reaches it, so Marshal cannot fail. (2) 338: deliverInput's select-default case, explicitly called out as unreachable by the comment directly above it: the channel is always fresh with no concurrent reader racing it at this point in the flow."
+    },
+    "internal/uiadapter/remote_input_watcher.go": {
+      "lines": [
+        163,
+        164,
+        165
+      ],
+      "reason": "Backfill's own chatsync.NewClient error guard. chatsync.NewClient's ONLY error is a nil TokenProvider (client.go:193-196: `if tokens == nil { return nil, ErrNoTokenProvider }`, no other check), and Backfill's call site passes w.cfg.Tokens - the exact value the guard three lines above (`if w.cfg.Tokens == nil { return }`) already proved non-nil. No input reaches this branch through the enclosing guard's own precondition."
+    },
+    "internal/storage/chat_sessions_delete.go": {
+      "lines": [
+        48,
+        191,
+        192
+      ],
+      "reason": "Two clusters. (1) 48: DeleteSessionSnapshot's own resolveSnapshotNameBySessionID error wrap. Reaching it requires deleteSessionSnapshotRow (the immediately preceding statement, line 31) to succeed with zero rows affected AND resolveSnapshotNameBySessionID's own SELECT on the SAME table to then fail - a DB failure occurring precisely in the window between two adjacent statements on one connection, with no test-controllable seam in that window (same class as the accepted internal/chatsync/session_badrequest.go entry). (2) 191-192: newContextID's crypto/rand.Read failure, an OS-level entropy failure with no deterministic in-process trigger (same class as the accepted worktreeroute.Principal entries)."
+    },
+    "internal/chatsync/outbox_rebase.go": {
+      "lines": [
+        116,
+        117,
+        118
+      ],
+      "reason": "rewriteEventsFileLocked's json.Marshal(we) error wrap. we.Payload holds se.Payload, a json.RawMessage; json.Marshal delegates to RawMessage's own MarshalJSON, which never errors - an empty/nil RawMessage marshals to the literal `null` rather than failing (verified directly: json.Marshal(WireEvent{Payload: json.RawMessage(nil)}) succeeds), and any non-empty RawMessage reaching this point was already validated as parseable JSON by unflushedEventsLocked's own json.Unmarshal when it was first read from disk."
+    },
+    "internal/cliagents/memory_support.go": {
+      "lines": [
+        70,
+        71,
+        72
+      ],
+      "reason": "openMarkdownMemoryStore's OpenMarkdownStore error wrap, unreachable given this call site's own guarantees. OpenMarkdownStore (markdown_store.go:54-82) returns a non-nil error only from its own cfg.Index==nil and cfg.ProjectID==\"\" guards; every per-scope refresh() failure is absorbed into the store's degraded map instead of propagating. This call site's Index comes from a just-succeeded storage.OpenSQLiteWithOptions (never nil on success) and its ProjectID is filepath.Abs(root) (never empty), so neither guard can fire."
+    },
+    "internal/uiadapter/session_pool_agentstate.go": {
+      "lines": [
+        79,
+        80
+      ],
+      "reason": "ApplyApprovalDefault's own normalized == \"\" guard. config.NormalizeDefaultMode's switch has no case that returns \"\": every named mode maps to a policy constant and the default case (and the explicit \"\" case) both return ApprovalPolicyWriteOnly, so no raw input makes NormalizeDefaultMode return an empty string."
+    },
+    "internal/uiadapter/settings_theme.go": {
+      "lines": [
+        16,
+        17
+      ],
+      "reason": "PersistTheme's own synchronous Apply-error branch. settingsGeneral.Apply (settings_general.go:20-22) is `return g.newSaveHandle(...), nil` unconditionally - its second return value is a literal nil, never a variable that could carry an error - so this call can never return a non-nil err. The only failure PersistTheme can actually observe is the async SaveFailed event TestPersistTheme_SaveFailureSurfaces covers."
+    },
+    "internal/uiadapter/runner_model.go": {
+      "lines": [
+        41,
+        42,
+        43
+      ],
+      "reason": "availableModelsByProvider's own r.res == nil guard, explicitly called out as dead by the comment directly above it: the function's one caller, handleModel, already returns early on r.res == nil before ever reaching this call, so no input reaches this branch through the CommandRunner's public API."
+    },
+    "internal/ui/component/approval/approval.go": {
+      "lines": [
+        78,
+        79
+      ],
+      "reason": "clampOffset's own max<0 branch. max := diffTotal() - windowHeight(), and windowHeight() is `min(diffTotal(), ApprovalDiffPreviewLines)` - so max always equals diffTotal() minus a value that is at most diffTotal() itself, which is never negative (a - min(a,b) >= 0 for any a,b). No diff length makes windowHeight() exceed diffTotal(), so max<0 cannot occur. An earlier commit's test for this line asserted a true fact (offset clamps to 0 for short content) but for an unrelated reason - the normal clamp() call two lines below, not this guard - and has been removed."
+    },
+    "internal/ui/render/header.go": {
+      "lines": [
+        294,
+        295,
+        296
+      ],
+      "reason": "SectionHeader's own ruleLen<1 branch. The guard three lines above already returns early whenever width <= labelWidth+2, so any width that reaches this point satisfies width >= labelWidth+3, making ruleLen = width-labelWidth-1 >= 2. No width value can reach this line with ruleLen<1."
     },
     "internal/agent/agentloop_adapter.go": {
       "lines": [
         72,
+        102,
         200,
         201,
         202,
@@ -186,7 +464,7 @@
         434,
         435
       ],
-      "reason": "Three known SDK-path gaps from the session unpin. 72 = preparation-error shape: newSDKWorkBudgetHook's clampedMaxTokens error return, reachable only with malformed MaxTokens/outputCap calibration that no test wires (calibration-carry gap). 200-202 and 376-377 = surface-rotation bridge failure: recordBridgeError plus the partial-Result carry of the recorded bridge error; no test makes buildSDKToolRegistry fail mid-rotation (preparation-error-shape gap). 219, 223, 228-229 = defensive spec-skip fallbacks in cliToolSpecsToSDKDefs: every advertised ToolSpec in tests carries a named function with marshalable parameters. 429-430 and 434-435 = prompt-too-long compact retry floor clamps (commit 6cec7c51): reachable only when the over-budget retry target drops below 1 or below the compact-notice size; the retry tests keep prompts above MaxContextTokens/4 (calibration-carry gap)."
+      "reason": "Four known SDK-path gaps from the session unpin. 102 = buildAgentLoopOptions's adoptSDKRows error return: adoptSDKRows returns non-nil only from adoptSDKCompaction, whose single error site is the failed type assertion completer.(sdkshape.TokenEstimator); the completer argument here is newSDKTurnCompleter's return, whose concrete type *agentLoopCompleter always satisfies TokenEstimator with a pointer receiver, so the assertion cannot fail on this path (TestAdoptSDKRowsWrapsCompactionError covers the guarded contract directly at the shared helper). 72 = preparation-error shape: newSDKWorkBudgetHook's clampedMaxTokens error return, reachable only with malformed MaxTokens/outputCap calibration that no test wires (calibration-carry gap). 200-202 and 376-377 = surface-rotation bridge failure: recordBridgeError plus the partial-Result carry of the recorded bridge error; no test makes buildSDKToolRegistry fail mid-rotation (preparation-error-shape gap). 219, 223, 228-229 = defensive spec-skip fallbacks in cliToolSpecsToSDKDefs: every advertised ToolSpec in tests carries a named function with marshalable parameters. 429-430 and 434-435 = prompt-too-long compact retry floor clamps (commit 6cec7c51): reachable only when the over-budget retry target drops below 1 or below the compact-notice size; the retry tests keep prompts above MaxContextTokens/4 (calibration-carry gap)."
     },
     "internal/agent/agentloop_budget.go": {
       "lines": [

@@ -32,6 +32,18 @@ var (
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
 
+// testOnRoutedCoordinatorsLoaded is a test-only observation hook, called
+// only when routedCoordinators.LoadOrStore reports loaded=true - i.e. only
+// when this call actually lost the race and tore down its own duplicate
+// subscription. Nil in production. sync.Map.LoadOrStore's own contract
+// already guarantees routedCoordinators holds exactly one entry per
+// coordinator regardless of whether this branch ever runs, so a test
+// asserting on the map's size alone cannot tell "the race was won cleanly"
+// apart from "this branch is dead code" - this hook lets a test observe the
+// branch firing directly instead. Deliberately non-blocking: it exists only
+// to count, never to synchronize, so it carries no deadlock risk.
+var testOnRoutedCoordinatorsLoaded func()
+
 // activeSessionCaller is the chat session's identity, recorded once per process.
 //
 // Orchestration control initiated from a CLI surface - a slash command or a
@@ -374,6 +386,9 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	if previous, loaded := routedCoordinators.LoadOrStore(active, unsubscribe); loaded {
 		unsubscribe()
 		unsubscribe = previous.(func())
+		if testOnRoutedCoordinatorsLoaded != nil {
+			testOnRoutedCoordinatorsLoaded()
+		}
 	}
 	coordinatorRepos.Store(d, repo)
 	if actual == c {

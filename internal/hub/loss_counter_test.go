@@ -241,3 +241,23 @@ func TestSendCountsTheEventItCannotEnqueue(t *testing.T) {
 		t.Fatalf("dropped = %d, want %d: the displaced event AND the one that could not be enqueued", got, before+2)
 	}
 }
+
+// TestSendWithRefill_FirstAttemptSucceeds pins sendWithRefill's own
+// immediate-success path: with room in the queue, the first non-blocking
+// send must succeed and return without ever calling onFreed or dropping
+// anything.
+func TestSendWithRefill_FirstAttemptSucceeds(t *testing.T) {
+	c := newIdleConn(t)
+	before := c.Dropped()
+	called := false
+	c.sendWithRefill(WireEvent{Kind: "assistant"}, func() { called = true })
+	if called {
+		t.Fatal("sendWithRefill called onFreed when the queue had room")
+	}
+	if got := c.Dropped(); got != before {
+		t.Fatalf("dropped = %d, want %d: nothing should be dropped on the fast path", got, before)
+	}
+	if n := len(c.out); n != 1 {
+		t.Fatalf("queue has %d items, want 1", n)
+	}
+}

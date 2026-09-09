@@ -85,3 +85,53 @@ func TestSaveIdentity_ErrorChain(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadOrCreateIdentity_ReadFileNonNotExistErrorSurfaces pins the
+// branch where os.ReadFile fails with something OTHER than ErrNotExist
+// (a directory sitting where the identity file should be, which fails
+// with "is a directory" rather than "not exist" on every platform this
+// repo supports): LoadOrCreateIdentity must still mint a usable identity
+// AND report the read error, rather than silently minting.
+func TestLoadOrCreateIdentity_ReadFileNonNotExistErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	key := IdentityKey("principal-read-error")
+	path, err := identityPath(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id, loadErr := LoadOrCreateIdentity(dir, key)
+	if loadErr == nil {
+		t.Fatal("LoadOrCreateIdentity hid a non-ErrNotExist read failure")
+	}
+	if id.LocalHandle == "" {
+		t.Fatal("LoadOrCreateIdentity did not mint a usable identity despite the read error")
+	}
+}
+
+// TestLoadOrCreateIdentity_MintSaveErrorSurfaces pins the branch where a
+// fresh mint's own SaveIdentity fails: LoadOrCreateIdentity must still
+// return the minted (usable-this-run) identity alongside the error.
+func TestLoadOrCreateIdentity_MintSaveErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	key := IdentityKey("principal-mint-save-error")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	probe := filepath.Join(dir, "writability-probe")
+	if f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("platform still creates files in a read-only directory")
+	}
+	id, err := LoadOrCreateIdentity(dir, key)
+	if err == nil {
+		t.Fatal("LoadOrCreateIdentity hid a mint-save failure")
+	}
+	if id.LocalHandle == "" {
+		t.Fatal("LoadOrCreateIdentity did not return the usable minted identity despite the save error")
+	}
+}

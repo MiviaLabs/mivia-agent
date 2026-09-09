@@ -747,3 +747,47 @@ func TestDoctorWhitespaceAPIKeyCountsAsMissing(t *testing.T) {
 		t.Fatalf("stdout missing MISSING api_key line for whitespace-only key:\n%s", humanOut.String())
 	}
 }
+
+// TestDoctorJSONSyncDisabledReportsSkippedFields pins writeDoctorJSON's own
+// sync-disabled branch: with sync explicitly disabled in config, the JSON
+// output must report the fixed "disabled"/"skipped" values rather than
+// probing an endpoint sync will never use.
+func TestDoctorJSONSyncDisabledReportsSkippedFields(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_API_BASE_URL", "")
+	t.Setenv("DEEPSEEK_API_KEY", "SUPERSECRET_d61f8b")
+	root := t.TempDir()
+	path := filepath.Join(root, "mivia.toml")
+	body := `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 128000 }]
+default_model = "deepseek-v4-pro"
+
+[sync]
+enabled = false
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws := t.TempDir()
+
+	var out, errOut strings.Builder
+	if err := RunDoctorWithIO([]string{"--config", path, "--json", "--workspace", ws}, &out, &errOut); err != nil {
+		t.Fatalf("doctor --json unexpected error: %v", err)
+	}
+	var dj doctorJSON
+	if err := json.Unmarshal([]byte(out.String()), &dj); err != nil {
+		t.Fatalf("doctor --json output is not valid JSON: %v\nraw: %s", err, out.String())
+	}
+	if dj.SyncAPISource != "disabled" {
+		t.Errorf("SyncAPISource = %q, want %q", dj.SyncAPISource, "disabled")
+	}
+	if dj.SyncLogin != "skipped (sync disabled)" {
+		t.Errorf("SyncLogin = %q, want the sync-disabled skip message", dj.SyncLogin)
+	}
+	if dj.SyncProbe != "skipped (sync disabled)" {
+		t.Errorf("SyncProbe = %q, want the sync-disabled skip message", dj.SyncProbe)
+	}
+}

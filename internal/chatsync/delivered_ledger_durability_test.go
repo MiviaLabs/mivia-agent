@@ -54,3 +54,24 @@ func TestRecordDelivered_FailedWriteDoesNotCorruptExistingLedger(t *testing.T) {
 		t.Errorf("ledger content after a failed write = %v, want the untouched seed [inp-already-durable]", ids)
 	}
 }
+
+// TestRecordDelivered_NoStateDirIsANoop pins recordDelivered's own
+// no-stateDir guard, matching writePendingInput's contract.
+func TestRecordDelivered_NoStateDirIsANoop(t *testing.T) {
+	poller := &InputPoller{}
+	poller.recordDelivered("inp-1")
+	if poller.alreadyDelivered("inp-1") {
+		t.Fatal("recordDelivered persisted an id with no stateDir configured")
+	}
+}
+
+// TestRecordDelivered_EmptyIDIsANoop pins the id == "" half of the same
+// guard.
+func TestRecordDelivered_EmptyIDIsANoop(t *testing.T) {
+	stateDir := t.TempDir()
+	poller := &InputPoller{stateDir: stateDir}
+	poller.recordDelivered("")
+	if _, err := os.Stat(filepath.Join(stateDir, deliveredIDsFileName)); err == nil {
+		t.Fatal("recordDelivered wrote a ledger file for an empty id")
+	}
+}

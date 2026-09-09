@@ -301,3 +301,28 @@ func (w *wedgedCoordinator) canceledCount() int {
 	defer w.mu.Unlock()
 	return w.canceled
 }
+
+// TestJoinFailureFallback_SalvagesWorkDirectly pins joinFailureFallback's
+// own salvaged-result branch directly, distinct from
+// TestJoinRunTool_TimeoutSalvagesWorkAndStillCancelsWedgedRun which drives
+// it indirectly through the join_run tool: given a coordinator whose
+// Inspect reports salvageable work, a Join error that satisfies
+// errors.Is(err, context.Canceled) must return the salvaged snapshot and
+// result with a nil error, not the bare join error.
+func TestJoinFailureFallback_SalvagesWorkDirectly(t *testing.T) {
+	w := &wedgedWithWorkCoordinator{}
+	handle := &coordinator.RunHandle{}
+	snap, result, err := joinFailureFallback(w, handle, false, context.Canceled)
+	if err != nil {
+		t.Fatalf("joinFailureFallback err = %v, want nil once salvaged", err)
+	}
+	if result == nil {
+		t.Fatal("joinFailureFallback returned a nil result for salvageable work")
+	}
+	if snap.RunID != "run-wedged-work" {
+		t.Errorf("snap.RunID = %q, want run-wedged-work", snap.RunID)
+	}
+	if w.canceledCount() != 0 {
+		t.Errorf("canceled = %d, want 0: isNew is false so this call must not own the run", w.canceledCount())
+	}
+}

@@ -528,3 +528,28 @@ func TestRemoteInputWatcher_BackfillStopsAtMaxMidLoop(t *testing.T) {
 	}
 	w.Stop(ctx)
 }
+
+// TestRemoteInputWatcher_CandidatesSkipsWorktreeRoutePseudoSessions pins
+// candidates' own empty-SessionID skip: ListSessions' worktree-route arm
+// (storage.SQLite.ListSessions' third UNION branch) reports a pseudo-row
+// with SessionID "" for a saved worktree route, and candidates() must
+// filter it out rather than build a candidateSession with no session to
+// resolve a sync identity for.
+func TestRemoteInputWatcher_CandidatesSkipsWorktreeRoutePseudoSessions(t *testing.T) {
+	sess, wsRoot := newBackfillFixture(t)
+	store := sess.ContextStore().(*storage.SQLite)
+	principal, err := contextstate.NewPrincipal("ws", "cand-1", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-1", "/tmp/wt-1"); err != nil {
+		t.Fatalf("SaveWorktreeRoute: %v", err)
+	}
+
+	w := NewRemoteInputWatcher(WatcherConfig{Seed: sess, WorkspaceRoot: wsRoot})
+	for _, c := range w.candidates() {
+		if c.sessionID == "" {
+			t.Fatalf("candidates() included a pseudo-session with an empty SessionID: %+v", c)
+		}
+	}
+}

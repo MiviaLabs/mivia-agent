@@ -307,3 +307,49 @@ func installTestAuthToken(t *testing.T) {
 		t.Fatalf("save test token: %v", err)
 	}
 }
+
+// TestAttachCLISync_NilArgsDetachNoOp pins attachCLISync's own top guard: a
+// nil res, sess, or EventBus must return a safe no-op detach rather than
+// panic on the field reads that follow.
+func TestAttachCLISync_NilArgsDetachNoOp(t *testing.T) {
+	if detach := attachCLISync(nil, "", &config.Resolved{}); detach == nil {
+		t.Fatal("expected a non-nil no-op detach for a nil session")
+	} else {
+		detach()
+	}
+	if detach := attachCLISync(chat.NewSession(&config.Resolved{}, nil), "", nil); detach == nil {
+		t.Fatal("expected a non-nil no-op detach for a nil resolved config")
+	} else {
+		detach()
+	}
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	sess.EventBus = nil
+	if detach := attachCLISync(sess, "", &config.Resolved{}); detach == nil {
+		t.Fatal("expected a non-nil no-op detach for a nil event bus")
+	} else {
+		detach()
+	}
+}
+
+// TestAttachCLISync_OpenSessionErrorDetachNoOp pins attachCLISync's own
+// OpenSession error guard: an empty wsRoot resolves to an empty OutboxDir,
+// which OpenOutbox's MkdirAll refuses, so attach must fail closed with a
+// no-op detach rather than propagate a half-open sync session.
+func TestAttachCLISync_OpenSessionErrorDetachNoOp(t *testing.T) {
+	installTestAuthToken(t)
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	sess.SessionID = "cli-opensession-err-1"
+	sess.EventBus = events.New()
+	res := &config.Resolved{
+		Sync: config.ResolvedSync{
+			PollWaitSeconds:  1,
+			HeartbeatSeconds: 1,
+			MaxUnflushed:     50,
+		},
+	}
+	detach := attachCLISync(sess, "", res)
+	if detach == nil {
+		t.Fatal("expected a non-nil no-op detach when OpenSession fails")
+	}
+	detach()
+}

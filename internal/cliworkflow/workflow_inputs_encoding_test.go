@@ -1,6 +1,8 @@
 package cliworkflow
 
 import (
+	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -94,5 +96,34 @@ func TestInvocationSnapshotMatchesAdmissionForNonStrings(t *testing.T) {
 				t.Fatalf("admission snapshot %v and invocation snapshot %v hash differently; an identical keyed retry would be refused", admitted, compare)
 			}
 		})
+	}
+}
+
+// TestInvocationInputSnapshot_EncodeErrorSurfaces pins
+// invocationInputSnapshot's own encode-error wrap: a value json.Marshal
+// cannot encode (NaN has no JSON representation) must surface as an error
+// from the snapshot call, not silently drop the key.
+func TestInvocationInputSnapshot_EncodeErrorSurfaces(t *testing.T) {
+	if _, err := invocationInputSnapshot(map[string]any{"cfg": math.NaN()}); err == nil {
+		t.Fatal("invocationInputSnapshot accepted a NaN value json.Marshal cannot encode")
+	}
+}
+
+// TestInvocationInputsMatchRun_EncodeErrorSurfaces pins
+// invocationInputsMatchRun's own propagation of that same encode error,
+// once the run itself is found.
+func TestInvocationInputsMatchRun_EncodeErrorSurfaces(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	run := workflowledger.RunSnapshot{
+		RunID:        "wfr-nan-1",
+		WorkflowName: "test-wf",
+		Status:       workflowledger.RunStatusPending,
+		ActiveStepID: "start",
+	}
+	if err := repo.CreateRun(context.Background(), run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invocationInputsMatchRun(repo, "wfr-nan-1", map[string]any{"cfg": math.NaN()}); err == nil {
+		t.Fatal("invocationInputsMatchRun accepted a NaN value json.Marshal cannot encode")
 	}
 }

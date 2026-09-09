@@ -250,3 +250,36 @@ func TestLoginDialogNilRunnerShowsError(t *testing.T) {
 		t.Error("expected a non-nil Cmd (ClearScreen) even on the no-runner path")
 	}
 }
+
+// TestLoginDialogEnterOnEmailMovesFocusToPassword pins the "enter" literal
+// on the email field (as opposed to TestLoginDialogTabMovesFocusToPassword's
+// "tab" literal): both move focus rather than submitting from the email
+// field.
+func TestLoginDialogEnterOnEmailMovesFocusToPassword(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{LoginPrompt: true}}
+	s := newScreen(t, nil, nil, nil)
+	s.SetCommandRunner(runner)
+	s, _ = sendLine(t, s, "/login")
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.login.focus != 1 {
+		t.Fatalf("got focus %d, want 1 (password) after Enter on the email field", s.login.focus)
+	}
+}
+
+// TestSubmitLogin_NilLoginIsANoop pins submitLogin's own guard: calling
+// it with no open dialog must not panic or start a login attempt.
+func TestSubmitLogin_NilLoginIsANoop(t *testing.T) {
+	s := newScreen(t, nil, nil, nil)
+	if s.login != nil {
+		t.Fatal("precondition: expected no open login dialog")
+	}
+	next, cmd := s.submitLogin()
+	if cmd != nil {
+		t.Fatal("submitLogin returned a non-nil Cmd with no open dialog")
+	}
+	if next.login != nil {
+		t.Fatal("submitLogin left a non-nil login dialog")
+	}
+}

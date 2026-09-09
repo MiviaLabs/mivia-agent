@@ -10,6 +10,7 @@ package uiadapter
 // registry was swapped therefore ran with no orchestration surface at all.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -94,5 +95,29 @@ func TestWorktreeAdoptionKeepsSessionToolCatalog(t *testing.T) {
 	}
 	if adopted.CurrentBinding().Dispatcher == nil {
 		t.Error("adopted worktree session has no dispatcher on its binding")
+	}
+}
+
+// TestWireEntryLocked_AttachRebuiltSurfaceErrorSurfacesAsNotice pins
+// wireEntryLocked's own AttachRebuiltSurface error-notice branch: an
+// entry created for a dir that equals the pool's OWN launch root takes
+// adoptWorktreeToolsLocked's early "already the launch registry" return
+// (session_pool_adopt.go:65-67) without ever adopting a registry, so the
+// new entry session's Tools/ToolBaseResolver stay nil and its forked
+// AgentSessionState carries no ToolBase either - AttachRebuiltSurface's
+// widener then has no tool base to build from and fails.
+func TestWireEntryLocked_AttachRebuiltSurfaceErrorSurfacesAsNotice(t *testing.T) {
+	rootA := t.TempDir()
+	pool, _, _ := newPoolWithAgentState(t, rootA)
+	t.Cleanup(pool.CloseAll)
+
+	conv, err := pool.CreateFreshInDir(nil, rootA)
+	if err != nil {
+		t.Fatalf("CreateFreshInDir: %v", err)
+	}
+	_ = conv
+
+	if !strings.Contains(pool.lastToolScopeNotice, "session tools:") {
+		t.Fatalf("lastToolScopeNotice = %q, want it to name the AttachRebuiltSurface failure", pool.lastToolScopeNotice)
 	}
 }

@@ -78,3 +78,26 @@ func TestOnTaskStart_ValidIdentityRegisters(t *testing.T) {
 		t.Fatal("onTaskStart did not register a CancelFunc for a valid identity on a live handle")
 	}
 }
+
+// TestOnTaskStart_UnknownRunIDIsANoop pins onTaskStart's own
+// HandleForRun==nil guard: a fully populated identity naming a runID the
+// coordinator never spawned must not panic (a nil *RunHandle) or attempt
+// to register anything.
+func TestOnTaskStart_UnknownRunIDIsANoop(t *testing.T) {
+	c, _ := onTaskStartFixture(t)
+	ctx := runtime.ContextWithTaskIdentity(context.Background(), runtime.TaskIdentity{RunID: "run-never-spawned", TaskID: "tD"})
+	c.onTaskStart(ctx, subagents.Task{ID: "tD", Name: "noop"}, func() {}) // must not panic
+}
+
+// TestShouldSkipCanceledTask_UnknownRunIDFailsOpen pins
+// shouldSkipCanceledTask's own HandleForRun==nil guard: a valid identity
+// naming a runID the coordinator has no handle for must fail open (run
+// the task), the same "every guard fails open" contract the no-identity
+// and unstamped-context cases already follow.
+func TestShouldSkipCanceledTask_UnknownRunIDFailsOpen(t *testing.T) {
+	c, _ := onTaskStartFixture(t)
+	ctx := runtime.ContextWithTaskIdentity(context.Background(), runtime.TaskIdentity{RunID: "run-never-spawned", TaskID: "tE"})
+	if c.shouldSkipCanceledTask(ctx, subagents.Task{ID: "tE", Name: "noop"}) {
+		t.Fatal("shouldSkipCanceledTask skipped a task for an unknown runID; every guard must fail open")
+	}
+}

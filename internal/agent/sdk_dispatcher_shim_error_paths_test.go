@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // unmarshalableParamsTool is a fakeTool whose Parameters() cannot be
@@ -77,5 +79,28 @@ func TestWrapRefOnly_GuardClauses(t *testing.T) {
 				t.Errorf("wrapRefOnly wrapped inner despite the guard, want it returned unchanged")
 			}
 		})
+	}
+}
+
+// TestWrapRefOnly_NameNotListedIsANoop pins wrapRefOnly's own
+// tool-name-not-in-RefOnlyTools guard, distinct from
+// TestWrapRefOnly_GuardClauses' "name not listed" case above - that case
+// never actually reaches this branch, since its turn carries no active
+// spool and is blocked one guard earlier. Here SessionID and
+// BatchDegradeFloorBytes are both set AND the turn has a real spool
+// installed, isolating this guard.
+func TestWrapRefOnly_NameNotListedIsANoop(t *testing.T) {
+	cliTool := &fakeTool{name: "spoolable"}
+	inner, err := sdkadapter.ConvertTool(cliTool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := newSDKTurnState()
+	turn.rotateSurface(nil, remainder.NewSpool(&stubContentStore{}))
+	opts := Options{RefOnlyTools: []string{"other-tool"}, SessionID: "sess-1"}
+
+	got := wrapRefOnly(inner, cliTool, opts, turn)
+	if got != inner {
+		t.Error("wrapRefOnly wrapped inner despite the tool not being in RefOnlyTools")
 	}
 }

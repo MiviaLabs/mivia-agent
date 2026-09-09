@@ -76,3 +76,27 @@ func TestBuildAgentTurnOptionsDefaultsZeroRequestTimeout(t *testing.T) {
 		t.Fatalf("agent.Options.RequestTimeout = %s, want fallback %s", opts.RequestTimeout, DefaultRequestTimeout)
 	}
 }
+
+// TestBuildAgentTurnOptions_MailboxPendingReflectsOrchestrationState pins
+// the MailboxPending closure's own body: it must actually delegate to
+// orchestrationnotify.Pending for this session, not just exist.
+func TestBuildAgentTurnOptions_MailboxPendingReflectsOrchestrationState(t *testing.T) {
+	sess := NewSession(&config.Resolved{ProviderName: "test", Model: "test-model"}, &fakeCompleter{out: "ok"})
+	snapshot, done, err := sess.beginAgentTurn("probe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	opts := sess.buildAgentTurnOptions(snapshot, "probe", io.Discard, nil, nil)
+	if opts.MailboxPending() {
+		t.Fatal("MailboxPending() = true before anything was published")
+	}
+	payload, _ := json.Marshal(map[string]string{"message_id": "msg-1", "kind": "question", "synopsis": "need input", "content_ref": "ref-1"})
+	orchestrationnotify.Publish(ledger.LifecycleEvent{ID: "evt-2", SessionID: snapshot.sessionID, RunID: "run-1", TaskID: "task-1", Payload: payload})
+	if !opts.MailboxPending() {
+		t.Fatal("MailboxPending() = false after a lifecycle event was published for this session")
+	}
+	if !opts.MailboxPendingInterrupt() {
+		t.Fatal("MailboxPendingInterrupt() = false after a lifecycle event was published for this session")
+	}
+}

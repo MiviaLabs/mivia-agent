@@ -657,3 +657,21 @@ func TestLedgerReadKeepsFramingUnderResultCap(t *testing.T) {
 			contentPos, notePos, framePos, out)
 	}
 }
+
+// TestRegisterLedgerTools_DenylistSkipsRegistration pins the operator
+// denylist's own continue branch: a tool named on the denylist must be
+// skipped entirely rather than registered, so it never reaches the
+// registry or dispatcher.
+func TestRegisterLedgerTools_DenylistSkipsRegistration(t *testing.T) {
+	reg := tools.NewRegistry()
+	dispatcher := runtime.New(runtime.Policy{})
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil, []string{"ledger_read"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Get("ledger_read"); ok {
+		t.Fatal("ledger_read is on the denylist and must not be registered")
+	}
+	if _, ok := reg.Get("list_run_events"); !ok {
+		t.Fatal("list_run_events is not denied and must still be registered")
+	}
+}

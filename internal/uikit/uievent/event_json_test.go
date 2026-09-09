@@ -14,6 +14,7 @@ func TestEventJSONRoundTrip(t *testing.T) {
 		{Kind: KindTurnStart, TurnID: "t1", Seq: 1, At: at, Body: TurnStartBody{Input: "hello"}},
 		{Kind: KindTextDelta, TurnID: "t1", Seq: 2, At: at, Body: TextDeltaBody{Text: "chunk"}},
 		{Kind: KindTextEnd, TurnID: "t1", Seq: 2, At: at, Body: TextEndBody{Text: "full text"}},
+		{Kind: KindAssistantReset, TurnID: "t1", Seq: 2, At: at, Body: AssistantResetBody{Reason: "context_compacted"}},
 		{Kind: KindReasoning, TurnID: "t1", Seq: 2, At: at, Body: ReasoningDeltaBody{Text: "thinking", WordCount: 12}},
 		{Kind: KindToolPending, TurnID: "t1", Seq: 2, At: at, Body: ToolPendingBody{
 			ToolCallID: "c0", Name: "edit", Args: map[string]any{"path": "a.go"},

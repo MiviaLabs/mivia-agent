@@ -2,6 +2,8 @@ package chatsync
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -216,5 +218,111 @@ func TestFlush_SequenceGap400WithUnreadableSessionRetries(t *testing.T) {
 	time.Sleep(600 * time.Millisecond)
 	if s.Stopped() {
 		t.Errorf("sync stopped although the server state could not be read (reason %q); an unreadable session is transient, not poison", s.StopReason())
+	}
+}
+
+// TestRebaseOn_AdvanceCursorBranchResetsProjectorSeq pins the ResetSeq
+// call inside rebaseOn's advance-cursor shape (server at or ahead of the
+// outbox's first unflushed seq): a fresh serverLastSeq strictly greater
+// than the projector's current LastSeq must move the projector forward,
+// on the ordinary success path (no fault injection needed).
+func TestRebaseOn_AdvanceCursorBranchResetsProjectorSeq(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("rebase-advance")
+	_, s := openAgainstFake(t, f, id, t.TempDir())
+
+	before := s.projector.LastSeq()
+	if err := s.rebaseOn(before + 5); err != nil {
+		t.Fatalf("rebaseOn: %v", err)
+	}
+	if got := s.projector.LastSeq(); got != before+5 {
+		t.Fatalf("projector.LastSeq() = %d, want %d after rebaseOn advanced past it", got, before+5)
+	}
+}
+
+// TestRebaseOn_BehindShapeRebaseErrorSurfaces pins rebaseOn's own
+// "server BEHIND the outbox" shape's Rebase-error wrap: this is the
+// FIRST outbox write rebaseOn attempts on this shape (no earlier
+// AdvanceCursor call to race against), so a read-only outbox directory
+// isolates the failure cleanly.
+func TestRebaseOn_BehindShapeRebaseErrorSurfaces(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("rebase-behind")
+	f.RejectAppendsWith(400, "Bad Request", "sequence gap: expected 1, got 9")
+	bus, s := openAgainstFake(t, f, id, t.TempDir())
+	publishTurnStart(bus, id, "turn:seed", "seed an unflushed event")
+	waitUntil(t, "the seed event is unflushed", func() bool {
+		return s.outbox.UnflushedCount() > 0
+	})
+
+	dir := s.outbox.dir
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	probe := filepath.Join(dir, "writability-probe")
+	if wf, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = wf.Close()
+		_ = os.Remove(probe)
+		t.Skip("platform still creates files in a read-only directory")
+	}
+
+	unflushed, err := s.outbox.UnflushedEvents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Behind the outbox's first unflushed seq - 1, which is what selects
+	// the "server BEHIND" shape (rebaseOn's own else-branch) rather than
+	// the advance-cursor branch above.
+	err = s.rebaseOn(unflushed[0].Seq - 2)
+	if err == nil {
+		t.Fatal("rebaseOn hid a Rebase failure on a read-only outbox directory")
+	}
+}
+
+// TestFlush_RebaseFailureIsPoison pins session_badrequest.go's own poison
+// branch: when rebaseOn itself fails (as opposed to failing to close the
+// gap, which forks onto a new session instead), sync must stop
+// terminally rather than retry a batch the outbox can no longer produce
+// correctly.
+//
+// Driven by calling handleBadRequest directly rather than through the
+// async flush ticker: the outbox directory needs to go read-only AFTER
+// the session attaches (which itself writes to the outbox) but BEFORE
+// rebaseOn's own write, and no reliable window for that exists once the
+// uploader goroutine is live and racing the test.
+func TestFlush_RebaseFailureIsPoison(t *testing.T) {
+	f := newFakeAPI(t)
+	id := f.NewSession("rebase-poison")
+
+	bus, s := openAgainstFake(t, f, id, t.TempDir())
+	publishTurnStart(bus, id, "turn:attach", "first message")
+	waitUntil(t, "the attach pushes its first batch", func() bool { return len(f.Batches()) >= 1 })
+	waitUntil(t, "the outbox settles with nothing unflushed", func() bool { return s.outbox.UnflushedCount() == 0 })
+
+	dir := s.outbox.dir
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	probe := filepath.Join(dir, "writability-probe")
+	if wf, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = wf.Close()
+		_ = os.Remove(probe)
+		t.Skip("platform still creates files in a read-only directory")
+	}
+
+	// Empty outbox selects rebaseOn's advance-cursor shape unconditionally
+	// (len(unflushed) == 0), whose first write - AdvanceCursor - now fails
+	// on the read-only directory.
+	s.handleBadRequest(context.Background(), &BadRequestError{
+		StatusCode: 400, Message: "sequence gap: expected 1, got 9",
+	})
+
+	if !s.Stopped() {
+		t.Fatal("handleBadRequest did not poison sync after rebaseOn itself failed")
+	}
+	if reason := s.StopReason(); !strings.Contains(reason, "rebase") {
+		t.Errorf("stop reason = %q, want it to name the rebase failure", reason)
 	}
 }

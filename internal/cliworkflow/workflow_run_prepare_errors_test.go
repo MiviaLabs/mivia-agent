@@ -189,3 +189,30 @@ func runPrepareWorkflowRunAdmissionFailureCase(t *testing.T, tc prepareWorkflowR
 		t.Fatal("the store handle is still open after the refusal; closeFn did not run")
 	}
 }
+
+// TestPrepareWorkflowRunSurfacesDiscoveryError pins the found.Err branch:
+// a workflow file discovery itself could not read (a symlink in place of
+// a regular file) must surface that error and release the store, rather
+// than falling through to a confusing TOML parse error.
+func TestPrepareWorkflowRunSurfacesDiscoveryError(t *testing.T) {
+	root := writeWorkflowTestWorkspace(t, nil)
+	wfDir := filepath.Join(root, ".mivia", "workflows")
+	target := filepath.Join(t.TempDir(), "elsewhere.toml")
+	if err := os.WriteFile(target, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(wfDir, "demo.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(wfDir, "demo.toml")); err != nil {
+		t.Skipf("platform does not support symlinks: %v", err)
+	}
+
+	prepared, err := PrepareWorkflowRun("demo", root, filepath.Join(root, "mivia.toml"), []string{"task=x"})
+	if err == nil {
+		t.Fatal("expected an error preparing a workflow discovery could not read")
+	}
+	if prepared != nil {
+		t.Fatalf("prepared = %+v, want nil on the failure path", prepared)
+	}
+}

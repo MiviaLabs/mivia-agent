@@ -476,3 +476,15 @@ func TestStatusFileRecordsATimedOutStop(t *testing.T) {
 		t.Errorf("reason = %q, want it to say the drain timed out", st.Reason)
 	}
 }
+
+// TestNewStatusFileWriter_MarshalErrorSurfaces pins the writer's own
+// json.Marshal(st) error branch: SyncStatus.At (a time.Time) is the one
+// field whose MarshalJSON can fail - a year outside RFC 3339's [0,9999]
+// range - without corrupting any other field.
+func TestNewStatusFileWriter_MarshalErrorSurfaces(t *testing.T) {
+	write := newStatusFileWriter(t.TempDir())
+	bad := SyncStatus{State: "healthy", At: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}
+	if err := write(bad); err == nil {
+		t.Fatal("newStatusFileWriter accepted an At outside RFC 3339's year range")
+	}
+}

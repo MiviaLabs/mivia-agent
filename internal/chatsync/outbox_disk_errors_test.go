@@ -92,15 +92,21 @@ func TestOutboxUnflushedEvents_NonNotExistOpenErrorSurfaces(t *testing.T) {
 	if err := ob.Close(); err != nil {
 		t.Fatal(err)
 	}
-	eventsPath := filepath.Join(dir, eventsFileName)
-	if err := os.Remove(eventsPath); err != nil {
+	// os.Open SUCCEEDS on a directory - only a later read fails - so a
+	// directory-in-place-of-the-file precondition does not reach
+	// unflushedEventsLocked's own open-error branch (it instead fails one
+	// step later, inside the scan). Denying traversal into the whole
+	// events-file's parent directory does fail at os.Open itself.
+	if err := os.Chmod(dir, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(eventsPath, 0o700); err != nil {
-		t.Fatal(err)
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	eventsPath := filepath.Join(dir, eventsFileName)
+	if _, probeErr := os.Open(eventsPath); probeErr == nil {
+		t.Skip("platform still allows traversal into a 0000 directory")
 	}
 	if _, err := ob.UnflushedEvents(); err == nil {
-		t.Fatal("UnflushedEvents accepted an events.jsonl that is actually a directory")
+		t.Fatal("UnflushedEvents accepted a non-ErrNotExist open failure")
 	}
 }
 
@@ -235,5 +241,85 @@ func TestOpenOutbox_EventsFileCreateFailsAfterLockAcquired(t *testing.T) {
 		t.Fatal("OpenOutbox accepted a directory that cannot create events.jsonl")
 	} else if !strings.Contains(err.Error(), "open events file") {
 		t.Fatalf("err = %v, want the open-events wrap", err)
+	}
+}
+
+// TestOpenOutbox_CountUnflushedFromDiskErrorSurfaces pins OpenOutbox's own
+// wrap of countUnflushedFromDisk's error during init, distinct from
+// TestOutboxCountUnflushedFromDisk_BlankLineSkippedAndUnparsableErrors
+// (which calls the method directly, bypassing OpenOutbox entirely).
+func TestOpenOutbox_CountUnflushedFromDiskErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, eventsFileName)
+	// A merely-malformed trailing record is exactly what repairEventsFile
+	// (run first, inside OpenOutbox) truncates away before
+	// countUnflushedFromDisk ever sees it - so that precondition never
+	// reaches this branch. A single VALID record whose line exceeds the
+	// 1MiB bufio.Scanner cap countUnflushedFromDisk uses is different:
+	// repairEventsFile's own bufio.Reader has no such cap and accepts the
+	// line as good (it parses and is contiguous from seq 1), so the file
+	// survives repair intact, and only the later Scanner-based count
+	// trips bufio.ErrTooLong.
+	huge := `{"seq":1,"type":"turn_start","payload":{"text":"` + strings.Repeat("x", 2*1024*1024) + "\"}}\n"
+	if err := os.WriteFile(eventsPath, []byte(huge), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenOutbox(dir, 10); err == nil {
+		t.Fatal("OpenOutbox accepted an events.jsonl with a record past the scan buffer cap")
+	}
+}
+
+// TestOutboxAdvanceCursor_StaleSeqIsANoop pins AdvanceCursor's own
+// stale-seq guard: a seq behind the already-flushed cursor must not
+// rewrite cursor.json (a concurrent or reordered ack arriving late).
+func TestOutboxAdvanceCursor_StaleSeqIsANoop(t *testing.T) {
+	ob, _ := openTestOutbox(t)
+	if err := ob.AdvanceCursor(5); err != nil {
+		t.Fatal(err)
+	}
+	before := ob.Cursor()
+	if err := ob.AdvanceCursor(1); err != nil {
+		t.Fatal(err)
+	}
+	if after := ob.Cursor(); after != before {
+		t.Fatalf("Cursor() = %+v after a stale AdvanceCursor, want unchanged %+v", after, before)
+	}
+}
+
+// TestOutboxAppend_WriteErrorSurfaces pins writeBatchLocked's own
+// ob.eventsFile.Write error wrap. eventsFile is swapped for a read-only
+// handle on the SAME path: Seek (which Append does first, to locate the
+// append mark) works fine on a read-only file, but the subsequent Write
+// fails with EBADF - the one deterministic way to fail Write without
+// also failing the Seek immediately before it.
+func TestOutboxAppend_WriteErrorSurfaces(t *testing.T) {
+	ob, dir := openTestOutbox(t)
+	roFile, err := os.OpenFile(filepath.Join(dir, eventsFileName), os.O_RDONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ob.eventsFile = roFile
+	t.Cleanup(func() { _ = roFile.Close() })
+	if err := ob.Append(WireEvent{Seq: 1}); err == nil {
+		t.Fatal("Append accepted a write on a read-only events file handle")
+	} else if !strings.Contains(err.Error(), "write event") {
+		t.Fatalf("err = %v, want the write-event wrap", err)
+	}
+}
+
+// TestOutboxUnflushedEvents_MissingFileIsEmpty mirrors
+// TestOutboxCountUnflushedFromDisk_MissingFileIsZero for
+// unflushedEventsLocked's own not-exist branch: every OpenOutbox call
+// creates events.jsonl before this can run through the public API, so
+// it is exercised directly on a bare Outbox value over an empty
+// directory.
+func TestOutboxUnflushedEvents_MissingFileIsEmpty(t *testing.T) {
+	ob := &Outbox{dir: t.TempDir()}
+	events, err := ob.UnflushedEvents()
+	if err != nil {
+		t.Fatalf("UnflushedEvents on a missing file: %v", err)
+	}
+	if events != nil {
+		t.Fatalf("events = %v, want nil", events)
 	}
 }

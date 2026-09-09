@@ -372,3 +372,32 @@ func TestASoleRequestSaysNothingAboutAQueue(t *testing.T) {
 		t.Errorf("a sole pending request mentions a queue:\n%s", got)
 	}
 }
+
+// TestDiffWindow_StalePositiveOffsetClampsToEnd and its negative-offset
+// sibling pin diffWindow's own defensive start clamp directly, by setting
+// m.offset to a value no public setter would ever produce (ScrollBy
+// already clamps through clampOffset) - the render-time backstop the
+// function's own comment describes for "whatever a caller left behind".
+func TestDiffWindow_StalePositiveOffsetClampsToEnd(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(200)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: pairedDiff(t, 3)})
+	m.offset = 1_000_000
+
+	got := m.diffWindow()
+	if len(got) != 0 {
+		t.Fatalf("diffWindow() = %v, want empty when the stale offset is past the end", got)
+	}
+}
+
+func TestDiffWindow_StaleNegativeOffsetClampsToZero(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(200)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: pairedDiff(t, 3)})
+	m.offset = -5
+
+	got := m.diffWindow()
+	if len(got) == 0 {
+		t.Fatal("diffWindow() = empty, want the clamped-to-zero window's lines")
+	}
+}

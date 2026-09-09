@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -325,6 +327,22 @@ func TestRevokeWithoutTheOkFlagIsAnError(t *testing.T) {
 	}
 }
 
+// TestRevokeWithFalseOkFlagIsAnError pins Revoke's own !out.OK check
+// directly, distinct from TestRevokeWithoutTheOkFlagIsAnError above which
+// fails earlier at c.do's JSON decode: a well-formed JSON body that
+// explicitly answers {"ok":false} must still be refused as not the API's
+// acknowledgement.
+func TestRevokeWithFalseOkFlagIsAnError(t *testing.T) {
+	client, _ := serveOnce(t, http.StatusOK, `{"ok":false}`)
+	err := client.Revoke(context.Background(), "bearer-0", "rt-0")
+	if err == nil {
+		t.Fatal("Revoke() returned nil for a well-formed body with ok:false")
+	}
+	if !strings.Contains(err.Error(), "not the API's acknowledgement") {
+		t.Fatalf("err = %v, want the ok-flag wrap", err)
+	}
+}
+
 func TestMeParsesTheIdentity(t *testing.T) {
 	client, got := serveOnce(t, http.StatusOK, fixture(t, "me_response.json"))
 
@@ -564,5 +582,66 @@ func TestNewClientAcceptsUnversionedPaths(t *testing.T) {
 				t.Errorf("NewClient(%q) error = %v, want nil", url, err)
 			}
 		})
+	}
+}
+
+// TestClientDo_MarshalAndRequestConstructionErrors pins do's two earliest
+// guards directly: a request body encoding/json cannot marshal (a
+// channel), and a method string http.NewRequestWithContext refuses (an
+// embedded NUL, which net/http's method validator rejects outright).
+func TestClientDo_MarshalAndRequestConstructionErrors(t *testing.T) {
+	c := &Client{baseURL: "http://unused.invalid", http: http.DefaultClient}
+
+	err := c.do(context.Background(), http.MethodPost, "/x", "", map[string]any{"bad": make(chan int)}, nil)
+	if err == nil || !strings.Contains(err.Error(), "encode") {
+		t.Fatalf("err = %v, want the encode wrap", err)
+	}
+
+	err = c.do(context.Background(), "GET\x00", "/x", "", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "build") {
+		t.Fatalf("err = %v, want the build-request wrap", err)
+	}
+}
+
+// TestClientDo_NilOutSkipsDecode pins the out==nil early return: a 2xx
+// response with no target to decode into must not attempt to read the
+// body as JSON.
+func TestClientDo_NilOutSkipsDecode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not json, must never be parsed"))
+	}))
+	defer srv.Close()
+	c := &Client{baseURL: srv.URL, http: http.DefaultClient}
+
+	if err := c.do(context.Background(), http.MethodGet, "/x", "", nil, nil); err != nil {
+		t.Fatalf("do with nil out: %v", err)
+	}
+}
+
+// TestStatusErrorFrom_ReadErrorReturnsBareStatusError pins the ReadAll
+// guard: a body that errors mid-read must not propagate that error (the
+// caller already has a real status error to report), just an envelope
+// with no Detail.
+func TestStatusErrorFrom_ReadErrorReturnsBareStatusError(t *testing.T) {
+	resp := &http.Response{StatusCode: 500, Body: io.NopCloser(iotest.ErrReader(errors.New("read broke")))}
+	out := statusErrorFrom(resp)
+	if out.StatusCode != 500 {
+		t.Fatalf("StatusCode = %d, want 500", out.StatusCode)
+	}
+	if out.Detail != "" {
+		t.Fatalf("Detail = %q, want empty on a read error", out.Detail)
+	}
+}
+
+// TestSanitizeDetail_TruncatesPastDetailLimit pins the length cap directly.
+func TestSanitizeDetail_TruncatesPastDetailLimit(t *testing.T) {
+	long := strings.Repeat("a", detailLimit+50)
+	got := sanitizeDetail(long)
+	if len(got) != detailLimit+len("...") {
+		t.Fatalf("len(got) = %d, want %d (capped plus ellipsis)", len(got), detailLimit+3)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("got = %q, want it to end with ...", got)
 	}
 }

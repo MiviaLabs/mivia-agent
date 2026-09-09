@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -618,4 +619,126 @@ func generalRowIndexByLabel(t *testing.T, sec *generalSection, want string) int 
 	}
 	t.Fatalf("general section has no row labelled %q (have %d rows)", want, len(sec.rows))
 	return 0
+}
+
+// TestSpaceCommitsEachRemainingBooleanRow drives cursor + space/enter to
+// every boolean General row not already covered by a dedicated test
+// (mouse capture, show reasoning, and full disk access have their own),
+// proving each row's closure in the s.rows table literal actually wires
+// its apply func to the right field.
+func TestSpaceCommitsEachRemainingBooleanRow(t *testing.T) {
+	cases := []struct {
+		name string
+		down int // presses of "down" from row 0 to reach this row
+		get  func(ports.GeneralView) bool
+	}{
+		{"prompt cache notice", 3, func(v ports.GeneralView) bool { return v.ShowPromptCacheNotices }},
+		{"screen reader", 6, func(v ports.GeneralView) bool { return v.ScreenReader }},
+		{"reduced motion", 7, func(v ports.GeneralView) bool { return v.ReducedMotion }},
+		{"sync include thinking", 9, func(v ports.GeneralView) bool { return v.SyncIncludeThinking }},
+		{"sync include tool io", 10, func(v ports.GeneralView) bool { return v.SyncIncludeToolIO }},
+		{"sync stream assistant", 11, func(v ports.GeneralView) bool { return v.SyncStreamAssistant }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, h := newHarnessScreen(t, 100, 30)
+			before := tc.get(h.SettingsAdapters().General.General())
+
+			next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+			s = next.(Screen)
+			for i := 0; i < tc.down; i++ {
+				next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				s = next.(Screen)
+			}
+			if got := s.sections[0].(*generalSection).cursor; got != tc.down {
+				t.Fatalf("cursor = %d, want %d (%s row)", got, tc.down, tc.name)
+			}
+			next, cmd := s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
+			s = awaitGeneralSave(t, next.(Screen), cmd)
+
+			after := tc.get(h.SettingsAdapters().General.General())
+			if after == before {
+				t.Errorf("%s did not change after committing the row: still %v", tc.name, after)
+			}
+		})
+	}
+}
+
+// TestCommitFailureShowsErrorNotice pins commit's own err != nil branch
+// (Apply itself failing, as opposed to a Failed SaveEvent, which
+// TestFailedApplyKeepsTheOldValue covers): the section must surface the
+// error text as its notice and rebuild rather than leaving a stale row.
+func TestCommitFailureShowsErrorNotice(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	h.generalApplyErr = errors.New("boom: apply rejected")
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
+	s = next.(Screen)
+
+	sec := s.sections[0].(*generalSection)
+	if sec.notice != "boom: apply rejected" {
+		t.Fatalf("notice = %q, want the Apply error surfaced", sec.notice)
+	}
+}
+
+// TestAwaitSaveIncompleteChannelCloseIsAFailure pins awaitSave's own
+// defensive branch: a SaveHandle whose channel closes without ever
+// emitting a terminal Saved/Failed event (a contract violation a faulty
+// or future SaveHandle implementation could still produce) must still
+// resolve to a failure rather than silently reporting success.
+func TestAwaitSaveIncompleteChannelCloseIsAFailure(t *testing.T) {
+	ch := make(chan ports.SaveEvent)
+	close(ch)
+	msg := awaitSave(fakeIncompleteSaveHandle{ch: ch})()
+	failed, ok := msg.(generalFailedMsg)
+	if !ok {
+		t.Fatalf("awaitSave() = %#v, want generalFailedMsg", msg)
+	}
+	if failed.message != "save incomplete" {
+		t.Fatalf("message = %q, want the \"save incomplete\" fallback", failed.message)
+	}
+}
+
+type fakeIncompleteSaveHandle struct{ ch chan ports.SaveEvent }
+
+func (h fakeIncompleteSaveHandle) ID() string                     { return "fake-incomplete" }
+func (h fakeIncompleteSaveHandle) Events() <-chan ports.SaveEvent { return h.ch }
+func (h fakeIncompleteSaveHandle) Cancel()                        {}
+
+// TestHeaderWidthFloorsAtFortyWhenNarrow pins View's own headerWidth
+// fallback for a screen too narrow for width-4 to stay positive.
+func TestHeaderWidthFloorsAtFortyWhenNarrow(t *testing.T) {
+	s, _ := newHarnessScreen(t, 2, 30)
+	if got := s.sections[0].View(); got == "" {
+		t.Fatal("View() returned empty output for a narrow screen")
+	}
+}
+
+// TestSpaceCommitsTheScrollLinesRowThroughItsOwnRowClosure drives the
+// cursor onto the scroll-lines row (index 4) and commits it via the UI's
+// own key path, exercising that row's apply closure (strconv.Atoi) rather
+// than calling store.Apply directly the way TestFailedApplyKeepsTheOldValue
+// and TestScrollLinesCyclesThroughThePresetOnly's mis-landed cursor do.
+func TestSpaceCommitsTheScrollLinesRowThroughItsOwnRowClosure(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	before := h.SettingsAdapters().General.General().ScrollLines
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	s = next.(Screen)
+	for i := 0; i < 4; i++ {
+		next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
+	if got := s.sections[0].(*generalSection).cursor; got != 4 {
+		t.Fatalf("cursor = %d, want 4 (scroll lines row)", got)
+	}
+	next, cmd := s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
+	s = awaitGeneralSave(t, next.(Screen), cmd)
+
+	after := h.SettingsAdapters().General.General().ScrollLines
+	if after == before {
+		t.Errorf("scroll lines did not change after committing its own row: still %d", after)
+	}
 }

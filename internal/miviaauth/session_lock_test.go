@@ -3,9 +3,12 @@ package miviaauth
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // Tests for the refresh lock's contract and for Whoami, split out of
@@ -259,5 +262,173 @@ func TestLogoutDeletesEvenWhenTheLockIsBusy(t *testing.T) {
 	}
 	if !fileGone(t, path) {
 		t.Error("Logout() left the session file behind because the lock was busy")
+	}
+}
+
+// TestWithRefreshLock_MkdirAllFailureStillRunsTheWork pins the genuine
+// MkdirAll-fails branch, distinct from TestLockUnavailableStillRunsThe
+// GuardedWork above (which names the same fallback but actually succeeds
+// after creating the nested dir - MkdirAll on an existing dir is a no-op,
+// never the failure path). A regular file in place of a path component
+// makes MkdirAll fail for real.
+func TestWithRefreshLock_MkdirAllFailureStillRunsTheWork(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	result, err := withRefreshLock(filepath.Join(blocker, "sub", "auth.json.lock"), func() error {
+		ran = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withRefreshLock() error = %v", err)
+	}
+	if !ran {
+		t.Fatal("the guarded function did not run despite the MkdirAll failure")
+	}
+	if result != lockUnavailable {
+		t.Errorf("result = %v, want lockUnavailable", result)
+	}
+}
+
+// TestDeleteSession_RunSerializedErrorSurfaces pins deleteSession's own
+// runSerialized-failure wrap: a genuine acquire error (not a lock result)
+// must be reported, not swallowed as an ordinary lockUnavailable fallback.
+func TestDeleteSession_RunSerializedErrorSurfaces(t *testing.T) {
+	svc, path := newTestService(t, &fakeSessionClient{})
+	mustSave(t, path, farFutureToken())
+	acquireErr := errors.New("lock file wedged")
+	svc.acquire = func(string, func() error) (lockResult, error) { return lockHeld, acquireErr }
+
+	err := svc.deleteSession(Token{}, false)
+	if err == nil || !errors.Is(err, acquireErr) {
+		t.Fatalf("deleteSession() error = %v, want it to wrap %v", err, acquireErr)
+	}
+}
+
+// TestEnsureToken_AcquireErrorSurfaces pins ensureToken's own acquire-error
+// wrap, distinct from deleteSession's copy above.
+func TestEnsureToken_AcquireErrorSurfaces(t *testing.T) {
+	svc, path := newTestService(t, &fakeSessionClient{})
+	mustSave(t, path, farFutureToken())
+	acquireErr := errors.New("lock file wedged")
+	svc.acquire = func(string, func() error) (lockResult, error) { return lockHeld, acquireErr }
+
+	if _, err := svc.ensureToken(context.Background()); !errors.Is(err, acquireErr) {
+		t.Fatalf("ensureToken() error = %v, want it to wrap %v", err, acquireErr)
+	}
+}
+
+// TestClearIfStillMine_LoadErrorIsASilentNoOp pins the Load-failure early
+// return: a corrupt or unreadable token file must not panic and must not
+// be treated as a match worth deleting.
+func TestClearIfStillMine_LoadErrorIsASilentNoOp(t *testing.T) {
+	svc, path := newTestService(t, &fakeSessionClient{})
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc.clearIfStillMine(Token{Bearer: "irrelevant"})
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "not json" {
+		t.Fatalf("clearIfStillMine touched an unreadable token file: data=%q err=%v", data, err)
+	}
+}
+
+// TestLogin_SaveErrorSurfaces pins Login's own save-failure wrap: a
+// successful credential exchange whose token cannot be persisted must
+// report the save error, not silently report success with nothing on
+// disk.
+func TestLogin_SaveErrorSurfaces(t *testing.T) {
+	tok := farFutureToken()
+	fake := &fakeSessionClient{loginToken: tok}
+	dir := t.TempDir()
+	// A directory in place of the token file makes every Save fail: Save
+	// renames a temp file over path, and rename onto a non-empty-dir-over-
+	// file conflict fails on every platform this repo supports.
+	path := filepath.Join(dir, "auth.json")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(fake, path)
+
+	if err := svc.Login(context.Background(), "user@example.com", []byte("pw")); err == nil {
+		t.Fatal("Login accepted a token path that is a directory")
+	}
+}
+
+// TestWithRefreshLock_ImmediateOpenErrorSurfacesLockUnavailable pins
+// withRefreshLock's own lockUnavailable branch: a lock path whose file
+// cannot be opened at all (a directory sitting where the lock file
+// should be) fails immediately, before the context has any chance to be
+// done, so it must run fn() under lockUnavailable rather than report
+// lockBusy.
+func TestWithRefreshLock_ImmediateOpenErrorSurfacesLockUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "session.lock")
+	if err := os.Mkdir(lockPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	result, err := withRefreshLock(lockPath, func() error { ran = true; return nil })
+	if err != nil {
+		t.Fatalf("withRefreshLock: %v", err)
+	}
+	if result != lockUnavailable {
+		t.Fatalf("result = %v, want lockUnavailable", result)
+	}
+	if !ran {
+		t.Fatal("withRefreshLock did not run fn() under lockUnavailable")
+	}
+}
+
+// TestWithRefreshLock_RealContentionReportsLockBusy pins withRefreshLock's
+// own ctx-timeout-is-lockBusy branch with a REAL second flock.Flock
+// holding the same path exclusively - not the svc.acquire seam every
+// other lock-busy test in this file uses, which bypasses withRefreshLock
+// entirely. Runs the real lockBudget (20s); bounded and deterministic,
+// the only way to reach this branch without modifying withRefreshLock's
+// own timing constants.
+func TestWithRefreshLock_RealContentionReportsLockBusy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real 20s lock-contention wait; skipped in -short")
+	}
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "session.lock")
+
+	holder := flock.New(lockPath)
+	if err := holder.Lock(); err != nil {
+		t.Fatalf("holder.Lock(): %v", err)
+	}
+	defer holder.Unlock()
+
+	ran := false
+	result, err := withRefreshLock(lockPath, func() error { ran = true; return nil })
+	if err != nil {
+		t.Fatalf("withRefreshLock: %v", err)
+	}
+	if result != lockBusy {
+		t.Fatalf("result = %v, want lockBusy", result)
+	}
+	if ran {
+		t.Fatal("withRefreshLock ran fn() while the lock was genuinely held elsewhere")
+	}
+}
+
+// TestServiceLogout_RunSerializedErrorSurfaces pins Logout's own
+// runSerialized-failure wrap, the same class as
+// TestDeleteSession_RunSerializedErrorSurfaces and
+// TestEnsureToken_AcquireErrorSurfaces but for Logout's own load step.
+func TestServiceLogout_RunSerializedErrorSurfaces(t *testing.T) {
+	svc, path := newTestService(t, &fakeSessionClient{})
+	mustSave(t, path, farFutureToken())
+	acquireErr := errors.New("lock file wedged")
+	svc.acquire = func(string, func() error) (lockResult, error) { return lockHeld, acquireErr }
+
+	if _, err := svc.Logout(context.Background()); !errors.Is(err, acquireErr) {
+		t.Fatalf("Logout() error = %v, want it to wrap %v", err, acquireErr)
 	}
 }

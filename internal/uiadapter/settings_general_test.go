@@ -3,12 +3,16 @@ package uiadapter
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 func TestBuildGeneralView_SyncSeedsFromResolved(t *testing.T) {
@@ -270,5 +274,132 @@ api_url = "https://api.example.com"
 	}
 	if _, hasStream := syncMap["stream_assistant"]; hasStream {
 		t.Errorf("stream_assistant unexpectedly present in [sync] table")
+	}
+}
+
+// TestMutateGeneral_NoticeOptionsRelayToConversation pins
+// SetShowIterationNotices and SetShowPromptCacheNotices' s.conv branches:
+// with a conversation wired, each edit must relay both notice options,
+// not just flip a local field.
+func TestMutateGeneral_NoticeOptionsRelayToConversation(t *testing.T) {
+	res := &config.Resolved{}
+	s := NewSettingsStore(nil, res, nil)
+	conv := NewConversation(nil)
+	s.SetConversation(conv)
+
+	prior := s.snapshotGeneralPrior()
+	if _, _, err := s.mutateGeneral(ports.SetShowIterationNotices{On: true}, prior); err != nil {
+		t.Fatalf("SetShowIterationNotices: %v", err)
+	}
+	if !s.general.ShowIterationNotices {
+		t.Fatal("ShowIterationNotices did not update")
+	}
+
+	prior = s.snapshotGeneralPrior()
+	if _, _, err := s.mutateGeneral(ports.SetShowPromptCacheNotices{On: true}, prior); err != nil {
+		t.Fatalf("SetShowPromptCacheNotices: %v", err)
+	}
+	if !s.general.ShowPromptCacheNotices {
+		t.Fatal("ShowPromptCacheNotices did not update")
+	}
+}
+
+// TestMutateGeneral_ScreenReaderAndReducedMotion pins the two flag-only
+// cases directly.
+func TestMutateGeneral_ScreenReaderAndReducedMotion(t *testing.T) {
+	s := NewSettingsStore(nil, &config.Resolved{}, nil)
+	prior := s.snapshotGeneralPrior()
+	if _, _, err := s.mutateGeneral(ports.SetScreenReader{On: true}, prior); err != nil {
+		t.Fatalf("SetScreenReader: %v", err)
+	}
+	if !s.general.ScreenReader {
+		t.Fatal("ScreenReader did not update")
+	}
+	prior = s.snapshotGeneralPrior()
+	if _, _, err := s.mutateGeneral(ports.SetReducedMotion{On: true}, prior); err != nil {
+		t.Fatalf("SetReducedMotion: %v", err)
+	}
+	if !s.general.ReducedMotion {
+		t.Fatal("ReducedMotion did not update")
+	}
+}
+
+// TestRollbackGeneral_RestoresPoolApprovalDefault pins rollbackGeneral's
+// own s.pool != nil branch: with a live *SessionPool wired, a persist
+// failure must fan the prior approval default back out through the pool
+// rather than leaving pooled sessions on the optimistic, never-persisted
+// value.
+func TestRollbackGeneral_RestoresPoolApprovalDefault(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := &config.Resolved{Model: "test-model", ConfigPath: filepath.Join(blocker, "mivia.toml")}
+	s := NewSettingsStore(nil, res, nil)
+	s.pool = NewSessionPool(nil, res, nil, false)
+
+	// The default is ApprovalDefault: "always" (settings_general.go:35),
+	// so "deny" is the change a successful rollback must undo.
+	err := s.applyGeneral(ports.SetApprovalDefault{Mode: "deny"})
+	if err == nil {
+		t.Fatal("applyGeneral accepted an unwritable config path")
+	}
+	if got := s.general.ApprovalDefault; got != "always" {
+		t.Errorf("ApprovalDefault = %q after a rolled-back edit, want the pre-edit \"always\" restored", got)
+	}
+}
+
+// TestInheritApprovalLocked_NilSessionIsANoop pins the nil-sess guard
+// directly.
+func TestInheritApprovalLocked_NilSessionIsANoop(t *testing.T) {
+	inheritApprovalLocked(nil, nil, nil) // must not panic
+}
+
+// TestInheritApprovalLocked_FallsBackToExistingBasePolicy pins the
+// existing.BaseApprovalPolicyValue() fallback: an empty *config.Resolved
+// policy (res == nil) must inherit the PRIOR session's base policy rather
+// than leaving the new session's policy unset.
+func TestInheritApprovalLocked_FallsBackToExistingBasePolicy(t *testing.T) {
+	existing := chat.NewSession(&config.Resolved{Model: "test-model"}, nil)
+	existing.SetBaseApprovalPolicy("deny")
+	sess := chat.NewSession(&config.Resolved{Model: "test-model"}, nil)
+
+	inheritApprovalLocked(sess, existing, nil)
+
+	if got := sess.BaseApprovalPolicyValue(); got != "deny" {
+		t.Fatalf("BaseApprovalPolicyValue() = %q, want the existing session's %q to have been inherited", got, "deny")
+	}
+}
+
+// TestWireSyncNotices_CallbacksPushNotices drives every OnStop/OnDegraded/
+// OnRecovered callback wireSyncNotices installs and asserts each one
+// reaches the pool's Notices() stream.
+func TestWireSyncNotices_CallbacksPushNotices(t *testing.T) {
+	p := &SessionPool{notices: make(chan uievent.Event, 8)}
+	opts := &chatsync.SessionOptions{}
+	p.wireSyncNotices(opts)
+
+	opts.OnStop("server said stop")
+	opts.OnDegraded("network blip")
+	opts.OnRecovered()
+
+	var texts []string
+	for i := 0; i < 3; i++ {
+		select {
+		case ev := <-p.notices:
+			texts = append(texts, ev.Body.(uievent.NoticeBody).Text)
+		default:
+			t.Fatalf("expected 3 notices, got %d: %v", i, texts)
+		}
+	}
+	if !strings.Contains(texts[0], "server said stop") {
+		t.Errorf("OnStop notice = %q, want it to name the reason", texts[0])
+	}
+	if !strings.Contains(texts[1], "network blip") {
+		t.Errorf("OnDegraded notice = %q, want it to name the reason", texts[1])
+	}
+	if !strings.Contains(texts[2], "recovered") {
+		t.Errorf("OnRecovered notice = %q, want it to say so", texts[2])
 	}
 }

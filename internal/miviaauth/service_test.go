@@ -661,3 +661,51 @@ func (c *loginDuringRevokeClient) Revoke(ctx context.Context, bearer, refreshTok
 }
 
 // --- the lock contract's own trap --------------------------------------
+
+// TestServiceLogoutRefreshTokenAlreadyRevokedTreatsSessionAsDead pins
+// revokeSession's own refresh-then-definitive-401 branch: when the
+// refresh token itself comes back definitively refused (already revoked,
+// or reused), the session is treated as already dead - Logout succeeds
+// with no error, and still deletes the local file.
+func TestServiceLogoutRefreshTokenAlreadyRevokedTreatsSessionAsDead(t *testing.T) {
+	fake := &fakeSessionClient{
+		revokeErrs: []error{definitive401()},
+		refreshErr: definitive401(),
+	}
+	svc, path := newTestService(t, fake)
+	mustSave(t, path, expiredToken())
+
+	outcome, err := svc.Logout(context.Background())
+	if err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if outcome.RevokeErr != nil {
+		t.Errorf("RevokeErr = %v, want nil (session treated as already dead)", outcome.RevokeErr)
+	}
+	if !fileGone(t, path) {
+		t.Error("Logout() left the session file behind")
+	}
+}
+
+// TestServiceLogoutRefreshTransientErrorSurfaces pins revokeSession's own
+// non-definitive-401 refresh-error propagation, distinct from the
+// definitive-401 case above: a transient refresh failure (network, 5xx)
+// must surface as the outcome's RevokeErr rather than being swallowed as
+// "session already dead".
+func TestServiceLogoutRefreshTransientErrorSurfaces(t *testing.T) {
+	boom := errors.New("network blip")
+	fake := &fakeSessionClient{
+		revokeErrs: []error{definitive401()},
+		refreshErr: boom,
+	}
+	svc, path := newTestService(t, fake)
+	mustSave(t, path, expiredToken())
+
+	outcome, err := svc.Logout(context.Background())
+	if err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if !errors.Is(outcome.RevokeErr, boom) {
+		t.Errorf("RevokeErr = %v, want it to wrap the transient refresh error", outcome.RevokeErr)
+	}
+}

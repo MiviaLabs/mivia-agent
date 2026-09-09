@@ -150,3 +150,13 @@ func loadTheme(t *testing.T) theme.Theme {
 	t.Fatal("mivia-dark theme not found")
 	return theme.Theme{}
 }
+
+// TestPulseGlyph_OutOfRangePhaseFallsBackToDefault pins pulseGlyph's own
+// default branch directly: every caller normalizes phase into [0,7]
+// before calling, but the function is defensive against a phase outside
+// that range, and the fallback glyph must match phase 0's.
+func TestPulseGlyph_OutOfRangePhaseFallsBackToDefault(t *testing.T) {
+	if got, want := pulseGlyph(99, false), pulseGlyph(0, false); got != want {
+		t.Errorf("pulseGlyph(99, false) = %q, want the phase-0 fallback %q", got, want)
+	}
+}

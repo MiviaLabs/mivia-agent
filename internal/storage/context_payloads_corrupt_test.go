@@ -3,9 +3,12 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -290,4 +293,95 @@ func TestLoadPayloadBytesTxReturnsInlineBytesWithoutReading(t *testing.T) {
 	if err != nil || string(body) != "hi" {
 		t.Fatalf("inline read = (%q, %v), want (\"hi\", nil)", body, err)
 	}
+}
+
+// TestLoadPayloadBytesTxReportsARowsErrFailure is loadPayloadBytesTx's own
+// twin of the fault-driver pattern content_gc_fault_test.go uses: a fake
+// driver.Tx yields one chunk row then a non-EOF Next() error, which
+// database/sql surfaces as rows.Err() after the loop. The Tx-variant
+// reader must propagate that error rather than report a truncated body as
+// a complete, valid payload.
+func TestLoadPayloadBytesTxReportsARowsErrFailure(t *testing.T) {
+	db := openPayloadTxFaultDB(t)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	body, err := loadPayloadBytesTx(context.Background(), tx, "ref-1", 2, nil)
+	if body != nil {
+		t.Errorf("a rows.Err() failure returned %q", body)
+	}
+	if err == nil {
+		t.Fatal("loadPayloadBytesTx accepted a read it could not complete")
+	}
+	if !strings.Contains(err.Error(), "boom: chunk row failed") {
+		t.Errorf("err = %v, want the injected rows.Err() failure", err)
+	}
+}
+
+var payloadTxFaultSeq int64
+
+// openPayloadTxFaultDB opens a *sql.DB over a fake driver whose Begin()
+// succeeds (unlike contentGCFaultConn, which refuses transactions) and
+// whose QueryContext for the chunk-read query yields one row then a
+// non-EOF Next() error.
+func openPayloadTxFaultDB(t *testing.T) *sql.DB {
+	t.Helper()
+	name := fmt.Sprintf("mivia-payload-tx-fault-%d", atomic.AddInt64(&payloadTxFaultSeq, 1))
+	sql.Register(name, payloadTxFaultDriver{})
+	db, err := sql.Open(name, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+type payloadTxFaultDriver struct{}
+
+func (payloadTxFaultDriver) Open(string) (driver.Conn, error) {
+	return &payloadTxFaultConn{}, nil
+}
+
+type payloadTxFaultConn struct{}
+
+func (*payloadTxFaultConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare is not supported")
+}
+func (*payloadTxFaultConn) Close() error              { return nil }
+func (*payloadTxFaultConn) Begin() (driver.Tx, error) { return payloadTxFaultTx{}, nil }
+
+func (*payloadTxFaultConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if strings.Contains(query, "FROM context_payload_chunks") {
+		return &payloadOneRowThenErrRows{}, nil
+	}
+	return nil, fmt.Errorf("unexpected query in payloadTxFaultConn: %s", query)
+}
+
+type payloadTxFaultTx struct{}
+
+func (payloadTxFaultTx) Commit() error   { return nil }
+func (payloadTxFaultTx) Rollback() error { return nil }
+
+// payloadOneRowThenErrRows yields exactly one chunk row (index 0 of 2),
+// then a non-EOF Next() error - the shape that makes rows.Err() non-nil
+// after the loop without ever hitting the bad-sequence or Scan-error
+// branches first.
+type payloadOneRowThenErrRows struct{ done bool }
+
+func (*payloadOneRowThenErrRows) Columns() []string {
+	return []string{"chunk_index", "chunk_count", "data"}
+}
+func (*payloadOneRowThenErrRows) Close() error { return nil }
+func (r *payloadOneRowThenErrRows) Next(dest []driver.Value) error {
+	if r.done {
+		return errors.New("boom: chunk row failed")
+	}
+	r.done = true
+	dest[0] = int64(0)
+	dest[1] = int64(2)
+	dest[2] = []byte("A")
+	return nil
 }

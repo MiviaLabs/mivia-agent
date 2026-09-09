@@ -736,3 +736,59 @@ initial_step = "nope"
 		t.Fatalf("error should be prefixed with 'workflows explain': %v", err)
 	}
 }
+
+// TestWorkflowsShowDiscoveryErrorSurfaces pins the found.Err branch
+// (workflows show): a workflow file DiscoverWorkflows itself could not
+// read (a symlink in place of a regular file, rejected by
+// readRegularWorkflowFile) is recorded with its own Err at discovery
+// time, distinct from a parse failure on an otherwise-readable file
+// (TestWorkflowsExplainInvalidWorkflow's own scenario).
+func TestWorkflowsShowDiscoveryErrorSurfaces(t *testing.T) {
+	workspace := t.TempDir()
+	wfDir := filepath.Join(workspace, ".mivia", "workflows")
+	if err := os.MkdirAll(wfDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere.toml")
+	if err := os.WriteFile(target, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(wfDir, "linked.toml")); err != nil {
+		t.Skipf("platform does not support symlinks: %v", err)
+	}
+
+	var out, errOut strings.Builder
+	err := RunWorkflowsWithIO([]string{"show", "linked", "--workspace", workspace}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected error showing a workflow discovery could not read")
+	}
+	if !strings.Contains(err.Error(), "workflows show") {
+		t.Fatalf("error should be prefixed with 'workflows show': %v", err)
+	}
+}
+
+// TestWorkflowsExplainDiscoveryErrorSurfaces mirrors the show-command test
+// above for explain's own found.Err branch.
+func TestWorkflowsExplainDiscoveryErrorSurfaces(t *testing.T) {
+	workspace := t.TempDir()
+	wfDir := filepath.Join(workspace, ".mivia", "workflows")
+	if err := os.MkdirAll(wfDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere.toml")
+	if err := os.WriteFile(target, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(wfDir, "linked.toml")); err != nil {
+		t.Skipf("platform does not support symlinks: %v", err)
+	}
+
+	var out, errOut strings.Builder
+	err := RunWorkflowsWithIO([]string{"explain", "linked", "--workspace", workspace}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected error explaining a workflow discovery could not read")
+	}
+	if !strings.Contains(err.Error(), "workflows explain") {
+		t.Fatalf("error should be prefixed with 'workflows explain': %v", err)
+	}
+}

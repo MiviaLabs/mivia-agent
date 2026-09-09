@@ -755,3 +755,43 @@ func TestRepairReportsAnUnreadableSchemaVersion(t *testing.T) {
 		t.Fatal("repair proceeded without reading the schema version")
 	}
 }
+
+// TestRepairSurfacesV16EnsureFailure pins repairContextSchema's own v==16
+// branch: a dirty v16 row over an already-fully-migrated store whose
+// memory_sources table has since been corrupted (missing a required
+// column) must surface ensureContextSchemaV16's validation failure rather
+// than silently clear the dirty flag over a broken index.
+func TestRepairSurfacesV16EnsureFailure(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v16-ensure-fail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+
+	// Corrupt the v16 witness table: drop it and recreate without
+	// source_hash, so validateMemoryIndexSchema's column check fails once
+	// repair re-runs v16's ensure step.
+	if _, err := db.Exec(`DROP TABLE memory_sources`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE memory_sources (
+  scope TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', org_id TEXT NOT NULL DEFAULT '',
+  source_path TEXT NOT NULL, indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(scope, project_id, org_id, source_path)
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 15`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(16, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repairContextSchema(db); err == nil {
+		t.Fatal("repairContextSchema accepted a corrupted v16 memory index table")
+	}
+}

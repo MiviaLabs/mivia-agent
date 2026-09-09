@@ -136,3 +136,16 @@ func TestSyncSession_StopReasonAndInputsDefaults(t *testing.T) {
 		t.Errorf("Inputs with no poller = %v, want nil", got)
 	}
 }
+
+// TestProjectSubagent_UnknownKindProjectsNothing pins projectSubagent's own
+// default case directly: the method's switch is reached only for five
+// event kinds via Project's dispatch, so its default branch is otherwise
+// unreachable from outside the package. Calling it directly here (this
+// file is package chatsync, not chatsync_test) exercises that branch
+// without needing a sixth dispatch kind that does not exist.
+func TestProjectSubagent_UnknownKindProjectsNothing(t *testing.T) {
+	p := NewProjector("sess-1", 0, ProjectorOptions{})
+	if got := p.projectSubagent(Envelope{}, events.Event{Kind: events.KindToolStart}); got != nil {
+		t.Errorf("projectSubagent(unhandled kind) = %v, want nil", got)
+	}
+}

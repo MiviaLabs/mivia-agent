@@ -336,3 +336,40 @@ func TestRebaseOn_ServerBehindOutboxRenumbers(t *testing.T) {
 		t.Fatalf("unflushed after rebase = %+v, want seqs renumbered onto 4,5", unflushed)
 	}
 }
+
+// TestFlushOutbox_AdvanceCursorErrorSurfaces pins flushOutbox's own wrap
+// around the post-append AdvanceCursor call: the append itself succeeds
+// against a real fake server, but the outbox's directory is read-only so
+// the cursor write cannot be persisted.
+func TestFlushOutbox_AdvanceCursorErrorSurfaces(t *testing.T) {
+	fake := newFakeAPI(t)
+	sessionID := fake.NewSession("flush-advance-cursor")
+
+	dir := t.TempDir()
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ob.Close()
+	if err := ob.Append(WireEvent{Seq: 1, Type: "turn_start"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	probe := filepath.Join(dir, "writability-probe")
+	if f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("platform still creates files in a read-only directory")
+	}
+
+	client := newTestClient(t, ClientOptions{BaseURL: fake.URL()})
+	if _, err := flushOutbox(context.Background(), client, ob, sessionID, "batch-1", "writer-1"); err == nil {
+		t.Fatal("flushOutbox accepted an AdvanceCursor it could not persist")
+	} else if !strings.Contains(err.Error(), "advance cursor") {
+		t.Fatalf("err = %v, want the advance-cursor wrap", err)
+	}
+}

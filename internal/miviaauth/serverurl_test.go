@@ -98,3 +98,25 @@ func TestDefaultServerURLIsProductionAPI(t *testing.T) {
 		t.Errorf("DefaultServerURL = %q, want %q", DefaultServerURL, "https://api.mivia.app")
 	}
 }
+
+// TestServerURLFromEnvMalformedUserEnvFileFallsBackToDefault pins
+// ResolveServerURL's own sdkenvfile.Load error branch: a ~/.mivia/.env
+// file that exists but fails to parse (a line with no "=" separator) must
+// fall back to DefaultServerURL rather than propagate the parse error.
+func TestServerURLFromEnvMalformedUserEnvFileFallsBackToDefault(t *testing.T) {
+	sandboxServerURLEnv(t)
+	t.Setenv("MIVIA_API_BASE_URL", "")
+
+	miviaDir := filepath.Join(os.Getenv("HOME"), ".mivia")
+	if err := os.MkdirAll(miviaDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", miviaDir, err)
+	}
+	envFile := filepath.Join(miviaDir, ".env")
+	if err := os.WriteFile(envFile, []byte("THIS LINE HAS NO EQUALS SIGN\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", envFile, err)
+	}
+
+	if got := ServerURLFromEnv(); got != DefaultServerURL {
+		t.Errorf("ServerURLFromEnv() = %q, want %q (fallback on parse error)", got, DefaultServerURL)
+	}
+}
