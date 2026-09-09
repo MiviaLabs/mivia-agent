@@ -31,6 +31,46 @@ func matchesAgentID(aID, id string) bool {
 	return false
 }
 
+// crossNamespaceSuffixIndex is observeAgent's own fallback for a heartbeat
+// whose Origin.TaskID carries a DIFFERENT namespace prefix than the row it
+// belongs to - e.g. a row registered under a dispatch_tasks call's own id
+// ("call-1:task-a") receiving a heartbeat namespaced under a different
+// coordinator TaskIdentity ("run-9:task-a", per dispatchNamespace's
+// ambient-context fallback). matchesAgentID only strips a namespace off ONE
+// side and compares to the OTHER side's full string, so two DIFFERENTLY
+// namespaced ids sharing a raw suffix never match there.
+//
+// This is deliberately NOT folded into matchesAgentID/agentIndex, which
+// observeAgentStart, observeAgentEnd, and observeAgentHistory also use: two
+// independent dispatch_tasks calls can legitimately reuse the same raw task
+// id ("call-a:task-1" and "call-b:task-1" for two unrelated subagents), and
+// those START/END/HISTORY events for that shape must keep creating or
+// addressing two distinct rows. Only a live PROGRESS update - which can
+// never register a new dispatch group, only advance one already dispatched
+// - gets this broader match, and only as a last resort after the exact and
+// single-sided-namespace checks above have already missed. Two or more
+// candidate rows still refuse the match, same as ambiguousAgentID's guard,
+// so a genuine collision across dispatch groups is never silently guessed.
+func crossNamespaceSuffixIndex(rows []subagentRow, id string) int {
+	idIdx := strings.Index(id, ":")
+	if idIdx < 0 {
+		return -1
+	}
+	suffix := id[idIdx+1:]
+	found := -1
+	for i, row := range rows {
+		rIdx := strings.Index(row.ID, ":")
+		if rIdx < 0 || row.ID[rIdx+1:] != suffix {
+			continue
+		}
+		if found >= 0 {
+			return -1
+		}
+		found = i
+	}
+	return found
+}
+
 // agentIndex prefers the exact full ID. A namespace-stripped legacy ID may
 // fall back only when one row has that suffix; otherwise attribution would
 // update an arbitrary task in a parallel batch.
@@ -266,7 +306,11 @@ func (p panel) activeAgentCount() int {
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	log := slices.Clone(pr.Log)
 	p.agents = slices.Clone(p.agents)
-	if i := agentIndex(p.agents, id); i >= 0 {
+	i := agentIndex(p.agents, id)
+	if i < 0 {
+		i = crossNamespaceSuffixIndex(p.agents, id)
+	}
+	if i >= 0 {
 		a := p.agents[i]
 		if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
 			return
