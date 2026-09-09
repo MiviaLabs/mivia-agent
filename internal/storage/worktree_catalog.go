@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
@@ -21,12 +23,32 @@ func (s *SQLite) LoadWorktreeSession(ctx context.Context, p contextstate.Princip
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
 	key, err := loadWorktreeCatalogKeyTx(ctx, tx, p, i, "snapshot", n)
+	if errors.Is(err, contextstate.ErrSessionNotFound) {
+		// No snapshot row under this instance. A worktree session that only
+		// ever completed turns (never /save, never /clear - the normal TUI
+		// case) has exactly that shape: a live context_sessions row bound to
+		// the instance, plus checkpoints, and nothing in chat_sessions. Serve
+		// the live checkpoint, exactly as the plain LoadSession does for a
+		// plain session; without this every such session in the /resume
+		// picker failed with "session not found" although its instance was
+		// active and its history was on disk.
+		live, payload, found, _, lerr := s.loadLiveContextSession(ctx, tx, p, n, i)
+		if lerr != nil {
+			return nil, contextstate.SessionCatalogInfo{}, lerr
+		}
+		if !found {
+			return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
+		}
+		return payload, live, tx.Commit()
+	}
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
 	var b []byte
 	var out contextstate.SessionCatalogInfo
-	err = tx.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID).Scan(&out.Name, &out.Model, &out.Provider, &b, &out.CreatedAt, &out.UpdatedAt, &out.TurnCount, &out.TokenCount, &out.MessageCount, &out.Dir, &out.Worktree)
+	var catalogSessionID string
+	var snapshotRevision sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(c.session_id,''),COALESCE(d.dir,''),COALESCE(d.worktree,''),c.session_revision FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID).Scan(&out.Name, &out.Model, &out.Provider, &b, &out.CreatedAt, &out.UpdatedAt, &out.TurnCount, &out.TokenCount, &out.MessageCount, &catalogSessionID, &out.Dir, &out.Worktree, &snapshotRevision)
 	if err == sql.ErrNoRows {
 		return nil, out, contextstate.ErrSessionNotFound
 	}
@@ -35,7 +57,21 @@ func (s *SQLite) LoadWorktreeSession(ctx context.Context, p contextstate.Princip
 	}
 	out.Name = n
 	out.WorktreeInstance = i
-	return append([]byte(nil), b...), out, tx.Commit()
+	if catalogSessionID == "" {
+		// Plain snapshot copy inside the worktree: name is just a name.
+		return append([]byte(nil), b...), out, tx.Commit()
+	}
+	// "id is id": one decision for both namespaces, so a worktree snapshot
+	// gets the SAME staleness rule the plain path has - a snapshot older
+	// than a /clear must not be served, and the live identity must survive
+	// so the caller reclaims instead of forking.
+	payload, info, err := s.resolveProjection(ctx, tx, p, catalogSessionID, b, out, snapshotRevision, i)
+	if err != nil {
+		return nil, out, err
+	}
+	info.Name = n
+	info.WorktreeInstance = i
+	return payload, info, tx.Commit()
 }
 
 func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextstate.Principal, n string, i contextstate.WorktreeInstance) error {
@@ -49,6 +85,14 @@ func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextsta
 			return err
 		}
 		k, err := loadWorktreeCatalogKeyTx(ctx, tx, p, i, "snapshot", n)
+		if errors.Is(err, contextstate.ErrSessionNotFound) {
+			// No snapshot: the turn-only shape, which is the NORMAL one for
+			// a worktree session and exactly what the loader's live arm
+			// serves. Returning here left it fully loadable and its payloads
+			// unrevoked while reporting "session not found" for a delete the
+			// user asked for. Retire the live row instead.
+			return tombstoneContextSessionTx(ctx, tx, p, n, i)
+		}
 		if err != nil {
 			return err
 		}
@@ -68,8 +112,17 @@ func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextsta
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, k, i.ID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name=? AND storage_key=?`, p.WorkspaceID, p.SubjectID, i.ID, n, k)
-		return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name=? AND storage_key=?`, p.WorkspaceID, p.SubjectID, i.ID, n, k); err != nil {
+			return err
+		}
+		// The live row is what LoadWorktreeSession now serves when no
+		// snapshot remains, so removing only the snapshot would hand the
+		// whole "deleted" conversation back on the next resume. Same
+		// retention lifecycle the plain delete applies.
+		if err := tombstoneContextSessionTx(ctx, tx, p, n, i); err != nil && !errors.Is(err, contextstate.ErrSessionNotFound) {
+			return err
+		}
+		return nil
 	})
 }
 
@@ -164,4 +217,44 @@ func (s *SQLite) LoadWorktreeSessionAdmission(ctx context.Context, p contextstat
 		return r, err
 	}
 	return r, json.Unmarshal([]byte(b), &r.Names)
+}
+
+// WorktreeSessionBinding reports the managed worktree a live session id is
+// bound to. found is false for a plain session, so a caller can resolve any
+// bare id through one path: the binding is a property of the SESSION,
+// recorded here, not something only a /resume listing row knows.
+//
+// A row bound to an instance the catalog no longer has (or one being
+// deleted) is refused rather than reported unbound: silently degrading to
+// the plain namespace is what let a worktree session resume detached from
+// the worktree it belongs to.
+func (s *SQLite) WorktreeSessionBinding(ctx context.Context, p contextstate.Principal, sessionID string) (contextstate.WorktreeInstanceInfo, bool, error) {
+	if err := p.Validate(); err != nil {
+		return contextstate.WorktreeInstanceInfo{}, false, err
+	}
+	if err := validateSessionCatalogName(sessionID); err != nil {
+		return contextstate.WorktreeInstanceInfo{}, false, err
+	}
+	var instanceID sql.NullString
+	var info contextstate.WorktreeInstanceInfo
+	var worktree, canonical, state sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT cs.instance_id,wi.worktree,wi.canonical_path,wi.state FROM context_sessions cs LEFT JOIN worktree_instances wi ON wi.workspace_id=cs.workspace_id AND wi.instance_id=cs.instance_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0`, p.WorkspaceID, p.SubjectID, sessionID).Scan(&instanceID, &worktree, &canonical, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No live row at all: a plain named snapshot, or an unknown id. The
+		// plain loader owns that decision.
+		return contextstate.WorktreeInstanceInfo{}, false, nil
+	}
+	if err != nil {
+		return contextstate.WorktreeInstanceInfo{}, false, err
+	}
+	if !instanceID.Valid || instanceID.String == "" {
+		return contextstate.WorktreeInstanceInfo{}, false, nil
+	}
+	if !worktree.Valid || !canonical.Valid || contextstate.WorktreeInstanceState(state.String) == contextstate.WorktreeDeleted {
+		return contextstate.WorktreeInstanceInfo{}, false, contextstate.ErrWorktreeDeleted
+	}
+	info.Instance = contextstate.WorktreeInstance{Worktree: worktree.String, ID: instanceID.String}
+	info.CanonicalPath = canonical.String
+	info.State = contextstate.WorktreeInstanceState(state.String)
+	return info, true, nil
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
@@ -20,16 +21,35 @@ type WireEvent struct {
 	TurnID     string    `json:"turn_id"`
 	ToolCallID string    `json:"tool_call_id,omitempty"`
 	Name       string    `json:"name,omitempty"`
-	// Detail carries KindTurnStart's user-submitted text (events.Event.Detail
-	// - see relayedKinds' doc comment); other relayed kinds don't use it.
-	Detail     string `json:"detail,omitempty"`
-	Content    string `json:"content,omitempty"`
-	Input      string `json:"input,omitempty"`
-	Output     string `json:"output,omitempty"`
-	ErrorText  string `json:"error,omitempty"`
-	AgentTask  string `json:"agent_task,omitempty"`
-	AgentName  string `json:"agent_name,omitempty"`
-	AgentDepth int    `json:"agent_depth,omitempty"`
+	// Detail carries events.Event.Detail for every relayed kind that has one,
+	// not only KindTurnStart. Today that is: KindTurnStart's user-submitted
+	// text, KindSubagentBegin's bounded task description, KindSubagentHeartbeat's
+	// progress line, KindToolEnd/KindSubagentEnd's status vocabulary, and
+	// KindAssistant's "delta" marker and its content-free "complete" flag
+	// (events.DetailAssistantComplete; the receiver drops it on empty
+	// content, chat_hub_render.go). Each is content the receiving process
+	// renders, so widening what travels here widens what leaves the machine -
+	// check the producer before adding another.
+	Detail      string `json:"detail,omitempty"`
+	Content     string `json:"content,omitempty"`
+	Input       string `json:"input,omitempty"`
+	Output      string `json:"output,omitempty"`
+	ErrorText   string `json:"error,omitempty"`
+	AgentTask   string `json:"agent_task,omitempty"`
+	AgentParent string `json:"agent_parent,omitempty"`
+	AgentName   string `json:"agent_name,omitempty"`
+	AgentDepth  int    `json:"agent_depth,omitempty"`
+	// Dropped is the cumulative number of events this hub failed to deliver to
+	// the receiving connection: its share of the relay's bounded bus queue plus
+	// its own bounded outbound queue. It is monotonic non-decreasing for the
+	// life of one connection - a peer's own counter is never forwarded across a
+	// rebroadcast, which would interleave two unrelated origins and let the
+	// value fall - and restarts at zero when the hub owner changes. A consumer
+	// detects loss by diffing it
+	// against the last value it saw - the stream is deliberately lossy (see
+	// docs/product/wire-schema.md) and this is the only signal that says so.
+	// Omitted while it is zero, which is the ordinary case.
+	Dropped uint64 `json:"dropped,omitempty"`
 	// Compaction carries the typed payload for KindCompaction only. Nested and
 	// pointer so every other kind's wire form stays byte-identical, and
 	// content-free by construction so it is safe to commit to the wire
@@ -71,6 +91,7 @@ func toWire(ev events.Event) WireEvent {
 		SessionID: ev.SessionID, TurnID: ev.TurnID, ToolCallID: ev.ToolCallID,
 		Name: ev.Name, Detail: ev.Detail, Content: ev.Content, Input: ev.Input, Output: ev.Output,
 		AgentTask: ev.AgentTask, AgentName: ev.AgentName, AgentDepth: ev.AgentDepth,
+		AgentParent: ev.AgentParent,
 	}
 	if ev.Compaction != nil {
 		w.Compaction = &WireCompaction{
@@ -85,8 +106,12 @@ func toWire(ev events.Event) WireEvent {
 			Reason:         ev.Compaction.Reason,
 		}
 	}
+	// Never ev.Err.Error(): provider and tool error text can quote the request
+	// that produced it (DC-14), and this is a cross-process wire. Classify with
+	// the same function the --json NDJSON writer uses, so the process reading
+	// this socket is never told more than the local surface is.
 	if ev.Err != nil {
-		w.ErrorText = ev.Err.Error()
+		w.ErrorText = chat.TurnErrorMessage(ev.Err)
 	}
 	return w
 }
@@ -100,6 +125,7 @@ func fromWire(w WireEvent) events.Event {
 		SessionID: w.SessionID, TurnID: w.TurnID, ToolCallID: w.ToolCallID,
 		Name: w.Name, Detail: w.Detail, Content: w.Content, Input: w.Input, Output: w.Output,
 		AgentTask: w.AgentTask, AgentName: w.AgentName, AgentDepth: w.AgentDepth,
+		AgentParent: w.AgentParent,
 	}
 	if w.Compaction != nil {
 		ev.Compaction = events.RehydrateCompactionEvent(events.CompactionEvent{

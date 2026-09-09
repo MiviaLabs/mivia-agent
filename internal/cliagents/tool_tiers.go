@@ -49,7 +49,7 @@ func PlanToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *co
 		return ToolTierPlan{Tiers: tools.Tiers{Core: authorizedNamesInRegistryOrder(base, selected)}}
 	}
 	authorized := authorizedNamesInRegistryOrder(base, selected)
-	tiers := tools.SplitTiers(authorized, withMCPServerToolsAlwaysCore(*core, authorized, selected))
+	tiers := tools.SplitTiers(authorized, withMCPServerToolsAlwaysCore(*core, authorized, identityMCPServerScope(selected, res)))
 	plan := ToolTierPlan{Tiers: tiers}
 	for _, name := range tiers.Deferred {
 		// Every name here came out of base.List(), so the lookup cannot miss.
@@ -65,37 +65,53 @@ func PlanToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *co
 }
 
 // withMCPServerToolsAlwaysCore extends a configured core-tier list with every
-// authorized MCP-discovered tool, so an operator's [tools] core (or an
-// agent's tools_core) can never silently defer one.
+// authorized MCP-discovered tool so [tools] core or tools_core cannot silently
+// defer them.
 //
-// That list is hand-authored and names static, compiled-in tool names; it
-// cannot name an MCP tool, whose "mcp__<server>__x<hex>" name is a runtime
-// hash of whatever the remote server reports (internal/mcp.EncodeToolName) -
-// unknowable when the list is written, and liable to change the moment the
-// server's own tool set does. Without this, naming ANY core tier at all
-// (this repo's own .mivia/mivia.toml does, to control prompt cost) silently
-// and permanently moves every MCP tool into the deferred tier, with no way
-// to opt back in short of predicting the hash. isMCPServerTool already
-// treats server selection as authority over an MCP tool's AUTHORIZATION
-// (authorizedAgentTools, mcp_scope.go); this applies the same rule to core-
-// tier placement, since a tool the agent cannot even see advertised is a
-// stronger deferral than a tool it can no longer call.
+// Configured core lists name static tools. An MCP tool name ("mcp__<server>__x<hex>")
+// is derived at runtime from remote server reports and changes dynamically. Setting
+// any core tier would otherwise move all MCP tools into the deferred tier.
 //
-// Copies core rather than appending in place: core aliases the config
-// layer's *[]string, and append can silently write through spare capacity
-// into memory another binding still reads.
-func withMCPServerToolsAlwaysCore(core, authorized []string, selected *agents.ResolvedAgent) []string {
-	if selected == nil || len(selected.EffectiveMCPServers) == 0 {
+// scope is the identity's MCP server selection - the same rule that granted
+// authority and attached the tools in the first place (SelectedOrGlobalMCPServers):
+// the selected agent's EffectiveMCPServers, or the config's global server set
+// for the root/no-agent-selected identity. A workspace with no agent
+// definitions at all runs the root identity, and its global = true servers
+// (e.g. codegraph) must stay callable without load_tools just like a named
+// agent's selection is.
+//
+// Copies core rather than appending in place because core aliases config memory
+// (*[]string); appending could mutate capacity read by another binding.
+func withMCPServerToolsAlwaysCore(core, authorized, scope []string) []string {
+	if len(scope) == 0 {
 		return core
 	}
 	out := make([]string, len(core), len(core)+len(authorized))
 	copy(out, core)
 	for _, name := range authorized {
-		if isMCPServerTool(name, selected) {
+		if isMCPServerToolForServers(name, scope) {
 			out = append(out, name)
 		}
 	}
 	return out
+}
+
+// identityMCPServerScope returns the MCP server IDs whose tools this identity
+// may invoke - the exact server selection SetupSessionMCPTools attached
+// (SelectedOrGlobalMCPServers): a selected agent's own effective scope, or,
+// when no agent is selected (the root identity; also every workspace without
+// an agent named config.DefaultAgentName), the config's global server set.
+// The tier split must consult the same selection that granted authority,
+// otherwise the root identity's global MCP tools are deferred behind
+// load_tools even though they are advertised and authorized.
+func identityMCPServerScope(selected *agents.ResolvedAgent, res *config.Resolved) []string {
+	if selected != nil {
+		return selected.EffectiveMCPServers
+	}
+	if res == nil {
+		return nil
+	}
+	return res.MCP.GlobalServerIDs()
 }
 
 // authorizedNamesInRegistryOrder lists the names the selected agent may invoke,

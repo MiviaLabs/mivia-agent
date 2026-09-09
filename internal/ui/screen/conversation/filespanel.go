@@ -194,6 +194,25 @@ type panel struct {
 	open    bool
 	focused bool
 	dialog  bool
+
+	// Per-section fold state. During a long run the files and subagents
+	// lists grow without bound and push each other off the pane; folding
+	// one is how a reader keeps the other in view. The context section
+	// folds to its header for the same reason.
+	contextCollapsed bool
+	filesCollapsed   bool
+	agentsCollapsed  bool
+
+	// selKey names the row the cursor was last MOVED to, captured at the
+	// moment of the move.
+	//
+	// A rebind cannot work this out for itself. Live mutations append
+	// rows and then rebind, so by the time the rebind runs the cursor
+	// index already points into a list that changed underneath it: a file
+	// arriving above the subagents header made the header's index name a
+	// file instead, and the "restore" faithfully restored the wrong row.
+	// Capturing at the move is the only point where index and model agree.
+	selKey string
 }
 
 // newPanel builds the panel's zero state; entries arrive live from
@@ -226,16 +245,40 @@ func (p *panel) appendLive(d uievent.Diff) {
 	p.rebindIfOpen()
 }
 
-// rowLabels is the selectable list in render order: files, then
-// subagents. The picker's cursor indexes this list; panelRows draws the
-// same order, so the marked row is always the row the next key acts on.
+// modelRowLabel is the picker label of the sidebar's first row: the
+// session's model. Enter or a double-click on it opens the model picker
+// (the same dialog "/model" opens); the row is drawn from the top bar's
+// session info, so this label is only the list's stable name for it.
+const (
+	modelRowLabel     = "model"
+	contextRowLabel   = "context"
+	filesHeaderLabel  = "files changed"
+	agentsHeaderLabel = "subagents"
+)
+
+// rowLabels is the selectable list in render order, derived from the one
+// row plan navGroups builds. Deriving it means the picker's list and the
+// drawn rows cannot disagree about what is selectable or in what order -
+// they used to be two hand-kept sequences.
 func (p panel) rowLabels() []string {
-	names := make([]string, 0, len(p.entries)+len(p.agents))
-	for _, e := range p.entries {
-		names = append(names, e.rowLabel())
-	}
-	for _, a := range p.agents {
-		names = append(names, a.rowLabel())
+	files, agents := p.visibleRows()
+	sel := p.navSelectable()
+	names := make([]string, 0, len(sel))
+	for _, g := range sel {
+		switch g.kind {
+		case navContextHeader:
+			names = append(names, contextRowLabel)
+		case navModel:
+			names = append(names, modelRowLabel)
+		case navFilesHeader:
+			names = append(names, filesHeaderLabel)
+		case navFile:
+			names = append(names, files[g.at].rowLabel())
+		case navAgentsHeader:
+			names = append(names, agentsHeaderLabel)
+		case navAgent:
+			names = append(names, agents[g.at].rowLabel())
+		}
 	}
 	return names
 }
@@ -251,325 +294,103 @@ func (p panel) visibleRows() ([]fileEntry, []subagentRow) {
 }
 
 // selectionKey names the selected row by what it IS (a file's path, a
-// subagent's id) rather than by its render label, which changes as
-// statuses tick - so a rebind can hold the same row across a label
-// change.
+// subagent's id, a section) rather than by its render label, which
+// changes as statuses tick - so a rebind can hold the same row across a
+// label change.
 func (p panel) selectionKey() string {
-	entries, agents := p.visibleRows()
-	idx := p.list.CursorRow()
-	if idx < 0 {
+	files, agents := p.visibleRows()
+	g, ok := p.navCursor()
+	if !ok {
 		return ""
 	}
-	if idx < len(entries) {
-		return "f:" + entries[idx].Path
-	}
-	idx -= len(entries)
-	if idx >= 0 && idx < len(agents) {
-		return "a:" + agents[idx].ID
-	}
-	return ""
+	return navKeyOf(g, files, agents)
 }
+
+// modelRowSelected reports whether the list highlights the model row.
+func (p panel) modelRowSelected() bool {
+	g, ok := p.navCursor()
+	return ok && g.kind == navModel
+}
+
+// sectionHeaderSelected reports whether the list highlights a foldable
+// section header, which is what left/right and Enter act on.
+func (p panel) sectionHeaderSelected() bool {
+	g, ok := p.navCursor()
+	return ok && g.collapsible()
+}
+
+// noteSelection records what the cursor is on, for the next rebind.
+// Every deliberate cursor move calls it; live mutations must not.
+func (p *panel) noteSelection() { p.selKey = p.selectionKey() }
 
 func (p *panel) rebindIfOpen() {
 	if !p.open {
 		return
 	}
-	keep := p.selectionKey()
+	keep := p.selKey
+	if keep == "" {
+		keep = p.selectionKey()
+	}
 	p.list.Rebind(p.rowLabels())
 	if keep == "" || p.list.Filter() != "" {
 		// A filter may exclude the held row; Rebind has already clamped
 		// the cursor to the filtered list, which is the best hold
 		// available.
+		p.noteSelection()
 		return
 	}
-	for i, e := range p.entries {
-		if keep == "f:"+e.Path {
+	// Re-find the held row through the same plan the list was built from
+	// and the same naming selectionKey used to capture it, so a held
+	// selection survives a fold, an unfold, and a row arriving above it.
+	files, agents := p.visibleRows()
+	for i, g := range p.navSelectable() {
+		if navKeyOf(g, files, agents) == keep {
 			p.list.MoveTo(i)
+			p.selKey = keep
 			return
 		}
 	}
-	for i, a := range p.agents {
-		if keep == "a:"+a.ID {
-			p.list.MoveTo(len(p.entries) + i)
-			return
-		}
-	}
+	// The held row is gone (a file dropped, an agent cleared). Whatever
+	// the clamp left under the cursor is the new selection.
+	p.noteSelection()
 }
 
-// selectedAgent returns the subagent the list highlights, if any: the
-// cursor walks files and subagents alike.
+// selectedAgent returns the subagent the list highlights, if any.
 func (p panel) selectedAgent() (subagentRow, bool) {
-	entries, agents := p.visibleRows()
-	idx := p.list.CursorRow() - len(entries)
-	if idx < 0 || idx >= len(agents) {
+	_, agents := p.visibleRows()
+	g, ok := p.navCursor()
+	if !ok || g.kind != navAgent || g.at < 0 || g.at >= len(agents) {
 		return subagentRow{}, false
 	}
-	return agents[idx], true
+	return agents[g.at], true
 }
 
-func matchesAgentID(aID, id string) bool {
-	if aID == id {
-		return true
-	}
-	if aID == "" || id == "" {
-		return false
-	}
-	if idx := strings.Index(aID, ":"); idx >= 0 {
-		if aID[idx+1:] == id {
-			return true
-		}
-	}
-	if idx := strings.Index(id, ":"); idx >= 0 {
-		if id[idx+1:] == aID {
-			return true
-		}
-	}
-	return false
-}
-
-// observeAgentStart records or updates one subagent's running status. A
-// start means a NEW task under an old id - not history. Leaving it
-// terminal would badge a genuinely running dispatch as already finished.
-// Start events carry no group/call identity that could distinguish a
-// genuinely out-of-order start arriving after its own dispatch's end;
-// resetting is the lesser evil - worst case a finished row briefly shows
-// running until its end event re-terminates it.
-func (p *panel) observeAgentStart(id, name string) {
-	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			if name != "" {
-				p.agents[i].Name = name
-			}
-			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
-				p.agents[i].Status = "running"
-				// A (re)created row is a NEW run under a reused id: anchor
-				// its stall clock and its elapsed-time clock now, so the
-				// fresh row never renders instantly "stalled", nor reports
-				// the elapsed time of the run that already ended.
-				now := time.Now()
-				p.agents[i].LastProgress = now
-				p.agents[i].StartedAt = now
-			}
-			p.rebindIfOpen()
-			return
-		}
-	}
-	now := time.Now()
-	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: "running", LastProgress: now, StartedAt: now})
-	p.rebindIfOpen()
-}
-
-// observeAgentEnd updates a tracked subagent's terminal state upon completion or failure.
-func (p *panel) observeAgentEnd(id string, ok bool) {
-	status := "completed"
-	if !ok {
-		status = "failed"
-	}
-	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			p.agents[i].Status = status
-			p.agents[i].LastProgress = time.Now()
-			p.rebindIfOpen()
-			return
-		}
-	}
-}
-
-// observeAgentGroupStart registers a dispatch_tasks call's fanned-out
-// per-task ids as one running row each - instead of observeAgentStart's
-// single row for the whole call - and remembers the group under callID so
-// observeAgentGroupEnd can resolve every member's terminal status when the
-// outer call completes.
-func (p *panel) observeAgentGroupStart(callID string, ids []string, names map[string]string) {
-	if p.dispatchGroups == nil {
-		p.dispatchGroups = map[string][]string{}
-	}
-	p.dispatchGroups[callID] = ids
-	for _, id := range ids {
-		name := ""
-		if names != nil {
-			name = names[id]
-			if name == "" {
-				prefix := callID + ":"
-				rawID := strings.TrimPrefix(id, prefix)
-				name = names[rawID]
-			}
-		}
-		p.observeAgentStart(id, name)
-	}
-}
-
-// observeAgentGroupEnd resolves a dispatch_tasks group's per-task terminal
-// status from statuses (task id -> status, parsed from the tool's own JSON
-// result), falling back to ok for any member statuses does not cover. A
-// no-op when callID names no tracked group (the ordinary single-row path
-// handles it instead).
-func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, ok bool) {
-	ids, found := p.dispatchGroups[callID]
-	if !found {
-		return
-	}
-	delete(p.dispatchGroups, callID)
-	prefix := callID + ":"
-	for _, id := range ids {
-		rawID := strings.TrimPrefix(id, prefix)
-		status := statuses[id]
-		if status == "" {
-			status = statuses[rawID]
-		}
-		if status != "" {
-			p.setAgentStatus(id, status)
-			continue
-		}
-		p.observeAgentEnd(id, ok)
-	}
-}
-
-// setAgentStatus overwrites one tracked subagent's status verbatim - unlike
-// observeAgentEnd, which only ever writes "completed" or "failed".
-func (p *panel) setAgentStatus(id, status string) {
-	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			p.agents[i].Status = status
-			p.agents[i].LastProgress = time.Now()
-			p.rebindIfOpen()
-			return
-		}
-	}
-}
-
-// isDispatchGroup reports whether callID names a tracked dispatch_tasks
-// group, so the caller can choose the group-aware end path over the
-// ordinary single-row one.
-func (p panel) isDispatchGroup(callID string) bool {
-	_, found := p.dispatchGroups[callID]
-	return found
-}
-
-// reconcileTerminal transitions all non-terminal subagents to a terminal state
-// when a turn ends without explicit tool end events (cancellation, error, interrupt).
-func (p *panel) reconcileTerminal(reason string) {
-	status := statusCancelled
-	switch reason {
-	case "error", "failed":
-		status = statusFailed
-	case "interrupted":
-		status = statusInterrupted
-	case "completed":
-		status = statusCompleted
-	}
-	p.agents = slices.Clone(p.agents)
-	changed := false
-	for i, a := range p.agents {
-		if isNonTerminalStatus(a.Status) {
-			p.agents[i].Status = status
-			p.agents[i].LastProgress = time.Now()
-			changed = true
-		}
-	}
-	if changed {
-		p.rebindIfOpen()
-	}
-}
-
-// observeAgentHistory idempotently registers or updates a subagent from replayed history.
-func (p *panel) observeAgentHistory(id, status string) {
-	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			if isNonTerminalStatus(a.Status) {
-				p.agents[i].Status = status
-			}
-			p.rebindIfOpen()
-			return
-		}
-	}
-	p.agents = append(p.agents, subagentRow{ID: id, Status: status})
-	p.rebindIfOpen()
-}
-
-// activeAgentCount returns the count of currently running/pending subagents.
-func (p panel) activeAgentCount() int {
-	count := 0
-	for _, a := range p.agents {
-		if isNonTerminalStatus(a.Status) {
-			count++
-		}
-	}
-	return count
-}
-
-// observeAgent records progress for a subagent. It preserves the subagent's
-// starting state and name, updates steps/toolcalls, and advances the stall clock
-// only when real forward progress occurs.
-func (p *panel) observeAgent(id string, pr *uievent.Progress) {
-	log := slices.Clone(pr.Log)
-	p.agents = slices.Clone(p.agents)
-	for i, a := range p.agents {
-		if matchesAgentID(a.ID, id) {
-			if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
-				return
-			}
-			row := a
-			if pr.Status != "" {
-				row.Status = pr.Status
-			}
-			if pr.Step > 0 {
-				row.Step = pr.Step
-			}
-			if pr.TotalSteps > 0 {
-				row.Total = pr.TotalSteps
-			}
-			if pr.ToolCalls > 0 {
-				row.ToolCalls = pr.ToolCalls
-			}
-			if len(log) > 0 {
-				combinedLog := make([]string, 0, len(a.Log)+len(log))
-				combinedLog = append(combinedLog, a.Log...)
-				combinedLog = append(combinedLog, log...)
-				row.Log = combinedLog
-			}
-			if progressAdvances(a, row) {
-				row.LastProgress = time.Now()
-			}
-			p.agents[i] = row
-			p.rebindIfOpen()
-			return
-		}
-	}
-	now := time.Now()
-	row := subagentRow{
-		ID:           id,
-		Status:       pr.Status,
-		Step:         pr.Step,
-		Total:        pr.TotalSteps,
-		ToolCalls:    pr.ToolCalls,
-		Log:          log,
-		LastProgress: now,
-		StartedAt:    now,
-	}
-	p.agents = append(p.agents, row)
-	p.rebindIfOpen()
-}
-
-// openPanel shows the panel with focus in its list, refreshing the list
-// over everything observed while it was closed.
+// the model row: opening the sidebar is how the model is changed.
 func (p *panel) openPanel() {
 	p.open, p.focused, p.dialog, p.dialogAgent = true, true, false, ""
 	p.rebindIfOpen()
+	p.list.Rebind(p.rowLabels())
+	// The model row, not index 0: the context header now sits above it,
+	// and opening the sidebar is still how the model gets changed.
+	// navGroups always emits exactly one selectable navModel, so this
+	// loop always finds it; there is no fallback arm to keep alive.
+	for i, g := range p.navSelectable() {
+		if g.kind == navModel {
+			p.list.MoveTo(i)
+			p.noteSelection()
+			return
+		}
+	}
 }
 
-// selected returns the entry the list highlights.
+// selected returns the file entry the list highlights.
 func (p panel) selected() (fileEntry, bool) {
 	entries, _ := p.visibleRows()
-	idx := p.list.CursorRow()
-	if idx < 0 || idx >= len(entries) {
+	g, ok := p.navCursor()
+	if !ok || g.kind != navFile || g.at < 0 || g.at >= len(entries) {
 		return fileEntry{}, false
 	}
-	return entries[idx], true
+	return entries[g.at], true
 }
 
 // contentRows is the selected file's content: its diff, or its
@@ -683,31 +504,35 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 	return s.panel.filterEntries(needle)
 }
 
-// selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
-// It accounts for sidebar windowing (maxRows) and individual group heights (1 line per file,
-// 2 lines per subagent row).
-func (p *panel) selectNavRow(clickRow, maxRows int) bool {
+// selectNavRow maps a rendered row in the nav sidebar to the picker row
+// drawn there, and moves the cursor to it. It reports false when the row
+// belongs to no selectable group, so the caller can ignore the click.
+//
+// The map comes from the same navGroups plan and the same window bounds
+// the renderer uses, so a click cannot land on a row other than the one
+// under the pointer. contextRows is passed in rather than derived here
+// because only the Screen knows how tall the context section draws.
+func (p *panel) selectNavRow(clickRow, maxRows, contextRows int) bool {
 	if clickRow < 0 {
 		return false
 	}
-	visible, agents := p.visibleRows()
-	groupLens := panelGroupLens(len(visible), len(agents))
-	selIdx := p.list.CursorRow()
-	selGroup := panelSelGroup(selIdx, len(visible), len(agents))
-	startGroup, endGroup := panelWindowGroupBounds(groupLens, selGroup, maxRows, false)
+	plan := p.navGroups(contextRows)
+	selGroup := navSelGroup(plan, p.list.CursorRow())
+	startGroup, endGroup := panelWindowGroupBounds(navGroupLens(plan), selGroup, maxRows, false)
 
-	curLine := 0
+	line := 0
 	for gIdx := startGroup; gIdx < endGroup; gIdx++ {
-		gLen := groupLens[gIdx]
-		if clickRow >= curLine && clickRow < curLine+gLen {
-			pickerIdx := panelGroupToPickerIdx(gIdx, len(visible), len(agents))
-			if pickerIdx >= 0 {
-				p.list.MoveTo(pickerIdx)
-				return true
+		g := plan[gIdx]
+		if clickRow >= line && clickRow < line+g.lines {
+			pickerIdx := navPickerIndex(plan, gIdx)
+			if pickerIdx < 0 {
+				return false
 			}
-			return false
+			p.list.MoveTo(pickerIdx)
+			p.noteSelection()
+			return true
 		}
-		curLine += gLen
+		line += g.lines
 	}
 	return false
 }
@@ -728,9 +553,12 @@ func (p panel) filterEntries(needle string) ([]fileEntry, []subagentRow) {
 	return visible, agents
 }
 
-// openPanelDialogForSelected opens the diff dialog or subagent thread for the selected item.
+// openPanelDialogForSelected opens the diff dialog or subagent thread for
+// the selected item. The model row has no content dialog: Enter and a
+// double-click on it open the model picker instead (see handlePanelListKey
+// and handleNavClick).
 func (s *Screen) openPanelDialogForSelected() tea.Cmd {
-	if !s.panelDialogFits() {
+	if s.panel.modelRowSelected() || !s.panelDialogFits() {
 		return nil
 	}
 	var cmd tea.Cmd
@@ -746,9 +574,14 @@ func (s *Screen) openPanelDialogForSelected() tea.Cmd {
 
 // handleNavClick routes mouse clicks within the nav sidebar. Callers pass
 // the screen row minus the top gutter (mouse.go's handleClick and
-// handleModalClick): 0 is the pane's top padding row, 1 is SIDEBAR, 2 is
-// the files header, 3 and up are content rows - the same row numbers the
-// rendered View uses below the frame.
+// handleModalClick): 0 is the pane's top padding row and the sidebar's own
+// rows follow, the same row numbers the rendered View uses below the frame.
+// The rows are not enumerated here because the context section's height
+// varies with the body (contextSectionRows); selectNavRow derives the map
+// from the same function the renderer uses, so the two cannot drift. A click
+// on a file or subagent row opens its dialog; a click on the model row
+// selects it, and a second click within the double-click window opens
+// the model picker, as Enter does.
 func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	// clickRow 0 is top padding row; content starts at clickRow 1
 	clickRow--
@@ -758,9 +591,29 @@ func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	s.panel.focused = true
 	paneH := max(1, s.contentHeight())
 	innerNavH := max(1, paneH-2)
-	if s.panel.selectNavRow(clickRow, innerNavH) {
-		cmd := s.openPanelDialogForSelected()
-		return *s, cmd
+	if !s.panel.selectNavRow(clickRow, innerNavH, s.contextSectionRows(innerNavH)) {
+		return *s, nil
 	}
-	return *s, nil
+	// A click on a section header folds or unfolds it: the header draws
+	// the marker, so it is the affordance, and a marker the mouse cannot
+	// work is a control that lies about being one.
+	if s.panel.sectionHeaderSelected() {
+		s.panel.toggleSection()
+		return *s, nil
+	}
+	if s.panel.modelRowSelected() {
+		now := time.Now()
+		if s.now != nil {
+			now = s.now()
+		}
+		double := !s.lastNavClickTime.IsZero() && now.Sub(s.lastNavClickTime) < 500*time.Millisecond && s.lastNavClickRow == clickRow
+		s.lastNavClickTime, s.lastNavClickRow = now, clickRow
+		if double {
+			s.lastNavClickTime = time.Time{}
+			return s.runSlashCommand("/model")
+		}
+		return *s, nil
+	}
+	cmd := s.openPanelDialogForSelected()
+	return *s, cmd
 }

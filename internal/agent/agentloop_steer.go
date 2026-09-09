@@ -20,36 +20,26 @@ import (
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
-// bridgeSteerSignals wires the CLI's interrupt signals onto one Steer
-// handle. Each non-nil signal spawns one goroutine; all exit when
-// runDone closes (i.e. RunSteerable returns) OR ctx is canceled,
-// whichever comes first, so a long-lived caller ctx leaks no pollers.
+// bridgeSteerSignals wires CLI interrupt signals onto one Steer handle.
+// Each non-nil signal spawns one goroutine; all exit when runDone closes
+// (RunSteerable returns) or ctx cancels, so a long-lived ctx leaks no pollers.
 //
-// The three signal sources model the CLI's three cancellation layers:
-//   - InterruptCh resolves once per fire and, when MailboxPendingInterrupt
-//     is also set, fires Trigger ONLY when an Interrupt-flagged steer
-//     is queued. When MailboxPendingInterrupt is nil, InterruptCh fires
-//     Trigger unconditionally - a bare InterruptCh with no mailbox gate
-//     is an explicit interrupt (the legacy "fire on close" semantics).
-//   - MailboxPendingInterrupt is the strict signal-branch poller:
-//     the predicate reports whether an Interrupt-flagged steer is
-//     queued. Trigger fires the moment it returns true.
-//   - MailboxPending is the loose watchdog poller (gated on
-//     WatchdogInterval > 0): the predicate reports whether ANY message
-//     is waiting, so a stale signal after a drain can never cancel a call.
+// Signal sources:
+//   - InterruptCh: when MailboxPendingInterrupt is set, fires Trigger only
+//     when an Interrupt-flagged steer is queued; otherwise fires Trigger
+//     unconditionally (explicit interrupt).
+//   - MailboxPendingInterrupt: strict poller; fires Trigger when an
+//     Interrupt-flagged steer is queued.
+//   - MailboxPending: watchdog poller (WatchdogInterval > 0); fires Trigger
+//     when any message is waiting.
 //
-// All three sites share one SoftInterruptCooldown gate. A positive
-// cooldown caps Trigger fires to one per window; a zero cooldown
-// disables the gate, mirroring the legacy steerCooldownOK semantics.
-// The shared cooldownUntil is intra-RunAgentLoopOnce only (a local
-// atomic.Int64 here), so the gate does not span multiple SDK turns;
-// the legacy's cross-call gate (Loop.softInterruptAt) is not portable
-// to the SDK's per-RunSteerable Steer value and is recorded as an
-// accepted semantic gap.
+// All sources share one SoftInterruptCooldown gate. A positive cooldown caps
+// Trigger fires to one per window; zero disables the gate. The shared
+// cooldownUntil is intra-RunAgentLoopOnce (local atomic.Int64) and does not
+// span multiple SDK turns (accepted semantic gap).
 //
-// wg.Add(1) runs before each spawn and every goroutine defers
-// wg.Done(); the caller waits on wg after closing runDone, so no
-// goroutine from this call can outlive it - see the wg param doc.
+// Goroutines call wg.Add(1) before spawn and defer wg.Done(). The caller
+// waits on wg after closing runDone so no goroutine outlives the call.
 func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Options, steer *sdkagentloop.Steer,
 	// wg lets the caller confirm every spawned goroutine has fully
 	// exited (not just been signaled to). Required across a

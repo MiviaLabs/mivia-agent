@@ -7,11 +7,14 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -93,18 +96,111 @@ func buildWorkflowToolOpts(root string, fullDisk bool, res *config.Resolved) (*t
 	return opts, nil
 }
 
+// BuildToolsForRoot builds the production tool registry for ONE root,
+// without touching any session: workspace + workflow tools wire against
+// rootWorkspace, the project memory store opens at rootMemory. Callers
+// that split roots pass worktree dir / main repo root respectively; the
+// chat REPL passes the same root twice. The returned closer releases the
+// memory store (nil-safe when memory wiring produced no store). The
+// builder never mutates a session - installing registry and prefix
+// identity stays with the caller. ConfigureChatWorkspace runs the same
+// wiring through buildToolsForRootWired and then performs the installs.
+//
+// BuildToolsForRootHookForTest redirects registry construction in tests
+// (race-window replay, failure injection). Production leaves it nil.
+var BuildToolsForRootHookForTest func(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved) (*tools.Registry, func(), error)
+
+// SessionRootWiring is the session-scoped half of a per-root registry build.
+// Bus and SessionRepo belong to the SESSION, not to the root, so every root a
+// session can run a workflow from needs them - the launch checkout and each
+// worktree the pool rebuilds. LoadWorkspaceConfig is the operator's [agents]
+// gate, which decides whether the ROOT's own committed policy is honored.
+// Passing them as one value keeps the build sites from drifting apart field
+// by field, which is how the worktree build came to pass nil for everything.
+type SessionRootWiring struct {
+	Bus         func() *events.Bus
+	SessionRepo ledger.LedgerRepository
+	// LoadWorkspaceConfig mirrors config.AgentsGlobal.LoadWorkspaceConfig:
+	// when false the operator has refused workspace-provided values, so a
+	// root's own config is ignored and the launch policy stands.
+	LoadWorkspaceConfig bool
+}
+
+// buildToolsForRootWired is the ONE wiring path both public entry points
+// share: workflow options for rootWorkspace, workflow-var wiring, session
+// memory at rootMemory, then registry composition. Keeping a single body
+// stops the two callers drifting field by field (they did once).
+// composition.BuildRegistry cannot fail today (see its doc comment).
+func buildToolsForRootWired(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, busProvider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) (*tools.Registry, *tools.DefaultOptions, func(), error) {
+	noClose := func() {}
+	opts, err := buildWorkflowToolOpts(rootWorkspace, fullDisk, res)
+	if err != nil {
+		return nil, nil, noClose, err
+	}
+	WireWorkflowToolOptionsVar(opts, opts.Workspace.Abs, res, busProvider, runSweep, quiet, sessionRepo)
+	if err := WireSessionMemory(opts, rootMemory, res); err != nil {
+		return nil, nil, noClose, err
+	}
+	registry, _ := composition.BuildRegistry(registryInputFromDefaultOptions(opts))
+	closeFn := func() {
+		if opts.Memory != nil {
+			_ = opts.Memory.Close()
+		}
+	}
+	return registry, opts, closeFn, nil
+}
+
+// busProvider and sweep stay launch-side on purpose: parked-run recovery
+// belongs to the process's own workspace, not to every worktree root a
+// pool rebuilds for.
+func BuildToolsForRoot(rootWorkspace, rootMemory string, fullDisk bool, res *config.Resolved, wiring SessionRootWiring) (*tools.Registry, func(), error) {
+	// runSweep is false here and only here: parked-run recovery is the
+	// launch workspace's job (see the comment above). Progress publishing
+	// and child-run ownership are the SESSION's and travel with it to every
+	// root it can run a workflow from.
+	// This root's OWN committed [tools] policy governs the tools that run in
+	// it. The pool reused the launch checkout's policy for every root, so a
+	// worktree on a branch that tightened (or loosened) its limits,
+	// allowlists or secret-path patterns still ran under the launch rules.
+	// Gated on the operator's workspace-config switch, exactly like every
+	// other workspace-provided value.
+	rooted, err := resolvedForRoot(rootWorkspace, res, wiring.LoadWorkspaceConfig)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	registry, _, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, rooted, wiring.Bus, false, true, wiring.SessionRepo)
+	return registry, closeFn, err
+}
+
+// resolvedForRoot returns res with the tools policy root itself declares,
+// when root carries its own workspace config and the operator's gate allows
+// it. The copy is shallow and touches ONLY Tools: provider, model, approvals
+// and every other session-level choice stay the operator's, since they belong
+// to the session rather than to a checkout.
+func resolvedForRoot(root string, res *config.Resolved, allowWorkspaceConfig bool) (*config.Resolved, error) {
+	if res == nil || !allowWorkspaceConfig {
+		return res, nil
+	}
+	tc, found, err := config.WorkspaceToolsConfig(root)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return res, nil
+	}
+	rooted := *res
+	rooted.Tools = tc
+	return &rooted, nil
+}
+
 func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *AgentSessionState, quiet bool, fullDisk bool, runRecoverySweep bool) (func(), error) {
 	if !useTools {
 		return func() {}, nil
 	}
-	opts, err := buildWorkflowToolOpts(root, fullDisk, res)
-	if err != nil {
-		return func() {}, err
-	}
-	var busProvider func() *events.Bus
-	if runRecoverySweep {
-		busProvider = func() *events.Bus { return sess.EventBus }
-	}
+	// The bus is wired whenever the session has one, so a workflow started
+	// here publishes progress; the recovery SWEEP is gated separately on
+	// runRecoverySweep, which only a genuine interactive launch sets.
+	busProvider := func() *events.Bus { return sess.EventBus }
 	// The session's ledger repo is the same value NewSessionDispatcher will
 	// receive, so the workflow engine stamps exactly the instance the
 	// session's orchestration tools carry. Nil (state without an adopted
@@ -113,23 +209,23 @@ func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	if state != nil {
 		sessionRepo = state.LedgerRepo
 	}
-	WireWorkflowToolOptionsVar(opts, opts.Workspace.Abs, res, busProvider, quiet, sessionRepo)
-	if err := WireSessionMemory(opts, root, res); err != nil {
+	registry, opts, closeFn, err := buildToolsForRootWired(root, root, fullDisk, res, busProvider, runRecoverySweep, quiet, sessionRepo)
+	if err != nil {
 		return func() {}, err
 	}
 	stashMemoryOnState(state, opts.Memory, res)
-	// composition.BuildRegistry cannot fail today (see its doc comment); the
-	// error return is discarded here rather than propagated through a new,
-	// untestable branch, matching the pre-move tools.NewDefaultRegistry call
-	// this replaces, which had no error return at all.
-	registry, _ := composition.BuildRegistry(registryInputFromDefaultOptions(opts))
+	// Seed the authoritative posture from the launch value BEFORE
+	// registering the re-arm, so SetFullDiskReArm's immediate sync call
+	// re-applies the same value this root was just opened with instead of
+	// stomping a "born unrestricted" root back to false. State is nil for
+	// some test harnesses; persistence-only then.
+	if state != nil {
+		state.seedFullDisk(fullDisk)
+		state.SetFullDiskReArm(opts.Workspace.SetUnrestricted)
+	}
 	sess.Tools = registry
 	sess.RefreshPrefixIdentity()
-	return func() {
-		if opts.Memory != nil {
-			_ = opts.Memory.Close()
-		}
-	}, nil
+	return closeFn, nil
 }
 
 // registryInputFromDefaultOptions copies opts field by field into a
@@ -190,4 +286,38 @@ func LogDiagnosticsCommandsOnce(w io.Writer, tc config.ToolsConfig, quiet bool) 
 		parts = append(parts, fmt.Sprintf("%s=[%s]", name, strings.Join(tc.DiagnosticsCommands[name], " ")))
 	}
 	fmt.Fprintf(w, "diagnostics: configured commands: %s\n", strings.Join(parts, ", "))
+}
+
+// CreateManagedWorktreeForPool creates a managed worktree in the given
+// store. Bridge for the TUI pool's worktree-session creation path —
+// uiadapter cannot import internal/cliworktree directly (UI isolation).
+func CreateManagedWorktreeForPool(store *storage.SQLite, root, name string) error {
+	return CreateManagedWorktreeForPoolFromRef(store, root, name, "")
+}
+
+// CreateManagedWorktreeForPoolFromRef creates a managed worktree in the given
+// store from baseRef. An empty ref preserves the existing default behavior.
+// This bridge keeps uiadapter independent from internal/cliworktree.
+func CreateManagedWorktreeForPoolFromRef(store *storage.SQLite, root, name, baseRef string) error {
+	_, err := cliworktree.CreateManagedWorktreeInStore(store, root, name, baseRef, config.DefaultWorktreeBranchPrefix)
+	return err
+}
+
+// VerifyWorktreeMarker confirms the on-disk marker under root names
+// exactly the live instance a session just bound. The DB row alone cannot
+// see a worktree removed and recreated out-of-band at the same path with
+// the state still active; the marker is the physical identity the REPL's
+// repository binding already checks (bindManagedWorktreeSessionExpected).
+// Bridge for the TUI bind path - uiadapter cannot import
+// internal/cliworktree directly (UI isolation).
+func VerifyWorktreeMarker(root string, want contextstate.WorktreeInstance) error {
+	got, err := cliworktree.ReadWorktreeMarker(root)
+	if err != nil {
+		return fmt.Errorf("worktree %q marker: %w", want.Worktree, err)
+	}
+	if got != want {
+		return fmt.Errorf("worktree %q marker names instance %s, binding expects %s - the directory was replaced out-of-band",
+			want.Worktree, got.ID, want.ID)
+	}
+	return nil
 }

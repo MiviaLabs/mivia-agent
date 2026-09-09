@@ -5,7 +5,8 @@ import "context"
 // CommandOutcome is what a slash command asks the UI to do next. The
 // screen checks the fields in a fixed priority order (see
 // internal/ui/screen/conversation/commands.go): Err first, then Quit,
-// then the open-a-modal fields, then ClearTranscript, then
+// then the open-a-modal fields (OpenTheme, OpenSettings, OpenHelp,
+// OpenQueue, LoginPrompt), then ClearTranscript, then
 // ModelChoiceGroups, then AgentChoices, then SessionChoices, then
 // Notice. Only one field is normally set per outcome.
 type CommandOutcome struct {
@@ -33,6 +34,12 @@ type CommandOutcome struct {
 
 	// OpenQueue asks the UI to open the queue manager overlay.
 	OpenQueue bool
+
+	// LoginPrompt asks the UI to open the login dialog (email plus a
+	// masked password field). LoginEmail, when non-empty, prefills the
+	// email field.
+	LoginPrompt bool
+	LoginEmail  string
 
 	// ClearTranscript asks the UI to empty the transcript view.
 	ClearTranscript bool
@@ -128,6 +135,34 @@ type CommandRunner interface {
 	// picker: switch/resume the selected session and report the outcome.
 	SelectSession(ctx context.Context, id string) CommandOutcome
 
+	// SetActiveSessionID tells the runner which pooled session is now the
+	// foreground session, so a per-session command issued next (SelectModel,
+	// SelectAgent, SelectEffort, ...) acts on the session actually on
+	// screen. A Screen with several open tabs calls SelectSession only the
+	// first time it visits a tab; every later focus change - including
+	// keyboard/mouse tab-cycling among already-open tabs - must still call
+	// this, or the runner keeps acting on whichever session it last touched
+	// even after the screen has moved on. A no-op for an id the runner has
+	// no live session for.
+	SetActiveSessionID(id string)
+
+	// StartInWorktree starts a brand-new chat session inside the worktree
+	// a route pseudo-row stands for: summary.Worktree and
+	// summary.WorktreeDir name the target, and no transcript exists yet.
+	// The outcome installs the new Conversation like SelectSession does.
+	StartInWorktree(ctx context.Context, summary SessionSummary) CommandOutcome
+
+	// StartInNewWorktree creates a worktree (auto-named when name is empty)
+	// and starts a new chat session bound to it. Duplicate errors surface
+	// as Err; the user presses the shortcut again.
+	StartInNewWorktree(ctx context.Context, name string) CommandOutcome
+
+	// ResumeInWorktree resumes an existing worktree-bound session,
+	// re-applying its worktree binding before the chat surface renders so
+	// later turns land in that worktree. A summary without worktree
+	// metadata behaves exactly like SelectSession(summary.ID).
+	ResumeInWorktree(ctx context.Context, summary SessionSummary) CommandOutcome
+
 	// SelectEffort applies a reasoning effort choice returned by an EffortChoices
 	// picker and reports a CommandOutcome, typically a confirmation Notice.
 	SelectEffort(ctx context.Context, level string) CommandOutcome
@@ -137,6 +172,13 @@ type CommandRunner interface {
 	// DB access) the open /resume picker polls to keep its status dots
 	// live without re-fetching the session list.
 	SessionActive(id string) bool
+
+	// CompleteLogin submits the credentials typed into the login dialog
+	// (opened by a LoginPrompt outcome) and reports the result, typically
+	// a confirmation Notice or an Err. password is a []byte, not a
+	// string, so the runner can zero it once the login request is sent
+	// (see miviaauth.Service.Login, which takes the same shape).
+	CompleteLogin(ctx context.Context, email string, password []byte) CommandOutcome
 }
 
 // DefaultAgentName is the session's compiled root agent:

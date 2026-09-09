@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -368,5 +369,337 @@ func assertPersistedProjectTOML(t *testing.T, path string) {
 	}
 	if raw.Subagents.StorePath != ".mivia/custom_store.db" || raw.Harness.Sandbox || !raw.Privacy.RedactToolArgs {
 		t.Errorf("TOML flags mismatch: %+v", raw)
+	}
+}
+
+// TestSettingsStore_ApplySync_IncludeThinking_ToggleOff_RoundTrip drives
+// the [sync] include_thinking key through the real SettingsStore end to
+// end: the in-memory view updates, the file on disk materialises
+// `include_thinking = false`, and a reloaded config (parsed via the
+// resolver the real file goes through) reports IncludeThinking == false.
+// The test deliberately uses the same hand-parsed resolver path that
+// internal/config/sync_enabled_toml_test.go uses for the same absent-vs-
+// false contract, rather than the heavier config.Load: the lighter path is
+// the one whose behaviour the [sync] key actually depends on, and the
+// heavier path drags in provider resolution that has no business in a
+// sync-only assertion.
+// syncConfigFromMap projects a decoded [sync] TOML map into the SyncConfig
+// the production resolver consumes. Used by the integration tests to
+// confirm a written file's contents round-trip through the same resolver
+// path config.Load eventually invokes, without dragging in the full
+// config pipeline (provider resolution, MCP, etc.) that has no business
+// in a sync-only assertion.
+//
+// Lives here (test-only) rather than in the production config package
+// because no production caller needs this projection - production code
+// always has a SyncConfig in hand by the time it cares.
+func syncConfigFromMap(m map[string]any) config.SyncConfig {
+	get := func(key string) *bool {
+		v, ok := m[key]
+		if !ok {
+			return nil
+		}
+		b, ok := v.(bool)
+		if !ok {
+			return nil
+		}
+		return &b
+	}
+	return config.SyncConfig{
+		IncludeThinking: get("include_thinking"),
+		IncludeToolIO:   get("include_tool_io"),
+		StreamAssistant: get("stream_assistant"),
+	}
+}
+
+// TestSettingsStore_ApplySync_FiresLiveReArmNotifier pins the
+// end-to-end live re-arm: the settings store, on a successful
+// SetSync* persist, fires the syncOptsNotifier so the session pool can
+// re-arm every attached SyncSession without a restart. The test wires
+// a recording notifier into the store (mirroring how newtui/run.go
+// wires the real one) and asserts the captured arguments match the
+// post-toggle view values.
+//
+// Synchronization: applyGeneral fires the notifier in a separate
+// goroutine to keep the SaveHandle loop responsive. The test signals
+// the notifier fire via a buffered channel so the assertion only
+// runs after the closure has run, avoiding the data race a naive
+// shared-variable read would trigger under `-race`.
+func TestSettingsStore_ApplySync_FiresLiveReArmNotifier(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := &config.Resolved{
+		ConfigPath:   cfgPath,
+		ProviderName: "ollama",
+		Model:        "llama3.3",
+		Sync: config.ResolveSyncConfig(config.SyncConfig{
+			IncludeThinking: ptrTrue(),
+			IncludeToolIO:   ptrTrue(),
+			StreamAssistant: ptrTrue(),
+		}),
+	}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	// Recording notifier wired into the store. The launcher in
+	// newtui/run.go does this for real; tests wire their own to assert
+	// the fan-out without going through the real pool. Communicates
+	// the captured values to the test goroutine via a channel so the
+	// `-race` detector sees the happens-before through the channel
+	// send/receive rather than through a shared-variable read.
+	type capture struct {
+		thinking bool
+		toolIO   bool
+		stream   bool
+	}
+	captured := make(chan capture, 1)
+	store.SetSyncOptsNotifier(func(includeThinking, includeToolIO, streamAssistant bool) {
+		captured <- capture{includeThinking, includeToolIO, streamAssistant}
+	})
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	// Wait for the notifier to fire. A 5-second ceiling is generous -
+	// the closure runs in a goroutine spun by applyGeneral and is
+	// expected to be near-instant under -race.
+	select {
+	case got := <-captured:
+		if got.thinking != false || got.toolIO != true || got.stream != true {
+			t.Errorf("notifier fired with (%v,%v,%v); want (false, true, true) - only the touched key flipped", got.thinking, got.toolIO, got.stream)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync notifier did not fire within 5s; applyGeneral failed to fan-out the toggle")
+	}
+}
+
+// TestSettingsStore_ApplySync_NotFiredOnPersistFailure pins the
+// rollback contract: when UpdateGeneralConfig fails, the notifier
+// must NOT fire. A live re-arm that happens even on persist failure
+// would leave the in-flight sync session with flags that never
+// reached disk - the rollback's whole reason for being.
+func TestSettingsStore_ApplySync_NotFiredOnPersistFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	blocker := filepath.Join(tmpDir, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unwritablePath := filepath.Join(blocker, "mivia.toml")
+
+	res := &config.Resolved{
+		ConfigPath: unwritablePath,
+		Model:      "test-model",
+		Sync:       config.ResolveSyncConfig(config.SyncConfig{}),
+	}
+	sess := chat.NewSession(res, nil)
+	store := uiadapter.NewSettingsStore(sess, res, nil)
+
+	called := 0
+	store.SetSyncOptsNotifier(func(_, _, _ bool) { called++ })
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		return
+	}
+	for ev := range h.Events() {
+		if ev.State == ports.SaveFailed {
+			break
+		}
+	}
+	if called != 0 {
+		t.Errorf("sync notifier fired %d times on persist failure; want 0 (rollback contract)", called)
+	}
+	if got := store.Settings().General.General().SyncIncludeThinking; got != true {
+		t.Errorf("post-rollback SyncIncludeThinking = %v, want true (prior value)", got)
+	}
+}
+
+func ptrTrue() *bool { v := true; return &v }
+
+func TestSettingsStore_ApplySync_IncludeThinking_ToggleOff_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := &config.Resolved{ConfigPath: cfgPath, ProviderName: "ollama", Model: "llama3.3"}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	if got := store.Settings().General.General().SyncIncludeThinking; got != false {
+		t.Errorf("in-memory SyncIncludeThinking = %v, want false", got)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal written config: %v", err)
+	}
+	syncMap, ok := raw["sync"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing [sync] table in written file:\n%s", string(data))
+	}
+	if v, ok := syncMap["include_thinking"]; !ok || v != false {
+		t.Errorf("include_thinking = %v (present=%v), want false present:\n%s", v, ok, string(data))
+	}
+
+	// Reload via the same resolver the production code uses for [sync].
+	resolved := config.ResolveSyncConfig(syncConfigFromMap(syncMap))
+	if resolved.IncludeThinking {
+		t.Errorf("ResolvedSync.IncludeThinking = true, want false after explicit false write")
+	}
+}
+
+// TestSettingsStore_ApplySync_IncludeToolIO_ToggleOff_RoundTrip mirrors
+// the IncludeThinking test for the include_tool_io switch. Two siblings
+// (rather than three tests) is the right number: each test exercises a
+// different file-write path through the *bool helper, and the third
+// variant (stream_assistant) shares both. The omission is explicit so a
+// future regression cannot silently break only one of the three.
+func TestSettingsStore_ApplySync_IncludeToolIO_ToggleOff_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := &config.Resolved{ConfigPath: cfgPath, ProviderName: "ollama", Model: "llama3.3"}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetSyncIncludeToolIO{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	syncMap := raw["sync"].(map[string]any)
+	if v, ok := syncMap["include_tool_io"]; !ok || v != false {
+		t.Errorf("include_tool_io = %v (present=%v), want false present", v, ok)
+	}
+	resolved := config.ResolveSyncConfig(syncConfigFromMap(syncMap))
+	if resolved.IncludeToolIO {
+		t.Errorf("ResolvedSync.IncludeToolIO = true, want false")
+	}
+}
+
+// TestSettingsStore_ApplySync_ToggleOffThenOn_WritesTrue closes the
+// round-trip loop the planner pinned as a load-bearing rule: an operator
+// who toggles include_thinking off then back on must end with the key
+// PRESENT and set to true (not absent). The TUI must never silently delete
+// the key on a back-to-true toggle, because the documented absent-means-on
+// rule means a later cosmetic file rewriter could erase the operator's
+// last action without their consent.
+func TestSettingsStore_ApplySync_ToggleOffThenOn_WritesTrue(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := &config.Resolved{ConfigPath: cfgPath, ProviderName: "ollama", Model: "llama3.3"}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	// Toggle off.
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+	// Toggle back on.
+	h, err = store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetSyncIncludeThinking{On: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	syncMap := raw["sync"].(map[string]any)
+	v, present := syncMap["include_thinking"]
+	if !present {
+		t.Fatalf("include_thinking absent after toggle-off-then-on; expected present=true:\n%s", string(data))
+	}
+	if v != true {
+		t.Errorf("include_thinking = %v after toggle-off-then-on, want true", v)
+	}
+	resolved := config.ResolveSyncConfig(syncConfigFromMap(syncMap))
+	if !resolved.IncludeThinking {
+		t.Errorf("ResolvedSync.IncludeThinking = false after toggle-back-on, want true")
+	}
+}
+
+// TestSettingsStore_ApplySync_RollbackOnPersistFailure asserts the
+// rollback contract the locked plan called out: when persist fails, the
+// in-memory General view must NOT carry the failed edit. The failing-path
+// technique mirrors settings_persist_failure_test.go's unwritableConfigPath
+// helper - a config path whose PARENT is a regular file fails at
+// MkdirAll for every user, including root, so the assertion holds in CI.
+func TestSettingsStore_ApplySync_RollbackOnPersistFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	blocker := filepath.Join(tmpDir, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unwritablePath := filepath.Join(blocker, "mivia.toml")
+
+	// Build a Resolved through the real resolver with an empty [sync]
+	// table, so SyncIncludeThinking/ToolIO/StreamAssistant reflect the
+	// file's "absent = ON" default rather than the Go zero value (which
+	// would be false and misrepresent the empty file's intent).
+	res := &config.Resolved{
+		Model:      "test-model",
+		ConfigPath: unwritablePath,
+		Sync:       config.ResolveSyncConfig(config.SyncConfig{}),
+	}
+	sess := chat.NewSession(res, nil)
+	store := uiadapter.NewSettingsStore(sess, res, nil)
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetSyncIncludeThinking{On: false})
+	if err != nil {
+		return // a synchronous refusal is also an honest failure
+	}
+
+	var last ports.SaveEvent
+	for ev := range h.Events() {
+		last = ev
+	}
+	if last.State != ports.SaveFailed {
+		t.Fatalf("terminal state = %v, want SaveFailed: setting did not persist but no failure was surfaced", last.State)
+	}
+	if got := store.Settings().General.General().SyncIncludeThinking; got != true {
+		t.Errorf("post-rollback General.SyncIncludeThinking = %v, want true (prior value must be restored on persist failure)", got)
 	}
 }

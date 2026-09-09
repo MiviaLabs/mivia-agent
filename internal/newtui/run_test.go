@@ -3,6 +3,8 @@ package newtui
 import (
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +14,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -40,6 +44,70 @@ func TestBuildApp(t *testing.T) {
 	}
 	if appModel == nil {
 		t.Fatal("expected non-nil app model")
+	}
+}
+
+func TestBuildAppUsesConfiguredThemeAndDetectedTier(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	sess := chat.NewSession(&config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, nil)
+	root, _, _, err := buildApp(sess, &config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, true, &cli.AgentSessionState{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := root.(app.Model)
+	if !ok {
+		t.Fatalf("root type = %T, want app.Model", root)
+	}
+	if m.Theme.Name != "mivia-light" {
+		t.Fatalf("startup theme = %q, want mivia-light", m.Theme.Name)
+	}
+	if m.Tier == theme.TierTrueColor {
+		t.Fatalf("startup tier = %v, want NO_COLOR degradation", m.Tier)
+	}
+}
+
+func TestLoadAllThemesIncludesUserThemes(t *testing.T) {
+	oldEmbedded, oldUser, oldDir := loadEmbeddedThemes, loadUserThemes, userThemesDir
+	defer func() { loadEmbeddedThemes, loadUserThemes, userThemesDir = oldEmbedded, oldUser, oldDir }()
+	loadEmbeddedThemes = func() ([]theme.Theme, error) { return []theme.Theme{{Name: "built-in"}}, nil }
+	loadUserThemes = func(string) ([]theme.Theme, error) { return []theme.Theme{{Name: "custom"}}, nil }
+	userThemesDir = func() string { return "/custom/themes" }
+
+	themes, err := loadAllThemes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(themes) != 2 || themes[0].Name != "built-in" || themes[1].Name != "custom" {
+		t.Fatalf("themes = %+v, want built-in and custom", themes)
+	}
+}
+
+func TestChooseThemeFallsBackToDarkForUnknownName(t *testing.T) {
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := chooseTheme(themes, "not-installed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "mivia-dark" {
+		t.Fatalf("fallback theme = %q, want mivia-dark", got.Name)
+	}
+}
+
+func TestPersistThemeWritesSelectedName(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "mivia.toml")
+	store := uiadapter.NewSettingsStore(nil, &config.Resolved{ConfigPath: configPath}, nil)
+	if msg := persistTheme(store, "mivia-light")(); msg != nil {
+		t.Fatalf("persistTheme returned %v", msg)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `theme = 'mivia-light'`) {
+		t.Fatalf("saved config = %q, missing selected theme", data)
 	}
 }
 
@@ -124,6 +192,11 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 
 	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m, _ = m.Update(ctrl('b')) // open the activity panel, focused on its list
+	// The panel opens on its model row. Below it the section headers are
+	// selectable rows of their own (they fold their sections), so the
+	// walk down to the subagent passes the "subagents" header first.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	view := ansi.Strip(m.View().Content)
@@ -132,5 +205,75 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 	}
 	if !strings.Contains(view, "found 0 leaks across 12 packages") {
 		t.Errorf("expected the dispatched subagent's output to render in the dialog, got:\n%s", view)
+	}
+}
+
+// TestLoadAllThemes_EmbeddedAndUserErrorsSurface pins loadAllThemes' own
+// two error branches directly (not via the loadThemes indirection
+// TestBuildAppPropagatesThemeLoadError swaps out entirely).
+func TestLoadAllThemes_EmbeddedAndUserErrorsSurface(t *testing.T) {
+	oldEmbedded, oldUser, oldDir := loadEmbeddedThemes, loadUserThemes, userThemesDir
+	defer func() { loadEmbeddedThemes, loadUserThemes, userThemesDir = oldEmbedded, oldUser, oldDir }()
+
+	embeddedErr := errors.New("embedded broken")
+	loadEmbeddedThemes = func() ([]theme.Theme, error) { return nil, embeddedErr }
+	if _, err := loadAllThemes(); !errors.Is(err, embeddedErr) {
+		t.Fatalf("loadAllThemes err = %v, want the embedded-load error", err)
+	}
+
+	userErr := errors.New("user dir broken")
+	loadEmbeddedThemes = func() ([]theme.Theme, error) { return []theme.Theme{{Name: "built-in"}}, nil }
+	loadUserThemes = func(string) ([]theme.Theme, error) { return nil, userErr }
+	userThemesDir = func() string { return "/custom/themes" }
+	if _, err := loadAllThemes(); !errors.Is(err, userErr) {
+		t.Fatalf("loadAllThemes err = %v, want the user-load error", err)
+	}
+}
+
+// TestChooseTheme_NoMatchAndNoDefaultIsAnError pins the final error branch:
+// neither the requested name nor the mivia-dark fallback is present.
+func TestChooseTheme_NoMatchAndNoDefaultIsAnError(t *testing.T) {
+	if _, err := chooseTheme([]theme.Theme{{Name: "other"}}, "missing"); err == nil {
+		t.Fatal("chooseTheme accepted a theme set with no match and no default")
+	}
+}
+
+// TestBuildAppPropagatesChooseThemeError pins buildApp's own error wrap
+// around chooseTheme, distinct from TestChooseTheme_NoMatchAndNoDefaultIsAnError
+// (which calls chooseTheme directly): a configured theme name that matches
+// nothing, with no "mivia-dark" default present either, must fail buildApp
+// rather than falling through with a zero-value theme.
+func TestBuildAppPropagatesChooseThemeError(t *testing.T) {
+	original := loadThemes
+	loadThemes = func() ([]theme.Theme, error) { return []theme.Theme{{Name: "other"}}, nil }
+	defer func() { loadThemes = original }()
+
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	res := &config.Resolved{TUI: config.TUIConfig{Theme: "missing-theme"}}
+	agentState := &cli.AgentSessionState{}
+	if _, _, _, err := buildApp(sess, res, true, agentState, ""); err == nil {
+		t.Fatal("buildApp accepted an unresolvable theme name with no default available")
+	}
+}
+
+// TestPersistTheme_SaveFailureSurfacesAsNotice pins persistTheme's own
+// error branch: a config path PersistTheme cannot write to must return a
+// SettingsNoticeMsg naming the failure rather than a silent nil.
+func TestPersistTheme_SaveFailureSurfacesAsNotice(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(blocker, "mivia.toml")
+	store := uiadapter.NewSettingsStore(nil, &config.Resolved{ConfigPath: configPath}, nil)
+
+	msg := persistTheme(store, "mivia-light")()
+	notice, ok := msg.(app.SettingsNoticeMsg)
+	if !ok {
+		t.Fatalf("persistTheme() = %#v, want a SettingsNoticeMsg", msg)
+	}
+	if !strings.Contains(notice.Text, "theme save failed") {
+		t.Fatalf("notice text = %q, want it to name the save failure", notice.Text)
 	}
 }

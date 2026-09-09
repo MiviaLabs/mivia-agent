@@ -226,8 +226,14 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	}
 	emitSyntheticTurnStart(events, displayText, &seq)
 
-	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
-	previous := c.sess.SwapOnAgentEvent(handler)
+	// stream is the single owner of every send on, and the single close
+	// of, this turn's channel (turn_stream.go). It is built AFTER the
+	// synthetic turn.start, which goes into a channel nothing else can
+	// touch yet.
+	stream := newTurnStream(events, turnCtx.Done(), cancelTurn)
+
+	handler := newTurnHandler(stream, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
+	previous, tapToken := c.sess.SwapOnAgentEventToken(handler)
 
 	var clearSubagent func()
 	if SubagentProgressRegistrar != nil {
@@ -235,12 +241,28 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	}
 
 	h := newTurnHandle(events, closed, cancelTurn, func() {
-		c.sess.SwapOnAgentEvent(previous)
+		// Ownership-checked: this turn's goroutine releases c.turnMu
+		// BEFORE this defer runs (defers are LIFO), and Cancel may be
+		// called on an already-finished handle, so by now a NEWER turn may
+		// own the sink. Restoring unconditionally would leave that live
+		// turn streaming nothing. See chat.Session.RestoreOnAgentEvent.
+		c.sess.RestoreOnAgentEvent(tapToken, previous)
 		if clearSubagent != nil {
 			clearSubagent()
 		}
-	})
-	c.runTurnGoroutine(turnCtx, in, h, closed, turnIDPtr, &seq, cancelTurn)
+	}, stream)
+	// turnOpts carries agent.Options.OnToolCancelReady through to the SDK
+	// backend for this turn (chat.TurnOptions -> agent.Options, see
+	// buildAgentTurnOptions). The hook fires once the run's per-turn cancel
+	// registry exists and hands back a ToolCanceler the handle retains for
+	// its whole lifetime; a legacy (non-SDK) run never calls it, so
+	// h.toolCanceler stays nil and CancelToolCall is a no-op miss.
+	turnOpts := &chat.TurnOptions{
+		OnToolCancelReady: func(tc agent.ToolCanceler) {
+			h.toolCanceler.Store(&tc)
+		},
+	}
+	c.runTurnGoroutine(turnCtx, in, h, closed, turnIDPtr, &seq, cancelTurn, turnOpts)
 	return h, nil
 }
 
@@ -297,7 +319,7 @@ var subagentForwardKinds = map[uievent.Kind]bool{
 // subagent's own completion live instead of only when the whole enclosing
 // batch finishes. The select on turnCtx.Done() drops the event rather than
 // blocks the agent loop if the buffer is full and Cancel is mid-flight.
-func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions, subagents *SubagentThreads) func(agent.Event) {
+func newTurnHandler(stream *turnStream, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions, subagents *SubagentThreads) func(agent.Event) {
 	forward := func(translated []uievent.Event) {
 		for _, e := range translated {
 			if closed.Load() {
@@ -309,9 +331,11 @@ func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr 
 			}
 			e.Seq = n
 			e.At = time.Now()
-			select {
-			case events <- e:
-			case <-turnCtx.Done():
+			// One send, serialised against the close. A false result means
+			// the stream closed (or the turn ended) under us, which is the
+			// same "stop forwarding" signal the closed.Load() check above
+			// gives - except this one cannot be stale.
+			if !stream.Send(e) {
 				return
 			}
 		}
@@ -354,12 +378,13 @@ func filterSubagentForward(translated []uievent.Event) []uievent.Event {
 // agent loop stops pushing events even before the goroutine returns;
 // Cancel invokes it before closing the channel so a stray emit cannot
 // panic on send-to-closed-channel.
-func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel context.CancelFunc, restore func()) *turnHandle {
+func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel context.CancelFunc, restore func(), stream *turnStream) *turnHandle {
 	return &turnHandle{
 		idAtomic: &atomic.Pointer[string]{},
 		events:   events,
 		cancel:   cancel,
 		closed:   closed,
+		stream:   stream,
 		restore:  restore,
 	}
 }
@@ -378,7 +403,7 @@ func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel contex
 // concurrent SetTurnWaiterForTest calls across tests (a common pattern
 // when -race runs reuse the package's shared global) do not race
 // against the goroutine's read.
-func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send, h *turnHandle, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, cancelTurn context.CancelFunc) {
+func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send, h *turnHandle, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, cancelTurn context.CancelFunc, turnOpts *chat.TurnOptions) {
 	waiter := turnWaiter
 	go func() {
 		defer h.restore()
@@ -393,7 +418,7 @@ func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send,
 		if in.PersistedText != "" {
 			persistedText = in.PersistedText
 		}
-		turnID, err := c.sess.SendUserWithEventAndPersistedText(turnCtx, in.Text, persistedText, io.Discard, nil)
+		turnID, err := c.sess.SendUserWithTurnOptions(turnCtx, in.Text, persistedText, io.Discard, nil, turnOpts)
 		h.idAtomic.Store(&turnID)
 		turnIDPtr.Store(&turnID)
 		c.emitTurnEndIfWinner(h, closed, seq, turnID, err)
@@ -401,15 +426,23 @@ func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send,
 	}()
 }
 
-// emitTurnEndIfWinner CAS-claims closed. The winner emits the terminal
-// turn.end with the real TurnID and then closes the channel. The
-// non-blocking select protects against a full buffer at the moment of
+// emitTurnEndIfWinner claims the close. The winner emits the terminal
+// turn.end with the real TurnID and then closes the stream. The
+// non-blocking TrySend protects against a full buffer at the moment of
 // close (the receiver has stopped draining, which should not happen
 // for the terminal event but is a belt-and-braces guard).
+//
+// The claim is the turnStream's own close latch, not a separate atomic:
+// two flags for one decision is how the send/close race got in. The
+// atomic `closed` remains as the tap's cheap advisory pre-check only -
+// it is set here so that check keeps working, but it no longer decides
+// who closes.
 func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, seq *uint64, turnID string, err error) {
-	if !closed.CompareAndSwap(false, true) {
+	stream := h.stream
+	if stream == nil || stream.Closed() {
 		return
 	}
+	closed.Store(true)
 	reason := "completed"
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -424,10 +457,7 @@ func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, s
 				At:     time.Now(),
 				Body:   uievent.NoticeBody{Text: err.Error()},
 			}
-			select {
-			case h.events <- errEvent:
-			default:
-			}
+			stream.TrySend(errEvent)
 		}
 	}
 	atomic.AddUint64(seq, 1)
@@ -438,11 +468,11 @@ func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, s
 		At:     time.Now(),
 		Body:   uievent.TurnEndBody{Reason: reason},
 	}
-	select {
-	case h.events <- endEvent:
-	default:
-	}
-	close(h.events)
+	stream.TrySend(endEvent)
+	// Close reports whether THIS call closed it; a false result means
+	// Cancel won the race in between, which is the outcome the old CAS
+	// produced too - the channel is closed exactly once either way.
+	stream.Close()
 }
 
 // History returns a snapshot of the session's user/assistant turns at
@@ -470,14 +500,19 @@ func (c *Conversation) History() []ports.Message {
 			var tcs []ports.ToolCall
 			for _, tc := range m.ToolCalls {
 				output := toolOutputs[tc.ID]
-				if d := parseToolDiff(tc.Function.Name, tc.Function.Arguments, output); d != nil {
-					diffs = append(diffs, *d)
+				var diff *uievent.Diff
+				if ports.ToolCallOK(ports.ToolCall{Name: tc.Function.Name, Output: output}) {
+					diff = parseToolDiff(tc.Function.Name, tc.Function.Arguments, output)
+				}
+				if diff != nil {
+					diffs = append(diffs, *diff)
 				}
 				tcs = append(tcs, ports.ToolCall{
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 					Output:    output,
+					Diff:      diff,
 				})
 			}
 			out = append(out, ports.Message{
@@ -524,11 +559,18 @@ func (c *Conversation) Model() ports.ModelInfo {
 		Name:          selection.Model,
 		Provider:      selection.ProviderName,
 		ContextWindow: int64(budget),
+		// The model's own window, carried so a surface can explain a budget
+		// that sits well below it. An operator prompt cap (config's
+		// max_prompt_tokens) is invisible otherwise, and a capped session on a
+		// large-window model reads as capacity that went missing.
+		DeclaredWindow: int64(binding.Profile.ContextWindowTokens),
 	}
 }
 
 // ContextUsage reports the session's live prompt-cost estimate. Field
 // mapping: InputTokens <- chat.ContextUsage.UsedTokens,
+// Breakdown <- chat.ContextUsage.Breakdown (already calibrated, and summing to
+// UsedTokens, so the sidebar's rows and its header never disagree),
 // OutputTokens = 0 (chat.ContextUsage.OutputReserveTokens is max output capacity, not consumed tokens),
 // CachedTokens = 0 (chat has no cache field; honest zero),
 // CostUSD = 0 (chat has no cost field; honest zero).
@@ -543,6 +585,7 @@ func (c *Conversation) ContextUsage() ports.Usage {
 		OutputTokens: 0,
 		CachedTokens: 0,
 		CostUSD:      0,
+		Breakdown:    toPortsBreakdown(u.Breakdown),
 	}
 }
 
@@ -606,7 +649,17 @@ type turnHandle struct {
 	events   chan uievent.Event
 	cancel   context.CancelFunc
 	closed   *atomic.Bool
-	restore  func()
+	// stream serialises every send against the single close. It is the
+	// only safe way to touch events; see turn_stream.go.
+	stream  *turnStream
+	restore func()
+	// toolCanceler is populated once (via Send's OnToolCancelReady
+	// callback, delivered on the turn goroutine, racing an early
+	// CancelToolCall from the UI goroutine) after the SDK backend's
+	// per-turn cancel registry exists. Until then - and always, on a
+	// legacy (non-SDK) run, which never calls the hook - it stays nil
+	// and CancelToolCall is a no-op miss.
+	toolCanceler atomic.Pointer[agent.ToolCanceler]
 }
 
 // ID returns the turn ID assigned by chat.Session.SendUserWithEvent.
@@ -648,11 +701,32 @@ func (h *turnHandle) Cancel() {
 	if h.restore != nil {
 		h.restore()
 	}
-	if h.closed != nil {
-		if h.closed.CompareAndSwap(false, true) {
-			close(h.events)
+	if h.stream != nil {
+		// The stream's own latch decides the single close; the atomic is
+		// updated for the tap's advisory pre-check only.
+		if h.closed != nil {
+			h.closed.Store(true)
 		}
+		h.stream.Close()
 	}
+}
+
+// CancelToolCall cancels ONE in-flight tool call by its call ID, leaving
+// the rest of the turn - and any concurrent sibling tool call - running.
+// It returns whether a matching in-flight call was found. Before the SDK
+// backend's per-turn registry exists (a narrow window early in the turn,
+// before the first tool call can even be dispatched) and on a legacy
+// (non-SDK) run, no ToolCanceler has been installed and this is a no-op
+// that returns false.
+func (h *turnHandle) CancelToolCall(callID string) bool {
+	if h == nil || callID == "" {
+		return false
+	}
+	p := h.toolCanceler.Load()
+	if p == nil || *p == nil {
+		return false
+	}
+	return (*p)(callID)
 }
 
 // ActiveTurn returns the current active turn handle, if any.
@@ -665,4 +739,30 @@ func (c *Conversation) ActiveTurn() (ports.TurnHandle, bool) {
 // which background sessions are actually doing something.
 func (c *Conversation) IsActive() bool {
 	return c.active.Load()
+}
+
+// toPortsBreakdown copies chat's composition into the UI's. Field by
+// field on purpose: a struct conversion would silently accept a rename,
+// and a field added on both sides but forgotten here reads as a
+// permanent zero on screen with nothing failing. TestEveryBreakdownFieldCrossesTheBridge
+// asserts the copy by reflection so the omission fails the day a field
+// is added, not the day someone notices a row stuck at 0.
+//
+// Pending is deliberately not set: it is what the provider prices beyond
+// what this composition explains, and WithLiveTotal fills it later.
+func toPortsBreakdown(b chat.ContextBreakdown) ports.ContextBreakdown {
+	return ports.ContextBreakdown{
+		System:            int64(b.System),
+		ToolSchemas:       int64(b.ToolSchemas),
+		ExternalSchemas:   int64(b.ExternalSchemas),
+		ToolCount:         b.ToolCount,
+		ExternalToolCount: b.ExternalToolCount,
+		Memory:            int64(b.Memory),
+		Summary:           int64(b.Summary),
+		Skills:            int64(b.Skills),
+		SkillCount:        b.SkillCount,
+		Prose:             int64(b.Prose),
+		ToolResults:       int64(b.ToolResults),
+		Reasoning:         int64(b.Reasoning),
+	}
 }

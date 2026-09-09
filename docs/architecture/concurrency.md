@@ -12,7 +12,7 @@
 | In-flight LLM calls | 8–40 (provider quota) |
 | Shell workers | 4–16 |
 
-These ranges are design targets, not fixed constants read from a single config knob. The real, live concurrency knob is `[subagents] max_workers` (`internal/subagents/subagents.go`, `Pool.Workers`), which defaults to `0` (unlimited — one worker per task). Treat this table as a planning budget, not a promise that a `LogicalAgents`/`InFlight` setting exists with these exact bounds.
+These ranges are design targets, not fixed constants read from a single config knob. The real, live concurrency knob is `[subagents] max_workers` (`internal/subagents/subagents.go`, `Pool.Workers`), which defaults to `3` (when unconfigured; set to `-1` for unlimited). Treat this table as a planning budget, not a promise that a `LogicalAgents`/`InFlight` setting exists with these exact bounds.
 
 ## Async orchestration model
 

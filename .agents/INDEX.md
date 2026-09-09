@@ -2,7 +2,7 @@
 
 Product: **mivia** (MiviaLabs)
 Binary: `mivia` (`cmd/mivia/`)
-`.agents/` is the canonical project-level control surface for agentic development in this repo: durable rules, doctrines, skills, quality docs, and templates that tool adapters reference. Root `AGENTS.md` is the canonical instruction file. `.mivia/` is scoped to the product's own runtime config and state (`mivia.toml`, `workflows/`, `hooks/`, `agents/*.toml`, `policy/*.json` consumed by compiled Go code, `skills/` mirrored for the `mivia` binary's own loader) - not agent instructions.
+`.agents/` is the canonical project-level control surface for agentic development in this repo: durable rules, doctrines, skills, quality docs, and templates that tool adapters reference. Root `AGENTS.md` is the canonical instruction file. `.mivia/` is scoped to the product's own runtime config and state (`mivia.toml`, `workflows/`, `hooks/`, `agents/*.toml`, `policy/*.json` consumed by compiled Go code) - not agent instructions. `.mivia/` holds no skills: the `mivia` binary loads workspace skills from `.agents/skills/`.
 
 ## Read Order
 
@@ -64,13 +64,17 @@ Canonical project skills live under `.agents/skills/` as real directories.
 The compiled `mivia` binary's loader (`internal/workspace.SkillsDir`,
 returns `<root>/.agents/skills`) reads from this path; the loader's
 `os.Root` sandbox cannot follow symlinks, so a skill must be a real
-directory at this path to be discovered. `.claude/skills/` mirrors each
-skill as a real directory for tool discovery (Claude's adapter looks
-there independently of the binary). To add a skill: create a directory
-under `.agents/skills/<name>/SKILL.md` with the YAML frontmatter schema
-documented in any existing skill, and a matching copy under
-`.claude/skills/<name>/`. Run `make skills-move` only when migrating
-the canonical home, not for routine skill additions.
+directory at this path to be discovered. Claude Code discovers skills
+only under `.claude/skills/`, so `.claude/skills/<name>/SKILL.md` is an alias stub: it
+repeats the canonical frontmatter block byte for byte and its body
+points at `.agents/skills/<name>/SKILL.md`. The stub is a plain file,
+not a symlink, because Git sets `core.symlinks=false` on Windows and a
+cloned symlink turns into a plain text file. To add a skill: create a
+directory under `.agents/skills/<name>/SKILL.md` with the YAML
+frontmatter schema documented in any existing skill, then add the alias
+stub under `.claude/skills/<name>/SKILL.md`. Keep bundled resources
+beside the canonical file only. `scripts/verify_agent_config.py`
+enforces this.
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 
@@ -98,8 +102,7 @@ Repo-native:
 - `workflow-runs-analysis` - read-only validated analysis of workflow-run ledger; process-quality findings (default window last 24h)
 - `session-analysis` - read-only validated analysis of chat sessions in the durable chat ledger; metadata-only (no message content); default window last 24h; owned by the unrestricted root
 - `capture` - record a durable decision or correction to `.agents/memories/`
-- `housekeeping` - audit `.agents/memories/` for staleness, duplicates, and orphan facts
-- `memory-housekeeping` - audit the memory store: verify facts, delete stale or duplicate entries, update outdated ones, create missing ones
+- `memories-housekeeping` - audit `.agents/memories/` for staleness, duplicates, and orphan facts
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fix` `review_panel` members):
 
@@ -120,6 +123,21 @@ human and ADLC-driven workflow. The four standard roles are:
 | `plan-reviewer` | `.agents/agents/plan-reviewer.md` | read-only |
 | `builder` | `.agents/agents/builder.md` | read + write + run_command |
 | `reviewer` | `.agents/agents/reviewer.md` | read-only |
+
+`planner` and `plan-reviewer` are standalone, manually-selectable roles for
+ad-hoc plan drafting and challenge; they are not dispatched by name in
+either automated path. The ADLC rule's own dispatch examples name
+`reviewer` (Step 0/5), `auditor` (Step 0/5), `verifier` (Step 2/6),
+`go-engineer` (Step 4), and `performance` (Step 5) - never `planner`,
+`plan-reviewer`, or `builder`. The compiled workflow engine's shape varies
+by workflow: `.mivia/workflows/feature-delivery.toml` uses
+`workflow-engineer` for plan/implement/repair steps and a
+`panel-reviewer`/`review-synthesizer` panel for review; `.mivia/workflows/
+bug-fix.toml` and `bug-fix-fast.toml` instead gate review with an ACTIVE
+`agent = "reviewer"` triage step (their own panel/review/perf-verify
+layers are currently commented out as a temporary debug cut - see
+`docs/development/debug-cut.md`). None of these three workflows dispatch
+`plan-reviewer` or `builder` by name.
 
 Frontmatter schema and the loading contract are documented in
 [`.agents/agents/README.md`](agents/README.md). The `mivia` binary and workflow
@@ -144,12 +162,13 @@ Machine-readable hook and agent policy:
 | `.mivia/policy/required-paths.json` | Mandatory repository directories and configuration paths |
 | `.mivia/policy/invariant-skips.json` | Allowlisted OS-capability skips in invariant tests |
 | `.mivia/policy/test-skips.json` | Allowlisted test skips and unreviewed-skip prevention |
+| `.mivia/policy/wire-vocabulary.json` | Files that restate the `mivia.chat.v1` event vocabulary and the contract they must equal |
 | `.mivia/policy/mutation/*.json` | Per-package mutation kill-rate floors and audited denylists |
 
 ## Quality
 
 - `.agents/quality/contracts/` - project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
-- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-19`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
+- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-40`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
 
 ## Runtime Artifacts
 

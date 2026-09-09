@@ -15,6 +15,20 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
+	// ParentTaskID is the ATTRIBUTION key of the task that caused this one to
+	// start, empty when the root loop did.
+	//
+	// It is not Owner, and not Request.ParentID which Owner feeds: those name
+	// the parent INVOCATION, which diverges from the attribution key whenever
+	// a coordinator supplies its own task id. A consumer drawing a tree of
+	// runs joins on the attribution key, so that is what has to travel.
+	//
+	// One relationship sets it today: an ask_agent referral, where the asking
+	// task caused the referral to start. A dispatch_tasks fan-out does NOT -
+	// those runs are siblings started by the same parent, and a subagent
+	// cannot dispatch a subagent at all, because the mandatory tool denylist
+	// removes the dispatching tools from every spawned registry.
+	ParentTaskID string
 	// RawID is the model-supplied task id verbatim, before dispatch_tasks
 	// namespaces it into ID for harness-level uniqueness
 	// (internal/cliorchestrate/task_namespace.go's namespacedTaskID). Kept
@@ -96,6 +110,7 @@ const Unlimited = -1
 // admit DefaultMaxFanout tasks at a realistic multi-thousand budget each
 // while still rejecting a pathological value.
 const (
+	DefaultWorkers   = 3
 	DefaultMaxFanout = 32
 	DefaultMaxDepth  = 10
 	DefaultMaxBudget = 1_000_000
@@ -117,7 +132,32 @@ type Pool struct {
 	// whole pool to finish (plan R9). The result value returned to the caller
 	// is never modified by the callback; nil means no-op.
 	OnTaskDone func(ctx context.Context, t Task, r Result)
+	// OnTaskStart, when set, is invoked on the worker goroutine right after
+	// the task's own cancelable execution context is derived (the
+	// WithTimeout/WithCancel wrap below, already used for per-task timeout
+	// enforcement) and before dispatch. It receives the STAMPED per-task
+	// context (ContextForTask has already applied TaskIdentity) and that
+	// context's own CancelFunc, so a caller can cancel just this one task's
+	// execution without touching the pool's parent context or any sibling
+	// task. Nil-safe; nil means no-op.
+	OnTaskStart func(ctx context.Context, t Task, cancel context.CancelFunc)
+	// ShouldSkipTask, when set, is consulted on the worker goroutine after
+	// OnTaskStart and immediately BEFORE the handler is invoked. It receives
+	// the STAMPED per-task context (ContextForTask has already applied
+	// TaskIdentity). Reporting true settles the task as canceled without
+	// ever invoking its handler, so the task performs no side effects.
+	//
+	// This closes the dispatch window a per-task cancel would otherwise fall
+	// through: the executeOne ctx.Err() check above only sees the RUN-WIDE
+	// pool context, which a single-task cancel deliberately never touches,
+	// and a task can be canceled after the scheduler put it in a batch but
+	// before a worker reached it (the spawn stagger, or a busy worker pool).
+	// Nil-safe; nil means no-op.
+	ShouldSkipTask func(ctx context.Context, t Task) bool
 }
+
+// Workers returns the configured or defaulted worker limit.
+func (p *Pool) Workers() int { return p.p.Workers }
 
 // MaxFanout returns the maximum number of tasks accepted in one orchestration.
 func (p *Pool) MaxFanout() int { return p.p.MaxFanout }
@@ -137,7 +177,8 @@ func (p *Pool) ValidateTask(t Task) error {
 		return fmt.Errorf("nil subagent pool")
 	}
 	return p.d.Validate(runtime.Request{
-		ID: t.ID, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		ID: t.ID, ParentID: t.Owner, ParentTaskID: t.ParentTaskID,
+		Name: t.Name, Kind: runtime.Subagent,
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role, Scope: t.Scope,
 		Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth,
 		Timeout: t.Timeout, AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
@@ -150,6 +191,9 @@ func New(d *runtime.Dispatcher, p Policy) *Pool {
 	// Apply safe defaults for zero-valued limits. Zero must not mean unlimited;
 	// an unconfigured deployment should degrade to safe bounds rather than
 	// unbounded fan-out or budget. Use Unlimited (-1) to explicitly opt out.
+	if p.Workers == 0 {
+		p.Workers = DefaultWorkers
+	}
 	if p.MaxFanout == 0 {
 		p.MaxFanout = DefaultMaxFanout
 	}
@@ -164,7 +208,7 @@ func New(d *runtime.Dispatcher, p Policy) *Pool {
 
 func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 	if p.p.MaxFanout != Unlimited && p.p.MaxFanout > 0 && len(tasks) > p.p.MaxFanout {
-		return nil, fmt.Errorf("fan-out limit exceeded")
+		return nil, fmt.Errorf("fan-out limit exceeded: got %d tasks, configured limit is %d", len(tasks), p.p.MaxFanout)
 	}
 	by := map[string]Task{}
 	keys := map[string]string{}
@@ -276,8 +320,8 @@ func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Res
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	workers := p.p.Workers
-	if workers == 0 {
-		// 0 = unlimited: one worker per task (bounded by len(tasks)).
+	if workers == Unlimited || workers <= 0 {
+		// Unlimited: one worker per task (bounded by len(tasks)).
 		workers = len(tasks)
 	}
 	if workers > len(tasks) {
@@ -364,12 +408,19 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		taskCtx, cancel = context.WithCancel(baseCtx)
 	}
 	defer cancel()
+	if p.OnTaskStart != nil {
+		p.OnTaskStart(taskCtx, t, cancel)
+	}
+	if skipped, skip := p.skipCanceledTask(taskCtx, t); skip {
+		return skipped
+	}
 	// Task.ID is caller-facing coordination state. It must not cross the
 	// dispatch boundary: concurrent runs are allowed to reuse display IDs,
 	// while the dispatcher requires a fresh opaque invocation identity.
 	id := runtime.NewSessionID()
 	r := p.d.Invoke(taskCtx, runtime.Request{
-		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		ID: id, ParentID: t.Owner, ParentTaskID: t.ParentTaskID,
+		Name: t.Name, Kind: runtime.Subagent,
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role,
 		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
 		AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
@@ -395,6 +446,30 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		callOnTaskDoneSafely(p.OnTaskDone, taskCtx, t, result)
 	}
 	return result
+}
+
+// skipCanceledTask consults ShouldSkipTask and, when it reports the task has
+// already been claimed for cancellation, builds that task's canceled result
+// and runs the OnTaskDone finalize hook for it - WITHOUT ever invoking the
+// handler, so a canceled task performs no side effects (file edits, shell
+// commands, provider calls).
+//
+// Running OnTaskDone on this path is load-bearing: that hook is what signals
+// this dispatch attempt's completion, and a caller waiting for the task to
+// unwind after a per-task cancel blocks on that signal.
+//
+// The result deliberately mirrors the owner's own canceled result exactly
+// (status "canceled" carrying context.Canceled), so downstream bookkeeping is
+// identical to the path where the run-wide context was canceled.
+func (p *Pool) skipCanceledTask(taskCtx context.Context, t Task) (Result, bool) {
+	if p.ShouldSkipTask == nil || !p.ShouldSkipTask(taskCtx, t) {
+		return Result{}, false
+	}
+	result := Result{TaskID: t.ID, Err: context.Canceled, Status: "canceled"}
+	if p.OnTaskDone != nil {
+		callOnTaskDoneSafely(p.OnTaskDone, taskCtx, t, result)
+	}
+	return result, true
 }
 
 // callOnTaskDoneSafely invokes fn and recovers a panic without letting it

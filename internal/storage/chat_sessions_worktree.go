@@ -85,7 +85,13 @@ func hideCoveredWorktreeRoutes(infos []contextstate.SessionCatalogInfo) []contex
 	}
 	covered := make(map[routeKey]bool)
 	for _, info := range infos {
-		if !info.WorktreeRoute && info.Worktree != "" && info.Dir != "" {
+		// Only a row carrying the managed instance covers the route: it
+		// resumes through the instance-scoped path, so the route row is
+		// redundant next to it. A row with bare worktree metadata (legacy
+		// pre-instance session) resumes PLAIN and must not hide the route
+		// pseudo-row - that row is the only scoped-start affordance for
+		// the worktree.
+		if !info.WorktreeRoute && info.Worktree != "" && info.Dir != "" && !info.WorktreeInstance.IsZero() {
 			covered[routeKey{worktree: info.Worktree, dir: info.Dir}] = true
 		}
 	}

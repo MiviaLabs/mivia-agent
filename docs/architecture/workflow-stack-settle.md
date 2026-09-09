@@ -2,10 +2,12 @@
 
 ## Status
 
-This document lists gaps in stack-settle automation that are not fixed yet.
-The drive-before-delivery ordering itself is shipped — see
+This document lists gaps in stack-settle automation. The drive-before-delivery
+ordering itself is shipped — see
 [Workflow architecture: Stacking](workflows.md#stacking-small-pr-delivery)
-for what already runs. Everything below this point is still open.
+for what already runs. P2 (lock hygiene) and the D5 host/API parity gap are
+fixed; the rest below is still open. See "Fixed since this document was
+written" at the end.
 
 A live incident on 2026-08-17 surfaced the gaps: a stacked plan run parked at
 `delivery_pending` for more than one hour after all its chunk PRs merged. A
@@ -21,9 +23,10 @@ when a host process runs `workflow deliver` or `stack drive`.
 A failed chunk also parks the parent. The drive halts on a failed chunk and
 leaves the stack resumable. No path settles the plan run as failed.
 
-The workflow execution lock adds friction. `workflow deliver` aborts after a
-5-second wait with an opaque "lock is busy" error. The lock is not the cause
-of the parked run. It makes the failure mode worse.
+The workflow execution lock adds friction. As originally observed, `workflow
+deliver` aborted after a 5-second wait with an opaque "lock is busy" error.
+The lock was not the cause of the parked run, but it made the failure mode
+worse. (This part is fixed - see P2 below.)
 
 ## Evidence
 
@@ -43,19 +46,19 @@ base `dev`).
    14:38:59.
 
 The pattern is known in the repo. See
-`internal/cli/workflow_tool_engine_delivery_repair_test.go`, comment at line
-475: "workflow deliver on 'lock is busy' (observed: plan runs parked 50+
+`internal/cliworkflow/workflow_tool_engine_delivery_repair_test.go`, which
+covers "workflow deliver on 'lock is busy' (observed: plan runs parked 50+
 min)".
 
 ## Root causes
 
 | Id | Defect | Evidence |
 |----|--------|----------|
-| D1 | No autonomous settle. The drive loop lives inside a live process. Out-of-band merges are invisible. | `internal/workflows/localengine/engine_stack.go` line 143, `markMergedChunks` |
+| D1 | No autonomous settle. The drive loop lives inside a live process. Out-of-band merges are invisible. | `internal/workflows/localengine/engine_stack.go`, `markMergedChunks` |
 | D2 | Failed chunks park the parent. The drive halts on a failed chunk. | `internal/workflows/localengine/engine_stack_settle.go`, `stackHasProgress` |
-| D3 | Lock friction. The execution flock has a 5-second wait and an opaque error. | `internal/cli/workflow_resume_lock.go` line 66, `internal/cli/workflow_tool_engine.go` line 33 |
-| D4 | Status opacity. `delivery_pending` shows no blocking cause. | `internal/cli/stack_admit_integration.go` line 78 |
-| D5 | Host and API parity gap. The `workflow_run` tool admits and returns. Nothing drives the stack after that. | `maybeDriveSettledStack` call sites, `scripts/run-delivery-workflow.sh` |
+| D3 | Lock friction. The execution flock had a 5-second wait and an opaque error. | **Fixed (P2).** See below. |
+| D4 | Status opacity. `delivery_pending` shows no blocking cause. | `internal/clichat/stack_admit_integration.go` |
+| D5 | Host and API parity gap. The `workflow_run` tool admits and returns. Nothing drives the stack after that. | **Fixed.** `maybeDriveSettledStack` now runs from the CLI foreground path (`internal/cliworkflow/workflow_run.go:173`, `workflow_resume.go:204`) and from the session engine's auto-delivery-repair hook (`internal/cliworkflow/workflow_tool_engine.go:314`, `workflow_tool_engine_reconcile.go:343`). |
 
 ## Design goals
 
@@ -103,16 +106,18 @@ stack.
 The failed chunk PR stays open by default. A new stacking knob controls this.
 See the `failed_pr_policy` section.
 
-### P2: Lock hygiene
+### P2: Lock hygiene (fixed)
 
 Scope the execution flock to the actual git-exclude marker writes and step
 admission. `workflow deliver` and the settle path do not need it. Settle is
 one ledger CAS plus one oracle read. Both are already safe under concurrency.
 
-If the flock stays on the deliver path, raise the wait to 60 seconds. Use
-exponential backoff with jitter. On timeout, report who holds the flock and
-for how long. Use flock `F_GETLK` to read the owner. Reclaim stale holders
-whose process died. Fix the misleading "Git exclude" name in the busy error.
+**Status: done.** `WorkflowResolutionLockWait` is 60 seconds
+(`internal/cliworkflow/workflow_tool_engine.go:38`) with exponential jittered
+backoff (`internal/cliworkflow/workflow_resume_lock.go`). The misleading
+"Git exclude" name is fixed: `renameGitExcludeLockError` rewrites it to
+"lock workflow execution:" (`workflow_resume_lock.go:54-59`), pinned by
+`TestWorkflowResumeLockFindings` (`workflow_resume_lock_findings_test.go`).
 
 ### P3: Status transparency
 
@@ -146,7 +151,8 @@ New stacking knob in the workflow `[stacking]` table.
 
 The knob lives on `definition.Stacking`
 (`internal/workflows/definition/types.go`). The compiler validates the value
-(`internal/workflows/compiler/stacking.go`). It follows the `merge_policy`
+(`internal/workflows/definition/stacking.go` - `validateStacking`; there is no
+separate `internal/workflows/compiler` package). It follows the `merge_policy`
 pattern: a string enum with a global default.
 
 ## Files to change
@@ -156,12 +162,12 @@ pattern: a string enum with a global default.
 | `internal/workflows/localengine/engine_stack.go` | Extract `markMergedChunks`; call the sweep |
 | `internal/workflows/localengine/engine_stack_settle.go` | Add failure settle; apply `failed_pr_policy` |
 | `internal/workflows/definition/types.go` | Add `FailedPRPolicy` to `Stacking` |
-| `internal/workflows/compiler/stacking.go` | Validate `failed_pr_policy` enum and default |
-| `internal/cli/workflow_resume_lock.go` | Fix lock wait, holder report, stale reclaim |
-| `internal/cli/workflow_tool_engine.go` | Raise lock wait; report holder |
-| `internal/cli/stack_admit_integration.go` | Name the exact blocker in refusals |
-| `internal/cli/workflow_deliver.go` | Drive an advanceable stack before settling |
-| `internal/cli/workflows_sidebar.go` | Show blocking cause in the dot |
+| `internal/workflows/definition/stacking.go` | Validate `failed_pr_policy` enum and default |
+| `internal/cliworkflow/workflow_resume_lock.go` | Fix lock wait, holder report, stale reclaim |
+| `internal/cliworkflow/workflow_tool_engine.go` | Raise lock wait; report holder |
+| `internal/clichat/stack_admit_integration.go` | Name the exact blocker in refusals |
+| `internal/cliworkflow/workflow_deliver.go` | Drive an advanceable stack before settling |
+| the delivery-status sidebar rendering | Show blocking cause in the dot |
 | `scripts/run-delivery-workflow.sh` | Print and background the drive command |
 | `docs/architecture/workflows.md` | Document the new knob and the sweep |
 
@@ -196,3 +202,16 @@ pattern: a string enum with a global default.
 - No change to `merge_policy` semantics.
 - No change to the chunk admission contract.
 - No new ADR files. ADRs are prohibited in this repository.
+
+## Fixed since this document was written
+
+- **P2 (lock hygiene)**: done. See D3 and P2 above for the code pointers.
+- **D5 (host/API parity)**: done for the CLI foreground path and the session
+  engine's auto-delivery-repair hook; see D5 above. Whether this closes the
+  gap for every admission surface (for example a bare MCP `workflow_run`
+  tool call with no session engine attached) was not independently verified
+  when this note was added - confirm the calling surface before assuming
+  full parity.
+- P0-1, P0-2, P0-3, P1, P3, P4, and the `failed_pr_policy` knob were **not**
+  verified as done; treat them as still open until re-checked against the
+  code.

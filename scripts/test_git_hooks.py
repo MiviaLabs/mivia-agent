@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -133,6 +134,7 @@ def test_hooks_executable_and_present() -> None:
         "scripts/git-hooks/post-commit",
         "scripts/git-hooks/run_with_timeout",
         "scripts/git-hooks/run_without_git_env",
+        "scripts/git-hooks/assert_staged_tree_unchanged",
         ".githooks/pre-commit",
         ".githooks/pre-push",
         ".githooks/commit-msg",
@@ -147,6 +149,45 @@ def test_hooks_executable_and_present() -> None:
         # and direct execution tests below provide the equivalent contract.
         if os.name != "nt":
             assert path.stat().st_mode & 0o111, f"{rel} not executable"
+
+
+ASSERT_TREE = ROOT / "scripts" / "git-hooks" / "assert_staged_tree_unchanged"
+
+
+def test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched(root: Path) -> None:
+    init_repo(root)
+    before = run(["git", "write-tree"], root).stdout.strip()
+
+    proc = run([str(ASSERT_TREE), before, "mutation check"], root, check=False)
+
+    assert proc.returncode == 0, proc.stderr
+
+    # Same repo, same gate: with no before-hash it must refuse on usage rather
+    # than silently pass, so a caller that forgets the argument cannot turn the
+    # gate into a no-op.
+    usage = run([str(ASSERT_TREE)], root, check=False)
+    assert usage.returncode != 0
+    assert "usage:" in usage.stderr
+
+
+def test_assert_staged_tree_unchanged_refuses_a_restaged_mutant(root: Path) -> None:
+    # The class this gate exists for: a gate that mutates real working-tree
+    # files runs from a hook that also re-stages them (gofmt -w + git add), so
+    # a mutant present at that instant is staged and committed while the
+    # mutating gate still reports success - it restores before it reports.
+    # Simulated here by staging a change after the "before" hash is taken,
+    # which is exactly the shape that reaches the index.
+    init_repo(root)
+    before = run(["git", "write-tree"], root).stdout.strip()
+
+    (root / "file.txt").write_text("mutated content\n", encoding="utf-8")
+    run(["git", "add", "file.txt"], root)
+
+    proc = run([str(ASSERT_TREE), before, "mutation check"], root, check=False)
+
+    assert proc.returncode == 1, proc.stdout
+    assert "staged tree changed while this gate ran" in proc.stderr
+    assert before in proc.stderr, "the refusal must name the tree it expected"
 
 
 def test_commit_msg_accepts_valid() -> None:
@@ -196,6 +237,45 @@ def test_commit_msg_rejects_unknown_scope() -> None:
     assert scopes_idx < error_idx
     assert "unknown scope 'setup'" in err
     assert "ai:" in err  # scope guide mentions ai for control surface work
+
+
+def run_commit_msg_subject(subject: str) -> subprocess.CompletedProcess:
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(subject)
+        path = fh.name
+    return run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+
+
+def test_commit_msg_rejects_an_empty_subject() -> None:
+    """subject_line() skips blank and comment lines, so an all-blank message
+    (or one holding only comments) is what actually reaches the empty check."""
+    proc = run_commit_msg_subject("\n# just a comment\n\n")
+    assert proc.returncode != 0
+    assert "empty commit subject" in proc.stderr
+
+
+def test_commit_msg_rejects_an_over_length_subject() -> None:
+    proc = run_commit_msg_subject("chore(build): " + "x" * 100 + "\n\nbody\n")
+    assert proc.returncode != 0
+    assert "longer than" in proc.stderr
+
+
+def test_commit_msg_rejects_an_unknown_type() -> None:
+    proc = run_commit_msg_subject("frobnicate(build): do a thing\n\nbody\n")
+    assert proc.returncode != 0
+    assert "unknown type" in proc.stderr
+
+
+def test_commit_msg_rejects_a_body_starting_uppercase() -> None:
+    proc = run_commit_msg_subject("chore(build): Capitalized start\n\nbody\n")
+    assert proc.returncode != 0
+    assert "lowercase letter or digit" in proc.stderr
+
+
+def test_commit_msg_rejects_a_trailing_period() -> None:
+    proc = run_commit_msg_subject("chore(build): do a thing.\n\nbody\n")
+    assert proc.returncode != 0
+    assert "must not end with a period" in proc.stderr
 
 
 # A real test name: the hook now resolves every Regression name to a real
@@ -594,7 +674,11 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert "internal/chat/" in pre
     assert "internal/config/" in pre
     assert "internal/cliorchestrate/" in pre
+    assert "internal/storage/" in pre
     assert "TestTaskResultProducerConformance" in pre
+    # The session-catalog namespaces are two implementations of one contract;
+    # the conformance table is what makes a one-namespace fix fail loudly.
+    assert "TestCatalogNamespaces" in pre
     # Invariant summary must be in the quality line
     assert "INVARIANT_SUMMARY" in pre
     helper_call = 'run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }'
@@ -603,11 +687,22 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert helper_call in push
 
 
-def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path) -> None:
+def test_ci_verify_fetches_history_for_changed_line_gates() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    verify_start = workflow.index("  verify:\n")
+    verify_end = workflow.index("  commit-lint:\n", verify_start)
+    verify_job = workflow[verify_start:verify_end]
+    assert "fetch-depth: 0" in verify_job
+
+
+def test_pre_commit_full_script_auto_stages_memories(root: Path) -> None:
     """Run the REAL scripts/git-hooks/pre-commit end to end in a linked git
-    worktree of this repo, with a genuinely staged .mivia/memory.db change,
-    confirming the memory.db auto-stage step coexists with every other gate
-    (config, secrets, size, structure, semgrep, invariants) running together.
+    worktree of this repo with an UNTRACKED new memory and a DELETED tracked
+    one under .agents/memories/, confirming the auto-stage step adds the new
+    file and stages the deletion, coexisting with every other gate (config,
+    secrets, size, structure, semgrep, invariants) running together.
 
     A linked worktree (not a synthetic fixture) is required: the script's
     other gates live at $ROOT/scripts/... and must actually be present.
@@ -631,25 +726,35 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
         run(["git", "config", "--worktree", "user.name", "Hook Test"], root)
         run(["git", "config", "--worktree", "commit.gpgsign", "false"], root)
 
-        mivia_db = root / ".mivia" / "memory.db"
-        assert mivia_db.is_file(), "worktree must carry the real committed memory.db"
+        memories = root / ".agents" / "memories"
+        assert memories.is_dir(), "worktree must carry the committed .agents/memories"
+        tracked = sorted(memories.glob("*.md"))
+        assert tracked, "worktree must carry at least one committed memory"
 
-        # Real, valid mutation via the actual CLI (not a byte-level edit):
-        # find a real existing id, then promote it - a genuine read-write
-        # open plus (if not already core) a real row change.
-        found = run(
-            ["go", "run", "./cmd/mivia", "memory", "search", "the",
-             "--workspace", str(root), "--limit", "1", "--json"],
-            root,
+        # A new memory exactly as memory_save leaves it: untracked, never
+        # `git add`ed by anyone.
+        created = memories / "auto-stage-fixture.md"
+        created.write_text(
+            "scope: project\nverdict: good\n\n"
+            "## Summary\nAuto-stage fixture; carries no wire vocabulary.\n",
+            encoding="utf-8",
         )
-        results = json.loads(found.stdout)
-        assert results, "expected at least one existing memory entry to promote"
-        entry_id = results[0]["id"]
-        run(
-            ["go", "run", "./cmd/mivia", "memory", "promote", entry_id, "--workspace", str(root)],
-            root,
+        # Housekeeping, the other half of the contract: a tracked memory
+        # deleted from the working tree must stage as a deletion too.
+        tracked[0].unlink()
+
+        # The exec pipe-bound gate (and every other invariant gate below it)
+        # is keyed on a staged .go file under internal/ - a memory-only
+        # change legitimately does not trigger it. Stage one trivial probe,
+        # same as test_pre_commit_full_script_runs_all_gates_with_staged_memory_db,
+        # so this test's "coexists with every other gate" claim actually
+        # exercises the invariant gates instead of skipping them all.
+        probe = root / "internal" / "evidencecheck" / "hook_probe_test.go"
+        probe.write_text(
+            "package evidencecheck\n\nimport \"testing\"\n\nfunc TestHookProbe(t *testing.T) {}\n",
+            encoding="utf-8",
         )
-        run(["git", "add", ".mivia/memory.db"], root)
+        run(["git", "add", str(probe)], root)
 
         result = run(
             [str(ROOT / "scripts" / "git-hooks" / "pre-commit")],
@@ -660,9 +765,88 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
             f"pre-commit failed:\nstdout={result.stdout}\nstderr={result.stderr}"
         )
         cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
-        assert ".mivia/memory.db" in cached, "memory.db auto-stage step did not run"
+        assert ".agents/memories/auto-stage-fixture.md" in cached, (
+            "the new memory was not auto-staged"
+        )
+        status = run(["git", "diff", "--cached", "--name-status"], root).stdout
+        assert any(
+            line.startswith("D\t.agents/memories/") for line in status.splitlines()
+        ), f"the deleted memory was not staged as a deletion:\n{status}"
         combined = result.stdout + result.stderr
         assert "one or more parallel pre-commit gates failed" not in combined
+        assert "Running exec pipe-bound gate..." in combined
+    finally:
+        run(["git", "worktree", "remove", "--force", str(root)], ROOT, check=False)
+
+
+def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path) -> None:
+    """Run the REAL scripts/git-hooks/pre-commit end to end in a linked git
+    worktree of this repo, with a genuinely staged .mivia/memory.db change,
+    confirming a staged db coexists with every other gate (config, secrets,
+    size, structure, semgrep, invariants) running together.
+
+    A linked worktree (not a synthetic fixture) is required: the script's
+    other gates live at $ROOT/scripts/... and must actually be present.
+    """
+    if os.name == "nt" or shutil.which("go") is None:
+        return
+    root.parent.mkdir(parents=True, exist_ok=True)
+    run(["git", "config", "extensions.worktreeConfig", "true"], ROOT)
+    run(["git", "worktree", "add", "--detach", str(root)], ROOT)
+    try:
+        run(["git", "config", "--worktree", "user.email", "hook-test@example.invalid"], root)
+        run(["git", "config", "--worktree", "user.name", "Hook Test"], root)
+        run(["git", "config", "--worktree", "commit.gpgsign", "false"], root)
+
+        mivia_db = root / ".mivia" / "memory.db"
+        assert mivia_db.is_file(), "worktree must carry the real committed memory.db"
+
+        # `mivia memory promote` no longer touches this file: the memory
+        # store defaults to the Markdown backend (config.MemoryConfig has no
+        # store_path field - [memory].store_path in .mivia/mivia.toml is
+        # dead config), and its derived SQLite index lives at
+        # workspace.GlobalContextStorePath, under the user's HOME namespace
+        # directory, never under the workspace root. .mivia/memory.db is a
+        # leftover from an earlier schema (its own `memories` table predates
+        # the current index's `memory_entries` table) that nothing in the
+        # binary reads or writes today - it just still sits here, tracked.
+        #
+        # A real, valid mutation via direct sqlite3 (not a byte-level edit)
+        # against that same legacy schema is the closest equivalent to what
+        # this test used to get from the CLI: a genuine read-write open plus
+        # a real row change, producing an authentic page-level diff instead
+        # of a corrupted-looking one.
+        con = sqlite3.connect(str(mivia_db))
+        try:
+            row = con.execute("SELECT id, tier FROM memories LIMIT 1").fetchone()
+            assert row, "expected at least one existing memory.db row to flip"
+            entry_id, tier = row
+            new_tier = "archive" if tier == "core" else "core"
+            con.execute("UPDATE memories SET tier = ? WHERE id = ?", (new_tier, entry_id))
+            con.commit()
+        finally:
+            con.close()
+        run(["git", "add", ".mivia/memory.db"], root)
+        probe = root / "internal" / "evidencecheck" / "hook_probe_test.go"
+        probe.write_text(
+            "package evidencecheck\n\nimport \"testing\"\n\nfunc TestHookProbe(t *testing.T) {}\n",
+            encoding="utf-8",
+        )
+        run(["git", "add", str(probe)], root)
+
+        result = run(
+            [str(ROOT / "scripts" / "git-hooks" / "pre-commit")],
+            root,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"pre-commit failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
+        assert ".mivia/memory.db" in cached, "staged memory.db did not survive the hook"
+        combined = result.stdout + result.stderr
+        assert "one or more parallel pre-commit gates failed" not in combined
+        assert "Running exec pipe-bound gate..." in combined
     finally:
         run(["git", "worktree", "remove", "--force", str(root)], ROOT, check=False)
 
@@ -673,7 +857,7 @@ def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
         return
     source = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
     start = source.index("# Secret scan:")
-    end = source.index("\nrun_verify python3 scripts/check_docs_ownership.py", start)
+    end = source.index("\nrun_verify python3 scripts/verify_agent_config.py", start)
     selection = source[start:end]
     with tempfile.TemporaryDirectory() as tmp:
         fake_bin = Path(tmp) / "bin"
@@ -684,8 +868,9 @@ def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
 set -euo pipefail
 case \"$*\" in
   'rev-parse --abbrev-ref HEAD') printf 'mivia/no-upstream\\n' ;;
-  'rev-list --first-parent -2 HEAD') printf 'first-parent\\n' ;;
-  'merge-base HEAD first-parent') printf 'first-parent-base\\n'; exit 0 ;;
+  # No first-parent branches here on purpose: the assertion below is that the
+  # slice never reaches for them. A stub case for a call that cannot happen
+  # reads as coverage of a path this fixture does not drive.
   *) exit 1 ;;
 esac
 """,
@@ -698,6 +883,10 @@ esac
             [
                 "bash",
                 "-c",
+                # The hook reads git's ref lines from stdin. This test's inherited
+                # stdin can be a non-tty that never reaches EOF (a hook, CI, an
+                # agent session), which would park the read loop forever.
+                "exec </dev/null\n"
                 "set -euo pipefail\n"
                 "run_verify() { printf '%s\\n' \"$@\"; }\n"
                 + selection,
@@ -707,6 +896,150 @@ esac
         )
     assert proc.stdout.splitlines() == ["python3", "scripts/secret_scan.py", "--tracked"]
     assert "git rev-list --first-parent" not in selection
+
+
+ZERO_SHA = "0" * 40
+
+
+def pre_push_selection() -> str:
+    """The `# Secret scan:` slice of the shipped pre-push hook, read at test time."""
+    source = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
+    start = source.index("# Secret scan:")
+    end = source.index("\nrun_verify python3 scripts/verify_agent_config.py", start)
+    return source[start:end]
+
+
+def init_pushed_repo(root: Path) -> tuple[str, str]:
+    """A repo with `main` pushed to a bare `origin` and an unpushed `feature`.
+
+    Returns (sha_main, sha_feature). HEAD is left on `main`, so a hook that
+    sweeps HEAD sweeps the wrong ref.
+    """
+    init_repo(root)
+    run(["git", "commit", "-m", "chore(test): initial"], root)
+    run(["git", "branch", "-M", "main"], root)
+    remote = root.parent / f"{root.name}-remote.git"
+    run(["git", "init", "--bare", str(remote)], root)
+    run(["git", "remote", "add", "origin", str(remote)], root)
+    run(["git", "push", "origin", "main"], root)
+    sha_main = run(["git", "rev-parse", "main"], root).stdout.strip()
+    run(["git", "checkout", "-q", "-b", "feature"], root)
+    (root / "feature.txt").write_text("feature\n", encoding="utf-8")
+    run(["git", "add", "feature.txt"], root)
+    run(["git", "commit", "-m", "chore(test): feature"], root)
+    sha_feature = run(["git", "rev-parse", "feature"], root).stdout.strip()
+    run(["git", "checkout", "-q", "main"], root)
+    return sha_main, sha_feature
+
+
+def run_pre_push_selection(root: Path, stdin: str) -> list[str]:
+    """Run the secret-scan slice with git's ref lines piped INSIDE the command.
+
+    Piping inside `bash -c` keeps the harness's own stdin out of the picture
+    and gives the slice a real pipe that reaches EOF.
+    """
+    script = (
+        "set -euo pipefail\n"
+        "ROOT=\"$(git rev-parse --show-toplevel)\"\n"
+        "run_verify() { printf '%s\\n' \"$*\"; }\n"
+        "printf '%s' \"$1\" | {\n" + pre_push_selection() + "\n}\n"
+    )
+    proc = run(["bash", "-c", script, "bash", stdin], root)
+    return proc.stdout.splitlines()
+
+
+def test_pre_push_sweeps_the_pushed_ref_not_head(root: Path) -> None:
+    """The hook must scan the ranges git hands it on stdin, not HEAD's."""
+    if os.name == "nt":
+        return
+    sha_main, sha_feature = init_pushed_repo(root)
+    head = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+    assert head == sha_main and head != sha_feature
+
+    # New branch: no remote sha; base comes from the chain anchored on the
+    # PUSHED ref (feature has no upstream, so origin/main).
+    lines = run_pre_push_selection(
+        root, f"refs/heads/feature {sha_feature} refs/heads/feature {ZERO_SHA}\n"
+    )
+    expected_base = run(["git", "merge-base", "feature", "origin/main"], root).stdout.strip()
+    assert expected_base == sha_main
+    assert lines == [
+        f"python3 scripts/secret_scan.py --base {sha_main} --tip {sha_feature}"
+    ], lines
+    assert f"--tip {head}" not in lines[0] and "--tip HEAD" not in lines[0]
+
+    # Update of a pushed branch: the remote sha is the base.
+    run(["git", "push", "origin", "feature"], root)
+    run(["git", "checkout", "-q", "feature"], root)
+    (root / "feature.txt").write_text("feature two\n", encoding="utf-8")
+    run(["git", "commit", "-am", "chore(test): feature two"], root)
+    sha_new = run(["git", "rev-parse", "feature"], root).stdout.strip()
+    run(["git", "checkout", "-q", "main"], root)
+    lines = run_pre_push_selection(
+        root, f"refs/heads/feature {sha_new} refs/heads/feature {sha_feature}\n"
+    )
+    assert lines == [
+        f"python3 scripts/secret_scan.py --base {sha_feature} --tip {sha_new}"
+    ], lines
+
+    # A delete alone: no non-delete line was read, so the HEAD fallback runs
+    # and no range is built for the deleted ref.
+    lines = run_pre_push_selection(
+        root, f"refs/heads/feature {ZERO_SHA} refs/heads/feature {sha_new}\n"
+    )
+    assert lines == [
+        f"python3 scripts/secret_scan.py --base {sha_main} --tip HEAD"
+    ], lines
+
+    # A pushed ref whose whole chain finds no base is scanned --tracked, not
+    # dropped.
+    orphan = root.parent / f"{root.name}-orphan"
+    init_repo(orphan)
+    run(["git", "commit", "-m", "chore(test): orphan"], orphan)
+    sha_orphan = run(["git", "rev-parse", "HEAD"], orphan).stdout.strip()
+    lines = run_pre_push_selection(
+        orphan, f"refs/heads/feature {sha_orphan} refs/heads/feature {ZERO_SHA}\n"
+    )
+    assert lines == ["python3 scripts/secret_scan.py --tracked"], lines
+
+
+def test_pre_push_receives_ref_lines_through_the_supervisor(root: Path) -> None:
+    """The shipped path: git -> .githooks/pre-push -> run_with_timeout -> hook.
+
+    Depends on `setsid`: on a host that has it, run_with_timeout runs the hook
+    as a background job, and reverting the `<&0` redirect in
+    `setsid --wait "$@" <&0 &` fails this test (the job reads /dev/null and
+    the capture file is empty). Without `setsid` the supervisor execs GNU
+    `timeout`, which preserves stdin on its own, so the claim cannot be
+    exercised and the test is skipped rather than passed vacuously.
+    """
+    if os.name == "nt":
+        return
+    if shutil.which("setsid") is None:
+        print("test_pre_push_receives_ref_lines_through_the_supervisor: skipped (no setsid)")
+        return
+    _sha_main, sha_feature = init_pushed_repo(root)
+    for rel in (".githooks/pre-push", "scripts/git-hooks/run_with_timeout"):
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / rel, dst)
+        dst.chmod(0o755)
+    capture = root / ".git" / "pre-push-stdin"
+    stub = root / "scripts" / "git-hooks" / "pre-push"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"cat >'{capture}'\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    run(["git", "config", "core.hooksPath", str(root / ".githooks")], root)
+
+    run(["git", "push", "origin", "feature"], root)
+    captured = capture.read_text(encoding="utf-8") if capture.is_file() else "<missing>"
+    assert (
+        f"refs/heads/feature {sha_feature} refs/heads/feature {ZERO_SHA}" in captured
+    ), f"hook stdin through the supervisor: {captured!r}"
 
 
 def test_isolated_git_env_preserves_main_and_worktree_indexes(root: Path) -> None:
@@ -824,6 +1157,14 @@ def test_pre_push_semgrep_engine_resilience() -> None:
 
 
 def main() -> None:
+    # Every fixture here pins the hook's AUTO-DETECT behavior, none tests the
+    # MIVIA_PUSH_VERIFY_BASE/TIP override path itself, so an override left
+    # active in the invoking shell (set to scope a rewritten-history push)
+    # must not leak into subprocess envs built from os.environ.copy() below -
+    # it would silently steer every fixture onto the override branch instead
+    # of the auto-detect logic each one exists to pin.
+    os.environ.pop("MIVIA_PUSH_VERIFY_BASE", None)
+    os.environ.pop("MIVIA_PUSH_VERIFY_TIP", None)
     # Discovery by scan, not by a hand-maintained call list: seven trailer
     # CONTENT tests defined after the __main__ guard silently never ran
     # here. Zero-argument test_ functions run in sorted order; the
@@ -848,7 +1189,12 @@ def main() -> None:
         (test_isolated_git_env_preserves_main_and_worktree_indexes, "isolation"),
         (test_install_sets_first_push_upstream_in_linked_worktree, "first-push"),
         (test_pre_commit_does_not_overstage_partially_staged_go_file, "partial-staging"),
-        (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-worktree"),
+        (test_pre_commit_full_script_auto_stages_memories, "full-script-worktree"),
+        (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-memory-db"),
+        (test_assert_staged_tree_unchanged_passes_when_the_index_is_untouched, "tree-guard-clean"),
+        (test_assert_staged_tree_unchanged_refuses_a_restaged_mutant, "tree-guard-mutated"),
+        (test_pre_push_sweeps_the_pushed_ref_not_head, "push-ref"),
+        (test_pre_push_receives_ref_lines_through_the_supervisor, "push-supervisor"),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)

@@ -32,3 +32,27 @@ func TestDispatchTasksRefusesAnInadmissibleSchema(t *testing.T) {
 		t.Fatalf("err = %v, want an output_schema admission refusal", err)
 	}
 }
+
+func TestDispatchTasksRawDecoderRejectsInvalidAgentFieldsAndDuplicateKeys(t *testing.T) {
+	dispatch := routingTools(t)
+	cases := []string{
+		`{"tasks":null}`,
+		`{"tasks":[]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","timeout_seconds":null}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","budget":null}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","agent":null}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","skill":null}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","agent":1}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","skill":1}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","agent":"a","agent":"b"}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work","skill":"a","skill":"b"}]}`,
+		`{"tasks":[{"id":"t1","prompt":"work"}],"tasks":[]}`,
+		`{"tasks":[{"id":"t1","prompt":"work"}]} trailing`,
+		`{"tasks":[{"id":"t1","prompt":"work"}`,
+	}
+	for _, raw := range cases {
+		if _, err := dispatch.Execute(context.Background(), json.RawMessage(raw)); err == nil {
+			t.Errorf("Execute(%s) accepted invalid JSON", raw)
+		}
+	}
+}

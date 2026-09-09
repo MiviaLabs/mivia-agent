@@ -58,6 +58,13 @@ func WriteDefaultUserConfig(path string) error {
 	return nil
 }
 
+// errUserConfigExists reports that the user config bootstrap was asked to
+// write a file that already exists. It is a fall-through signal, not a user
+// facing failure: loadFile answers it by loading the existing file, so the
+// file's real problem (a TOML parse error, or an unresolvable provider)
+// surfaces instead of a message about bootstrapping.
+var errUserConfigExists = errors.New("user config already exists")
+
 // autoBootstrapUserConfig silently writes a minimal default config to
 // UserConfigPath() and returns the path it wrote. It returns "" (no error)
 // when HOME cannot be resolved, in which case the caller falls back to its
@@ -66,11 +73,22 @@ func WriteDefaultUserConfig(path string) error {
 // It is only reached from loadFile when LoadOptions.AutoBootstrapUserConfig
 // is set and no explicit --config/$MIVIA_CONFIG path was given and the
 // normal candidate search already came up empty - see loadFile's doc
-// comment for the full policy - so it never overwrites an existing file.
+// comment for the full policy. That search (firstProviderCandidate) returns
+// "" whenever no candidate DECLARES A PROVIDER, which is also true of an
+// existing but provider-less or corrupt user config file - so this function
+// cannot trust "reached here" to mean "path does not exist" and must check
+// itself: an existing file at path is left untouched and reported with
+// errUserConfigExists, which loadFile turns into "load that file normally"
+// so its own parse/provider error is what the caller sees.
 func autoBootstrapUserConfig() (string, error) {
 	path := UserConfigPath()
 	if path == "" {
 		return "", nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("auto-bootstrap user config: %s: %w", path, errUserConfigExists)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("auto-bootstrap user config: stat %s: %w", path, err)
 	}
 	if err := WriteDefaultUserConfig(path); err != nil {
 		return "", fmt.Errorf("auto-bootstrap user config: %w", err)

@@ -181,6 +181,18 @@ type inheritedFields struct {
 	inputSchema    map[string]any
 }
 
+// effectiveDenylistFor is the set applyToolPolicy denies with, kept on the
+// resolved agent for producers that add tool names AFTER it has run.
+//
+// cliagents.AuthorizedAgentTools is the one that matters: it grants authority
+// over every tool of a selected MCP server, which by definition is not in the
+// agent file, and several of the surfaces it feeds cannot reach the operator's
+// config to re-check. Carrying the denial in the immutable resolved snapshot
+// is what makes it apply everywhere the agent goes.
+func effectiveDenylistFor(disallowed []string, opts ResolveOptions) []string {
+	return append(slices.Clone(disallowed), opts.Global.MandatoryToolDenylistAdditions...)
+}
+
 func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts ResolveOptions) (ResolvedAgent, []string, error) {
 	var warn []string
 	fields := inheritFields(in.Spec, parent, opts)
@@ -250,6 +262,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		EffectiveMCPServers: mcpServers,
 		AllowEmptyTools:     allowEmptyTools,
 		DisallowedTools:     dis,
+		EffectiveDenylist:   effectiveDenylistFor(dis, opts),
 		CoreTools:           fields.coreTools,
 		Skills:              skills,
 		SkillOrigins:        origins,
@@ -339,62 +352,6 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 		f.toolsList = &empty
 	}
 	return f
-}
-
-// resolveSkillsAllowlist applies plan 06 nil/empty/explicit semantics and trust.
-// nil → unrestricted (all trusted skills); empty → none; names → validated set.
-func resolveSkillsAllowlist(agentName string, skills *[]string, opts ResolveOptions) (*[]string, map[string]string, error) {
-	if skills == nil {
-		return nil, nil, nil
-	}
-	if len(*skills) == 0 {
-		empty := []string{}
-		return &empty, map[string]string{}, nil
-	}
-	// When a catalogue is provided, every name must resolve to a trusted origin.
-	// Without a catalogue (unit tests that only care about tool inheritance),
-	// accept names as-is so existing resolve tests stay focused.
-	out := make([]string, 0, len(*skills))
-	origins := make(map[string]string, len(*skills))
-	seen := make(map[string]struct{}, len(*skills))
-	for _, raw := range *skills {
-		name := strings.TrimSpace(raw)
-		if name == "" {
-			return nil, nil, fmt.Errorf("agent %q: skills entry must not be empty", agentName)
-		}
-		if _, dup := seen[name]; dup {
-			continue
-		}
-		seen[name] = struct{}{}
-		if opts.SkillCatalogue != nil {
-			entry, ok := opts.SkillCatalogue[name]
-			if !ok || (!entry.User && !entry.Project) {
-				return nil, nil, fmt.Errorf("agent %q: unknown skill %q", agentName, name)
-			}
-			origin, err := pickSkillOrigin(agentName, name, entry, opts.AllowProjectSkills)
-			if err != nil {
-				return nil, nil, err
-			}
-			origins[name] = origin
-		}
-		out = append(out, name)
-	}
-	return &out, origins, nil
-}
-
-// pickSkillOrigin prefers user skills over project so a workspace skill cannot
-// silently shadow a user binding. Project-only skills require the workspace gate.
-func pickSkillOrigin(agentName, skillName string, entry SkillCatalogueEntry, allowProject bool) (string, error) {
-	if entry.User {
-		return string(config.AgentSourceUser), nil
-	}
-	if entry.Project {
-		if !allowProject {
-			return "", fmt.Errorf("agent %q: skill %q is workspace-only; enable load_workspace_config to use project skills", agentName, skillName)
-		}
-		return string(config.AgentSourceWorkspace), nil
-	}
-	return "", fmt.Errorf("agent %q: unknown skill %q", agentName, skillName)
 }
 
 func applyToolDeltas(toolsList *[]string, spec config.AgentFileSpec) *[]string {

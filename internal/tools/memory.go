@@ -49,6 +49,7 @@ func (t *memorySaveTool) Parameters() map[string]any {
 		"why":        map[string]any{"type": "string", "description": "Reasoning or context, max 1000 characters."},
 		"scope":      map[string]any{"type": "string", "enum": []string{"project", "org"}, "description": "project = this workspace only; org = shared across the org's projects (requires user-config org_id)."},
 		"verdict":    map[string]any{"type": "string", "enum": []string{"good", "bad", "mixed", "neutral"}, "description": "Assessment of the experience."},
+		"importance": map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}, "description": "How much this should shape future work. Defaults to medium."},
 		"good":       map[string]any{"type": "string", "description": "What worked. Use bullet lines."},
 		"bad":        map[string]any{"type": "string", "description": "What did not work. Use bullet lines."},
 		"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "maxItems": 8, "description": "Optional keywords."},
@@ -63,6 +64,7 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 		Why        string   `json:"why"`
 		Scope      string   `json:"scope"`
 		Verdict    string   `json:"verdict"`
+		Importance string   `json:"importance"`
 		Good       string   `json:"good"`
 		Bad        string   `json:"bad"`
 		Tags       []string `json:"tags"`
@@ -79,6 +81,10 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if in.Verdict != "" {
 		verdict = memory.Verdict(in.Verdict)
 	}
+	importance := memory.ImportanceMedium
+	if in.Importance != "" {
+		importance = memory.Importance(in.Importance)
+	}
 	// Trim metadata once so the stored title/summary/tags agree with the
 	// rendered content (which Render trims): padded metadata would degrade
 	// exact-title ranking and leak stray whitespace into results.
@@ -94,6 +100,7 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 		Title:      title,
 		Scope:      scope,
 		Verdict:    verdict,
+		Importance: importance,
 		Tags:       tags,
 		Summary:    summary,
 		Good:       in.Good,

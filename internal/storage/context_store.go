@@ -325,7 +325,31 @@ func (s *SQLite) Advance(ctx context.Context, request contextstate.AdvanceReques
 		_ = tx.Rollback()
 		return err
 	}
+	if err := restampProjectionForBindingAdvance(ctx, tx, request); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	return tx.Commit()
+}
+
+// restampProjectionForBindingAdvance keeps a projection snapshot fresh across
+// an advance that changed no content.
+//
+// resolveProjection treats session_revision as a CONTENT-staleness proxy: a
+// snapshot older than the live head was superseded by a clear or a commit, so
+// the live state wins. A binding advance (/model, a provider switch) bumps the
+// same counter while superseding nothing, which read as stale and silently
+// discarded a failed turn's snapshot - the only copy that turn's history has,
+// since it never reached a checkpoint. Carrying the snapshot's stamp forward
+// keeps the proxy honest without a schema change: content advances still move
+// the head past it.
+func restampProjectionForBindingAdvance(ctx context.Context, tx *sql.Tx, request contextstate.AdvanceRequest) error {
+	if request.ClearActive {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET session_revision=? WHERE workspace_id=? AND subject_id=? AND session_id=? AND session_revision=? AND instance_id IS ?`,
+		request.NewSession, request.Principal.WorkspaceID, request.Principal.SubjectID, request.SessionID, request.Expected.Session, nullableText(request.WorktreeInstance.ID))
+	return err
 }
 
 func advanceActiveCheckpoint(ctx context.Context, tx *sql.Tx, request contextstate.AdvanceRequest, source uint64) (any, error) {

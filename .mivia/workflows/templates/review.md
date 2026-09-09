@@ -27,6 +27,13 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths named in `files_changed` and `inspected` in the implementation
+summary above, plus the delivery plan's own `inspected` list (see `evidence.plan`) - that is
+the builder's own read-set, not a claim to trust blindly. Read every one of those paths
+yourself and verify the implementation summary's claims against what they actually contain;
+add any further path the change should have touched or the summary should have inspected but
+did not.
+
 Check that the work stays within scope. Check that tests cover success and reachable negative
 paths. When untrusted structured input applies, check empty, malformed, oversized, and duplicate
 input coverage. Check security, privacy, safe paths, fail-closed behavior, and hook policy.

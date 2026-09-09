@@ -3,7 +3,8 @@ id: prefer_fast_bug_audit_for_speed
 title: Fast bug hunt requests → bug-fix-fast / fast-bug-audit, not the slow default
 content: When the user wants a quick/fast bug hunt in this repo, dispatch bug-fix-fast.toml or the fast-bug-audit skill directly - not the default bug-fix.toml / bug-audit path, which is deliberately slow and exhaustive.
 importance: medium
-tags: workflows, skills, bug-hunting
+tags: [workflows, skills, bug-hunting]
+updated: 2026-09-04
 ---
 
 When the user asks for a fast, quick, or opportunistic bug hunt, default to
@@ -14,7 +15,7 @@ the fast path, not the habitual slow one:
   delivery, only the hunt step's skill/template differ (`fast-bug-audit` /
   `templates/bugfix-hunt-fast.md` vs `bug-audit` / `templates/bugfix-hunt.md`).
 - Interactive/direct skill invocation: `fast-bug-audit`
-  (`.mivia/skills/fast-bug-audit/SKILL.md`), not `bug-audit`.
+  (`.agents/skills/fast-bug-audit/SKILL.md`), not `bug-audit`.
 - Feature-delivery task text: the template at
   `.agents/templates/bug-hunt-task-fast.md` (scope placeholder at the end,
   fill in and paste as the `task` input).

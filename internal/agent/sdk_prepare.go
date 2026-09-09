@@ -108,6 +108,13 @@ func sdkPrepareTrim(l *Loop, opts Options, turn *sdkTurnState) func(context.Cont
 		if err != nil {
 			return nil, err
 		}
+		// The prepared slice IS the request: post-pruning, post-compaction,
+		// exactly what the provider is about to be billed for. Reported here
+		// so a host can describe the live context at every step instead of
+		// waiting for the turn to end and adopt.
+		if opts.ObserveRequestHistory != nil {
+			opts.ObserveRequestHistory(prepared)
+		}
 		return cliMessagesToSDK(prepared), nil
 	}
 }

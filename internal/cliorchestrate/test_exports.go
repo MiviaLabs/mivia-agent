@@ -16,7 +16,7 @@ import (
 // StoreTestCoordinator stores a coordinator and its repo in the package-level
 // maps for the given dispatcher. Returns a cleanup func. Used by cli tests that
 // stay in internal/cli but need to set up orchestration state.
-func StoreTestCoordinator(d *runtime.Dispatcher, c coordinator.Coordinator, repo ledger.LedgerRepository) func() {
+func StoreTestCoordinator(d *runtime.Dispatcher, c ResumeCoordinator, repo ledger.LedgerRepository) func() {
 	coordinators.Store(d, c)
 	coordinatorRepos.Store(d, repo)
 	return func() {
@@ -36,18 +36,18 @@ func LoadCoordinatorRepo(d *runtime.Dispatcher) (ledger.LedgerRepository, bool) 
 }
 
 // LoadCoordinator returns the coordinator registered for d, if any.
-func LoadCoordinator(d *runtime.Dispatcher) (coordinator.Coordinator, bool) {
+func LoadCoordinator(d *runtime.Dispatcher) (OrchestrationCoordinator, bool) {
 	v, ok := coordinators.Load(d)
 	if !ok {
 		return nil, false
 	}
-	c, ok := v.(coordinator.Coordinator)
+	c, ok := v.(OrchestrationCoordinator)
 	return c, ok
 }
 
 // StoreTestRunHandle stores an orchestrationHandle for the given runID.
 // Returns a cleanup func. Used by cli tests that need to set up run handles.
-func StoreTestRunHandle(runID string, c coordinator.Coordinator, h *coordinator.RunHandle, repo ledger.LedgerRepository, d *runtime.Dispatcher, sessionID string) func() {
+func StoreTestRunHandle(runID string, c OrchestrationCoordinator, h *coordinator.RunHandle, repo ledger.LedgerRepository, d *runtime.Dispatcher, sessionID string) func() {
 	record := &orchestrationHandle{
 		coord:      c,
 		handle:     h,
@@ -63,7 +63,7 @@ func StoreTestRunHandle(runID string, c coordinator.Coordinator, h *coordinator.
 }
 
 // CoordinatorForRun returns the coordinator stored for the given runID, if any.
-func CoordinatorForRun(runID string) coordinator.Coordinator {
+func CoordinatorForRun(runID string) OrchestrationCoordinator {
 	v, ok := runHandles.Load(runID)
 	if !ok {
 		return nil
@@ -86,8 +86,8 @@ func ClearAllCoordinators() {
 
 // NewDispatchTasksToolForAdvertising returns a dispatch_tasks tool for the
 // cli session tool catalog (schema advertising only). agentReg feeds the
-// agent enum and roster prose in Parameters(); nil keeps the degraded
-// historical shape (empty enum, roster-free prose), and every method still
+// agent roster prose in Parameters(); nil keeps the degraded
+// historical shape (roster-free prose), and every method still
 // reads no runtime state beyond that immutable snapshot.
 func NewDispatchTasksToolForAdvertising(agentReg *agents.AgentRegistry) tools.Tool {
 	return &dispatchTasksTool{agentReg: agentReg}
@@ -156,7 +156,7 @@ func NewDispatchTasksToolForSkillPolicy(skillReg *skills.Registry, agentReg *age
 
 // CoordinatorOfHandle returns the handle record's coordinator. It serves cli
 // tests that inspect a parked run's coordinator.
-func CoordinatorOfHandle(record *OrchestrationHandleForTest) coordinator.Coordinator {
+func CoordinatorOfHandle(record *OrchestrationHandleForTest) OrchestrationCoordinator {
 	return record.coord
 }
 

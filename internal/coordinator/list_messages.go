@@ -30,7 +30,7 @@ const MessageKindAskDeclined agentmsg.Kind = "ask_declined"
 // announcements (LifecycleKindTaskAskDeclined) are surfaced as
 // MessageKindAskDeclined entries with TaskID = asker and a synopsis like
 // "ask declined: target terminal".
-func (c *coordinator) ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error) {
+func (c *Coordinator) ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error) {
 	if runID == "" {
 		return nil, fmt.Errorf("list run messages: run_id is required")
 	}
@@ -87,7 +87,7 @@ func (c *coordinator) ListRunMessages(ctx context.Context, runID, taskID string)
 }
 
 // LoadMessageBody resolves a content_ref to the full stored message envelope.
-func (c *coordinator) LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error) {
+func (c *Coordinator) LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error) {
 	if contentRef == "" {
 		return agentmsg.Message{}, ledger.ErrContentNotFound
 	}

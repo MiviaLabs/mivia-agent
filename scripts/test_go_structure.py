@@ -61,11 +61,21 @@ def test_policy_exists_and_thresholds() -> None:
     assert p["funcLines"]["hard"] == 120
     assert p["commentBlockLines"]["soft"] == 25
     assert p["commentBlockLines"]["hard"] == 30
-    # Baselines are pinned to current file locations after the cli split;
-    # chat_json_writer moved from internal/cli to internal/clichat, and the
-    # TUI god-file moved from internal/cli/tui.go to internal/legacytui/tui.go.
+    # Every baseline entry is a grant tied to a real file: a row for a
+    # deleted file is a standing allowance waiting for an unrelated new
+    # file at that path to inherit it. (A pinned legacytui path rotted
+    # here once and turned this test into a red gate nobody noticed.)
+    root = POLICY.parent.parent.parent
+    for rel_path in p["baseline"]["files"]:
+        assert (root / rel_path).is_file(), f"file baseline entry for missing file: {rel_path}"
+    for rel_path in p["commentBlockLines"]["baseline"]:
+        assert (root / rel_path).is_file(), f"comment baseline entry for missing file: {rel_path}"
+    # Baselines are pinned to current file locations after the cli split:
+    # chat_json_writer moved from internal/cli to internal/clichat. The
+    # legacytui god-file that used to be pinned here was deleted with the
+    # package, so its baseline entry is gone and must stay gone.
     assert "internal/clichat/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
-    assert "internal/legacytui/tui.go" in p["baseline"]["files"]
+    assert not any(f.startswith("internal/legacytui/") for f in p["baseline"]["files"])
 
 
 def test_small_file_ok() -> None:
@@ -276,6 +286,31 @@ def test_generated_exclusions_are_applied() -> None:
             assert proc.stderr == "", f"{name}: {proc.stderr}"
 
 
+def test_empty_import_block_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        f = d / "husk.go"
+        f.write_text(
+            "package p\n\n// Tests relocated elsewhere.\n\nimport ()\n",
+            encoding="utf-8",
+        )
+        proc = run(["python3", str(CHECK), str(f)])
+        assert proc.returncode == 1, proc.stderr
+        assert "empty import block" in proc.stderr
+
+
+def test_real_import_block_ok() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        f = d / "ok.go"
+        f.write_text(
+            'package p\n\nimport (\n\t"fmt"\n)\n\nfunc Hello() { fmt.Println("x") }\n',
+            encoding="utf-8",
+        )
+        proc = run(["python3", str(CHECK), str(f)])
+        assert proc.returncode == 0, proc.stderr
+
+
 def main() -> None:
     test_policy_exists_and_thresholds()
     test_small_file_ok()
@@ -295,6 +330,8 @@ def main() -> None:
     test_worktree_clean_tree_passes()
     test_worktree_strict_promotes_warning()
     test_worktree_scans_untracked_modified_file()
+    test_empty_import_block_fails()
+    test_real_import_block_ok()
     print("test_go_structure: ok")
 
 

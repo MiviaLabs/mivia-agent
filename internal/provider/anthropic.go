@@ -57,6 +57,11 @@ type AnthropicCompleter struct {
 	// every tool loop. Off leaves the request body byte-identical to the
 	// pre-marker layout, which is what [provider] prompt_cache = "off" buys.
 	cacheMarkers bool
+	// contextWindow is the resolved model's declared context capacity
+	// (Options.ContextWindowTokens), or 0 when the caller supplied
+	// none. Read by ContextWindow (anthropic_sdk_capabilities.go); it
+	// changes nothing about the wire request.
+	contextWindow int
 }
 
 // NewAnthropic returns a native Anthropic Messages API completer.
@@ -69,7 +74,9 @@ func NewAnthropic(opts Options) (Completer, error) {
 		}
 		base = descriptor.DefaultURL
 	}
-	return newAnthropicCompleter("anthropic", base, opts.APIKey, opts.DialContext, opts.CacheMarkersEnabled), nil
+	c := newAnthropicCompleter("anthropic", base, opts.APIKey, opts.DialContext, opts.CacheMarkersEnabled)
+	c.contextWindow = opts.ContextWindowTokens
+	return c, nil
 }
 
 // newAnthropicCompleter builds an AnthropicCompleter against an arbitrary

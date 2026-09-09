@@ -32,6 +32,9 @@ type Policy struct {
 	patterns    []*regexp.Regexp
 	keyNames    []string
 	placeholder string
+	// partial holds one matcher per pattern, in pattern order, for the
+	// streaming hold-back.
+	partial []*partialMatcher
 }
 
 // Compile builds a policy from configuration.
@@ -54,6 +57,14 @@ func Compile(patterns, keyNames []string, placeholder string) (*Policy, error) {
 			return nil, fmt.Errorf("redaction pattern %q: %w", expr, err)
 		}
 		p.patterns = append(p.patterns, compiled)
+		// The same parse regexp.Compile just ran, so this cannot fail where
+		// that succeeded; it is an error rather than a fallback so a pattern
+		// the stream could not reason about is refused, never held by guess.
+		pm, err := compilePartial(expr)
+		if err != nil {
+			return nil, fmt.Errorf("redaction pattern %q: streaming automaton: %w", expr, err)
+		}
+		p.partial = append(p.partial, pm)
 	}
 	for _, name := range keyNames {
 		if name = strings.TrimSpace(strings.ToLower(name)); name != "" {
@@ -140,6 +151,16 @@ func SetPolicy(p *Policy) { active.Store(p) }
 
 // Current returns the installed policy, or nil when none is set.
 func Current() *Policy { return active.Load() }
+
+// Active reports whether the process-wide policy would redact anything.
+//
+// A caller needs this to decide SHAPE, not content. Redaction is a regex over
+// one string, so it cannot match a secret split across two strings: a policy
+// that would catch a key in a whole message catches nothing when the same key
+// arrives as three fragments. A producer that can choose between sending
+// fragments and sending one message must therefore know whether a policy is
+// active before it chooses.
+func Active() bool { return !active.Load().empty() }
 
 // Text applies the process-wide policy.
 func Text(s string) string { return active.Load().Text(s) }

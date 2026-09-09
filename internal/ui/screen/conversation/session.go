@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/queue"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
@@ -21,6 +22,7 @@ import (
 type sessionState struct {
 	conv         ports.Conversation
 	transcript   transcript.Model
+	composer     composer.Model
 	active       ports.TurnHandle
 	statusline   statusline.Model
 	approval     approval.Model
@@ -31,6 +33,12 @@ type sessionState struct {
 	threads      ports.SubagentThreads
 	queue        []string
 	pendingForce *string
+	// liveUsage is this session's own in-flight turn accounting. It is
+	// per-session state like everything above: held only on the Screen, one
+	// session's reading overrode the top bar for whichever session the user
+	// switched to, and the owning session's TurnEnd - delivered on the
+	// background path - could never clear it.
+	liveUsage *ports.Usage
 }
 
 func (st *sessionState) handleTurnEvent(ev uievent.Event) {
@@ -42,28 +50,33 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
 		st.panel.dialog, st.panel.dialogAgent = false, ""
 	case uievent.ToolStartBody:
-		st.approval.Clear()
+		// This call's own prompt only - see the same rule in events.go.
+		st.approval.Resolve(b.ToolCallID)
 		st.statusline.SetLabel("running")
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
-		if isSubagentTool(b.Name) || (st.threads != nil && isThreadRegistered(st.threads, b.ToolCallID)) {
-			st.panel.observeAgentStart(b.ToolCallID, b.Name)
-		}
+		// The SAME helpers the foreground path uses. Hand-rolled copies
+		// here dropped a dispatch group's per-task rows and every
+		// blackboard message a backgrounded session raised.
+		observeToolStartInto(&st.panel, st.threads, b)
+		recordBlackboardToolInto(&st.blackboard, b.Name, b.Args)
 	case uievent.ToolOutputBody:
 		if b.Progress != nil {
 			st.panel.observeAgent(b.ToolCallID, b.Progress)
 		}
 	case uievent.ToolEndBody:
-		st.approval.Clear()
+		st.approval.Resolve(b.ToolCallID)
 		st.statusline.SetLabel("thinking")
-		st.panel.observeAgentEnd(b.ToolCallID, b.OK)
-		if b.Diff != nil {
-			st.panel.appendLive(*b.Diff)
-		}
+		observeToolEndInto(&st.panel, b)
 	case uievent.UsageBody:
 		st.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
-		st.approval.Clear()
+		st.approval.ClearAll()
 		st.panel.reconcileTerminal(b.Reason)
+		// The turn is over, so this session's committed estimate is
+		// authoritative again - exactly as on the foreground path. Left
+		// set, the snapshotted reading overrode the top bar the moment the
+		// user switched back, and nothing else could ever clear it.
+		st.liveUsage = nil
 	}
 }
 
@@ -74,53 +87,108 @@ func (s Screen) convID() string {
 	return s.conv.ID()
 }
 
+// snapshotSessionState captures everything belonging to the session being
+// switched away from, so it resumes exactly as it was left. Every field here
+// is per-session: one held on the Screen instead leaks into whichever
+// session the user switches to (liveUsage did exactly that).
+func (s *Screen) snapshotSessionState() *sessionState {
+	return &sessionState{
+		conv:         s.conv,
+		transcript:   s.transcript,
+		composer:     s.composer,
+		active:       s.active,
+		statusline:   s.statusline,
+		approval:     s.approval,
+		history:      s.history,
+		queueOverlay: s.queueOverlay,
+		blackboard:   s.blackboard,
+		panel:        s.panel,
+		threads:      s.threads,
+		queue:        s.queue,
+		pendingForce: s.pendingForce,
+		liveUsage:    s.liveUsage,
+	}
+}
+
+func (s *Screen) dismissModals() {
+	s.closeThread()
+	s.hideComposer = false
+	s.modelPicker = nil
+	s.agentPicker = nil
+	s.sessionPicker = nil
+	s.palettePicker = nil
+	s.effortPicker = nil
+	s.login = nil
+	s.overlay = ""
+}
+
+func (s *Screen) applySessionState(st *sessionState) {
+	s.transcript = st.transcript
+	s.composer = st.composer
+	s.active = st.active
+	s.statusline = st.statusline
+	s.approval = st.approval
+	s.history = st.history
+	s.queueOverlay = st.queueOverlay
+	s.blackboard = st.blackboard
+	s.panel = st.panel
+	s.queue = st.queue
+	s.pendingForce = st.pendingForce
+	s.liveUsage = st.liveUsage
+	if st.threads != nil {
+		s.threads = st.threads
+	}
+}
+
 func (s *Screen) switchConversation(newConv ports.Conversation) {
 	if newConv == nil {
 		return
+	}
+	if s.compaction != nil {
+		s.compaction.Cancel()
+		// The compaction belongs to the session being saved below. Stop its
+		// activity mark before copying the statusline into that session's
+		// state; the canceled worker may still emit a late Done event.
+		s.statusline.Stop()
+		s.compaction = nil
+		s.compactionSessionID = ""
+		s.compactionCancelRequested = false
 	}
 	if s.sessions == nil {
 		s.sessions = make(map[string]*sessionState)
 	}
 
+	s.dismissModals()
+
 	// Save current session state
 	if s.conv != nil {
-		oldID := s.convID()
-		s.sessions[oldID] = &sessionState{
-			conv:         s.conv,
-			transcript:   s.transcript,
-			active:       s.active,
-			statusline:   s.statusline,
-			approval:     s.approval,
-			history:      s.history,
-			queueOverlay: s.queueOverlay,
-			blackboard:   s.blackboard,
-			panel:        s.panel,
-			threads:      s.threads,
-			queue:        s.queue,
-			pendingForce: s.pendingForce,
-		}
+		s.sessions[s.convID()] = s.snapshotSessionState()
 	}
 
 	s.conv = newConv
 	newID := s.convID()
+	s.registerSession(newID)
+
+	s.syncRunnerActiveSession(newID)
+
+	if cr, ok := s.runner.(interface{ Commands() []composer.Command }); ok {
+		s.commands = cr.Commands()
+	}
 
 	if st, ok := s.sessions[newID]; ok {
-		s.transcript = st.transcript
-		s.active = st.active
-		s.statusline = st.statusline
-		s.approval = st.approval
-		s.history = st.history
-		s.queueOverlay = st.queueOverlay
-		s.blackboard = st.blackboard
-		s.panel = st.panel
-		s.queue = st.queue
-		s.pendingForce = st.pendingForce
+		s.applySessionState(st)
+		s.composer.SetCommands(s.commands)
+		s.composer.SetMentions(s.mentions)
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
 		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
+		s.composer = composer.New(s.Theme, s.Tier, s.chatWidth())
+		s.composer.SetCommands(s.commands)
+		s.composer.SetMentions(s.mentions)
 		s.active = nil
 		s.queue = nil
 		s.pendingForce = nil
+		s.liveUsage = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)
 		s.approval.SetWidth(contentWidth(s.width))
@@ -134,14 +202,40 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.LoadHistory(newConv.History())
 	}
 
+	// The top bar keeps the last usage reading it was handed, and
+	// refreshTopbar deliberately falls back to it when the incoming session
+	// has not priced a turn yet ("the last composition the bar held is the
+	// best one available"). That fallback is only sound WITHIN one session,
+	// so the bar is re-seeded from the session being switched to - its own
+	// live reading, or nothing - before the refresh consults it.
+	seed := ports.Usage{}
+	if s.liveUsage != nil {
+		seed = *s.liveUsage
+	}
+	s.topbar.SetUsage(seed)
 	s.refreshTopbar()
 	s.reflow()
+}
+
+// syncRunnerActiveSession tells the runner which session is now on screen.
+// switchConversation is the sole place s.conv changes, including the fast,
+// cached-tab path (switchToSessionID's `if st, ok := s.sessions[id]` branch)
+// that never calls s.runner.SelectSession again - without this call, a
+// /model (or any other per-session runner command) issued after cycling
+// back to an already-visited, idle tab kept acting on whichever session the
+// runner last touched, refusing the switch on that OTHER session's
+// activeTurns/switching state instead of this one's.
+func (s *Screen) syncRunnerActiveSession(id string) {
+	if s.runner != nil {
+		s.runner.SetActiveSessionID(id)
+	}
 }
 
 func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
 	if msg.SessionID != "" && s.convID() != msg.SessionID {
 		if st, ok := s.sessions[msg.SessionID]; ok {
 			st.handleTurnEvent(msg.Event)
+			s.refreshTopbar()
 			if st.active != nil {
 				return s, s.awaitSessionEvent(msg.SessionID, st.active.Events())
 			}
@@ -159,16 +253,17 @@ func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
 		}
 		return s, nil
 	}
-	return s.handleTurnEvent(msg.Event)
+	return s.handleTurnEventFrom(msg.Event, msg.Source)
 }
 
 func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 	if msg.sessionID != "" && s.convID() != msg.sessionID {
 		if st, ok := s.sessions[msg.sessionID]; ok {
 			st.statusline.Stop()
-			st.approval.Clear()
+			st.approval.ClearAll()
 			st.panel.reconcileTerminal("interrupted")
 			st.active = nil
+			s.refreshTopbar()
 			if st.pendingForce != nil {
 				forced := *st.pendingForce
 				st.pendingForce = nil
@@ -176,6 +271,8 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 				if err == nil {
 					st.active = handle
 					st.statusline.Start("thinking", s.now())
+					st.statusline.SetQueued(len(st.queue))
+					s.refreshTopbar()
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
 				st.queue = append([]string{forced}, st.queue...)
@@ -193,6 +290,8 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 				if err == nil {
 					st.active = handle
 					st.statusline.Start("thinking", s.now())
+					st.statusline.SetQueued(len(st.queue))
+					s.refreshTopbar()
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
 				st.queue = append([]string{nextText}, st.queue...)
@@ -201,7 +300,7 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 		return s, nil
 	}
 	s.statusline.Stop()
-	s.approval.Clear()
+	s.approval.ClearAll()
 	s.panel.reconcileTerminal("interrupted")
 	s.active = nil
 	s.refreshTopbar()
@@ -223,6 +322,8 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 			if sc.queueOverlay.Active() {
 				sc.queueOverlay.SetItems(sc.queue)
 			}
+		} else {
+			sc.statusline.SetQueued(len(sc.queue))
 		}
 		return sc, cmd
 	}

@@ -46,10 +46,14 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 	// Capability.Timeout is the parent agent-loop budget for this tool call.
 	// It may exceed the default 60s ToolTimeout so multi-step batches are not
 	// killed early; EffectiveTimeoutSec still keeps a finite safety ceiling.
+	// DispatchOrchestrationSecForWorkers scales the budget for batches
+	// bigger than the pool's worker capacity, which the coordinator's DAG
+	// runs across multiple sequential dispatch waves - see that function's
+	// doc comment for why an unscaled budget killed later waves.
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
 		ResourceKey: ToolDispatchTasks,
-		Timeout:     time.Duration(DispatchOrchestrationSec(t.cfg.DefaultTimeout, args)) * time.Second,
+		Timeout:     time.Duration(DispatchOrchestrationSecForWorkers(t.cfg.DefaultTimeout, t.cfg.MaxWorkers, args)) * time.Second,
 	}
 }
 
@@ -57,17 +61,20 @@ func (t *dispatchTasksTool) Name() string { return ToolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
-		"bug audits, and any work that can be split - never do N sequential passes. "
+		"bug audits, and any read-only work that can be split - never do N sequential passes. " +
+		"Implementation tasks are dispatchable too: brief them to apply and verify the change, " +
+		"not to report findings. Tasks share one working tree, so serialize implementation " +
+		"tasks with depends_on or keep one writer per batch. "
 	// Same invariant as agentRoutingDescription: the always-available claim
 	// only appears when the built-in actually resolved into the registry (a
 	// same-name skill collision can skip it), so the prose never promises a
 	// target the enum lacks.
 	if _, ok := t.agentReg.Get(agents.BuiltInGeneralPurposeName); ok {
-		desc += "The agent field is optional: the built-in general-purpose agent is always available and carries " +
-			"the default toolset; omitting agent runs a tool-less one-shot call, so name an agent for any task that needs tools. "
+		desc += "The general-purpose agent is always available here. The agent field is optional: when general-purpose is available, an omitted or blank agent uses it and its " +
+			"default toolset; name an agent only to select another route. A skill is checked against the effective agent. "
 	} else {
 		desc += "The agent field is optional: name a listed agent for any task that needs tools; " +
-			"omitting agent runs a tool-less one-shot call. "
+			"when the built-in fallback is unavailable, omitting or blanking agent runs a tool-less one-shot call; a skill still requires an agent. "
 	}
 	desc += "Tasks without dependencies (depends_on) run concurrently. " +
 		"Every task always reports its own result and status, so one failure never " +
@@ -91,7 +98,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array", "items": taskItemSchema(t.agentReg, true),
+				"type": "array", "items": taskItemSchema(t.agentReg),
 				"description": "Array of 1-16 tasks. Tasks without depends_on run concurrently.",
 			},
 			"timeout_seconds": map[string]any{
@@ -100,31 +107,28 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 			"wait": map[string]any{
 				"type": "string", "enum": []string{"none", "task", "run"},
-				"description": "Wait mode: run (default) blocks until the whole batch finishes and returns each task's result; none returns immediately with a run_id to inspect/join/cancel; task waits for the requested wait_task_id only",
+				"description": "Wait mode: none (default) returns immediately with a run_id; run blocks until the whole batch finishes; task waits for the requested wait_task_id",
 			},
 			"wait_task_id": map[string]any{
 				"type": "string", "description": "Required when wait=task",
 			},
 		},
-		"required":             []string{"tasks"},
-		"additionalProperties": false,
+		"required": []string{"tasks"},
+		// True for the same reason taskItemSchema is: a decoration must not
+		// refuse the batch before it runs. This level is belt-and-braces -
+		// sdkadapter's relaxTopLevelAdditionalProperties already strips a
+		// top-level false before the schema reaches a provider, so the nested
+		// item schema was the one actually enforcing rejection.
+		"additionalProperties": true,
 	}
 
 	return result
 }
 
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var params struct {
-		Tasks          []dispatchTaskParam `json:"tasks"`
-		TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
-		Wait           string              `json:"wait,omitempty"`
-		WaitTaskID     string              `json:"wait_task_id,omitempty"`
-	}
-	if err := decodeStrictTaskJSON(args, &params); err != nil {
+	var params dispatchTaskParams
+	if err := decodeDispatchTaskJSON(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
-	}
-	if len(params.Tasks) == 0 {
-		return `{"tasks":[]}`, nil
 	}
 	wait, err := normalizedDispatchWait(params.Wait, params.WaitTaskID)
 	if err != nil {
@@ -195,6 +199,16 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 // fail-closed reasoning as RunThroughCoordinator) - the caller must
 // return (earlyOut, nil) immediately without building or spawning tasks.
 func (t *dispatchTasksTool) resolveBatchTimeout(ctx context.Context, tasks []dispatchTaskParam, requestedSeconds int) (timeout int, earlyOut string) {
+	if err := ctx.Err(); err != nil {
+		payload, _ := json.Marshal(map[string]string{
+			"error": "caller context already expired; no tasks were started",
+			// The caller abandoning the tool is a cancellation at this
+			// admission boundary, even when its context reports a deadline.
+			// Keep this consistent with the deadline branch below.
+			"status": string(ledger.TaskStatusCanceled),
+		})
+		return 0, string(payload)
+	}
 	// timeout_seconds IS the budget when explicit - never floored to the
 	// 12h default. Per-task overrides can still raise the batch budget so
 	// a task never outlives it.
@@ -305,10 +319,10 @@ type dispatchTaskParam struct {
 
 func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskParam, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
+	seenIDs := make(map[string]struct{}, len(params))
 	for i, pt := range params {
-		// id is declared required by taskItemSchema, but decodeStrictTaskJSON
-		// only rejects unknown fields - JSON Schema "required" is advisory to
-		// the model, never enforced on decode. A task the model left
+		// id is declared required by taskItemSchema, but JSON Schema "required"
+		// is advisory to the model, never enforced on decode. A task the model left
 		// unnamed used to fall through to namespacedTaskID(namespace, "")
 		// (an empty rawID short-circuits to ""), so subagents.Task.ID stayed
 		// "" all the way to coordinator.createTask, which then minted an
@@ -324,10 +338,25 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 		// fast here, before any subagent spawns, turns a silently stuck
 		// batch member into an immediate, actionable tool error the model
 		// can retry from.
-		if strings.TrimSpace(pt.ID) == "" {
+		canonicalID := strings.TrimSpace(pt.ID)
+		if canonicalID == "" {
 			return nil, fmt.Errorf("dispatch_tasks: task %d: id is required (every task needs a unique id so its progress can be tracked)", i+1)
 		}
-		route, err := ResolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
+		if _, exists := seenIDs[canonicalID]; exists {
+			return nil, fmt.Errorf("dispatch_tasks: duplicate task id %q", canonicalID)
+		}
+		// The safety net for the permissive decode (task_request_decode.go): an
+		// unknown field is ignored now, so a "promt" typo no longer fails the
+		// decode - it arrives here as a task with an empty prompt. Spawning it
+		// would burn the batch's budget on a subagent with nothing to do and
+		// report an empty result, so refuse it here, before anything spawns,
+		// with an error the model can act on. Same reasoning as the id guard
+		// above.
+		if strings.TrimSpace(pt.Prompt) == "" {
+			return nil, fmt.Errorf("dispatch_tasks: task %q: prompt is required (a task with no prompt has nothing to do; check for a misspelled field name)", canonicalID)
+		}
+		seenIDs[canonicalID] = struct{}{}
+		route, err := resolveDispatchTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
 		if err != nil {
 			return nil, fmt.Errorf("dispatch_tasks: %w", err)
 		}
@@ -349,7 +378,7 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 			}
 		}
 		tasks[i] = subagents.Task{
-			ID: namespacedTaskID(namespace, pt.ID), RawID: pt.ID, InvocationKey: namespace + ":" + pt.ID,
+			ID: namespacedTaskID(namespace, canonicalID), RawID: canonicalID, InvocationKey: namespace + ":" + canonicalID,
 			Name: name, AgentName: agentName, AgentDigest: digest,
 			Skill: route.skill, Owner: DefaultToolOwner,
 			ProviderName: providerName, Model: model,

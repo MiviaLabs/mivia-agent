@@ -77,7 +77,16 @@ func (s *StorageRepository) ensureBuilt(ctx context.Context) error {
 // catchUp probes the store for runs that moved since this instance's cursor.
 func (s *StorageRepository) catchUp(ctx context.Context) error {
 	return s.engine.CatchUp(ctx, func(runID string, maxSeq int) ledgercore.FilterDecision {
-		if s.engine.Watermarks().Applied(runID) == 0 && !strings.HasPrefix(runID, "wfr-") {
+		// Skip foreign runs on EVERY pass, not just the first. The old guard
+		// also required Applied(runID) == 0, but FilterAdvanceOnly itself
+		// calls SetApplied, so the watermark was non-zero forever after: the
+		// next event on that foreign run fell through to FilterApply and this
+		// instance re-read and re-folded the run's ENTIRE log, only to discard
+		// it. The store is shared with the coordinator and chat, so an active
+		// chat session made every GetRun/ListRuns/ListStepAttempts here pay
+		// for that session's whole history. The sibling tasks ledger tests the
+		// prefix alone, and is correct.
+		if !strings.HasPrefix(runID, "wfr-") {
 			return ledgercore.FilterAdvanceOnly
 		}
 		return ledgercore.FilterApply

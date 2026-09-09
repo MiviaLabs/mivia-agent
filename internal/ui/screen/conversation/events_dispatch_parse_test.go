@@ -33,6 +33,12 @@ func TestDispatchTaskIDsAndNamesGuards(t *testing.T) {
 	if len(names) != 0 {
 		t.Errorf("names = %v, want none without display names", names)
 	}
+	ids, _ = dispatchTaskIDsAndNames("call-1", "dispatch_tasks", map[string]any{"tasks": []any{
+		map[string]any{"id": "   "},
+	}})
+	if len(ids) != 1 || ids[0] != "task-1" {
+		t.Errorf("whitespace-only id = %v, want [task-1]", ids)
+	}
 }
 
 // TestNamespacedTaskIDEmptyArms pins the passthrough: an empty namespace or
@@ -46,6 +52,9 @@ func TestNamespacedTaskIDEmptyArms(t *testing.T) {
 	}
 	if got := namespacedTaskID("call-1", "a"); got != "call-1:a" {
 		t.Errorf("namespacedTaskID = %q, want call-1:a", got)
+	}
+	if got := namespacedTaskID("call-1", " a "); got != "call-1:a" {
+		t.Errorf("namespacedTaskID padded = %q, want call-1:a", got)
 	}
 }
 

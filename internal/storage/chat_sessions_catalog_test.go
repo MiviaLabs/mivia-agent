@@ -202,7 +202,14 @@ func TestSQLiteChatSessionCatalogHidesDeletedBoundRoute(t *testing.T) {
 	}
 }
 
-func TestSQLiteChatSessionCatalogHidesRouteWhenWorktreeHasSession(t *testing.T) {
+// TestSQLiteChatSessionCatalogKeepsRouteNextToInstancelessSession pins the
+// listing contract the resume-routing gate depends on: a saved session with
+// bare worktree metadata and no managed instance resumes PLAIN, so the
+// route pseudo-row must stay visible next to it - it is the only affordance
+// that starts an instance-scoped session in that worktree. (Before the
+// routing gate existed, both rows dispatched identically and the route row
+// was hidden as a duplicate.)
+func TestSQLiteChatSessionCatalogKeepsRouteNextToInstancelessSession(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -224,8 +231,17 @@ func TestSQLiteChatSessionCatalogHidesRouteWhenWorktreeHasSession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Name != "real-session" || list[0].WorktreeRoute {
-		t.Fatalf("session list = %+v, want the real worktree session only", list)
+	var haveSession, haveRoute bool
+	for _, info := range list {
+		if info.Name == "real-session" && !info.WorktreeRoute {
+			haveSession = true
+		}
+		if info.WorktreeRoute && info.Worktree == "wt-a" {
+			haveRoute = true
+		}
+	}
+	if len(list) != 2 || !haveSession || !haveRoute {
+		t.Fatalf("session list = %+v, want the instance-less session AND the route row", list)
 	}
 	if err := store.DeleteSessionSnapshot(context.Background(), principal, "real-session"); err != nil {
 		t.Fatal(err)

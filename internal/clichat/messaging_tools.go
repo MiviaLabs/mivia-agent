@@ -127,7 +127,7 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok {
 		return "", fmt.Errorf("post_message requires a running task identity")
 	}
-	c := cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
+	var c chatCoordinator = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 
 	if kind == agentmsg.KindAsk {
 		return t.handleAsk(ctx, c, id, in.Body, in.Refs, in.ToRole, in.WaitSeconds, in.InReplyTo)
@@ -170,7 +170,7 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return t.waitForAnswer(ctx, c, id, msg, in.WaitSeconds)
 }
 
-func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coordinator, id runtime.TaskIdentity, msg agentmsg.Message, waitSec int) (string, error) {
+func (t *postMessageTool) waitForAnswer(ctx context.Context, c chatCoordinator, id runtime.TaskIdentity, msg agentmsg.Message, waitSec int) (string, error) {
 	if waitSec <= 0 {
 		waitSec = defaultQuestionWaitSec
 	}
@@ -257,7 +257,7 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 // on context.Background() because the tool ctx may already be expired when the
 // wait ends (a deadline-clamped timer race); the best-effort transition must
 // not be blocked by the very deadline that ended the wait.
-func retireParkedWait(c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), result map[string]any) (string, error) {
+func retireParkedWait(c chatCoordinator, id runtime.TaskIdentity, parked *bool, unpark func(), result map[string]any) (string, error) {
 	*parked = false
 	unpark()
 	// Best-effort unpark; cancel may have won — still return the result.
@@ -270,7 +270,7 @@ func retireParkedWait(c coordinator.Coordinator, id runtime.TaskIdentity, parked
 // result: the wait ended without a real peer answer (parked timer expiry,
 // deadline-clamped ctx expiry, or a system ask-decline sentinel). It renders
 // the same no_answer JSON shape retireParkedWait produced for these paths.
-func retireParkedWaitNoAnswer(c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), msgID, reason string) (string, error) {
+func retireParkedWaitNoAnswer(c chatCoordinator, id runtime.TaskIdentity, parked *bool, unpark func(), msgID, reason string) (string, error) {
 	return retireParkedWait(c, id, parked, unpark, map[string]any{
 		"status": "no_answer", "reason": reason, "message_id": msgID,
 	})
@@ -280,7 +280,7 @@ func retireParkedWaitNoAnswer(c coordinator.Coordinator, id runtime.TaskIdentity
 // clears the parked flag, unparks, best-effort returns the task to running
 // (the terminal transition is left to the cancel path), and propagates the
 // context error unchanged so a canceled task is never a no_answer park.
-func retireParkedWaitCancel(c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), cause error) (string, error) {
+func retireParkedWaitCancel(c chatCoordinator, id runtime.TaskIdentity, parked *bool, unpark func(), cause error) (string, error) {
 	*parked = false
 	unpark()
 	_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
@@ -342,7 +342,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if errJSON != "" {
 		return errJSON, nil
 	}
-	c := record.GetCoordinator()
+	c, _ := record.GetCoordinator().(chatCoordinator)
 	if c == nil {
 		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
@@ -395,11 +395,11 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 // and send_to_task (session-privileged). Called from session dispatcher setup.
 // Messaging is always enabled. agentReg may be nil (tests); when set, referral
 // spawns resolve AgentDigest for production agent handlers.
-func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry) error {
+func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, denylist []string) error {
 	post := &postMessageTool{
 		dispatcher: d, cfg: cfg, repo: repo,
 		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
-			c := cliorchestrate.InitCoordinator(d, cfg, repo)
+			var c chatCoordinator = cliorchestrate.InitCoordinator(d, cfg, repo)
 			var meta coordinator.ReferralSpawnMeta
 			if agentReg != nil {
 				if route, err := cliorchestrate.ResolveTaskRoute(agentReg, nil, toRole, ""); err == nil {
@@ -410,17 +410,28 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 			return c.SpawnReferralFromAsk(ctx, runID, toRole, ask, meta)
 		},
 	}
-	if _, exists := reg.Get(post.Name()); !exists {
-		if err := d.RegisterTool(reg, post); err != nil {
-			return fmt.Errorf("register post_message: %w", err)
+	// An operator's mandatory_tool_denylist must reach EVERY session-tool
+	// registrar, including the one that owns the name. run_messages and
+	// send_to_task below go through RegisterSessionTool, which refuses a
+	// denied name - but postMessageTool is deliberately not a PrivilegedTool
+	// and cannot use that gate, so the check happens here instead. Skipped,
+	// not errored: a session whose messaging is denied must still start,
+	// exactly like registerLedgerTools's denied names. Nothing re-adds it
+	// later - the scope filter has already run, and injectBaselineMessaging
+	// copies from the authority registry this skip keeps the name out of.
+	if !tools.OperatorDenialSet(denylist)[post.Name()] {
+		if _, exists := reg.Get(post.Name()); !exists {
+			if err := d.RegisterTool(reg, post); err != nil {
+				return fmt.Errorf("register post_message: %w", err)
+			}
+			reg.Register(post)
 		}
-		reg.Register(post)
 	}
 	for _, t := range []tools.Tool{
 		&runMessagesTool{dispatcher: d, cfg: cfg, repo: repo},
 		&sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo},
 	} {
-		if err := cliagents.RegisterSessionTool(d, reg, t); err != nil {
+		if err := cliagents.RegisterSessionTool(d, reg, t, denylist); err != nil {
 			if _, exists := reg.Get(t.Name()); !exists {
 				return err
 			}

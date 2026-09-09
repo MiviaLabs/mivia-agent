@@ -41,12 +41,26 @@ const (
 	VerdictNeutral Verdict = "neutral"
 )
 
+// Importance is how much a memory should shape future work, the same
+// closed vocabulary .agents/memories/README.md's frontmatter schema
+// requires (scripts/check_memories.py's IMPORTANCE_VALUES) and a distinct
+// axis from Verdict: Verdict judges how the recorded experience went,
+// Importance judges how much weight a reader should give it.
+type Importance string
+
+const (
+	ImportanceHigh   Importance = "high"
+	ImportanceMedium Importance = "medium"
+	ImportanceLow    Importance = "low"
+)
+
 // Entry is one memory. Render produces the stored Markdown; Parse reads it
 // back tolerantly.
 type Entry struct {
 	Title      string
 	Scope      Scope
 	Verdict    Verdict
+	Importance Importance // optional; RenderProtocolFile defaults to medium
 	Tags       []string
 	Created    string // YYYY-MM-DD; empty means "today" at save time
 	Summary    string
@@ -153,6 +167,11 @@ func (e Entry) validateMetadata() error {
 	default:
 		return fmt.Errorf("verdict must be one of good, bad, mixed, neutral, got %q", e.Verdict)
 	}
+	switch e.Importance {
+	case "", ImportanceHigh, ImportanceMedium, ImportanceLow:
+	default:
+		return fmt.Errorf("importance must be one of high, medium, low, got %q", e.Importance)
+	}
 	if e.Created != "" {
 		if _, err := time.Parse("2006-01-02", e.Created); err != nil {
 			return fmt.Errorf("created must be YYYY-MM-DD, got %q", e.Created)
@@ -203,6 +222,14 @@ func (e Entry) validateCollections() error {
 		}
 		if strings.Contains(tag, ",") {
 			return fmt.Errorf("tag must not contain a comma")
+		}
+		// RenderProtocolFile writes tags into an unquoted YAML flow sequence
+		// ("tags: [a, b]"), and the memories gate (scripts/check_memories.py)
+		// requires each element to be a plain keyword. Refuse the characters
+		// that break either the sequence or the gate's per-tag rule, so a file
+		// this package writes is never rejected downstream.
+		if strings.ContainsAny(tag, ":[]{}") || strings.Contains(tag, " #") {
+			return fmt.Errorf("tag must be a plain keyword without any of : [ ] { } or \" #\"")
 		}
 	}
 	if len(e.References) > maxReferences {
@@ -284,12 +311,123 @@ func (e Entry) Render() string {
 		b.WriteString("\ncreated: ")
 		b.WriteString(e.Created)
 	}
-	b.WriteString("\n\n## Summary\n")
+	b.WriteString("\n\n")
+	writeBody(&b, e)
+	return b.String()
+}
+
+// RenderProtocolFile returns the Markdown MarkdownSource.Save writes to
+// .agents/memories/<id>.md: a closed YAML frontmatter block carrying the six
+// keys .agents/memories/README.md marks mandatory (id, title, content,
+// importance, tags, updated - enforced by scripts/check_memories.py), the
+// same open ".agents protocol" shape a hand-authored, capture-skill-written
+// memory uses, followed by the same title-and-section body Render's own
+// template emits. id must be the caller's resolved filename stem with every
+// hyphen replaced by an underscore (README's derivation rule); the caller
+// computes it, since only MarkdownSource knows the final filename.
+//
+// title and content (the entry's Summary, one sentence) are wrapped in
+// single quotes and any embedded single quote is doubled, the one escaping
+// scripts/check_memories.py's QUOTED rule accepts unconditionally - simpler
+// and safer than quoting only when a colon or indicator character is
+// present. importance falls back to "medium" when the entry does not carry
+// one, so a file this method writes never has an empty importance field,
+// the one required key Entry has no dedicated field for.
+func (e Entry) RenderProtocolFile(id string) string {
+	importance := strings.TrimSpace(string(e.Importance))
+	if importance == "" {
+		importance = string(ImportanceMedium)
+	}
+	updated := e.Created
+	if updated == "" {
+		updated = time.Now().Format("2006-01-02")
+	}
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.WriteString("id: ")
+	b.WriteString(id)
+	b.WriteString("\ntitle: ")
+	b.WriteString(yamlSingleQuote(strings.TrimSpace(e.Title)))
+	b.WriteString("\ncontent: ")
+	b.WriteString(yamlSingleQuote(oneLine(e.Summary)))
+	b.WriteString("\nimportance: ")
+	b.WriteString(importance)
+	// x-scope/x-verdict are not among the six keys README.md marks
+	// mandatory, but scripts/check_memories.py places no ceiling on extra
+	// keys, and parseProtocolMemory (markdown_source.go) reads them back
+	// when present. Without them, every file this method writes would
+	// silently forget the caller's actual Scope/Verdict on the next Scan -
+	// parseProtocolMemory's only other source for those fields is the
+	// hardcoded ScopeProject/VerdictNeutral fallback for a hand-authored
+	// file that never carried them at all. The "x-" prefix (rather than a
+	// bare "scope"/"verdict") is deliberate: Parse's own header switch
+	// recognizes unprefixed "scope:"/"verdict:" lines and would set
+	// e.Scope/e.Verdict from THIS frontmatter block before Scan ever
+	// reaches the protocol shape below, taking the wrong (Parse's own
+	// legacy-header) branch entirely - Scan only falls through to
+	// parseProtocolMemory when Parse's own e.Scope comes back empty.
+	b.WriteString("\nx-scope: ")
+	b.WriteString(string(e.Scope))
+	b.WriteString("\nx-verdict: ")
+	b.WriteString(string(e.Verdict))
+	b.WriteString("\ntags: [")
+	if len(e.Tags) > 0 {
+		b.WriteString(strings.Join(e.Tags, ", "))
+	} else {
+		// tags is a required, non-empty key; scope is always a real tag
+		// (project or org) and never absent, so it is a safe fallback that
+		// carries real information instead of a placeholder.
+		b.WriteString(string(e.Scope))
+	}
+	b.WriteString("]\nupdated: ")
+	b.WriteString(updated)
+	b.WriteString("\n---\n\n# ")
+	b.WriteString(strings.TrimSpace(e.Title))
+	b.WriteString("\n\n")
+	writeBody(&b, e)
+	return b.String()
+}
+
+// yamlSingleQuote wraps s in single quotes, doubling any embedded single
+// quote - the one YAML escaping scripts/check_memories.py's QUOTED regex
+// accepts for every value, including one that opens with a YAML indicator
+// character or holds an unescaped colon.
+func yamlSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// yamlUnquote reverses yamlSingleQuote: a value wrapped in single quotes is
+// unwrapped and every doubled ” collapses back to '. A value not wrapped in
+// matching single quotes (a hand-authored file's unquoted title, or one
+// quoted with double quotes) passes through unchanged - parseProtocolMemory
+// applies this to every frontmatter value, and only this package's own
+// RenderProtocolFile ever emits the single-quoted form.
+func yamlUnquote(s string) string {
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		return strings.ReplaceAll(s[1:len(s)-1], "''", "'")
+	}
+	return s
+}
+
+// oneLine collapses s onto a single line: a YAML plain or single-quoted
+// scalar cannot carry a literal newline. content is Entry.Summary, already
+// bounded to one to three sentences by Validate, so joining is lossless in
+// practice.
+func oneLine(s string) string {
+	fields := strings.Fields(s)
+	return strings.Join(fields, " ")
+}
+
+// writeBody writes the section template Render and RenderProtocolFile share:
+// Summary, What worked, What did not work, Why, References. Both callers
+// have already written the entry's title and header/frontmatter block.
+func writeBody(b *strings.Builder, e Entry) {
+	b.WriteString("## Summary\n")
 	b.WriteString(strings.TrimSpace(e.Summary))
 	b.WriteString("\n\n## What worked\n")
-	writeSection(&b, e.Good)
+	writeSection(b, e.Good)
 	b.WriteString("\n## What did not work\n")
-	writeSection(&b, e.Bad)
+	writeSection(b, e.Bad)
 	b.WriteString("\n## Why\n")
 	b.WriteString(strings.TrimSpace(e.Why))
 	b.WriteString("\n\n## References\n")
@@ -302,7 +440,6 @@ func (e Entry) Render() string {
 			b.WriteString("\n")
 		}
 	}
-	return b.String()
 }
 
 func writeSection(b *strings.Builder, content string) {
@@ -357,6 +494,8 @@ func Parse(data []byte) (Entry, error) {
 				e.Scope = Scope(value)
 			case "verdict":
 				e.Verdict = Verdict(value)
+			case "importance":
+				e.Importance = Importance(value)
 			case "created":
 				e.Created = value
 			case "tags":

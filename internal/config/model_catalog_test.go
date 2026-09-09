@@ -36,6 +36,10 @@ max_tokens = 8192
 }
 
 func TestModelCatalogIsProviderQualifiedAndStable(t *testing.T) {
+	// The provider fallback layers the user config under the base file;
+	// without HOME isolation the operator's real ~/.mivia/mivia.toml
+	// would inject its provider groups into the expected three.
+	isolateHomeAndConfigEnv(t)
 	path := writeCatalogConfig(t, `[provider]
 name = "openrouter"
 

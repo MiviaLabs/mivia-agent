@@ -3,6 +3,7 @@ package transcript
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -72,6 +73,17 @@ type Block struct {
 	// footer line for the same reason: the footer is styled at push time,
 	// and restyle rebuilds it from this copy when the theme changes.
 	Usage *uievent.UsageBody
+
+	// ElapsedMS is the call's own duration, kept as a number rather than
+	// only as the formatted Meta string, so a coalesced work run can add
+	// its members up. Parsing "4.1s" back out of the header would be
+	// reading the rendering as if it were the model.
+	ElapsedMS int
+
+	// StartedAt is when this transcript SAW the call start, used to
+	// derive ElapsedMS when the event carries no duration of its own.
+	// Zero for anything that is not a live tool call.
+	StartedAt time.Time
 }
 
 // renderCalls counts Block.Render invocations. It exists so tests can
@@ -197,10 +209,11 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	if showRail {
 		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
 	}
+	body := b.bodyStyle(t, tier)
 	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
-		sb.WriteString(line)
+		sb.WriteString(body(line))
 	}
 	return sb.String()
 }
@@ -216,6 +229,25 @@ func (b Block) collapseMarker() string {
 	default:
 		return "v"
 	}
+}
+
+// bodyStyle is how a block's body rows are drawn. Every kind but
+// reasoning passes its rows through untouched: they are tool output and
+// diffs, already styled by their formatters, and restyling them here
+// would flatten that.
+//
+// Reasoning is the exception. It is the model talking to itself, not to
+// the reader, and it reads as a whisper: dim and italic, the same voice
+// the streaming tail already uses for it (transcript.go, tailRows).
+// Settled blocks used to drop that voice and render identically to tool
+// output, so the one thing on screen that is NOT addressed to the reader
+// looked exactly like the things that are.
+func (b Block) bodyStyle(t theme.Theme, tier theme.Tier) func(string) string {
+	if b.Kind != uievent.KindReasoning {
+		return func(line string) string { return line }
+	}
+	style := render.Role(t, tier, theme.RoleFGSubtle).Italic(true)
+	return func(line string) string { return style.Render(line) }
 }
 
 func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
@@ -252,6 +284,18 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 		// (focus.go), which is a different contract.
 		plain := ansi.Strip(render.Header(t, tier, headerW, spec))
 		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
+	}
+
+	// A reasoning header is drawn as one italic dim run, for the reason
+	// bodyStyle gives: collapsed - which is its default - the header is
+	// ALL the reader sees of it, and "> reasoning  9 words  hidden" was
+	// otherwise shaped and coloured exactly like "> edit  31ms  ok".
+	// Italic is a decoration, not a colour, so it survives NO_COLOR
+	// (ux-rules 9.5) and degrades to plain where the terminal has no
+	// italic - and there the word "reasoning" still carries it.
+	if b.Kind == uievent.KindReasoning {
+		plain := ansi.Strip(render.Header(t, tier, headerW, spec))
+		return render.Role(t, tier, theme.RoleFGSubtle).Italic(true).Render(plain)
 	}
 
 	return render.Header(t, tier, headerW, spec)

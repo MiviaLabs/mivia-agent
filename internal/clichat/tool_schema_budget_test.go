@@ -37,7 +37,7 @@ import (
 // Budget constants are ratcheted down only with a measured reason recorded
 // here and in the commit message.
 const (
-	coreSchemaTokenBudget       = 4043 // achieved 3851 + 5% margin
+	coreSchemaTokenBudget       = 4043 // achieved 3953 (20 tools, delete_file joined) + margin
 	advertisedSchemaTokenBudget = 9818 // achieved 9351 + 5% margin
 )
 
@@ -163,8 +163,8 @@ func specCost(t *testing.T, spec provider.ToolSpec) (tokens, descBytes, paramByt
 // recorded in the ratchet table above.
 func TestCoreToolSchemaBudget(t *testing.T) {
 	core, deferred, session := budgetSpecs(t)
-	if len(core) != 19 {
-		t.Fatalf("core tier = %d tools, want 19 (repo [tools] core)", len(core))
+	if len(core) != 20 {
+		t.Fatalf("core tier = %d tools, want 20 (repo [tools] core)", len(core))
 	}
 	coreCost, err := provider.EstimateToolSchemaCost(core)
 	if err != nil {

@@ -67,17 +67,26 @@ Only then edit.
 After any edit, make `docs/README.md` reflect reality: update the index and
 the reading-order diagram if a doc moved, was added, or was removed.
 
-## The vendored OpenAPI spec
+## The recorded API contract
 
-`api/openapi/auth.v2.yaml` is a vendored copy from `go-mivia`, not generated
-here. Resync it manually, per `api/openapi/README.md`:
+`api/contracts/auth.v1.json` records the mivia API's `/v1/auth/*` surface:
+routes, and the JSON field sets of the wire structs in
+`internal/miviaauth`. It is hand-maintained, and
+`internal/miviaauth/wire_contract_test.go` holds the Go code to it.
+
+The API lives in `mivia-app-web` and checks in no OpenAPI document, so there
+is nothing to generate from. Resync by reading the source files listed under
+`source.paths` in the JSON, or by running the API locally:
 
 ```
-cp ../go-mivia/api/openapi/auth.v2.yaml api/openapi/auth.v2.yaml
-go generate ./internal/miviaauth/...
+curl -s http://localhost:3001/docs/json | python3 -m json.tool
 ```
 
-Then update the commit hash and date recorded in `api/openapi/README.md`.
+This skill declares no command execution. Without it, read the source files
+instead and report the resync as `NOT_RUN`.
+
+Then update `source.transcribedOn`, per `api/contracts/README.md`. Never make
+the test regenerate the JSON: the guarantee is that a person edits it.
 
 ## Watch the gates
 
@@ -88,7 +97,10 @@ Then update the commit hash and date recorded in `api/openapi/README.md`.
   exists, no duplicate H1 titles, no parallel doc for an owned topic) and
   `scripts/check_provider_docs.py`.
 - `docs-check` is a prerequisite target inside `make verify`.
-- After editing, run `make verify`. It must exit 0.
+- After editing, `make verify` must exit 0. This skill declares no command
+  execution: when the invoking agent has it, run the gate and report the
+  exit status. Otherwise name the gate as `NOT_RUN` and say who must run
+  it. Never report a gate as passing when nothing ran it.
 
 ## Scope discipline
 
@@ -99,9 +111,12 @@ Then update the commit hash and date recorded in `api/openapi/README.md`.
 - If a doc change is large (new architecture area, restructure, many
   files), route it through the delivery workflow: start it with
   `scripts/run-delivery-workflow.sh <label>` (see `AGENTS.md`, section
-  "Workflow runs", and `.agents/skills/feature-delivery/SKILL.md`).
+  "Workflow runs", and `.agents/skills/feature-delivery/SKILL.md`). Starting
+  that run needs command execution this skill does not declare, so name it as
+  the implementer's step.
 
 ## Done means verified
 
-Report what you changed and the `make verify` result. If a gate failed, fix
+Report what you changed and the `make verify` result, or `NOT_RUN`
+with the reason. If a gate failed, fix
 the doc, not the gate. A green tree with truthful docs is the only "done".

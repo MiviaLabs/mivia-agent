@@ -2,8 +2,10 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -48,10 +50,11 @@ type LoadOptions struct {
 
 // Load resolves config + env credentials.
 func Load(opts LoadOptions) (*Resolved, error) {
-	file, configPath, found, err := loadFile(opts)
+	loaded, err := loadFile(opts)
 	if err != nil {
 		return nil, err
 	}
+	file, configPath, found := loaded.File, loaded.ConfigPath, loaded.Found
 	worktreeCfg, err := loadSelectedWorktreeConfig(configPath, found)
 	if err != nil {
 		return nil, err
@@ -76,15 +79,20 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}
-	mcpConfig, mcpWarnings, err := loadRuntimeMCPConfig(opts.WorkspaceRoot)
+	root := opts.WorkspaceRoot
+	if strings.TrimSpace(root) == "" {
+		if isProjectConfigShape(configPath) {
+			root = filepath.Dir(filepath.Dir(filepath.Clean(configPath)))
+		} else if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+		}
+	}
+	mcpConfig, mcpWarnings, err := loadRuntimeMCPConfig(root)
 	if err != nil {
 		return nil, err
 	}
-	root := opts.WorkspaceRoot
-	if strings.TrimSpace(root) == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			root = cwd
-		}
+	if err := refuseUntrustedMCPTable(loaded.BaseMCP, configPath, root, found); err != nil {
+		return nil, err
 	}
 	projectConfigFound := ProjectConfigExists(root)
 	memCfg, err := resolveMemoryConfig(file, configPath, root, projectConfigFound)
@@ -154,12 +162,14 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Memory:                  memCfg,
 		Harness:                 file.Harness,
 		Approvals:               file.Approvals,
+		TUI:                     file.TUI,
 		Workflows:               file.Workflows,
 		Verifiers:               cloneVerifierProfiles(file.Verifiers),
 		MCP:                     mcpConfig,
 		MCPWarnings:             append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:            resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:             resolvePromptCache(file.Provider.PromptCache),
+		Sync:                    ResolveSyncConfig(file.Sync),
 	}
 	applyTimeoutBudgets(res, file, subagentCfg)
 	if !found {
@@ -197,10 +207,10 @@ func resolveSubagentStoreBackend(subagentCfg SubagentConfig, configPath string) 
 	if storeBackend == "" {
 		storeBackend = memory.BackendMemory
 	}
-	if storeBackend != memory.BackendMemory && storeBackend != memory.BackendSQLite {
+	if storeBackend != memory.BackendMemory && storeBackend != "sqlite" {
 		return subagentCfg, "", fmt.Errorf("config %s: [subagents] store_backend must be \"memory\" or \"sqlite\", got %q", configPath, subagentCfg.StoreBackend)
 	}
-	if storeBackend == memory.BackendSQLite && subagentCfg.StorePath == "" {
+	if storeBackend == "sqlite" && subagentCfg.StorePath == "" {
 		subagentCfg.StorePath = defaultStorePath()
 	}
 	subagentCfg.StoreBackend = storeBackend
@@ -363,7 +373,10 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, strin
 	if !ok {
 		return "", ProviderConfig{}, "", fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
 	}
-	pc := file.Providers[name]
+	pc, ok := file.Providers[name]
+	if !ok {
+		return "", ProviderConfig{}, "", fmt.Errorf("provider %q is not configured: no [providers.%s] section in the active config (declare it there or in ~/.mivia/mivia.toml; run 'mivia setup')", name, name)
+	}
 	if len(pc.Models) == 0 {
 		return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: models must be non-empty", name)
 	}
@@ -482,6 +495,55 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 	return nil
 }
 
+// firstProviderCandidate scans DefaultConfigCandidates() in order and returns
+// the first existing candidate whose config actually declares a provider
+// ([provider].name or any [providers.*] entry). A workspace mivia.toml that
+// only carries workspace concerns (workflows, verifiers, MCP) must not shadow
+// the user config and kill the first-time-user flow: without this filter, the
+// workspace file becomes the base config, AutoBootstrapUserConfig never fires
+// (it only triggers when NO candidate exists), and resolveProvider fails with
+// a baffling "[providers.openrouter]: models must be non-empty" naming a
+// provider the user never configured.
+//
+// When no existing candidate declares a provider: if allowBootstrap is true
+// the return is "" so loadFile can auto-bootstrap the user config (the
+// provider-less workspace file still applies through the overlay path);
+// otherwise the first existing candidate is returned unchanged, preserving
+// the pre-existing found=true/resolveProvider-error behavior for callers
+// that did not opt into bootstrapping. Candidates that exist but fail to
+// decode are treated as provider-less; their parse error still surfaces
+// later, when the file is loaded as the base or as the workspace overlay.
+func firstProviderCandidate(allowBootstrap bool) string {
+	candidates := DefaultConfigCandidates()
+	firstExisting := ""
+	for _, cand := range candidates {
+		if strings.TrimSpace(cand) == "" {
+			continue
+		}
+		if info, err := os.Stat(cand); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if firstExisting == "" {
+			firstExisting = cand
+		}
+		data, err := os.ReadFile(cand)
+		if err != nil {
+			continue
+		}
+		var file File
+		if err := decodeConfigInto(data, cand, &file); err != nil {
+			continue
+		}
+		if strings.TrimSpace(file.Provider.Name) != "" || len(file.Providers) > 0 {
+			return cand
+		}
+	}
+	if allowBootstrap {
+		return ""
+	}
+	return firstExisting
+}
+
 // loadFile resolves the base config (opts.ConfigPath, else the first of
 // DefaultConfigCandidates() that exists) and, when opts.WorkspaceRoot names
 // a directory with its own .mivia/mivia.toml distinct from that base file,
@@ -507,41 +569,78 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 // tooling needs; the base file supplies whatever the workspace file doesn't
 // set (typically the provider/model catalog and API key wiring, which a
 // per-project file rarely if ever redefines).
-func loadFile(opts LoadOptions) (File, string, bool, error) {
+// loadedFile is loadFile's result. BaseMCP is the [mcp] table decoded from
+// the BASE file alone, captured before any workspace overlay is merged into
+// File - see refuseUntrustedMCPTable, which judges trust on BaseMCP rather
+// than the merged File.MCP so that an overlay-declared table (one of the two
+// TRUSTED paths) is never mistaken for one the untrusted base file declared.
+type loadedFile struct {
+	File       File
+	ConfigPath string
+	Found      bool
+	BaseMCP    MCPConfig
+}
+
+func loadFile(opts LoadOptions) (loadedFile, error) {
 	path := ExpandPath(opts.ConfigPath)
 	if path == "" {
-		path, _ = FirstExisting(DefaultConfigCandidates())
+		path = firstProviderCandidate(opts.AutoBootstrapUserConfig)
 	}
 	if path == "" && opts.AutoBootstrapUserConfig && strings.TrimSpace(opts.ConfigPath) == "" {
 		bootstrapped, err := autoBootstrapUserConfig()
-		if err != nil {
-			return File{}, "", false, err
+		switch {
+		case errors.Is(err, errUserConfigExists):
+			// The candidate scan reported "no provider anywhere" only because
+			// the existing user config is provider-less or undecodable. Load
+			// it as the base anyway so the file's own error surfaces below,
+			// rather than a bootstrap message that names neither the problem
+			// nor the remedy every other command prints.
+			path = UserConfigPath()
+		case err != nil:
+			return loadedFile{}, err
+		default:
+			path = bootstrapped
 		}
-		path = bootstrapped
 	}
 	if path == "" {
 		if !opts.AllowMissingConfig {
-			return File{}, "", false, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create .mivia/mivia.toml", strings.Join(DefaultConfigCandidates(), ", "))
+			return loadedFile{}, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create %s", strings.Join(DefaultConfigCandidates(), ", "), filepath.Join(workspace.Namespace, "mivia.toml"))
 		}
-		return File{}, "", false, nil
+		return loadedFile{}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return File{}, path, false, fmt.Errorf("read config %s: %w", path, err)
+		return loadedFile{ConfigPath: path}, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var file File
 	if err := decodeConfigInto(data, path, &file); err != nil {
-		return File{}, path, false, err
+		return loadedFile{ConfigPath: path}, err
 	}
+
+	// baseMCP is the [mcp] table as decoded from the base file alone, before
+	// any workspace overlay below can add or change it. refuseUntrustedMCPTable
+	// judges trust against this snapshot, not the merged file.MCP, so that an
+	// overlay declared at a TRUSTED path (the workspace's own .mivia/mivia.toml)
+	// is never mistaken for a table the untrusted base file declared itself.
+	baseMCP := file.MCP
 
 	if overlayPath, ok := workspaceOverlayConfigPath(opts.WorkspaceRoot, path); ok {
 		overlayData, err := os.ReadFile(overlayPath)
 		if err != nil {
-			return File{}, path, false, fmt.Errorf("read workspace config %s: %w", overlayPath, err)
+			return loadedFile{ConfigPath: path}, fmt.Errorf("read workspace config %s: %w", overlayPath, err)
 		}
 		if err := decodeConfigInto(overlayData, overlayPath, &file); err != nil {
-			return File{}, path, false, err
+			return loadedFile{ConfigPath: path}, err
 		}
+	}
+
+	// mergeProviderFallback layers ~/.mivia/mivia.toml's [provider]/
+	// [providers.*] underneath whatever the base config (+ workspace overlay
+	// above) already declared, so the user-level catalog/credentials remain
+	// available even when an explicit --config/$MIVIA_CONFIG or a provider-
+	// less workspace file was selected as the base. See its own doc comment.
+	if err := mergeProviderFallback(&file, path); err != nil {
+		return loadedFile{ConfigPath: path}, err
 	}
 
 	// [verifiers] deliberately does NOT layer: evidence-gate profiles are the
@@ -552,11 +651,11 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	// the commands that judge a project's gates.
 	verifiers, err := LoadWorkspaceVerifiers(opts.WorkspaceRoot)
 	if err != nil {
-		return File{}, path, false, err
+		return loadedFile{ConfigPath: path}, err
 	}
 	file.Verifiers = verifiers
 
-	return file, path, true, nil
+	return loadedFile{File: file, ConfigPath: path, Found: true, BaseMCP: baseMCP}, nil
 }
 
 // workspaceOverlayConfigPath returns workspaceRoot's own .mivia/mivia.toml

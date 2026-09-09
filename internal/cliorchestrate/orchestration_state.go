@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/orchestrationnotify"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -23,12 +24,25 @@ import (
 // orchestration tool. runHandles maps runID → *orchestrationHandle for
 // subsequent Inspect/Join/Cancel calls.
 var (
-	coordinators     sync.Map // *runtime.Dispatcher → coordinator.Coordinator
-	coordinatorRepos sync.Map // *runtime.Dispatcher → ledger.LedgerRepository
-	runHandles       sync.Map // runID → orchestrationHandle
+	coordinators       sync.Map // *runtime.Dispatcher → OrchestrationCoordinator
+	coordinatorRepos   sync.Map // *runtime.Dispatcher → ledger.LedgerRepository
+	runHandles         sync.Map // runID → orchestrationHandle
+	routedCoordinators sync.Map // *coordinator.Coordinator → unsubscribe func
 )
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
+
+// testOnRoutedCoordinatorsLoaded is a test-only observation hook, called
+// only when routedCoordinators.LoadOrStore reports loaded=true - i.e. only
+// when this call actually lost the race and tore down its own duplicate
+// subscription. Nil in production. sync.Map.LoadOrStore's own contract
+// already guarantees routedCoordinators holds exactly one entry per
+// coordinator regardless of whether this branch ever runs, so a test
+// asserting on the map's size alone cannot tell "the race was won cleanly"
+// apart from "this branch is dead code" - this hook lets a test observe the
+// branch firing directly instead. Deliberately non-blocking: it exists only
+// to count, never to synchronize, so it carries no deadlock risk.
+var testOnRoutedCoordinatorsLoaded func()
 
 // activeSessionCaller is the chat session's identity, recorded once per process.
 //
@@ -66,7 +80,7 @@ func sessionCallerContext(ctx context.Context) context.Context {
 }
 
 type orchestrationHandle struct {
-	coord      coordinator.Coordinator
+	coord      OrchestrationCoordinator
 	handle     *coordinator.RunHandle
 	repo       ledger.LedgerRepository
 	dispatcher *runtime.Dispatcher
@@ -75,7 +89,7 @@ type orchestrationHandle struct {
 }
 
 // GetCoordinator returns the coordinator for this run handle. See RunAccess.
-func (h *orchestrationHandle) GetCoordinator() coordinator.Coordinator { return h.coord }
+func (h *orchestrationHandle) GetCoordinator() OrchestrationCoordinator { return h.coord }
 
 // GetHandle returns the run handle. See RunAccess.
 func (h *orchestrationHandle) GetHandle() *coordinator.RunHandle { return h.handle }
@@ -310,11 +324,11 @@ func PoolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
 // ActiveCoordinator returns the first Coordinator registered in the
 // package-level coordinators map, if any. Used to find a running dispatch's
 // Coordinator from a caller that does not hold the *runtime.Dispatcher key.
-func ActiveCoordinator() (coordinator.Coordinator, bool) {
-	var found coordinator.Coordinator
+func ActiveCoordinator() (OrchestrationCoordinator, bool) {
+	var found OrchestrationCoordinator
 	var ok bool
 	coordinators.Range(func(_, value any) bool {
-		c, isCoordinator := value.(coordinator.Coordinator)
+		c, isCoordinator := value.(OrchestrationCoordinator)
 		if !isCoordinator {
 			return true // continue
 		}
@@ -328,9 +342,9 @@ func ActiveCoordinator() (coordinator.Coordinator, bool) {
 // or durable ledger repository and a subagent pool backed by the given
 // dispatcher. Safe for concurrent calls; only the first invocation initialises
 // the singleton. Subsequent calls are no-ops.
-func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) coordinator.Coordinator {
+func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
 	if existing, ok := coordinators.Load(d); ok {
-		return existing.(coordinator.Coordinator)
+		return existing.(*coordinator.Coordinator)
 	}
 	poolDepth, poolFanout := PoolLimitsFromConfig(cfg)
 	repo := defaultOrchestrationRepo
@@ -363,9 +377,25 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
 	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
+	active := actual.(*coordinator.Coordinator)
+	unsubscribe := active.SubscribeLifecycle(func(event ledger.LifecycleEvent) {
+		if event.Kind == coordinator.LifecycleKindTaskMessage {
+			orchestrationnotify.Publish(event)
+		}
+	})
+	if previous, loaded := routedCoordinators.LoadOrStore(active, unsubscribe); loaded {
+		unsubscribe()
+		unsubscribe = previous.(func())
+		if testOnRoutedCoordinatorsLoaded != nil {
+			testOnRoutedCoordinatorsLoaded()
+		}
+	}
 	coordinatorRepos.Store(d, repo)
 	if actual == c {
 		d.OnClose(func() {
+			if raw, ok := routedCoordinators.LoadAndDelete(active); ok {
+				raw.(func())()
+			}
 			if ownedStore != nil {
 				_ = ownedStore.Close()
 			}
@@ -373,7 +403,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 			coordinatorRepos.Delete(d)
 		})
 	}
-	return actual.(coordinator.Coordinator)
+	return active
 }
 
 // maxTaskRetries and minTaskRetryBaseBackoff clamp [subagents.retry] against

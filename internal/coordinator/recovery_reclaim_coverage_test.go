@@ -26,7 +26,7 @@ func (claimProbeFailingRepo) ClaimRun(context.Context, string, string) error {
 // be live or recoverable by its holder, so DeleteRun must never fire.
 func TestReclaimAbandonedRunProbeFailureIsNoReclaim(t *testing.T) {
 	repo := &claimProbeFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	if c.reclaimAbandonedRun("run-x") {
 		t.Fatal("reclaim succeeded despite a failed claim probe; a run we cannot prove abandoned must never be deleted")
 	}
@@ -56,7 +56,7 @@ func (r *reclaimDeleteFailingRepo) ReleaseRun(ctx context.Context, runID, holder
 // no stale claim blocks the real owner.
 func TestReclaimAbandonedRunDeleteFailureUndoesProbeClaim(t *testing.T) {
 	repo := &reclaimDeleteFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	if c.reclaimAbandonedRun("run-x") {
 		t.Fatal("reclaim succeeded despite a failed DeleteRun")
 	}
@@ -99,7 +99,7 @@ func TestReclaimAbandonedRunReProbeFailureIsNoReclaim(t *testing.T) {
 	if err := repo.MemoryLedgerRepository.ClaimRun(ctx, "run-x", "dead-process-holder"); err != nil {
 		t.Fatal(err)
 	}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	if c.reclaimAbandonedRun("run-x") {
 		t.Fatal("reclaim succeeded despite a failed re-probe; only the winner of the clear+re-probe race may delete")
 	}

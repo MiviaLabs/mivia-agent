@@ -80,18 +80,22 @@ func TestSDKTurnShapingZeroIsInert(t *testing.T) {
 func TestSDKTurnShapingKeepsToolsOffered(t *testing.T) {
 	f := newBatchFixture(t, []int{1 << 10})
 	loop := f.h.newLoop()
-	_ = loop
 	sdkOpts, _, err := buildAgentLoopOptions(loop, Options{
 		Model: "m", BatchResultBudgetBytes: 16 << 10,
 		SessionID: budgetTestSession, RemainderSpool: f.spool,
+		Dispatcher: governedDispatcher(t, loop.Tools),
 	}, "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sdkOpts.TurnResultBudget != 0 {
-		t.Fatalf("TurnResultBudget = %d, want 0 while host shaping is active", sdkOpts.TurnResultBudget)
+	if sdkOpts.Bounds.MaxConsecutiveToolFailures != sdkFailureSpiralBound {
+		t.Fatalf("Bounds.MaxConsecutiveToolFailures = %d, want the failure-spiral bound %d",
+			sdkOpts.Bounds.MaxConsecutiveToolFailures, sdkFailureSpiralBound)
 	}
-	defs, _, err := sdkagentloop.Definitions(sdkOpts.Tools, nil)
+	if sdkOpts.Bounds.MaxTotalTokens != 0 {
+		t.Fatalf("Bounds.MaxTotalTokens = %d, want 0: the SDK bound re-bills history per iteration and must stay unset under host shaping", sdkOpts.Bounds.MaxTotalTokens)
+	}
+	defs, err := sdkagentloop.Definitions(sdkOpts.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

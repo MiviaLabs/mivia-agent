@@ -1,32 +1,23 @@
-// Package sdkadapter - CLI-to-SDK tool-registry converter.
+// Package sdkadapter converts CLI tool registries to SDK tool registries.
 //
-// The CLI's internal/tools.Registry and the SDK's tools.Registry are
-// distinct types in distinct modules. The SDK loop consumes only the
-// SDK shape, so the bridge converts the CLI registry: every CLI tool
-// wraps as an SDK tool plus tools.SchemaTool.
+// The CLI internal/tools.Registry and SDK tools.Registry are distinct types.
+// The SDK loop consumes the SDK shape, so the bridge wraps every CLI tool
+// as an SDK tool and tools.SchemaTool.
 //
-// SchemaTool is required, not optional: the SDK's Definitions helper
-// fails closed with ErrNoSchemas when a non-empty registry holds no
-// schema-publishing tool. The schema is the json.Marshal of the CLI
-// tool's Parameters() map - the same OpenAI-parameters object the
-// CLI's OpenAITools() publishes today.
+// SchemaTool is mandatory: the SDK Definitions helper fails closed with
+// ErrNoSchemas when a non-empty registry has no schema-publishing tool.
+// The schema is the json.Marshal of the CLI tool Parameters() map.
 //
-// ConvertToolRegistryWithAdmission adds the legacy CLI's per-call
-// staged/unadmitted predicates (see internal/agent/loop_tool_exec.go:13-27)
-// on top of the standard wrapper: a predicate answering true
-// returns a denial string wrapped in tools.Out, which the SDK
-// renders as a RoleTool message so the model retries on the next
-// iteration. Per-call evaluation keeps the UnadmittedHandler
-// auto-stage side effect (see internal/agent/options.go:108-117)
-// firing only when the model actually invokes the unadmitted tool.
+// ConvertToolRegistryWithAdmission adds per-call staged/unadmitted predicates
+// (internal/agent/loop_tool_exec.go:13-27). A true predicate returns a denial
+// string in tools.Out, rendered as RoleTool for next-iteration retry. Per-call
+// evaluation ensures the UnadmittedHandler auto-stage side effect
+// (internal/agent/options.go:108-117) fires only when invoked.
 //
-// The ref-only shim lives in the agent package
-// (internal/agent/refonly_shim.go) and is applied after this
-// converter. It cannot live here because *remainder.Spool already
-// imports sdkadapter for sdkadapter.Mint; placing the shim in
-// sdkadapter would create an import cycle. See
-// docs/development/sdk-backend-field-mapping.md for the wider
-// rationale.
+// The ref-only shim lives in internal/agent/refonly_shim.go and is applied
+// after this converter. It cannot live here because *remainder.Spool imports
+// sdkadapter for sdkadapter.Mint (preventing an import cycle).
+// See docs/development/sdk-backend-field-mapping.md.
 package sdkadapter
 
 import (
@@ -34,6 +25,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
@@ -85,6 +78,16 @@ type AdmissionPredicates struct {
 	// and the gate's blocking select never fires - the tool hangs
 	// silently after the user approves.
 	EmitPending func(toolCallID, name, detail, input string)
+
+	// RecordDenied reports that a call was REFUSED and never ran.
+	//
+	// It is the symmetric partner of EmitPending, and it exists because a
+	// denial returns from this wrapper without ever entering the dispatcher
+	// shim - so nothing records an outcome for the call, and the agent loop's
+	// no-outcome fallback then emits a tool_end reading "completed
+	// (duplicate)". Both status mappings classify that as success, so every
+	// viewer showed a refused tool call as one that ran and succeeded.
+	RecordDenied func(toolCallID, name, reason string)
 }
 
 // admissionCheckedToolAdapter wraps a CLI tool plus the admission
@@ -111,6 +114,18 @@ func (a *admissionCheckedToolAdapter) Name() string { return a.cliName }
 // and Go interface wrappers silently strip optional interfaces, so
 // every wrapper layer forwards explicitly; a profile-less inner yields
 // the zero profile ("undeclared": the registry default applies).
+// MaxResultBytes and Privileged forward the inner adapter's
+// declared budget and privilege marker, so the wrappers never mask
+// the capabilities the loop's shaping and scope checks read.
+func (a *admissionCheckedToolAdapter) MaxResultBytes() int {
+	n, _ := sdktools.ResultBudgetOf(a.inner)
+	return n
+}
+
+func (a *admissionCheckedToolAdapter) Privileged() bool {
+	return sdktools.IsPrivileged(a.inner)
+}
+
 func (a *admissionCheckedToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
 	return sdktools.ExecutionProfileOf(a.inner)
 }
@@ -144,11 +159,40 @@ func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOu
 	return sdktools.InOut{}, nil
 }
 
+// NeedsApprovalLayer reports whether tool calls must be routed through the
+// approval adapter.
+//
+// This is the single location for this decision, preventing fail-open bugs
+// caused by duplicate construction logic.
+//
+// When hasGate is true, an approver is present, so the layer is always built.
+// Without a gate, policy decides: any policy other than "auto" requires approval,
+// and because no gate exists to ask, the adapter denies execution. (Previously,
+// requiring a gate caused "deny", "write-only", and "always" to execute write
+// tools without checks on headless surfaces).
+//
+// An empty policy string is not treated as configured. While it normalizes to
+// write-only in config.NormalizeApprovalPolicy, here it indicates that the caller
+// set no policy (for example, nested subagent loops). Treating empty policy as
+// write-only would incorrectly deny subagent write tools under auto defaults.
+//
+// This temporary carve-out will be removed when nested loops inherit policy.
+// TestAnEmptyPolicyIsNotAConfiguredPolicy enforces this contract.
+func NeedsApprovalLayer(hasGate bool, policy string) bool {
+	if hasGate {
+		return true
+	}
+	if strings.TrimSpace(policy) == "" {
+		return false
+	}
+	return !IsAutoApproval(policy)
+}
+
 // WrapToolWithAdmission wraps one already-converted SDK tool with
 // approval and admission layers according to pred.
 func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred AdmissionPredicates) sdktools.Tool {
 	wrapped := inner
-	if pred.ApprovalGate != nil {
+	if NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
 		wrapped = &approvalGatedToolAdapter{
 			inner:           wrapped,
 			cliName:         cliTool.Name(),
@@ -156,6 +200,7 @@ func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred Admissi
 			standing:        pred.ApprovalStanding,
 			policy:          pred.ApprovalPolicy,
 			emitPending:     pred.EmitPending,
+			recordDenied:    pred.RecordDenied,
 			getCapabilities: capabilitiesFor(cliTool),
 		}
 	}
@@ -173,7 +218,11 @@ func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred Admissi
 // WrapRegistryWithAdmission wraps each tool in sdkReg with the
 // admission and approval predicates corresponding to cliReg.
 func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry, pred AdmissionPredicates) error {
-	if sdkReg == nil || (pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil) {
+	if sdkReg == nil {
+		return nil
+	}
+	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
+		!NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
 		return nil
 	}
 	for _, t := range sdkReg.Tools() {
@@ -190,7 +239,12 @@ func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry
 		wrapped := WrapToolWithAdmission(t, cliTool, pred)
 		sdkReg.Remove(name)
 		if err := sdkReg.Add(wrapped); err != nil {
-			_ = sdkReg.Add(t)
+			// Deliberately NOT restoring t. This wrapper carries the approval
+			// and admission layers, so putting the bare tool back leaves an
+			// UNGATED tool in a registry the caller may or may not discard -
+			// a fail-open on the error path of the very layer that gates
+			// writes. The registry loses the tool instead, and the error says
+			// so.
 			return fmt.Errorf("sdkadapter: wrap tool %q in SDK registry: %w", name, err)
 		}
 	}
@@ -208,19 +262,22 @@ func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry
 // unadmitted) run first; if those pass, the approval gate runs
 // before the inner CLI tool. Layering order matters - a staged
 // tool never reaches the approval gate.
-// regOpts (for example sdktools.WithDefaultRunTimeout) are forwarded
-// verbatim to the SDK's New, so the registry-wide run-timeout backstop
-// is the caller's choice rather than the SDK's hardcoded default.
-func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates, regOpts ...sdktools.Option) (*sdktools.Registry, error) {
+// regOpts (the registry-wide run-timeout backstop) are forwarded to
+// each converted tool's ExecutionProfile, because the SDK's New no
+// longer takes registry options: a no-profile tool is bounded at the
+// caller's chosen value instead of the SDK's hardcoded DefaultRunTimeout,
+// and the caller's choice rather than the SDK's default governs.
+func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates, runTimeout ...time.Duration) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
-	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil {
-		return ConvertToolRegistry(cliReg, regOpts...)
+	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil &&
+		!NeedsApprovalLayer(pred.ApprovalGate != nil, pred.ApprovalPolicy) {
+		return ConvertToolRegistry(cliReg, runTimeout...)
 	}
-	sdkReg := sdktools.New(regOpts...)
+	sdkReg := sdktools.New()
 	for _, t := range cliReg.List() {
-		inner, err := newSDKToolAdapter(t)
+		inner, err := newSDKToolAdapter(t, firstRunTimeout(runTimeout))
 		if err != nil {
 			return nil, err
 		}
@@ -237,14 +294,42 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 // arguments the CLI's Execute expects, and wraps the CLI's string
 // result in the SDK's Out.
 type sdkToolAdapter struct {
-	cli    tools.Tool
-	schema []byte
+	cli        tools.Tool
+	schema     []byte
+	runTimeout time.Duration
 }
 
 // Compile-time assertions: the adapter satisfies the SDK interfaces.
 var _ sdktools.Tool = (*sdkToolAdapter)(nil)
 var _ sdktools.SchemaTool = (*sdkToolAdapter)(nil)
 var _ sdktools.ProfiledTool = (*sdkToolAdapter)(nil)
+
+// MaxResultBytes forwards the CLI tool's declared result budget
+// through the SDK's ResultBudgetTool capability: the Capability's
+// MaxResultBytes when the tool is CapableTool, else its
+// ResultBudgetBytes when it implements the host budget interface.
+// Zero means unbounded, so the SDK loop's per-call shaping only
+// binds tools that declared a bound host-side.
+func (s *sdkToolAdapter) MaxResultBytes() int {
+	if capable, ok := s.cli.(tools.CapableTool); ok {
+		if n := capable.Capability(nil).MaxResultBytes; n > 0 {
+			return n
+		}
+	}
+	if budgeted, ok := s.cli.(tools.ResultBudgetTool); ok {
+		return budgeted.ResultBudgetBytes()
+	}
+	return 0
+}
+
+// Privileged forwards the CLI tool's session-control privilege
+// marker through the SDK's PrivilegedTool capability, so a wired
+// SDK Scope enforces the same explicit-allowlisting rule the host
+// registry enforces for privileged tools.
+func (s *sdkToolAdapter) Privileged() bool {
+	_, privileged := s.cli.(tools.PrivilegedTool)
+	return privileged
+}
 
 // ExecutionProfile publishes the CLI tool's Capability as the SDK
 // ExecutionProfile, so the SDK's run-timeout backstop honors a
@@ -255,11 +340,22 @@ var _ sdktools.ProfiledTool = (*sdkToolAdapter)(nil)
 // registry-wide default (from CLI config) applies. The nil args
 // mirror capableToolBridge: the SDK interface is static, so the
 // bridge reads the zero-payload capability shape.
+// runTimeout applies only to tools whose resolved profile Timeout is
+// zero ("undeclared"): a positive value is the registry-wide bound, a
+// negative value maps to the SDK's TimeoutNone (never cap), and zero
+// leaves the tool undeclared so the SDK's own DefaultRunTimeout (10
+// minutes) applies. The SDK no longer takes a registry-wide option
+// (tools.New lost its functional options), so the bound rides each
+// tool's ExecutionProfile instead.
 func (s *sdkToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
+	p := sdktools.ExecutionProfile{}
 	if capable, ok := s.cli.(tools.CapableTool); ok {
-		return CapabilityToExecutionProfile(capable.Capability(nil))
+		p = CapabilityToExecutionProfile(capable.Capability(nil))
 	}
-	return sdktools.ExecutionProfile{}
+	if p.Timeout == 0 {
+		p.Timeout = s.runTimeout
+	}
+	return p
 }
 
 // newSDKToolAdapter wraps one CLI tool, publishing its parameter
@@ -267,12 +363,26 @@ func (s *sdkToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
 // error in the tool; the adapter returns it rather than dropping the
 // schema silently, because a schema-less tool would trip the SDK's
 // ErrNoSchemas at New time with a less actionable message.
-func newSDKToolAdapter(t tools.Tool) (*sdkToolAdapter, error) {
+// ConvertTool adapts ONE CLI tool to the SDK interfaces.
+//
+// It exists for the deferred-tool path, which has to execute a single tool
+// that is deliberately absent from the SDK registry. Without it that path
+// invoked the runtime dispatcher itself, which made it a second
+// implementation of tool execution: nine contracts had to be re-honoured by
+// hand there and only four were. See DC-35.
+//
+// The returned value satisfies sdktools.SchemaTool too, so a caller can use
+// it for both fields of a dispatcher shim.
+func ConvertTool(t tools.Tool) (*sdkToolAdapter, error) {
+	return newSDKToolAdapter(t, 0)
+}
+
+func newSDKToolAdapter(t tools.Tool, runTimeout time.Duration) (*sdkToolAdapter, error) {
 	schema, err := json.Marshal(t.Parameters())
 	if err != nil {
 		return nil, fmt.Errorf("sdkadapter: tool %q: marshal parameters: %w", t.Name(), err)
 	}
-	return &sdkToolAdapter{cli: t, schema: relaxTopLevelAdditionalProperties(schema)}, nil
+	return &sdkToolAdapter{cli: t, schema: relaxTopLevelAdditionalProperties(schema), runTimeout: runTimeout}, nil
 }
 
 // relaxTopLevelAdditionalProperties strips a top-level
@@ -345,19 +455,20 @@ func (s *sdkToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 // errors (blank name, duplicate name) wrap with the offending tool's
 // name so the operator can find the duplicate.
 //
-// regOpts (for example sdktools.WithDefaultRunTimeout) are forwarded
-// verbatim to the SDK's New. Without an explicit run-timeout option the
-// SDK bounds every no-profile tool at its hardcoded DefaultRunTimeout
-// (10 minutes); callers that arm their own per-call deadlines pass
-// sdktools.WithDefaultRunTimeout(sdktools.TimeoutNone) to keep the SDK
-// backstop from being tighter than their declared budgets.
-func ConvertToolRegistry(cliReg *tools.Registry, regOpts ...sdktools.Option) (*sdktools.Registry, error) {
+// runTimeout (the registry-wide run-timeout backstop) reaches the SDK
+// through each converted tool's ExecutionProfile, because the SDK's New
+// no longer takes registry options. Without an explicit run-timeout
+// value the SDK bounds every no-profile tool at its hardcoded
+// DefaultRunTimeout (10 minutes); callers that arm their own per-call
+// deadlines pass sdktools.TimeoutNone to keep the SDK backstop from
+// being tighter than their declared budgets.
+func ConvertToolRegistry(cliReg *tools.Registry, runTimeout ...time.Duration) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
-	sdkReg := sdktools.New(regOpts...)
+	sdkReg := sdktools.New()
 	for _, t := range cliReg.List() {
-		wrapped, err := newSDKToolAdapter(t)
+		wrapped, err := newSDKToolAdapter(t, firstRunTimeout(runTimeout))
 		if err != nil {
 			return nil, err
 		}
@@ -366,4 +477,13 @@ func ConvertToolRegistry(cliReg *tools.Registry, regOpts ...sdktools.Option) (*s
 		}
 	}
 	return sdkReg, nil
+}
+
+// firstRunTimeout resolves the optional run-timeout override: absent
+// or empty means "no override", so the SDK's DefaultRunTimeout governs.
+func firstRunTimeout(runTimeout []time.Duration) time.Duration {
+	if len(runTimeout) == 0 {
+		return 0
+	}
+	return runTimeout[0]
 }

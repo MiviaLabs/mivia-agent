@@ -14,7 +14,8 @@ import (
 // does).
 const (
 	// SubagentRosterMaxLines caps the roster entries; overflow collapses into
-	// a tail line pointing at the dispatch_tasks agent enum.
+	// a tail line pointing at the dispatch_tasks agent field description,
+	// which carries the full roster (the schema publishes no enum).
 	SubagentRosterMaxLines = 8
 	// subagentRosterDescBytes clamps each sanitized description.
 	subagentRosterDescBytes = 160
@@ -51,7 +52,7 @@ func SubagentRosterSection(registry *agents.AgentRegistry) string {
 	if truncated {
 		b.WriteString("- ...and ")
 		b.WriteString(strconv.Itoa(len(list) - SubagentRosterMaxLines))
-		b.WriteString(" more (full roster in the dispatch_tasks agent enum)\n")
+		b.WriteString(" more (full roster in the dispatch_tasks agent field description)\n")
 	}
 	return b.String()
 }

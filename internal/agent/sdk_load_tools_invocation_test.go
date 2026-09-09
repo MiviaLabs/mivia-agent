@@ -10,13 +10,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
 func toolcallctxWithID(ctx context.Context, id, name string, index int) context.Context {
-	return toolcallctx.WithToolCall(ctx, sdkshape.ToolCall{ID: id, Name: name, Index: index, Arguments: []byte(`{}`)})
+	return sdkagentloop.WithToolCall(ctx, sdkshape.ToolCall{ID: id, Name: name, Index: index, Arguments: []byte(`{}`)})
 }
 
 func sdkInOutFor(t *testing.T, args string) sdktools.InOut {
@@ -112,6 +112,7 @@ func TestSDKBuildToolRegistryDoesNotConsultPredicatesForInRegistryTools(t *testi
 		Model:                 "test-model",
 		StagedToolMessage:     staged,
 		UnadmittedToolHandler: unadmitted,
+		Dispatcher:            governedDispatcher(t, reg),
 	}
 	loop := &Loop{Completer: &scriptedTurnCompleter{steps: []provider.Response{{Content: "noop", FinishReason: "stop"}}}, Tools: reg}
 	turn := newSDKTurnState()

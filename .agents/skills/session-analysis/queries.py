@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """session-analysis companion: read-only ledger analyzer + golden selftest.
 
-Part of the `session-analysis` skill (.mivia/skills/session-analysis/SKILL.md).
+Part of the `session-analysis` skill (.agents/skills/session-analysis/SKILL.md).
 This program is the skill's data surface: every query mirrors the harness's own
 catalog read path (internal/storage/chat_sessions.go ListSessions) against the
 durable chat ledger (SQLite). It is STRICTLY READ-ONLY against the ledger.

@@ -657,3 +657,22 @@ func TestAppModelStackImmutability(t *testing.T) {
 		t.Errorf("deliverTop mutated previous model stack element in place: received=%d", len(baseScreen.received))
 	}
 }
+
+func TestThemeSelectionInvokesPersistenceCallback(t *testing.T) {
+	dark := loadTheme(t)
+	themes := []theme.Theme{dark}
+	called := ""
+	m := New(stubScreen{name: "base"}, dark, theme.TierASCII, themes).WithOptions(Options{
+		PersistTheme: func(name string) tea.Cmd {
+			called = name
+			return func() tea.Msg { return nil }
+		},
+	})
+	_, cmd := m.Update(ThemeSelectedMsg{Name: dark.Name})
+	if called != dark.Name {
+		t.Fatalf("persistence callback name = %q, want %q", called, dark.Name)
+	}
+	if cmd == nil {
+		t.Fatal("expected persistence command")
+	}
+}

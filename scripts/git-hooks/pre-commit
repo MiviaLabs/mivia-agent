@@ -67,13 +67,17 @@ else
   GOFMT_SUMMARY="gofmt skipped"
 fi
 
-# Auto-stage a modified .mivia/memory.db that the caller forgot to `git add`,
-# so every commit picks up the latest memory store instead of silently
-# leaving it behind. Only a working-tree modification to a tracked file is
-# staged here - never an untracked/new file, and never a deletion - so this
-# cannot turn an unrelated commit into one that adds or removes the db.
-if git diff --name-only --diff-filter=M -- .mivia/memory.db | grep -qx '\.mivia/memory\.db'; then
-  git add -- .mivia/memory.db
+# Auto-stage every change under .agents/memories/ - memory_save drops new
+# markdown entries there mid-session and housekeeping edits or deletes old
+# ones, and none of those edits belong to the code change being committed,
+# so they were forgotten one commit after another. Additions and deletions
+# are staged alike: a new memory IS a new file and housekeeping IS a delete,
+# and the secret scan below reads the staged blobs either way. An operator
+# who wants a memory OUT of a commit still can: unstage it explicitly
+# (git restore --staged) after this hook has staged it, and commit with
+# what remains.
+if [ -d .agents/memories ]; then
+  git add -A -- .agents/memories
 fi
 
 # Materialize the STAGED tree into a real directory and run every gate that
@@ -125,6 +129,16 @@ mapfile -d '' STAGED_DOCS < <(
 )
 if ((${#STAGED_DOCS[@]})); then
   run_verify python3 "$STAGED_ROOT/scripts/check_docs_ownership.py"
+fi
+
+# Any Markdown file can restate the chat event vocabulary, and one already
+# restated it wrongly. The Go conformance test cannot see prose, so this runs
+# on staged Markdown as well as on the contract itself. It is milliseconds.
+mapfile -d '' STAGED_VOCAB < <(
+  git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -E '(\.md$|^api/contracts/|^\.mivia/policy/wire-vocabulary\.json$)' | tr '\n' '\0' || true
+)
+if ((${#STAGED_VOCAB[@]})); then
+  run_verify python3 "$STAGED_ROOT/scripts/check_wire_vocabulary.py" --root "$STAGED_ROOT" --policy "$STAGED_ROOT/.mivia/policy/wire-vocabulary.json"
 fi
 
 SEMGREP_SUMMARY="semgrep skipped (not installed)"
@@ -188,6 +202,29 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running TUI invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s) || INV_FAIL=1
   fi
+  # .agents/agents and .agents/skills had no invariant-test entry here.
+  # verify_agent_config.py already checks frontmatter shape and alias parity on
+  # every commit, but nothing resolved the real effective tools until push.
+  # This test resolves them through the loader, so it holds the agent-skill
+  # tool contract and every skills: name that a hand-rolled frontmatter scanner
+  # cannot: inherits, tools_add, tools_remove, tools_core and disallowed_tools
+  # all change the effective set.
+  #
+  # This entry needs its own status list. $STAGED is ACM, which omits deletions,
+  # and deleting or moving a skill directory is exactly the edit that leaves a
+  # role's skills: list naming a skill with no SKILL.md. INV-AG-30 rejects that
+  # at load and the role loses the skill in silence.
+  #
+  # --no-renames is load-bearing, not a style choice. With rename detection on,
+  # --name-only prints the DESTINATION only, so `git mv .agents/skills/foo`
+  # to any path outside the tree matches nothing here and skips the test.
+  # --no-renames splits the rename into a delete and an add, so the source path
+  # appears and the pattern matches.
+  STAGED_ROSTER="$(git diff --cached --name-only --no-renames --diff-filter=ACMD)"
+  if echo "$STAGED_ROSTER" | grep -qE '^\.agents/(agents|skills)/'; then
+    echo " → Running agent-skill roster tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestCommittedRosterSkillCompatibilityMatrix' ./internal/agents/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/tools/'; then
     echo " → Running tool invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s) || INV_FAIL=1
@@ -206,6 +243,62 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running provider invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestCompleterConformance|TestIsTransportStageTimeout|TestStdlibTimerErrorIdentities|TestCompatBaseRoundTripper' ./internal/provider/ -count=1 -timeout=120s) || INV_FAIL=1
   fi
+  # Cross-kind delivery order is a LIVENESS contract that only shows up as a
+  # wrong-looking UI two processes away: a turn terminal delivered before the
+  # deltas it terminates makes a viewer close a turn and then render into it.
+  # SubscribeAcross buys that order with one queue under many kinds, which in
+  # turn makes a partial Unsubscribe silently feed a queue nobody drains. Both
+  # are cheap to check and impossible to notice by reading.
+  if echo "$STAGED" | grep -qE '^internal/events/'; then
+    echo " → Running event-bus ordering invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestSubscribeAcrossPreservesCrossKindOrder|TestUnsubscribeRemovesSubscriptionFromEveryKind|TestBusUnsubscribeByHandlerRemovesEveryKind|TestDeliveryUnsubscribeRemovesSubscriptionFromEveryKind' ./internal/events/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # internal/hub is the consumer that spends the order SubscribeAcross buys.
+  # Everything below the relay's broadcast boundary is order-preserving by
+  # construction, so the bus subscription is the only hop that can reorder -
+  # and reverting it to SubscribeMany compiles, passes vet, and only shows up
+  # as duplicated turns on a second surface.
+  # A gate script that calls rg/grep with no search path reads STDIN instead of
+  # the tree whenever stdin is not a tty - so it blocks forever in CI or a hook,
+  # or returns zero matches and reads as a pass. This shipped twice, both on the
+  # verify chain. The check is milliseconds; the failure mode is a gate that can
+  # never report.
+  if echo "$STAGED" | grep -qE '^scripts/.*\.py$'; then
+    echo " → Running subprocess-stdin gate..."
+    (cd "$STAGED_ROOT" && run_verify python3 scripts/check_subprocess_stdin.py </dev/null) || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/hub/'; then
+    echo " → Running hub relay ordering invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestRelayPreservesCrossKindPublishOrder|TestOwnerStopReleasesTheRelaySubscription|TestClientStopReleasesTheRelaySubscription|TestTurnTerminalsAreRelayed|TestSendStampsAMonotonicLossCount|TestRelayChargesBusLossOnlyToEventsThatPassedThroughIt' ./internal/hub/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # The viewer-surface conformance table. It runs whenever a kind, a surface,
+  # or the policy that lets a surface stay silent is touched - the three ways a
+  # kind gets added on one side and forgotten on the others. It is the gate for
+  # a class that has shipped four times here (a kind reaching one viewer of
+  # four, an arm with no allowlist entry, an allowlist entry with no arm).
+  if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|uiadapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
+    echo " → Running viewer-surface conformance tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # The tool-execution conformance table. Two code paths execute a model's
+  # tool call and share no Go interface, so nothing named them siblings and
+  # nine bugs shipped from the second one honouring four of nine contracts.
+  # It runs whenever either path, the wiring that routes between them, or the
+  # policy recording their declared divergences is touched.
+  if echo "$STAGED" | grep -qE '^(internal/(chat|agent|clichat)/|\.mivia/policy/tool-execution-conformance\.json$)'; then
+    echo " → Running tool-execution conformance tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestNoToolReachesTheModelUngoverned' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # The wire-field source check: every string leaving this machine must pass
+  # through applyTruncation. Two fields have skipped it, each rejecting a
+  # hundred-event batch at the receiving column, and both regression suites
+  # missed both because they enumerate shapes by hand.
+  if echo "$STAGED" | grep -qE '^(internal/chatsync/|\.mivia/policy/wire-field-sources\.json$)'; then
+    echo " → Running wire-field source invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestNoWirePayloadStringComesStraightFromTheEvent|TestNoWireFieldCarriesANulByte|TestNoEventExceedsTheStoredPayloadBound' ./internal/chatsync/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/coordinator/'; then
     echo " → Running coordinator invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestDrainSeesQueuedMessage|TestPendingInterruptPreservesQueueContents' ./internal/coordinator/ -count=1 -timeout=60s) || INV_FAIL=1
@@ -222,7 +315,12 @@ if command -v go >/dev/null 2>&1; then
   fi
   # Any staged Go change can add an exec; the gate walks internal/ whole, so
   # it is keyed on Go files rather than one directory.
-  if echo "" | grep -qE '^internal/.*\.go$'; then
+  #
+  # This read `echo ""`, which matches nothing, so the gate ran on ZERO commits
+  # from the day it was added - the anti-pattern the gate-authoring skill names
+  # first: a gate that cannot fail. It passes on the current tree, so nothing
+  # slipped through while it was dark, but nothing was watching either.
+  if echo "$STAGED" | grep -qE '^internal/.*\.go$'; then
     echo " → Running exec pipe-bound gate..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryExecBoundsItsPipeWait' ./internal/evidencecheck/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
@@ -242,6 +340,41 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running chat invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The chat-sync event vocabulary is published to a web client through
+  # api/contracts/chat-sessions.v1.json, and the API names each SSE frame after
+  # the event type string - so a type the client does not know is an event it
+  # never receives. The vocabulary already drifted once in a third copy. This
+  # is keyed on the contract file as well as the package, because editing the
+  # JSON alone is exactly the edit that must not go unchecked.
+  if echo "$STAGED" | grep -qE '^(internal/chatsync/|api/contracts/)'; then
+    echo " → Running chat-sync wire vocabulary invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryWireTypeConstantIsInTheEventTable|TestKnownWireTypesIsDerivedFromTheEventTable|TestKnownWireTypesMatchContractSnapshot|TestWireEnvelopeMatchesContractSnapshot|TestWireSharedObjectsMatchContractSnapshot|TestWireEventPayloadsMatchContractSnapshot' ./internal/chatsync/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # The context breakdown's fields are enumerated by hand in five places
+  # across three packages - two scaling slices, two count-preserving
+  # copies, and the chat->ports bridge - and the compiler checks none of
+  # them. A field added to the struct but missed in one enumeration is
+  # silent: it either stops the rows summing to the total printed beside
+  # them, or it reads "(0)" on screen forever. An adversarial review found
+  # eight such mutations surviving the whole suite. Keyed on all three
+  # packages, because the drift is between them.
+  if echo "$STAGED" | grep -qE '^internal/(chat/|uikit/ports/|uiadapter/)'; then
+    echo " → Running context-breakdown enumeration invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryCostFieldIsRescaled|TestChatCountsOnlyKeepsEveryCount|TestFloorAndConversationPartitionEveryCost' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/uikit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/uiadapter/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # The session catalog has two namespaces - plain and managed-worktree - and
+  # every behaviour implemented for one and missed by the other in the
+  # 2026-09-05 batch was a reachable data bug: a worktree session that could
+  # not be resumed, a /clear'ed conversation resurrected from an older
+  # snapshot, a "deleted" session still fully loadable. The conformance table
+  # runs the same assertions over both namespaces, so a fix applied to one
+  # fails for the sibling instead of shipping half-done.
+  if echo "$STAGED" | grep -qE '^internal/storage/'; then
+    echo " → Running session-catalog namespace conformance tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestCatalogNamespaces|TestEveryCatalogEntryPointIsClassified' ./internal/storage/ -count=1 -timeout=90s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/config/'; then
     echo " → Running config invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s) || INV_FAIL=1
@@ -252,7 +385,37 @@ if command -v go >/dev/null 2>&1; then
   INVARIANT_SUMMARY="invariants ok"
 fi
 
+# Mutation sweep on the staged diff. Applies text-level operator mutations
+# ONLY to lines this commit adds or edits - verbatim-moved lines (the same
+# bytes deleted elsewhere in the diff) are skipped, so a refactor commit's
+# sweep cost tracks semantic change, not text churn - runs each mutant's
+# package test target, and fails if a mutant survives with no test noticing - the one
+# check generic enough to catch "the test asserts on the wrong thing" or "the
+# fixture disables the very guard it means to test" without knowing the
+# defect class in advance. It was already wired into `make verify`
+# (scripts/check_mutation.py --staged) but nothing ran `make verify`
+# interactively, so it never fired on an ordinary commit. This is that gap
+# closed: it runs here, on every commit, scoped to what that commit actually
+# changes so cost stays proportional to diff size, not repo size.
+#
+# Runs from ROOT, not STAGED_ROOT: it drives `git diff --cached` itself and
+# transiently mutates the real working-tree file, restoring it in a `finally`
+# even on SIGTERM - it needs the real .git directory and working tree, which
+# STAGED_ROOT (a bare `git archive` extraction with no .git) does not have.
+# MOVED TO pre-push. The sweep runs one `go test` per mutation site, so its
+# cost scales with the diff, and a broad commit (a multi-package change, or a
+# backlog landed in one go) ran it past ten minutes - long enough that the
+# supervisor killed it and the commit failed with a timeout traceback instead
+# of a verdict. A gate that cannot finish is not enforcing anything, and one
+# that makes every commit unaffordable gets bypassed, which is worse than
+# moving it.
+#
+# It is NOT weakened: pre-push runs the same sweep over the full push range
+# before any code leaves this machine, which is the boundary that matters.
+# Commits stay local and cheap; nothing reaches a remote unswept.
+MUTATION_SUMMARY="mutation check deferred to pre-push"
+
 printf 'tree=%s\nsummary=%s\n' \
   "$TREE" \
-  "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY}; ${INVARIANT_SUMMARY})" \
+  "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY}; ${INVARIANT_SUMMARY}; ${MUTATION_SUMMARY})" \
   >"$SUMMARY_FILE"

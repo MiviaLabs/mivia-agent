@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func resumeLifecycleFixture(t *testing.T, seed func(ctx context.Context, repo ledger.LedgerRepository)) (*coordinator, ledger.LedgerRepository) {
+func resumeLifecycleFixture(t *testing.T, seed func(ctx context.Context, repo ledger.LedgerRepository)) (*Coordinator, ledger.LedgerRepository) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	ctx := context.Background()
@@ -22,7 +22,7 @@ func resumeLifecycleFixture(t *testing.T, seed func(ctx context.Context, repo le
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
 	// Production wiring: coordinator.New, no WithRetryPolicy.
-	return New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator), repo
+	return New(repo, subagents.New(d, subagents.Policy{Workers: 1})), repo
 }
 
 func lifecycleTask(id, status string, deps ...string) ledger.TaskSnapshot {

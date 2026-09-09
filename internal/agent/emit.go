@@ -40,6 +40,20 @@ func emit(opts Options, e Event) {
 			e.Input,
 			e.Output,
 		)
+		ev.InputBody = e.InputBody
+		ev.OutputBody = e.OutputBody
+		if e.Kind == EventHook {
+			// The generic conversion carries only strings, so the hook's
+			// verdict would stop here - and a consumer past the bus could not
+			// tell a hook that reported from one that refused a tool call.
+			ev.Hook = &events.HookEvent{
+				Phase:   e.Name,
+				Program: e.Program,
+				Tool:    e.Tool,
+				Denied:  e.Denied,
+				Output:  e.HookStdout,
+			}
+		}
 		ev.SessionID = opts.SessionID
 		ev.TurnID = opts.TurnID
 		if opts.EventIdentity != nil {
@@ -47,7 +61,8 @@ func emit(opts Options, e Event) {
 			ev.Identity = &copy
 		}
 		if !e.Origin.IsZero() {
-			ev = ev.WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+			ev = ev.WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth).
+				WithAgentParent(e.Origin.ParentTaskID)
 		}
 		opts.EventBus.Publish(ev)
 	}
@@ -196,5 +211,28 @@ func EmitCompaction(ctx context.Context, opts Options, preparation contextmgr.Pr
 			ev.Identity = &copy
 		}
 		opts.EventBus.Publish(ev)
+	}
+}
+
+// ToolPendingEmitter returns the EmitPending closure the approval decision
+// calls before a gate blocks, so a UI can draw the prompt while waiting.
+//
+// It is exported because internal/chat needs the SAME emitter for the
+// deferred-tool path. That path had none, and the shipped TUI arms its
+// approval prompt exclusively from this event - so an interactive policy
+// there called the gate, blocked, and drew nothing.
+//
+// ToolCallID must be the in-flight call id: the UI resolves a decision back
+// to the blocked gate by it, and a prompt carrying anything else makes every
+// answer a silent no-op.
+func ToolPendingEmitter(opts Options) func(toolCallID, name, detail, input string) {
+	return func(toolCallID, name, detail, input string) {
+		emit(opts, Event{
+			Kind:       EventToolPending,
+			ToolCallID: toolCallID,
+			Name:       name,
+			Detail:     detail,
+			Input:      input,
+		})
 	}
 }

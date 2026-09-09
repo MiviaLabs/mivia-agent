@@ -26,6 +26,11 @@ func TestInputsToRawFlagsPreservesBigIntegers(t *testing.T) {
 func lockStorePath(t *testing.T) string {
 	t.Helper()
 	store := t.TempDir()
+	// t.Cleanup runs LIFO; registering the drain after TempDir's own removal
+	// cleanup means the drain fires FIRST, so any abandon-cleanup goroutine
+	// still touching the store directory (see drainAbandonedLockAttempts)
+	// finishes before RemoveAll runs against it.
+	t.Cleanup(drainAbandonedLockAttempts)
 	storePath := filepath.Join(store, "context.db")
 	if err := os.WriteFile(storePath, []byte("store"), 0o600); err != nil {
 		t.Fatal(err)
@@ -212,6 +217,64 @@ func TestAcquireWorkflowExecutionLockBoundedCtxCancelDuringSleep(t *testing.T) {
 	// instead of finishing the sleep tick and starting another attempt.
 	if elapsed >= cancelAfter+800*time.Millisecond {
 		t.Fatalf("elapsed = %s, want prompt return near cancelAfter %s, not a further contended attempt or the full 5s maxWait", elapsed, cancelAfter)
+	}
+}
+
+// TestAcquireWorkflowExecutionLockBoundedDrainsAbandonedAttemptBeforeCleanup
+// pins that a caller owning the lock store's directory can await the
+// abandon-cleanup goroutine spawned when ctx wins the race against an
+// in-flight contended attempt (workflow_resume_lock.go:145-155), so that
+// goroutine's filesystem calls against the directory never race the
+// directory's own removal. Without a drain seam, that goroutine can still be
+// running - and still touching the store's directory - after the caller (and
+// a test's t.TempDir()) has already returned, which is exactly the shape of
+// the "directory not empty" TempDir cleanup failure this pins against.
+//
+// The attempt is forced to block deterministically (rather than racing real
+// flock timing) so this test never depends on scheduling luck.
+func TestAcquireWorkflowExecutionLockBoundedDrainsAbandonedAttemptBeforeCleanup(t *testing.T) {
+	storePath := lockStorePath(t)
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	original := workflowExecutionLockFile
+	workflowExecutionLockFile = func(file *os.File) (func(), error) {
+		close(entered)
+		<-release
+		return original(file)
+	}
+	t.Cleanup(func() { workflowExecutionLockFile = original })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-entered
+		cancel()
+	}()
+
+	_, err := acquireWorkflowExecutionLockBounded(ctx, storePath, "wfr-drain", 5*time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+
+	// The abandon-cleanup goroutine is still blocked on <-release. Draining
+	// must not return until it finishes - proving the seam actually
+	// synchronizes with the goroutine rather than returning immediately.
+	drained := make(chan struct{})
+	go func() {
+		drainAbandonedLockAttempts()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		t.Fatal("drainAbandonedLockAttempts returned before the abandoned attempt finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-drained:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drainAbandonedLockAttempts did not return after the abandoned attempt finished")
 	}
 }
 

@@ -67,9 +67,6 @@ var HandleSlashEffort = clichat.HandleSlashEffort
 // HandleSlashInfo re-exports the clichat.HandleSlashInfo function.
 var HandleSlashInfo = clichat.HandleSlashInfo
 
-// HighlightCodeBlock re-exports the clichat.HighlightCodeBlock function.
-var HighlightCodeBlock = clichat.HighlightCodeBlock
-
 // IsBannerTool re-exports the clichat.IsBannerTool function.
 var IsBannerTool = clichat.IsBannerTool
 
@@ -94,9 +91,6 @@ var LatestAutoSaveName = clichat.LatestAutoSaveName
 // Max re-exports the clichat.Max function.
 var Max = clichat.Max
 
-// MaxThinkingLines re-exports the clichat.MaxThinkingLines constant.
-const MaxThinkingLines = clichat.MaxThinkingLines
-
 // MinCardWidth re-exports the clichat.MinCardWidth constant.
 const MinCardWidth = clichat.MinCardWidth
 
@@ -105,9 +99,6 @@ var NewAgentTaskHandler = clichat.NewAgentTaskHandler
 
 // NewStreamBridge re-exports the clichat.NewStreamBridge function.
 var NewStreamBridge = clichat.NewStreamBridge
-
-// NewSubagentTracker re-exports the clichat.NewSubagentTracker function.
-var NewSubagentTracker = clichat.NewSubagentTracker
 
 // NewTerminal re-exports the clichat.NewTerminal function.
 var NewTerminal = clichat.NewTerminal
@@ -133,8 +124,8 @@ var ReplHelpContent = clichat.ReplHelpContent
 // RestoreREPLRuntime re-exports the clichat.RestoreREPLRuntime function.
 var RestoreREPLRuntime = clichat.RestoreREPLRuntime
 
-// SetGlobalBus re-exports the clichat.SetGlobalBus function.
-var SetGlobalBus = clichat.SetGlobalBus
+// RegisterSessionBus re-exports the clichat.RegisterSessionBus function.
+var RegisterSessionBus = clichat.RegisterSessionBus
 
 // SetSubagentProgress re-exports the clichat.SetSubagentProgress function.
 var SetSubagentProgress = clichat.SetSubagentProgress
@@ -144,9 +135,6 @@ const SkillTurnPreamble = clichat.SkillTurnPreamble
 
 // SlashKindBuiltin re-exports the clichat.SlashKindBuiltin constant.
 const SlashKindBuiltin = clichat.SlashKindBuiltin
-
-// SubagentRun re-exports the clichat.SubagentRun type.
-type SubagentRun = clichat.SubagentRun
 
 // SummarizeToolDetail re-exports the clichat.SummarizeToolDetail function.
 var SummarizeToolDetail = clichat.SummarizeToolDetail
@@ -171,9 +159,6 @@ var VisualLineCount = clichat.VisualLineCount
 
 // EffortOrchestrationNotice re-exports the clichat.EffortOrchestrationNotice constant.
 const EffortOrchestrationNotice = clichat.EffortOrchestrationNotice
-
-// Rect re-exports the clichat.Rect type.
-type Rect = clichat.Rect
 
 // SafeEffortError re-exports the clichat.SafeEffortError function.
 var SafeEffortError = clichat.SafeEffortError
@@ -256,9 +241,6 @@ var CancellationCanReplaceTurnError = clichat.CancellationCanReplaceTurnError
 // ModelRestoreNoticeText re-exports the clichat.ModelRestoreNoticeText function.
 var ModelRestoreNoticeText = clichat.ModelRestoreNoticeText
 
-// OverlayAt re-exports the clichat.OverlayAt function.
-var OverlayAt = clichat.OverlayAt
-
 // OpenRepositoryContextStore re-exports the clichat.OpenRepositoryContextStore function.
 var OpenRepositoryContextStore = clichat.OpenRepositoryContextStore
 
@@ -267,9 +249,6 @@ type SlashCommand = clichat.SlashCommand
 
 // StreamBridge re-exports the clichat.StreamBridge type.
 type StreamBridge = clichat.StreamBridge
-
-// SubagentTracker re-exports the clichat.SubagentTracker type.
-type SubagentTracker = clichat.SubagentTracker
 
 // ToolRow re-exports the clichat.ToolRow type.
 type ToolRow = clichat.ToolRow

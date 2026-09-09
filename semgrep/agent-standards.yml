@@ -162,8 +162,6 @@ rules:
     paths:
       include:
         - /.agents/skills/**/SKILL.md
-        - /.mivia/skills/**/SKILL.md
-        - /.claude/skills/**/SKILL.md
     pattern-regex: '^## Output\s*$'
 
   - id: mivia.generic.skills-require-mivia-report-v1
@@ -174,8 +172,6 @@ rules:
     paths:
       include:
         - /.agents/skills/**/SKILL.md
-        - /.mivia/skills/**/SKILL.md
-        - /.claude/skills/**/SKILL.md
     pattern-regex: '(?i)ReportFormat:\s*(?!mivia-report/v1\b)\S+'
 
   - id: mivia.generic.architecture-review-must-stay-portable
@@ -187,8 +183,6 @@ rules:
       include:
         - /.agents/skills/architecture-review/**
         - /.agents/skills/panel-architecture-review/**
-        - /.mivia/skills/architecture-review/**
-        - /.mivia/skills/panel-architecture-review/**
     pattern-regex: '(?im)(\bmivia\b|mivia-report/v1|\.mivia/|AGENTS\.md|\bADLC\b|\bStep\s+0\b|\bchallenge\s+panel\b|\b(bug-audit|secure-change|verify-change)\b|engineering:architecture|docs/OWNERS\.yaml|docs/architecture/|\breviewing\s+(?-i:HEAD)\b|\b(at|against)\s+(?-i:HEAD)\b|(?-i:\bGo\b)\s+rejects?\s+cycles?\b|\bgo[- ]idiomatic\b|context\.Context|cmd/mivia|\bmake\s+(verify|invariants)\b|INV-(AG|SEC|TUI)-|scripts/check_go_structure\.py|\binternal/|^(?![^\n]*\b(if|when)\b[^\n]*\bdocs/[^\n]*\bexists?\b)[^\n]*\bdocs/|^(?![^\n]*\b(if|when)\b[^\n]*(\.github/|\.gitlab/|\.circleci/)[^\n]*\bexists?\b)[^\n]*(\.github/|\.gitlab/|\.circleci/)|^(?![^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\bGit\b)[^\n]*\bgit\s+(head|diff|show|log|status|grep|rev-parse|merge-base|ls-files)\b|^[^\n]*\b(use|prefer)\s+(the\s+)?(Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b[^\n]*\b(use|prefer)\s+(the\s+)?(Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b|^(?=[^\n]*\b(use|prefer)\s+(the\s+)?(?P<portable_lang>Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b)(?![^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\b(?P=portable_lang)\b)(?![^\n]*\b(?P=portable_lang)\b[^\n]*\b(if|when)\b[^\n]*(discover(ed|y|s|ing)?|supplied)\b)(?![^\n]*\b(?P=portable_lang)\b[^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\b(?P=portable_lang)\b)[^\n]*\b(use|prefer)\s+(the\s+)?(?P=portable_lang)\b|^(?![^\n]*\b(if|when)\b[^\n]*go\.mod[^\n]*\bexists?\b)[^\n]*\bgo\s+(build|test|list|vet)\b|^(?![^\n]*\b(if|when)\b[^\n]*Cargo\.toml[^\n]*\bexists?\b)[^\n]*\b(run|execute)\s+cargo\s+test\b|^(?![^\n]*\b(if|when)\b[^\n]*(package\.json|npm)[^\n]*\b(exists?|supplied|declared|available)\b)[^\n]*\b(run|execute)\s+npm\s+test\b|^(?![^\n]*\b(if|when)\b[^\n]*(pytest|pyproject)[^\n]*\b(exists?|supplied|declared|available)\b)[^\n]*\b(run|execute)\s+pytest\b)'
 
   # --- Architecture guidance (docs / rules) ---
@@ -202,7 +196,6 @@ rules:
         - /docs/**
         - /.agents/rules/**
         - /.agents/skills/**/SKILL.md
-        - /.mivia/skills/**/SKILL.md
         - /AGENTS.md
         - /CLAUDE.md
         - /README.md
@@ -548,3 +541,183 @@ rules:
       - pattern: bufio.NewScanner($RESP.Body)
       - pattern: bufio.NewReader($RESP.Body)
       - pattern: json.NewDecoder($RESP.Body)
+
+  - id: mivia.go.no-test-func-outside-test-file
+    languages:
+      - go
+    severity: ERROR
+    message: >
+      A Test/Benchmark/Fuzz-shaped function (TestMain included) outside a
+      _test.go file compiles into the production package and is never
+      executed by `go test` - the test silently stops running. Move it into
+      a _test.go file. (Class seen as dev-merge residue: a "relocated
+      tests" file that was not _test.go.)
+    paths:
+      include:
+        - /cmd/**/*.go
+        - /internal/**/*.go
+        - /pkg/**/*.go
+      exclude:
+        - "*_test.go"
+    patterns:
+      - pattern-either:
+          - pattern: func $FN($T *testing.T) { ... }
+          - pattern: func $FN($T *testing.B) { ... }
+          - pattern: func $FN($T *testing.F) { ... }
+          - pattern: func $FN($T *testing.M) { ... }
+      - metavariable-regex:
+          metavariable: $FN
+          # Bare Test/Benchmark/Fuzz names run under `go test` too, so the
+          # name may end right after the prefix ($) - only a lowercase
+          # continuation (Testify) marks a legitimate non-test helper.
+          regex: ^(Test|Benchmark|Fuzz)($|[A-Z_])
+
+  - id: mivia.go.hub-wire-no-raw-error-text
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      Classify error text with chat.TurnErrorMessage before putting it on the
+      hub wire. Provider and tool error text can quote the request that
+      produced it (DC-14), and this socket reaches ANOTHER process - the local
+      NDJSON surface already emits a classified string, so a raw err.Error()
+      here leaves the remote process better informed than the local one, in
+      the direction that leaks.
+    paths:
+      include:
+        - /internal/hub/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern-either:
+      # Any .Error() call at all. The narrow $EV.Err.Error() form was trivially
+      # bypassed - a local variable, a differently-named field, a helper taking
+      # a bare error, errors.Join/Unwrap, or fmt.Errorf(...).Error() all
+      # defeated it, seven shapes proven by review. This package legitimately
+      # renders no error text: toWire classifies through chat.TurnErrorMessage
+      # and nothing else here formats an error, so a blanket ban has no honest
+      # false positive to make.
+      - pattern: $X.Error()
+      - pattern: fmt.Sprint($E)
+      - pattern: fmt.Sprintln($E)
+      - pattern: fmt.Sprintf("...", ..., $EV.Err, ...)
+
+  - id: mivia.go.no-truncation-call-inside-envelope-literal
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      applyTruncation MUTATES the Envelope it is passed, and Envelope is
+      embedded BY VALUE in every wire payload. A composite literal that both
+      copies `Envelope: env` and calls `applyTruncation(&env, ...)` reads an
+      unsequenced operand: the Go spec does not order a non-call operand
+      against a function call in the same literal, so the copy may be taken
+      before the mutation. When it is, `trunc` is nil and an amputated field
+      renders as COMPLETE - the event contract says `trunc` absent means
+      nothing was cut, with no third reading. Hoist the applyTruncation call
+      into a statement BEFORE the literal.
+    paths:
+      include:
+        - /internal/chatsync/**/*.go
+    patterns:
+      - pattern: |
+          $T{..., Envelope: $E, ...}
+      - pattern: |
+          $T{..., $F: applyTruncation(&$ENV, ...), ...}
+
+  - id: mivia.go.no-chat-principal-as-sync-handle
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      chat.Session.SessionID is an unguessable principal - the authorization
+      subject for contextstate - and chatsync.LocalHandle is a LOCAL-only
+      value that names an outbox directory and a persisted identity record.
+      Converting the principal into the handle writes a live capability into
+      durable local state and, historically, into a request URL. Resolve the
+      handle from the persisted identity instead
+      (chatsync.LoadOrCreateIdentity keyed by chatsync.IdentityKey). The
+      runtime proof that the value did not travel is
+      TestChatPrincipalNeverReachesTheWireOrDisk; this rule only makes the
+      wrong line hard to write.
+    paths:
+      include:
+        - /internal/**/*.go
+    pattern-either:
+      - pattern: chatsync.LocalHandle($X.SessionID)
+      - pattern: LocalHandle($X.SessionID)
+      - pattern: chatsync.LocalHandle($X.sessionID)
+      - pattern: LocalHandle($X.sessionID)
+
+  - id: mivia.go.no-validstring-rune-boundary-backoff
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      A truncation that cuts to a byte budget and then backs off with
+      utf8.ValidString in the LOOP CONDITION checks the ENTIRE prefix, not the
+      cut boundary. One invalid byte anywhere earlier in the string drags the
+      result all the way back to that byte, so a 16 KiB budget can keep 10
+      bytes and still report an ordinary budget cut (DC-6, amputation
+      disguised as truncation). It is also O(n^2) on a long string. Back off
+      across the boundary rune only - utf8.DecodeLastRuneInString reports
+      (RuneError, 1) for a byte that cannot start a rune or an incomplete
+      trailing sequence, while a genuine U+FFFD decodes with size 3 and is
+      kept. Reference implementation - internal/chatsync/truncate.go
+      (truncateString).
+    paths:
+      include:
+        - /**/*.go
+    pattern-either:
+      # Shape 1: the check IS the loop condition, on the `for` line itself.
+      - pattern-regex: 'for[^\n{]*!\s*utf8\.ValidString\('
+      # Shape 2: the check sits anywhere INSIDE the body of a loop that walks
+      # an index downward. internal/hooks/protocol.go carried exactly this
+      # before 04f36f5b (`for i := limit - 1; ...; i--` with
+      # `utf8.ValidString(s[:i])` two lines below), and a rule keyed on the
+      # `for` line alone could not see it. The mechanism is identical: a
+      # shrinking cut re-validated over the whole prefix.
+      - patterns:
+          - pattern: utf8.ValidString(...)
+          - pattern-either:
+              - pattern-inside: |
+                  for ...; ...; $I-- {
+                    ...
+                  }
+              - pattern-inside: |
+                  for ...; ...; $I -= $N {
+                    ...
+                  }
+              - pattern-inside: |
+                  for ...; ...; $I = $I - $N {
+                    ...
+                  }
+
+  - id: mivia.go.no-locked-field-reread
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      $VAR was captured from $RECV.$FIELD under $RECV.$MU.Lock() above,
+      specifically so every later use of this value stays fenced against a
+      concurrent writer. Reading $RECV.$FIELD again directly here throws that
+      fence away: it is an unsynchronized read of a mutex-guarded field (data
+      race under -race), and it can observe a DIFFERENT value than $VAR
+      within the same logical operation if a writer runs in between - DC-29,
+      exactly what broke internal/chatsync/poller.go's ConsumeInput call
+      (fixed in a2e554d7): it re-read p.sessionID instead of reusing the
+      already-locked sessID, so a concurrent SetSessionID could send the
+      consume request against a different session than the one the input
+      was actually fetched from. Reuse the captured local instead.
+    paths:
+      include:
+        - /internal/**/*.go
+      exclude:
+        - /**/*_test.go
+    patterns:
+      - pattern-inside: |
+          $RECV.$MU.Lock()
+          $VAR := $RECV.$FIELD
+          $RECV.$MU.Unlock()
+          ...
+      - pattern: $RECV.$FIELD
+      - pattern-not-inside: $VAR := $RECV.$FIELD

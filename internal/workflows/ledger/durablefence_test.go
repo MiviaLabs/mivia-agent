@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/durablefence"
+	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/ledger/ledgertest"
 )
 
 // TestRunClaimPassesDurableFenceChecks drives the shared durable-ownership

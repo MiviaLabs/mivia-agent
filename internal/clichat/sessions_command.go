@@ -163,8 +163,9 @@ func newCatalogSessionAt(workspaceRoot string) (*chat.Session, *storage.SQLite, 
 	}
 	// Resolve a REAL initial completer when the workspace's provider and
 	// credential resolve, so summaryWiring (which reads binding.Completer)
-	// can wire an LLM summarizer for `mivia compact --session` under a
-	// [context.summary]-enabled policy. When no provider/key resolves (e.g. a
+	// can wire an LLM summarizer for `mivia compact --session`. The
+	// summarizer is always enabled; it needs the binding. When no
+	// provider/key resolves (e.g. a
 	// workspace with no API key), keep the structural fallback: a read-only
 	// catalog command must still work, and SummaryDisabledReason names the
 	// cause when compaction stays structural-only. The SetBindingFactory below

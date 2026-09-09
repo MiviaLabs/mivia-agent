@@ -765,8 +765,1072 @@ record boundaries - just before a record header, or at end of output.
 - Sweep every sibling writer that feeds the same parser. A format with two
   writers needs the fix in both.
 
+## DC-25 Exported stream or event channel is never closed upon worker termination
+
+**Mechanism.** A background worker, poller, or subscription manager exposes an
+asynchronous receive-only channel (`Inputs() <-chan T` or `Events() <-chan E`)
+for caller consumers. Callers consume the channel using a standard idiom
+`for item := range worker.Inputs()`. When the worker's `Stop(ctx)` method is
+called, the worker closes internal loop control channels (`stopCh`) and exits,
+but forgets to close the exported output channel (`defer close(w.inputCh)`).
+Callers iterating over the channel block indefinitely on the range loop, leaking
+consumer goroutines, holding references to enclosing session pools, and failing
+graceful shutdown deadlines.
+
+**Evidence.** `internal/chatsync.InputPoller.Stop` terminated `p.loop` but
+left `p.inputCh` unclosed. `internal/uiadapter.SessionPool.forwardRemoteInputs`
+blocked permanently on `range syncSess.Inputs()`, leaking a goroutine per
+pooled session. Caught by architectural bug review finding [AR-2] and fixed in
+commit `ac410387` (regression tests `TestInputPoller_ChannelClosedOnStop` and
+`TestSessionPool_ForwardRemoteInputsGoroutineTerminatesOnStop`).
+
+**Probes.**
+- For every worker with an exported channel accessor, trace the termination
+  branch of its background loop. Ensure `defer close(ch)` runs on all exit paths.
+- Conformance test: Start worker, invoke `worker.Stop()`, and assert that
+  reading from `<-worker.Channel()` immediately returns `(zero, false)` without
+  timeout.
+
+## DC-26 Top-level JSON array sent where upstream API schema requires object envelope
+
+**Mechanism.** An HTTP client method accepts a slice parameter (`events []EventItem`)
+and serializes it directly to `POST /v1/...` as a top-level JSON array (`[...]`).
+The upstream REST API schema requires an object envelope with a named field
+(`{"events": [...]}`). Unit tests with handwritten mock servers mirror the
+client author's mistaken assumption by decoding `json.NewDecoder(r.Body).Decode(&slice)`
+directly, resulting in 100% test pass rates in mock suites while 100% of live
+requests fail with HTTP 400 Bad Request.
+
+**Evidence.** `internal/chatsync.Client.AppendEvents` sent `events []EventItem`
+directly, causing live sync batch append requests to fail against the API's
+ValidationPipe. Mock servers in `client_test.go`, `attach_test.go`, and
+`session_test.go` shared the defect. Caught in correctness bug review and fixed
+in commit `ac410387` (regression test `TestClientAppendEvents_MatchesWireEnvelope`).
+
+**Probes.**
+- Compare every client `POST`/`PUT`/`PATCH` payload against frozen schema contracts
+  in `api/contracts/` or upstream OpenAPI/JSONSchema definitions.
+- Unit test mock servers must decode request payloads into typed structs or maps
+  that assert the required envelope properties, rather than decoding bare slice
+  types.
+
+## DC-35 A second implementation of an existing path, sharing no interface with the first
+
+**Mechanism.** Some capability - "execute a tool call", "render an event",
+"send a request" - accumulates contracts over the project's life: a timeout, a
+dedup rule, a cap, an outcome record, an authorization check. Then a second
+call site needs the same capability under conditions the first cannot serve,
+and it is written fresh. Every contract the first honours must now be
+re-honoured by hand in the second, and each one that is not becomes its own
+bug with its own symptom.
+
+They do not look related. One surfaces as a hang, another as a duplicate side
+effect, another as a refusal rendered green, another as an unbounded call.
+They are reported, triaged and fixed separately, over weeks. It is one defect.
+
+**Why the sibling rule does not catch it.** DC-style drift is normally caught
+by a conformance suite over an interface's implementations. This class is the
+version with **no interface**: the two paths have different signatures and
+different packages, so neither the compiler nor a per-interface gate can name
+them as siblings. Nothing in the codebase records that they are the same
+capability twice.
+
+**Evidence.** 2026-09-02: nine fixes in one function pair
+(`serveUnadmittedTool`/`runDeferredToolNow`), a second implementation of
+`dispatcherShim.Run`. It honoured four of nine contracts. Missing: per-call
+timeout, dedup declaration, step bucketing, failure capping, failure recorded
+as failed, denylist. Each shipped as a separate bug. Earlier, seven bugs of
+the interface-having variant in `provider.Completer`.
+
+**Probes.**
+- For any capability with more than one call path, list the contracts the
+  OLDEST path honours. That list is the specification; nothing else is.
+- Ask what would happen if a third path were added tomorrow. If the answer is
+  "someone would have to remember all of them", the gate is missing.
+- A conformance table over PATHS, not implementations, driven through real
+  entry points. A path that may not honour a contract declares it with a
+  reason; a declared divergence that has gone away must fail, or the list
+  stops describing the code.
+- Prefer deleting the second implementation to gating it. A gate makes drift
+  visible; delegation makes it impossible.
+
+**Gate.** `internal/clichat/tool_execution_conformance_test.go` +
+`.mivia/policy/tool-execution-conformance.json`.
+
+
+## DC-39 A struct's fields are enumerated by hand in a helper, and the helper drifts from the struct
+
+**Mechanism.** A struct's own fields are walked by a hand-written list -
+a slice of pointers to scale, a copy that preserves some fields and zeroes
+others, a field-by-field conversion to a sibling type in another package.
+Adding a field to the struct is one edit; keeping every enumeration of it
+correct is several, in files the author may not open, and the compiler
+checks none of them: the list is `[]*int`, so a missing entry is a shorter
+slice, not a type error.
+
+The failure is silent in both directions and looks like arithmetic that
+merely disagrees with itself. A value left out of a scaling list keeps its
+raw magnitude while its siblings are scaled, so the parts stop summing to
+the whole displayed beside them. A value left out of a preserving copy is
+zeroed on every pass, so a surface reads `0` forever. Neither raises an
+error, and neither is visible to a test that asserts on the fields it
+happens to name - which is the trap: the test and the enumeration share
+one list, and the list is the bug.
+
+It is the structural sibling of DC-28. There the hand-maintained list is a
+`switch` over an external vocabulary; here it is a list over the program's
+own fields, which feels safer and is not, because the vocabulary grows on
+this repo's schedule and so the drift is always self-inflicted.
+
+**Why it recurs.** The enumerations are written once, when the struct is
+small enough to hold in your head, and each is locally obvious. The field
+that breaks them is added months later by someone solving a different
+problem, who reads the struct and the one call site their feature needs.
+Nothing points from the struct to its enumerations.
+
+**Evidence.** `ContextBreakdown` exists twice - `internal/chat` and
+`internal/uikit/ports` - and its fields are enumerated in five places:
+`fields()`, `buckets()`, `conversationBuckets()`, two `countsOnly()`, and
+the field-by-field bridge in `internal/uiadapter/conversation.go`. An
+adversarial review of the `Skills` field added by `818bba0a` mutated each
+of them in turn: **eight mutations passed the entire test suite**, three of
+which broke the sum invariant outright and one of which - dropping the
+field from the bridge - read as a permanent zero on screen.
+
+Gated by `TestEveryCostFieldIsRescaled`,
+`TestFloorAndConversationPartitionEveryCost`,
+`TestChatCountsOnlyKeepsEveryCount`, `TestEveryTokenFieldIsScaled`,
+`TestConversationBucketsAreExactlyTheReclaimableFields`,
+`TestCountsOnlyKeepsEveryCountAndDropsEveryCost` and
+`TestEveryBreakdownFieldCrossesTheBridge` (INV-TUI-30).
+
+**Probes.**
+- Grep the struct's package for a `[]*T` of its own fields, a `func (x T) …
+  T` that rebuilds it field by field, or a conversion to a same-shaped type
+  in another package. Each is an enumeration that can drift.
+- Ask of each: what happens if a field is missing? If the answer is a wrong
+  number rather than a compile error, it needs a reflection gate.
+- Write the gate over the STRUCT, not over the fields you know. Enumerate by
+  reflection and classify by behaviour - a field that moves `Total()` is a
+  cost - so the gate carries no copy of the list it is checking and a new
+  field joins by existing.
+- A test that names fields is not a gate for this class. It shares the
+  enumeration's blind spot by construction.
+
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class
 produces a new mechanism. Cite the commit. Do not remove a class because it stopped
 appearing; the probe is what keeps it away.
+
+## DC-27 An injected option's zero value is indistinguishable from a deliberate policy
+
+**Mechanism.** A package is made a leaf (or otherwise decoupled) by replacing a direct
+import with an injected option field: instead of calling `otherpkg.Policy()`, the type
+takes `Policy bool` or `Classify func(error) string` and the host supplies it. The
+decoupling is correct and the gate that motivated it passes. But the field's ZERO value
+is a legal, plausible policy - `false` reads as "the operator did not ask for this",
+`nil` reads as "use the default" - so a wiring site that never sets it is
+indistinguishable from one that deliberately chose that value.
+
+Every test of the decoupled package passes, because the package is doing exactly what it
+was told. The defect lives entirely in the caller, in a line that was never written.
+
+This is the sibling of DC-16: there the producer path exists and does not publish; here
+the consumer field exists and nobody supplies it. Both are absences, and an absence is
+what a test asserting present behaviour cannot see.
+
+**Why it recurs.** The refactor that creates the seam and the wiring that fills it are
+naturally two different commits, often two different authors. The first is reviewable and
+self-contained; the second looks like mechanical follow-up and is the one that gets
+dropped. A concurrent-agent tree makes this near-certain: the author who created the
+requirement does not own the files that must satisfy it.
+
+**Where it has appeared.** `internal/chatsync.ProjectorOptions` produced FOUR instances in
+one package: `WriterID` (adopt/fork dead in production while tests made it look live),
+`StreamAssistant` (contract T2's default, unset), and `ErrorMessage` + `RedactToolArgs`
+(introduced by the leaf refactor 3d1076ce, unwired until the commit citing this class).
+
+**Control.**
+
+- Where the zero value is not a safe default, do not accept one. Take the value as a
+  required positional argument to the constructor, so an unwired site is a COMPILE error
+  rather than a silent policy. This is what `NewClient(tokens TokenProvider, ...)` does
+  for the token provider, and it is strictly stronger than any test.
+- When the zero value must remain legal, test the PRODUCTION constructor, not a
+  hand-built options literal. A test that builds its own struct asserts the author's
+  intent; a test that calls `cliSyncOptions`/`poolSyncOptions` asserts the wiring.
+- Table the test over BOTH values of a boolean. A site that hardcodes either constant
+  passes one case and fails the other, so the assertion cannot be satisfied by a literal.
+- On any commit that converts an import into an injected option, enumerate the wiring
+  sites in the commit body and confirm each one. The seam and its callers are one change,
+  even when they are separate commits.
+
+## DC-28 A classification switch enumerates the observed case and lets its neighbours fall through
+
+**Mechanism.** A `switch` maps a value from a FINITE EXTERNAL VOCABULARY - an HTTP
+status code, an upstream error code, an enum another system owns - onto a local
+policy. The author enumerates the cases the current behaviour produced, and the
+remaining members of that vocabulary fall to `default`. The default is correct for
+the case under test, so every test passes; it is silently wrong for the neighbours
+nobody named.
+
+This is not "an unhandled case crashed". Nothing crashes. The neighbour gets the
+default policy, which is a plausible policy, so the defect is a WRONG ACTION rather
+than a missing one - and the wrong action is usually the more expensive of the two,
+because the default on a classification switch is nearly always "retry" or "carry on".
+
+It is the sibling of DC-27 and DC-16: all three are absences. There the absence is a
+field nobody set; here it is a `case` nobody wrote. A test suite that enumerates the
+same cases the switch does cannot see any of them - the test and the code share one
+list, and the list is the bug.
+
+**Why it recurs.** The switch is written against an OBSERVED response. An author who
+has seen the server answer 400 writes `case 400`. The vocabulary the server may draw
+from is far larger than the vocabulary it has been seen to use, and it grows on the
+server's release schedule, not this repo's. Each later widening ("413 and 422 join
+400") adds the case that was just observed and re-freezes the rest.
+
+**Where it has appeared.** `internal/chatsync/client.go`'s `parseErrorResponse`
+(commit `6bec2d05`) classifies an error response into poison-stop versus retry. It
+names 400, 413 and 422 as poison, 401, 404 and 409 as their own outcomes, and
+deliberately leaves 408 and 429 on the retry path (poisoning a "try again later"
+would turn a transient slowdown into a permanent stop - that reasoning is correct
+and is pinned by `TestTransientStatusesKeepRetrying`).
+
+Every OTHER 4xx still falls to `default`, which returns a generic `server error (%d)`
+that `session_flush.go` and `session_badrequest.go` route to `scheduleRetry`. The
+still-unguarded members are **402, 403, 405, 406, 407, 410, 415, 421, 423, 424, 428,
+431 and 451**. Several of those are as permanent as 400: a 403 or a 451 on an append
+is a body or a principal the server will never accept, and 415 is a content type it
+will never decode. The session retries each of them for the life of the process while
+reporting itself as running. The class is therefore live and open at its own origin
+site, which is the evidence that it is a class and not one commit's oversight.
+
+**Control.**
+
+- When a switch classifies a finite external vocabulary, enumerate the WHOLE
+  vocabulary, not the observed subset. For each remaining member, confirm one of two
+  things and say which in the commit body: it is handled explicitly, or the default is
+  provably correct FOR THAT MEMBER. "The default is correct for the case I tested" is
+  not one of the two.
+- Prefer classifying by RANGE or by property over classifying by value where the
+  vocabulary has a structural meaning. `4xx except 408 and 429 is permanent` states a
+  rule about the whole vocabulary; `case 400, 413, 422` states a rule about three
+  observations. The range form fails safe as the server adds codes.
+- Where the default carries the more expensive outcome (retry forever, trust, allow),
+  invert it: make the default the cheap outcome and enumerate the members that earn
+  the expensive one. A retry-by-default classifier must justify the default for every
+  unnamed member; a stop-by-default classifier only has to be wrong once, loudly.
+- Table the test over the vocabulary, not over the switch. A test that lists the same
+  codes the switch lists proves only that the author wrote the same list twice.
+
+## DC-29 Locked capture, unlocked reuse
+
+**Mechanism.** A mutex-guarded field is correctly read under the lock and captured
+into a local: `mu.Lock(); x := p.field; mu.Unlock()`. A few lines later, in the same
+function, the field is needed again - and the author reaches for `p.field` a second
+time instead of reusing `x`. The lock discipline at the top of the function reads as
+proof the whole function is safe; the second, bare read quietly falls outside it.
+
+This is not "forgot to lock" in the usual sense - the author DID lock, once, and
+that is exactly what makes the second read easy to miss in review: the function
+already looks synchronized. The bug is that the capture's scope of protection ends
+at `Unlock()`, and nothing marks the second read as having stepped outside it.
+
+**Why it recurs.** The capture is usually written to satisfy the FIRST use (often a
+network call whose signature takes the value once). A second use gets added later -
+often for a follow-up request that logically belongs to the same operation - and the
+author's fingers reach for the field name they already know (`p.field`), not the
+local a few lines up that has scrolled out of view. The two reads then silently
+address different points in time if a writer runs between them.
+
+**Evidence.** `internal/chatsync/poller.go`'s `pollOnce` (fixed in `a2e554d7`)
+captured `sessID := p.sessionID` under `p.mu` for the `NextInput` call, then called
+`ConsumeInput(consumeCtx, p.sessionID, raw.ID)` three lines later - a fresh,
+unprotected read of the same field, racing `SetSessionID` under `-race` and, worse,
+able to consume an input fetched from one remote session against a different one if
+`SetSessionID` ran in between. `SetSessionID` had no production caller at fix time,
+so the window was latent rather than reachable, but the shape is the same regardless
+of who calls the setter.
+
+**Probes.**
+- For every `mu.Lock(); x := p.field; mu.Unlock()` capture, grep every other
+  reference to `p.field` in the same function and confirm each one reuses `x`, not a
+  fresh read.
+- Treat "the function locks somewhere" as a false signal of safety. Check EACH read
+  of the guarded field independently; a function can be half-protected.
+- Gate: `mivia.go.no-locked-field-reread` (`semgrep/agent-standards.yml`) matches
+  this exact shape statically for the common case where the capture and the reread
+  sit in the same block. It cannot see a reread in a DIFFERENT function or through
+  an intermediate helper - `go test -race` against a concurrency test that actually
+  exercises the write path (`TestInputPoller_ConsumeInputUsesTheSameSessionIDAsNextInput`,
+  `internal/chatsync/poller_session_race_test.go`) is what catches those; write one
+  whenever the field has a setter with any caller, present or planned.
+
+## DC-30 Teardown proceeds without waiting for an async delivery pipeline to finish
+
+**Mechanism.** A producer hands work to a consumer through a call that is
+documented as non-blocking or fire-and-forget (a bounded queue, an event bus
+`Publish`, a channel send with a `default` case) and returns immediately once
+the work is *enqueued*, not once it is *handled*. The caller then tears the
+consumer down - Stop, Close, process exit - on the very next line, reasoning
+"the producer is done, so the consumer must be too." The teardown path drains
+whatever has already reached the consumer's OWN internal buffer, which reads
+as complete, but says nothing about work still sitting in the enqueue layer
+between the two, waiting for a delivery goroutine that has not been scheduled
+yet. Nothing observable distinguishes "already delivered" from "enqueued a
+moment ago" at the call site - both look like a function that already
+returned.
+
+**Why it recurs.** The non-blocking contract exists precisely so the producer
+never stalls, which is correct and desirable; the mistake is assuming that
+same non-blocking property also means "and it already happened." A low-volume
+manual test never exposes this: a handful of events clear a bounded queue
+before a human can even reach for the next command, so the gap is invisible
+until real load (many small events instead of a few big ones) inflates the
+queue's drain time closer to - or past - the teardown's own budget.
+
+**Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` (fixed
+alongside the regression test below) called `syncSess.Stop(ctx)` directly from
+the detach closure. `Stop` only drains `SyncSession`'s own `eventCh` via a
+non-blocking `drainAndFlushFinal`; it has no visibility into
+`events.Bus`'s per-subscription queue (`internal/events/bus.go`, default
+256-cap, `Publish` "never blocks on a handler") that feeds `HandleEvent` in
+front of it. A one-shot turn with `[sync].stream_assistant = true` publishes
+5-10x the event volume of an unstreamed turn; `oneShot` returns the instant
+the model/tool loop finishes, `defer attachCLISync(...)()` fires on the very
+next line, and the still-queued tail (the final `assistant.message`,
+`turn.ended`, trailing `tool.ended` events) was silently abandoned when the
+process exited moments later. Reproduced live against a real staging session
+(all three symptoms - reasoning, tool I/O, and the tail-loss described here -
+surfaced together while dogfooding), then pinned by
+`TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping`.
+
+**Second instance.** `internal/cliworkflow/workflow_resume_lock.go`'s
+`acquireWorkflowExecutionLockBounded` races a contended
+`AcquireWorkflowExecutionLock` attempt (blocking up to ~1s inside a
+non-context-aware flock retry loop) against `ctx.Done()`. When ctx wins, the
+function returns immediately - correct, so a cancelled caller is never kept
+waiting - but spawns a goroutine to drain the abandoned attempt and release
+the lock if it eventually succeeds, so a cancelled caller never leaks a held
+lock either. Nothing let a caller wait for THAT goroutine, though: it can
+still be opening/closing files inside the lock store's directory after the
+caller (a test using `t.TempDir()`) has already returned and `t.TempDir()`'s
+own `RemoveAll` cleanup has run, intermittently failing with "directory not
+empty" under full-suite load (the volume-scale trigger here is concurrent
+package execution, not event count). Same mechanism as the `events.Bus` case
+above with the roles reversed: there the unseen upstream layer was a queue
+feeding a drain; here it is a goroutine racing a teardown. Fixed by
+`drainAbandonedLockAttempts`, a `sync.WaitGroup` a caller that owns the lock
+store directory's lifetime can wait on before tearing it down - the
+upstream-layer synchronization primitive DC-30's probe calls for, this time a
+`Wait` rather than a `Flush`. Pinned by
+`TestAcquireWorkflowExecutionLockBoundedDrainsAbandonedAttemptBeforeCleanup`,
+which forces the abandoned attempt to block on a real channel (not scheduler
+timing) so the proof is deterministic.
+
+**Probes.**
+- For every teardown call (`Stop`, `Close`, `Shutdown`) that follows a
+  non-blocking handoff (`Publish`, a buffered channel send, a queue push),
+  check whether the teardown's own drain logic can see ONLY the handoff's
+  target buffer, or also the layer feeding it. If the two are different
+  buffers owned by different components, the teardown needs an explicit
+  synchronization call (a `Flush`, a `Wait`, a barrier) on the UPSTREAM layer
+  before it proceeds - draining its own buffer is not enough.
+  `events.Bus.Flush()` is exactly this primitive here; look for its
+  equivalent (a barrier, drain-then-ack, or explicit join) before trusting
+  any other bounded-queue-plus-teardown pair.
+  - Volume-scale the test: a burst well under the queue's capacity (so a
+    capacity-based drop-oldest cannot be the reason for loss) that runs the
+    producer's publish loop immediately followed by teardown, with no sleep
+    and no explicit synchronization call. If it can lose events, the fix is
+    missing; a correct fix is deterministic here regardless of scheduler
+    timing because the synchronization primitive is barrier-based, not a
+    race the test has to get lucky to observe.
+
+## DC-31 A fixed short timeout sized for the idle case bounds an operation whose cost scales with backlog
+
+**Mechanism.** A shutdown or final-flush path gives a real network operation
+a short, fixed ctx budget - reasonable if that operation always does a small,
+constant amount of work. But the operation actually sends WHATEVER has
+accumulated since the last successful attempt, as ONE uncapped request (no
+pagination, no chunking). Under light load the backlog is always small and
+the fixed budget is never noticed. Under real load - a burst that outpaces
+how fast the periodic background path can drain it - the backlog grows, and
+the SAME fixed budget that was generous for one case is starved for the
+other. The timeout was sized for "how long does a network call normally
+take," never audited against "how long can this call's PAYLOAD grow."
+
+**Why it recurs.** The budget is usually copied from a nearby precedent (a
+different Stop/Close call with a genuinely small, bounded operation) or
+picked as "a couple seconds feels responsive" during manual testing, which
+only ever exercises the light-load case - a human typing a few messages
+never accumulates a real backlog before quitting. The failure mode is also
+easy to miss under test: an in-process httptest server answers in
+microseconds regardless of backlog size, so nothing in a fast test suite
+ever pays the real network cost that exposes the gap.
+
+**Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` detach
+closure and `internal/newtui/run.go`'s TUI shutdown both gave `Stop`'s final
+flush a 2-5 second ctx. `FlushOutbox` (`internal/chatsync/attach.go`) sends
+the ENTIRE unflushed backlog in one `AppendEvents` call - no size cap, no
+chunking. Once `[sync].stream_assistant = true` raised event volume 5-10x, a
+real turn against the real staging API accumulated a backlog periodic
+mid-turn flushes could not fully drain (a single-threaded worker loop
+blocked on each network round trip cannot also drain new local events
+during that call), and the final `flushNow` needed longer than 2 seconds for
+a real round trip. `Stop`'s `timedOut` path returned early, handing outbox
+close to a goroutine the caller's own process exit then killed - the
+backlog was not delayed, it was permanently lost (confirmed via the local
+outbox file: all events were correctly projected and durably queued
+locally, seq 1-504; only the first 78 were ever uploaded, matching the
+server's own stored count exactly).
+
+**Probes.**
+- For every operation whose request body is "whatever accumulated," not a
+  fixed shape, check what bounds that accumulation (a max batch size? a
+  chunking loop?) and what bounds the TIME budget given to send it. If the
+  size has no cap and the timeout is a small constant, the timeout is wrong
+  for the operation's actual worst case, not merely "a little tight."
+  `internal/chatsync.RecommendedStopTimeout` is the fix here: a single named,
+  documented constant both callers reference, sized for a real network round
+  trip carrying a real backlog, not copied ad-hoc per call site.
+  - Test it against a REAL slow server, not a fast local fake: an httptest
+    handler that sleeps past the OLD budget but under the NEW one
+    (`TestAttachCLISyncDetach_SurvivesASlowFinalFlush`) is the only way to
+    observe this - a mock that never blocks cannot fail regardless of what
+    the timeout constant says.
+
+## DC-32 An unbounded batch crosses a peer's hard cap, and the rejection reads as unrecoverable
+
+**Mechanism.** A client accumulates work locally with no size limit ("send
+whatever's pending") and submits it to a peer as one request. The peer DOES
+cap what it accepts, and rejects an oversized submission with a 4xx. Nothing
+about that 4xx is actually unrecoverable - splitting the same submission into
+two requests would succeed - but the client's error classification was
+written for a DIFFERENT kind of 4xx (a genuinely bad, unfixable submission),
+and every 4xx that doesn't match the one carved-out RECOVERABLE shape (here:
+a sequence-gap complaint) falls into that catch-all "poison, stop
+permanently" branch. The client had a bug (no chunking); the peer's correct,
+well-behaved rejection of that bug's output gets treated as proof the
+CONNECTION is broken, not the SUBMISSION.
+
+**Why it recurs.** The accumulation side and the transport side are written
+by different concerns at different times: "collect everything that needs
+sending" has no reason to think about a wire-level cap when it's written,
+and "send what's pending" often starts life genuinely small (a handful of
+events between periodic flushes), so a batch-size cap feels like premature
+complexity until real load - here, turning on a feature that multiplies
+event volume 5-10x - makes the accumulated backlog cross a limit nobody
+had reason to hit before. The peer's cap is also easy to never learn about
+until it fires: it's enforced, but not necessarily documented anywhere the
+client author would read before shipping.
+
+**Evidence.** `internal/chatsync/attach.go`'s `FlushOutbox` sent the entire
+unflushed outbox as one `AppendEvents` request. A direct probe against the
+real staging API confirmed the server caps batches at 100 events with a
+400 ("events must contain no more than 100 elements"). That message doesn't
+match `handleBadRequest`'s `IsSequenceComplaint` check (written for a
+different 400 shape entirely - a seq-gap from a crash-window race), so it
+fell to `poison()`, which stops the sync session permanently for the rest
+of the process. Once `[sync].stream_assistant = true` raised event volume
+enough that the local outbox could genuinely exceed 100 unflushed events
+(easily, since periodic mid-turn flushes could not always keep pace), the
+very next flush attempt - including the final one on Stop - poisoned the
+session outright, discarding everything queued after it. The same probe
+also surfaced a second, narrower version of this class: a single ~200KB
+event payload got a 500 (not a clean 4xx) where a 60KB one succeeded -
+flagged as residual, not fixed here (see the Sweep note on the fix commit).
+
+**Probes.**
+- For every "accumulate locally, submit as one request" path, ask
+  explicitly: does the peer cap what it accepts, and does the client know
+  that cap and respect it, or does it submit "whatever's pending" and
+  trust the peer to accept any size? If nobody has verified the peer's
+  actual limit (probe it directly against the real service, not just its
+  docs - `maxAppendBatch` here was set from an empirical probe, not a
+  written spec), assume one exists and chunk defensively.
+- For every place a 4xx/error response is classified as terminal vs.
+  retryable vs. "fix and resend smaller," check whether the classification
+  covers ALL of the peer's actual 4xx vocabulary or only the one shape the
+  author had in mind. A catch-all "anything else is unrecoverable" branch
+  silently absorbs every NEW 4xx meaning the peer ever adds, including ones
+  that are trivially fixable client-side.
+- Gate: `TestFlushOutboxChunksBatchesAtTheServerCap`
+  (`internal/chatsync/attach_test.go`) mocks the server's own 100-cap
+  rejection and asserts the client never sends a batch large enough to
+  trigger it, and that a 250-event backlog still fully lands across
+  multiple chunked requests.
+
+## DC-33 A struct field is nulled by one subsystem's precondition; a sibling subsystem still reads it assuming it stays populated
+
+**Mechanism.** A struct field starts populated and one subsystem depends on
+it staying that way. A second, unrelated subsystem later gains the
+authority to null the field as a side effect of its OWN state transition
+("once X is enabled, this field belongs to X's replacement and is
+cleared"). The nulling subsystem has no way to know who else reads the
+field - it was written to serve its own concern, not to honor every
+reader's assumption. The reading subsystem, in turn, was written before
+the nulling subsystem existed (or before the nulling subsystem grew this
+behavior), so it has no reason to check for the null case; it just reads
+the field and treats an unexpectedly empty value as "legitimately absent"
+rather than "cleared out from under me by someone else's precondition." If
+the nulling condition is the DEFAULT path in production - not an edge case
+- the field is empty on every real run, and a reader that falls back
+silently on empty (mint a fresh substitute, skip, no error) makes the
+whole failure invisible: nothing crashes, nothing logs, the dependent
+feature just never round-trips.
+
+**Why it recurs.** The field's name and original purpose ("the directory
+this session lives in") say nothing about the fact that a second subsystem
+now owns its lifecycle for the common case. A reader added later, in a
+different package, reasonably assumes a plainly-named field on a shared
+struct holds what its doc comment says - nothing about the type signature
+distinguishes "this is stable" from "this is stable only until some other
+subsystem's precondition fires." Because the nulling path is the DEFAULT
+one in production, no manual smoke test catches it either: the feature
+built on the field "works" in the sense that it runs without error, it
+just silently does the wrong (ephemeral, unpersisted) thing every time.
+
+**Evidence.** `internal/chat/context_integration.go`'s `SetContextManager`
+unconditionally zeroes `chat.Session.SessionDir` (with `sessionStore`/
+`saveManager`) the instant context state is enabled - which every real
+`mivia chat` invocation does, CLI or TUI, before chat sync ever attaches.
+`internal/clichat/chat_sync.go`'s `cliSyncOptions` and
+`internal/uiadapter/session_pool.go`'s `poolSyncOptions` read
+`sess.SessionDir` to anchor chat-sync's local identity file.
+`chatsync.LoadOrCreateIdentity` treats an empty anchor directory as "no
+identity directory available" and mints a fresh, NEVER-PERSISTED identity
+rather than erroring - so every chat-sync attach ran against an ephemeral
+identity with no `RemoteSessionID`, and `AttachSession` always took the
+create-fresh branch instead of re-attaching to an existing remote session.
+Every resume of a local chat thread therefore forked a brand-new remote
+session with the API. No test caught this: every existing chat-sync
+identity test built its `chat.Session` as a hand-rolled struct literal
+with `SessionDir` set directly, never through the real `SetContextManager`
+path that clears it in production.
+
+**Probes.**
+- For every field a reader treats as reliably populated, find every OTHER
+  writer of that same field (not just the constructor) and check whether
+  that writer's precondition for clearing it is the DEFAULT path in
+  production, not a rare edge case.
+- A reader that falls back silently on an unexpectedly empty/zero field
+  (mint-fresh, skip, treat-as-absent) hides this class completely. Prefer
+  either a reader that can distinguish "genuinely never applicable" from
+  "cleared by someone else," or a caller-supplied value the reader has no
+  way to get wrong instead of a shared mutable field at all.
+- Build the object through its REAL production construction path when
+  testing a reader of a shared field - not a struct literal that pins the
+  field's value before the writer that owns its lifecycle ever runs.
+- A narrow, legacy-sounding field name ("SessionDir") on a widely-shared
+  struct can accumulate readers from unrelated subsystems that never
+  intended to depend on its lifecycle. Grep every reader before repurposing
+  or clearing such a field.
+- Gate: `TestCLISyncOptionsPersistsIdentityWithoutSessionDir`
+  (`internal/clichat/chat_sync_opts_test.go`) and
+  `TestPoolSyncOptionsPersistsIdentityWithoutSessionDir`
+  (`internal/uiadapter/session_pool_syncopts_test.go`) build a session with
+  `SessionDir` explicitly empty - the real production shape - and assert
+  identity still round-trips across a simulated resume.
+
+## DC-34 An operation fence is captured after the operation it is meant to fence, not before
+
+**Mechanism.** A staleness/fencing token is meant to answer "did anything
+relevant change between when I started this operation and when I'm about to
+publish its result?" That guarantee only holds if the token is captured
+*before* the operation's own blocking work begins. If it is instead captured
+*after* the blocking work returns - because the token-capture line sits
+right next to the publish call it feeds, which reads naturally as "capture,
+then publish" - the token now only ever compares the session's state against
+itself: nothing observes the interval between capture and check, since both
+happen back-to-back with no yield in between. A concurrent mutation that
+lands *during* the blocking work (another operation racing it, a user action
+firing mid-flight) is invisible to the check: by the time the token is
+captured, that mutation has already happened and is already reflected as
+"current." The operation silently wins over whatever it should have lost to.
+
+**Why it recurs.** The capture-then-check pattern is locally correct-looking
+at every call site: `token := s.captureOperationToken(...); return
+s.publish(token, ...)` reads like ordinary sequencing, and the function
+compiles, passes single-threaded tests, and passes any concurrency test that
+only exercises the fast, uncontended path. The bug only shows up under a
+timing window that requires a slow or artificially blocked I/O step
+*between* the vulnerable capture point and where the naive placement put it
+- exactly the case a blocking-store test double is built to create. A
+reviewer skimming the diff sees "captures a token, checks it before
+publishing" and confirms the fencing pattern is present, without checking
+*where in the function* relative to the blocking call the capture happens.
+
+**Evidence.** `internal/chat/context_catalog.go`'s `loadContextCatalog`
+called `s.captureOperationToken("catalog-load:"+name)` at each of its four
+return sites, all *after* `s.fetchCatalogSessionData(name)` - the function's
+one blocking catalog read - had already returned. A concurrent `Clear()` or
+`SelectModel()` racing that fetch therefore always lost the race silently: a
+slow `Load` could resurrect content a user had already cleared, or overwrite
+a live model switch with the stale saved binding, and `tokenCurrentLocked`
+would report the token as current every time, because there was never a
+window in which it could observe the concurrent change. The legacy
+file-backed loader this replaced got this right by construction - its
+token was captured as the literal first line of the load function, before
+its own blocking read - so the divergence was invisible until two of its
+tests were ported to the context-catalog path (`TestLoadCannotResurrectAfterClear`,
+`TestLoadCannotOverwriteModelSwitch`) and started failing not with a build
+error but with a silently-succeeded `Load` where `ErrStaleOperation` was
+expected.
+
+**Probes.**
+- For any function whose job is "check whether context changed since we
+  started," find the token/fence capture line and the function's blocking
+  I/O or slow call, and verify the capture happens strictly BEFORE the slow
+  call - not merely before the `publish`/`return` line it happens to sit
+  next to in the source.
+- A capture-then-immediately-check pattern with no yield between them
+  (no channel receive, no lock release/reacquire, no goroutine switch) can
+  never observe a concurrent mutation, regardless of how correct the
+  comparison logic itself is. If the two lines are adjacent, ask what
+  blocking step happened earlier in the same function that the token should
+  have spanned instead.
+- Test the fence with a deliberately slow/blocked dependency (a test double
+  that blocks on a channel until released) and a concurrent mutation
+  triggered while it is blocked - a single-threaded or already-fast test
+  cannot expose this class no matter how many assertions it has.
+- Gate: `TestLoadCannotResurrectAfterClear` (`internal/chat/clear_race_test.go`)
+  and `TestLoadCannotOverwriteModelSwitch` (`internal/chat/model_policy_test.go`)
+  block a catalog fetch mid-flight, perform a concurrent `Clear`/`SelectModel`,
+  then release the fetch and assert the load is rejected as stale rather than
+  silently overwriting the concurrent change.
+
+## DC-36 A byte offset from one language's tooling is sliced against another language's code-point-indexed string
+
+**Mechanism.** A script in language B (here, Python) consumes source positions
+produced by language A's own tooling (here, Go's `go/scanner`/`token.FileSet`,
+which reports byte offsets by definition). B then decodes the source to its
+native string type and indexes/slices it with those offsets as if they were
+that type's own indexing unit. Whenever B's string type indexes by code point
+rather than by byte (Python 3 `str`), and the source contains any character
+that encodes to more than one byte (an em-dash, a curly quote, any non-ASCII
+text), every offset reported for a position after that character is now
+wrong by the accumulated byte/code-point difference. The mismatch is silent:
+Python raises no error, the slice just returns different text.
+
+**Evidence.** `scripts/check_mutation.py`'s `run_mutant` decoded a Go file to
+`str` (`text = original.decode("utf-8")`) then sliced it with `site.start`/
+`site.end` from `mutation_tokenize.py`'s go/scanner helper (`file.Offset(pos)`,
+byte-based). A file with em-dashes before a mutation site had its mutation
+silently applied to the wrong span - sometimes producing a build failure
+(misclassified `discarded`), sometimes an edit that left the intended
+mutation site untouched (misclassified `survived`, hiding a real gap a
+correct test did in fact close). `sweep_diff`'s line-number lookup had the
+identical bug (`file_text.count("\n", 0, site.start)` on a decoded `str`),
+which could drop a real mutation site from a diff sweep entirely by
+computing the wrong line number for it. Found via `internal/coordinator/cancel_task.go`
+(2026-09-03): a test provably killed the real mutant (confirmed by hand-
+applying the correct byte-precise mutation and observing the test fail), yet
+the gate kept reporting it `survived`.
+
+**Probes.**
+- Any script that consumes byte/rune/codepoint positions from a DIFFERENT
+  tool or language than the one doing the slicing: name the unit each side
+  uses, and confirm they match. Go, Rust, and most compiler tooling report
+  byte offsets; Python `str` indexes by code point; JavaScript strings index
+  by UTF-16 code unit. All three disagree the moment non-ASCII text appears
+  earlier in the same buffer.
+- Slice/index the RAW BYTES the position came from, not a decoded string -
+  or re-derive the offsets in the consuming language's own native unit
+  before using them (e.g. `len(text[:byte_offset].encode())` round-trips are
+  a code smell, not a fix - they still require re-decoding for every use).
+- Test with a fixture containing at least one multi-byte character BEFORE
+  the position under test, not after - a bug in this class is invisible in
+  any fixture that only ever has ASCII before the site.
+- A gate for this class must assert on the PRODUCTION function that
+  consumes the offset, not on a reimplementation of it inside the test.
+  The first attempt here asserted only that the tokenizer emits byte
+  offsets - which was never the broken part - so reverting either fixed
+  line left the whole suite green. Extracting each consumer as a pure
+  `bytes`-in function (`apply_mutation`, `line_of_offset`) is what made a
+  real gate possible; prefer that shape over an inline slice.
+- Gate: `test_tokenizer_offsets_survive_multibyte_utf8_before_site` and
+  `test_denylist_spans_survive_multibyte_utf8_before_snippet`
+  (`scripts/test_check_mutation.py`) build fixtures with em-dashes before
+  the site and assert on `check_mutation.apply_mutation`,
+  `check_mutation.line_of_offset`, and
+  `check_mutation.denylisted_spans`/`is_denylisted` directly. Each fails
+  if its consumer is reverted to code-point slicing.
+
+## DC-37 A verification tool mutates the tree in place and reports success after restoring
+
+**Mechanism.** A gate proves something by CHANGING the working tree - applying a
+mutant, rewriting a file, formatting in place - then restores and reports on
+what it measured. Two properties combine badly. The restore is best-effort, so
+"we called write" is not evidence the bytes are back. And the report is
+produced AFTER the restore, so the run looks clean whether or not the restore
+landed. Anything else running against the same tree in that window - most
+sharply, a hook step that stages working-tree files - captures the tool's
+transient edit as if it were the author's work. The tool's own summary then
+corroborates the result, because from its perspective nothing is wrong.
+
+**Evidence.** `scripts/check_mutation.py` mutates each site in the real file and
+restores it in a `finally`; `scripts/git-hooks/pre-commit` separately runs
+`gofmt -w <file>; git add -- <file>` for every fully-staged Go file. A commit
+shipped `internal/coordinator/shouldSkipCanceledTask` with its nil guard
+inverted (`c != nil` where `c == nil` was meant), which short-circuits for
+every real coordinator and turned the dispatch-window fix that same commit was
+making into dead code. Every gate passed, including a `killed=10 survived=0
+rate=100.00%` line from the sweep that had introduced it. It surfaced only
+because a routine `git status` afterwards showed one stray modified file; the
+test that commit added then failed against its own committed code. Most likely
+with several sweeps against one checkout, where another run's mutated file is
+not the committing process's to restore.
+
+**Probes.**
+- For any tool that edits files it does not own: does it VERIFY restoration, or
+  only attempt it? A restore path that swallows write errors - correct, so one
+  unwritable file cannot mask a run's results - is exactly why the attempt
+  proves nothing.
+- Does the tool report before or after restoring? A summary computed after the
+  restore cannot distinguish "restored" from "left behind", so it is not
+  evidence and should not be read as any.
+- Ask what else touches the tree while it runs. A single-writer assumption is
+  usually undocumented and usually false: hooks, formatters, editors,
+  file-watchers and concurrent runs of the same tool all write.
+- Guard at the boundary that matters, not only inside the tool. The tool's own
+  check cannot fire when it is SIGKILLed, and has no standing over a file
+  another process mutated. Comparing the artefact about to be committed
+  (`git write-tree`) across the gate covers both.
+- Gate: `test_assert_staged_tree_unchanged_refuses_a_restaged_mutant`
+  (`scripts/test_git_hooks.py`) stages a change across the guard's before-hash
+  and asserts `scripts/git-hooks/assert_staged_tree_unchanged` exits 1 naming
+  the expected tree; neutering its comparison to `if true` makes it fail.
+  `test_restore_and_verify_raises_when_a_mutant_is_left_behind`
+  (`scripts/test_check_mutation.py`) covers the tool-side half.
+
+## DC-38 One logical unit is announced by several lifecycle events, and consumers count events
+
+**Mechanism.** A producer publishes more than one event per logical unit -
+a queued/running pair, a begin/attach pair, an admitted/dispatched pair - to
+give each observer the phase it needs. The event kind is the same on every
+leg, and the unit's identity travels in a field. Every consumer written
+against "one event per unit" then reports the multiple: a counter reads N
+times the work, a list shows each item once per leg, and the extra copies
+carry only the fields their own phase populated, so they look like real but
+degraded entries rather than duplicates. Nothing errors, and the wire shape is
+usually pinned by a test that asserts the multiple deliberately, so the
+producer looks correct - because it is.
+
+**Evidence.** mivia-agent's agent loop emits two `EventToolStart` per tool
+call - `"queued"` from the PointPreTool hook, carrying the redacted arguments,
+then `"running"` from the dispatcher shim, carrying none - both under one
+`ToolCallID` (`internal/agent/sdk_tool_events.go`, pinned by
+`internal/agent/agentloop_maxconcurrent_test.go`: 3 calls, 6 events). Two
+consumers counted the events. `internal/subagents/multi_step.go`
+`stepOnEvent` incremented `toolCallCount` per event, so the subagent panel's
+`Tools: N` (`internal/ui/screen/conversation/filespanel_layout.go`, fed by the
+heartbeat's `toolcalls=`) and `inspect_agents`' `progress.tool_calls` (fed by
+the same stream through `ToolCallSink` into
+`internal/coordinator/tool_call_buffer.go`) both read exactly double.
+`internal/uiadapter/subagent.go` appended a `ports.ToolCall` per event, so a
+subagent thread listed every call twice, the second with null arguments and no
+output - and rendered both on reopen, because `LoadHistory` replays start/end
+per entry and `transcript.findLive` refuses a call id whose latest block is
+already a `tool_end`. Gated by
+`TestStepOnEventCountsQueuedAndRunningStartOnce` and
+`TestSubagentThreadListsOneToolCallPerCallID`.
+
+**Probes.**
+- For every event kind a consumer counts or appends, ask how many the producer
+  emits per unit. Read the producer, not the kind's name: `tool_start` reads
+  like one-per-call and is not.
+- Deduplicate on the unit's declared identity, not on the phase vocabulary.
+  A `Detail == "running"` filter misses a unit that never reached that phase -
+  an admission-staged call emits `"queued"` only.
+- The first leg is not always the informative one. State which leg carries
+  each field and merge, rather than keeping whichever arrives first or last.
+- A test asserting the producer's multiple is not a licence to count it. When
+  the wire shape is pinned, the fix belongs in the consumer, and both sides
+  should cite each other.
+- Sweep every consumer of the kind, not the one a bug report named: counters,
+  list appends, and cap accounting each fail differently and only one of them
+  is usually visible.
+
+## DC-40 A check inspects a proxy for the property it asserts
+
+*Numbered DC-30 in commits `ad7b21ab` and `45ecc175`, before that id was
+found to be taken by the teardown class above. Renumbered in `eeb3fdb1`;
+the `Class:` trailer on those two commits means this class, not DC-30.*
+
+**Mechanism.** A gate, contract, or comment asserts a property, and the code
+under it examines something correlated with that property instead of the
+property itself. The two agree on the cases that exist when it is written, so
+it passes, and it keeps passing after they diverge. The check reports coverage
+it never had.
+
+Nine forms shipped in this repository, all in one batch of work:
+
+- A semgrep rule forbade a path and scoped `paths.include` to Go files only,
+  so it could police path constructions in code and never the directory's
+  existence, the docs, the templates or the contracts.
+- A contract verifier globbed a directory that was deleted, so `rg` errored,
+  `!` inverted the error into a pass, and the contract reported success while
+  inspecting nothing.
+- A length cap compared characters where the loader compares bytes, so a
+  200-character description holding one em dash passed and was then truncated.
+- A tags rule tested `startswith("[")`, so `[[a, b]]` passed in 15 files.
+- A frontmatter gate sliced lines and never parsed, so a scalar no YAML parser
+  can read sat green through every run.
+- A write blocklist named one of two directories holding the same definitions;
+  the second inherited protection only while it was a byte-identical copy.
+- A blocklist entry named `.git` for the stated reason of protecting the hooks,
+  which live outside `.git`.
+- A pre-commit entry keyed on a status list that omitted the edit it targets.
+- A script defined its checks and no entry point, so running it printed nothing
+  and exited 0.
+
+**Why it recurs.** The proxy is almost always the cheaper thing to write, and
+it is correct on the day it is written. Nothing later re-asks whether the proxy
+still tracks the property, because the check is green and a green check is read
+as evidence. The comment above it then states the property, not the proxy, so
+the next reader inherits the stronger claim.
+
+**Probe.** For every check, ask what it would have to see to be wrong, and
+whether it looks there. Concretely:
+
+- Does the assertion compare the whole value, or a prefix, a first character,
+  a count, or a presence?
+- Does it measure the same unit the consumer measures (bytes vs characters,
+  bytes vs runes)?
+- If it names one path, file, directory or implementation, is there a second
+  that serves the same purpose?
+- If it is scoped (`paths.include`, a status filter, a glob), can the case it
+  targets appear outside that scope?
+- Can it fail at all? Run the mutation. A check that has never been watched
+  rejecting something is not evidence.
+- Does the comment above it claim more than the code below it does?
+
+**Gate.** No gate closes this class as a whole: "the check examines a proxy"
+is not a syntactic property. Several named forms do have gates.
+
+- `scripts/check_gate_scripts.py` closes the one form with a mechanical
+  boundary: a gate script that cannot report.
+- `scripts/verify_skill_tree.py` measures the skill caps in bytes, as the
+  loader does, and refuses a quote the loader refuses.
+- `scripts/check_memories.py` rejects the frontmatter shapes that a
+  differential run against `yaml.safe_load` proved a parser refuses:
+  indicator-led scalars, malformed block-scalar headers, raw tabs, unclosed
+  flow collections, unbalanced quotes and colonless lines. It does NOT parse
+  YAML, so it is not equivalent to a parser; claiming it is would be this
+  class again.
+- `scripts/verify_agent_config.py` gates the write blocklist against the
+  paths it must cover, the PreToolUse guard's matcher, timeout and program,
+  the shape of a Makefile rule, and the core tier against both prompt
+  directions.
+
+The forms with no gate stay a review probe. Say which is which rather than
+implying coverage that does not exist - which would itself be this class.
+
+## DC-41 One durable contract, two namespaces, only one implementing it
+
+**Mechanism.** A durable store exposes the same operation over two namespaces -
+a plain scope and a scoped one (per-tenant, per-worktree, per-instance) - as
+two functions rather than one parameterized function. A behaviour is then added
+to whichever namespace the reported failure came from, and the sibling keeps
+the old semantics. Both compile, both have tests, and each test only ever
+exercises its own namespace, so the divergence is invisible until a user lands
+on the wrong side of it.
+
+This is DC-13's "one operation, one path" in the persistence layer, and it is
+worse there: the two sides disagree about DATA, so the symptoms are a record
+that cannot be read, a record that cannot be deleted, and a record that comes
+back after deletion.
+
+**Evidence.** The 2026-09-05 worktree batch, four instances in one subsystem.
+`LoadWorktreeSession` had no live-row fallback while `LoadSession` had had one
+for years, so a worktree session that only ever completed turns - the normal
+TUI shape - failed every resume with "session not found" although its history
+was on disk. `resolveProjection`'s staleness rule, which stops a `/clear`ed
+conversation being resurrected from an older snapshot, existed only in the
+plain namespace. `DeleteWorktreeSessionSnapshot` returned before its tombstone
+for the turn-only shape, so that session was undeletable while reporting
+"session not found"; `DeleteSessionSnapshot` had the mirror hole for a live
+projection, reporting success while the conversation stayed loadable. Each was
+found and fixed one namespace at a time.
+
+**Probes.**
+- For each namespace-scoped function, name its sibling. If the pair is two
+  function bodies rather than one body taking the scope as a parameter, read
+  both and diff the behaviour, not the signature.
+- A reader that gained a fallback obliges every WRITER and DELETER of the same
+  rows to be re-read: what the reader can now serve, the deleter must now
+  retire.
+- A staleness or precedence rule expressed against a counter is a behaviour,
+  not a query detail - if one namespace has it, the other needs it.
+- The gate for this class is a conformance table over the namespaces, never
+  another per-namespace test: see
+  `internal/storage/session_catalog_conformance_test.go`, whose assertions are
+  shared and whose only per-row difference is the scope value.
+
+**Gate.** `internal/storage/session_catalog_conformance_test.go` runs one set
+of assertions over both catalog namespaces, and
+`TestEveryCatalogEntryPointIsClassified` fails when a new `Load*Session*` or
+`Delete*Session*` entry point is neither covered by the table nor recorded as
+outside the contract. It runs at commit time for any change under
+`internal/storage/` (`scripts/git-hooks/pre-commit`). It does NOT cover the
+admission side tables, which are their own contract.
+
+## DC-42 A test suite reads the developer's own machine configuration, so its verdict depends on who runs it
+
+**Mechanism.** A configuration loader merges a USER-level layer that the caller
+cannot address. A test passes an explicit, isolated config path and believes it
+built a hermetic fixture, but the loader silently unions the developer's
+home-directory config on top. The suite then has two verdicts: one on a machine
+where that file is absent (CI, a fresh clone) and another on a machine where it
+is populated. Neither verdict is about the code.
+
+The failure is doubly misleading. The tests that break are the ones whose
+subject happens to intersect the leaked setting, so the failure LOOKS
+subject-specific - here, MCP pinning - and invites a fix to the subject. And
+because CI is clean, the suite is green in the only place anyone checks, so the
+failures read as "pre-existing and unrelated" and get routed around instead of
+diagnosed.
+
+**Evidence.** 2026-09-05: nineteen `internal/cliworkflow` tests failed on a
+developer machine with `~/.mivia/mivia.toml` declaring MCP servers, and passed
+under any other home. `config.Load` calls `LoadTrustedMCPConfig`, which reads
+`config.UserConfigPath()` regardless of `LoadOptions.ConfigPath`, so every
+fixture resolved `res.MCP.Enabled = true` while the ledger rows those same
+fixtures wrote pinned no `MCPConfigDigest`.
+`validateWorkflowMCPConfigDigest` then refused the resumes - correctly. The
+product check was right, the fixtures were right, and the whole defect was the
+shared environment. `internal/clichat` had already hit the destructive half of
+this class (tests writing into the real `~/.mivia/context.db`, leaving 57,077
+workspace ids behind) and had grown `testenv.IsolateHome` for it; the packages
+that had not adopted it were still exposed to the verdict half.
+
+**Probes.**
+- For any loader with a user/global layer, ask what an explicit path
+  actually overrides. "Explicit config path" and "hermetic" are different
+  claims, and a merge makes the first one true and the second false.
+- A test failure that reproduces for one person and not in CI is a
+  hermeticity report until proven otherwise. Bisect it against a clean `HOME`
+  BEFORE bisecting it against the code.
+- A failure blamed on a durable guard ("snapshot does not pin X") deserves the
+  question "what made X enabled in this test?" before the question "is the
+  guard too strict?".
+- Never relax a guard to make an environment-dependent suite pass. That
+  converts a test-harness defect into a production hole.
+
+**Gate.** `testenv.HomeIsolated()` plus a per-package assertion that calls it:
+`internal/cliworkflow/home_isolation_test.go` fails when `TestMain` stops
+isolating, and does so identically on every machine, because it asserts the
+isolation rather than any consequence of it. Its sibling test asserts the exact
+leaked seam - that a fixture-built `config.Load` resolves MCP off - so the
+class is pinned at the mechanism, not at one of its nineteen symptoms. This is
+NOT yet a repo-wide gate: `internal/agents`, `internal/chat`,
+`internal/cliagents`, `internal/cliorchestrate`, `internal/provider`, and
+`internal/uiadapter` resolve user configuration in tests without
+`testenv.IsolateHome` (some isolate `HOME` per test, which protects those tests
+only). They pass today; they are unprotected, not proven clean.
+
+## DC-43 A signal is produced, transported, and declared as a port, and nothing at the far end reads it
+
+**Mechanism.** A pipeline is built end to first: producers publish, a bus or
+channel carries, a port declares the surface, and each layer is verified
+against the layer it hands to. Nobody verifies the last hop, because there is
+nothing after it to compare against. Every layer's own tests pass - the
+producer publishes, the bus delivers, the port returns a channel - and the
+feature is dead, because a channel with no reader is indistinguishable from a
+channel with a reader that has nothing to say.
+
+The failure mode is silence, which is also the correct output for an idle
+system. That is what lets it survive review: nobody notices an event that
+never renders, and the layer-by-layer tests all agree the plumbing is right.
+It is DC-16's mirror image - there, a live path had consumers and only some
+producers fed it; here every producer feeds a path that ends nowhere.
+
+**Evidence.** 2026-09-05. `internal/cliworkflow` published a lifecycle event
+onto the session bus for every workflow transition, and `internal/events`
+delivered them, and `events.MetricsAdapter` even listed the kinds - but the
+only `SubscribeAcross` call sites outside `internal/events` were the hub relay
+and `internal/chatsync`, and neither listed a workflow kind. A run started
+with `workflow_run` from the TUI showed one tool call and then nothing for its
+entire lifetime, so a multi-hour run was indistinguishable from a hung one.
+Fixing it uncovered the same defect one layer down: `ports.Notices` - the
+declared out-of-band advisory port, with a full doc comment stating the UI
+"reads it once, at startup" - had a producer in `internal/uiadapter` and NO
+reader anywhere in `internal/ui` or `internal/newtui`. Chat-sync lifecycle
+advisories had been going into that channel unread for as long as it existed.
+Subscribing to the workflow kinds alone would have moved the silence one layer
+rather than ending it.
+
+**Probes.**
+- For every published event kind, name the consumer. Not the port, not the
+  bus, not the adapter that could subscribe - the code that turns it into
+  something a person sees or a system acts on. "It goes on the bus" is a
+  transport claim, not a delivery one.
+- A port interface with a doc comment describing who reads it is evidence of
+  intent, never of a reader. Grep for the call site.
+- When you fix a missing consumer, check the layer you handed to. This class
+  clusters: the same review that let one last hop go unverified let the next
+  one go too.
+- Trace one real user-visible signal end to end through the layers at least
+  once per pipeline, in a test that fails if any single hop is removed. Every
+  per-layer test can pass while the pipeline delivers nothing.
+
+**Gate.** `internal/uiadapter/workflow_notices_test.go`'s
+`TestEveryWorkflowEventKindIsClassified` parses the `Kind` constants out of
+`internal/events/event.go` - the declaration site, not a hand-kept list - and
+fails when a workflow kind reaches it with no entry in
+`workflowNoticePolicy`. Silence stays possible but must be recorded as a
+decision with a reason.
+
+Two further AST gates protect the ends of this pipeline:
+- `internal/cliworkflow/workflow_progress_kind_test.go`'s
+  `TestEveryProgressKindMapsToARenderedEventKind` parses
+  `internal/workflows/controller/progress.go` and proves every declared
+  `ProgressKind` maps to an event kind the notice policy renders.
+  `internal/workflows/localengine/engine_progress_kind_test.go` mirrors this
+  gate for the local engine.
+- `internal/newtui/app_streams_test.go`'s
+  `TestEveryPoolStreamIsWiredIntoTheScreen` proves every stream on
+  `ports.SessionPool` connects to a consumption site on the screen.
+
+**Lesson: AST vs. string search.** Never gate transport completeness with
+source text search or grep. Comments and variable names easily defeat string
+matches. A commented reference can satisfy a grep test while no executable call
+exists. Always parse the Go AST to inspect declared constants and call sites.
+
+## DC-44 Speculative or surrogate object cleanup destroys durable state reassigned to a live owner
+
+**Mechanism.** Code constructs a speculative or surrogate object to attempt a
+join, lookup, or reconciliation. The surrogate allocates or receives transient
+resources, such as a context lease or database lock.
+
+During execution, code detects an existing live instance. Code reassigns state
+or ownership between the surrogate and the live instance. A deferred cleanup
+path then runs on the surrogate (for example, `defer surrogate.Discard()` or
+`defer surrogate.Close()`).
+
+Because the surrogate still references the reassigned durable state, the cleanup
+path destroys or cancels the live instance's resources. The live instance fails
+unexpectedly.
+
+**Evidence.** 2026-09-05. In `internal/agent/session.go`, joining an existing
+session constructed a candidate session that held a context lease. When
+`JoinSession` found a matching live session, it reassigned the lease to that
+live session. However, the deferred `candidate.Close()` still executed. This
+cancelled the context lease of the live session while it ran active turns.
+
+**Probes.**
+- When code constructs a speculative object, check its cleanup paths.
+- Search for deferred calls to `Close`, `Discard`, or `Release` on candidate
+  objects.
+- Verify that state transfers clear the reference from the source object
+  before cleanup runs. For example, set `candidate.lease = nil` before discard.
+- Test concurrent operations during join or reconcile to ensure surrogate
+  cleanup does not affect the live instance.
+
+**Gate.** Add unit tests that assert ownership detachment. Verify that calling
+cleanup on a discarded candidate leaves the live instance's leases and durable
+handles open and valid.

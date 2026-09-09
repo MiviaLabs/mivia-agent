@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
@@ -27,7 +26,7 @@ func TestDiagnostics_ListRuns(t *testing.T) {
 		}
 	}
 
-	diag := NewDiagnostics(repo, nil)
+	diag := NewDiagnostics(repo)
 	runs, err := diag.ListRuns(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +47,7 @@ func TestDiagnostics_ActiveHandles(t *testing.T) {
 	_ = repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "r1", Status: ledger.RunStatusCompleted})
 	_ = repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "r2", Status: ledger.RunStatusRunning})
 
-	diag := NewDiagnostics(repo, nil)
+	diag := NewDiagnostics(repo)
 	count := diag.ActiveHandles()
 	if count != 1 {
 		t.Fatalf("expected 1 active handle (r2 running), got %d", count)
@@ -66,35 +65,15 @@ func TestDiagnostics_ActiveHandlesFiltersCorrectly(t *testing.T) {
 	_ = repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "r5", Status: ledger.RunStatusFailed})
 	_ = repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "r6", Status: ledger.RunStatusCanceled})
 
-	diag := NewDiagnostics(repo, nil)
+	diag := NewDiagnostics(repo)
 	count := diag.ActiveHandles()
 	if count != 3 { // created + queued + running = 3
 		t.Fatalf("expected 3 active handles (created+queued+running), got %d", count)
 	}
 }
 
-func TestDiagnostics_MetricsSnapshot(t *testing.T) {
-	bus := events.New()
-	t.Cleanup(bus.Close)
-	adapter := events.NewMetricsAdapter()
-	adapter.Subscribe(bus)
-
-	bus.Publish(events.NewEvent(events.KindToolStart))
-	bus.Publish(events.NewEvent(events.KindToolEnd))
-	bus.Flush()
-
-	diag := NewDiagnostics(nil, adapter)
-	counts, total := diag.MetricsSnapshot()
-	if total != 2 {
-		t.Fatalf("expected total=2, got %d", total)
-	}
-	if len(counts) != 2 {
-		t.Fatalf("expected 2 kind entries, got %d", len(counts))
-	}
-}
-
 func TestDiagnostics_NilRepo(t *testing.T) {
-	diag := NewDiagnostics(nil, nil)
+	diag := NewDiagnostics(nil)
 	ctx := context.Background()
 
 	// Should not panic
@@ -107,10 +86,6 @@ func TestDiagnostics_NilRepo(t *testing.T) {
 	}
 	if diag.ActiveHandles() != 0 {
 		t.Fatalf("expected 0 active handles from nil repo")
-	}
-	counts, total := diag.MetricsSnapshot()
-	if len(counts) != 0 || total != 0 {
-		t.Fatalf("expected zero metrics from nil adapter")
 	}
 }
 
@@ -127,7 +102,7 @@ func TestDiagnostics_ListRunsLimit(t *testing.T) {
 		_ = repo.CreateRun(ctx, "", snap)
 	}
 
-	diag := NewDiagnostics(repo, nil)
+	diag := NewDiagnostics(repo)
 	runs, err := diag.ListRuns(ctx, 2)
 	if err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ package cliagents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -29,11 +31,16 @@ import (
 // process start; tests in this package use a minimal in-package implementation
 // to avoid importing cli (which would create an import cycle).
 func TestMain(m *testing.M) {
+	restoreHome, err := testenv.IsolateHome()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		os.Exit(1)
+	}
 	NewSessionDispatcherVar = testNewSessionDispatcher
 	// WireWorkflowToolOptionsVar is called by ConfigureChatWorkspace. A no-op
 	// is sufficient for tests that call ConfigureChatWorkspace without needing
 	// workflow tool wiring.
-	WireWorkflowToolOptionsVar = func(_ *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool, _ ledger.LedgerRepository) {
+	WireWorkflowToolOptionsVar = func(_ *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool, _ bool, _ ledger.LedgerRepository) {
 	}
 	// RemainderSpoolFromRegistryVar is wired to a no-op; the tests do not need
 	// real read_output spool tracking.
@@ -46,7 +53,9 @@ func TestMain(m *testing.M) {
 	// BuiltInSlashTokensVar returns an empty set; tests do not need real slash
 	// command collision detection.
 	BuiltInSlashTokensVar = func() map[string]struct{} { return nil }
-	os.Exit(m.Run())
+	code := m.Run()
+	restoreHome()
+	os.Exit(code)
 }
 
 // --- type aliases for unexported tests ------------------------------------
@@ -499,6 +508,6 @@ func memoryTestResolved(enabled bool) *config.Resolved {
 	return &config.Resolved{
 		ProviderName: "deepseek",
 		Model:        "deepseek-v4-flash",
-		Memory:       config.MemoryConfig{Enabled: &enabled, StoreBackend: "sqlite"},
+		Memory:       config.MemoryConfig{Enabled: &enabled, StoreBackend: "markdown"},
 	}
 }

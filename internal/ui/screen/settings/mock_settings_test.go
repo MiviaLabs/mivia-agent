@@ -23,6 +23,11 @@ type mockSettings struct {
 	runs        map[string][]ports.Run
 	watchers    map[string][]chan ports.Run
 	skills      []ports.SkillView
+
+	// generalApplyErr, when set, makes the next mockGeneral.Apply call
+	// return it directly instead of a SaveHandle - the Apply-itself-fails
+	// path, distinct from a SaveHandle resolving to a Failed SaveEvent.
+	generalApplyErr error
 }
 
 func newMockSettings() *mockSettings {
@@ -114,6 +119,12 @@ func (g mockGeneral) General() ports.GeneralView {
 }
 
 func (g mockGeneral) Apply(_ context.Context, _ ports.Scope, e ports.GeneralEdit) (ports.SaveHandle, error) {
+	g.mu.Lock()
+	applyErr := g.generalApplyErr
+	g.mu.Unlock()
+	if applyErr != nil {
+		return nil, applyErr
+	}
 	return g.newSaveHandle(func() error { return g.applyGeneral(e) }), nil
 }
 
@@ -140,6 +151,14 @@ func (m *mockSettings) applyGeneral(e ports.GeneralEdit) error {
 		m.general.ScreenReader = v.On
 	case ports.SetReducedMotion:
 		m.general.ReducedMotion = v.On
+	case ports.SetFullDiskAccess:
+		m.general.FullDiskAccess = v.On
+	case ports.SetSyncIncludeThinking:
+		m.general.SyncIncludeThinking = v.On
+	case ports.SetSyncIncludeToolIO:
+		m.general.SyncIncludeToolIO = v.On
+	case ports.SetSyncStreamAssistant:
+		m.general.SyncStreamAssistant = v.On
 	default:
 		return fmt.Errorf("unknown general edit %T", e)
 	}
@@ -674,6 +693,13 @@ func seedGeneral() ports.GeneralView {
 		ApprovalDefault:        "once",
 		ScreenReader:           false,
 		ReducedMotion:          false,
+		// Sync* fields mirror config/sync.go's three-state rule (absent ==
+		// ON), so the seeded harness view starts with every sync opt-out at
+		// its default-ON state. The tests that exercise the toggle paths
+		// override these explicitly.
+		SyncIncludeThinking: true,
+		SyncIncludeToolIO:   true,
+		SyncStreamAssistant: true,
 	}
 }
 

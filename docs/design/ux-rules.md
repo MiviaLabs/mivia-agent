@@ -320,6 +320,26 @@ getting this wrong.
 Sources: [k9s #444](https://github.com/derailed/k9s/issues/444),
 [k9s #155](https://github.com/derailed/k9s/issues/155).
 
+> **Amended 2026-09-04 (mivia sidebar).** "Anchor to identity" is not enough
+> on its own: the identity has to be CAPTURED AT THE MOVE. The sidebar
+> recovered its selection by asking the current model what the current cursor
+> index meant - but live mutations append rows and then rebind, so by then the
+> index already pointed into a changed list. A file arriving above the
+> subagents header made that index name a file, and the restore faithfully
+> restored the wrong row. The move is the only moment where index and model
+> agree, so that is where the key is taken.
+
+**Rule 6.8 (mivia, added 2026-09-04).** A list whose sections grow without
+bound during a run must let the user fold a section. The files and subagents
+lists both grow for the length of a long run and push each other off the pane;
+without a fold the reader cannot keep either in view. The section header
+becomes the selectable row that owns the fold: left closes, right opens, Enter
+toggles. A section with nothing in it keeps a plain caption and no marker -
+offering a fold over nothing costs a stop on the way past and does nothing
+when taken. A folded section still states its count, and a folded gauge still
+states its share: folding must not cost the reader the number they were
+watching.
+
 **Rule 6.6.** Keep a paused viewport paused when the turn finishes. The finish
 event is when a naive implementation yanks the user away.
 Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
@@ -372,6 +392,24 @@ Source: [claude-code #66957](https://github.com/anthropics/claude-code/issues/66
 **Rule 7.7.** Disable mouse tracking on exit and on panic. Otherwise the user's
 terminal stays broken.
 Source: [lazygit #1764](https://github.com/jesseduffield/lazygit/issues/1764).
+
+**Rule 7.8 (mivia, added 2026-09-04).** A row that DRAWS a fold marker must
+toggle on a click on that row, in both directions. A marker that only ever
+opens is a control the user cannot use to put the screen back: the transcript's
+click handler was expand-only, so a mis-click on a 400-line tool result was
+undoable from the keyboard alone. The converse still holds - a click on a
+BODY row falls through, so expanded content is never folded away by a stray
+click. Surfaces bound by this: transcript block headers and coalesced run rows
+(`ToggleBlockAtScreenRow`), and sidebar section headers (`handleNavClick`).
+
+**Rule 7.9 (mivia, added 2026-09-04).** A click row must be derived from the
+same geometry the renderer drew, and tests for it must read the row back OUT
+of the rendered output. A test that recomputes the renderer's arithmetic
+agrees with the code by construction: the transcript's span geometry named the
+blank separator row instead of the header for every block that started a
+section, so clicking the header did nothing and clicking the blank row above
+it expanded the block - and every existing test passed, because each derived
+its click row from the same wrong arithmetic.
 
 ---
 
@@ -497,7 +535,7 @@ Read the keymap package for the current bindings, never this table.
 | 2/4 | `│` body rail on every expanded block | Rail on the focused and the failed body only; plain 4-column indent at rest | Restores section 2's resting state (transcript-polish.md R4) |
 | 4 | Unknown tool repeats its first output line in the header | Header keeps the tool name; the body carries each line once | One fact, one place (transcript-polish.md R7) |
 | 4 | One blank row after every block | Blank rows separate turn sections: prose and activity groups. Activity runs are dense | Spacing follows turns, not events (transcript-polish.md R1, amended 2026-08-28) |
-| 4 | Every tool call draws its own header row | Two or more consecutive collapsed read-only lookups coalesce into one leader row; opening it restores the headers | Magnitude first, detail on demand; display-only - copy, pager and dump keep per-block identity (transcript-polish.md R2) |
+| 4 | Every tool call draws its own header row | Two or more consecutive collapsed read-only lookups coalesce into one leader row, and three or more consecutive FINISHED activity blocks of any kind into one work row; opening either restores the headers | Magnitude first, detail on demand; display-only - copy, pager and dump keep per-block identity. Running work and failures never coalesce (transcript-polish.md R2, R2a) |
 
 `research-panes.md` stays as the record of the colour and contrast work. Its
 sections 7.1 and 7.2, on markdown and diagram rendering, are unverified against

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -17,23 +18,52 @@ import (
 
 // RunHandle is a handle to an active orchestration run.
 type RunHandle struct {
-	mu                 sync.RWMutex
-	runID              string
-	done               chan struct{}
-	cancel             context.CancelFunc
-	poolCtx            context.Context
-	result             *RunResult
-	attempts           map[string]string
-	attemptsMu         sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
-	recovered          bool
-	localActor         bool
-	requestFingerprint string
-	retryPolicy        RetryPolicy
-	failInterrupted    bool
-	cancelOnce         sync.Once
-	cancelDone         chan struct{}
-	cancellationErr    error
-	owner              *coordinator
+	mu         sync.RWMutex
+	runID      string
+	done       chan struct{}
+	cancel     context.CancelFunc
+	poolCtx    context.Context
+	result     *RunResult
+	attempts   map[string]string
+	attemptsMu sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
+	// taskCancels holds each dispatched task's own CancelFunc, keyed by task
+	// ID: onTaskStart (task_start.go) populates it from the per-task
+	// cancelable context executeOne already derives for timeout enforcement
+	// (subagents.Pool.executeOne). A task with no entry has not yet been
+	// dispatched to the pool (still queued) — CancelTask (cancel_task.go)
+	// cancels such a task through the ledger alone.
+	taskCancels map[string]context.CancelFunc
+	// taskDoneCh mirrors taskCancels: a fresh channel per dispatch attempt,
+	// closed by onTaskDone (task_done.go) when that attempt's executeOne
+	// call returns, so CancelTask can wait for that ONE task's own execution
+	// to unwind after canceling its context, instead of waiting on h.done
+	// (the WHOLE run's completion signal).
+	taskDoneCh map[string]chan struct{}
+	// taskCancelMu guards taskCancels and taskDoneCh: written from pool
+	// worker goroutines (one per dispatched task, so concurrent across
+	// siblings), read from CancelTask's caller goroutine.
+	taskCancelMu sync.RWMutex
+	// subagentToolCancelers holds, per task, the agent.ToolCanceler its own
+	// nested SDK-backed loop published via agent.Options.OnToolCancelReady
+	// (subagents.MultiStepHandler.OnToolCancelReady - see tool_cancel.go).
+	// This is a SEPARATE registry from taskCancels above and deliberately
+	// not conflated with it: taskCancels stops a task's WHOLE execution
+	// context (used by CancelTask), while this registry reaches INSIDE a
+	// still-running task to cancel just one of its tool calls, leaving
+	// that task - and every sibling task, and the run itself - running.
+	// Guarded by its own mutex rather than taskCancelMu so the two
+	// registries never contend with each other.
+	subagentToolCancelers map[string]agent.ToolCanceler
+	subagentToolCancelMu  sync.RWMutex
+	recovered             bool
+	localActor            bool
+	requestFingerprint    string
+	retryPolicy           RetryPolicy
+	failInterrupted       bool
+	cancelOnce            sync.Once
+	cancelDone            chan struct{}
+	cancellationErr       error
+	owner                 *Coordinator
 	// nonInteractiveParent marks a run whose parent is a non-interactive
 	// controller that can never answer child questions (set at construction;
 	// immutable thereafter). ParkQuestion declines such runs' child questions
@@ -50,96 +80,6 @@ type RunHandle struct {
 	referrals *referralTracker
 }
 
-func (h *RunHandle) policy() RetryPolicy {
-	if h == nil {
-		return NoRetry
-	}
-	h.mu.RLock()
-	p := h.retryPolicy
-	h.mu.RUnlock()
-	return p
-}
-
-func (h *RunHandle) mustFailInterrupted() bool {
-	if h == nil {
-		return false
-	}
-	h.mu.RLock()
-	v := h.failInterrupted
-	h.mu.RUnlock()
-	return v
-}
-
-func (h *RunHandle) Done() <-chan struct{} { return h.done }
-
-// TaskProgress returns the live per-task tool-call liveness view for
-// parent-facing inspection (inspect_agents): tool-call counts and
-// last-activity stamps that survive the raw trace buffer's caps, so a chatty
-// task never reads stale. Nil-receiver safe; nil when nothing has run.
-func (h *RunHandle) TaskProgress() map[string]TaskProgress {
-	if h == nil {
-		return nil
-	}
-	return h.toolCalls.progressSnapshot()
-}
-
-// LocalActor reports whether this process owns execution of the run.
-func (h *RunHandle) LocalActor() bool {
-	if h == nil {
-		return false
-	}
-	h.mu.RLock()
-	local := h.localActor
-	h.mu.RUnlock()
-	return local
-}
-
-// isNonInteractiveParent reports whether the run's parent cannot answer child
-// questions. Locking accessor: the flag is written at construction before the
-// run goroutine starts and never mutated, but ParkQuestion may be reached from
-// any pool worker, so reads go through h.mu like poolContext().
-func (h *RunHandle) isNonInteractiveParent() bool {
-	if h == nil {
-		return false
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.nonInteractiveParent
-}
-
-// poolContext returns the run's pool context under lock so concurrent
-// referral tasks do not race executeResumedRun's rewrite of poolCtx.
-func (h *RunHandle) poolContext() context.Context {
-	if h == nil {
-		return context.Background()
-	}
-	h.mu.RLock()
-	ctx := h.poolCtx
-	h.mu.RUnlock()
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
-
-// setAttempt records the current attempt ID for a task. Must be called from
-// the single writer goroutine (DAG execution). Concurrent with getAttempt
-// from the cancel goroutine.
-func (h *RunHandle) setAttempt(taskID, attemptID string) {
-	h.attemptsMu.Lock()
-	h.attempts[taskID] = attemptID
-	h.attemptsMu.Unlock()
-}
-
-// getAttempt returns the current attempt ID for a task. Safe for concurrent
-// use from any goroutine.
-func (h *RunHandle) getAttempt(taskID string) string {
-	h.attemptsMu.RLock()
-	v := h.attempts[taskID]
-	h.attemptsMu.RUnlock()
-	return v
-}
-
 type RunResult struct {
 	Snapshot ledger.RunSnapshot
 	Results  []subagents.Result
@@ -148,95 +88,7 @@ type RunResult struct {
 
 type LifecycleSubscriber func(event ledger.LifecycleEvent)
 
-type Coordinator interface {
-	Spawn(context.Context, []subagents.Task, string) (*RunHandle, error)
-	// SpawnNew is Spawn plus an isNew signal: false when the idempotency-key
-	// lookup returned an existing run some other caller started, so a
-	// caller can tell whether it is safe to treat itself as the run's sole
-	// owner (e.g. before canceling it on its own unrelated context dying).
-	SpawnNew(context.Context, []subagents.Task, string) (*RunHandle, bool, error)
-	EnsureRun(context.Context, EnsureRunRequest) (*RunHandle, error)
-	EnsureSingleTaskRun(context.Context, EnsureRunRequest) (*RunHandle, error)
-	EnsureTerminalSingleTaskRun(context.Context, EnsureRunRequest, ledger.TaskStatus) (*RunHandle, error)
-	// JoinAsRecovered returns a recovered, wait-only handle for an already
-	// admitted run, or ledger.ErrNotFound if none is admitted yet. It never
-	// claims to run the child, dispatches its handler, or resumes it as a
-	// local actor: Cancel on the returned handle always takes the fail-closed
-	// recovered path, which refuses when a task's persisted status looks
-	// nonterminal with no verifiable live owner.
-	JoinAsRecovered(context.Context, EnsureRunRequest) (*RunHandle, error)
-	Inspect(context.Context, *RunHandle) (ledger.RunSnapshot, error)
-	Join(context.Context, *RunHandle) (*RunResult, error)
-	Cancel(context.Context, *RunHandle) error
-	SetTimeSource(func() time.Time)
-	WithRetryPolicy(RetryPolicy) Coordinator
-	ResumeInterruptedRun(context.Context, string) (*RunHandle, error)
-	ListInterruptedRuns(context.Context) ([]RecoveredRun, error)
-	SubscribeLifecycle(LifecycleSubscriber) func()
-	// PostTaskMessage persists a typed agent message and announces a
-	// task_message lifecycle event (ID + synopsis only). Plan 53.01 seam.
-	PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error
-	// ParkQuestion / DeliverAnswer / Transition* support plan 53.02 questions.
-	// maxWait is the asker's effective max wait; the park expires at
-	// max(parkTTL, maxWait+parkSlack) so long waits are never evicted early.
-	ParkQuestion(runID, taskID, messageID string, maxWait ...time.Duration) (answerCh <-chan string, unpark func(), err error)
-	// DeliverAnswer unblocks a park when inReplyTo matches the parked message id
-	// (empty inReplyTo matches any live park for the task).
-	DeliverAnswer(runID, taskID, inReplyTo, body string) bool
-	TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error
-	TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error
-	ConsumeMessageQuota(runID, taskID string, max int) error
-	// RefundMessageQuota decrements the per-task upstream message count after a
-	// failed persist so a failed message never permanently burns a budget slot
-	// (messageQuota is otherwise increment-only). Floored at zero: it only ever
-	// undoes a prior ConsumeMessageQuota.
-	RefundMessageQuota(runID, taskID string)
-	CountPendingQuestions(runID, taskID string) int
-	// ParkedQuestions returns the live parked questions for a run
-	// (TaskID/MessageID/ExpiresAt), read under the question registry lock.
-	// Expired parks are treated as absent via the existing eviction.
-	ParkedQuestions(runID string) []ParkedQuestion
-	ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error)
-	LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error)
-	// SendToTask enqueues a parent→child message (steer/answer) after ledger persist.
-	SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
-	// WithMessagingLimits applies body/mailbox budgets from [subagents.messaging].
-	WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator
-	// Ask registry (plan 53.04).
-	RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string)
-	TryRegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string, maxAsks int) bool
-	AsksUsedByTask(runID, taskID string) int
-	ReferralSpawnsUsed(runID string) int
-	IncReferralSpawn(runID string)
-	TryIncReferralSpawn(runID string, max int) bool
-	DecReferralSpawn(runID string)
-	AskLookup(askID string) (askerTaskID string, ok bool)
-	AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string)
-	CompleteAskAnswer(askID string) error
-	ClaimAskAnswer(askID string) (askerTaskID string, err error)
-	// BeginAskAnswer claims an open registry ask for parent/peer one-shot.
-	// claimed=false,err=nil means not a registry ask (question path).
-	BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error)
-	IsAskAnswered(askID string) bool
-	CloseAsk(askID string)
-	// SealAskAnswer closes open/claimed ask; true only if this call sealed.
-	SealAskAnswer(askID string) bool
-	UnclaimAskAnswer(askID, askerTaskID string)
-	// FindLiveTaskByRole returns a running/awaiting task whose AgentName matches role.
-	FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error)
-	// HandleForRun returns the in-memory handle for an active run, if any.
-	HandleForRun(runID string) *RunHandle
-	// MailboxSend delivers an already-persisted message to a task mailbox.
-	MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
-	// SpawnReferralFromAsk starts a same-run referral task for a non-blocking ask.
-	// Optional meta supplies agent digest/provider/model for production agents.
-	SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message, meta ...ReferralSpawnMeta) (taskID string, err error)
-	// SpawnReferral starts a same-run task by role/name with the given input.
-	// askID, when non-empty, is bound before the referral goroutine starts.
-	SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error)
-}
-
-type coordinator struct {
+type Coordinator struct {
 	repo            ledger.LedgerRepository
 	pool            *subagents.Pool
 	names           *ledger.DisplayNameGenerator
@@ -275,8 +127,8 @@ type subscriberEntry struct {
 
 var subscriberIDCounter atomic.Uint64
 
-func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	c := &coordinator{
+func New(repo ledger.LedgerRepository, pool *subagents.Pool) *Coordinator {
+	c := &Coordinator{
 		repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(),
 		handles: map[string]*RunHandle{}, handlesByRun: map[string]*RunHandle{},
 		holderID:   newCoordinatorHolderID(),
@@ -302,6 +154,20 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 		// idempotent; recordRunResults still owns output/attempt persistence
 		// and the single terminal event.
 		pool.OnTaskDone = c.onTaskDone
+		// Install the per-task start hook so a task's own cancelable
+		// execution context (the pool's per-task WithTimeout/WithCancel
+		// derivation in executeOne, already used for timeout enforcement) is
+		// registered on the run handle the moment it is dispatched. This is
+		// what makes single-task cancellation (CancelTask, cancel_task.go)
+		// structurally possible: without it, there is no per-task CancelFunc
+		// to invoke, only the run-wide one.
+		pool.OnTaskStart = c.onTaskStart
+		// Install the pre-dispatch cancellation fence so a task canceled
+		// after the DAG put it in a batch, but before a worker reached it,
+		// never runs its handler at all (task_start.go
+		// shouldSkipCanceledTask). Without it CancelTask reports success for
+		// such a task while the task goes on doing real work.
+		pool.ShouldSkipTask = c.shouldSkipCanceledTask
 	}
 	return c
 }
@@ -309,7 +175,7 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 // WithMessagingLimits applies [subagents.messaging] body and mailbox budgets.
 // Non-positive values leave the current setting unchanged. Safe to call on the
 // concrete coordinator returned by New before the first Spawn.
-func (c *coordinator) WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator {
+func (c *Coordinator) WithMessagingLimits(maxBodyBytes, mailboxCapacity int) *Coordinator {
 	if maxBodyBytes > 0 {
 		c.maxBodyBytes = maxBodyBytes
 	}
@@ -331,36 +197,34 @@ func newCoordinatorHolderID() string {
 	return "c-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
 
-func (c *coordinator) SetTimeSource(now func() time.Time) {
+func (c *Coordinator) SetTimeSource(now func() time.Time) {
 	c.nowMu.Lock()
 	c.now = now
 	c.nowMu.Unlock()
 }
 
-func (c *coordinator) nowLocked() time.Time {
+func (c *Coordinator) nowLocked() time.Time {
 	c.nowMu.RLock()
 	now := c.now()
 	c.nowMu.RUnlock()
 	return now
 }
 
-func (c *coordinator) retryPolicyLocked() RetryPolicy {
+func (c *Coordinator) retryPolicyLocked() RetryPolicy {
 	c.retryMu.RLock()
 	p := c.retryPolicy
 	c.retryMu.RUnlock()
 	return p
 }
 
-func (c *coordinator) WithRetryPolicy(policy RetryPolicy) Coordinator {
+func (c *Coordinator) WithRetryPolicy(policy RetryPolicy) *Coordinator {
 	c.retryMu.Lock()
 	c.retryPolicy = policy
 	c.retryMu.Unlock()
 	return c
 }
 
-var _ Coordinator = (*coordinator)(nil)
-
-func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) func() {
+func (c *Coordinator) SubscribeLifecycle(fn LifecycleSubscriber) func() {
 	if fn == nil {
 		return func() {}
 	}
@@ -380,7 +244,7 @@ func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) func() {
 	}
 }
 
-func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
+func (c *Coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	c.subMu.RLock()
 	safe := make([]LifecycleSubscriber, len(c.subscribers))
 	for i, entry := range c.subscribers {

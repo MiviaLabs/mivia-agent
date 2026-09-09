@@ -31,7 +31,7 @@ func (s *Screen) forcePush(text string) bool {
 		}
 	}
 	s.pendingForce = &text
-	s.approval.Clear()
+	s.approval.ClearAll()
 	s.active.Cancel()
 	s.statusline.Stop()
 	if displaced {
@@ -97,6 +97,8 @@ func (s *Screen) drainPendingForce() (app.Screen, tea.Cmd, bool) {
 			sc.queueOverlay.SetItems(sc.queue)
 		}
 		sc.statusline.Notice("send failed; re-queued")
+	} else {
+		sc.statusline.SetQueued(len(sc.queue))
 	}
 	return sc, cmd, true
 }

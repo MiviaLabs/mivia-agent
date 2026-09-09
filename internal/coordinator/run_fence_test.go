@@ -39,7 +39,7 @@ func (h fatalOnCallHandler) Invoke(_ context.Context, req runtime.Request) (json
 
 // twoProcessFixture creates two coordinators over a single storage.Store,
 // simulating two separate mivia processes sharing one workspace.
-func twoProcessFixture(t *testing.T, tasks []ledger.TaskSnapshot) (*coordinator, *coordinator, ledger.LedgerRepository) {
+func twoProcessFixture(t *testing.T, tasks []ledger.TaskSnapshot) (*Coordinator, *Coordinator, ledger.LedgerRepository) {
 	t.Helper()
 	store := storage.NewMemory()
 	ctx := context.Background()
@@ -70,8 +70,8 @@ func twoProcessFixture(t *testing.T, tasks []ledger.TaskSnapshot) (*coordinator,
 	p1 := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
 	p2 := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
 
-	c1 := New(repo1, p1).(*coordinator)
-	c2 := New(repo2, p2).(*coordinator)
+	c1 := New(repo1, p1)
+	c2 := New(repo2, p2)
 
 	return c1, c2, repo2
 }
@@ -105,7 +105,7 @@ func TestResumeRefusesRunHeldByAnotherExecutor(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", fatalOnCallHandler{t: t})
 	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
-	altC2 := New(c2.repo, p).(*coordinator)
+	altC2 := New(c2.repo, p)
 
 	h, err := altC2.ResumeInterruptedRun(ctx, "run-x")
 	if !errors.Is(err, ErrRunHeldByAnotherExecutor) {
@@ -173,7 +173,7 @@ func TestClaimReleasedOnRunCompletion(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
 	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
-	c := New(repo1, p).(*coordinator)
+	c := New(repo1, p)
 
 	h, err := c.Spawn(ctx, []subagents.Task{{Name: "worker"}}, "")
 	if err != nil {
@@ -253,7 +253,7 @@ func TestResumeReleasesClaimOnError(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
 	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
-	c := New(repo, p).(*coordinator)
+	c := New(repo, p)
 
 	// Attempt to resume - ClaimRun should succeed, then tasksFromSnapshots
 	// should fail with the empty HandlerName error.
@@ -288,8 +288,8 @@ func TestSpawnRefusesConcurrentRunID(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
 	policy := subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second}
-	c1 := New(repo1, subagents.New(d, policy)).(*coordinator)
-	c2 := New(repo2, subagents.New(d, policy)).(*coordinator)
+	c1 := New(repo1, subagents.New(d, policy))
+	c2 := New(repo2, subagents.New(d, policy))
 
 	var mu sync.Mutex
 	calls := 0

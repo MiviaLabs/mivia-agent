@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
-	"github.com/MiviaLabs/mivia-agent/internal/jschema"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -60,11 +60,11 @@ type RouteDecision struct {
 
 // RecordStepResult writes the child identity and bounded evidence selection to
 // one workflow attempt. The controller calls it after attempt admission.
-func RecordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
+func RecordStepResult(ctx context.Context, repo LedgerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
 	return recordStepResult(ctx, repo, attempt, result, status, RouteDecision{})
 }
 
-func recordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
+func recordStepResult(ctx context.Context, repo LedgerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
@@ -99,7 +99,7 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 
 // CompleteExistingStepResult completes an attempt that the controller already
 // recorded before an interruption. The stable child key prevents re-dispatch.
-func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
+func CompleteExistingStepResult(ctx context.Context, repo LedgerRepository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
@@ -199,24 +199,33 @@ type AgentStepResult struct {
 	ErrorRef string
 }
 
-// SchemaValidationError marks output that fails the declared step schema.
-type SchemaValidationError struct {
-	StepID string
-	Err    error
+// stepCoordinator is this package's consumer-side view of a coordinator:
+// ensure (plain, single-task, terminal), inspect, join, and cancel child
+// runs - for both linear steps and panel children (the panel child subset is
+// workflowledger.PanelChildCoordinator). The full coordinator carries far
+// more; the controller depends on the subset, not the fat interface. The
+// real coordinator type satisfies it.
+type stepCoordinator interface {
+	EnsureRun(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	EnsureSingleTaskRun(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	EnsureTerminalSingleTaskRun(ctx context.Context, req coordinator.EnsureRunRequest, status ledger.TaskStatus) (*coordinator.RunHandle, error)
+	JoinAsRecovered(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error)
+	Inspect(ctx context.Context, h *coordinator.RunHandle) (ledger.RunSnapshot, error)
+	Join(ctx context.Context, h *coordinator.RunHandle) (*coordinator.RunResult, error)
+	Cancel(ctx context.Context, h *coordinator.RunHandle) error
 }
 
-func (e *SchemaValidationError) Error() string {
-	if e == nil || e.Err == nil {
-		return "workflow step output schema validation failed"
-	}
-	return fmt.Sprintf("workflow step %q output schema validation failed", e.StepID)
-}
-
-func (e *SchemaValidationError) Unwrap() error { return e.Err }
+// Compile-time checks that the real coordinator satisfies the step subset,
+// and that the step subset covers the panel child subset the panel step path
+// hands to workflowledger.NewPanelCoordinator.
+var (
+	_ stepCoordinator                      = (*coordinator.Coordinator)(nil)
+	_ workflowledger.PanelChildCoordinator = (stepCoordinator)(nil)
+)
 
 // CoordinatorRunner is the production implementation of AgentStepRunner.
 type CoordinatorRunner struct {
-	Coordinator coordinator.Coordinator
+	Coordinator stepCoordinator
 	// JoinWatchdog bounds a coordinator join from the controller side. The
 	// coordinator's own Join (internal/coordinator/coordinator.go) waits on
 	// the child run's done channel with no bound of its own, so a child that
@@ -250,7 +259,7 @@ func (r *CoordinatorRunner) SetProgressEmitter(emitter func(ProgressEvent)) {
 var _ AgentStepRunner = (*CoordinatorRunner)(nil)
 
 // NewCoordinatorRunner creates a workflow step adapter.
-func NewCoordinatorRunner(c coordinator.Coordinator) *CoordinatorRunner {
+func NewCoordinatorRunner(c stepCoordinator) *CoordinatorRunner {
 	return &CoordinatorRunner{Coordinator: c}
 }
 
@@ -419,80 +428,104 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 	return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, ValidatedOutput: validated, EvidenceJSON: evidenceJSON, Status: result.Status}, nil
 }
 
+// toolCallTraceSource exposes the host-recorded tool-call trace for one task.
+// *coordinator.Coordinator satisfies it; it is a narrow optional interface so a
+// host without the trace yields NO history rather than a different, weaker
+// source of truth.
+type toolCallTraceSource interface {
+	LoadTaskToolCalls(ctx context.Context, runID, taskID string) ([]subagents.ToolCallStep, error)
+}
+
+// fetchToolExecutionHistory returns what the child agent PROVABLY executed.
+//
+// The only admissible source is the host-recorded tool-call trace: the agent
+// loop's own tool_start/tool_end events, buffered by the coordinator and
+// stored at task completion. It used to read the run-message blackboard
+// instead, which the audited child writes itself through post_message. A child
+// could mint a passing record by posting a finding whose body decoded as a
+// ToolExecutionRecord with its own chosen exit_code, or simply a body starting
+// with "run_command:", which was credited a hardcoded exit 0. The other kind
+// it accepted, "tool_execution", had no producer anywhere in the tree, so
+// agent-authored findings were the sole input.
+//
+// An empty history is fail-CLOSED, not fail-open: Validate rejects every PASS
+// claim it cannot match against a recorded execution.
 func (r *CoordinatorRunner) fetchToolExecutionHistory(ctx context.Context, runID, taskID string) ([]evidencecheck.ToolExecutionRecord, error) {
 	if r.Coordinator == nil {
 		return nil, nil
 	}
-	summaries, err := r.Coordinator.ListRunMessages(ctx, runID, taskID)
+	source, ok := r.Coordinator.(toolCallTraceSource)
+	if !ok {
+		return nil, nil
+	}
+	steps, err := source.LoadTaskToolCalls(ctx, runID, taskID)
 	if err != nil {
 		return nil, err
 	}
+	return toolExecutionHistory(steps), nil
+}
+
+// toolExecutionHistory folds a task's recorded start/end steps into one record
+// per completed run_command call. A start with no matching end is dropped: an
+// unfinished command proves nothing.
+func toolExecutionHistory(steps []subagents.ToolCallStep) []evidencecheck.ToolExecutionRecord {
+	type pending struct {
+		argv []string
+		line string
+	}
+	open := make(map[string]pending)
 	var history []evidencecheck.ToolExecutionRecord
-	for _, s := range summaries {
-		if s.Kind == agentmsg.KindFinding || s.Kind == "tool_execution" {
-			msg, err := r.Coordinator.LoadMessageBody(ctx, s.ContentRef)
-			if err != nil {
+	for _, step := range steps {
+		if step.Name != "run_command" {
+			continue
+		}
+		switch step.Kind {
+		case "start":
+			var in struct {
+				Argv []string `json:"argv"`
+			}
+			if err := json.Unmarshal([]byte(step.Input), &in); err != nil || len(in.Argv) == 0 {
 				continue
 			}
-			var rec evidencecheck.ToolExecutionRecord
-			if err := json.Unmarshal([]byte(msg.Body), &rec); err == nil && (rec.ToolName != "" || len(rec.Argv) > 0 || rec.CommandLine != "") {
-				history = append(history, rec)
+			open[step.ToolCallID] = pending{argv: in.Argv, line: strings.Join(in.Argv, " ")}
+		case "end":
+			p, ok := open[step.ToolCallID]
+			if !ok {
 				continue
 			}
-			if strings.HasPrefix(s.Synopsis, "run_command:") {
-				cmd := strings.TrimSpace(strings.TrimPrefix(s.Synopsis, "run_command:"))
-				history = append(history, evidencecheck.ToolExecutionRecord{
-					ToolName:    "run_command",
-					CommandLine: cmd,
-					Argv:        strings.Fields(cmd),
-					ExitCode:    0,
-				})
-			} else if strings.HasPrefix(msg.Body, "run_command:") {
-				cmd := strings.TrimSpace(strings.TrimPrefix(msg.Body, "run_command:"))
-				history = append(history, evidencecheck.ToolExecutionRecord{
-					ToolName:    "run_command",
-					CommandLine: cmd,
-					Argv:        strings.Fields(cmd),
-					ExitCode:    0,
-				})
-			}
+			delete(open, step.ToolCallID)
+			history = append(history, evidencecheck.ToolExecutionRecord{
+				ToolName:    "run_command",
+				Argv:        p.argv,
+				CommandLine: p.line,
+				ExitCode:    recordedExitCode(step.Output),
+				Output:      step.Output,
+			})
 		}
 	}
-	return history, nil
+	return history
 }
 
-// applyChildResult copies the child task's terminal status and output onto a
-// step result. Output is extracted from the result envelope like the success
-// path does.
-func applyChildResult(out *AgentStepResult, res subagents.Result) {
-	out.Status = res.Status
-	if len(res.Output) > 0 {
-		out.Output = extractTaskOutput(res.Output)
+// recordedExitCode reads the exit status run_command writes into its own
+// output header ("exit=0", "exit=2", "exit=timeout", "exit=canceled",
+// "exit=error"). Anything it cannot read as a clean zero counts as a failure:
+// a claim must never pass because the status was unparseable.
+func recordedExitCode(output string) int {
+	const marker = "exit="
+	idx := strings.LastIndex(output, marker)
+	if idx < 0 {
+		return -1
 	}
-}
-
-// extractTaskOutput is the controller-wide mechanism for turning one
-// coordinator task result's Output into the payload the workflow step's
-// schema governs. Agent handlers (agentTaskHandler/MultiStepHandler) return a
-// transport envelope - {"output": <model reply>, "status": "completed",
-// "schema": "ok"?, "steps": N, "elapsed": "...", "step_count": N} - and the
-// CLI tool surface deliberately exposes that envelope (elapsed/steps/schema).
-// Every workflow controller consumer that validates or decodes a task result
-// as step-schema JSON MUST unwrap it through this function first; decoding
-// the envelope directly silently skips its fields as unknown (e.g. a panel
-// member report decoding to verdict ""). Non-envelope payloads pass through
-// untouched, so plain verifier/gate JSON is unaffected.
-func extractTaskOutput(raw json.RawMessage) json.RawMessage {
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return append(json.RawMessage(nil), raw...)
+	rest := output[idx+len(marker):]
+	end := strings.IndexAny(rest, " \t\r\n")
+	if end >= 0 {
+		rest = rest[:end]
 	}
-	_, hasStatus := envelope["status"]
-	_, hasSchema := envelope["schema"]
-	if (hasStatus || hasSchema) && envelope["output"] != nil {
-		return append(json.RawMessage(nil), envelope["output"]...)
+	code, err := strconv.Atoi(strings.TrimSpace(rest))
+	if err != nil {
+		return -1
 	}
-	return append(json.RawMessage(nil), raw...)
+	return code
 }
 
 func validateRequest(spec AgentStepRequest) error {
@@ -515,94 +548,6 @@ func idempotencyKey(spec AgentStepRequest) string {
 func mustJSON(value string) json.RawMessage {
 	raw, _ := json.Marshal(value)
 	return raw
-}
-
-func cloneSchema(schema map[string]any) map[string]any {
-	if schema == nil {
-		return nil
-	}
-	raw, _ := json.Marshal(schema)
-	var out map[string]any
-	_ = json.Unmarshal(raw, &out)
-	return out
-}
-
-func validateOutput(stepID string, raw json.RawMessage, schema map[string]any) (any, error) {
-	if len(raw) == 0 {
-		return nil, &SchemaValidationError{StepID: stepID, Err: jschema.ErrValidation}
-	}
-	if err := validateEvidenceClaims(stepID, raw); err != nil {
-		return nil, &SchemaValidationError{StepID: stepID, Err: err}
-	}
-	if schema == nil {
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return nil, &SchemaValidationError{StepID: stepID, Err: fmt.Errorf("%w: invalid JSON", jschema.ErrValidation)}
-		}
-		return value, nil
-	}
-	compiled, err := jschema.Compile(schema)
-	if err != nil {
-		return nil, fmt.Errorf("compile step output schema: %w", err)
-	}
-	value, err := compiled.ValidateJSONBytes(raw)
-	if err != nil {
-		return nil, &SchemaValidationError{StepID: stepID, Err: err}
-	}
-	return value, nil
-}
-
-// ValidateReportEvidence cross-checks report claims against recorded tool executions.
-func ValidateReportEvidence(reportText string, history []evidencecheck.ToolExecutionRecord) error {
-	claims := evidencecheck.ParseClaims(reportText)
-	if len(claims) == 0 {
-		return nil
-	}
-	rep := evidencecheck.Validate(claims, history)
-	return rep.Error()
-}
-
-func validateEvidenceClaims(stepID string, raw json.RawMessage) error {
-	text := extractReportText(raw)
-	if text == "" || !strings.Contains(text, "mivia-report/v1") {
-		return nil
-	}
-	lines := strings.Split(text, "\n")
-	inEvidence := false
-	for _, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		lower := strings.ToLower(trimmed)
-		if strings.HasPrefix(lower, "evidence:") || strings.HasPrefix(lower, "## evidence") {
-			inEvidence = true
-			continue
-		}
-		if inEvidence && strings.HasPrefix(lower, "#") {
-			inEvidence = false
-		}
-		if inEvidence && (strings.Contains(trimmed, "PASS") || strings.Contains(trimmed, "FAIL")) {
-			if strings.HasPrefix(trimmed, "- :") || strings.HasPrefix(trimmed, "* :") || strings.HasPrefix(trimmed, "- PASS") || strings.HasPrefix(trimmed, "* PASS") {
-				return fmt.Errorf("step %q report contains malformed evidence line %q", stepID, trimmed)
-			}
-		}
-	}
-	return nil
-}
-
-func extractReportText(raw json.RawMessage) string {
-	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		return text
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err == nil {
-		if report, ok := m["report"].(string); ok {
-			return report
-		}
-		if output, ok := m["output"].(string); ok {
-			return output
-		}
-	}
-	return ""
 }
 
 func findResult(results []subagents.Result, taskID string) (subagents.Result, error) {

@@ -221,3 +221,29 @@ func TestGapRegisterMemoryToolsClampsSearchBudget(t *testing.T) {
 		t.Errorf("memory_search budget = %d, want 4096 (clamped by MaxToolResultBytes)", got)
 	}
 }
+
+// TestGapMemorySaveImportanceBranch covers the in.Importance != "" branch of
+// Execute. The unknown value must reach the store's validation unchanged: a
+// dropped or ignored importance would save successfully under the medium
+// default and hide the caller's mistake.
+func TestGapMemorySaveImportanceBranch(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memorySaveTool{store: store}
+	_, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"title":"importance branch","summary":"s","why":"w","importance":"urgent"}`))
+	if err == nil {
+		t.Fatal("memory_save must forward an unknown importance to the store's validation")
+	}
+	if !strings.Contains(err.Error(), "importance must be one of high, medium, low") {
+		t.Fatalf("error = %v, want the store's importance rejection", err)
+	}
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"title":"importance branch","summary":"s","why":"w","importance":"high"}`))
+	if err != nil {
+		t.Fatalf("memory_save with a valid importance: %v", err)
+	}
+	if !strings.HasPrefix(out, "saved memory ") {
+		t.Errorf("output = %q, want saved-memory confirmation", out)
+	}
+}

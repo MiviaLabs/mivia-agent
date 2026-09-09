@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	sdkref "github.com/MiviaLabs/mivia-ai-sdk/context/ref"
 	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
 )
 
@@ -21,8 +22,8 @@ func TestReexportedShapeConstants(t *testing.T) {
 	if MaxSourceRangeEvents != sdkctx.MaxSourceRangeEvents {
 		t.Errorf("MaxSourceRangeEvents = %d, want %d", MaxSourceRangeEvents, sdkctx.MaxSourceRangeEvents)
 	}
-	if HashPrefix != sdkctx.HashPrefix {
-		t.Errorf("HashPrefix = %q, want %q", HashPrefix, sdkctx.HashPrefix)
+	if HashPrefix != sdkref.HashPrefix {
+		t.Errorf("HashPrefix = %q, want %q", HashPrefix, sdkref.HashPrefix)
 	}
 }
 
@@ -31,14 +32,14 @@ func TestReexportedShapeConstants(t *testing.T) {
 // means the CLI silently forked the ref-mint pipeline.
 func TestReexportedRefHelpers(t *testing.T) {
 	t.Parallel()
-	if Digest([]byte("hello")) != sdkctx.Digest([]byte("hello")) {
-		t.Error("Digest diverged from sdkctx.Digest")
+	if Digest([]byte("hello")) != sdkref.Digest([]byte("hello")) {
+		t.Error("Digest diverged from sdkref.Digest")
 	}
-	if Mint([]byte("hello")) != sdkctx.Mint([]byte("hello")) {
-		t.Error("Mint diverged from sdkctx.Mint")
+	if Mint([]byte("hello")) != sdkref.Mint([]byte("hello")) {
+		t.Error("Mint diverged from sdkref.Mint")
 	}
-	if IsRef(sdkctx.Mint([]byte("hello"))) != sdkctx.IsRef(sdkctx.Mint([]byte("hello"))) {
-		t.Error("IsRef diverged from sdkctx.IsRef")
+	if IsRef(sdkref.Mint([]byte("hello"))) != sdkref.IsRef(sdkref.Mint([]byte("hello"))) {
+		t.Error("IsRef diverged from sdkref.IsRef")
 	}
 	got, err := NewContentRef("ns", "ws", "s", "sub", []byte("hello"))
 	if err != nil {

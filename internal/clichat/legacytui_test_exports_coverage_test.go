@@ -34,10 +34,7 @@ func TestValidateKeyRegistry(t *testing.T) {
 	}
 }
 
-func TestFormatUserBubbleTimeAndAgentHelpers(t *testing.T) {
-	if got := FormatUserBubbleTime(time.Now()); got == "" {
-		t.Fatal("FormatUserBubbleTime must return non-empty")
-	}
+func TestFormatAgentHelpers(t *testing.T) {
 	_ = FormatAgentCurrent("alpha", agents.NewRegistry())
 	_ = FormatAgentSet("alpha")
 	_ = FormatLiveToolWaveSummary(2, 1, 0, 0)
@@ -55,17 +52,6 @@ func TestLoadAgentDefinitionsLocal(t *testing.T) {
 }
 
 func TestLegacytuiTestExportsRenderHelpers(t *testing.T) {
-	// RenderOneChatBlock / RenderThinkingBlock / HighlightCodeBlock
-	// are pure helpers; exercise them on representative inputs.
-	if got := RenderOneChatBlock(ChatBlock{Kind: ChatBlockUser, Text: "hello"}, "model", 80, true); len(got) == 0 {
-		t.Fatal("RenderOneChatBlock returned empty")
-	}
-	if got := RenderThinkingBlock("thinking", true, 0, true, 80); len(got) == 0 {
-		t.Fatal("RenderThinkingBlock returned empty")
-	}
-	if got := HighlightCodeBlock("go", "package main"); got == "" {
-		t.Fatal("HighlightCodeBlock returned empty")
-	}
 	// FormatUserMessageCard must accept a width.
 	if got := FormatUserMessageCard("text", 80, time.Now()); len(got) == 0 {
 		t.Fatal("FormatUserMessageCard returned empty")
@@ -173,8 +159,6 @@ func TestMoreLegacytuiTestExports(t *testing.T) {
 	// BuildModelBinding forwards to cliagents; with a nil state
 	// the underlying impl may return a zero binding.
 	_ = BuildModelBinding
-	// DialogRectFor is a pure geometry helper.
-	_ = DialogRectFor(80, 24, DialogPrefs{}, 40, 10)
 	// HandleSlashInfo: handleSlashInfo with a nil session may
 	// panic, so we just verify the export line is referenced.
 	_ = HandleSlashInfo
@@ -185,14 +169,10 @@ func TestPureReExports(t *testing.T) {
 	// Each re-export is a single return statement; the only way
 	// to cover it is to call the export.
 	now := time.Now()
-	_ = FormatUserBubbleTime(now)
 	_ = FormatUserMessageCard("text", 80, now)
 	_ = OrchestrationSwitchGuard("")
 	_ = FilterSkillsForScope(nil, AgentSkillScope{})
-	_ = RenderOneChatBlock(ChatBlock{}, "", 80, true)
-	_ = RenderThinkingBlock("text", true, 0, true, 80)
 	_ = SummarizeToolDetail("read_file", `{"path":"/tmp/x"}`, "ok")
-	_ = HighlightCodeBlock("go", "package main")
 	EmitSubagentProgress(agent.Event{})
 	_, _ = RepositorySessionStorePath("", ChatInvocation{}, nil)
 }

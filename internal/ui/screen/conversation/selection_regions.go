@@ -18,7 +18,8 @@ import (
 // source, the helpers below, which mirror View's assembly row by row.
 //
 // Two regions are selectable: the transcript window and the composer
-// body (menu and border rows are not). The approval prompt, history,
+// body (its padding rows are not, and the completion popup is an
+// overlay above the bar). The approval prompt, history,
 // queue, blackboard, dialogs, and the nav pane carry no region in v1:
 // a press there falls through to handleClick exactly as before. The
 // embedded subagent-thread construction renders inside a dialog frame
@@ -85,32 +86,37 @@ func (s Screen) transcriptRegion() sel.Rect {
 }
 
 // composerRegion is the absolute rect of the composer's text body only:
-// framed border rows and completion-menu rows are excluded, and the
-// columns run across the inner width where the textarea actually draws.
+// padding rows are excluded, and the columns run across the bar's inner
+// width - prompt cells included, since the composer's own selection rows
+// start at the prompt glyph (composer.selectionRows). The composer draws
+// no border (see composer.Model.View); its padding rows and columns
+// occupy exactly the cells the border used to. The completion popup is
+// an overlay above the bar and is not part of the bar's rows.
 func (s Screen) composerRegion() sel.Rect {
 	x0, tg := s.contentOrigin()
-	menuRows := s.composer.MenuRows()
-	framed := 0
-	if s.composer.Framed() {
-		framed = 2 // top + bottom border
+	padRows := 0
+	if s.composer.Padded() {
+		padRows = 2 // top + bottom padding row
 	}
 	// bodyRows is never below 1: composer.Height() already adds the same
-	// framed/menu terms subtracted here (menuRows mirrors MenuRows(),
-	// framed mirrors composer.Framed()'s own frame constant), so this
-	// always reduces to the textarea's own row count, which composer.
-	// Height() clamps to at least 1.
-	bodyRows := s.composer.Height() - menuRows - framed
-	// The status row sits at the screen bottom; the composer block ends
-	// just above it. InputRowFromBottom counts from the status row up to
-	// the LAST input row, so the first body row sits height-1 above it.
-	lastInputRow := s.height - tg - s.composer.InputRowFromBottom()
+	// pad term subtracted here (padRows mirrors Padded()'s own two rows),
+	// so this always reduces to the textarea's own row count, which
+	// composer.Height() clamps to at least 1.
+	bodyRows := s.composer.Height() - padRows
+	// The status row is the last content row: the screen's last row less
+	// the bottom gutter row, which gutter() draws exactly when it draws
+	// the top one (tg). InputRowFromBottom counts from the status row up
+	// to the LAST input row, so the first body row sits bodyRows-1 above
+	// it. mouse.go's handleClick derives inputRow the same way.
+	statusRow := s.height - 1 - tg
+	lastInputRow := statusRow - s.composer.InputRowFromBottom()
 	firstBodyRow := lastInputRow - (bodyRows - 1)
-	colOffset := 1
-	if s.composer.Framed() {
-		colOffset += s.composer.InputColumnOffset()
-	}
-	x1 := x0 + colOffset
-	w := s.chatWidth() - colOffset - 2 // right border + padding inset
+	// x0 is already the first content column inside the gutter; the bar's
+	// left padding comes next, then the prompt glyph - the body's first
+	// cell. The right padding mirrors the left.
+	inset := s.composer.InputColumnOffset()
+	x1 := x0 + inset
+	w := s.chatWidth() - 2*inset
 	if w < 1 {
 		return sel.Rect{} // the body cannot draw a single cell: no region
 	}

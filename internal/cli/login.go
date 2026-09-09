@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -11,8 +13,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 )
 
-// runLogin authenticates against the go-mivia auth endpoints and persists
-// the resulting session locally.
+// webAppURL is where accounts are created. The CLI has no registration
+// command: sign-up happens in the web app only.
+const webAppURL = "https://mivia.app"
+
+// runLogin authenticates against the mivia API and persists the resulting
+// session locally.
 func runLogin(args []string) error {
 	return runLoginWithIO(args, os.Stdout, os.Stderr, os.Stdin)
 }
@@ -40,11 +46,35 @@ func runLoginWithIO(args []string, stdout, stderr io.Writer, stdin io.Reader) er
 	service := miviaauth.NewService(client, config.UserAuthPath())
 
 	if err := service.Login(context.Background(), opts.email, password); err != nil {
-		return fmt.Errorf("login: %w", err)
+		return loginRequestError(err)
 	}
 
 	fmt.Fprintf(stdout, "Logged in as %s.\n", opts.email)
 	return nil
+}
+
+// loginRequestError turns a failed login into a message with a next step.
+//
+// The server answers an unknown account and a wrong password with the same
+// 401, deliberately, so that it leaks nothing about which addresses have
+// accounts. The message therefore covers both without claiming to know which
+// one happened, and points at the web app because the CLI has no way to
+// create an account -- registration lives there.
+func loginRequestError(err error) error {
+	var statusErr *miviaauth.StatusError
+	if errors.As(err, &statusErr) {
+		switch statusErr.StatusCode {
+		case http.StatusUnauthorized:
+			return fmt.Errorf("login: the email or password was not accepted. Check the password, or sign up at %s if you do not have an account yet", webAppURL)
+		case http.StatusBadRequest:
+			if statusErr.Detail != "" {
+				return fmt.Errorf("login: the server rejected the request: %s", statusErr.Detail)
+			}
+		case http.StatusTooManyRequests:
+			return fmt.Errorf("login: rate limited, wait a few minutes and try again")
+		}
+	}
+	return fmt.Errorf("login: %w", err)
 }
 
 // loginOptions holds the parsed `mivia login` flags.

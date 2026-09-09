@@ -1,8 +1,11 @@
 package agents
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -181,17 +184,17 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		t.Fatalf("committed skills must load without warnings, got: %v", warnings)
 	}
 	wantNames := []string{
-		"architecture-review", "bug-audit", "capture", "concurrency-review",
+		"agent-creator", "architecture-review", "bug-audit", "capture", "concurrency-review",
 		"delivery",
 		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
 		"gate-authoring",
-		"housekeeping",
+		"memories-housekeeping",
 		"logic-review",
-		"memory-housekeeping", "panel-architecture-review",
+		"panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
 		"review",
 		"review-synthesis",
-		"secure-change", "simplification-review",
+		"secure-change", "simplification-review", "skill-creator",
 		"session-analysis", "test-review",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
 		"workflow-runs-analysis",
@@ -237,9 +240,36 @@ func committedSkillsDir(t *testing.T) string {
 	cwd, _ := os.Getwd()
 	dir := filepath.Join(cwd, "..", "..", ".agents", "skills")
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		requireThisRepo(t)
 		t.Skip("committed skills not present at", dir)
 	}
 	return dir
+}
+
+// requireThisRepo fails (not skips) when the working tree IS the mivia-agent
+// module but .agents/skills or .agents/agents has gone missing. A deleted
+// tree the loader glob then walks is empty, which reads as zero warnings and
+// zero violations - the same "absent directory reads as a pass" defect
+// verify_skill_tree.check_skill_dir documents and guards against. Skipping
+// here would let the same class through on the Go side.
+func requireThisRepo(t *testing.T) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	goMod := filepath.Join(cwd, "..", "..", "go.mod")
+	body, err := os.ReadFile(goMod)
+	if err != nil {
+		return // no go.mod two levels up: genuinely a foreign checkout
+	}
+	if strings.Contains(string(body), "module github.com/MiviaLabs/mivia-agent") {
+		t.Fatalf(
+			"this IS the mivia-agent module (%s), but the committed .agents "+
+				"tree is missing. That is not a foreign checkout to skip past.",
+			goMod,
+		)
+	}
 }
 
 // committedAgentInputs discovers the committed .agents/agents Markdown files into
@@ -253,6 +283,7 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 		dir = filepath.Join(root, ".agents", "agents")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "planner.md")); err != nil {
+		requireThisRepo(t)
 		t.Skip("project agents not present at", dir)
 	}
 	entries, err := os.ReadDir(dir)
@@ -313,6 +344,15 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A nil Skills key admits EVERY skill (SkillAllowed returns true), so
+	// skipping those agents left five of sixteen committed roles and 52
+	// admitted pairs unverified. Pin the refusals instead: each one is a
+	// dispatch that fails closed at CheckSkillInvocation, and the set must
+	// change only on purpose. A role that deliberately cannot write files or
+	// run commands is expected here; a NEW entry means a skill just became
+	// unreachable for that role.
+	assertNilAllowlistRefusals(t, reg, skillReg)
+
 	covered := make(map[string]bool)
 	for _, agent := range reg.List() {
 		if agent.Skills == nil {
@@ -349,6 +389,83 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 			continue
 		}
 		t.Fatalf("committed skill %q is neither allowlisted by any committed agent nor owned by the unrestricted root", def.Name)
+	}
+}
+
+// wantNilAllowlistRefusals maps each committed role with no skills: key to the
+// skills its effective tools cannot cover, as "<skill>(<first missing tool>)".
+// These roles admit every skill by policy, so the tool superset is the only
+// thing standing between them and a runtime refusal.
+var wantNilAllowlistRefusals = map[string][]string{
+	"builder": {
+		"memories-housekeeping(delete_file)",
+		"workflow-feature-delivery(multi_edit)",
+		"workflow-runs-analysis(workflow_list_runs)",
+	},
+	"e2e-engineer": {
+		"agent-creator(run_command)",
+		"feature-delivery(run_command)",
+		"gate-authoring(run_command)",
+		"performance-review(run_command)",
+		"session-analysis(run_command)",
+		"skill-creator(run_command)",
+		"verify-change(run_command)",
+		"verify-code-change(run_command)",
+		"workflow-runs-analysis(workflow_list_runs)",
+	},
+	"panel-reviewer": reviewerRefusals,
+	"plan-reviewer":  reviewerRefusals,
+	"planner":        reviewerRefusals,
+}
+
+// The three read-only review roles hold no write or exec tools on purpose, so
+// they share one refusal set.
+var reviewerRefusals = []string{
+	"agent-creator(write_file)",
+	"capture(write_file)",
+	"docs-maintenance(write_file)",
+	"docs-update(write_file)",
+	"feature-delivery(write_file)",
+	"gate-authoring(run_command)",
+	"memories-housekeeping(write_file)",
+	"performance-review(run_command)",
+	"session-analysis(run_command)",
+	"skill-creator(write_file)",
+	"verify-change(run_command)",
+	"verify-code-change(run_command)",
+	"workflow-feature-delivery(write_file)",
+	"workflow-runs-analysis(workflow_list_runs)",
+}
+
+func assertNilAllowlistRefusals(t *testing.T, reg *AgentRegistry, skillReg *skills.Registry) {
+	t.Helper()
+	seen := make(map[string]bool)
+	for _, agent := range reg.List() {
+		if agent.Skills != nil {
+			continue
+		}
+		seen[agent.Name] = true
+		var refused []string
+		for _, def := range skillReg.List() {
+			if missing := firstMissingSkillTool(&agent, def.Tools); missing != "" {
+				refused = append(refused, fmt.Sprintf("%s(%s)", def.Name, missing))
+			}
+		}
+		sort.Strings(refused)
+		want, ok := wantNilAllowlistRefusals[agent.Name]
+		if !ok {
+			t.Fatalf("agent %q has no skills: key and is not pinned in wantNilAllowlistRefusals; it admits every skill, so its refusals must be recorded. Observed: %v", agent.Name, refused)
+		}
+		sorted := append([]string(nil), want...)
+		sort.Strings(sorted)
+		if !slices.Equal(refused, sorted) {
+			t.Fatalf("agent %q nil-allowlist refusals drifted.\n got: %v\nwant: %v\nA new entry means a skill became unreachable for this role; a removed one means it gained a tool. Update the pin only when the change is intended.", agent.Name, refused, sorted)
+		}
+	}
+	for name := range wantNilAllowlistRefusals {
+		if !seen[name] {
+			t.Fatalf("wantNilAllowlistRefusals pins %q, which is not a committed role with a nil skills: key. A stale pin covers nothing.", name)
+		}
 	}
 }
 

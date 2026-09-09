@@ -16,22 +16,33 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	sdkschema "github.com/MiviaLabs/mivia-ai-sdk/schema"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
 // servedUnadmittedToolMessage builds the RoleTool message for a deferred
 // call UnadmittedToolHandler served synchronously: rendered exactly like an
-// ordinary successful call - no "error: " prefix, no failed tool_end, the
-// error text this path exists to remove. appendHookContext gives the model
-// the same framed, tag-neutralized advisory text dispatcherShim.Run gives
-// it for an admitted call - the recorded outcome and the returned message
-// carry the SAME body, exactly like the shim's capped+appended body.
+// ordinary ADMITTED call - no "error: " prefix of this path's own, which is
+// the framing it exists to remove. appendHookContext gives the model the
+// same framed, tag-neutralized advisory text dispatcherShim.Run gives it for
+// an admitted call - the recorded outcome and the returned message carry the
+// SAME body, exactly like the shim's capped+appended body.
+//
+// "Like an admitted call" includes its FAILURES. The outcome is recorded
+// with result.Failed, mirroring the shim's recordToolEventOutcome(..., failed,
+// ...): a deferred call that ran and errored, or that a hook blocked, or that
+// approval refused, is a failed call and must render as one.
 func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdkshape.ToolCall, result UnadmittedToolResult) sdkshape.Message {
 	body := appendHookContext(result.Content, result.HookContext)
 	if turn != nil {
-		turn.recordToolOutcomeWithPreview(callKey, call.Name, body, false, "", false, body)
+		// result.Failed, not a hardcoded false. A deferred call that ran and
+		// errored, one a PreToolUse hook blocked, and one approval refused all
+		// arrive here on the Ran path, and recording every one of them as a
+		// success is how a refusal reached every viewer as a completed call.
+		turn.recordToolOutcomeWithPreview(callKey, call.Name, body, result.Failed, "", false, body)
 	}
 	return sdkshape.Message{
 		Role:       provider.RoleTool,
@@ -39,6 +50,48 @@ func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdksha
 		Name:       call.Name,
 		Content:    body,
 	}
+}
+
+// hostAuthorizedToolMessage runs a tool the HOST authorized for this call but
+// which the SDK registry does not have - the deferred-tool case - through the
+// SAME shim an admitted call uses.
+//
+// The host decides and the loop executes. That is what stops the deferred
+// path being a second implementation of tool execution, where the timeout,
+// the dedup declaration, the result cap, the hook plumbing and the failure
+// outcome all had to be re-honoured by hand and five of them were not. See
+// DC-35 and RunUnadmittedTool.
+func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnState, call sdkshape.ToolCall, tool tools.Tool) (sdkshape.Message, error) {
+	body, err := RunUnadmittedTool(ctx, opts, turn, tool, call.Arguments)
+	if err != nil {
+		// Degrade to a model-visible result, never a run failure. The SDK
+		// treats a non-nil error from OnToolCallError as a hard failure of the
+		// whole run, and the path this replaced had no error channel at all -
+		// every problem reached the model as a message. An infrastructure
+		// error here (unmarshalable arguments, a tool whose parameters will
+		// not marshal) would otherwise abort the turn over one bad call.
+		body = "error: " + err.Error()
+		// callKey mirrors the fallback sdkToolCallErrorReporter and
+		// servedUnadmittedToolMessage already use in this file: call.ID is
+		// empty when a provider stream sends the tool-call NAME delta
+		// before, or without, the ID delta. Recording only under call.ID
+		// silently drops the outcome for every such call, and
+		// bridgeToolCallEnd (agentloop_events.go) then finds nothing under
+		// the name key, so the row carries no body and no reason.
+		// No callKey != "" here either: recordToolOutcome delegates to
+		// recordToolOutcomeWithPreview, which drops an outcome with an empty
+		// id. Guarding it again in one caller and not the other only made the
+		// two look like they had different contracts.
+		if turn != nil {
+			turn.recordToolOutcome(toolCallKey(call), call.Name, body, true)
+		}
+	}
+	return sdkshape.Message{
+		Role:       provider.RoleTool,
+		ToolCallID: call.ID,
+		Name:       call.Name,
+		Content:    body,
+	}, nil
 }
 
 // sdkToolCallErrorReporter returns the Options.OnToolCallError hook
@@ -60,6 +113,9 @@ func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdksha
 func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.ErrorFunc {
 	return func(ctx context.Context, call sdkshape.ToolCall, runErr error) (sdkshape.Message, error) {
 		if !(errors.Is(runErr, sdktools.ErrUnknownName) || errors.Is(runErr, sdkagentloop.ErrToolNotOffered)) {
+			// Every OTHER failure outside the shim still needs an outcome,
+			// or it reaches the operator as a success. See below.
+			recordPreShimFailure(turn, call, runErr)
 			return sdkshape.Message{}, nil
 		}
 		// Legacy precedence: processToolCalls filters malformed-JSON
@@ -71,10 +127,7 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		if strings.TrimSpace(string(call.Arguments)) != "" && !json.Valid(call.Arguments) {
 			return sdkshape.Message{}, nil
 		}
-		callKey := call.ID
-		if callKey == "" {
-			callKey = call.Name
-		}
+		callKey := toolCallKey(call)
 		msg := ""
 		if opts.StagedToolMessage != nil {
 			if m, ok := opts.StagedToolMessage(call.Name); ok {
@@ -95,6 +148,9 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 			// already nil for a dedup-served duplicate (runDeferredToolNow).
 			if callKey != "" {
 				emitHookRuns(opts, callKey, result.HookRuns)
+			}
+			if result.Handled && result.Execute != nil {
+				return hostAuthorizedToolMessage(ctx, opts, turn, call, result.Execute)
 			}
 			if result.Handled && result.Ran {
 				return servedUnadmittedToolMessage(turn, callKey, call, result), nil
@@ -124,4 +180,55 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 			Content:    "error: " + msg,
 		}, nil
 	}
+}
+
+// toolCallKey is the outcome-map key for one call: its ID, or its Name when
+// the ID is empty. call.ID goes empty when a provider stream sends the
+// tool-call NAME delta before, or without, the ID delta, and every recorder
+// in this file has to agree on the fallback or an outcome lands under a key
+// bridgeToolCallEnd never looks up.
+func toolCallKey(call sdkshape.ToolCall) string {
+	if call.ID != "" {
+		return call.ID
+	}
+	return call.Name
+}
+
+// recordPreShimFailure records the operator outcome for a tool call the SDK
+// failed outside the dispatcher shim: a rejection before the shim (scope
+// denial, schema violation, undecodable payload) or a render failure after
+// it. Both are failures of the CALL - a result the model never received is
+// not a call that succeeded - and a render failure legitimately overwrites
+// the shim's own recorded outcome for the same key.
+//
+// Without it nothing is stored for the call and bridgeToolCallEnd's
+// no-outcome fallback reports a call that never ran. The SDK counts these as
+// reported failures toward Bounds.MaxConsecutiveToolFailures, so the operator
+// surfaces must agree with that judgement.
+//
+// The body mirrors the SDK's own ErrorPolicyReport rendering (errorReportContent:
+// the ToolErrorPrefix marker plus, for a schema violation, the bounded
+// corrective message), so the operator row and the model's tool result carry
+// the same text. The reporter still returns the zero Message: this records
+// what happened, it does not replace the answer.
+//
+// The record REPLACES any outcome already stored under the key rather than
+// merging into it, so the render-failure path also drops the shim's
+// previewOverride, duplicate and originalBody. The only outcome that can
+// already exist under the key is one composeRunOutput recorded, and a body
+// the model never received has no preview worth keeping. (Run's own
+// marshal-argument error records nothing beforehand, so it overwrites
+// nothing.)
+func recordPreShimFailure(turn *sdkTurnState, call sdkshape.ToolCall, runErr error) {
+	if turn == nil || runErr == nil {
+		return
+	}
+	// No callKey == "" guard: recordToolOutcomeWithPreview owns that invariant
+	// and drops an outcome with an empty id, so a second check here would be a
+	// branch no test can observe.
+	body := sdkagentloop.ToolErrorPrefix + runErr.Error()
+	if errors.Is(runErr, sdkagentloop.ErrArgumentValidation) {
+		body = sdkagentloop.ToolErrorPrefix + sdkschema.Corrective(runErr)
+	}
+	turn.recordToolOutcomeWithPreview(toolCallKey(call), call.Name, body, true, "", false, "")
 }

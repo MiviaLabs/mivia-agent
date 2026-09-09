@@ -21,7 +21,7 @@ import (
 // registration (or between CreateRun and the first CreateTask) leaves behind.
 // Seeding goes through the public ledger API: create the keyed run, close the
 // writing repository, and replay it through a fresh one (a process restart).
-func abandonedRunCoordinator(t *testing.T) *coordinator {
+func abandonedRunCoordinator(t *testing.T) *Coordinator {
 	t.Helper()
 	ctx := context.Background()
 	store := storage.NewMemory()
@@ -45,7 +45,7 @@ func abandonedRunCoordinator(t *testing.T) *coordinator {
 	if err := d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
 		t.Fatal(err)
 	}
-	return New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	return New(fresh, subagents.New(d, subagents.Policy{Workers: 1}))
 }
 
 // TestRecoverByIdempotencyKeyTreatsAbandonedCreationAsNotFound is the
@@ -95,7 +95,7 @@ func TestRecoverByIdempotencyKeyStillDedupsRunsWithTasks(t *testing.T) {
 	seedRun("run-created-with-task", "key-created-task", ledger.RunStatusCreated)
 	seedRun("run-completed", "key-completed", ledger.RunStatusCompleted)
 
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 
 	for _, tc := range []struct{ key, runID string }{
 		{"key-running", "run-running"},
@@ -187,7 +187,7 @@ func TestSpawnReclaimsAbandonedKeyAndExecutesWork(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1}))
 
 	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
 	if err != nil {
@@ -275,7 +275,7 @@ func TestSpawnRefusesClaimedAbandonedKey(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1}))
 
 	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
 	if !errors.Is(err, ErrIdempotencyKeyContended) {
@@ -322,7 +322,7 @@ func TestSpawnReclaimsExpiredClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1}))
 	// The dead holder never heartbeats, so its claim is expired at any lease
 	// boundary: the lease-aware reclaim must take it over.
 	c.claimLease = 0
@@ -404,7 +404,7 @@ func TestListInterruptedRunsDropsStaleClaimedAbandonedRun(t *testing.T) {
 	if err := d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
 		t.Fatal(err)
 	}
-	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1}))
 
 	// Before the reclaim, the abandoned run IS listed - with the dead holder's
 	// claim reported as held-by-another-executor. The fix targets the
@@ -475,7 +475,7 @@ func assertKeyResolvesTo(t *testing.T, repo ledger.LedgerRepository, key, wantRu
 // abandonedRunCoordinator. The claim is seeded at the STORE level (not through
 // the seed repository) so the seed's Close does not release it as one of its
 // own tracked claims.
-func reclaimGuardCoordinator(t *testing.T, createdAt time.Time, claimHolder string) (*coordinator, string) {
+func reclaimGuardCoordinator(t *testing.T, createdAt time.Time, claimHolder string) (*Coordinator, string) {
 	t.Helper()
 	ctx := context.Background()
 	store := storage.NewMemory()
@@ -500,7 +500,7 @@ func reclaimGuardCoordinator(t *testing.T, createdAt time.Time, claimHolder stri
 	if err := d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
 		t.Fatal(err)
 	}
-	return New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator), "run-guarded"
+	return New(fresh, subagents.New(d, subagents.Policy{Workers: 1})), "run-guarded"
 }
 
 // TestReclaimSkipsClaimedLiveRun is the claim guard for a run that may still
@@ -632,7 +632,7 @@ func TestReclaimProceedsForOldUnclaimedRun(t *testing.T) {
 // run (run IDs are random base32, uppercase, and sort before "run-abandoned") -
 // a pre-existing ledger projection-ordering limitation outside this task's file
 // scope (see internal/ledger/storage_projection.go catchUp ordering).
-func concurrentSpawnCoordinators(t *testing.T, createdAt time.Time, invoked func()) (*coordinator, *coordinator, func() *coordinator) {
+func concurrentSpawnCoordinators(t *testing.T, createdAt time.Time, invoked func()) (*Coordinator, *Coordinator, func() *Coordinator) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
@@ -657,7 +657,7 @@ func concurrentSpawnCoordinators(t *testing.T, createdAt time.Time, invoked func
 		t.Fatalf("close seed repo: %v", err)
 	}
 	clock := func() time.Time { return createdAt }
-	makeCoord := func() *coordinator {
+	makeCoord := func() *Coordinator {
 		repo := ledger.NewStorageLedgerRepository(store)
 		repo.SetTimeSource(clock)
 		d := runtime.New(runtime.Policy{})
@@ -671,7 +671,7 @@ func concurrentSpawnCoordinators(t *testing.T, createdAt time.Time, invoked func
 		if err := d.Register(runtime.Subagent, "worker", handler); err != nil {
 			t.Fatal(err)
 		}
-		return New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+		return New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	}
 	return makeCoord(), makeCoord(), makeCoord
 }

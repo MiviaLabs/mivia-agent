@@ -14,6 +14,7 @@ func TestEventJSONRoundTrip(t *testing.T) {
 		{Kind: KindTurnStart, TurnID: "t1", Seq: 1, At: at, Body: TurnStartBody{Input: "hello"}},
 		{Kind: KindTextDelta, TurnID: "t1", Seq: 2, At: at, Body: TextDeltaBody{Text: "chunk"}},
 		{Kind: KindTextEnd, TurnID: "t1", Seq: 2, At: at, Body: TextEndBody{Text: "full text"}},
+		{Kind: KindAssistantReset, TurnID: "t1", Seq: 2, At: at, Body: AssistantResetBody{Reason: "context_compacted"}},
 		{Kind: KindReasoning, TurnID: "t1", Seq: 2, At: at, Body: ReasoningDeltaBody{Text: "thinking", WordCount: 12}},
 		{Kind: KindToolPending, TurnID: "t1", Seq: 2, At: at, Body: ToolPendingBody{
 			ToolCallID: "c0", Name: "edit", Args: map[string]any{"path": "a.go"},
@@ -44,6 +45,9 @@ func TestEventJSONRoundTrip(t *testing.T) {
 			Done:  1, Total: 2,
 		}},
 		{Kind: KindNotice, TurnID: "t1", Seq: 6, At: at, Body: NoticeBody{Text: "context 62%"}},
+		{Kind: KindWorkflowStatus, TurnID: "t1", Seq: 6, At: at, Body: WorkflowStatusBody{
+			Run: "run-1", Step: "implement", Since: at, Active: true,
+		}},
 		{Kind: KindHook, TurnID: "t1", Seq: 6, At: at, Body: HookBody{
 			Event: "PreToolUse", Program: "guard.sh", Tool: "run_command",
 			Input: `{"argv":["git","status"]}`, Output: "policy forbids this argv", Denied: true,

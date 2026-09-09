@@ -24,16 +24,24 @@ def main() -> None:
 
     try:
         result = subprocess.run(
-            ["rg", "-n", "^func Test", "-g", "*_test.go"],
+            # See validate_invariants.py: the "." path and stdin=DEVNULL stop
+            # ripgrep searching stdin instead of the tree.
+            ["rg", "-n", "^func Test", "-g", "*_test.go", "."],
             capture_output=True, text=True, cwd=ROOT,
+            stdin=subprocess.DEVNULL,
         )
         existing = set(re.findall(r"func (Test\w+)", result.stdout))
     except (OSError, ValueError):
         existing = set()
-    # rg is a fast path only: it may be absent (not every runner ships it) or
-    # return zero matches for a tree full of tests (Homebrew's ripgrep on
-    # macOS), so any non-positive result falls back to a stdlib walk instead
-    # of reporting the tests as missing.
+    # rg is a fast path only: it may be absent (not every runner ships it), so
+    # any non-positive result falls back to a stdlib walk instead of reporting
+    # the tests as missing.
+    #
+    # This fallback used to blame "Homebrew's ripgrep on macOS" for the empty
+    # result. That was a misdiagnosis: the call passed no search path, so
+    # ripgrep searched stdin instead of the tree on every platform whose stdin
+    # was not a tty. The fallback quietly produced the right answer and hid the
+    # real bug, which in its other form blocks forever.
     if not existing:
         existing = set()
         skip = {".git", "testdata", "node_modules", "vendor"}

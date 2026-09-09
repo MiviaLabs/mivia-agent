@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -60,6 +61,58 @@ GIT_COMMIT_SHORT_VALUE_CHARS = "mFC"
 # Shell control operators that start a NEW command. Every command in a
 # compound string must be vetted, so scanning restarts at these.
 SHELL_SEPARATORS = {"&&", ";", "||"}
+
+# Interpreters whose `-c <string>` payload is itself a shell command line,
+# never data. Matched by basename so a full path (/bin/bash, /usr/bin/sh)
+# is recognized the same as the bare name.
+SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+
+
+def _interpreter_name(tok: str) -> str:
+    return tok.rsplit("/", 1)[-1]
+
+
+def _expand_shell_c(tokens: list, *, _depth: int = 0) -> list:
+    """Splice a `sh -c '<command>'` payload's tokens into the scan stream.
+
+    `["sh", "-c", "git --no-pager commit -n"]` is the documented, supported
+    way to run a shell pipeline through this tool (see run_command_test.go),
+    and it was a live bypass: the payload is a single argv element that is
+    never itself token-split, so neither the structural -n walk nor the
+    regex backstop (which needs "git" and "commit" textually adjacent) ever
+    saw the command inside it - an option like --no-pager, -C, or --git-dir
+    between "git" and "commit" defeated the regex too, same as it does
+    unwrapped. Expansion is additive: the wrapper tokens (`sh`, `-c`, and the
+    raw payload string) stay in the output, so a pattern that targets the
+    wrapper itself still matches; recursion handles a payload that itself
+    wraps another `sh -c`. Depth is capped only against pathological input;
+    ordinary nesting is a handful of levels at most.
+    """
+    if _depth > 20:
+        return list(tokens)
+    out = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = str(tokens[i])
+        out.append(tok)
+        if (
+            _interpreter_name(tok) in SHELL_INTERPRETERS
+            and i + 2 < n
+            and str(tokens[i + 1]) == "-c"
+        ):
+            payload = str(tokens[i + 2])
+            out.append(payload)
+            try:
+                inner = shlex.split(payload)
+            except ValueError:
+                inner = None
+            if inner:
+                out.extend(_expand_shell_c(inner, _depth=_depth + 1))
+            i += 3
+            continue
+        i += 1
+    return out
 
 
 def _takes_message_value(tok: str) -> bool:
@@ -156,22 +209,90 @@ def option_vector(argv: list) -> list:
     Compound shell strings are vetted per command: the argv is split at shell
     separators (&&, ;, ||) and each segment is scanned on its own, so a
     second `git commit` after a separator can never hide behind the first
-    command's -m value. Within a command, -m/-F/-C consume exactly one value
-    token (even a dash-prefixed one) and scanning resumes.
+    command's -m value. Only a segment that actually invokes `git ... commit`
+    gets the commit-argument char-bundling treatment, and only from the
+    `commit` token onward - every other segment, and everything before
+    `commit` in a git-commit segment, passes through as plain argv elements.
+    Applying commit's short-option grammar to an unrelated command (a second
+    `go test -fuzz X` after `&&`) shredded flags that grammar was never meant
+    to see.
     """
     vec = []
     for segment in _split_shell_segments(argv):
-        vec.extend(_scan_segment(segment))
+        commit_at = _git_commit_index(segment)
+        if commit_at is None:
+            vec.extend(str(tok) for tok in segment)
+            continue
+        vec.extend(str(tok) for tok in segment[: commit_at + 1])
+        vec.extend(_scan_segment(segment[commit_at + 1 :]))
     return vec
+
+
+# git global options that consume the NEXT argv element as their value, in
+# BOTH their short and long forms (confirmed against git.c handle_options,
+# and empirically against the real git binary - see
+# scripts/test_agent_hook_guard.py): -C/--git-dir/--work-tree/--namespace/
+# --super-prefix/--attr-source each take a directory, path, or tree-ish,
+# -c/--config-env take a key[=value]. Missing any of these here was a real,
+# live bypass: `git --git-dir /tmp/x commit -n` was misread as a boolean
+# flag followed by an unrelated value token, so _git_commit_index never
+# found "commit" and the whole segment skipped both the structural -n check
+# and the regex backstop (which also requires literal "git"+"commit"
+# adjacency); --attr-source was the same bug, missed by the fix that added
+# the rest of this set. --exec-path is deliberately excluded: given with no
+# "=", git treats it as boolean (prints the path and exits), never reaching
+# a subcommand, so it cannot hide one.
+GIT_GLOBAL_VALUE_OPTIONS = {
+    "-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+    "-c", "--config-env", "--attr-source",
+}
+
+
+def _git_commit_index(segment: list) -> int | None:
+    """Index of the `commit` SUBCOMMAND token, if this segment invokes it.
+
+    None when the segment does not invoke git commit. Scans past global
+    options (and their values, for -C/-c) to find the actual subcommand
+    position - the first token after `git` that is not itself an option.
+    A bare scan for the first literal "commit" token anywhere misclassifies
+    `git branch commit` (a branch NAMED commit) as a commit invocation, and
+    under-classifies `git -c commit commit -n` (a decoy "commit" used as a
+    -c VALUE, with the real subcommand one token later).
+    """
+    parts = [str(part) for part in segment]
+    if "git" not in parts:
+        return None
+    i = parts.index("git") + 1
+    n = len(parts)
+    while i < n:
+        tok = parts[i]
+        if tok in GIT_GLOBAL_VALUE_OPTIONS:
+            i += 2  # skip the option and its value
+            continue
+        if tok.startswith("-"):
+            i += 1  # a boolean global flag; its value, if any, is attached
+            continue
+        return i if tok == "commit" else None
+    return None
 
 
 def is_git_commit(argv: list) -> bool:
     """True when argv invokes `git commit` (git options like -c included)."""
-    parts = [str(part) for part in argv]
-    for i, tok in enumerate(parts):
-        if tok == "git" and any(t == "commit" for t in parts[i + 1 :]):
-            return True
-    return False
+    return any(_git_commit_index(seg) is not None for seg in _split_shell_segments(argv))
+
+
+def segment_has_git_commit_dash_n(segment: list) -> bool:
+    """True when this segment's git-commit arguments contain a bare -n.
+
+    Structural, not string-matched: it does not require "git" and "commit"
+    to be textually adjacent, so global options between them (-C, -c,
+    --no-pager, --git-dir=...) cannot hide a -n the way the
+    blockedFlagPatterns regex needing them literally adjacent can be made to.
+    """
+    commit_at = _git_commit_index(segment)
+    if commit_at is None:
+        return False
+    return "-n" in _scan_segment(segment[commit_at + 1 :])
 
 
 def block(reason: str) -> None:
@@ -182,23 +303,35 @@ def block(reason: str) -> None:
 def load(name: str) -> dict:
     path = POLICY_DIR / name
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        policy = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
         # Fail closed, and say what to fix. A policy this gate cannot read means
         # it cannot answer, and "cannot answer" is not "allow".
         block(f"policy unreadable at {path}: {err}")
         raise  # unreachable; keeps the type checker and the reader honest
+    # A truncated or emptied policy - {} is valid JSON - parsed without error
+    # and then blocked NOTHING: every pattern list came back via .get(key, []),
+    # which reads a missing key the same as an intentionally empty one. Require
+    # the shape every shipped policy actually has, so a policy this thin is as
+    # loud as one that fails to parse.
+    if not isinstance(policy, dict) or policy.get("version") != 1:
+        block(f"policy at {path} is missing or has the wrong version (want 1)")
+    if not str(policy.get("correctiveMessage", "")).strip():
+        block(f"policy at {path} carries no correctiveMessage")
+    return policy
 
 
-def matches(patterns: list, command: str):
+def matches(patterns: list, command: str, *, source: str = "") -> str | None:
     for pattern in patterns:
         try:
             found = re.search(pattern, command)
-        except re.error:
-            # A malformed pattern is that policy's bug, not this call's.
-            # Skipping it is right: blocking every command over one typo would
-            # take the repository offline.
-            continue
+        except re.error as err:
+            # A malformed pattern used to be skipped silently: one typo in a
+            # policy file quietly disabled that one rule while every gate
+            # kept reporting ok. Fail loud instead - a policy this gate
+            # cannot evaluate is the same "cannot answer" case load() already
+            # treats as a block, not an allow.
+            block(f"malformed pattern in {source or 'policy'}: {pattern!r} ({err})")
         if found:
             return found.group(0)
     return None
@@ -220,14 +353,30 @@ def main() -> None:
     # Scan only the option vector. For git commit, -m/-F/-C VALUES and post-`--`
     # positionals are message data, never bypass flags; a standalone dash-
     # prefixed element after the terminator (`-m x -n`) is still an option.
-    parts = [str(part) for part in argv]
-    vec = option_vector(parts) if is_git_commit(parts) else parts
+    # Expand first: a `sh -c '<command>'` payload is itself an unsplit
+    # command line, and every check below operates on tokens.
+    parts = _expand_shell_c([str(part) for part in argv])
+    # A structural check, ahead of the pattern-based ones below: -n survives
+    # any global git option between `git` and `commit`, which the
+    # blockedFlagPatterns regex requires to be textually adjacent.
+    for segment in _split_shell_segments(parts):
+        if segment_has_git_commit_dash_n(segment):
+            corrective = str(
+                load("agent-hook-bypass.json").get(
+                    "correctiveMessage", "this command is not permitted here"
+                )
+            )
+            block(
+                "blocked by agent-hook-bypass.json (structural): -n on git "
+                "commit. " + corrective
+            )
+    vec = option_vector(parts)
     options = " ".join(vec)
 
     for name, keys in POLICIES:
         policy = load(name)
         for key in keys:
-            if hit := matches(policy.get(key, []), options):
+            if hit := matches(policy.get(key, []), options, source=f"{name} ({key})"):
                 block(
                     f"blocked by {name} ({key}): {hit!r}. "
                     + str(policy.get("correctiveMessage", "this command is not permitted here"))

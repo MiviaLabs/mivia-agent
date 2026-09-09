@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# assert_staged_tree_unchanged <before-tree-hash> [gate name]
+#
+# Refuses the commit when the staged tree changed while a gate ran.
+#
+# The class: a gate that MUTATES REAL WORKING-TREE FILES, run from a hook that
+# also re-stages working-tree files. scripts/check_mutation.py applies each
+# mutant to the real file and restores it afterwards; the pre-commit hook's
+# gofmt step does `gofmt -w <file>; git add -- <file>` for every fully-staged
+# Go file. A mutant present in the working tree when that `git add` runs is
+# staged and committed - and nothing notices, because the sweep restores
+# before it reports and still prints a 100 percent kill rate.
+#
+# That is not hypothetical: a commit shipped shouldSkipCanceledTask with its
+# nil guard inverted exactly this way, which turned the fix it was making into
+# dead code while every gate stayed green. It was caught only because a later
+# `git status` happened to show one stray modified file.
+#
+# check_mutation.py now verifies its own restoration, but that cannot be the
+# only belt. A sweep killed hard enough to skip its `finally` (SIGKILL, OOM)
+# never reaches its own guard, and when several sweeps share one checkout - the
+# situation that produced the original incident - another run's mutated file
+# was never this process's to restore. Comparing the staged tree across the
+# gate catches every one of those, because it asks the only question that
+# actually matters: is what we are about to commit still what we checked?
+set -euo pipefail
+
+before="${1:?usage: assert_staged_tree_unchanged <before-tree-hash> [gate name]}"
+gate="${2:-a gate}"
+
+after="$(git write-tree)"
+if [ "$after" = "$before" ]; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+${gate}: the staged tree changed while this gate ran.
+
+A gate that mutates working-tree files ran alongside this hook's gofmt
+re-add, so a mutated file was staged and would have been committed. Nothing
+has been committed.
+
+  staged tree before: ${before}
+  staged tree after:  ${after}
+
+Inspect and restore before retrying:
+
+  git status --short
+  git diff --cached
+  git checkout -- <file>
+EOF
+exit 1

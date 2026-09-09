@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,15 @@ import (
 
 // Session holds conversation history and a completer.
 type Session struct {
+	// liveRequest is the message list the agent loop last prepared for a
+	// provider call, captured at each step through
+	// agent.Options.ObserveRequestHistory. It exists because the loop's
+	// carried history is only written back when the turn ENDS, so between
+	// those points ContextUsage described the previous turn: on the first
+	// turn it saw the floor alone, and a reader watching the context fill
+	// saw nothing of what was filling it. Nil between turns, when Messages
+	// is itself current. Guarded by mu.
+	liveRequest        []provider.Message
 	Completer          provider.Completer
 	model              string
 	allowedModels      []string
@@ -60,6 +70,18 @@ type Session struct {
 	// after it announced work and called no tool, from [chat]
 	// max_unacted_continuations. Zero leaves the mechanism off.
 	MaxUnactedContinuations int
+	// ToolDenylist is the operator's mandatory tool denylist
+	// ([tools] mandatory_tool_denylist additions), carried here so the
+	// deferred-tool path can honour it.
+	//
+	// It is enforced at the point of EXECUTION rather than only where the
+	// resolver is wired. Every other layer already refuses these names -
+	// ScopedRegistry drops them from the executable registry and
+	// ScopedRegistryWithTail refuses to admit them - but the deferred path
+	// resolves from the pre-scope base, so without this it reached around all
+	// of them and ran the tool.
+	ToolDenylist []string
+
 	// ToolBaseResolver, when non-nil, returns the full authorized tool
 	// registry - including tools tiered/deferred out of Tools - that a
 	// deferred-but-advertised tool call can be resolved and executed from
@@ -103,6 +125,10 @@ type Session struct {
 	BaseApprovalPolicy string
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
+	// onAgentEventToken increments on every OnAgentEvent swap, so a
+	// restoring caller can prove it still owns the slot. See
+	// RestoreOnAgentEvent. Guarded by mu, like OnAgentEvent itself.
+	onAgentEventToken uint64
 	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
 	// When set, the agent loop dual-publishes agent events onto this bus.
 	EventBus *events.Bus
@@ -120,10 +146,6 @@ type Session struct {
 	// the resolved [chat] request_timeout_seconds. Zero means
 	// DefaultRequestTimeout (15 minutes).
 	RequestTimeout time.Duration
-	// SessionDir is the directory where sessions are persisted
-	// (e.g., <workspace>/.mivia/sessions/). When set, enables
-	// save/load/list/delete operations and auto-save on exit.
-	SessionDir string
 	// mu protects concurrent mutations to Messages, model, and turnID.
 	// All exported methods that read or write these fields must
 	// hold mu (Lock for writes, RLock for reads). Save/Load use the
@@ -212,18 +234,8 @@ type Session struct {
 	// == "") means no step-boundary publication has happened for the current
 	// turn; commitTurnToken then falls back to the turn's own captured token.
 	liveTurnToken OperationToken
-	// sessionStore is the persistence backend for save/load/list/delete.
-	// When nil, persistence operations return errors (graceful degradation).
-	sessionStore SessionStore
-	// saveManager orchestrates auto-save strategies (per-turn, exit, prune).
-	// When nil, SaveAfterTurn and SaveLast are no-ops.
-	saveManager *SaveManager
-	// turnSaveName is the rolling per-turn snapshot directory used by the
-	// unwired fallback path, mirroring SaveManager.turnSaveName. Guarded by mu.
-	turnSaveName string
-	// contextManager is optional and deliberately separate from legacy
-	// SessionStore. When enabled, durable turns use the checkpoint publisher
-	// and never fall back to raw JSONL autosave.
+	// contextManager is optional. When enabled, durable turns use the
+	// checkpoint publisher.
 	contextManager       *contextmgr.ContextManager
 	contextPrincipal     contextstate.Principal
 	contextPolicy        contextstate.PolicySnapshot
@@ -252,16 +264,6 @@ type Session struct {
 	prefixIdentity         PrefixIdentity
 	prefixIdentityCaptures uint64
 	prefixGeneration       uint64
-}
-
-// TurnOptions supplies an invocation-local capability surface. It never
-// mutates the session-owned registry or binding, which keeps scoped tools from
-// leaking into ordinary or concurrent turns. Cleanup runs after history has
-// been scrubbed and committed.
-type TurnOptions struct {
-	Tools      *tools.Registry
-	Dispatcher *runtime.Dispatcher
-	Cleanup    func()
 }
 
 // MessagesCount returns the number of messages under the read lock.
@@ -330,6 +332,16 @@ func (s *Session) sendUser(ctx context.Context, userText, persistedText string, 
 }
 
 func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event), turn *TurnOptions) (string, error) {
+	// A blank user message is refused here rather than sent. The wire shape
+	// gate (provider.ValidateToolPairing) rejects a user message whose content
+	// trims to nothing, and it runs on every later preparation, so one blank
+	// turn does not fail by itself - it fails the NEXT turn, and the one after
+	// that, with "empty user message at index N" pointing at a message the
+	// reader never knowingly sent. Refusing at the entry keeps a history that
+	// can always be prepared.
+	if strings.TrimSpace(userText) == "" {
+		return "", fmt.Errorf("chat: a user message cannot be blank")
+	}
 	// Publish the turn's callback on the session for the whole turn.
 	// emitContextCompaction reads s.OnAgentEvent, and this callback used to
 	// reach the agent loop only, so an automatic compaction on the plain
@@ -385,13 +397,18 @@ func (s *Session) compactAfterTurn(ctx context.Context, turnErr error) {
 	_, _ = s.CompactIfNeeded(ctx)
 }
 
-func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {
-	snapshot, done, err := s.beginPlainTurn(userText)
-	if err != nil {
-		return "", err
+func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (reply string, err error) {
+	snapshot, done, beginErr := s.beginPlainTurn(userText)
+	if beginErr != nil {
+		return "", beginErr
 	}
+	// Announced here rather than by the caller: every surface reaches this
+	// function, and snapshot.myTurn is the same id every later event of the
+	// turn carries. See turn_events.go.
+	s.publishTurnStart(snapshot.sessionID, snapshot.myTurn, persistedText)
 	defer func() {
 		done()
+		s.publishTurnEnd(ctx, snapshot.sessionID, snapshot.myTurn, err)
 		s.fireRootTurnEndHook(ctx, snapshot.sessionID, snapshot.myTurn)
 	}()
 	if snapshot.context.manager != nil {
@@ -400,13 +417,15 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 	return s.sendPlainLegacy(ctx, persistedText, w, snapshot)
 }
 
-func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (string, error) {
-	snapshot, done, err := s.beginAgentTurn(userText, eventOverride)
-	if err != nil {
-		return "", err
+func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (reply string, err error) {
+	snapshot, done, beginErr := s.beginAgentTurn(userText, eventOverride)
+	if beginErr != nil {
+		return "", beginErr
 	}
+	s.publishTurnStart(snapshot.sessionID, snapshot.myTurn, persistedText)
 	defer func() {
 		done()
+		s.publishTurnEnd(ctx, snapshot.sessionID, snapshot.myTurn, err)
 		s.fireRootTurnEndHook(ctx, snapshot.sessionID, snapshot.myTurn)
 	}()
 	// Publish any stage an earlier boundary could not at the earliest safe
@@ -429,7 +448,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		snapshot.toolTimeout = agent.DefaultToolTimeout
 	}
 	opts := s.buildAgentTurnOptions(snapshot, userText, w, turnDispatcher, turn)
-	reply, err := loop.Run(ctx, userText, opts)
+	reply, err = loop.Run(ctx, userText, opts)
 
 	// A step-boundary publication mid-turn swapped the binding surface and
 	// bumped the operation fence (TryPublishAgentSurface -> invalidateLocked);
@@ -448,229 +467,9 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	return reply, err
 }
 
-// effectiveRequestTimeout normalizes a snapshot's per-request deadline: a
-// zero value (a session built from a hand-built Resolved with no [chat]
-// request_timeout_seconds resolution) falls back to DefaultRequestTimeout,
-// never to "unbounded". Both turn shapes - agent (buildAgentTurnOptions)
-// and plain (sendPlainLegacy / sendPlainContext) - share this one rule.
-// The deadline bounds one LLM request only: Prepare, the summarizer call,
-// and the durable commit keep their own bounds.
-func effectiveRequestTimeout(d time.Duration) time.Duration {
-	if d <= 0 {
-		return DefaultRequestTimeout
-	}
-	return d
-}
-
-func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText string, w io.Writer, turnDispatcher *runtime.Dispatcher, turn *TurnOptions) agent.Options {
-	requestTimeout := effectiveRequestTimeout(snapshot.requestTimeout)
-	opts := agent.Options{
-		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
-		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
-		MaxSteps:  snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
-		MaxUnactedContinuations: snapshot.maxUnactedContinuations,
-		MaxToolResultChars:      snapshot.maxToolResult,
-		BatchResultBudgetBytes:  snapshot.batchResultBudget,
-		RefOnlyTools:            snapshot.refOnlyTools,
-		RemainderSpool:          snapshot.remainderSpool,
-		RequestTimeout:          requestTimeout,
-		ToolTimeout:             snapshot.toolTimeout,
-		ToolRunTimeout:          snapshot.toolRunTimeout,
-		ParentID:                "session",
-		TurnID:                  fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
-		ApprovalGate:     snapshot.approvalGate,
-		ApprovalStanding: snapshot.approvalStanding,
-		ApprovalPolicy:   snapshot.approvalPolicy,
-		FinalWriter:      w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
-		RequireFinalText: true,
-		// Step 1 has no Surface hook call (applySurfaceHook skips it), so the
-		// turn's very first request must already carry the pinned snapshot;
-		// safe to read fresh here since an active turn blocks /agent and
-		// /model from republishing it mid-turn (BeginSurfaceSwitch).
-		AdvertisedToolSpecs: s.AdvertisedToolSpecs(),
-	}
-	if snapshot.context.manager != nil {
-		input := prepareInputForContext(snapshot.messages, snapshot.contextBudget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy, snapshot.context.worktree)
-		input.Revision = snapshot.context.revision
-		input.CurrentObjective = userText
-		opts.PreparationManager = snapshot.context.manager.PreparationManager
-		opts.UsageWriter = snapshot.context.manager.UsageWriter
-		opts.PreparationInput = input
-		opts.SummaryConfig = agent.SummaryConfig{
-			Summarizer:        snapshot.context.summarizer,
-			UnavailableReason: snapshot.context.manager.SummaryUnavailableReason,
-			Redaction:         snapshot.context.redaction,
-		}
-	}
-	if turnDispatcher != nil {
-		opts.Dispatcher = turnDispatcher
-	}
-	// Mid-turn admission publication (w2a/w2d): a tool staged by load_tools
-	// becomes callable from the next step via the loop's Surface hook, and a
-	// deferred stage reports the reason instead of the unknown-tool denial.
-	s.wireStepBoundaryAdmission(&opts, turn)
-	return opts
-}
-
-// commitTurnToken and SetRemainderSpool live in session_turn_surface.go.
-
-// surfaceForTurnStart publishes any stage an earlier boundary could not
-// (guarded boundary, failed save) at the earliest safe point of this turn: no
-// batch is running, so closing the previous dispatcher is safe (R2-1), and the
-// returned surface carries the staged tool so it is callable from the first
-// step (DC-9: staged tools become callable from the next STEP, and this
-// turn-start publication remains the cross-turn path for a stage that no step
-// boundary could publish). A stage owned by this not-yet-run turn stays
-// deferred for its own boundary (D7). Turns with nothing pending keep the
-// snapshot path byte-for-byte.
-//
-// The returned token is the turn's operation fence RE-CAPTURED after the
-// start-of-turn publication. That publication swaps the binding surface and
-// bumps the operation fence (TryPublishAgentSurface -> invalidateLocked),
-// which would fence this turn's own beginAgentTurn token out of
-// commitPreparedTurn (chat-turnstart-admission-fences-own-turn). Re-capturing
-// pins the fence to the post-publication epoch/revision/binding and to this
-// turn's own id, so the loop's commit runs under the fence it actually
-// executes on. When the publication deferred (no bump), the re-capture is a
-// no-op re-read. Genuine supersession still refuses: a superseding turn
-// advances s.turnID, and sameFence compares TurnID.
-func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher, OperationToken, []provider.Message) {
-	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(snapshot.toolRegistry, snapshot.binding.Dispatcher, turn)
-	if !snapshot.pendingAdmission {
-		return toolRegistry, turnDispatcher, snapshot.token, snapshot.messages
-	}
-	s.PublishPendingAdmissionAtTurnStart()
-	// The snapshot predates the start-of-turn publication. Read the live
-	// surface once so the loop's registry and dispatcher carry the staged tool
-	// and stay in agreement (INV-AG-29); a later mid-turn switch still cannot
-	// change what this turn captured.
-	s.mu.RLock()
-	liveTools := s.Tools
-	liveDispatcher := s.binding.Dispatcher
-	// The publication can rewrite s.Messages (setMemoryMessageLocked places or
-	// replaces the core-memory frame). The snapshot's message clone predates
-	// that, so running the loop on it - and later committing the loop's
-	// history - would stomp the just-published frame. Re-read the live history
-	// under the same lock so the turn runs on, and commits on top of, the
-	// post-publication messages.
-	liveMessages := cloneContextMessages(s.Messages)
-	s.mu.RUnlock()
-	toolRegistry, turnDispatcher = resolveTurnExecutionSurface(liveTools, liveDispatcher, turn)
-	return toolRegistry, turnDispatcher, s.captureTurnToken(snapshot.myTurn), liveMessages
-}
-
-// adoptCalibration copies a finished turn's rolling token calibration back
-// into the session so the next turn starts from it.
-//
-// Deliberately not fenced by the turn's operation token, unlike history: an
-// estimate-vs-actual observation stays true even when the turn errored or its
-// fence went stale, and discarding it would leave the heuristic uncorrected
-// exactly on the long turns that drift most. Concurrent turns each start from
-// the same seed, so the one with the most samples is the most informed; the
-// count only ever grows on top of what the turn was seeded with.
-func (s *Session) adoptCalibration(turnCalibration contextmgr.Calibration) {
-	if turnCalibration.Samples == 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if turnCalibration.Samples >= s.Calibration.Samples {
-		s.Calibration = turnCalibration
-	}
-}
-
 // runTurnCleanup invokes the optional per-turn cleanup callback.
 func (s *Session) runTurnCleanup(turn *TurnOptions) {
 	if turn != nil && turn.Cleanup != nil {
 		turn.Cleanup()
 	}
-}
-
-// CalibrationSeeder supplies the estimate-vs-actual correction ratio already
-// observed for a (provider, model) binding. It is a one-method view of the
-// durable usage ledger, declared here so internal/chat stays storage-agnostic
-// - the composition root injects the concrete store.
-type CalibrationSeeder interface {
-	CalibrationSeed(ctx context.Context, workspaceID, provider, model string) (float64, bool, error)
-}
-
-// SeedCalibration primes the token-estimate correction from durable
-// observations of this session's binding, so the FIRST request of a fresh
-// process is planned with the correction the workspace already learned.
-//
-// The ratio was previously written to the usage ledger on every turn and
-// never read back, so every process, session and resume began assuming the
-// len(s)/4 estimate was exact. On payloads that are mostly code and JSON tool
-// schemas it runs ~1.7x low, so the first request slipped past the compaction
-// trigger and the next one repaid the whole error at once - the sequence that
-// destroyed a real session's context.
-//
-// Seeding is a cold-start aid, never an override: a session that has already
-// measured its own binding keeps that measurement, and Samples is set to 1
-// (not the durable row count) so the first live observation outweighs the
-// seed immediately and a stale ratio decays within a turn or two rather than
-// pinning the estimate. Any failure leaves the session uncorrected, exactly
-// as before this seam existed - a missing seed must never be worse than the
-// old unconditional 1.0.
-func (s *Session) SeedCalibration(ctx context.Context, seeder CalibrationSeeder, workspaceID string) {
-	if seeder == nil {
-		return
-	}
-	s.mu.RLock()
-	already := s.Calibration.Samples
-	provider, model := s.binding.ProviderName, s.binding.Model
-	s.mu.RUnlock()
-	if already > 0 || provider == "" || model == "" {
-		return
-	}
-	ratio, ok, err := seeder.CalibrationSeed(ctx, workspaceID, provider, model)
-	if err != nil || !ok || ratio <= 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.Calibration.Samples > 0 {
-		// A turn landed while the query was in flight; live evidence wins.
-		return
-	}
-	s.Calibration.Ratio = ratio
-	s.Calibration.Samples = 1
-}
-
-// RefreshCalibrationAfterModelSwitch discards whatever token-estimate
-// calibration this session carries and re-seeds it from the durable usage
-// ledger for the session's CURRENT (provider, model) binding.
-//
-// Mirrors cliagents.RefreshSummarizerAfterModelSwitch, called at the same two
-// sites (resumeChatSession, uiadapter/session_pool.go's own resume) for the
-// identical reason: enableSessionContext's SeedCalibration call runs once, at
-// session construction, against whatever binding the process started with -
-// the config's default model, not yet the resumed session's saved one. A
-// resumed session almost always carries a DIFFERENT provider/model, so the
-// seed it started with is keyed to the wrong binding entirely: either no
-// durable observations exist for the startup model (leaving Samples at 0,
-// i.e. ratio 1.0, no correction) or a real ratio exists but describes a
-// different model's estimator bias. Either way the first post-resume request
-// is planned on a wrong-or-missing correction, which is exactly the "first
-// request slipped past the compaction trigger, the next one repaid the whole
-// error at once" sequence SeedCalibration's own doc comment says it exists to
-// prevent - resume just reaches the same failure through a different path,
-// by seeding at the wrong moment rather than not seeding at all.
-//
-// SeedCalibration on its own cannot fix this on a second call: its guard
-// (already > 0) exists to protect a session's own LIVE measurement from being
-// clobbered by a stale seed, but here what it is protecting is a seed for the
-// wrong binding, not a live measurement - so this resets to the zero value
-// first, exactly as a session that had never seeded at all would look, then
-// lets SeedCalibration run its normal lookup against the binding Load just
-// published.
-func (s *Session) RefreshCalibrationAfterModelSwitch(ctx context.Context) {
-	seeder, ok := s.ContextStore().(CalibrationSeeder)
-	if !ok {
-		return
-	}
-	s.mu.Lock()
-	s.Calibration = contextmgr.Calibration{}
-	s.mu.Unlock()
-	s.SeedCalibration(ctx, seeder, s.ContextPrincipal().WorkspaceID)
 }

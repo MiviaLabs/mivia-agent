@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 // connBufSize bounds one connection's outbound queue. Overflow policy is
@@ -17,8 +18,14 @@ const connBufSize = 256
 // connected client, or a client's view of the owner - with a bounded,
 // drop-oldest outbound queue.
 type conn struct {
-	nc        net.Conn
-	out       chan WireEvent
+	nc  net.Conn
+	out chan WireEvent
+	// dropped counts events this connection discarded because its outbound
+	// queue was full. It exists because drop-oldest here was previously
+	// SILENT: internal/events at least exposes Drops(), while the connection
+	// shed events with no counter at all, so a consumer could not tell a quiet
+	// turn from a lossy one.
+	dropped   atomic.Uint64
 	done      chan struct{}
 	closeOnce sync.Once
 }
@@ -29,7 +36,28 @@ func newConn(nc net.Conn) *conn {
 
 // send enqueues ev for delivery, dropping the oldest queued event first if
 // the writer has fallen behind. Never blocks.
+//
+// NOT safe for concurrent callers on one conn, and it is only correct today
+// because nothing does that: the owner serializes every send under o.mu in
+// broadcast, and the client sends from its single relay delivery goroutine.
+// Two concurrent senders could interleave their events, and one could lose the
+// slot the other freed. Nothing here enforces the rule, so a future caller has
+// to honour it - or this needs its own mutex.
+//
+// ev.Dropped arrives carrying whatever loss happened UPSTREAM of this
+// connection (the shared relay queue); send adds this connection's own running
+// total, so the value the far end reads is the total number of events this hub
+// failed to deliver to it. The count is stamped at enqueue time, so an event
+// that is itself later dropped takes its snapshot with it - harmless, because
+// the total is cumulative and any surviving later event carries a value at
+// least as large.
 func (c *conn) send(ev WireEvent) {
+	// Stamp BEFORE the first attempt, not only on the retry path: the happy
+	// path must still report loss this connection took earlier, or the count
+	// would fall back to the upstream-only value as soon as the reader caught
+	// up. A counter that can go down is worse than none, because a consumer
+	// diffing it would read the recovery as "no loss".
+	ev.Dropped += c.dropped.Load()
 	select {
 	case c.out <- ev:
 		return
@@ -37,13 +65,54 @@ func (c *conn) send(ev WireEvent) {
 	}
 	select {
 	case <-c.out:
+		// Count it on both the connection and THIS event, so the event that
+		// displaced one reports it immediately rather than one event later.
+		c.dropped.Add(1)
+		ev.Dropped++
 	default:
+	}
+	c.enqueueOrCount(ev, nil)
+}
+
+// sendWithRefill is send's retry step with a seam for the race it has to
+// tolerate: onFreed runs after a slot is freed and before the retry, which is
+// what a concurrent writeLoop does in production. Test-only entry point;
+// production calls send.
+func (c *conn) sendWithRefill(ev WireEvent, onFreed func()) {
+	ev.Dropped += c.dropped.Load()
+	select {
+	case c.out <- ev:
+		return
+	default:
+	}
+	select {
+	case <-c.out:
+		c.dropped.Add(1)
+		ev.Dropped++
+	default:
+	}
+	c.enqueueOrCount(ev, onFreed)
+}
+
+// enqueueOrCount performs the final enqueue and COUNTS the event when even that
+// fails. That branch was previously a silent discard: send frees one slot and
+// retries, but a concurrent writeLoop can refill it in between, and the event
+// was then dropped without incrementing anything. A consumer diffing the
+// counter would never learn about it, which is precisely the silence the
+// counter exists to end.
+func (c *conn) enqueueOrCount(ev WireEvent, onFreed func()) {
+	if onFreed != nil {
+		onFreed()
 	}
 	select {
 	case c.out <- ev:
 	default:
+		c.dropped.Add(1)
 	}
 }
+
+// Dropped returns the cumulative number of events this connection discarded.
+func (c *conn) Dropped() uint64 { return c.dropped.Load() }
 
 // writeLoop drains c.out to the socket until the connection or c.done
 // closes. Run it in its own goroutine.

@@ -11,7 +11,7 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 2. `.agents/INDEX.md` - fuller control-surface index (skills, policy, quality, hooks, semgrep)
 3. `.agents/doctrines/*` - evidence and verification doctrines
 4. `.agents/rules/*` - durable policy (linked by title below)
-5. `.agents/skills/*` - real-directory skills under the development surface; the `mivia` binary's loader (`internal/workspace.SkillsDir`) reads from this path. `.claude/skills/` mirrors each skill as a real directory for tool discovery
+5. `.agents/skills/*` - real-directory skills under the development surface; the `mivia` binary's loader (`internal/workspace.SkillsDir`) reads from this path. Claude Code discovers skills only under `.claude/skills/`, so `.claude/skills/<name>/SKILL.md` is an alias stub that repeats the canonical frontmatter and points at the canonical file. It is a plain file, not a symlink, because Git sets `core.symlinks=false` on Windows by default
 6. `docs/OWNERS.yaml` - doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/`
 
@@ -23,8 +23,9 @@ instructions: `mivia.toml` (this repo's own dogfooded config), `workflows/*`
 `internal/tools/workflow_tools.go`), `hooks/` (this repo's lifecycle hook
 scripts), `policy/*` (commit-message, pr-title, go-structure, docs-ownership,
 agent-hook-bypass - all read by compiled Go code or scripts at a hardcoded
-`.mivia/policy/` path), and `skills/` (a required mirror - see point 5). Never
-move those; they are functional, not instructional.
+`.mivia/policy/` path). Never move those; they are functional, not
+instructional. `.mivia/` holds no skills: workspace skills live only in
+`.agents/skills/`, which is the path `internal/workspace.SkillsDir` reads.
 
 ### `.agents/memories/`
 
@@ -37,7 +38,8 @@ policy) or a private per-machine agent memory store; a fact that becomes a
 hard rule belongs in `.agents/rules/`, not here.
 
 Read every file under `.agents/memories/` at the start of a task, the same
-way you read this file.
+way you read this file. `.agents/memories/.archive/` is the one exception:
+an archived memory is a record, not an active constraint.
 
 ### `.agents/agents/`
 
@@ -48,6 +50,21 @@ compiled fallback prompt the shipped binary carries, so this repo dogfoods
 exactly what users get. Format and loading contracts are documented in
 [`.agents/agents/README.md`](.agents/agents/README.md). Run `make
 agents-check` after editing any role file.
+
+`planner.md` and `plan-reviewer.md` are standalone, manually-selectable
+roles (pick them from the agent switcher, or dispatch them by name) for
+ad-hoc plan drafting and challenge outside any automated loop. Neither the
+ADLC rule's own Step 0 dispatch example nor the compiled workflow engine
+calls them by name: Step 0 there dispatches the generic `reviewer` (+
+`architecture-review` skill) and `auditor` roles. The compiled workflow
+engine's shape varies by workflow: `.mivia/workflows/feature-delivery.toml`
+uses `workflow-engineer` for plan/implement/repair steps and a
+`panel-reviewer`/`review-synthesizer` panel for review, while
+`bug-fix.toml`/`bug-fix-fast.toml` instead gate review with an active
+`agent = "reviewer"` triage step (their panel/review layers are currently
+commented out as a temporary debug cut - see
+`docs/development/debug-cut.md`). Do not assume either automated path
+routes through `planner.md`/`plan-reviewer.md` - it does not, today.
 
 ## Delivery process
 

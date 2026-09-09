@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/mark"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
@@ -47,6 +48,7 @@ type Model struct {
 
 	safetyMode string
 	costUSD    float64
+	queued     int
 
 	// notice is a one-line message shown INSTEAD of the turn line, and
 	// only until the next turn starts. It carries the outcome of an
@@ -73,6 +75,7 @@ func New(t theme.Theme, tier theme.Tier) Model {
 // spinner clock.
 func (m *Model) Start(label string, now time.Time) tea.Cmd {
 	m.notice = ""
+	m.queued = 0
 	m.active = true
 	m.label = label
 	m.detail = ""
@@ -127,6 +130,17 @@ func (m *Model) SetCost(costUSD float64) {
 	m.costUSD = costUSD
 }
 
+// SetQueued sets the number of messages waiting behind the active turn,
+// shown as a pill beside the turn line (label, detail, elapsed clock) -
+// never in place of it. A message queued while a turn is running must not
+// hide that a turn IS running: Notice() replaces the whole line and was
+// the wrong tool for this (see the callers this replaced in
+// internal/ui/screen/conversation). n <= 0 hides the pill. SetLabel and
+// SetDetail do not touch it - only Start (a new turn) and n == 0 clear it.
+func (m *Model) SetQueued(n int) {
+	m.queued = n
+}
+
 // Notice shows a one-line message until the next turn starts.
 //
 // A clipboard write is the case that needs it. tea.SetClipboard emits
@@ -139,7 +153,27 @@ func (m *Model) Notice(text string) { m.notice = text }
 func (m *Model) ClearNotice() { m.notice = "" }
 
 // Active reports whether the line draws anything.
+//
+// This is a RENDER question, not an activity question: a notice with no
+// turn behind it still occupies the row. Callers deciding whether the
+// spinner clock should keep running must use Animating instead - see the
+// comment there for the defect that distinction exists to prevent.
 func (m Model) Active() bool { return m.active || m.notice != "" }
+
+// Animating reports whether the line has a MOVING mark, i.e. whether a
+// tick would change anything on screen.
+//
+// It is deliberately narrower than Active. Update itself already refuses
+// to advance a frame unless m.active ("if _, ok := msg.(TickMsg); !ok ||
+// !m.active"), and View draws the notice INSTEAD of the mark, so a
+// notice-only line is static by construction.
+//
+// The distinction is load-bearing. A notice outlives its turn - Stop only
+// clears m.active, and the sole production reset is Start - so a clock
+// whose lifetime is gated on Active never lapses after a turn that left
+// one behind, repainting the whole cockpit at SpinnerFPS forever with
+// nothing running.
+func (m Model) Animating() bool { return m.active }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if _, ok := msg.(TickMsg); !ok || !m.active {
@@ -149,6 +183,52 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	next, _ := m.mark.Update(mark.TickMsg{})
 	m.mark = next
 	return m, tickCmd()
+}
+
+// TickCmd returns a Cmd to start or continue the spinner tick loop.
+func TickCmd() tea.Cmd {
+	return tickCmd()
+}
+
+// Mark returns a copy of the statusline's current mark Model.
+func (m Model) Mark() mark.Model { return m.mark }
+
+// MarkView returns the statusline mark's rendered view.
+func (m Model) MarkView() string { return m.mark.View() }
+
+// MarkGlyph returns the statusline mark's current glyph rune.
+func (m Model) MarkGlyph() rune { return m.mark.Glyph() }
+
+// Frame returns the spinner frame index.
+func (m Model) Frame() int { return m.frame }
+
+// badge returns the fixed-width (14-rune) activity capsule:
+// [ <glyph> <LABEL> ]
+// Brackets and spacers wear RoleFGSubtle; glyph wears the mark's role;
+// Waiting/Pending labels wear RoleWarning (the reserved yellow), while
+// autonomous states stay subtle.
+func (m Model) badge() string {
+	st := stateFor(m.label)
+	labelRole := theme.RoleFGSubtle
+	if st == mark.Waiting || st == mark.Pending {
+		labelRole = theme.RoleWarning
+	}
+
+	clean := strings.ToUpper(m.label)
+	if ansi.StringWidth(clean) > 8 {
+		clean = ansi.Truncate(clean, 8, uikitconfig.ClipMarker)
+	}
+	if pad := 8 - ansi.StringWidth(clean); pad > 0 {
+		clean += strings.Repeat(" ", pad)
+	}
+
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	bracketOpen := subtle.Render("[")
+	bracketClose := subtle.Render("]")
+	glyph := m.mark.View()
+	styledLabel := render.Role(m.Theme, m.Tier, labelRole).Render(clean)
+
+	return bracketOpen + subtle.Render(" ") + glyph + subtle.Render(" ") + styledLabel + subtle.Render(" ") + bracketClose
 }
 
 // View renders the line as of now. now is a parameter rather than
@@ -165,11 +245,19 @@ func (m Model) View(now time.Time) string {
 	// a live "18.3s" beside a committed "4.1s" reads as one language.
 	elapsed := now.Sub(m.started).Round(time.Second)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	line := m.mark.View() + subtle.Render(" ") + subtle.Render(m.label)
-	if m.detail != "" {
-		line += subtle.Render("  " + m.detail)
+	line := m.badge()
+
+	isASCII := m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY
+	divider := " · "
+	if isASCII {
+		divider = " - "
 	}
-	line += subtle.Render("  " + render.FormatElapsed(int(elapsed.Milliseconds())))
+
+	if m.detail != "" {
+		line += subtle.Render("  " + m.detail + divider + render.FormatElapsed(int(elapsed.Milliseconds())))
+	} else {
+		line += subtle.Render("  " + render.FormatElapsed(int(elapsed.Milliseconds())))
+	}
 
 	// Telemetry & Safety Pill badges
 	var pills []string
@@ -191,6 +279,9 @@ func (m Model) View(now time.Time) string {
 	}
 	if m.costUSD > 0.0001 {
 		pills = append(pills, subtle.Render(fmt.Sprintf("$%.2f", m.costUSD)))
+	}
+	if m.queued > 0 {
+		pills = append(pills, subtle.Render(fmt.Sprintf("[queued: %d]", m.queued)))
 	}
 
 	if len(pills) > 0 {

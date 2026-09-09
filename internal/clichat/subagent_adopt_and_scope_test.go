@@ -71,7 +71,7 @@ func TestRegisterSkillHandlersSkipsDeniedSkills(t *testing.T) {
 
 	err = registerSkillHandlers(d, tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}),
 		nullCompleter{}, "test-model", sessionDial{}, config.SubagentConfig{}, resultBudgets{},
-		0, nil, nil, skillReg, scope, nil, contextmgr.PrepareInput{}, nil)
+		0, nil, nil, skillReg, scope, nil, contextmgr.PrepareInput{}, nil, nil)
 	if err != nil {
 		t.Fatalf("registerSkillHandlers: %v", err)
 	}

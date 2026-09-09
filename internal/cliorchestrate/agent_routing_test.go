@@ -53,32 +53,12 @@ func routingTools(t *testing.T) *dispatchTasksTool {
 // cliorchestrate.HandlerOneshot, not through a named agent's handler.
 func TestAgentFieldOptionalRunsOneshot(t *testing.T) {
 	dispatch := routingTools(t)
-	out, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
+	out, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("Execute error = %v, want nil", err)
 	}
 	if !strings.Contains(out, "oneshot-ok") {
 		t.Fatalf("Execute output = %q, want the oneshot handler's result", out)
-	}
-}
-
-func TestHandlerAndNameSelectorsRejected(t *testing.T) {
-	dispatch := routingTools(t)
-	cases := []struct {
-		name string
-		tool func(json.RawMessage) error
-		args string
-	}{
-		{"dispatch handler", func(a json.RawMessage) error { _, err := dispatch.Execute(context.Background(), a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","handler":"multi_step"}]}`},
-		{"dispatch name", func(a json.RawMessage) error { _, err := dispatch.Execute(context.Background(), a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","name":"oneshot"}]}`},
-		{"dispatch role", func(a json.RawMessage) error { _, err := dispatch.Execute(context.Background(), a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","role":"reviewer"}]}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.tool(json.RawMessage(tc.args)); err == nil || !strings.Contains(err.Error(), "unknown field") {
-				t.Fatalf("error = %v, want strict selector rejection", err)
-			}
-		})
 	}
 }
 
@@ -90,7 +70,11 @@ func TestBuiltInRunnerCannotSelectAgent(t *testing.T) {
 	}
 }
 
-func TestAgentEnumInParameters(t *testing.T) {
+// TestInternalSelectorsNeverLeakIntoTheSchema pins one property: the internal
+// handler/name selectors are never advertised to the model. The agent field's
+// roster prose is TestAgentRosterStaysInTheDescription's subject, and the
+// absent enum is TestAgentFieldPublishesNoEnum's (agent_roster_hint_test.go).
+func TestInternalSelectorsNeverLeakIntoTheSchema(t *testing.T) {
 	dispatch := routingTools(t)
 	parameters := dispatch.Parameters()
 	items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
@@ -100,14 +84,6 @@ func TestAgentEnumInParameters(t *testing.T) {
 	}
 	if _, found := props["name"]; found {
 		t.Fatal("name leaked into model schema")
-	}
-	agent := props["agent"].(map[string]any)
-	if got := agent["enum"].([]string); len(got) != 2 || got[0] != "researcher" || got[1] != "writer" {
-		t.Fatalf("agent enum = %#v", got)
-	}
-	hasRoster := strings.Contains(agent["description"].(string), "researcher: Research evidence")
-	if !hasRoster {
-		t.Fatalf("agent routing hint = %q", agent["description"])
 	}
 }
 
@@ -132,22 +108,6 @@ func TestTaskItemSchemaAgentIsOptional(t *testing.T) {
 		if required[i] != w {
 			t.Fatalf("required=%v, want %v", required, want)
 		}
-	}
-}
-
-func TestAgentEnumOmittedWhenRegistryEmpty(t *testing.T) {
-	for name, parameters := range map[string]map[string]any{
-		"dispatch nil":   (&dispatchTasksTool{}).Parameters(),
-		"dispatch empty": (&dispatchTasksTool{agentReg: agents.NewRegistry()}).Parameters(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
-			props := items["properties"].(map[string]any)
-			agent := props["agent"].(map[string]any)
-			if enumVal, found := agent["enum"]; found {
-				t.Fatalf("empty registry must not emit enum key, got %#v", enumVal)
-			}
-		})
 	}
 }
 

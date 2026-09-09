@@ -301,3 +301,25 @@ func TestRenderSmoke_IntermediateReasoningAndNoticesDuringStream(t *testing.T) {
 		t.Errorf("notice occurrence=%d, want 1", c)
 	}
 }
+
+// TestPlainRendererSaysTheReplyAboveIsVoid covers the discard on the piped
+// surface. A writer cannot retract what it printed, so silence would leave
+// the rejected reply and its replacement stacked with nothing between them.
+func TestPlainRendererSaysTheReplyAboveIsVoid(t *testing.T) {
+	var buf bytes.Buffer
+	err := Render(&buf, []uievent.Event{
+		{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "the rejected reply"}},
+		{Kind: uievent.KindAssistantReset, Body: uievent.AssistantResetBody{Reason: "schema_retry"}},
+		{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "the accepted reply"}},
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "discarded the reply above") {
+		t.Errorf("the discard is invisible; a reader sees two answers:\n%s", got)
+	}
+	if !strings.Contains(got, "schema_retry") {
+		t.Errorf("the reason did not reach the line:\n%s", got)
+	}
+}

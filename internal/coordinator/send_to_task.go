@@ -20,7 +20,7 @@ import (
 // answer if the ledger write failed. Registry asks participate in one-shot
 // claim (INV one answer per ask); phase-03 question ids are not registry asks
 // and keep post-then-deliver without claim.
-func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
+func (c *Coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
 	if h == nil {
 		return false, fmt.Errorf("send to task: nil handle")
 	}
@@ -101,7 +101,7 @@ func (h *RunHandle) MarkTaskMailboxTerminal(taskID string) {
 // wait_seconds. Gated on the ledger task status (IsTaskTerminal): a retry that
 // is pending or queued must NOT be declined — the task will run again and may
 // answer. Repo read errors fail safe (no decline; the asker timer handles it).
-func (c *coordinator) declineAsksForTerminalTask(runID, taskID string) {
+func (c *Coordinator) declineAsksForTerminalTask(runID, taskID string) {
 	if c == nil || c.repo == nil || runID == "" || taskID == "" {
 		return
 	}
@@ -139,7 +139,7 @@ func (c *coordinator) declineAsksForTerminalTask(runID, taskID string) {
 // status (IsTaskTerminal) so a retry that is pending/queued is never declined;
 // idempotent so a sealed/claimed ask no-ops and a real answer in flight always
 // wins.
-func (c *coordinator) declineAskDeliveredToTerminal(runID, taskID, askID string) {
+func (c *Coordinator) declineAskDeliveredToTerminal(runID, taskID, askID string) {
 	if c == nil || c.repo == nil || runID == "" || taskID == "" || askID == "" {
 		return
 	}
@@ -168,7 +168,7 @@ func (c *coordinator) declineAskDeliveredToTerminal(runID, taskID, askID string)
 // run_messages can surface it after the fact. Best-effort (the decline itself
 // already happened; a failed append must not fail the finalize fence). Mirrors
 // how other events append: c.repo.AppendEvent then c.emitLifecycleEvent.
-func (c *coordinator) appendAskDeclinedEvent(runID, askerTaskID, askID string) {
+func (c *Coordinator) appendAskDeclinedEvent(runID, askerTaskID, askID string) {
 	if c == nil || c.repo == nil || runID == "" || askerTaskID == "" || askID == "" {
 		return
 	}

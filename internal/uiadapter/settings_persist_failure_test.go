@@ -113,3 +113,28 @@ func TestSettingsRemoveProviderSurfacesPersistFailure(t *testing.T) {
 		t.Fatalf("terminal state = %v, want SaveFailed", event.State)
 	}
 }
+
+// TestSettingsGeneralEditRollbackRestoresConversationState pins
+// rollbackGeneral's own s.conv != nil branch: with a live *Conversation
+// wired via SetConversation, a persist failure must restore its
+// show-reasoning/notice/scroll-lines state to what it was before the
+// edit, not leave the optimistic in-memory change standing.
+func TestSettingsGeneralEditRollbackRestoresConversationState(t *testing.T) {
+	store := settingsStoreWithUnwritableConfig(t)
+	conv := uiadapter.NewConversation(chat.NewSession(&config.Resolved{Model: "test-model"}, nil))
+	store.SetConversation(conv)
+
+	// The default is ShowReasoning: true (settings_general.go:33), so
+	// toggling it OFF is the change a successful rollback must undo.
+	handle, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetShowReasoning{On: false})
+	if err != nil {
+		return
+	}
+	event := awaitTerminal(t, handle)
+	if event.State != ports.SaveFailed {
+		t.Fatalf("terminal state = %v, want SaveFailed", event.State)
+	}
+	if got := store.Settings().General.General().ShowReasoning; !got {
+		t.Errorf("General().ShowReasoning = %v after a rolled-back edit, want the rollback to have restored the true default", got)
+	}
+}

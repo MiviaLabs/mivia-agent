@@ -132,10 +132,114 @@ func TestEnsureSelectedMCPToolsRegistersServer(t *testing.T) {
 	defer cleanup()
 	state := &AgentSessionState{ToolBase: registry, MCPManager: manager}
 	selected := agents.ResolvedAgent{EffectiveMCPServers: []string{"repo"}}
-	if err := ensureSelectedMCPTools(state, selected); err != nil {
+	if err := ensureSelectedMCPTools(nil, state, selected); err != nil {
 		t.Fatalf("ensureSelectedMCPTools() error = %v", err)
 	}
 	if _, ok := registry.Get("mcp__repo__x6563686f"); !ok {
 		t.Fatal("registry.Get(mcp__repo__x6563686f) = not found")
+	}
+}
+
+// TestSetupSessionMCPToolsAttachesGlobalServersWithNoAgentSelected pins the
+// fix for the reported bug: a configured `global = true` MCP server's tools
+// never reached the root session, because SetupSessionMCPTools passed nil
+// serverIDs whenever selected == nil and no fallback ever kicked in. The
+// root/no-agent-selected identity is the DEFAULT session (no `mivia` agent
+// definition and no --agent), so this was the common case, not an edge case.
+func TestSetupSessionMCPToolsAttachesGlobalServersWithNoAgentSelected(t *testing.T) {
+	t.Setenv("MIVIA_CLI_MCP_HELPER", "1")
+	res := serverConfig()
+	res.MCP.Servers[0].Global = true
+	registry := tools.NewRegistry()
+	manager, cleanup, err := SetupSessionMCPTools(registry, &res, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, ok := registry.Get("mcp__repo__x6563686f"); !ok {
+		t.Fatal("registry.Get(mcp__repo__x6563686f) = not found: a global MCP " +
+			"server's tools must reach the root session even when no agent is selected")
+	}
+	if manager == nil {
+		t.Fatal("SetupSessionMCPTools() returned a nil manager")
+	}
+}
+
+// TestSetupSessionMCPToolsSkipsNonGlobalServersWithNoAgentSelected is the
+// negative twin: a server that is NOT marked global must stay unattached at
+// root, matching the same rule resolveMCPServers already enforces for a
+// resolved agent that names no mcp_servers of its own.
+func TestSetupSessionMCPToolsSkipsNonGlobalServersWithNoAgentSelected(t *testing.T) {
+	t.Setenv("MIVIA_CLI_MCP_HELPER", "1")
+	res := serverConfig()
+	res.MCP.Servers[0].Global = false
+	registry := tools.NewRegistry()
+	_, cleanup, err := SetupSessionMCPTools(registry, &res, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, ok := registry.Get("mcp__repo__x6563686f"); ok {
+		t.Fatal("a non-global MCP server's tools were attached at root with no agent selected")
+	}
+}
+
+// TestEnsureRootMCPToolsNilStateIsNoOp confirms ensureRootMCPTools tolerates
+// a nil AgentSessionState (a tools-off session, or a caller with no agent
+// state) as a documented no-op rather than a nil-pointer panic on
+// state.ToolBase / state.MCPManager.
+func TestEnsureRootMCPToolsNilStateIsNoOp(t *testing.T) {
+	res := serverConfig()
+	if err := ensureRootMCPTools(nil, &res, nil); err != nil {
+		t.Fatalf("ensureRootMCPTools(nil state) error = %v, want nil no-op", err)
+	}
+}
+
+// TestEnsureRootMCPToolsMergesGlobalServers is the positive twin: with a
+// real state, ensureRootMCPTools must merge every configured GLOBAL MCP
+// server into the tool base, mirroring
+// TestSetupSessionMCPToolsAttachesGlobalServersWithNoAgentSelected but via
+// the agent-switch merge path instead of initial session setup.
+func TestEnsureRootMCPToolsMergesGlobalServers(t *testing.T) {
+	t.Setenv("MIVIA_CLI_MCP_HELPER", "1")
+	res := serverConfig()
+	res.MCP.Servers[0].Global = true
+	registry := tools.NewRegistry()
+	manager, cleanup, err := SetupSessionMCPTools(registry, &res, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	// Fresh registry standing in for a restored root surface that has not
+	// yet seen this global server merged in.
+	fresh := tools.NewRegistry()
+	state := &AgentSessionState{ToolBase: fresh, MCPManager: manager}
+	if err := ensureRootMCPTools(nil, &res, state); err != nil {
+		t.Fatalf("ensureRootMCPTools() error = %v", err)
+	}
+	if _, ok := fresh.Get("mcp__repo__x6563686f"); !ok {
+		t.Fatal("ensureRootMCPTools() did not merge the global server's tools into the tool base")
+	}
+}
+
+// TestSelectedOrGlobalMCPServers pins the selection rule directly: a selected
+// agent's own scope wins outright (even when empty, which must NOT fall back
+// to the global set - an agent that explicitly names no servers gets none);
+// nil selected falls back to cfg's global server IDs.
+func TestSelectedOrGlobalMCPServers(t *testing.T) {
+	cfg := &config.Resolved{MCP: config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{
+		{ID: "global", Global: true}, {ID: "private", Global: false},
+	}}}
+	if got := SelectedOrGlobalMCPServers(cfg, nil); len(got) != 1 || got[0] != "global" {
+		t.Fatalf("no agent selected = %v, want [global]", got)
+	}
+	scoped := &agents.ResolvedAgent{EffectiveMCPServers: []string{"private"}}
+	if got := SelectedOrGlobalMCPServers(cfg, scoped); len(got) != 1 || got[0] != "private" {
+		t.Fatalf("selected agent's own scope = %v, want [private]", got)
+	}
+	empty := &agents.ResolvedAgent{EffectiveMCPServers: []string{}}
+	if got := SelectedOrGlobalMCPServers(cfg, empty); len(got) != 0 {
+		t.Fatalf("agent with an explicit empty scope = %v, want none (must not fall back to global)", got)
 	}
 }

@@ -288,3 +288,44 @@ func TestSessionReleaseContextLeaseIsANoOpWhenNeverArmed(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	session.ReleaseContextLease(context.Background())
 }
+
+// TestSessionStopContextLeaseHeartbeatIsANoOpWhenNeverArmed confirms a
+// session that never bound a context store (no heartbeat ever armed)
+// tolerates StopContextLeaseHeartbeat as a no-op rather than a nil-pointer
+// panic. This is the pool-adoption discard path in
+// internal/uiadapter/session_pool_worktree.go, which calls this on any
+// discarded twin session regardless of whether it ever armed a heartbeat.
+func TestSessionStopContextLeaseHeartbeatIsANoOpWhenNeverArmed(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	session.StopContextLeaseHeartbeat()
+}
+
+// TestSessionStopContextLeaseHeartbeatStopsTickingWithoutReleasing confirms
+// the non-nil path: StopContextLeaseHeartbeat stops the ticking goroutine
+// (no further RenewLease calls land) but does NOT call ReleaseLease - the
+// documented contract distinguishing it from ReleaseContextLease for the
+// pool-adopted-twin case where the durable lease row must survive.
+func TestSessionStopContextLeaseHeartbeatStopsTickingWithoutReleasing(t *testing.T) {
+	store := &heartbeatFakeStore{}
+	principal := heartbeatTestPrincipal(t, "sess-1", "subj-1")
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	session.contextHeartbeatOnce.Do(func() {})
+	session.contextHeartbeat = newContextHeartbeat(5*time.Millisecond, func() contextstate.Principal { return principal })
+	session.contextHeartbeat.arm(store, principal)
+	waitForCondition(t, time.Second, "heartbeat never renewed before stop", func() bool {
+		count, _ := store.counts()
+		return count > 0
+	})
+
+	session.StopContextLeaseHeartbeat()
+
+	if releaseCount, _ := store.releases(); releaseCount != 0 {
+		t.Fatalf("ReleaseLease call count = %d, want 0 - StopContextLeaseHeartbeat must not release the lease", releaseCount)
+	}
+	countAtStop, _ := store.counts()
+	time.Sleep(20 * time.Millisecond)
+	countAfter, _ := store.counts()
+	if countAfter != countAtStop {
+		t.Fatalf("renewCount grew from %d to %d after StopContextLeaseHeartbeat returned - the heartbeat kept ticking", countAtStop, countAfter)
+	}
+}

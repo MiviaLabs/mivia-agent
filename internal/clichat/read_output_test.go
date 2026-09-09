@@ -217,7 +217,7 @@ func TestReadOutputCrossPrincipalDenied(t *testing.T) {
 func TestReadOutputRegisteredOnRootAndSpawnedScopes(t *testing.T) {
 	reg := tools.NewRegistry()
 	d := runtime.New(runtime.Policy{})
-	spool, err := registerLedgerTools(d, reg, ledger.NewMemoryLedgerRepository(), 0, nil)
+	spool, err := registerLedgerTools(d, reg, ledger.NewMemoryLedgerRepository(), 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

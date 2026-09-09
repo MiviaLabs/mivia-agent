@@ -138,11 +138,9 @@ func TestCommandRunner_New_NilSessionReturnsError(t *testing.T) {
 }
 
 func TestCommandRunner_New_SavesAndReturnsNewConversation(t *testing.T) {
-	dir := t.TempDir()
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "test", Model: "m1"}
 	sess := chat.NewSession(res, comp)
-	sess.SessionDir = dir
 	sess.SessionID = "original-sess"
 	runner := uiadapter.NewCommandRunner(sess, res, nil)
 
@@ -330,7 +328,6 @@ func setupSessionStoreFixture(t *testing.T) (*chat.Session, *config.Resolved, *s
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
 	sess := chat.NewSession(res, comp)
-	sess.SessionDir = tmpDir
 
 	store, err := storage.OpenSQLite(tmpDir + "/context.db")
 	if err != nil {
@@ -667,8 +664,11 @@ func TestCommandRunner_YoloToggle(t *testing.T) {
 	}
 }
 
-func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
-	dir := t.TempDir()
+// twoModelOllamaCatalogConfig returns a config.Resolved advertising models m1
+// and m2 on the ollama provider - the fixture shape
+// TestCommandRunner_SelectModel_InResumedSession needs to make SelectModel's
+// cross-session resolution actually see both models as selectable.
+func twoModelOllamaCatalogConfig() *config.Resolved {
 	res := &config.Resolved{
 		ProviderName: "ollama",
 		Model:        "m1",
@@ -699,14 +699,48 @@ func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
 			},
 		},
 	})
+	return res
+}
+
+// bindRunnerTestContextSession wires sess to a shared durable context store,
+// the fixture two or more sessions in the same test need to resume each
+// other via the same catalog.
+func bindRunnerTestContextSession(t *testing.T, sess *chat.Session, store *storage.SQLite) {
+	t.Helper()
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
+	dir := t.TempDir()
+	res := twoModelOllamaCatalogConfig()
+
+	store, err := storage.OpenSQLite(dir + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 
 	sess1 := chat.NewSession(res, nil)
-	sess1.SessionDir = dir
 	sess1.SessionID = "session-1"
+	bindRunnerTestContextSession(t, sess1, store)
 
 	sess2 := chat.NewSession(res, nil)
-	sess2.SessionDir = dir
 	sess2.SessionID = "session-2"
+	bindRunnerTestContextSession(t, sess2, store)
 	sess2.Messages = []provider.Message{
 		{Role: provider.RoleUser, Content: "Hello in session 2"},
 	}
@@ -736,6 +770,90 @@ func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
 	// Verify the resumed conversation's model was updated to m2
 	if got := resumedConv.Model().Name; got != "m2" {
 		t.Errorf("resumed conversation model = %q, want %q", got, "m2")
+	}
+}
+
+// TestCommandRunner_SetActiveSessionID covers every branch of
+// SetActiveSessionID (runner.go): a nil receiver, a runner with no pool, an
+// empty id, an id the pool has no live session for, and a live pooled id -
+// each verified indirectly through SelectModel, since sess/pool are
+// unexported: whichever session SelectModel actually mutates next is
+// whichever session SetActiveSessionID left active.
+func TestCommandRunner_SetActiveSessionID(t *testing.T) {
+	dir := t.TempDir()
+	res := twoModelOllamaCatalogConfig()
+
+	store, err := storage.OpenSQLite(dir + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	sess1 := chat.NewSession(res, nil)
+	sess1.SessionID = "session-1"
+	bindRunnerTestContextSession(t, sess1, store)
+
+	sess2 := chat.NewSession(res, nil)
+	sess2.SessionID = "session-2"
+	bindRunnerTestContextSession(t, sess2, store)
+	if err := sess2.Save("session-2"); err != nil {
+		t.Fatalf("failed to save session-2: %v", err)
+	}
+
+	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	runner := uiadapter.NewCommandRunnerWithPool(sess1, pool, res, nil)
+	selectModel := func(r *uiadapter.CommandRunner, name string) {
+		t.Helper()
+		if out := r.SelectModel(context.Background(), name); out.Err != "" {
+			t.Fatalf("SelectModel(%s) error: %v", name, out.Err)
+		}
+	}
+
+	// A nil receiver must not panic.
+	var nilRunner *uiadapter.CommandRunner
+	nilRunner.SetActiveSessionID("session-1")
+
+	// A runner with no pool is a no-op: SelectModel still acts on sess1,
+	// the session it was constructed with.
+	noPoolRunner := uiadapter.NewCommandRunnerWithPool(sess1, nil, res, nil)
+	noPoolRunner.SetActiveSessionID("session-2")
+	selectModel(noPoolRunner, "m2")
+	if got := sess1.CurrentSelection().Model; got != "m2" {
+		t.Fatalf("no-pool SetActiveSessionID must be a no-op; sess1 model = %q, want m2", got)
+	}
+
+	// Resolve session-2 into the pool via SelectSession/GetOrCreate (same
+	// path TestCommandRunner_SelectModel_InResumedSession exercises),
+	// making runner active on session-2. This LOADS a fresh *chat.Session
+	// distinct from the local sess2 var (which only wrote it to disk), so
+	// live() below always fetches the pool's own tracked object.
+	if out := runner.SelectSession(context.Background(), "session-2"); out.Err != "" {
+		t.Fatalf("SelectSession error: %v", out.Err)
+	}
+	live := func(id string) *chat.Session { return runner.Pool().Session(id) }
+
+	// An empty id is a no-op: runner stays on session-2.
+	runner.SetActiveSessionID("")
+	selectModel(runner, "m1")
+	if got := live("session-2").CurrentSelection().Model; got != "m1" {
+		t.Fatalf("empty-id SetActiveSessionID must be a no-op; session-2 model = %q, want m1", got)
+	}
+
+	// An id the pool has no live session for is a no-op: still session-2.
+	runner.SetActiveSessionID("does-not-exist")
+	selectModel(runner, "m2")
+	if got := live("session-2").CurrentSelection().Model; got != "m2" {
+		t.Fatalf("unknown-id SetActiveSessionID must be a no-op; session-2 model = %q, want m2", got)
+	}
+	if got := sess1.CurrentSelection().Model; got != "m2" {
+		t.Fatalf("unknown-id SetActiveSessionID must not touch sess1; model = %q, want m2 (unchanged)", got)
+	}
+
+	// A live pooled id switches the runner back to session-1.
+	runner.SetActiveSessionID("session-1")
+	selectModel(runner, "m1")
+	if got := sess1.CurrentSelection().Model; got != "m1" {
+		t.Fatalf("SetActiveSessionID(session-1) did not switch the runner; sess1 model = %q, want m1", got)
 	}
 }
 

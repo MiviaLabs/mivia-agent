@@ -1,0 +1,129 @@
+{
+  "contract": "mivia API /v1/auth",
+  "source": {
+    "repository": "mivia-app-web",
+    "paths": [
+      "apps/api/src/main.ts",
+      "apps/api/src/auth/auth.controller.ts",
+      "apps/api/src/auth/auth.service.ts",
+      "apps/api/src/auth/dto/auth-response.dto.ts",
+      "apps/api/src/auth/dto/login.dto.ts",
+      "apps/api/src/auth/dto/refresh-token.dto.ts",
+      "apps/api/src/auth/dto/revoke-token.dto.ts",
+      "apps/api/src/common/filters/http-exception.filter.ts"
+    ],
+    "transcribedOn": "2026-08-30"
+  },
+  "notes": [
+    "URI versioning with defaultVersion 1 and no setGlobalPrefix, so every path is /v1/... with no /api segment.",
+    "The global ValidationPipe sets forbidNonWhitelisted, so an unknown request property is a 400. The request field sets below are load-bearing, not stylistic.",
+    "Success statuses are the declared @HttpCode. The client accepts any 2xx so an undeclared change does not break it, but a drift in this recorded value is still a contract change worth seeing in a diff."
+  ],
+  "routes": [
+    {
+      "name": "login",
+      "method": "POST",
+      "path": "/v1/auth/login",
+      "auth": "public",
+      "successStatus": 200,
+      "requestStruct": "loginRequest",
+      "responseStruct": "sessionResponse"
+    },
+    {
+      "name": "refresh",
+      "method": "POST",
+      "path": "/v1/auth/refresh",
+      "auth": "public",
+      "successStatus": 200,
+      "requestStruct": "refreshRequest",
+      "responseStruct": "sessionResponse"
+    },
+    {
+      "name": "revoke",
+      "method": "POST",
+      "path": "/v1/auth/revoke",
+      "auth": "bearer",
+      "successStatus": 200,
+      "requestStruct": "revokeRequest",
+      "responseStruct": "okResponse"
+    },
+    {
+      "name": "me",
+      "method": "GET",
+      "path": "/v1/auth/me",
+      "auth": "bearer",
+      "successStatus": 200,
+      "requestStruct": "",
+      "responseStruct": "meResponse"
+    }
+  ],
+  "structs": {
+    "loginRequest": {
+      "dto": "LoginDto",
+      "fields": {
+        "email": { "kind": "string", "nullable": false },
+        "password": { "kind": "string", "nullable": false }
+      }
+    },
+    "refreshRequest": {
+      "dto": "RefreshTokenDto",
+      "fields": {
+        "refreshToken": { "kind": "string", "nullable": false }
+      }
+    },
+    "revokeRequest": {
+      "dto": "RevokeTokenDto",
+      "dtoFieldsNotModelled": ["sessionId"],
+      "dtoFieldsNotModelledReason": "The CLI only ever revokes its own session, by refresh token or by the caller's jti. Revoking an arbitrary session by id is a web-app capability with no CLI surface.",
+      "fields": {
+        "refreshToken": { "kind": "string", "nullable": false }
+      }
+    },
+    "authUser": {
+      "dto": "AuthUserDto",
+      "fields": {
+        "id": { "kind": "string", "nullable": false },
+        "email": { "kind": "string", "nullable": false },
+        "organizationId": { "kind": "string", "nullable": false },
+        "role": { "kind": "string", "nullable": false }
+      }
+    },
+    "sessionResponse": {
+      "dto": "LoginResponseDto, RefreshResponseDto",
+      "dtoNote": "The two DTOs are structurally identical, so one Go struct models both.",
+      "fields": {
+        "ok": { "kind": "bool", "nullable": false },
+        "token": { "kind": "string", "nullable": false },
+        "refreshToken": { "kind": "string", "nullable": false },
+        "user": { "kind": "object", "nullable": false },
+        "expiresAt": { "kind": "string", "nullable": false }
+      }
+    },
+    "okResponse": {
+      "dto": "RevokeResponseDto",
+      "fields": {
+        "ok": { "kind": "bool", "nullable": false }
+      }
+    },
+    "meResponse": {
+      "dto": "MeResponseDto",
+      "fields": {
+        "id": { "kind": "string", "nullable": false },
+        "email": { "kind": "string", "nullable": false },
+        "organizationId": { "kind": "string", "nullable": false },
+        "role": { "kind": "string", "nullable": false },
+        "displayName": { "kind": "string", "nullable": true }
+      }
+    },
+    "errorEnvelope": {
+      "dto": "ErrorResponseEnvelope",
+      "dtoFieldsNotModelled": ["timestamp", "path"],
+      "dtoFieldsNotModelledReason": "The client reads the envelope only to tell a real API rejection from an intercepted one and to quote the reason; the timestamp and path add nothing to either.",
+      "fields": {
+        "statusCode": { "kind": "number", "nullable": false },
+        "error": { "kind": "string", "nullable": false },
+        "message": { "kind": "string|array", "nullable": false }
+      }
+    }
+  }
+}

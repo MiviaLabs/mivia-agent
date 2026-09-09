@@ -258,6 +258,7 @@ func TestE2EAskDeclineResponderTerminal(t *testing.T) {
 			{"id": "aud-1", "agent": "auditor",
 				"prompt": declineAuditorMarker + " you are the auditor; you are overloaded and will wrap up without answering any ask"},
 		},
+		"wait": "run",
 	})
 	type execResult struct {
 		body string

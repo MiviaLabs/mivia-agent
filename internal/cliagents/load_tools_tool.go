@@ -46,7 +46,7 @@ func NewLoadToolsTool(sess *chat.Session, candidates []tools.TierCandidate) tool
 func (t *loadToolsTool) Name() string { return tools.LoadToolsToolName }
 
 func (t *loadToolsTool) Description() string {
-	return "Enable additional tools for execution. The tools listed as not currently loaded in your instructions are authorized and their schemas are visible to you, but they are locked: calling one directly before loading it is refused. Name them exactly with \"names\", or describe what you need with \"query\" to match against tool names and descriptions. Loaded tools become callable on your NEXT turn, not the current one: finish this turn, then call them. Calling a locked tool directly also queues it to load automatically, so you can just retry the call next turn instead."
+	return "Enable additional tools for execution. The tools listed as not currently loaded in your instructions are authorized and their schemas are visible to you, but they are locked. Name them exactly with \"names\", or describe what you need with \"query\" to match against tool names and descriptions. Calling a locked tool directly is not refused: the call runs immediately, and the tool is queued for native admission at the next step boundary too."
 }
 
 func (t *loadToolsTool) Parameters() map[string]any {
@@ -198,7 +198,7 @@ func (t *loadToolsTool) render(result chat.AdmissionStageResult) string {
 		b.WriteString("\n")
 	}
 	if len(result.Staged) > 0 || len(result.AlreadyStaged) > 0 {
-		b.WriteString("These are available from your next turn, not this one. Publication happens at the turn boundary and can be deferred while other work is active. Finish this turn first.")
+		b.WriteString("These run immediately if you call them now. Native publication happens at the turn boundary and can be deferred while other work is active.")
 	}
 	if len(result.AlreadyStaged) > 0 {
 		if _, reason, ok := t.session.PendingAdmissionStatus(); ok && reason != "" {
@@ -233,8 +233,19 @@ func truncatePreviewUTF8(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
 	}
-	for maxBytes > 0 && !utf8.ValidString(s[:maxBytes]) {
-		maxBytes--
+	// Back off across the rune at the CUT BOUNDARY only (DC-6). Re-validating
+	// the whole prefix (utf8.ValidString(s[:maxBytes])) trims all the way back
+	// to the first invalid byte ANYWHERE in s - a model-supplied tool name
+	// carrying one raw byte would make the error name nothing at all - and
+	// costs O(n^2). A real U+FFFD decodes with size 3 and is kept. Mirrors
+	// chatsync.truncateString.
+	cut := s[:maxBytes]
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
+		cut = cut[:len(cut)-1]
 	}
-	return s[:maxBytes]
+	return cut
 }

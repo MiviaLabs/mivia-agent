@@ -973,12 +973,13 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 	}
 }
 
-// TestCtrlBWhilePanelFocusedIsHandledByThePanel pins the dispatch
-// order: with the panel's list focused, ctrl+b is consumed by the panel
-// (focus returns to the composer, panel stays open) rather than
-// reaching the global cycle's close step. The full cycle, layout, and
-// live-update coverage lives in filespanel_test.go.
-func TestCtrlBWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
+// TestCtrlBWhilePanelFocusedClosesThePanel pins the dispatch order:
+// with the panel's list focused, ctrl+b is NOT consumed as a focus
+// change - it falls through to the global toggle and closes the panel,
+// so one press always hides an open sidebar. tab is the key that hands
+// focus back without closing. The full cycle, layout, and live-update
+// coverage lives in filespanel_test.go.
+func TestCtrlBWhilePanelFocusedClosesThePanel(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
 	scr := next.(Screen)
@@ -986,14 +987,14 @@ func TestCtrlBWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
 	if !scr.panel.open || !scr.panel.focused {
 		t.Fatalf("precondition: panel open and focused, got open=%v focused=%v", scr.panel.open, scr.panel.focused)
 	}
-	scr, _ = press(t, scr, ctrl('b')) // focused: hand focus back, stay open
-	if !scr.panel.open || scr.panel.focused {
-		t.Errorf("second ctrl+b: open=%v focused=%v, want open with composer focus", scr.panel.open, scr.panel.focused)
+	scr, _ = press(t, scr, ctrl('b')) // focused: close outright
+	if scr.panel.open || scr.panel.focused {
+		t.Errorf("second ctrl+b: open=%v focused=%v, want closed", scr.panel.open, scr.panel.focused)
 	}
 	// The composer takes keys again: typing lands in the input.
 	scr, _ = press(t, scr, key("h"))
 	if got := scr.composer.Value(); got != "h" {
-		t.Errorf("composer value %q after defocus, want \"h\"", got)
+		t.Errorf("composer value %q after the panel closed, want \"h\"", got)
 	}
 }
 
@@ -1136,5 +1137,30 @@ func TestViewReflectsLiveSelectionRect(t *testing.T) {
 	wantY := 1 + s.topbar.Height() + 1
 	if tr.MinX != 1 || tr.MinY != wantY || tr.Height() != s.transcriptHeight() {
 		t.Fatalf("injected rect must match geometry: %+v", tr)
+	}
+}
+
+// TestEnterOnBlankInputSendsNothing: the composer's guard must match the wire
+// shape gate, which rejects a user message whose content trims to nothing. An
+// empty-string-only check let a stray space or newline through as a turn, and
+// that turn made every later turn fail preparation.
+func TestEnterOnBlankInputSendsNothing(t *testing.T) {
+	for _, blank := range []string{" ", "   "} {
+		s := sized(t, 1)
+		next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
+		scr := next.(Screen)
+		for _, r := range blank {
+			scr, _ = press(t, scr, key(string(r)))
+		}
+		if got := scr.composer.Value(); strings.TrimSpace(got) != "" || got == "" {
+			t.Fatalf("precondition: composer holds blank input, got %q", got)
+		}
+		scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if scr.active != nil {
+			t.Errorf("Enter on %q started a turn; a blank message is not sendable", blank)
+		}
+		if got := scr.composer.Value(); got != "" {
+			t.Errorf("composer still holds %q after Enter on blank input", got)
+		}
 	}
 }

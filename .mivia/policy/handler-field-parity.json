@@ -10,6 +10,7 @@
     "Depth": "Spawn-depth for nested delegation. A one-shot handler cannot spawn, so it has no depth to propagate.",
     "ID": "Parent id threaded into nested tool dispatch. A one-shot call dispatches no tools.",
     "Role": "Role carried onto nested tool dispatch, same reason as ID.",
-    "TurnID": "Turn identity for nested tool dispatch, same reason as ID."
+    "TurnID": "Turn identity for nested tool dispatch, same reason as ID.",
+    "ParentTaskID": "Attribution of emitted events. OneShotHandler stamps no EventOrigin at all and emits no attributed events - grep Origin in internal/subagents/oneshot.go returns nothing - so there is no event for a parent id to appear on. If that handler ever starts emitting attributed events, this entry must go and the field must be honored there too."
   }
 }

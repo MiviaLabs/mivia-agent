@@ -102,6 +102,94 @@ subject` shape). After the run settles, close and delete-branch any PR it
 opened - the workflow's own PR body already says "Safe to close/delete."
 Never merge one.
 
+### Live auth smoke (`make live-auth-smoke`)
+
+`internal/miviaauth/live_smoke_test.go` checks the CLI's `/v1/auth` model
+against a real deployment. It is behind the `liveauth` build tag, so it does
+not compile - and cannot run - unless someone asks for it by name. Same
+never-run-without-explicit-ask rule as the workflows above; it is not part of
+`make verify` or CI.
+
+It exists because `api/contracts/auth.v1.json` is maintained by hand and its
+README says it cannot see the live server drift: the snapshot pins what the Go
+package models, so it catches our edits, never the API's. This test is the
+other half of that guard, and it is the only thing in the repo that compares
+the two.
+
+```bash
+MIVIA_LIVE_API_BASE_URL=https://... \
+MIVIA_LIVE_EMAIL=... MIVIA_LIVE_PASSWORD=... make live-auth-smoke
+```
+
+Use a throwaway account, never a real user's. The run mutates real state: it
+revokes the sessions it creates, and deliberately trips the server's
+refresh-token theft detection once (that check is why it needs its own second
+login). It spends 2 logins against the API's login rate limit per run.
+
+Missing credentials fail the run rather than skipping it - if the tag is set,
+a quiet pass would be the wrong answer.
+
+### Live chat-session probe (`make live-chat-smoke`)
+
+`internal/chatsync/live_contract_test.go` checks the deployed
+`/v1/chat-sessions` surface: register a session, push events, read them by
+cursor, stream them over SSE, and drive the remote-input long poll. It is
+behind the `livechat` build tag and follows the same never-run-without-an-
+explicit-ask rule as the auth smoke, with the same environment variables.
+
+It exists because the API half of chat session sync shipped first and both
+clients (the Go CLI and the web viewer) are still unwritten, so nothing else
+exercises the real surface. The probe is not a client: it speaks raw HTTP with
+its own wire structs, so it pins server behavior without freezing any decision
+about how the CLI gets built.
+
+It leaves ended session rows in the target database - the API has no delete
+endpoint. Every row it creates is titled `mivia live probe: ...`.
+
+**The probe found four API defects on its first run.** All four are now fixed
+in `apps/api` and verified green against the deployment on 2026-08-31, so a red
+run means a regression, not known debt:
+
+| Probe | Was | Now |
+|-------|-----|-----|
+| `PayloadBoundIsAClientError` | 500, body carried the failing SQL and its bound parameters | 400 |
+| `RejectsIntraBatchGap` | `[seq 1, seq 99]` accepted, `lastSeq` hid the hole | 400 |
+| `ConsumeIsExactlyOnce` | second consume returned 200, so the loser of a race could not tell | 409 |
+| `EndIsTerminal` | events still appended to an ended session | 409 |
+
+The full run passes: lifecycle, validation and tenancy guards, SSE replay, SSE
+live push, and cursor resume.
+
+**Frame naming is intentional, not a defect.** Every SSE frame is named after
+its client-supplied event type rather than a fixed name, so a browser's
+`EventSource.onmessage` never fires; a web client must call
+`addEventListener` once per entry in `knownTypes`. This is recorded as
+intentional in `api/contracts/chat-sessions.v1.json`'s notes array and echoed
+in Go terms by `internal/chatsync/wire.go`'s `WireEventSpec.Type` doc
+comment; `live_sse_test.go`'s "names the frame after the event type" subtest
+confirms it against the live deployment. The open trade-off is forward
+compatibility: `knownTypes` is a closed, versioned list, so a type added in a
+later deploy is invisible to an already-shipped client's
+`addEventListener` list until that client updates. Changing this behavior -
+for example, to a default frame name - is a breaking, versioned decision
+owned by `apps/api`, not something this repo decides unilaterally.
+
+**`TestLiveChatSessionFanOutReachesEveryStream` is the multi-replica check.** It
+opens six concurrent SSE streams, each on its own connection with keep-alives
+off so the load balancer is free to place them, appends one event, and counts
+how many streams received it. A working fan-out is six; local-only delivery is
+roughly half, because a stream only hears an append served by the replica it
+happens to sit on.
+
+That count is a diagnosis rather than a hang, and it earned its place at once:
+against two replicas it measured 5, then 2, then 2 of 6, which identified the
+original Postgres LISTEN/NOTIFY transport as silently dead through Neon's
+pooled endpoint. `LISTEN` succeeds through PgBouncer and never delivers. The
+transport moved to Redis pub/sub; the probe now reads 6 of 6.
+
+Run this one against a deployment with more than one replica. On a single
+replica it passes trivially and proves nothing.
+
 ### e2e suite runner (`scripts/e2e_suite.py`)
 
 `scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
@@ -132,7 +220,7 @@ delete-branch any PR a run opens; never merge one.
 ### Context-compaction e2e (`scripts/e2e_context_compaction.py`)
 
 Drives the real `mivia` binary through automatic compaction, manual
-`/compact`, the tool-enabled agent loop, and the summary-gate-off path.
+`/compact`, the tool-enabled agent loop, and the unbuildable-summarizer path.
 Every assertion reads a surface a user or host app observes - the NDJSON
 wire and the durable SQLite checkpoint - so a regression that unit tests
 pass by construction still fails here.
@@ -156,7 +244,7 @@ Use the report shape in `.agents/rules/01-output-budget.md`.
 
 ## Skill frontmatter
 
-Workspace skills (`.mivia/skills/*/SKILL.md`) use a strict YAML subset for
+Workspace skills (`.agents/skills/*/SKILL.md`) use a strict YAML subset for
 frontmatter between `---` delimiters. The parser lives in
 `internal/skills/frontmatter.go` and supports:
 
@@ -167,7 +255,9 @@ frontmatter between `---` delimiters. The parser lives in
 
 **Recognised keys:** `name`, `description`, `triggers`, `user-invocable`,
 `argument-hint`, `short-description`, `tools` (optional list of required tool
-names for agent skill binding).
+names for agent skill binding), `input_schema`, `output_schema`. The two schema
+keys take a JSON string, not a nested map: the frontmatter subset parser has no
+nested maps.
 
 **Rejected with a line-numbered error:**
 

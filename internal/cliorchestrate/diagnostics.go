@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
@@ -23,16 +22,14 @@ type RunSummary struct {
 // Diagnostics exposes bounded, privacy-safe operator views of the
 // orchestration runtime. Sources: LedgerRepository for run state.
 type Diagnostics struct {
-	repo    ledger.LedgerRepository
-	adapter *events.MetricsAdapter
+	repo ledger.LedgerRepository
 }
 
-// NewDiagnostics creates a Diagnostics backed by the given ledger repo and metrics adapter.
+// NewDiagnostics creates a Diagnostics backed by the given ledger repo.
 // If repo is nil, ListRuns and ActiveHandles return zero values.
-// If adapter is nil, MetricsSnapshot returns zero values.
 // Does not panic.
-func NewDiagnostics(repo ledger.LedgerRepository, adapter *events.MetricsAdapter) *Diagnostics {
-	return &Diagnostics{repo: repo, adapter: adapter}
+func NewDiagnostics(repo ledger.LedgerRepository) *Diagnostics {
+	return &Diagnostics{repo: repo}
 }
 
 // ListRuns returns runs from the ledger repository, newest first.
@@ -94,14 +91,4 @@ func (d *Diagnostics) ActiveHandles() int {
 		return 0
 	}
 	return len(runs)
-}
-
-// MetricsSnapshot returns current counts from MetricsAdapter via Snapshot().
-// MetricsSnapshot returns a snapshot of event counts from the metrics adapter.
-// Returns zero values if no adapter configured.
-func (d *Diagnostics) MetricsSnapshot() (counts map[string]uint64, totalEvents uint64) {
-	if d.adapter == nil {
-		return nil, 0
-	}
-	return d.adapter.Snapshot()
 }

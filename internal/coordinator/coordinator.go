@@ -15,14 +15,14 @@ import (
 )
 
 // executeRun runs the tasks through the pool and records results in the ledger.
-func (c *coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
+func (c *Coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 	c.executeResumedRun(h, tasks, nil)
 }
 
 // executeResumedRun runs tasks with the outcomes of already-finished tasks
 // pre-seeded, so a dependent of a completed task can become ready without that
 // task being dispatched again.
-func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) {
+func (c *Coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) {
 	defer close(h.done)
 	stopHeartbeat := c.startClaimHeartbeat(h)
 	defer func() {
@@ -50,11 +50,12 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	// would duplicate the terminal lifecycle event.
 	results = mergeSeededResults(results, tasks, seed)
 
-	h.mu.Lock()
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	snap, snapErr := c.repo.GetRun(persistCtx, h.runID)
 	cancel()
 	runErr = joinError(runErr, snapErr)
+
+	h.mu.Lock()
 	h.result = &RunResult{Snapshot: snap, Results: results, Err: runErr}
 	h.mu.Unlock()
 }
@@ -89,7 +90,7 @@ func mergeSeededResults(results []subagents.Result, tasks []subagents.Task, seed
 	return results
 }
 
-func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
+func (c *Coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
 	if IsTaskTerminal(status) {
 		h.MarkTaskMailboxTerminal(task.ID)
 	}
@@ -112,7 +113,7 @@ func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status s
 	return nil
 }
 
-func (c *coordinator) validateHandle(h *RunHandle) error {
+func (c *Coordinator) validateHandle(h *RunHandle) error {
 	if h == nil || h.owner != c {
 		return fmt.Errorf("run handle does not belong to coordinator")
 	}
@@ -137,7 +138,7 @@ func joinError(current, next error) error {
 }
 
 // Inspect returns a read-only snapshot of the run from the ledger.
-func (c *coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnapshot, error) {
+func (c *Coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnapshot, error) {
 	if err := c.validateHandle(h); err != nil {
 		return ledger.RunSnapshot{}, err
 	}
@@ -145,7 +146,7 @@ func (c *coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnap
 }
 
 // Join blocks until the run completes or the context is canceled.
-func (c *coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error) {
+func (c *Coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error) {
 	if err := c.validateHandle(h); err != nil {
 		return nil, err
 	}

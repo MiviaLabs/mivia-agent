@@ -8,9 +8,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
-	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/hooks"
+	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/events"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // TestSDKTurnShaping_ParallelCallsDoNotCollide proves that under MaxConcurrentTools > 1,
@@ -61,6 +60,7 @@ func TestSDKTurnShaping_VetoPathCleanRecord(t *testing.T) {
 		MaxSteps:               5,
 		MaxConcurrentTools:     2,
 		BatchResultBudgetBytes: 1024,
+		Dispatcher:             governedDispatcher(t, reg),
 	}
 
 	sdkOpts, turn, err := buildAgentLoopOptions(loop, opts, "hi")
@@ -69,11 +69,11 @@ func TestSDKTurnShaping_VetoPathCleanRecord(t *testing.T) {
 	}
 
 	if sdkOpts.Hooks == nil {
-		sdkOpts.Hooks = sdkhooks.New()
+		sdkOpts.Hooks = sdkhooks.NewRegistry()
 	}
 	// Add a PointPreTool hook that vetoes call_b
-	_ = sdkOpts.Hooks.Add(sdkhooks.PointPreTool, "veto-b", func(ctx context.Context, payload any) (bool, error) {
-		if call, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	_ = sdkOpts.Hooks.Add(sdkhooks.PointPreTool, "veto-b", func(_ context.Context, payload any) (bool, error) {
+		if call, ok := payload.(sdkshape.ToolCall); ok {
 			if call.ID == "call_b" {
 				return false, nil // veto call_b
 			}

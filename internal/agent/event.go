@@ -29,12 +29,34 @@ const (
 	EventSubagentStart     EventKind = "subagent_start"
 	EventSubagentEnd       EventKind = "subagent_end"
 	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
+	// EventSubagentBegin is the run-level OPENING signal for one subagent,
+	// the mirror of EventSubagentDone. Distinct from EventSubagentStart,
+	// which opens a single nested TOOL call.
+	//
+	// A run was previously only discoverable from its first nested event, so
+	// a consumer had no event carrying the run's own identity: the task it
+	// was given arrived, if at all, on the dispatching tool call, which a
+	// remote consumer has to correlate separately. Detail carries the bounded
+	// task description, and the event's own timestamp is the run's start.
+	EventSubagentBegin EventKind = "subagent_begin"
 	// EventSubagentDone is the run-level terminal signal for one subagent:
 	// its loop returned and it will emit nothing further. Distinct from
 	// EventSubagentEnd, which closes a single nested tool call - an agent
 	// between two tool calls has no open tools but is very much still alive,
 	// so only this event may retire it from the parent's live agent view.
 	EventSubagentDone EventKind = "subagent_done"
+	// EventAssistantReset tells a consumer to discard the assistant text it
+	// has accumulated for the current turn and start again.
+	//
+	// It exists because a turn can be re-driven whole after it has already
+	// streamed: a prompt-too-long compaction retry, a bounded empty-response
+	// retry, or a subagent schema retry all replay the turn. A consumer that
+	// appends deltas has no way to know the second attempt is not a
+	// continuation of the first, and shows the answer twice.
+	//
+	// It is not an error. A turn that resets and then completes is a normal,
+	// successful turn.
+	EventAssistantReset EventKind = "assistant_reset"
 	// EventThinking carries model reasoning (chain of thought) for providers
 	// that expose it. Content is the reasoning delta.
 	EventThinking EventKind = "thinking"
@@ -104,6 +126,36 @@ type EventOrigin struct {
 	// EventOrigin) and for any subagent kind that doesn't stamp origin at
 	// all (a one-shot delegate has no nested tool calls to attribute).
 	TaskDescription string
+	// SessionID and TurnID are the conversation and turn the subagent is
+	// working inside, copied from the runtime.Request that dispatched it.
+	//
+	// They are on the ORIGIN rather than captured where the event is published
+	// because the subagent publish path runs through package-level state
+	// (clichat's global bus and progress sink), which has no per-session
+	// context to capture: the dispatcher is shared by pointer through the
+	// copied tool registry, so construction-time capture would attribute every
+	// subagent to whichever session happened to build it first. Carrying the
+	// identity on the event is the only place it is unambiguous.
+	//
+	// Without them a subagent's events reach the bus with an empty SessionID,
+	// and internal/hub's receiver drops every event whose SessionID does not
+	// match its own - so a second live surface saw the root loop's tool calls
+	// and none of its subagents'. Empty for the root loop, which publishes
+	// through agent.emit and gets both from Options instead.
+	SessionID string
+	TurnID    string
+	// ParentTaskID is the TaskID of the subagent that dispatched this one,
+	// empty when the root loop dispatched it.
+	//
+	// Depth alone cannot express which run started which. This is the edge
+	// that makes a depth a position rather than just a number.
+	//
+	// Set today only for an ask_agent referral: the asking task caused the
+	// referral to start. Runs from one dispatch_tasks call are siblings and
+	// report no parent, and a subagent cannot dispatch a subagent - the
+	// mandatory tool denylist removes the dispatching tools from every spawned
+	// registry - so a deeper chain does not arise on that path.
+	ParentTaskID string
 }
 
 // IsZero reports whether the origin is the root loop.
@@ -117,6 +169,11 @@ type Event struct {
 	Content    string
 	Input      string // bounded, redacted tool input preview
 	Output     string // bounded, redacted tool output preview
+	// InputBody and OutputBody are the same redacted text WITHOUT the
+	// preview cap, for a bus consumer that bounds and marks the cut itself
+	// (chatsync). See events.Event for the contract.
+	InputBody  string
+	OutputBody string
 	// Denied is set only for EventHook: true when this run blocked its tool
 	// call (a PreToolUse hook that denied). Renderers use it to give a
 	// blocking run a distinct visual treatment from an advisory one.
@@ -140,6 +197,12 @@ type Event struct {
 	Identity *events.Identity
 	// Compaction is present only for the post-commit typed progress event. It
 	// is not copied into generic content/input/output envelopes.
+	// HookStdout is what a hook actually PRINTED, with no operator diagnostic
+	// appended. Event.Output carries the two joined, because a local operator
+	// wants the diagnostic next to the output; that joined form names the
+	// hook's absolute PATH, so it must not be what crosses to another machine.
+	HookStdout string
+
 	Compaction *events.CompactionEvent
 	// CacheUsage is present only for the typed prompt-cache accounting
 	// event. It is not copied into generic content/input/output envelopes.

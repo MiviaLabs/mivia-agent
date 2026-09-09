@@ -5,17 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
+func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
 	return c.runDAGSeeded(h, tasks, nil)
 }
 
-func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) ([]subagents.Result, error) {
+func (c *Coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) ([]subagents.Result, error) {
 	pending := make(map[string]subagents.Task, len(tasks))
 	for _, task := range tasks {
 		pending[task.ID] = task
@@ -55,7 +56,11 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 			}
 			continue
 		}
-		runErr = joinError(runErr, c.startReady(h, ready, pending, results, retryQueue, retryStates))
+		// Cap only the EAGER pre-dispatch CAS pass, not the batch pool.Run
+		// receives - see capReadyToPoolCapacity's and onTaskStart's doc
+		// comments for why.
+		eager := c.capReadyToPoolCapacity(ready)
+		runErr = joinError(runErr, c.startReady(h, eager, pending, results, retryQueue, retryStates))
 		batch := buildBatch(ready, pending, results, retryQueue)
 		if len(batch) == 0 {
 			continue
@@ -88,7 +93,7 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 // it succeeds while we own the run and returns ErrClaimHeld once another
 // holder took it. On theft, the caller stops dispatching and leaves the run
 // to the new owner (do not settle — the run is not ours anymore).
-func (c *coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) error {
+func (c *Coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) error {
 	if err := c.repo.ClaimRun(h.poolCtx, h.runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
 			return fmt.Errorf("run %q execution claim was taken by another executor; dispatching stopped", h.runID)
@@ -109,7 +114,7 @@ func (c *coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, result
 	return nil
 }
 
-func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Task, results map[string]subagents.Result) ([]subagents.Task, error) {
+func (c *Coordinator) collectReady(h *RunHandle, pending map[string]subagents.Task, results map[string]subagents.Result) ([]subagents.Task, error) {
 	ready := make([]subagents.Task, 0, len(pending))
 	var runErr error
 	for id, task := range pending {
@@ -144,10 +149,65 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 			ready = append(ready, task)
 		}
 	}
+	// Sorted by ID to match subagents.Pool's own internal ready() ordering
+	// (subagents.go): Pool.run rebuilds its own pending map from whatever
+	// batch buildBatch submits and re-derives ITS OWN dispatch order via
+	// ready(), which sorts by ID - completely independent of the order this
+	// slice is built in. Left unsorted (map iteration order, randomized per
+	// call), capReadyToPoolCapacity's ready[:capacity] prefix names a
+	// DIFFERENT set of tasks than the ones Pool.execute's fixed worker count
+	// actually dispatches first, so the eager pre-dispatch CAS pass and the
+	// pool's real concurrency ceiling silently disagree on which tasks are
+	// "the first N" - onTaskStart's lazy CAS (task_start.go) then adds
+	// running transitions for whichever tasks the pool actually reaches
+	// first, on top of capReadyToPoolCapacity's already-CASed set, letting
+	// the ledger's running count exceed true worker capacity. Sorting here
+	// makes both selections agree.
+	sort.Slice(ready, func(i, j int) bool { return ready[i].ID < ready[j].ID })
 	return ready, runErr
 }
 
-func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
+// capReadyToPoolCapacity truncates ready to the pool's worker capacity, so
+// the caller only transitions (and later dispatches) as many tasks as the
+// pool can actually run concurrently in this wave. Truncated tasks stay
+// untouched (still "queued" in the ledger, still in pending) and are
+// re-offered as ready on the DAG loop's next iteration, once this wave's
+// pool.Run call frees a worker.
+//
+// A nil pool or a non-positive/unlimited Workers() value (subagents.Pool's
+// own "0 means unlimited" and "Unlimited (-1)" contract) applies no cap:
+// the pool itself sizes its worker count from len(batch) in that case
+// (subagents.go's execute), so capping here would only shrink throughput
+// without fixing anything the running-status bug touches.
+//
+// The caller (runDAGSeeded) uses this ONLY to bound startReady's eager
+// pre-dispatch ledger CAS - not the batch buildBatch submits to pool.Run,
+// which always gets the full, uncapped ready set. Pool.execute
+// (subagents.go) already caps its own worker-goroutine count to the pool's
+// configured Workers and feeds them from one shared jobs channel, so it
+// continuously admits the next ready task the instant ANY worker frees -
+// the correct concurrency primitive. Capping the SUBMITTED batch as well (a
+// prior fix) threw that continuous admission away: pool.Run/Pool.execute
+// wg.Wait()s for the WHOLE submitted batch before returning, so a
+// capacity-capped task was only ever reconsidered once every task of the
+// PRIOR wave finished - including a slow or parked one still holding a
+// worker no other wave task needed anymore. A task beyond this eager cap
+// reaches the pool still "queued" in the ledger; onTaskStart (task_start.go)
+// lazily CASes it to running the moment a worker actually reaches it, so
+// the ledger never shows more "running" than the pool can execute AND a
+// freed worker is reused within the same wave, not the next one.
+func (c *Coordinator) capReadyToPoolCapacity(ready []subagents.Task) []subagents.Task {
+	if c.pool == nil {
+		return ready
+	}
+	capacity := c.pool.Workers()
+	if capacity <= 0 || capacity >= len(ready) {
+		return ready
+	}
+	return ready[:capacity]
+}
+
+func (c *Coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
 	var runErr error
 	for _, task := range ready {
 		if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err == nil {
@@ -204,7 +264,7 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 // still be dispatched, never recorded as failed without executing. A ledger
 // read error reports false so the caller falls through to the legacy failure
 // path unchanged.
-func (c *coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
+func (c *Coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
 	if err != nil {
 		return false
@@ -216,7 +276,7 @@ func (c *coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
 // already been claimed for cancellation (cancel_requested or canceled). When a
 // startReady dispatch CAS loses to reconcileCancellation, this distinguishes a
 // cancellation race from a genuine failure so the task surfaces as canceled.
-func (c *coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
+func (c *Coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
 	snap, err := c.repo.GetTask(context.Background(), h.runID, taskID)
 	if err != nil {
 		return false
@@ -312,7 +372,7 @@ func canceledResult(h *RunHandle, taskID string) subagents.Result {
 // change, and same as requeueForResume's crash-recovery path (recovery.go) -
 // both already require MaxRetries > 0, so the exposure is bounded to
 // deployments that explicitly opt into retry.
-func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
+func (c *Coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
 	if err != nil || h.policy().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
 		return false
@@ -342,7 +402,7 @@ func buildBatch(ready []subagents.Task, pending map[string]subagents.Task, resul
 	return batch
 }
 
-func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState, tasks ...[]subagents.Task) error {
+func (c *Coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState, tasks ...[]subagents.Task) error {
 	var runErr error
 	// tasks is optional (the direct-call test path passes none): the retry
 	// transition carries the task's SessionID only when the task is in hand.
@@ -395,7 +455,7 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 	return runErr
 }
 
-func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) []subagents.Result {
+func (c *Coordinator) finalizeDAG(tasks []subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) []subagents.Result {
 	for taskID := range queue {
 		if _, ok := results[taskID]; !ok {
 			if state := states[taskID]; state != nil {
@@ -423,7 +483,7 @@ func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]sub
 	return out
 }
 
-func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string, sessionIDs ...string) error {
+func (c *Coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string, sessionIDs ...string) error {
 	ctx := h.poolContext()
 	snap, err := c.repo.GetTask(ctx, h.runID, taskID)
 	if err != nil {
@@ -458,7 +518,7 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 // count forever. Open/closed/claimed ask bookkeeping is untouched — in-flight
 // open asks are retired at the attempt boundary via CloseAsk/SealAskAnswer.
 // The per-attempt upstream message quota is reset here too (FIX P3b).
-func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
+func (c *Coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
 	attemptID := newAttemptID()
 	h.setAttempt(taskID, attemptID)
 	c.resetTaskAsks(h.runID, taskID)

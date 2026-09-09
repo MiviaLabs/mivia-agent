@@ -334,3 +334,28 @@ func TestHeaderDiffTierDegradation(t *testing.T) {
 		t.Errorf("expected '+5 -2' in ASCII degraded header, got %q", p)
 	}
 }
+
+func TestSectionHeader(t *testing.T) {
+	th := loadTheme(t)
+	hdr := SectionHeader(th, theme.TierTrueColor, "Behavior", 40)
+	p := plain(hdr)
+	if !strings.HasPrefix(p, "◆ Behavior ") {
+		t.Errorf("expected header to start with '◆ Behavior ', got %q", p)
+	}
+	if !strings.Contains(p, "─") {
+		t.Errorf("expected divider rune '─' in header, got %q", p)
+	}
+	if ansi.StringWidth(p) > 40 {
+		t.Errorf("width %d exceeds 40", ansi.StringWidth(p))
+	}
+
+	// ASCII degradation
+	hdrAscii := SectionHeader(th, theme.TierASCII, "Behavior", 30)
+	pAscii := plain(hdrAscii)
+	if !strings.HasPrefix(pAscii, "> Behavior ") {
+		t.Errorf("expected ASCII header to start with '> Behavior ', got %q", pAscii)
+	}
+	if !strings.Contains(pAscii, "-") {
+		t.Errorf("expected divider '-' in ASCII header, got %q", pAscii)
+	}
+}

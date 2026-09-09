@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
 const defaultPendingBuffer = 16
@@ -77,11 +77,19 @@ func (a *Approver) Resolve(id string, decision ports.Decision) {
 // arming a prompt. The second return is false when the policy is neither
 // (i.e. "once"/write-only), meaning gate must fall through to the
 // interactive prompt below.
-func (a *Approver) standingPolicyResult() (sdkadapter.ApprovalResult, bool) {
-	if a.sess == nil {
-		return sdkadapter.ApprovalResult{}, false
+func (a *Approver) standingPolicyResult(ctx context.Context) (sdkadapter.ApprovalResult, bool) {
+	// The CALLER's policy wins. One approver now serves several sessions -
+	// /new inherits this gate so the UI has a single place to render prompts
+	// from - and a.sess is whichever session it was constructed against. A
+	// transient /yolo on that one used to auto-approve write tools in a fresh
+	// conversation whose own policy said to prompt.
+	policy, ok := sdkadapter.ApprovalPolicyFromContext(ctx)
+	if !ok {
+		if a.sess == nil {
+			return sdkadapter.ApprovalResult{}, false
+		}
+		policy = a.sess.ApprovalPolicyValue()
 	}
-	policy := a.sess.ApprovalPolicyValue()
 	if sdkadapter.IsAutoApproval(policy) {
 		return sdkadapter.ApprovalResult{Approved: true}, true
 	}
@@ -96,26 +104,49 @@ func (a *Approver) standingPolicyResult() (sdkadapter.ApprovalResult, bool) {
 	return sdkadapter.ApprovalResult{}, false
 }
 
+// approvalKey is the key the waiting map must use: the same one the SDK
+// approval wrapper publishes the prompt under, because the TUI arms its prompt
+// from that uievent and Resolves with that id. Keying by an internally
+// generated "appr-N" while the prompt announced the call id made every Resolve
+// a silent no-op and the gate block forever - the "approved but still pending"
+// hang.
+//
+// The TOOL CALL id only. NOT the name as a fallback, even though an ID-less
+// call (a provider stream sending the name delta before, or without, the id)
+// then gets a generated id here that the published prompt cannot match, and
+// blocks until its context dies. A name is not a per-call identity: two
+// overlapping calls to one tool - ordinary for parallel subagents, which all
+// share this Approver - would collide on it. The second registration would
+// overwrite the first's channel, the operator would be shown one prompt and
+// asked to decide once, and that decision would authorize the OTHER call,
+// unseen. A hang is a bad outcome; approving a command nobody was shown is a
+// worse one, so this half of the ID-less case stays unfixed until there is a
+// per-call identity to key it on. See sdkadapter.recordKeyFromContext for the
+// reporting half, which has no such constraint.
+//
+// The operator is still SHOWN that prompt (the transcript renders a pending
+// block with a blank CallID), so approving it appears to do nothing until the
+// tool's own timeout returns canceled. That is worth knowing before debugging
+// it: the button is not broken, the call has no id to answer under.
+//
+// Returns "" when the ctx carries no tool call at all (legacy backend, direct
+// callers); the caller then generates an id, and consumers of Pending()
+// resolve with whatever ID the request carries - that path works, because the
+// same id is published and registered.
+func approvalKey(ctx context.Context) string {
+	tc, ok := sdkagentloop.ToolCallFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	return tc.ID
+}
+
 // gate is installed as chat.Session.ApprovalGate.
 func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
-	if res, short := a.standingPolicyResult(); short {
+	if res, short := a.standingPolicyResult(ctx); short {
 		return res
 	}
-	// The waiting map's key must be the id the UI will Resolve with.
-	// The new TUI arms its approval prompt from the tool.pending
-	// uievent, whose ToolCallID is the in-flight TOOL CALL id
-	// (EventToolPending.ToolCallID, stamped from toolcallctx by the
-	// SDK approval wrapper). Keying by an internally generated
-	// "appr-N" id made every Resolve a silent no-op and the gate
-	// blocked forever - the "approved but still pending" hang. When
-	// the ctx carries no tool call (legacy backend, direct callers),
-	// fall back to the generated id; consumers of Pending() resolve
-	// with whatever ID the request carries, so both domains stay
-	// self-consistent.
-	callID := ""
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok && tc.ID != "" {
-		callID = tc.ID
-	}
+	callID := approvalKey(ctx)
 	if callID == "" {
 		callID = fmt.Sprintf("appr-%d", atomic.AddUint64(&a.counter, 1))
 	}

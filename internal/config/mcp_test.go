@@ -284,3 +284,27 @@ func writeMCPConfig(t *testing.T, path, data string) {
 		t.Fatal(err)
 	}
 }
+
+// TestLoad_UserMCPConfigErrorSurfaces pins Load's own loadRuntimeMCPConfig
+// error wrap: a valid provider config paired with an invalid user-level
+// [mcp] table (an unknown key, same rejection as
+// TestLoadTrustedMCPConfigRejectsUnknownMCPKeys) must fail Load itself,
+// not silently degrade to no MCP servers.
+func TestLoad_UserMCPConfigErrorSurfaces(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[provider]
+name = "deepseek"
+[providers.deepseek]
+default_model = "deepseek-v4-pro"
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 10000 }]
+[mcp]
+enabled = true
+unsafe_secret = "value"
+`)
+	if _, err := Load(LoadOptions{WorkspaceRoot: t.TempDir()}); err == nil {
+		t.Fatal("Load accepted an invalid user-level [mcp] table")
+	}
+}

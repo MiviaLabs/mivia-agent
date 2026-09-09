@@ -42,7 +42,10 @@ import (
 //
 // An empty Content on either mode is dropped: deltas with no payload, and
 // interim/final events that arrived before any text was produced, are not
-// representable in the current uievent body set. Unknown Detail values
+// representable in the current uievent body set. That guard - not the
+// unknown-Detail fallback below - is what keeps the loop's content-free
+// "complete" flag (events.DetailAssistantComplete) off the TUI; carrying
+// text on it would render a text.end per iteration. Unknown Detail values
 // fall back to text.end so a future agent addition that introduces a new
 // mode still emits something visible rather than vanishing: only an
 // unrecognized EventKind (caught at the switch in TranslateEvent) is fatal.
@@ -113,6 +116,70 @@ func translateSubagentStart(ev agent.Event) []uievent.Event {
 	return translateToolStart(ev)
 }
 
+// laneLog wraps one note for Progress.Log, and returns nil for an empty note
+// so an empty log entry never renders as a blank line.
+func laneLog(detail string) []string {
+	if detail == "" {
+		return nil
+	}
+	return []string{detail}
+}
+
+// translateAssistantReset maps the turn-restart signal to a transcript reset.
+//
+// The turn is being re-driven from the beginning, so any assistant text the
+// transcript is holding for it belongs to an attempt that no longer exists.
+// Without this the replay is appended to the abandoned attempt and the reader
+// sees the answer twice.
+func translateAssistantReset(ev agent.Event) []uievent.Event {
+	return []uievent.Event{{
+		Kind: uievent.KindAssistantReset,
+		Body: uievent.AssistantResetBody{Reason: ev.Detail},
+	}}
+}
+
+// translateSubagentBegin maps the RUN-level opening signal to a progress
+// update on that run's own row, keyed by Origin.TaskID exactly as
+// translateSubagentDone and translateSubagentHeartbeat are.
+//
+// It is not a tool.start: no tool call is beginning. It exists so the row
+// appears, with the task it was given, before the run makes its first tool
+// call - which is the whole reason the event was added.
+func translateSubagentBegin(ev agent.Event) []uievent.Event {
+	out := notice(subagentBeginText(ev))
+	if ev.Origin.TaskID == "" {
+		// No run key to attach a row to, so the notice is all this can say.
+		// It is still said: a run that announces itself and produces nothing
+		// is indistinguishable from a run that never started.
+		return out
+	}
+	return append(out, uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{
+			ToolCallID: ev.Origin.TaskID,
+			// Log carries the task text: Progress has no free-text field,
+			// and Log is what the row already renders for a run's latest
+			// human-readable note.
+			Progress: &uievent.Progress{AgentName: ev.Origin.Agent, Status: "running", Log: laneLog(ev.Detail)},
+		},
+	})
+}
+
+// subagentBeginText mirrors subagentDoneText so a run's opening and closing
+// notices read as a pair.
+func subagentBeginText(ev agent.Event) string {
+	if desc := ev.Origin.TaskDescription; desc != "" {
+		return "subagent started: " + desc
+	}
+	if name := ev.Origin.Agent; name != "" {
+		return "subagent started: " + name
+	}
+	if ev.Name != "" {
+		return "subagent started: " + ev.Name
+	}
+	return "subagent started"
+}
+
 // translateSubagentEnd reuses the tool.end body shape; the same OK / Err
 // derivation as ordinary tool calls applies. Origin attribution rides on
 // the input event and is preserved by callers that thread TurnID / Seq
@@ -168,7 +235,7 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
-			Progress:   &uievent.Progress{Status: status},
+			Progress:   &uievent.Progress{AgentName: ev.Origin.Agent, Status: status},
 		},
 	})
 }
@@ -207,6 +274,7 @@ func translateSubagentHeartbeat(ev agent.Event) []uievent.Event {
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
 			Progress: &uievent.Progress{
+				AgentName: ev.Origin.Agent,
 				Status:    "running",
 				Step:      heartbeatStep(ev.Detail),
 				ToolCalls: heartbeatToolCalls(ev.Detail),

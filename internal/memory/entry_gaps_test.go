@@ -3,6 +3,7 @@ package memory
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // baseGapEntry returns a valid entry: it passes every Validate check except
@@ -103,5 +104,44 @@ func TestGapParseEmptyInputReturnsZeroEntry(t *testing.T) {
 		if e.Title != "" || e.Summary != "" || e.Scope != "" {
 			t.Fatalf("Parse(%q) = %+v, want zero Entry", data, e)
 		}
+	}
+}
+
+// TestGapValidateRejectsUnknownImportance covers the importance branch of
+// Validate: an empty importance is allowed (the store defaults it), but any
+// value outside high/medium/low must be refused, so a typo never reaches the
+// rendered file as an unrecognized frontmatter value.
+func TestGapValidateRejectsUnknownImportance(t *testing.T) {
+	e := baseGapEntry()
+	e.Importance = Importance("urgent")
+	err := e.Validate(Limits{})
+	if err == nil {
+		t.Fatal("expected unknown-importance rejection")
+	}
+	if !strings.Contains(err.Error(), "importance must be one of high, medium, low") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "urgent") {
+		t.Fatalf("error %v must name the rejected value", err)
+	}
+}
+
+// TestGapRenderProtocolFileDefaultsUpdatedToToday covers the empty-Created
+// branch of RenderProtocolFile: the frontmatter's updated field is mandatory,
+// so an entry with no Created date is stamped with today rather than emitting
+// an empty value the memories gate would reject.
+func TestGapRenderProtocolFileDefaultsUpdatedToToday(t *testing.T) {
+	e := baseGapEntry()
+	e.Created = ""
+	got := e.RenderProtocolFile("gap_entry")
+	want := "updated: " + time.Now().Format("2006-01-02") + "\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("rendered file lacks %q:\n%s", want, got)
+	}
+
+	dated := baseGapEntry()
+	dated.Created = "2026-08-09"
+	if datedOut := dated.RenderProtocolFile("gap_entry"); !strings.Contains(datedOut, "updated: 2026-08-09\n") {
+		t.Fatalf("a recorded Created date must be used verbatim:\n%s", datedOut)
 	}
 }

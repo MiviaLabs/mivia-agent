@@ -54,7 +54,8 @@ func TestDispatchTasksHangingTaskKeepsSiblingResults(t *testing.T) {
 		"tasks": [
 			{"id":"fast","agent":"oneshot","prompt":"answer now"},
 			{"id":"slow","agent":"oneshot","prompt":"block forever"}
-		]
+		],
+		"wait": "run"
 	}`)
 
 	// Bound the call exactly as the agent loop does.

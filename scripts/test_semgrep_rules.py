@@ -42,6 +42,10 @@ REQUIRED_IDS = [
     "mivia.go.no-direct-tool-execution-outside-dispatcher",
     "mivia.go.no-empty-test",
     "mivia.go.no-tautological-test-assertion",
+    "mivia.go.no-truncation-call-inside-envelope-literal",
+    "mivia.go.no-chat-principal-as-sync-handle",
+    "mivia.go.no-validstring-rune-boundary-backoff",
+    "mivia.go.no-locked-field-reread",
 ]
 
 # Substrings expected near each rule id (YAML-escaped forms, not compiled regexes).
@@ -51,6 +55,10 @@ RULE_PATTERN_HINTS = {
     "mivia.generic.no-git-hook-bypass-in-agent-config": r"no-verify",
     "mivia.go.no-empty-test": r"func",
     "mivia.go.no-tautological-test-assertion": r"assert\.True",
+    "mivia.go.no-truncation-call-inside-envelope-literal": "applyTruncation",
+    "mivia.go.no-chat-principal-as-sync-handle": r"LocalHandle\(\$X\.SessionID\)",
+    "mivia.go.no-validstring-rune-boundary-backoff": r"utf8\\\.ValidString\\\(",
+    "mivia.go.no-locked-field-reread": r"\$RECV\.\$MU\.Lock\(\)",
 }
 
 PORTABILITY_VIOLATIONS = [

@@ -20,7 +20,7 @@ import (
 // "hold" blocks until its context is done (used both for the timed-out task,
 // via a per-task Timeout, and for the sibling that keeps the run mid-flight
 // until Cancel lands).
-func newNoRetryCancelFixture(t *testing.T) (Coordinator, *ledger.MemoryLedgerRepository) {
+func newNoRetryCancelFixture(t *testing.T) (*Coordinator, *ledger.MemoryLedgerRepository) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -32,7 +32,7 @@ func newNoRetryCancelFixture(t *testing.T) (Coordinator, *ledger.MemoryLedgerRep
 }
 
 // waitForTaskStatusByID polls Inspect until the task with id reaches status.
-func waitForTaskStatusByID(t *testing.T, c Coordinator, h *RunHandle, id, status string) {
+func waitForTaskStatusByID(t *testing.T, c *Coordinator, h *RunHandle, id, status string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {

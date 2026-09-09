@@ -525,7 +525,14 @@ func TestYAMLHighlightOversizedTerminates(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			var got string
-			runWithinTimeout(t, 2*time.Second, "highlightCodeBlock oversized", func() {
+			// Measured ~0.34s of real work for the 1MiB case under -race in
+			// isolation - the budget below is CI-load headroom on top of
+			// that, not slack for an unbounded loop. This test's own name
+			// and the comment above pin a real fixed infinite-loop
+			// regression; a genuine reintroduction would still blow this
+			// budget, just not at the razor's edge a loaded shared runner
+			// occasionally crosses on 2s alone.
+			runWithinTimeout(t, 10*time.Second, "highlightCodeBlock oversized", func() {
 				got = highlightCodeBlock("yaml", tc.content)
 			})
 			if len(got) > 8*len(tc.content)+4096 {

@@ -31,8 +31,11 @@ The orchestrator learns the roster at its first turn, without searching:
 1. The root system prompt carries a `# Subagents` section (one line per
    agent, capped, appended additively - also on customized
    `[chat].system_prompt`).
-2. The advertised `dispatch_tasks` schema carries the real `agent` enum plus
-   optional-field prose from the resolved registry.
+2. The advertised `dispatch_tasks` schema carries the real roster and the
+   optional-field prose in the `agent` field description, from the resolved
+   registry. The field publishes no `enum`: an enum is enforced by the
+   provider before the tool runs, which turns a misspelled name into a
+   pre-execution tool failure that never names the valid alternatives.
 3. Selecting an unknown name errors with `(available: ...)` naming the
    roster.
 
@@ -43,7 +46,7 @@ next session start (or `/agent` switch).
 
 On launch, `runChat`:
 
-1. Discovers agent TOML files (user + workspace) and merges the compiled built-ins
+1. Discovers agent definition files (`.md` with YAML frontmatter, or `.toml`; user + workspace) and merges the compiled built-ins
 2. Resolves immutable definitions
 3. Selects `--agent <name>`, or defaults to **`mivia`** when present
 4. Applies that definition’s `system_prompt` and tool scope
@@ -55,7 +58,7 @@ with `write_file`); the next launch picks them up.
 
 | Workspace | Content |
 |-----------|---------|
-| **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.toml`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/cli/agent_prompt_repo_test.go`. |
+| **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.md`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/clichat/agent_prompt_repo_test.go`. |
 | **Any other project** | That project’s stable conventions in agent `system_prompt` fields. |
 
 ### Optional fields
@@ -82,7 +85,9 @@ skills = [
 
 Root `mivia.toml` omits `skills` so the orchestrator may invoke any trusted
 skill. Enforcement is at the task boundary when the model selects the task's
-explicit `agent` and optional `skill` fields.
+explicit `agent` and optional `skill` fields. If `agent` is omitted or blank,
+the dispatcher uses `general-purpose` when it is loaded; otherwise it uses the
+tool-less one-shot fallback, and a skill requires an available agent.
 
 ## User gate (`load_workspace_config`)
 
@@ -110,6 +115,10 @@ project skill cannot shadow then remove a user skill of the same name.
 
 ## Related
 
-- This repo’s agents: `.agents/agents/*.md` (mivia, go-engineer, researcher,
-  reviewer, security, docs, verifier)
+- This repo's agents: `.agents/agents/*.md` (auditor, builder, docs,
+  e2e-engineer, go-engineer, memory-curator, panel-reviewer, performance,
+  plan-reviewer, planner, researcher, review-synthesizer, reviewer, security,
+  verifier, workflow-engineer). This repo ships no committed `mivia` root-agent
+  file; the root session runs the compiled `general-orchestrator` fallback
+  instead (see "Built-in agents" above).
 - Namespace: `internal/workspace/namespace.go`, `internal/config/agents.go`

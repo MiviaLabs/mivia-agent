@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import os
 import random
 import subprocess
@@ -189,6 +190,71 @@ def test_blocks_commit_dash_n_argv() -> None:
     )
     assert proc.returncode != 0
     assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def flags_with_no_backing_pattern() -> list[str]:
+    """blockedFlags entries that no blockedFlagPatterns regex also catches.
+
+    Derived, never hand-listed: a hand-listed copy of a computed set is the
+    same defect one level up.
+    """
+    policy = json.loads(
+        (ROOT / ".mivia" / "policy" / "agent-hook-bypass.json").read_text(encoding="utf-8")
+    )
+    flags = policy.get("blockedFlags") or []
+    patterns = [re.compile(p) for p in policy.get("blockedFlagPatterns") or []]
+    return [f for f in flags if not any(p.search(f"git commit {f} -m x") for p in patterns)]
+
+
+def test_the_exact_flag_list_is_load_bearing() -> None:
+    """Pins the blockedFlags mechanism itself, not the regexes that shadow it.
+
+    Almost every blocked flag is also matched by a blockedFlagPatterns regex,
+    so the exact-flag loop could be deleted, or a policy entry dropped, with
+    the whole suite green. The flags below have no backing pattern, and the
+    assertion is on the reason string, so neither mechanism can stand in for
+    the other.
+    """
+    unbacked = flags_with_no_backing_pattern()
+    assert unbacked, (
+        "every blockedFlags entry is also pattern-matched, so this test pins "
+        "nothing. Keep one flag covered by the list alone, or assert the "
+        "reason string for a pattern-backed flag instead."
+    )
+    for flag in unbacked:
+        proc = run_guard(
+            "claude",
+            "PreToolUse",
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git commit {flag} -m x"},
+            },
+        )
+        assert proc.returncode != 0, f"{flag} was not blocked"
+        assert f"blocked flag {flag}" in (proc.stderr + proc.stdout), (
+            f"{flag} was blocked, but not by the exact-flag list"
+        )
+
+
+def test_every_blocked_flag_is_actually_blocked() -> None:
+    """Sweep the whole policy list, so a new entry cannot ship untested."""
+    policy = json.loads(
+        (ROOT / ".mivia" / "policy" / "agent-hook-bypass.json").read_text(encoding="utf-8")
+    )
+    flags = policy.get("blockedFlags") or []
+    assert flags, "blockedFlags is empty: the exact-flag mechanism would be inert"
+    for flag in flags:
+        proc = run_guard(
+            "claude",
+            "PreToolUse",
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git commit {flag} -m x"},
+            },
+        )
+        assert proc.returncode != 0, f"{flag} was not blocked"
 
 
 def test_blocks_commit_no_verify_argv() -> None:
@@ -528,6 +594,148 @@ def test_allows_dash_f_with_n_value_shell() -> None:
     assert proc.returncode == 0, proc.stderr + proc.stdout
 
 
+def test_run_command_guard_does_not_shred_a_later_segments_flags() -> None:
+    """A git-commit segment's short-option bundling must not leak into a
+    later shell segment.
+
+    _scan_segment used to run over the WHOLE argv once any segment matched
+    `git ... commit`, so `-fuzz` in a second, unrelated segment shredded into
+    -f -u -z -z and could not match resource-exhaustion.json. The command is
+    still blocked here, but by that policy's own pattern, not defeated by
+    git commit's option grammar leaking across a shell separator.
+    """
+    proc = run_command_guard(
+        ["git", "commit", "-m", "x", "&&", "go", "test", "-fuzz", "FuzzX"]
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "resource-exhaustion.json" in proc.stderr
+
+
+def test_run_command_guard_catches_dash_n_across_a_global_option() -> None:
+    """-n must be caught even when a global git option sits before commit.
+
+    The pattern-based check requires "git" and "commit" to be textually
+    adjacent; a global option between them defeated it.
+    The structural check added alongside this test does not require adjacency.
+    """
+    for argv in (
+        ["git", "-C", "/tmp", "commit", "-n", "-m", "x"],
+        ["git", "--no-pager", "commit", "-n", "-m", "x"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+        assert "agent-hook-bypass.json" in proc.stderr
+
+
+def test_run_command_guard_does_not_misclassify_a_branch_named_commit() -> None:
+    """A literal "commit" token that is not the subcommand must not count.
+
+    _git_commit_index used to scan for the first "commit" token anywhere
+    after "git", so `git branch commit -n` (a branch literally named commit)
+    was misread as a git-commit invocation and its own -n falsely blocked.
+    """
+    proc = run_command_guard(["git", "branch", "commit", "-n"])
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_run_command_guard_catches_dash_n_behind_every_long_global_option() -> None:
+    """A live bypass: any long-form git global option not in the value-
+    consuming set was read as boolean, its VALUE token then examined instead
+    of the real subcommand, so `_git_commit_index` never found "commit" and
+    the whole segment was skipped by both the structural and regex checks.
+    """
+    for argv in (
+        ["git", "--git-dir", "/tmp/x", "commit", "-n"],
+        ["git", "--work-tree", "/tmp/x", "commit", "-n"],
+        ["git", "--namespace", "foo", "commit", "-n"],
+        ["git", "--super-prefix", "foo", "commit", "-n"],
+        ["git", "--config-env", "user.name=X", "commit", "-n"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+
+
+def test_run_command_guard_allows_a_global_options_value_named_commit() -> None:
+    """A global option's VALUE is never the subcommand, long form included."""
+    for argv in (
+        ["git", "-C", "commit", "status"],
+        ["git", "--git-dir", "commit", "status"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 0, f"{argv} -> {proc.stderr}"
+
+
+def test_run_command_guard_catches_dash_n_behind_attr_source() -> None:
+    """A live bypass one option short of the fix above: --attr-source takes
+    a separate value token too (confirmed against the real git binary) and
+    was missing from GIT_GLOBAL_VALUE_OPTIONS, the same bug class."""
+    for argv in (
+        ["git", "--attr-source", "foo", "commit", "-n"],
+        ["git", "--attr-source", "foo", "--attr-source", "bar", "commit", "-n"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+    # The "=" form is a single token and was never affected.
+    proc = run_command_guard(["git", "--attr-source=foo", "commit", "-n"])
+    assert proc.returncode == 2, proc.stderr
+
+
+def test_run_command_guard_expands_sh_dash_c_before_scanning() -> None:
+    """A live, critical bypass: a `sh -c '<command>'` (or bash/zsh/...) argv
+    element is the officially supported way to run a shell pipeline through
+    run_command, but the payload is a single unsplit string - neither the
+    structural -n walk nor the regex backstop (which needs "git" and
+    "commit" textually adjacent) ever tokenized it, so ANY decoy option
+    between "git" and "commit" inside the string defeated both checks,
+    with no structural coverage at all before expansion."""
+    for argv in (
+        ["sh", "-c", "git commit -n"],
+        ["sh", "-c", "git --no-pager commit -n"],
+        ["sh", "-c", "git -C /tmp commit -n"],
+        ["sh", "-c", "git --attr-source foo commit -n"],
+        ["sh", "-c", "git --git-dir /tmp/x commit -n"],
+        ["bash", "-c", "git --namespace foo commit -n"],
+        ["/usr/bin/sh", "-c", "git commit -n"],
+        ["sh", "-c", "sh -c 'git commit -n'"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 2, f"{argv} -> {proc.stderr}"
+    # Benign shell payloads, and a decoy branch literally named "commit"
+    # inside the wrapper, must still be allowed.
+    for argv in (
+        ["sh", "-c", "git log -n5"],
+        ["sh", "-c", "git branch commit -n"],
+        ["sh", "-c", "git commit -m hello"],
+    ):
+        proc = run_command_guard(argv)
+        assert proc.returncode == 0, f"{argv} -> {proc.stderr}"
+
+
+def test_run_command_guard_finds_commit_past_a_decoy_value() -> None:
+    """A "commit" used as a -c VALUE is not the subcommand; the real one,
+    one token later, still is."""
+    proc = run_command_guard(["git", "-c", "commit", "commit", "-n"])
+    assert proc.returncode == 2, proc.stderr
+
+
+def test_run_command_guard_does_not_misclassify_log_dash_n() -> None:
+    """`git log -n5` is not git commit; -n5 is a bundled count, not a bare
+    bypass flag, and log is not commit regardless."""
+    proc = run_command_guard(["git", "-C", "/tmp", "log", "-n5"])
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_run_command_guard_allows_dash_capital_c_before_commit() -> None:
+    """git's own -C <dir> (change directory) is not commit's reuse-message.
+
+    Before this fix, the char-bundling parser ran over the whole argv and had
+    no notion of where `commit` starts, so a global -C before commit could be
+    consumed as if it were commit's -C (reuse-message) option.
+    """
+    proc = run_command_guard(["git", "-C", "/some/other/repo", "status"])
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_run_command_guard_blocks_bundled_dash_n() -> None:
     proc = run_command_guard(["git", "commit", "-an", "-m", "x"])
     assert proc.returncode == 2, proc.stderr
@@ -849,14 +1057,22 @@ def test_n_reporting_matches_segment_shape_seeded() -> None:
         "--reedit-message",
     ]
 
-    def vec_has_git_commit_n(vec: list[str]) -> bool:
-        try:
-            i_git = vec.index("git")
-            i_commit = vec.index("commit", i_git + 1)
-            vec.index("-n", i_commit + 1)
-        except ValueError:
-            return False
-        return True
+    def segment_has_git_commit_n(segment: list[str]) -> bool:
+        """Oracle for "-n on git commit", delegated to the module's own
+        structural walk (_git_commit_index) rather than a naive index()
+        search. A naive `vec.index("git")` finds the FIRST "git" token; the
+        random phrase pools can independently choose a bare "git" phrase
+        AND a "git_global"/commit phrase in the same segment (unrealistic as
+        a real shell command, but valid fuzz input), giving a segment with
+        two "git" tokens where the naive index-based oracle finds "commit"
+        and a LATER, unrelated "-n" (e.g. from a "grep -n x" phrase chosen
+        afterward) past the first "git" - a false "expected block" the real
+        structural walk correctly does not fire, because it commits to
+        whatever immediately follows the FIRST "git" as the subcommand
+        position and does not skip past an unrelated bare "git" token to
+        find a later, real commit invocation.
+        """
+        return mod._segment_has_git_commit_dash_n(segment)
 
     rng = random.Random(20260812)
     policy = mod.load_policy()
@@ -895,9 +1111,7 @@ def test_n_reporting_matches_segment_shape_seeded() -> None:
 
         # (b) -n is reported iff some single segment's option vector contains
         # git, then commit, then -n in order.
-        expected = any(
-            vec_has_git_commit_n(mod.option_vector(segment)) for segment in raw_segments
-        )
+        expected = any(segment_has_git_commit_n(segment) for segment in raw_segments)
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",

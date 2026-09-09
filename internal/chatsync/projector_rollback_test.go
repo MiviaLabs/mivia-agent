@@ -1,0 +1,467 @@
+package chatsync
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/events"
+)
+
+// A wire event can be projected and then never stored: the outbox overflows on
+// a slow or offline uplink, and appendLocked hands what it dropped back to
+// RollbackStreaming. The producer's counters must then describe what the
+// VIEWER holds, not what this side intended to send.
+//
+// These tests drive that path. The previous rollback for a reset wrote back
+// exactly the values the reset had set - streamed=false, fragments=0 - which
+// is not a rollback but a restatement, and nothing failed because nothing
+// tested it.
+
+// settledMessage runs the turn's aggregate and returns it.
+func settledMessage(t *testing.T, p *Projector) *AssistantMessagePayload {
+	t.Helper()
+	got := p.Project(rootEvent(events.KindAssistant, "the second answer", ""))
+	if len(got) != 1 {
+		t.Fatalf("the settled aggregate produced %d wire events, want 1", len(got))
+	}
+	payload, ok := got[0].Payload.(*AssistantMessagePayload)
+	if !ok {
+		t.Fatalf("settled payload is %T, want *AssistantMessagePayload", got[0].Payload)
+	}
+	return payload
+}
+
+// TestALostResetMakesTheSettledMessageCarryTheAnswer is the defect.
+//
+// The viewer holds the abandoned attempt's fragments and never heard the
+// discard. This side cannot say how many fragments that is - the reset zeroed
+// the count before the append failed - so the only repair it can offer is the
+// full text, which a viewer writes over its stitched text. Reporting a count
+// that covers the retry alone makes INV-1 empty the text, and the viewer keeps
+// two attempts welded together with nothing to replace them.
+func TestALostResetMakesTheSettledMessageCarryTheAnswer(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "the first ", "delta"))
+	p.Project(rootEvent(events.KindAssistant, "answer", "delta"))
+
+	reset := p.Project(rootEvent(events.KindAssistantReset, "", "schema_retry"))
+	if len(reset) != 1 {
+		t.Fatalf("the reset produced %d wire events, want 1", len(reset))
+	}
+	// The append lost it: it was projected, and never stored.
+	p.RollbackStreaming(reset)
+
+	// The retry streams its own answer, which is the case the previous
+	// rollback got wrong - it reported a count covering only this attempt.
+	p.Project(rootEvent(events.KindAssistant, "the second answer", "delta"))
+
+	payload := settledMessage(t, p)
+	if payload.Text != "the second answer" {
+		t.Errorf("Text = %q, want the whole answer: the viewer still holds the "+
+			"abandoned attempt and this message is the only thing that can "+
+			"replace it", payload.Text)
+	}
+	if payload.Fragments != 0 {
+		t.Errorf("Fragments = %d, want 0 - a non-zero count empties the text "+
+			"under INV-1 and counts only the attempt the viewer did not lose",
+			payload.Fragments)
+	}
+}
+
+// TestProjector_MaxStepsExhaustion_ResetFollowsSettledAssistantMessage is the
+// chatsync leg of the fix in internal/agent/loop_dispatch.go: when the SDK
+// root loop's turn stops on StopMaxIterations, finalizeSDKTurn has already
+// published the turn's last assistant text to the wire as a settled
+// "completed" message before runOnceSDK discards it and returns a hard
+// error. runOnceSDK now emits an assistant.reset for the same stream right
+// after that settled message, so a viewer retracts the bubble instead of
+// showing an answer the turn is about to report as a hard failure with no
+// accepted reply. This proves the projector - already correct for the
+// prompt-too-long and empty-response reset cases - behaves identically for
+// this new call site.
+func TestProjector_MaxStepsExhaustion_ResetFollowsSettledAssistantMessage(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	msg := p.Project(rootEvent(events.KindAssistant, "let me check that...", ""))
+	reset := p.Project(rootEvent(events.KindAssistantReset, "",
+		"agent exceeded max_steps: the reply was never accepted"))
+
+	got := append(msg, reset...)
+	wantTypes := []string{TypeAssistantMessage, TypeAssistantReset}
+	if len(got) != len(wantTypes) {
+		t.Fatalf("wire sequence = %v, want %v", got, wantTypes)
+	}
+	for i, w := range wantTypes {
+		if got[i].Type != w {
+			t.Fatalf("event[%d].Type = %s, want %s", i, got[i].Type, w)
+		}
+	}
+
+	msgPayload, ok := got[0].Payload.(*AssistantMessagePayload)
+	if !ok {
+		t.Fatalf("message payload is %T, want *AssistantMessagePayload", got[0].Payload)
+	}
+	resetPayload, ok := got[1].Payload.(*AssistantResetPayload)
+	if !ok {
+		t.Fatalf("reset payload is %T, want *AssistantResetPayload", got[1].Payload)
+	}
+	// The reset names the STREAM (no segment suffix); the message's own
+	// block extends that stream with a segment id.
+	if !strings.HasPrefix(msgPayload.Block, resetPayload.Block) {
+		t.Errorf("reset block = %q is not a prefix of message block = %q; the reset must target "+
+			"the same stream the settled message was published on, or a viewer clears the wrong "+
+			"stream's segments", resetPayload.Block, msgPayload.Block)
+	}
+}
+
+// TestAStoredResetStillReportsFragments is the other half. Nothing is broken
+// when the reset DID reach the wire, so the ordinary streamed accounting must
+// survive: a viewer that got the discard has already cleared the attempt, and
+// re-sending the whole answer beside its own deltas is the duplicate the
+// fragment count exists to prevent.
+func TestAStoredResetStillReportsFragments(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "the first answer", "delta"))
+	p.Project(rootEvent(events.KindAssistantReset, "", "schema_retry"))
+	p.Project(rootEvent(events.KindAssistant, "the second answer", "delta"))
+
+	payload := settledMessage(t, p)
+	if payload.Fragments != 1 || payload.Text != "" {
+		t.Errorf("Fragments = %d Text = %q, want 1 and empty: the viewer got the "+
+			"discard and holds exactly this attempt's one delta",
+			payload.Fragments, payload.Text)
+	}
+}
+
+// TestALateSubagentAggregateDoesNotReshipTheAnswer is the regression that
+// retiring a turn's lanes at its end introduced, and the reason a lane is now
+// retired only on its own run's terminal.
+//
+// A subagent's terminal can be shed by the bounded queues that carry it, and
+// this projector still projects late lane content after the turn's terminal.
+// A lane wiped at turn end is recreated with streamed=false, so the late
+// aggregate ships the whole answer the viewer already holds delta by delta.
+func TestALateSubagentAggregateDoesNotReshipTheAnswer(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindTurnStart, "", "the prompt"))
+	p.Project(subagentEvent(events.KindAssistant, "task-1", "the answer", "delta"))
+	p.Project(rootEvent(events.KindTurnEnd, "", "completed"))
+
+	// The run's own terminal was shed; its settled aggregate arrives anyway.
+	got := p.Project(subagentEvent(events.KindAssistant, "task-1", "the answer", ""))
+	if len(got) != 1 {
+		t.Fatalf("the late aggregate produced %d wire events, want 1", len(got))
+	}
+	payload, ok := got[0].Payload.(*SubagentAssistantMessagePayload)
+	if !ok {
+		t.Fatalf("payload is %T, want *SubagentAssistantMessagePayload", got[0].Payload)
+	}
+	if payload.Fragments != 1 || payload.Text != "" {
+		t.Errorf("Fragments = %d Text = %q, want 1 and empty: the lane forgot it "+
+			"had streamed, so the viewer is sent the answer a second time",
+			payload.Fragments, payload.Text)
+	}
+}
+
+// The two tests below are the LANE twins of the root-path tests above. Both
+// halves of this work shipped with the root half constrained and the lane half
+// not: a review mutated the lane's aggregate condition and the lane's segment
+// advance, and the whole package stayed green. A projector that treats a
+// subagent's stream as a first-class stream has to be held to the rule on both
+// paths, or the rule holds only where someone happened to write a test.
+
+// TestALostLaneResetMakesTheSettledMessageCarryTheAnswer mirrors
+// TestALostResetMakesTheSettledMessageCarryTheAnswer for one subagent lane.
+func TestALostLaneResetMakesTheSettledMessageCarryTheAnswer(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(subagentEvent(events.KindAssistant, "task-1", "the first answer", "delta"))
+	reset := p.Project(subagentEvent(events.KindAssistantReset, "task-1", "", "schema_retry"))
+	if len(reset) != 1 {
+		t.Fatalf("the lane reset produced %d wire events, want 1", len(reset))
+	}
+	p.RollbackStreaming(reset)
+	p.Project(subagentEvent(events.KindAssistant, "task-1", "the second answer", "delta"))
+
+	got := p.Project(subagentEvent(events.KindAssistant, "task-1", "the second answer", ""))
+	payload, ok := got[0].Payload.(*SubagentAssistantMessagePayload)
+	if !ok {
+		t.Fatalf("payload is %T, want *SubagentAssistantMessagePayload", got[0].Payload)
+	}
+	if payload.Text != "the second answer" || payload.Fragments != 0 {
+		t.Errorf("Fragments = %d Text = %q, want 0 and the whole answer: this "+
+			"lane's viewer still holds the abandoned attempt and has been sent "+
+			"nothing that can replace it", payload.Fragments, payload.Text)
+	}
+}
+
+// TestALaneReplayAfterResetUsesAFreshBlock mirrors
+// TestReplayAfterResetUsesAFreshBlock for one subagent lane. Reusing the
+// discarded attempt's block puts the replay back where the abandoned attempt
+// was, which is the ordering defect the segment advance exists to prevent.
+func TestALaneReplayAfterResetUsesAFreshBlock(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	first := p.Project(subagentEvent(events.KindAssistant, "task-1", "First try.", "delta"))
+	used := blockOf(t, onlyEvent(t, first))
+	p.Project(subagentEvent(events.KindAssistantReset, "task-1", "", "retrying"))
+	replay := p.Project(subagentEvent(events.KindAssistant, "task-1", "Replayed.", "delta"))
+
+	if got := blockOf(t, onlyEvent(t, replay)); got == used {
+		t.Fatalf("the lane's replay reused the discarded attempt's block %q", used)
+	}
+}
+
+// TestLostDeltaDoesNotSpendAStep: a single assistant delta whose append
+// fails, then a tool start, then a delta. The second delta must land in the
+// segment the first attempt would have used - nothing shipped, so the tool
+// call closed nothing.
+func TestLostDeltaDoesNotSpendAStep(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	lost := p.Project(rootEvent(events.KindAssistant, "never stored", "delta"))
+	wanted := blockOf(t, onlyEvent(t, lost))
+	p.RollbackStreaming(lost)
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	got := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "stored", "delta"))))
+	if got != wanted {
+		t.Fatalf("after a lost delta and a tool start the next delta landed in %q, want %q: the lost delta spent a step", got, wanted)
+	}
+}
+
+// TestThinkingDirtiedSegmentStillAdvancesAfterAssistantRollback: a STORED
+// thinking delta plus a LOST assistant delta, then a tool start. The segment
+// must advance - the thinking shipped. Fails if the assistant rollback clears
+// a flag the thinking stream shares.
+func TestThinkingDirtiedSegmentStillAdvancesAfterAssistantRollback(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	before := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "shipped", ""))))
+	lost := p.Project(rootEvent(events.KindAssistant, "never stored", "delta"))
+	p.RollbackStreaming(lost)
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	after := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "next step", ""))))
+	if stepOf(t, after) == stepOf(t, before) {
+		t.Fatalf("segment did not advance past a tool call although thinking had shipped into it (%q)", after)
+	}
+}
+
+// TestSecondThinkingDeltaLostStillLeavesTheSegmentDirty is the mirrored
+// discriminator: thinking delta stored, a second thinking delta lost, tool
+// start, prose. The segment DID ship reasoning, so it must advance. Fails
+// under any rollback that clears the segment unconditionally.
+func TestSecondThinkingDeltaLostStillLeavesTheSegmentDirty(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	before := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "shipped", ""))))
+	lost := p.Project(rootEvent(events.KindThinking, "never stored", ""))
+	p.RollbackStreaming(lost)
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	after := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "prose", "delta"))))
+	if stepOf(t, after) == stepOf(t, before) {
+		t.Fatalf("segment did not advance (%q): losing the SECOND thinking delta must not forget the first one shipped", after)
+	}
+}
+
+// TestLostResetDoesNotAdvanceTheStep: a reset whose append fails, then the
+// replayed prose. The replay must carry the segment the abandoned text used,
+// so a consumer can match the repair to the block it repairs.
+func TestLostResetDoesNotAdvanceTheStep(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+	used := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "first try", "delta"))))
+	reset := p.Project(rootEvent(events.KindAssistantReset, "", "retrying"))
+	p.RollbackStreaming(reset)
+	replay := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindAssistant, "replayed", "delta"))))
+	if replay != used {
+		t.Fatalf("replay after a LOST reset landed in %q, want %q: the viewer never heard the reset, so the repair must name the block it holds", replay, used)
+	}
+}
+
+// TestLostThinkingDeltaDoesNotSpendAStep is the thinking mirror of
+// TestLostDeltaDoesNotSpendAStep, for the root stream and for a lane: a
+// thinking delta whose append fails, then a tool start, then thinking. The
+// step must not have moved - nothing shipped. Without the thinking cases in
+// RollbackStreaming the lost delta stays counted and the tool call advances.
+func TestLostThinkingDeltaDoesNotSpendAStep(t *testing.T) {
+	t.Run("root", func(t *testing.T) {
+		p := NewProjector("sess-1", 0, proseOpts())
+		lost := p.Project(rootEvent(events.KindThinking, "never stored", ""))
+		wanted := blockOf(t, onlyEvent(t, lost))
+		p.RollbackStreaming(lost)
+		p.Project(toolEvent(events.KindToolStart, "call-1"))
+		got := blockOf(t, onlyEvent(t, p.Project(rootEvent(events.KindThinking, "stored", ""))))
+		if got != wanted {
+			t.Fatalf("after a lost thinking delta and a tool start the next one landed in %q, want %q", got, wanted)
+		}
+	})
+	t.Run("lane", func(t *testing.T) {
+		p := NewProjector("sess-1", 0, proseOpts())
+		lost := p.Project(subagentEvent(events.KindThinking, "task-a", "never stored", ""))
+		wanted := blockOf(t, onlyEvent(t, lost))
+		p.RollbackStreaming(lost)
+		laneTool := events.Event{Kind: events.KindSubagentStart, SessionID: "sess-1", TurnID: "turn:1", Timestamp: time.Now(), ToolCallID: "lane-call", Name: "Read"}
+		p.Project(laneTool.WithAgentAttribution("task-a", "builder", 1))
+		got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "stored", ""))))
+		if got != wanted {
+			t.Fatalf("after a lost lane thinking delta and the lane's tool start the next one landed in %q, want %q", got, wanted)
+		}
+	})
+}
+
+// TestLostResetOnACleanSegmentRestoresNothing pins the conditionality of
+// the reset undo. A reset before anything shipped advances nothing, so its
+// lost append must restore nothing either: the next prose lands exactly
+// where a control that never saw the reset puts it.
+func TestLostResetOnACleanSegmentRestoresNothing(t *testing.T) {
+	subject := NewProjector("sess-1", 0, proseOpts())
+	reset := subject.Project(rootEvent(events.KindAssistantReset, "", "retrying"))
+	subject.RollbackStreaming(reset)
+	got := blockOf(t, onlyEvent(t, subject.Project(rootEvent(events.KindAssistant, "answer", "delta"))))
+
+	control := NewProjector("sess-1", 0, proseOpts())
+	want := blockOf(t, onlyEvent(t, control.Project(rootEvent(events.KindAssistant, "answer", "delta"))))
+	if got != want {
+		t.Fatalf("after a lost reset on a clean segment the delta landed in %q, want %q: the undo restored a step it never replaced", got, want)
+	}
+	if stepOf(t, got) < 0 {
+		t.Fatalf("step under-ran: %q", got)
+	}
+}
+
+// TestALostDeltaSettlesOnTheBlockItsSurvivingDeltasUsed is the settle half of
+// the rollback contract. The settled aggregate names ts.streamSegment - the
+// segment its deltas streamed into - and a lost delta used to leave that
+// pointing at the segment it opened but never filled: the viewer got an empty
+// block carrying the fragment count, while the block holding the one stored
+// fragment never completed. The rollback must fall back to the segment the
+// surviving deltas actually used.
+func TestALostDeltaSettlesOnTheBlockItsSurvivingDeltasUsed(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// d1 ships into the turn's first segment and is stored.
+	p.Project(rootEvent(events.KindAssistant, "the first ", "delta"))
+	// A tool call closes that segment; the next prose belongs to a new one.
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+	// d2 is projected into the new segment and then lost at the append.
+	lost := p.Project(rootEvent(events.KindAssistant, "and more", "delta"))
+	p.RollbackStreaming(lost)
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:0" {
+		t.Errorf("settled block = %q, want turn:1:assistant:0 - the only segment "+
+			"holding a stored delta. The lost delta dragged the settle onto a "+
+			"block it emptied, and that block never completes", payload.Block)
+	}
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - the first delta was stored", payload.Fragments)
+	}
+}
+
+// TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock covers the no-append-loss
+// trigger of the same defect. Recording the settle segment when the delta's
+// block id was merely PICKED - before the stream gate - meant a delta whose
+// text never reached the wire still moved the segment assignment, and the
+// settle named a segment nothing ever shipped into.
+//
+// A policy installed mid-turn is that gate: a fragment shorter than
+// redact.StreamHoldBack is withheld in full by the cross-fragment redactor, so
+// it ships nothing and must record nothing. The text is not lost - the block's
+// close flushes the held tail as one final delta into the segment it arrived
+// in, which is what the settle then names.
+func TestAMidTurnRedactionLeavesTheSettleOnItsOwnBlock(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// d1 ships before any policy exists.
+	p.Project(rootEvent(events.KindAssistant, "before the policy ", "delta"))
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+
+	windowedPolicy(t, `SECRET_[0-9]+`)
+
+	// Held whole by the hold-back window: nothing ships, so nothing is
+	// recorded at the moment of the delta.
+	if got := p.Project(rootEvent(events.KindAssistant, "SECRET_1 held", "delta")); len(got) != 0 {
+		t.Fatalf("a wholly-held delta produced %d wire events, want 0", len(got))
+	}
+
+	out := p.Project(rootEvent(events.KindAssistant, "SECRET_1 held", ""))
+	if len(out) != 2 {
+		t.Fatalf("the settled aggregate produced %d wire events, want 2 - the "+
+			"flushed tail then the message", len(out))
+	}
+	tail, ok := out[0].Payload.(*AssistantDeltaPayload)
+	if !ok {
+		t.Fatalf("first event is %T, want *AssistantDeltaPayload - the flushed tail", out[0].Payload)
+	}
+	if tail.Text != "[redacted] held" {
+		t.Errorf("flushed tail text = %q, want %q - the tail is redacted, not dropped",
+			tail.Text, "[redacted] held")
+	}
+	if tail.Block != "turn:1:assistant:1" {
+		t.Errorf("flushed tail block = %q, want turn:1:assistant:1 - the segment "+
+			"the held text actually arrived in", tail.Block)
+	}
+	payload, ok := out[1].Payload.(*AssistantMessagePayload)
+	if !ok {
+		t.Fatalf("second event is %T, want *AssistantMessagePayload", out[1].Payload)
+	}
+	if payload.Block != "turn:1:assistant:1" {
+		t.Errorf("settled block = %q, want turn:1:assistant:1 - the block the "+
+			"last surviving delta shipped into", payload.Block)
+	}
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - block :1 holds only the flushed tail; the "+
+			"first delta lives in block :0 and is not this block's", payload.Fragments)
+	}
+	if payload.Text != "" {
+		t.Errorf("Text = %q, want empty - INV-1, fragments shipped", payload.Text)
+	}
+}
+
+// TestARollbackKeepsTheSegmentOtherStoredDeltasUse pins the guard's second
+// half: a lost delta whose segment still holds STORED siblings must not move
+// the settle at all. Flipping the guard's && to || restored the segment even
+// when the current one was still occupied, dragging the settle back to a
+// block the turn had left two segments ago.
+func TestARollbackKeepsTheSegmentOtherStoredDeltasUse(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "one ", "delta"))
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+	p.Project(rootEvent(events.KindAssistant, "two ", "delta"))
+	lost := p.Project(rootEvent(events.KindAssistant, "three", "delta"))
+	p.RollbackStreaming(lost)
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:1" {
+		t.Errorf("settled block = %q, want turn:1:assistant:1 - the segment still "+
+			"holds a stored delta; a lost sibling must not move the settle", payload.Block)
+	}
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - block :1 holds one stored delta (\"two \"); "+
+			"\"one \" is block :0's", payload.Fragments)
+	}
+}
+
+// TestAStreamThatShipsStillSettlesOnItsLastSegment pins the behaviour the fix
+// must not break: when every delta ships, the settled aggregate still names
+// the segment the turn's LAST deltas used, not the first - the original
+// reason streamSegment exists.
+func TestAStreamThatShipsStillSettlesOnItsLastSegment(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "one ", "delta"))
+	p.Project(rootEvent(events.KindAssistant, "two ", "delta"))
+	p.Project(rootEvent(events.KindToolStart, "", ""))
+	p.Project(rootEvent(events.KindAssistant, "three", "delta"))
+
+	payload := settledMessage(t, p)
+	if payload.Block != "turn:1:assistant:1" {
+		t.Errorf("settled block = %q, want turn:1:assistant:1 - the segment the "+
+			"turn's last deltas streamed into", payload.Block)
+	}
+	if payload.Fragments != 1 {
+		t.Errorf("Fragments = %d, want 1 - block :1 holds \"three\" only; the two "+
+			"earlier deltas are block :0's", payload.Fragments)
+	}
+}

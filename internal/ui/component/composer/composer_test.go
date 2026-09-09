@@ -127,7 +127,7 @@ func TestHeightGrowsWithLines(t *testing.T) {
 }
 
 func TestHeightCappedAtMaxLines(t *testing.T) {
-	// 10 lines of text should not exceed maxInputLines + 2 (for top and bottom frame).
+	// 10 lines of text should not exceed maxInputLines + 2 (top and bottom padding rows).
 	lines := strings.Repeat("text\n", 10)
 	m := sizedComposer(t, 80, strings.TrimSuffix(lines, "\n"))
 	maxExpected := maxInputLines + 2
@@ -177,6 +177,8 @@ func TestInputOffsets(t *testing.T) {
 	if got := m.InputRowFromBottom(); got != 2 {
 		t.Errorf("InputRowFromBottom() = %d, want 2", got)
 	}
+	// The bar's two padding columns sit before the prompt (the cells the
+	// old border used to occupy), so clicks subtract 2.
 	if got := m.InputColumnOffset(); got != 2 {
 		t.Errorf("InputColumnOffset() = %d, want 2", got)
 	}
@@ -190,8 +192,8 @@ func TestInputOffsets(t *testing.T) {
 	}
 }
 
-func TestViewNarrowFallbackNoFrame(t *testing.T) {
-	// Below minFramedWidth, View must not panic and must stay within width.
+func TestViewNarrowFallbackNoPadding(t *testing.T) {
+	// Below minPaddedWidth, View must not panic and must stay within width.
 	m := New(loadTheme(t), theme.TierASCII, 4)
 	m.SetValue("hi")
 	got := m.View()
@@ -202,7 +204,7 @@ func TestViewNarrowFallbackNoFrame(t *testing.T) {
 	}
 }
 
-// TestComposerViewNoExcessWidth checks that framed rows never exceed terminal width.
+// TestComposerViewNoExcessWidth checks that padded rows never exceed terminal width.
 // This replaces the strict pixel-exact test from textinput days; textarea
 // internal rendering varies by cursor position, but rows must never overflow.
 func TestComposerViewNoExcessWidth(t *testing.T) {
@@ -479,9 +481,9 @@ func TestMentionMenuViewAndScrolling(t *testing.T) {
 		t.Fatal("mention menu should be active")
 	}
 
-	view := m.View()
-	if !strings.Contains(view, "@file0.go") {
-		t.Errorf("view should show first mention; got:\n%s", view)
+	popup := strings.Join(m.Popup(), "\n")
+	if !strings.Contains(popup, "@file0.go") {
+		t.Errorf("popup should show first mention; got:\n%s", popup)
 	}
 
 	// Move forward past MaxCompletionRows to test offset clamping
@@ -542,8 +544,8 @@ func TestActiveMenuView_MentionMenu(t *testing.T) {
 	if rows := m.MenuRows(); rows == 0 {
 		t.Errorf("expected non-zero MenuRows for active mention menu")
 	}
-	if view := m.View(); !strings.Contains(view, "main.go") {
-		t.Errorf("expected View to contain mention entry main.go, got:\n%s", view)
+	if popup := strings.Join(m.Popup(), "\n"); !strings.Contains(popup, "main.go") {
+		t.Errorf("expected Popup to contain mention entry main.go, got:\n%s", popup)
 	}
 }
 
@@ -558,10 +560,10 @@ func TestComposerView_TruncatesLongLinesWhenNarrow(t *testing.T) {
 	}
 }
 
-func TestComposerView_TruncatesLongLinesWhenFramed(t *testing.T) {
+func TestComposerView_TruncatesLongLinesWhenPadded(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 80)
-	m.SetValue("A very long input string that exceeds framed inner width")
-	// Set width directly to framed width so lines exceed inner (10 - frameInset = 6)
+	m.SetValue("A very long input string that exceeds the padded inner width")
+	// Set width directly to a padded width so lines exceed inner (10 - padInset = 6)
 	m.width = 10
 	view := m.View()
 	if view == "" {
@@ -596,28 +598,78 @@ func TestMenuClickRow(t *testing.T) {
 	if m.MenuClickRow(10) {
 		t.Error("expected false for out-of-range row")
 	}
-	// Valid row
-	if !m.MenuClickRow(0) {
+	// Row 0 is the popup's blank top padding: no item there.
+	if m.MenuClickRow(0) {
+		t.Error("expected false when clicking the popup's padding row")
+	}
+	// Valid row: the first item sits on popup row 1.
+	if !m.MenuClickRow(1) {
 		t.Error("expected true when clicking valid menu row")
 	}
 }
 
-func TestComposerHintHidesAtFiles(t *testing.T) {
-	m := New(loadTheme(t), theme.TierASCII, 80)
-	view := m.View()
-	if strings.Contains(view, "@ Files") {
-		t.Errorf("expected view not to contain '@ Files', got:\n%s", view)
+// TestComposerIdleBarCarriesNoHint: the idle bar is prompt, text, and
+// padding only. The placeholder already names "/" for commands, so no
+// hint is drawn until a menu opens (menuHint, in the popup's footer), on
+// any tier.
+func TestComposerIdleBarCarriesNoHint(t *testing.T) {
+	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierTrueColor} {
+		m := New(loadTheme(t), tier, 80)
+		view := ansi.Strip(m.View())
+		for _, stale := range []string{"@ Files", "/ Commands", "Send", "["} {
+			if strings.Contains(view, stale) {
+				t.Errorf("tier %v: idle bar must carry no hint, found %q in:\n%s", tier, stale, view)
+			}
+		}
+		if !strings.Contains(view, "type / for commands") {
+			t.Errorf("tier %v: placeholder must still name / for commands:\n%s", tier, view)
+		}
 	}
-	if !strings.Contains(view, "/ Commands") {
-		t.Errorf("expected view to contain '/ Commands', got:\n%s", view)
-	}
+}
 
-	mUnicode := New(loadTheme(t), theme.TierTrueColor, 80)
-	viewUnicode := mUnicode.View()
-	if strings.Contains(viewUnicode, "@ Files") {
-		t.Errorf("expected truecolor view not to contain '@ Files', got:\n%s", viewUnicode)
+// TestMenuClickRowAcceptsMention: the mention popup shares the overlay
+// with the slash menu, so a click on one of its item rows must accept
+// that mention, not fall through as if no menu were open.
+func TestMenuClickRowAcceptsMention(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetMentions([]Mention{{Path: "a.go"}, {Path: "b.go"}})
+	m.SetValue("@")
+	if !m.MentionMenuActive() {
+		t.Fatal("precondition: mention menu open")
 	}
-	if !strings.Contains(viewUnicode, "/ Commands") {
-		t.Errorf("expected truecolor view to contain '/ Commands', got:\n%s", viewUnicode)
+	if m.MenuClickRow(0) {
+		t.Error("the popup's padding row holds no mention")
+	}
+	if !m.MenuClickRow(2) {
+		t.Fatal("expected the second item row to accept a mention")
+	}
+	if got := m.Value(); got != "@b.go" {
+		t.Errorf("accepted %q, want @b.go", got)
+	}
+	if m.MentionMenuActive() {
+		t.Error("accepting a mention by click must close the picker")
+	}
+}
+
+// TestMentionMenuOpensOnLaterLines: the mention trigger is found from
+// the cursor's offset into the whole value, so an "@" typed on the
+// second line opens the picker and accepting it edits that line, not
+// the first. Column() alone (a rune index within the current line)
+// pointed into line one and never saw the "@".
+func TestMentionMenuOpensOnLaterLines(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetMentions([]Mention{{Path: "a.go"}})
+	m.SetValue("first line\n@")
+	if !m.MentionMenuActive() {
+		t.Fatal("an @ at the start of the second line must open the picker")
+	}
+	m = m.AcceptMention()
+	if got := m.Value(); got != "first line\n@a.go" {
+		t.Errorf("accepted %q, want the mention on the second line", got)
+	}
+	// A multibyte first line must not skew the byte offset either.
+	m.SetValue("héllo wörld\n@a")
+	if !m.MentionMenuActive() {
+		t.Fatal("an @ after a multibyte first line must open the picker")
 	}
 }

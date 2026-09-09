@@ -210,7 +210,7 @@ func TestBuildAgentLoopOptions_NeverWiresWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions failed: %v", err)
 	}
-	if out.Window != nil {
+	if out.Compaction.Window != nil {
 		t.Fatal("buildAgentLoopOptions wired an SDK Window; the prompt-too-long recovery gate relies on Window staying nil")
 	}
 }

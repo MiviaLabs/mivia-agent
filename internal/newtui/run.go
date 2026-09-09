@@ -2,14 +2,15 @@ package newtui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
@@ -25,6 +26,28 @@ func registerSubagentProgress() {
 		return func() {
 			cli.ClearSubagentProgress(token)
 		}
+	}
+	uiadapter.SessionBusRegistrar = cli.RegisterSessionBus
+	// Closes the live half of the per-subagent cancel keys: the route table
+	// NewSubagentThreads hands over here is what every later dispatch
+	// publishes its (coordinator, runID, taskID) identities into, and what
+	// Screen.cancelSelectedSubagentTask (and the thread dialog's
+	// per-tool-call cancel) resolve the highlighted row through. Set before
+	// buildApp, which is where NewSubagentThreads actually runs. The
+	// adapter narrows each published coordinator to the
+	// SubagentTaskCoordinator subset the route table stores, because the
+	// dispatch side's sink type is not assignable to the UI-side one
+	// directly (func parameter types must match exactly).
+	uiadapter.SubagentTaskRouteRegistrar = func(sink func(coord uiadapter.SubagentTaskCoordinator, callID, runID, taskID string)) {
+		cli.SetSubagentTaskRouteSink(func(coord cli.OrchestrationCoordinator, callID, runID, taskID string) {
+			// The dispatch side publishes its narrow orchestration view; the
+			// route table stores the UI-cancel subset. The live value is the
+			// real coordinator, which carries both, so the widening
+			// assertion holds everywhere a route is actually published.
+			if c, ok := coord.(uiadapter.SubagentTaskCoordinator); ok {
+				sink(c, callID, runID, taskID)
+			}
+		})
 	}
 }
 
@@ -44,13 +67,20 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	// this, any session resumed in the TUI kept a fresh lease behind and the
 	// next process's resume was refused until the lease TTL ran out.
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// chatsync.RecommendedStopTimeout, not a shorter ad-hoc value: this ctx
+		// also bounds each pooled session's final chat-sync flush
+		// (SessionPool.ReleaseLeases), and a real network round trip carrying
+		// a real backlog needs a genuine chance to finish before the process
+		// exits kills it - see the constant's doc comment.
+		ctx, cancel := context.WithTimeout(context.Background(), chatsync.RecommendedStopTimeout)
 		defer cancel()
 		runner.Pool().ReleaseLeases(ctx)
+		runner.Pool().CloseAll()
 	}()
 
 	p := newTeaProgram(root)
 	wireMouseNotifier(settingsStore, p)
+	wireFullDiskNotifier(settingsStore, p)
 	_, err = p.Run()
 	return err
 }
@@ -66,6 +96,41 @@ func wireMouseNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
 			go p.Send(app.MouseCaptureMsg{On: on})
 		})
 	}
+}
+
+// wireFullDiskNotifier bridges the Settings screen's "full disk" toggle
+// into the running program: a live re-arm pushes the never-silent
+// disclosure (app.SettingsNoticeMsg) so it lands in the conversation
+// transcript as a permanent notice. Send is a no-op once the program
+// stops. A nil store skips wiring.
+func wireFullDiskNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
+	if store != nil {
+		store.SetFullDiskNotifier(func(text string) {
+			go p.Send(app.SettingsNoticeMsg{Text: text})
+		})
+	}
+}
+
+// wireSyncOptsNotifier bridges the Settings screen's three [sync]
+// opt-out toggles into the live chat-sync projector: a Settings ->
+// General operator action that flips include_thinking,
+// include_tool_io, or stream_assistant fires this notifier, which
+// fans out to every attached SyncSession in the pool. The pool call
+// runs synchronously and is bounded by the number of attached
+// sessions (one per logged-in chat), so a "go" wrapper is not needed
+// to keep the SaveHandle loop responsive.
+//
+// A nil store or nil pool skips wiring: the operator's toggle still
+// persists to disk via UpdateGeneralConfig; only the live re-arm
+// half is silent. The integration tests in
+// settings_persist_integration_test.go pin both halves.
+func wireSyncOptsNotifier(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool) {
+	if store == nil || pool == nil {
+		return
+	}
+	store.SetSyncOptsNotifier(func(includeThinking, includeToolIO, streamAssistant bool) {
+		pool.ApplySyncOpts(includeThinking, includeToolIO, streamAssistant)
+	})
 }
 
 // mouseEnabled resolves the startup mouse-capture decision:
@@ -87,10 +152,53 @@ func mouseEnabled(res *config.Resolved, env []string) bool {
 	return on
 }
 
-// loadThemes is theme.Embedded, indirected so a test can force the
-// error return (the compiled-in embed.FS itself cannot be corrupted
+// loadThemes combines embedded and user themes, indirected so tests can
+// force loader errors (the compiled-in embed.FS itself cannot be corrupted
 // in-process).
-var loadThemes = theme.Embedded
+var loadEmbeddedThemes = theme.Embedded
+var loadUserThemes = theme.LoadUserDir
+var userThemesDir = config.UserThemesDir
+var loadThemes = loadAllThemes
+
+func loadAllThemes() ([]theme.Theme, error) {
+	themes, err := loadEmbeddedThemes()
+	if err != nil {
+		return nil, err
+	}
+	if dir := userThemesDir(); dir != "" {
+		user, err := loadUserThemes(dir)
+		if err != nil {
+			return nil, err
+		}
+		themes = append(themes, user...)
+	}
+	return themes, nil
+}
+
+func chooseTheme(themes []theme.Theme, name string) (theme.Theme, error) {
+	if name != "" {
+		for _, th := range themes {
+			if th.Name == name {
+				return th, nil
+			}
+		}
+	}
+	for _, th := range themes {
+		if th.Name == "mivia-dark" {
+			return th, nil
+		}
+	}
+	return theme.Theme{}, fmt.Errorf("theme: default theme mivia-dark is not available")
+}
+
+func persistTheme(store *uiadapter.SettingsStore, name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := store.PersistTheme(name); err != nil {
+			return app.SettingsNoticeMsg{Text: "theme save failed: " + err.Error()}
+		}
+		return nil
+	}
+}
 
 // newTeaProgram is tea.NewProgram, indirected so a test can run RunTUI
 // headless: with the default options the program reads the process's real
@@ -106,12 +214,13 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	var th theme.Theme
-	for _, t := range themes {
-		if t.Name == "mivia-dark" {
-			th = t
-			break
-		}
+	themeName := ""
+	if res != nil {
+		themeName = res.TUI.Theme
+	}
+	th, err := chooseTheme(themes, themeName)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// runner owns the one SessionPool for this process; sourcing conv and
@@ -132,23 +241,44 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
+	wireSyncOptsNotifier(settingsStore, pool)
 	runner.SetSettingsStore(settingsStore)
-	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
+	env := os.Environ()
+	tier := theme.Detect(os.Stdout, env)
+	screen := conversation.New(th, tier, themes, conv, approver, 80, nil)
 
 	screen.SetCommands(runner.Commands())
 	screen.SetCommandRunner(runner)
 	screen.SetSubagentThreads(threads)
 	screen.SetSettings(settingsStore.Settings())
+	// pool.RemoteInputs() fans in every pooled session's chatsync-validated
+	// remote input (internal/uiadapter/remote_input.go); the screen is the
+	// sole thing that ever turns one into a conv.Send call (item 1 of the
+	// steering design - see poolSyncOptions' comment for the full rationale).
+	screen.SetRemoteInputs(pool.RemoteInputs())
+	// pool.Notices() is the out-of-turn advisory stream (ports.Notices):
+	// chat-sync lifecycle lines, and every workflow progress transition
+	// (internal/uiadapter/workflow_notices.go). It had no reader here at all,
+	// so a workflow run started with workflow_run showed the operator nothing
+	// after the tool call returned, however long the run went on.
+	screen.SetNotices(pool.Notices())
+	// pool.WorkflowStatus() is the replaceable liveness stream that keeps the
+	// status row honest between a step's start and its end. It is separate
+	// from Notices on purpose: heartbeats arrive every 15s per running step,
+	// and queuing them as advisories evicts the transitions worth reading.
+	screen.SetWorkflowStatus(pool.WorkflowStatus())
+	screen.SetSessionMounter(runner)
+	pool.StartBackgroundWatch(context.Background())
 
-	env := os.Environ()
 	report := termprobe.Probe(env, "")
 	// The help overlay names the detected terminal's own key for
 	// overriding mouse capture (rule 7.5); empty clears the line.
 	screen.SetMouseOverrideHint(report.MouseHint)
 
-	root := app.New(screen, th, theme.TierTrueColor, themes).WithOptions(app.Options{
-		Mouse:       mouseEnabled(res, env),
-		FullRepaint: report.FullRepaint,
+	root := app.New(screen, th, tier, themes).WithOptions(app.Options{
+		Mouse:        mouseEnabled(res, env),
+		FullRepaint:  report.FullRepaint,
+		PersistTheme: func(name string) tea.Cmd { return persistTheme(settingsStore, name) },
 	})
 
 	return root, settingsStore, runner, nil

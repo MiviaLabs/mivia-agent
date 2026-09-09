@@ -53,6 +53,11 @@ var fingerprintExcludedTaskFields = map[string]bool{
 	// (namespace+":"+RawID == ID) - including it would be redundant, not
 	// a distinct work-defining fact.
 	"RawID": true,
+	// ParentTaskID records WHO caused the task to start. It does not change
+	// what the task does: the same prompt under a different parent is the
+	// same work, and including it would make two identical tasks fingerprint
+	// apart and defeat the dedup this exists for. Provenance, not work.
+	"ParentTaskID": true,
 }
 
 func TestFingerprintCoversWorkDefiningTaskFields(t *testing.T) {

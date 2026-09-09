@@ -55,7 +55,7 @@ func TestEvidenceBindingStillCapped(t *testing.T) {
 // BEFORE dispatch, and no child run may be created.
 func TestEvidenceSelectionOverLedgerCapFailsBeforeDispatch(t *testing.T) {
 	base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
-	observed := &inspectingCoordinator{Coordinator: base}
+	observed := &inspectingCoordinator{stepCoordinator: base}
 	spec := validStepRequest()
 	spec.MaxContextBytes = 256 << 10
 	// Enough small bindings that the selection metadata (name/source/bytes/
@@ -85,7 +85,7 @@ func TestEvidenceSelectionOverLedgerCapFailsBeforeDispatch(t *testing.T) {
 // time instead of burning the child's full wait budget.
 func TestCoordinatorRunnerEnsuresNonInteractiveParent(t *testing.T) {
 	base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
-	observed := &inspectingCoordinator{Coordinator: base}
+	observed := &inspectingCoordinator{stepCoordinator: base}
 	if _, err := NewCoordinatorRunner(observed).RunStep(context.Background(), validStepRequest()); err != nil {
 		t.Fatal(err)
 	}

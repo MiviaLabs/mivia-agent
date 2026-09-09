@@ -479,7 +479,7 @@ func TestUnclaimAskAnswerEdges(t *testing.T) {
 
 // assertSealedBeforeClaimAnswer pins the structured notice a peer receives when
 // the ask was already sealed (timeout/close) before the answer could be claimed.
-func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
+func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c *coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
 	t.Helper()
 	c.RegisterAsk(runID, taskID, "worker", "done", nil)
 	_ = c.CompleteAskAnswer("done")
@@ -504,7 +504,7 @@ func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c coordi
 // loser surfaces either the ClaimAskAnswer race error (ask still open/claimed
 // at peek) or, if it peeked after the winner sealed, the structured
 // already-answered notice — both mean the duplicate was dropped.
-func assertConcurrentOneShot(t *testing.T, tool *postMessageTool, c coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
+func assertConcurrentOneShot(t *testing.T, tool *postMessageTool, c *coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
 	t.Helper()
 	c.RegisterAsk(runID, taskID, "worker", "race", nil)
 	beforeRace, err := c.ListRunMessages(ctx, runID, "")
@@ -640,12 +640,12 @@ func TestLiveAskDrainIncludesMessageID(t *testing.T) {
 
 // sealAfterClaimCoord pretends the waiter CloseAsk'd immediately after claim.
 type sealAfterClaimCoord struct {
-	coordinator.Coordinator
+	chatCoordinator
 	afterClaim bool
 }
 
 func (s *sealAfterClaimCoord) ClaimAskAnswer(askID string) (string, error) {
-	asker, err := s.Coordinator.ClaimAskAnswer(askID)
+	asker, err := s.chatCoordinator.ClaimAskAnswer(askID)
 	if err == nil {
 		s.afterClaim = true
 	}
@@ -656,12 +656,12 @@ func (s *sealAfterClaimCoord) IsAskAnswered(askID string) bool {
 	if s.afterClaim {
 		return true
 	}
-	return s.Coordinator.IsAskAnswered(askID)
+	return s.chatCoordinator.IsAskAnswered(askID)
 }
 
 // sealFailCoord claims/posts normally but loses SealAskAnswer (waiter won).
 type sealFailCoord struct {
-	coordinator.Coordinator
+	chatCoordinator
 }
 
 func (s sealFailCoord) SealAskAnswer(string) bool { return false }
@@ -674,7 +674,7 @@ func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
 	tool, c, _, runID, askerTask, ctx := setupPostMessageEnv(t, cfg)
 	const askID = "ask-timeout-seal"
 	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
-	wrap := &sealAfterClaimCoord{Coordinator: c}
+	wrap := &sealAfterClaimCoord{chatCoordinator: c}
 	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
 	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "late", askID); err == nil {
 		t.Fatal("peer must fail when waiter sealed after claim")
@@ -703,7 +703,7 @@ func TestPeerAnswerAbortsWhenSealLostAfterPost(t *testing.T) {
 	}
 	const askID = "ask-seal-after-post"
 	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
-	wrap := sealFailCoord{Coordinator: c}
+	wrap := sealFailCoord{chatCoordinator: c}
 	peerID := runtime.TaskIdentity{RunID: runID, TaskID: peerTask, Agent: "peer"}
 	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "body", askID); err == nil {
 		t.Fatal("peer must fail when seal lost after post")

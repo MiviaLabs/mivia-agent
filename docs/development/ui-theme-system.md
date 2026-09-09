@@ -27,6 +27,9 @@ Two rules that are easy to get wrong:
   ring, the selected row. It must pass contrast, but it is exempt from the
   colour-vision separation check that binds `{success, warning, danger,
   info}` to each other.
+- **`warning` is reserved for human attention.** The terminal status line
+  uses `warning` only for states waiting on a person (`Waiting`, `Pending`).
+  Autonomous states (`Thinking`, `Running`) stay monochrome (`fg`).
 - **`border` is decorative, `gutter` is not.** No state is carried by
   `border` alone, so it is exempt from the contrast gate. `gutter` (a line
   rail) is functional and is gated like any other role.
@@ -90,7 +93,8 @@ Adding a theme is a data change, never a code change.
    an explicit ANSI SGR index (0-15).
 2. First-party themes: drop the file in `internal/ui/theme/themes/` (picked
    up by `go:embed`, see `Embedded()` in `embed.go`). User themes: drop the
-   file in the user's theme config directory (`LoadUserDir`).
+   file in `~/.mivia/themes/` (`config.UserThemesDir`, loaded by
+   `LoadUserDir`). User themes are added after the embedded themes.
 3. For the status quad (`success`/`warning`/`danger`/`info`), prefer
    `SearchStatusPalette` (`search.go`) over hand-picking. Hand-picking a
    status palette measurably loses to a constrained search
@@ -104,8 +108,10 @@ Adding a theme is a data change, never a code change.
 
 ## Looking at it
 
-The in-app theme picker previews every embedded theme: press `ctrl+t`
+The in-app theme picker previews every loaded theme: press `ctrl+t`
 on the conversation screen, or run `/theme`. It renders role swatches,
 a diff pair, and the status set live. The degradation tiers are gated
 offline by `go test ./internal/ui/theme/...`; run the app under
-`NO_COLOR=1` or `TERM=dumb` to see the no-colour tier by hand.
+`NO_COLOR=1` or `TERM=dumb` to see the no-colour tier by hand. The saved
+`[tui].theme` value is selected at startup, and a picker selection is
+persisted through the settings save path.

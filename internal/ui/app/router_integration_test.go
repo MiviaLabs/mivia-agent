@@ -133,13 +133,33 @@ func TestSelectingThemeChangesRenderedColourAndPreservesState(t *testing.T) {
 
 	// The composer's accent prompt must render in the newly-adopted
 	// theme's accent colour, not the original mivia-dark's.
-	wantAccent := render.Role(f.light, theme.TierTrueColor, theme.RoleAccent).Render("> ")
+	wantAccent := render.Role(f.light, theme.TierTrueColor, theme.RoleAccent).Render("› ")
 	if !strings.Contains(view.Content, wantAccent) {
 		t.Errorf("expected the composer prompt styled with %s's accent colour, got:\n%q", f.light.Name, view.Content)
 	}
-	darkAccent := render.Role(f.dark, theme.TierTrueColor, theme.RoleAccent).Render("> ")
+	darkAccent := render.Role(f.dark, theme.TierTrueColor, theme.RoleAccent).Render("› ")
 	if darkAccent != wantAccent && strings.Contains(view.Content, darkAccent) {
 		t.Errorf("expected the original mivia-dark accent colour gone after switching to %s, got:\n%q", f.light.Name, view.Content)
+	}
+}
+
+// TestSettingsNoticeReachesTheConversationTranscript pins the routing of
+// the full-disk live re-arm's never-silent disclosure: the message lands in
+// the base conversation screen's transcript as a permanent notice, even
+// while a pushed modal (Settings) sits on top.
+func TestSettingsNoticeReachesTheConversationTranscript(t *testing.T) {
+	f := newRouterFixture(t)
+	base := conversation.New(f.dark, theme.TierTrueColor, f.themes, replay.New(nil, 0), nil, 80, nil)
+	m := app.New(base, f.dark, theme.TierTrueColor, f.themes)
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(app.Model)
+
+	next, _ = m.Update(app.SettingsNoticeMsg{Text: "workspace: FULL DISK ACCESS — file tools are not confined to the workspace"})
+	m = next.(app.Model)
+
+	if got := m.View().Content; !strings.Contains(got, "FULL DISK ACCESS") {
+		t.Errorf("transcript view missing the never-silent disclosure:\n%s", got)
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -27,7 +27,7 @@ func runShapedCall(t *testing.T, w *turnShapeWrapper, ctx context.Context, id st
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = w.Run(toolcallctx.WithToolCall(ctx, sdkToolCallFor(id, index)), sdktools.InOut{Value: json.RawMessage(`{}`)})
+		_, _ = w.Run(sdkagentloop.WithToolCall(ctx, sdkToolCallFor(id, index)), sdktools.InOut{Value: json.RawMessage(`{}`)})
 	}()
 	select {
 	case <-done:
@@ -87,7 +87,7 @@ func TestSDKTurnShaping_TwoStrandedCallsBothComplete(t *testing.T) {
 	for _, index := range []int{1, 2} {
 		w := shapingWrapper(counter, &blockingTool{})
 		go func(idx int) {
-			_, _ = w.Run(toolcallctx.WithToolCall(ctx, sdkToolCallFor("c", idx)), sdktools.InOut{Value: json.RawMessage(`{}`)})
+			_, _ = w.Run(sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c", idx)), sdktools.InOut{Value: json.RawMessage(`{}`)})
 			done <- idx
 		}(index)
 	}
@@ -114,7 +114,7 @@ func TestSDKTurnShaping_StillOrdersWhileLowerIndexRuns(t *testing.T) {
 	shaped := make(chan int, 2)
 	go func() {
 		_, _ = shapingWrapper(counter, slow).Run(
-			toolcallctx.WithToolCall(ctx, sdkToolCallFor("c0", 0)), sdktools.InOut{Value: json.RawMessage(`{}`)})
+			sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c0", 0)), sdktools.InOut{Value: json.RawMessage(`{}`)})
 		shaped <- 0
 	}()
 	// Let the slow call enter Run and be counted in flight.
@@ -127,7 +127,7 @@ func TestSDKTurnShaping_StillOrdersWhileLowerIndexRuns(t *testing.T) {
 	}
 	go func() {
 		_, _ = shapingWrapper(counter, fast).Run(
-			toolcallctx.WithToolCall(ctx, sdkToolCallFor("c1", 1)), sdktools.InOut{Value: json.RawMessage(`{}`)})
+			sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c1", 1)), sdktools.InOut{Value: json.RawMessage(`{}`)})
 		shaped <- 1
 	}()
 

@@ -111,7 +111,12 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 	}
 	_ = spool
 	dispatcher, err := NewSessionDispatcherVar(SessionDispatcherOpts{
-		Registry: toolGeneration,
+		// The operator's approval wiring survives a model switch. Without it
+		// every /new and /resume session - which reach their dispatcher
+		// through here - built ungated subagents.
+		Approval:     sess.ApprovalSnapshot,
+		ToolDenylist: agentCtx.Global.MandatoryToolDenylistAdditions,
+		Registry:     toolGeneration,
 		// Session-owned; see agentSessionState.LedgerRepo. Nil here is the
 		// hand-built caller with no agent state, which owns no session either.
 		Repo: repo,
@@ -131,7 +136,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		ToolRunTimeout:            config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec),
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		RefOnlyTools:              sess.RefOnlyTools,
-		WorkspaceRoot:             root,
+		WorkspaceRoot:             sessionToolRoot(sess, root),
 		MaxContextTokens:          binding.PromptBudgetTokens,
 		MaxTokens:                 res.MaxTokens,
 		Budget:                    sess.PromptBudget,
@@ -175,7 +180,7 @@ func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.ToolBase == nil {
+	if entryBase(sess, state) == nil {
 		return nil, nil
 	}
 	// The skill registry is frozen for the life of the agent binding, exactly
@@ -190,7 +195,7 @@ func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	// The dispatcher is built for the generation this binding will become, the
 	// same value SwitchBinding assigns when it publishes.
 	binding.ModelGeneration = sess.CurrentModelGeneration() + 1
-	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
+	base := entryBase(sess, state).CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
 	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
 		selected: state.Selected,
 		base:     base,

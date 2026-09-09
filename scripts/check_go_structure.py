@@ -184,6 +184,22 @@ def find_comment_blocks(path: Path) -> list[tuple[int, int]]:
     return blocks
 
 
+
+EMPTY_IMPORT_RE = re.compile(r"(?m)^import\s*\(\s*\)")
+
+
+def has_empty_import_block(path: Path) -> bool:
+    """An `import ()` block with nothing in it is always merge or refactor
+    residue: the declarations that justified the imports moved out and the
+    scaffold stayed behind (seen as a dev-merge husk that claimed to hold
+    relocated tests while compiling into the production package). gofmt
+    never emits it for real imports, so there are no false positives."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return bool(EMPTY_IMPORT_RE.search(text))
+
 def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
     fl = policy["fileLines"]
     fn = policy["funcLines"]
@@ -212,6 +228,13 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
             or any(fnmatch.fnmatch(r, pattern) for pattern in excludes)
         ):
             continue
+        if has_empty_import_block(path):
+            print(
+                f"HARD empty import block: {r} contains `import ()` - "
+                f"merge/refactor residue; delete the block or the file.",
+                file=sys.stderr,
+            )
+            hard_fail += 1
         lines = count_file_lines(path)
         test = is_test(path)
         soft = int(fl["testSoft"] if test else fl["soft"])

@@ -252,10 +252,17 @@ func TestApprovalGatedToolAdapterStandingDecisions(t *testing.T) {
 		}
 	})
 	t.Run("deny", func(t *testing.T) {
-		f := &approvalFixture{verdict: ApprovalResult{Approved: true}}
+		// The denial is recorded THROUGH the gate rather than hand-built, for
+		// the same reason the allow case is: a standing decision is keyed by
+		// the call it was made about, so a key written by hand in a test can
+		// agree with the adapter by luck and disagree in production.
+		f := &approvalFixture{verdict: ApprovalResult{Approved: false, ApprovedForClass: true}}
 		standing := NewApprovalStanding()
-		standing.Deny("gated", tools.ExecutionWrite)
 		reg, _ := f.convertGated(t, tools.ExecutionWrite, standing, AdmissionPredicates{})
+
+		if _, err := runGated(t, reg); err != nil {
+			t.Fatal(err)
+		}
 		s, err := runGated(t, reg)
 		if err != nil {
 			t.Fatal(err)
@@ -263,8 +270,9 @@ func TestApprovalGatedToolAdapterStandingDecisions(t *testing.T) {
 		if s != "tool call denied by user: standing decision" {
 			t.Fatalf("Run = %q, want the standing denial", s)
 		}
-		if got := f.gateCount(); got != 0 {
-			t.Fatalf("gate calls = %d, want 0 under standing deny", got)
+		if got := f.gateCount(); got != 1 {
+			t.Fatalf("gate calls = %d, want 1 (the second is short-circuited by the "+
+				"standing deny)", got)
 		}
 	})
 }

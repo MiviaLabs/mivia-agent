@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -56,6 +59,17 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	s.topbar.SetTheme(msg.Theme, msg.Tier)
 	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 	s.welcome.SetTheme(msg.Theme, msg.Tier)
+	for _, p := range []*picker.Model{s.modelPicker, s.agentPicker, s.palettePicker, s.effortPicker} {
+		if p != nil {
+			p.Theme, p.Tier = msg.Theme, msg.Tier
+		}
+	}
+	if s.sessionPicker != nil {
+		s.sessionPicker.SetTheme(msg.Theme, msg.Tier)
+	}
+	if s.login != nil {
+		s.login.SetTheme(msg.Theme, msg.Tier)
+	}
 	if s.thread != nil {
 		next := s.thread.applyTheme(msg)
 		s.thread = &next
@@ -83,7 +97,22 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 // appends to the transcript (where the user is looking) rather than failing silently.
 func (s Screen) send() (app.Screen, tea.Cmd) {
 	text := s.composer.SubmitText()
-	if text == "" {
+	// Trimmed, not just empty: the shape gate the history is validated
+	// against rejects a user message whose content trims to nothing, so a
+	// composer holding only spaces or a stray newline must be treated as
+	// nothing to send. The composer is cleared so pressing Enter on blank
+	// input looks like what it is rather than silently doing nothing.
+	if strings.TrimSpace(text) == "" {
+		s.composer.Clear()
+		return s, nil
+	}
+	if s.compaction != nil {
+		s.queue = append(s.queue, text)
+		if s.queueOverlay.Active() {
+			s.queueOverlay.SetItems(s.queue)
+		}
+		s.composer.Clear()
+		s.statusline.SetQueued(len(s.queue))
 		return s, nil
 	}
 	if s.active != nil {
@@ -92,7 +121,7 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 			s.queueOverlay.SetItems(s.queue)
 		}
 		s.composer.Clear()
-		s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
+		s.statusline.SetQueued(len(s.queue))
 		return s, nil
 	}
 	return s.sendText(text)
@@ -121,7 +150,11 @@ func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.C
 	s.composer.Clear()
 	s.active = handle
 	s.refreshTopbar()
-	cmd := s.statusline.Start("thinking", s.now())
+	// statusline.Start returns its own unconditional tick Cmd; it is
+	// dropped in favour of the guarded arm, so a turn beginning while a
+	// dispatch batch is already animating does not add a second clock.
+	_ = s.statusline.Start("thinking", s.now())
+	cmd := s.armTick()
 	return s, tea.Batch(cmd, s.awaitSessionEvent(s.convID(), handle.Events()))
 }
 
@@ -131,6 +164,29 @@ func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.C
 // for block shape; the panel and approval are side-effects of the same
 // stream, fed here because this screen sees every event.
 func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
+	return s.handleTurnEventFrom(ev, nil)
+}
+
+// handleTurnEventFrom is handleTurnEvent plus the channel the event was
+// read from, which decides whether the read loop re-arms.
+//
+// source nil means "no origin information" - the embedded thread screen's
+// wrapped events and the synthetic events this package injects for error
+// reporting. Those keep the historical unconditional re-arm.
+//
+// A NON-nil source that is not the active turn's channel is a stale
+// stream: a superseded turn still draining after s.active was replaced.
+// Re-arming on s.active.Events() for it would attach a SECOND permanent
+// read continuation to the live channel (a real turnHandle returns the
+// same channel on every call), after which two readers race for every
+// event and each re-arms on delivery, so the count never falls back.
+//
+// The re-arm follows the event back to its OWN channel instead of being
+// dropped, because handleEventMsg's untracked-session path documents the
+// invariant this shares: the read loop is the only remaining reference to
+// that channel, and abandoning it strands a writer that may be the agent
+// loop's synchronous event tap, which then blocks once the buffer fills.
+func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Event) (app.Screen, tea.Cmd) {
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
 
@@ -145,7 +201,10 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		// pre-empts, so it closes.
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 	case uievent.ToolStartBody:
-		s.approval.Clear()
+		// This call's OWN prompt, not every prompt. A blanket clear dismissed
+		// the prompt for a different call that was still waiting, and its gate
+		// then blocked with nothing on screen to answer it.
+		s.approval.Resolve(b.ToolCallID)
 		s.statusline.SetLabel("running")
 		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
 		s.observeToolStart(b)
@@ -156,9 +215,20 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		// from the same stream the transcript renders.
 		if b.Progress != nil {
 			s.panel.observeAgent(b.ToolCallID, b.Progress)
+			// A dispatch batch emits progress continuously, so this arm is
+			// guarded: without armTick every progress event started an
+			// additional self-re-arming clock and the marks animated N times
+			// too fast while the cockpit repainted N times per interval.
+			//
+			// Animating, not Active: a bare notice on the row ("copied the
+			// block") is static, and gating on Active suppressed this arm
+			// entirely, freezing the panel marks while the batch ran.
+			if !s.statusline.Animating() && s.panel.activeAgentCount() > 0 {
+				flushCmd = tea.Batch(flushCmd, s.armTick())
+			}
 		}
 	case uievent.ToolEndBody:
-		s.approval.Clear()
+		s.approval.Resolve(b.ToolCallID)
 		s.statusline.SetLabel("thinking")
 		s.observeToolEnd(b)
 	case uievent.UsageBody:
@@ -177,7 +247,8 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.topbar.SetUsage(live)
 		s.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
-		s.approval.Clear()
+		// The turn is over, so no decision can reach a gate any more.
+		s.approval.ClearAll()
 		s.panel.reconcileTerminal(b.Reason)
 		// The turn committed (and may have compacted at the boundary), so
 		// the session's own estimate is authoritative again. Dropping the
@@ -189,13 +260,27 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 
 	s.refreshTopbar()
 
-	var readCmd tea.Cmd
-
-	if s.active != nil {
-		readCmd = s.awaitSessionEvent(s.convID(), s.active.Events())
-	}
-	return s, tea.Batch(flushCmd, readCmd)
+	return s, tea.Batch(flushCmd, s.rearmRead(source))
 }
+
+// rearmRead returns the continuation that keeps ONE reader on the stream
+// this event came from. See handleTurnEventFrom for why a stale source
+// re-arms on itself instead of on the active turn's channel (double
+// reader) or on nothing at all (stranded writer).
+func (s Screen) rearmRead(source <-chan uievent.Event) tea.Cmd {
+	if source != nil && (s.active == nil || !sameEventStream(source, s.active.Events())) {
+		return s.awaitSessionEvent(s.convID(), source)
+	}
+	if s.active != nil {
+		return s.awaitSessionEvent(s.convID(), s.active.Events())
+	}
+	return nil
+}
+
+// sameEventStream reports whether two event channels are the same
+// underlying channel. Channel values are comparable, so this is identity,
+// not contents.
+func sameEventStream(a, b <-chan uievent.Event) bool { return a == b }
 
 // observeToolStart folds one ToolStartBody into the activity panel. A
 // dispatch_tasks call fires ONE tool.start for the whole batch, so it fans
@@ -203,10 +288,16 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 // otherwise the panel and the top-bar agent count would only ever show the
 // call, not the subagents it dispatched.
 func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
-	if !isSubagentTool(b.Name) && !(s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
+	observeToolStartInto(&s.panel, s.threads, b)
+}
+
+// observeToolStartInto is the shared body, so the background path fans a
+// dispatch group into per-task rows exactly as the foreground one does.
+func observeToolStartInto(p *panel, threads ports.SubagentThreads, b uievent.ToolStartBody) {
+	if !isSubagentTool(b.Name) && !(threads != nil && isThreadRegistered(threads, b.ToolCallID)) {
 		return
 	}
-	if s.panel.isDispatchGroup(b.ToolCallID) {
+	if p.isDispatchGroup(b.ToolCallID) {
 		// The agent loop emits two tool.start events per call - "queued"
 		// (internal/agent/sdk_tool_events.go, Args populated) then
 		// "running" (sdk_dispatcher_shim.go's dispatcherShim.Run, which
@@ -217,10 +308,10 @@ func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
 		return
 	}
 	if ids, names := dispatchTaskIDsAndNames(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
-		s.panel.observeAgentGroupStart(b.ToolCallID, ids, names)
+		p.observeAgentGroupStart(b.ToolCallID, ids, names)
 	} else {
 		name := extractAgentDisplayName(b.Name, b.Args)
-		s.panel.observeAgentStart(b.ToolCallID, name)
+		p.observeAgentStart(b.ToolCallID, name)
 	}
 }
 
@@ -238,17 +329,25 @@ func extractAgentDisplayName(toolName string, args map[string]any) string {
 // dispatched task's own terminal status from the call's JSON result,
 // instead of collapsing every task to the same aggregate ok/failed value.
 func (s *Screen) observeToolEnd(b uievent.ToolEndBody) {
-	if s.panel.isDispatchGroup(b.ToolCallID) {
-		s.panel.observeAgentGroupEnd(b.ToolCallID, parseDispatchTaskStatuses(b.Result), b.OK)
+	observeToolEndInto(&s.panel, b)
+}
+
+// observeToolEndInto is the shared body. The background path used to call
+// observeAgentEnd directly, which matches by row id and therefore never
+// matched a dispatch group's "callID:taskID" rows - so a group that finished
+// while its session was backgrounded left every task row running.
+func observeToolEndInto(p *panel, b uievent.ToolEndBody) {
+	if p.isDispatchGroup(b.ToolCallID) {
+		p.observeAgentGroupEnd(b.ToolCallID, parseDispatchTaskStatuses(b.Result), b.OK)
 	} else {
-		s.panel.observeAgentEnd(b.ToolCallID, b.OK)
+		p.observeAgentEnd(b.ToolCallID, b.OK)
 	}
 	if b.Diff != nil {
 		// The panel's data, fed live: every completed edit appears as a
 		// touched file the moment it happens, exactly as the transcript
 		// renders it. Deletions carry no diff in the event vocabulary, so
 		// only edits and creations record here.
-		s.panel.appendLive(*b.Diff)
+		p.appendLive(*b.Diff)
 	}
 }
 
@@ -294,7 +393,7 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 	if strings.ToLower(name) != "dispatch_tasks" {
 		return nil, nil
 	}
-	rawTasks, ok := args["tasks"].([]any)
+	rawTasks, ok := foldedArg(args, "tasks").([]any)
 	if !ok || len(rawTasks) == 0 {
 		return nil, nil
 	}
@@ -304,8 +403,8 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 		id := ""
 		taskName := ""
 		if m, ok := rt.(map[string]any); ok {
-			if s, ok := m["id"].(string); ok {
-				id = s
+			if s, ok := foldedArg(m, "id").(string); ok {
+				id = strings.TrimSpace(s)
 			}
 			taskName = extractAgentDisplayName("", m)
 		}
@@ -322,12 +421,45 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 	return ids, names
 }
 
+// foldedArg reads key from model-authored JSON the way encoding/json resolves
+// a struct tag: exact match first, else a case-insensitive one.
+//
+// The row ids built here have to equal the task ids the tool mints from the
+// SAME arguments - the row id is what later progress events match on, and what
+// an operator's cancel routes on (remote_cancel_target.go). The tool decodes
+// through encoding/json, which is case-insensitive, so a task written with
+// "ID" reaches it as a perfectly good id. Read exact-cased here, that task got
+// a positional "task-N" placeholder no event could ever match: the row sat at
+// Step 0, rendered "stalled", and a cancel aimed at it named an id nothing had
+// registered while the subagent kept spending the batch's budget.
+func foldedArg(m map[string]any, key string) any {
+	if v, ok := m[key]; ok {
+		return v
+	}
+	// Sorted, not map order: if a batch ever carried two folded spellings the
+	// row ids would otherwise differ run to run. The tool refuses that batch,
+	// so this is belt and braces - but an id that changes between renders is
+	// exactly the kind of thing that is impossible to reproduce from a report.
+	folded := make([]string, 0, len(m))
+	for k := range m {
+		if strings.EqualFold(k, key) {
+			folded = append(folded, k)
+		}
+	}
+	if len(folded) == 0 {
+		return nil
+	}
+	sort.Strings(folded)
+	return m[folded[0]]
+}
+
 // namespacedTaskID mirrors internal/cliorchestrate's function of the same
 // name. Duplicated, not imported: internal/ui/** must not import
 // internal/cli*-family packages (UI isolation, docs/design/ui-isolation.md,
 // enforced by scripts/check_import_layers.py), so the two copies are kept
 // in sync by contract, not by the compiler.
 func namespacedTaskID(namespace, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
 	if namespace == "" || rawID == "" {
 		return rawID
 	}
@@ -396,6 +528,13 @@ func parseDispatchTaskStatuses(result string) map[string]string {
 }
 
 func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
+	recordBlackboardToolInto(&s.blackboard, name, args)
+}
+
+// recordBlackboardToolInto is the shared body: the FOREGROUND handler used to
+// own it, so a message or finding raised by a backgrounded session was
+// dropped with no gap marker. Both paths call this now.
+func recordBlackboardToolInto(bb *blackboard.Model, name string, args map[string]any) {
 	if len(args) == 0 {
 		return
 	}
@@ -411,13 +550,13 @@ func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
 					refs = append(refs, fmt.Sprint(r))
 				}
 			}
-			s.blackboard.AddFinding("subagent", body, refs)
+			bb.AddFinding("subagent", body, refs)
 		} else if kind != "" && body != "" {
 			toRole := getStringVal(args, "to_role")
 			if toRole == "" {
 				toRole = "orchestrator"
 			}
-			s.blackboard.AddMessage("subagent", toRole, kind, body)
+			bb.AddMessage("subagent", toRole, kind, body)
 		}
 	case "send_to_task":
 		action := getStringVal(args, "action")
@@ -427,7 +566,7 @@ func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
 			action = "steer"
 		}
 		if body != "" {
-			s.blackboard.AddMessage("orchestrator", taskID, action, body)
+			bb.AddMessage("orchestrator", taskID, action, body)
 		}
 	case "send_message":
 		recipient := getStringVal(args, "Recipient")
@@ -439,7 +578,7 @@ func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
 			msg = getStringVal(args, "message")
 		}
 		if msg != "" {
-			s.blackboard.AddMessage("orchestrator", recipient, "message", msg)
+			bb.AddMessage("orchestrator", recipient, "message", msg)
 		}
 	}
 }
@@ -448,7 +587,11 @@ func getStringVal(m map[string]any, key string) string {
 	if m == nil {
 		return ""
 	}
-	if v, ok := m[key]; ok {
+	// Through foldedArg, so every read of a model-authored object in this file
+	// resolves names the way encoding/json does. A task written with "Agent"
+	// routes perfectly well for the tool and used to render a row with no
+	// agent label at all.
+	if v := foldedArg(m, key); v != nil {
 		if str, ok := v.(string); ok {
 			return str
 		}

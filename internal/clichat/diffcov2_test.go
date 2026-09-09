@@ -45,25 +45,6 @@ func TestDiffCov2BindingForRequestDeclaredMismatch(t *testing.T) {
 	}
 }
 
-// --- bubble_rail_roles.go ---
-
-func TestDiffCov2HeaderGroupMemberAndExitTokens(t *testing.T) {
-	m := headerGroupMember(3, "gk")
-	if !m.InGroup || m.ToolIndex != -1 || m.ToolCount != 3 || m.GroupKey != "gk" || !m.IsHeader {
-		t.Fatalf("headerGroupMember = %+v", m)
-	}
-	for _, s := range []string{"exit=error", "exit=timeout", "exit=canceled", "exit=cancelled", "x exit=1 y"} {
-		if !hasExitFailureToken(s) {
-			t.Errorf("hasExitFailureToken(%q) = false; want true", s)
-		}
-	}
-	for _, s := range []string{"exit=0", "exit=10", "exitit=1", "no tokens"} {
-		if hasExitFailureToken(s) {
-			t.Errorf("hasExitFailureToken(%q) = true; want false", s)
-		}
-	}
-}
-
 // --- chat.go / chat_repl*.go / chat_slash.go / chat_hub.go ---
 
 func TestDiffCov2HandleTabWithSlashPrefix(t *testing.T) {
@@ -138,55 +119,6 @@ func TestDiffCov2ChatBlockFromMessageAndHydrateDivider(t *testing.T) {
 	}
 }
 
-func TestDiffCov2RenderPreformattedDefaultAndSystemArrow(t *testing.T) {
-	block := ChatBlock{ID: "b1", Kind: ChatBlockAssistant, Text: "t", Rendered: "rendered"}
-	rail := ResolveBlockRail(block, GroupMember{}, ChromeRenderOpts(), RailView{})
-	lines, ok := renderPreformattedBlock(block, rail)
-	if !ok || len(lines) != 1 || lines[0] != "rendered" {
-		t.Fatalf("renderPreformattedBlock(default) = (%v, %v)", lines, ok)
-	}
-	arrow := renderBlockBody(ChatBlock{Kind: ChatBlockSystem, Text: "plain system note"}, "plain system note", "m", 60, false)
-	if len(arrow) != 1 || !strings.Contains(arrow[0], "plain system note") {
-		t.Fatalf("renderBlockBody(system note) = %v", arrow)
-	}
-}
-
-// --- chatblock_status.go ---
-
-func TestDiffCov2ReconstructStatusThinkingThenTool(t *testing.T) {
-	blocks := ReconstructEmptySpeechStatus([]ChatBlock{
-		{Kind: ChatBlockThinking, Text: "t"},
-		{Kind: ChatBlockTool, ToolName: "read_file"},
-	})
-	if len(blocks) < 2 {
-		t.Fatalf("ReconstructEmptySpeechStatus dropped blocks: %+v", blocks)
-	}
-}
-
-func TestDiffCov2ToolWaveFollowsWorkStatusSystem(t *testing.T) {
-	blocks := []ChatBlock{
-		{Kind: ChatBlockSystem, Text: "→ running"},
-		{Kind: ChatBlockTool, ToolName: "read_file"},
-	}
-	if !toolWaveFollows(blocks, 0) {
-		t.Fatal("toolWaveFollows(system work status) = false; want true")
-	}
-}
-
-// --- chatblock_workgroup.go ---
-
-func TestDiffCov2WorkGroupWindowNarrowWidthAndAppendBlock(t *testing.T) {
-	out := RenderChatBlocksWithWorkGroupsWindow(nil, "m", 0, false, nil, nil, RailView{})
-	if len(out.Lines) != 0 {
-		t.Fatalf("RenderChatBlocksWithWorkGroupsWindow(nil) lines = %v", out.Lines)
-	}
-	r := &ChatBlockRender{}
-	appendRenderedBlock(r, ChatBlock{Kind: ChatBlockSystem, Text: "note"}, "m", 60, false)
-	if len(r.Lines) == 0 {
-		t.Fatal("appendRenderedBlock produced no lines")
-	}
-}
-
 // --- dialog.go ---
 
 func TestDiffCov2HelpDialogLayoutAndDraw(t *testing.T) {
@@ -200,16 +132,6 @@ func TestDiffCov2HelpDialogLayoutAndDraw(t *testing.T) {
 	// A narrow width forces the truncation branches in renderHelpLines.
 	for _, line := range renderHelpLines(10) {
 		_ = line
-	}
-}
-
-// --- dialog_compositor.go ---
-
-func TestDiffCov2RenderDialogFrameRowRefit(t *testing.T) {
-	layout := DialogLayout{Rect: Rect{W: 12, H: 6}}
-	out := RenderDialogFrame("t", []string{"row content wider than the frame"}, "f", layout)
-	if !strings.Contains(out, "row conten") {
-		t.Fatalf("RenderDialogFrame lost row content: %q", out)
 	}
 }
 
@@ -227,7 +149,7 @@ func TestDiffCov2RenderCollapsedEditBlockFallbackPathAndFailed(t *testing.T) {
 	}
 }
 
-// --- highlight.go / highlight_blocks.go ---
+// --- highlight.go ---
 
 func TestDiffCov2HighlightLinePlainUnknownAndInlineComment(t *testing.T) {
 	if out, multi := highlightLine("plain text", "", false); multi || !strings.Contains(out, "plain text") {
@@ -240,9 +162,6 @@ func TestDiffCov2HighlightLinePlainUnknownAndInlineComment(t *testing.T) {
 	out, multi := highlightLine("x /* note */ y", "go", false)
 	if multi || !strings.Contains(out, "note") {
 		t.Fatalf("highlightLine(inline comment) = (%q, %v)", out, multi)
-	}
-	if got := getCodeIcon("brainfuck"); got == "" {
-		t.Fatal("getCodeIcon(unknown lang) returned empty")
 	}
 }
 
@@ -370,15 +289,6 @@ func TestDiffCov2ChunkSettleSucceededNotNoDiff(t *testing.T) {
 		workflowledger.RunSnapshot{RunID: "r1", Status: workflowledger.RunStatusSucceeded}, &buf)
 	chunkSettleSucceeded(repo, store, "stk", "chk2",
 		workflowledger.RunSnapshot{RunID: "r2", Status: workflowledger.RunStatusFailed}, &buf)
-}
-
-// --- thinking.go ---
-
-func TestDiffCov2RenderThinkingBlockView(t *testing.T) {
-	out := renderThinkingBlockView("t1", "thinking hard", false, 0, "m", 40, false, 0, true)
-	if !strings.Contains(out, "thinking hard") {
-		t.Fatalf("renderThinkingBlockView = %q", out)
-	}
 }
 
 // --- tool_wave_status.go ---
@@ -518,18 +428,6 @@ func TestDiffCov2AdmitNextWaveHaltedAtMaxTotal(t *testing.T) {
 	}
 }
 
-// --- dialog_geometry.go (crafted zero-width slicing inputs) ---
-
-func TestDiffCov2WrapDisplayRowsWideRuneSplit(t *testing.T) {
-	// A lone wide rune with a 1-column inner width cannot be cut into a
-	// 1-column part: the slicer falls through to the defensive empty-row
-	// padding branches.
-	rows, sources := WrapDisplayRowsWithSources([]string{"漢"}, 1)
-	if len(rows) == 0 || len(rows) != len(sources) {
-		t.Fatalf("WrapDisplayRowsWithSources(wide rune) = (%v, %v)", rows, sources)
-	}
-}
-
 // --- chat_command.go (TUI dispatch behind a pty stdin) ---
 
 // withPtyStdin swaps os.Stdin for a pty slave so term.IsTerminal reports
@@ -560,7 +458,7 @@ func TestDiffCov2DispatchChatSurfaceLaunchesTUI(t *testing.T) {
 
 		res := &config.Resolved{ProviderName: "p", Model: "m"}
 		sess := chat.NewSession(res, nullCompleter{})
-		err := dispatchChatSurface(chatInvocation{}, sess, res, false, &AgentSessionState{})
+		err := dispatchChatSurface(chatInvocation{}, sess, t.TempDir(), res, false, &AgentSessionState{})
 		if err != nil {
 			t.Fatalf("dispatchChatSurface(TUI) err = %v", err)
 		}
@@ -570,7 +468,7 @@ func TestDiffCov2DispatchChatSurfaceLaunchesTUI(t *testing.T) {
 
 		// An unwired launcher fails closed.
 		TUILauncherFunc = nil
-		if err := dispatchChatSurface(chatInvocation{}, sess, res, false, &AgentSessionState{}); err == nil || !strings.Contains(err.Error(), "unwired") {
+		if err := dispatchChatSurface(chatInvocation{}, sess, t.TempDir(), res, false, &AgentSessionState{}); err == nil || !strings.Contains(err.Error(), "unwired") {
 			t.Fatalf("dispatchChatSurface(unwired) err = %v; want unwired error", err)
 		}
 	})

@@ -17,6 +17,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/events"
 )
 
 // failingTool always errors, for the failed tool_end variant.
@@ -198,5 +199,27 @@ func TestBridgeEvents_StreamRevokeStillOncePerIteration(t *testing.T) {
 	}, func(o *Options) { o.FinalWriter = &fw })
 	if fw.revokeN != 1 {
 		t.Fatalf("RevokeStream called %d times, want 1 per iteration", fw.revokeN)
+	}
+}
+
+// TestSDKToolEventHooksIgnoreForeignPayload pins the PointPreTool
+// hook's type guard: the SDK fires the point with whatever payload the
+// caller supplied, so a non-ToolCall value must allow the call and
+// change nothing. Without the guard the hook would emit a nameless
+// tool_start and burn the once-per-iteration stream-revoke arm.
+func TestSDKToolEventHooksIgnoreForeignPayload(t *testing.T) {
+	var captured []Event
+	opts := Options{OnEvent: func(e Event) { captured = append(captured, e) }}
+	turn := newSDKTurnState()
+	reg := sdkToolEventHooks(opts, turn)
+
+	if err := reg.Fire(context.Background(), sdkhooks.PointPreTool, "not a tool call"); err != nil {
+		t.Fatalf("Fire(PointPreTool, string) = %v, want nil: an observer hook must never veto", err)
+	}
+	if len(captured) != 0 {
+		t.Fatalf("emitted %+v on a foreign payload, want no event", captured)
+	}
+	if !turn.armStreamRevoke() {
+		t.Fatal("the stream-revoke arm was consumed by a foreign payload; the first real tool call of the iteration would no longer revoke")
 	}
 }

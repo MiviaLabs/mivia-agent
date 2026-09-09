@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -105,6 +106,46 @@ func plainPersistenceError(err error) error {
 	return err
 }
 
+// plainCommitPersistenceError tags a durable-commit failure on the plain
+// context path as a persistence failure while keeping the original cause
+// matchable: errors.Is(err, ErrPersistence) and errors.Is(err, <cause>) both
+// hold (multi-%w). Returns nil for a nil cause. This is what makes
+// shouldPrintOneShotOutput (internal/clichat/chat.go) print the answer that
+// already streamed to the caller's writer instead of suppressing it - the
+// returned error string/value itself is not what reaches the terminal, the
+// ErrPersistence tag on it is what flips that decision.
+func plainCommitPersistenceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrPersistence, err)
+}
+
+// adoptUncommittedPlainTurn adopts candidate into s.Messages under the
+// operation fence WITHOUT advancing s.contextHead/s.contextRevision: the
+// checkpoint did not land durably, so the durable head must stay where it
+// is while the exchange survives in memory until the next successful
+// commit catches it up. In-memory history now runs one turn ahead of
+// contextHead until that catch-up happens - this is intended, not drift.
+// Refuses adoption (no-op) if the turn's fence has gone stale, or if
+// validateRestoredMessages rejects candidate's shape (fail closed - do not
+// poison later Prepare calls with an unpairable history).
+//
+// Every call site already holds contextPublishMu when this runs; this
+// function only ever acquires s.mu, preserving the established
+// contextPublishMu -> s.mu lock order.
+func (s *Session) adoptUncommittedPlainTurn(candidate []provider.Message, snapshot plainTurnSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnID != snapshot.myTurn || !s.tokenCurrentLocked(snapshot.token) {
+		return
+	}
+	if err := validateRestoredMessages(candidate); err != nil {
+		return
+	}
+	s.Messages = candidate
+}
+
 // commitInterruptedPlainContext handles the errored ChatStream path of a plain
 // context turn (sendPlainContext). An interrupted turn (Ctrl+C / force-send /
 // deadline) must not lose the user's message or the answer already streamed:
@@ -151,9 +192,17 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 				s.emitContextCompaction(commitCtx, snapshot.context, preparation, snapshot.myTurn, summary.present, summary.reason)
 				return partial, nil
 			}
+			// The commit never landed durably, but the user's message and the
+			// already-streamed partial answer are real: adopt them into
+			// memory (candidate may already carry an appended summary here,
+			// from buildContextTurnResult above) so the next successful
+			// commit catches contextHead up, instead of losing the turn
+			// outright. contextHead/contextRevision stay pinned to the last
+			// durable revision - do not advance them here.
+			s.adoptUncommittedPlainTurn(candidate, snapshot)
 			snapshot.context.manager.PreparationManager.Discard(preparation)
 			s.contextPublishMu.Unlock()
-			return "", commitErr
+			return partial, plainCommitPersistenceError(commitErr)
 		}
 		snapshot.context.manager.PreparationManager.Discard(preparation)
 		s.contextPublishMu.Unlock()
@@ -207,9 +256,20 @@ func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snap
 	snapshot.context.manager.PreparationManager.Discard(preparation)
 	if commitErr != nil {
 		// The commit itself failed - most commonly message-shape validation
-		// rejecting a turn that died mid-stream in an unpairable state. Fall
-		// back to the original discard behavior rather than surfacing a
-		// second, unrelated persistence error on top of err.
+		// rejecting a turn that died mid-stream in an unpairable state. Adopt
+		// the exchange into memory anyway (candidate may already carry an
+		// appended summary here) so it is not silently lost - the next
+		// successful commit catches contextHead up.
+		//
+		// Deliberately return err UNWRAPPED here, not tagged with
+		// ErrPersistence: this is the non-interrupted-error path, so the
+		// stream itself failed upstream, not just the durable save. The
+		// buffered/partial text is incomplete and untrustworthy, and tagging
+		// it ErrPersistence would wrongly signal "the answer is fine, only
+		// the save failed" when the answer itself never finished streaming.
+		// shouldPrintOneShotOutput (internal/clichat/chat.go) must stay false
+		// for this case.
+		s.adoptUncommittedPlainTurn(candidate, snapshot)
 		return "", err
 	}
 	s.mu.Lock()
@@ -262,8 +322,21 @@ func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snap
 		err = snapshot.context.manager.Commit(ctx, preparation, result)
 	}
 	if err != nil {
+		// Durable commit failed, but the exchange already happened (and
+		// candidate may already carry an appended summary here, if this
+		// failure came from Commit rather than result construction): adopt
+		// it into memory now rather than losing it, so it survives until the
+		// next successful commit catches contextHead up.
+		// contextHead/contextRevision stay pinned to the last durably
+		// committed revision - do not advance them here. reply is the
+		// model's actual streamed answer; return it un-blanked so Session's
+		// own SendUser contract holds for direct callers, tests, and future
+		// callers that read it (one-shot mode's answer already reached the
+		// terminal via the streamed writer, not via this return value - see
+		// plainCommitPersistenceError).
+		s.adoptUncommittedPlainTurn(candidate, snapshot)
 		snapshot.context.manager.PreparationManager.Discard(preparation)
-		return "", err
+		return reply, plainCommitPersistenceError(err)
 	}
 	s.mu.Lock()
 	if !s.tokenCurrentLocked(snapshot.token) {

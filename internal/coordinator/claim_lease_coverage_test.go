@@ -22,7 +22,7 @@ func TestClaimRunRefusesHeldClaimWithoutLeaseSupport(t *testing.T) {
 	if err := base.ClaimRun(context.Background(), "run", "other"); err != nil {
 		t.Fatal(err)
 	}
-	c := New(nonLeaseClaimRepository{LedgerRepository: base}, nil).(*coordinator)
+	c := New(nonLeaseClaimRepository{LedgerRepository: base}, nil)
 	if err := c.claimRun(context.Background(), "run"); !errors.Is(err, ledger.ErrClaimHeld) {
 		t.Fatalf("claim error = %v, want ErrClaimHeld", err)
 	}
@@ -30,7 +30,7 @@ func TestClaimRunRefusesHeldClaimWithoutLeaseSupport(t *testing.T) {
 
 func TestClaimHeartbeatCancelsAfterLeaseTheft(t *testing.T) {
 	base := ledger.NewMemoryLedgerRepository()
-	c := New(heldClaimRepository{LedgerRepository: base}, nil).(*coordinator)
+	c := New(heldClaimRepository{LedgerRepository: base}, nil)
 	c.claimHeartbeat = time.Millisecond
 	h := c.newRunHandle("run", "", nil, "", false)
 	stop := c.startClaimHeartbeat(h)

@@ -18,13 +18,20 @@ const (
 	KindToolPending Kind = "tool.pending" // needs approval
 	KindToolStart   Kind = "tool.start"
 	KindToolOutput  Kind = "tool.output" // incremental; also carries subagent progress
-	KindToolEnd     Kind = "tool.end"
-	KindPlan        Kind = "plan"   // to-do/plan checklist update
-	KindNotice      Kind = "notice" // free-text advisory line, e.g. context-usage warning
-	KindHook        Kind = "hook"   // a lifecycle hook fired for a tool call
-	KindUsage       Kind = "usage"
-	KindError       Kind = "error"
-	KindTurnEnd     Kind = "turn.end"
+	// KindAssistantReset tells the transcript to discard the assistant text it
+	// holds for the current turn, because the turn is being re-driven from the
+	// beginning.
+	KindAssistantReset Kind = "assistant.reset"
+	KindToolEnd        Kind = "tool.end"
+	KindPlan           Kind = "plan"   // to-do/plan checklist update
+	KindNotice         Kind = "notice" // free-text advisory line, e.g. context-usage warning
+	// KindWorkflowStatus is replaceable liveness for the running workflow,
+	// for a status row - never the transcript. See WorkflowStatusBody.
+	KindWorkflowStatus Kind = "workflow.status"
+	KindHook           Kind = "hook" // a lifecycle hook fired for a tool call
+	KindUsage          Kind = "usage"
+	KindError          Kind = "error"
+	KindTurnEnd        Kind = "turn.end"
 )
 
 // Event is one item in the UI event stream. TurnID and Seq fence late
@@ -103,9 +110,18 @@ type ToolStartBody struct {
 
 func (ToolStartBody) isBody() {}
 
+// AssistantResetBody is the Body for KindAssistantReset. Reason is a short,
+// content-free classification of why the turn restarted.
+type AssistantResetBody struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+func (AssistantResetBody) isBody() {}
+
 // Progress carries subagent step progress. It is optional on
 // ToolOutputBody; nil means ordinary incremental tool output.
 type Progress struct {
+	AgentName      string   `json:"agent_name,omitempty"`
 	Step           int      `json:"step"`
 	TotalSteps     int      `json:"total_steps"`
 	ElapsedSeconds float64  `json:"elapsed_seconds"`
@@ -197,6 +213,30 @@ type NoticeBody struct {
 }
 
 func (NoticeBody) isBody() {}
+
+// WorkflowStatusBody is the Body for KindWorkflowStatus: the liveness of the
+// workflow run currently executing, for a persistent status row rather than
+// the transcript.
+//
+// This exists because a workflow step can run quietly for hours. Its start
+// and its end are state transitions and belong in the record as notices; the
+// span between them is not a sequence of events at all, it is one fact that
+// stays true and whose only changing part is how long it has been true. A
+// transcript entry per liveness tick would bury the record it is supposed to
+// make readable, so the span is carried as a REPLACEABLE status instead: each
+// event supersedes the last, and the renderer derives the elapsed time from
+// Since at draw time rather than being told it.
+//
+// Active false clears the row: the run reached a terminal state and there is
+// no longer anything running to report.
+type WorkflowStatusBody struct {
+	Run    string    `json:"run"`
+	Step   string    `json:"step"`
+	Since  time.Time `json:"since"`
+	Active bool      `json:"active"`
+}
+
+func (WorkflowStatusBody) isBody() {}
 
 // HookBody is the Body for KindHook: one lifecycle hook execution for a
 // tool call, with its program, event, tool, and the bounded/redacted input

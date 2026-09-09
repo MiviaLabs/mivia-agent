@@ -15,7 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func newPostMessageCoordinator(t *testing.T) (Coordinator, ledger.LedgerRepository) {
+func newPostMessageCoordinator(t *testing.T) (*Coordinator, ledger.LedgerRepository) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -27,7 +27,7 @@ func newPostMessageCoordinator(t *testing.T) (Coordinator, ledger.LedgerReposito
 }
 
 // spawnJoinedRun creates one worker task and waits for completion.
-func spawnJoinedRun(t *testing.T, c Coordinator) (runID, taskID string) {
+func spawnJoinedRun(t *testing.T, c *Coordinator) (runID, taskID string) {
 	t.Helper()
 	ctx := context.Background()
 	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker", Input: json.RawMessage(`"hi"`)}}, "")
@@ -153,7 +153,7 @@ func TestPostTaskMessageRejectsInvalid(t *testing.T) {
 	snap, _ := c.Inspect(ctx, h)
 	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
 
-	coord := c.(*coordinator)
+	coord := c
 	// Missing ID / invalid kind
 	err = coord.PostTaskMessage(ctx, runID, taskID, agentmsg.Message{
 		RunID: runID, Kind: "chat", Body: "x",
@@ -198,7 +198,7 @@ func TestPostTaskMessagePayloadIsIDAndSynopsisOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.(*coordinator).PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
 		t.Fatal(err)
 	}
 	events, err := repo.ListEvents(ctx, runID)
@@ -300,7 +300,7 @@ func TestPostTaskMessageSynopsisRedacted(t *testing.T) {
 func TestPostTaskMessageInputValidation(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
 	ctx := context.Background()
-	coord := c.(*coordinator)
+	coord := c
 	msg, err := agentmsg.NewMessage("run-x", agentmsg.KindFinding,
 		agentmsg.Party{TaskID: "t"}, agentmsg.Party{}, "b", nil, agentmsg.Options{ID: "msg-v"})
 	if err != nil {
@@ -339,7 +339,7 @@ func TestPostTaskMessageStampsEmptyProvenance(t *testing.T) {
 		To:   agentmsg.Party{Role: agentmsg.ParentSentinel},
 		Body: "stamped",
 	}
-	if err := c.(*coordinator).PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
 		t.Fatal(err)
 	}
 	events, err := repo.ListEvents(ctx, runID)
@@ -386,7 +386,7 @@ func TestPostTaskMessageMissingTask(t *testing.T) {
 	snap, _ := c.Inspect(ctx, h)
 	msg, _ := agentmsg.NewMessage(snap.RunID, agentmsg.KindFinding,
 		agentmsg.Party{TaskID: "nope"}, agentmsg.Party{}, "b", nil, agentmsg.Options{ID: "msg-m"})
-	if err := c.(*coordinator).PostTaskMessage(ctx, snap.RunID, "no-such-task", msg); err == nil {
+	if err := c.PostTaskMessage(ctx, snap.RunID, "no-such-task", msg); err == nil {
 		t.Fatal("expected missing task error")
 	}
 }
@@ -481,7 +481,7 @@ func TestPostTaskMessageRespectsMaxBodyBytes(t *testing.T) {
 func TestPostTaskMessageDefaultBodyBudgetWhenUnset(t *testing.T) {
 	// maxBodyBytes forced to 0 falls back to DefaultMaxBodyBytes.
 	c, _ := newPostMessageCoordinator(t)
-	coord := c.(*coordinator)
+	coord := c
 	coord.maxBodyBytes = 0
 	ctx := context.Background()
 	runID, taskID := spawnJoinedRun(t, c)
@@ -552,7 +552,7 @@ func TestPostTaskMessageStoreAndAppendFailures(t *testing.T) {
 
 	// StoreContent failure
 	failStore := &failingStoreRepo{LedgerRepository: base, failStore: true}
-	coordStore := New(failStore, p).(*coordinator)
+	coordStore := New(failStore, p)
 	if err := coordStore.PostTaskMessage(ctx, runID, taskID, msg); err == nil || !strings.Contains(err.Error(), "store content") {
 		t.Fatalf("store fail: %v", err)
 	}
@@ -561,7 +561,7 @@ func TestPostTaskMessageStoreAndAppendFailures(t *testing.T) {
 	msg2 := msg
 	msg2.ID = "msg-f2"
 	failAppend := &failingStoreRepo{LedgerRepository: base, failAppend: true}
-	coordAppend := New(failAppend, p).(*coordinator)
+	coordAppend := New(failAppend, p)
 	if err := coordAppend.PostTaskMessage(ctx, runID, taskID, msg2); err == nil || !strings.Contains(err.Error(), "append event") {
 		t.Fatalf("append fail: %v", err)
 	}

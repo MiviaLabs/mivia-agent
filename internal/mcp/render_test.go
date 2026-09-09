@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestSanitizeToolMetadataBoundsUntrustedValues(t *testing.T) {
@@ -51,6 +54,112 @@ func TestSanitizeToolMetadataCopiesSafeSchema(t *testing.T) {
 	properties["name"].(map[string]any)["type"] = "changed"
 	if schema["properties"].(map[string]any)["name"].(map[string]any)["type"] != "string" {
 		t.Fatal("bridge returned a mutable source schema")
+	}
+}
+
+// TestSanitizeToolMetadataKeepsDescriptionBearingProperties is the
+// empty-advertised-schema regression: the codegraph_explore schema - like
+// nearly every real server's - puts "description" on the schema and on each
+// property. bridgeSchemaValue treated any unlisted key as fatal, so the whole
+// schema collapsed to a bare open object: the model was never shown the
+// parameter names or the required list, sent empty arguments, and the server
+// rejected them. Descriptions must survive the bridge.
+func TestSanitizeToolMetadataKeepsDescriptionBearingProperties(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Symbol names or a natural-language question",
+			},
+			"maxFiles": map[string]any{"type": "number", "default": float64(12)},
+		},
+		"required": []any{"query"},
+	}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["type"] != "object" {
+		t.Fatalf("bridged schema = %#v, want type object", got)
+	}
+	properties, ok := got["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("bridged schema = %#v, want the properties preserved", got)
+	}
+	query, ok := properties["query"].(map[string]any)
+	if !ok || query["type"] != "string" || query["description"] != "Symbol names or a natural-language question" {
+		t.Fatalf("bridged query property = %#v, want type and description preserved", query)
+	}
+	maxFiles := properties["maxFiles"].(map[string]any)
+	if maxFiles["default"] != float64(12) {
+		t.Fatalf("bridged maxFiles property = %#v, want the default preserved", maxFiles)
+	}
+	required, ok := got["required"].([]string)
+	if !ok || !slices.Equal(required, []string{"query"}) {
+		t.Fatalf("bridged required = %#v, want [query]", got["required"])
+	}
+}
+
+// TestSanitizeToolMetadataOmitsUnknownAnnotations pins the fail-open rule:
+// one vendor annotation key ("x-vendor") must not nuke the parameter
+// contract - the key is dropped, everything else survives.
+func TestSanitizeToolMetadataOmitsUnknownAnnotations(t *testing.T) {
+	schema := map[string]any{
+		"type":     "object",
+		"x-vendor": map[string]any{"internal": "metadata"},
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+		},
+	}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := got["x-vendor"]; exists {
+		t.Fatalf("bridged schema = %#v, want the unknown annotation omitted", got)
+	}
+	if got["properties"] == nil {
+		t.Fatalf("bridged schema = %#v, want the properties kept despite the unknown key", got)
+	}
+}
+
+// TestCallToolErrorTextKeepsServerDetail pins the second half of the
+// transcript-visibility fix: an isError result carries the actionable reason
+// in its CONTENT, and the old CallTool discarded it for a generic constant.
+func TestCallToolErrorTextKeepsServerDetail(t *testing.T) {
+	got := callToolErrorText([]sdk.Content{
+		&sdk.TextContent{Text: "missing required argument: query"},
+	})
+	if got != "missing required argument: query" {
+		t.Fatalf("callToolErrorText() = %q", got)
+	}
+	if empty := callToolErrorText(nil); empty != "MCP tool returned an error" {
+		t.Fatalf("callToolErrorText(nil) = %q, want the honest generic", empty)
+	}
+}
+
+// TestCallToolErrorTextMarksUnsupportedContent covers the non-text content
+// branch: a server that reports an error via ImageContent (or any content
+// type other than TextContent) must not be silently dropped - the caller
+// still needs to see that content was present, even though it cannot be
+// rendered as text.
+func TestCallToolErrorTextMarksUnsupportedContent(t *testing.T) {
+	got := callToolErrorText([]sdk.Content{
+		&sdk.ImageContent{Data: []byte{0xFF}, MIMEType: "image/png"},
+	})
+	if got != "[unsupported MCP result content]" {
+		t.Fatalf("callToolErrorText() = %q, want the unsupported-content marker", got)
+	}
+
+	// Mixed content: the text part is kept and joined with the marker for the
+	// unsupported part, so no information is lost from either.
+	mixed := callToolErrorText([]sdk.Content{
+		&sdk.TextContent{Text: "partial failure"},
+		&sdk.ImageContent{Data: []byte{0xFF}, MIMEType: "image/png"},
+	})
+	if mixed != "partial failure\n[unsupported MCP result content]" {
+		t.Fatalf("callToolErrorText() = %q, want text and marker joined", mixed)
 	}
 }
 
@@ -123,11 +232,73 @@ func TestDiscoveredToolUsesExternalServerCapability(t *testing.T) {
 	}
 }
 
-func TestDiscoveredToolHidesRemoteError(t *testing.T) {
-	tool := discoveredTool{remoteName: "result", client: failingResultClient{}}
+// TestDiscoveredToolSurfacesServerErrorRedacted pins the transcript contract
+// reversed from TestDiscoveredToolHidesRemoteError: the operator and the model
+// must see WHY an MCP call failed - a bare "MCP tool call failed" hid whether
+// the arguments were wrong, the index stale, or the server crashed. The
+// server-owned text passes through the session redaction policy (the same one
+// results use) before it reaches the transcript.
+func TestDiscoveredToolSurfacesServerErrorRedacted(t *testing.T) {
+	policy, err := redact.Compile([]string{"hush-\\d+"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := discoveredTool{
+		remoteName: "result",
+		client:     errorMessageClient{"index stale: token hush-12345 in request"},
+		redaction:  policy,
+	}
+	_, err = tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the server-owned failure surfaced")
+	}
+	if !strings.Contains(err.Error(), "MCP tool call failed: index stale: token") {
+		t.Fatalf("Execute() error = %v, want the server error detail surfaced for the transcript", err)
+	}
+	if strings.Contains(err.Error(), "hush-12345") {
+		t.Fatalf("Execute() error = %v, want the secret redacted before surfacing", err)
+	}
+}
+
+func TestDiscoveredToolBoundsServerErrorLength(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: errorMessageClient{strings.Repeat("x", 4096)}}
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
-	if err == nil || err.Error() != "MCP tool call failed" {
-		t.Fatalf("Execute() error = %v", err)
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the server-owned failure surfaced")
+	}
+	if len(err.Error()) > 600 {
+		t.Fatalf("Execute() error is %d bytes, want the server detail bounded", len(err.Error()))
+	}
+	if !strings.HasSuffix(err.Error(), "…[truncated]") {
+		t.Fatalf("Execute() error = %.80s..., want a truncation marker", err.Error())
+	}
+}
+
+// TestDiscoveredToolTruncatesOnARuneBoundary covers mcpCallErrText's own
+// backward-scan loop: the fixed 512-byte cut lands mid-rune whenever a
+// multi-byte character straddles that offset (an all-ASCII message, like the
+// test above, never exercises it - every byte is already a rune start). 511
+// ASCII bytes followed by a 3-byte '€' puts byte 512 inside that rune.
+func TestDiscoveredToolTruncatesOnARuneBoundary(t *testing.T) {
+	msg := strings.Repeat("x", 511) + "€" + strings.Repeat("y", 100)
+	tool := discoveredTool{remoteName: "result", client: errorMessageClient{msg}}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the server-owned failure surfaced")
+	}
+	if !strings.HasSuffix(err.Error(), "…[truncated]") {
+		t.Fatalf("Execute() error = %q, want a truncation marker", err.Error())
+	}
+	if !utf8.ValidString(err.Error()) {
+		t.Fatalf("Execute() error is not valid UTF-8, the cut landed inside a rune: %q", err.Error())
+	}
+}
+
+func TestDiscoveredToolEmptyServerErrorFallsBackToNoDetail(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: errorMessageClient{"   "}}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "server returned no error detail") {
+		t.Fatalf("Execute() error = %v, want an honest no-detail message", err)
 	}
 }
 
@@ -174,13 +345,13 @@ func (resultClient) CallTool(context.Context, string, map[string]any) (string, e
 }
 func (resultClient) Close() error { return nil }
 
-type failingResultClient struct{}
+type errorMessageClient struct{ msg string }
 
-func (failingResultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
-func (failingResultClient) CallTool(context.Context, string, map[string]any) (string, error) {
-	return "", errors.New("untrusted server diagnostic")
+func (c errorMessageClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (c errorMessageClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", errors.New(c.msg)
 }
-func (failingResultClient) Close() error { return nil }
+func (c errorMessageClient) Close() error { return nil }
 
 type canceledResultClient struct{}
 
@@ -305,5 +476,61 @@ func TestComposeToolDescriptionBoundsWholeString(t *testing.T) {
 	}
 	if got == "" {
 		t.Fatal("composeToolDescription() returned an empty description")
+	}
+}
+
+func TestBridgeSchemaAnnotationEveryBranch(t *testing.T) {
+	for _, key := range []string{"description", "format", "title"} {
+		if _, ok := bridgeSchemaAnnotation(key, "text"); !ok {
+			t.Errorf("bridgeSchemaAnnotation(%q, string) ok=false, want true", key)
+		}
+		if _, ok := bridgeSchemaAnnotation(key, 123); ok {
+			t.Errorf("bridgeSchemaAnnotation(%q, non-string) ok=true, want false", key)
+		}
+	}
+	for _, v := range []any{nil, true, "s", float64(1)} {
+		val, ok := bridgeSchemaAnnotation("default", v)
+		if !ok || val != v {
+			t.Errorf("bridgeSchemaAnnotation(default, %#v) = (%#v, %v), want (%#v, true)", v, val, ok, v)
+		}
+	}
+	// An unsupported default type (e.g. a map) is omitted (ok=true, nil
+	// value), never rejected - see the fail-open rule in the doc comment.
+	if val, ok := bridgeSchemaAnnotation("default", map[string]any{"x": 1}); !ok || val != nil {
+		t.Fatalf("bridgeSchemaAnnotation(default, map) = (%#v, %v), want (nil, true)", val, ok)
+	}
+	for _, key := range []string{"minimum", "maximum", "minLength", "maxLength"} {
+		if val, ok := bridgeSchemaAnnotation(key, float64(5)); !ok || val != float64(5) {
+			t.Errorf("bridgeSchemaAnnotation(%q, float64) = (%#v, %v), want (5, true)", key, val, ok)
+		}
+		if val, ok := bridgeSchemaAnnotation(key, "not a number"); !ok || val != nil {
+			t.Errorf("bridgeSchemaAnnotation(%q, non-float) = (%#v, %v), want (nil, true)", key, val, ok)
+		}
+	}
+	if val, ok := bridgeSchemaAnnotation("x-vendor-unknown", "anything"); !ok || val != nil {
+		t.Fatalf("bridgeSchemaAnnotation(unknown key) = (%#v, %v), want (nil, true)", val, ok)
+	}
+}
+
+func TestBridgeSchemaValuePropagatesMalformedAnnotation(t *testing.T) {
+	// "description" reaches the default case in bridgeSchemaValue's switch,
+	// and a non-string value makes bridgeSchemaAnnotation reject it -
+	// bridgeSchemaValue must propagate that as ok=false, not silently drop
+	// the key.
+	_, ok := bridgeSchemaValue(map[string]any{"description": 123}, 0)
+	if ok {
+		t.Fatal("bridgeSchemaValue accepted a schema with a malformed description annotation")
+	}
+}
+
+func TestBridgeSchemaValueInfersObjectTypeFromProperties(t *testing.T) {
+	out, ok := bridgeSchemaValue(map[string]any{
+		"properties": map[string]any{"name": map[string]any{"type": "string"}},
+	}, 0)
+	if !ok {
+		t.Fatal("bridgeSchemaValue rejected a schema with properties but no type")
+	}
+	if out["type"] != "object" {
+		t.Fatalf("out[type] = %v, want \"object\" inferred from properties", out["type"])
 	}
 }

@@ -54,6 +54,16 @@ func sessionSkillRegistry(root string, ctx agentSessionContext, skillReg *skills
 	return cliagents.FilterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 }
 
+// sessionAgentContext is the session's agent context, or the zero value when
+// no agent state is attached (a hand-built caller, or a session that never
+// captured a surface).
+func sessionAgentContext(state *AgentSessionState) agentSessionContext {
+	if state == nil {
+		return agentSessionContext{}
+	}
+	return state.Context()
+}
+
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *AgentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
@@ -63,10 +73,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	ctx := agentSessionContext{}
-	if state != nil {
-		ctx = state.Context()
-	}
+	ctx := sessionAgentContext(state)
 	skillReg = sessionSkillRegistry(root, ctx, skillReg)
 	skillScope := cliagents.SkillScopeFromAgent(ctx.Selected)
 	modelCatalog := routing.Catalog
@@ -83,6 +90,11 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	plan, liveScope := surface.plan, surface.skillScope
 	adoptSessionLedgerRepo(sess, cfg, state, routing)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		// The operator's approval wiring, read per invocation so a nested loop
+		// sees the gate installed after this dispatcher was built and any
+		// policy change since.
+		Approval:                  sess.ApprovalSnapshot,
+		ToolDenylist:              ctx.Global.MandatoryToolDenylistAdditions,
 		Registry:                  sess.Tools,
 		AuthorityRegistry:         surface.authority,
 		Repo:                      ledgerRepoOf(state),
@@ -116,8 +128,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		DeferredTools:             plan.Candidates,
 		Session:                   sess,
 		// Sink publishes invocation lifecycle events to the session bus. The
-		// closure reads sess.EventBus at publish time, so it stays live when
-		// runTUI later installs the bus.
+		// closure reads sess.EventBus at publish time, so it stays correct
+		// whenever the bus is installed - which today is JoinHub, on this
+		// surface and line mode only. Nothing installs one for the TUI.
 		Sink: sessionInvocationSink(sess),
 	})
 	if err != nil {
@@ -233,6 +246,11 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 		// must always read the CURRENT full tool set to serve a deferred call
 		// synchronously.
 		sess.ToolBaseResolver = func() *tools.Registry { return state.ToolBase }
+		// state.ToolBase is the PRE-scope clone, so the operator's denylist
+		// has not been applied to it. The deferred path resolves from it and
+		// would otherwise execute a denied name that every other layer
+		// refuses - including this function's own contract two comments up.
+		sess.ToolDenylist = ctx.Global.MandatoryToolDenylistAdditions
 	}
 	plan := cliagents.PlanToolTiers(sess.Tools, ctx.Selected, routing.Resolved)
 	if state != nil {
@@ -298,9 +316,7 @@ func printReplBanner(sess *chat.Session, toolsOn, quiet bool) {
 }
 
 func autoSaveREPL(sess *chat.Session) {
-	err := sess.SaveLast()
-	if err != nil {
+	if err := sess.SaveLast(); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
 	}
-	WriteAutosaveStatus(sess.SessionDir, err)
 }

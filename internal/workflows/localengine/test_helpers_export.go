@@ -28,3 +28,9 @@ func (e *Engine) SetActiveRunForTest(runID string) {
 	}
 	e.active[runID] = &activeRun{cancel: func() {}, done: make(chan struct{})}
 }
+
+// WorktreeIdentityForTest exposes worktreeIdentity so a test can assert that a
+// FRESH start pinned the run's git identity, not only a resume.
+func (e *Engine) WorktreeIdentityForTest(runID string) (Identity, bool) {
+	return e.worktreeIdentity(runID)
+}

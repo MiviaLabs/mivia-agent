@@ -31,9 +31,8 @@ import (
 	"errors"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/hooks"
+	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/events"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // toolCallOutcome is one call's recorded execution result: the
@@ -144,15 +143,11 @@ func (s *sdkTurnState) resetStreamRevoke() {
 // legacy "queued" tool_start. Both hooks always allow (observers never
 // veto - the approval and admission gates live elsewhere).
 func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
-	reg := sdkhooks.New()
-	_ = reg.Add(sdkhooks.PointPreTool, "agent.tool-events", func(ctx context.Context, payload any) (bool, error) {
+	reg := sdkhooks.NewRegistry()
+	_ = reg.Add(sdkhooks.PointPreTool, "agent.tool-events", func(_ context.Context, payload any) (bool, error) {
 		call, ok := payload.(sdkshape.ToolCall)
 		if !ok {
-			if tc, hasTC := toolcallctx.ToolCallFromContext(ctx); hasTC {
-				call = tc
-			} else {
-				return true, nil
-			}
+			return true, nil
 		}
 		// Content-then-tools: the first tool call of an iteration
 		// clears the optimistic final-stream tokens, the same
@@ -167,6 +162,7 @@ func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
 			Name:       call.Name,
 			Detail:     "queued",
 			Input:      redactToolInputForTool(call.Name, string(call.Arguments)),
+			InputBody:  redactedToolInput(string(call.Arguments)),
 		})
 		return true, nil
 	})
@@ -174,6 +170,28 @@ func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
 		return true, nil
 	})
 	return reg
+}
+
+// toolEndEventFor builds the tool_end for one recorded outcome. Legacy
+// emitToolEnd preview rule: the redacted body, unless an ephemeral tool
+// supplied a marker override - and the override replaces the unbounded
+// body too, so the resource body reaches no operator surface through the
+// wider field either.
+func toolEndEventFor(outcome toolCallOutcome) Event {
+	output := redactToolOutputForTool(outcome.name, outcome.body)
+	body := redactedToolOutput(outcome.body)
+	if outcome.previewOverride != "" {
+		output = outcome.previewOverride
+		body = outcome.previewOverride
+	}
+	return Event{
+		Kind:       EventToolEnd,
+		ToolCallID: outcome.id,
+		Name:       outcome.name,
+		Detail:     sdkToolEndDetail(outcome),
+		Output:     output,
+		OutputBody: body,
+	}
 }
 
 // sdkToolEndDetail reuses the legacy toolEndDetail vocabulary

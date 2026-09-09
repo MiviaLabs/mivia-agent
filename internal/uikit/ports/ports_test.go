@@ -16,11 +16,18 @@ import (
 type fakeTurnHandle struct {
 	id     string
 	events chan uievent.Event
+	// cancelable, when set, is the callID CancelToolCall reports finding.
+	// Any other ID is a miss - this is enough for a fake standing in for
+	// "one call is in flight".
+	cancelable string
 }
 
 func (h *fakeTurnHandle) ID() string                   { return h.id }
 func (h *fakeTurnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *fakeTurnHandle) Cancel()                      { close(h.events) }
+func (h *fakeTurnHandle) CancelToolCall(callID string) bool {
+	return h.cancelable != "" && callID == h.cancelable
+}
 
 type fakeConversation struct {
 	history []Message
@@ -180,5 +187,291 @@ func TestSessionStoreSaveListLoad(t *testing.T) {
 	}
 	if err := s.Load("missing"); err == nil {
 		t.Error("expected error loading missing session")
+	}
+}
+
+// TestBudgetIsCappedSeparatesAConfigCapFromAModelLimit: the flag exists so a
+// surface can say a small budget is a choice. Reporting true for an ordinary
+// output reserve would put "capped" on every session; reporting false for a
+// real cap leaves a 1M-window model looking like it lost most of its capacity,
+// which is the report that prompted this field.
+func TestBudgetIsCappedSeparatesAConfigCapFromAModelLimit(t *testing.T) {
+	cases := []struct {
+		name           string
+		budget, window int64
+		want           bool
+	}{
+		{"operator cap well below the window", 400_000, 1_048_576, true},
+		{"window reduced only by an output reserve", 917_504, 1_048_576, false},
+		{"budget equals the window", 200_000, 200_000, false},
+		{"window undeclared", 400_000, 0, false},
+		{"budget unknown", 0, 1_048_576, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			info := ModelInfo{ContextWindow: tc.budget, DeclaredWindow: tc.window}
+			if got := info.BudgetIsCapped(); got != tc.want {
+				t.Errorf("BudgetIsCapped() = %v for budget %d of window %d, want %v",
+					got, tc.budget, tc.window, tc.want)
+			}
+		})
+	}
+}
+
+// TestWithLiveTotalNeverGrowsTheFloor is the regression for the bug this
+// method replaced. The session adopts a turn's messages only at turn end, so
+// mid-turn its composition is the previous turn's. Scaling that composition up
+// to the provider's growing total made the system prompt and the tool schemas
+// grow on screen, which is impossible, while every conversation row sat at
+// zero. The floor must come out byte for byte unchanged and the unexplained
+// remainder must be visible as pending.
+func TestWithLiveTotalNeverGrowsTheFloor(t *testing.T) {
+	// A first turn: the session has priced the floor and nothing else.
+	floorOnly := ContextBreakdown{
+		System: 6_000, ToolSchemas: 3_000, ExternalSchemas: 5_000, Memory: 2_000,
+		ToolCount: 19, ExternalToolCount: 12,
+	}
+	got := floorOnly.WithLiveTotal(90_000)
+	if got.System != 6_000 || got.ToolSchemas != 3_000 || got.ExternalSchemas != 5_000 || got.Memory != 2_000 {
+		t.Errorf("the floor moved: system=%d tools=%d servers=%d memory=%d, want 6000/3000/5000/2000",
+			got.System, got.ToolSchemas, got.ExternalSchemas, got.Memory)
+	}
+	if got.Pending != 74_000 {
+		t.Errorf("Pending = %d, want the 74000 the composition cannot explain", got.Pending)
+	}
+	if got.Total() != 90_000 {
+		t.Errorf("Total = %d, want the live 90000 so the rows sum to the header", got.Total())
+	}
+	if got.ToolCount != 19 || got.ExternalToolCount != 12 {
+		t.Errorf("schema counts = %d/%d, want 19/12", got.ToolCount, got.ExternalToolCount)
+	}
+}
+
+// TestWithLiveTotalKeepsAnAdoptedComposition: once a turn is adopted the
+// session explains the whole total, so nothing is pending and no row moves.
+func TestWithLiveTotalKeepsAnAdoptedComposition(t *testing.T) {
+	full := ContextBreakdown{
+		System: 6_000, ToolSchemas: 3_000, Memory: 1_000,
+		Prose: 12_000, ToolResults: 36_000, Reasoning: 2_000,
+	}
+	got := full.WithLiveTotal(full.Total())
+	if got != full {
+		t.Errorf("an exact total changed the composition:\ngot  %+v\nwant %+v", got, full)
+	}
+	if got.Pending != 0 {
+		t.Errorf("Pending = %d, want 0 when the composition explains the total", got.Pending)
+	}
+}
+
+// TestWithLiveTotalShrinksOnlyTheConversation: a total below what is priced
+// means compaction just dropped history. Compaction removes conversation and
+// never the floor, so the floor must survive and only the conversation shrinks.
+func TestWithLiveTotalShrinksOnlyTheConversation(t *testing.T) {
+	before := ContextBreakdown{
+		System: 6_000, ToolSchemas: 3_000, Memory: 1_000,
+		Prose: 20_000, ToolResults: 60_000, Reasoning: 10_000,
+	}
+	got := before.WithLiveTotal(30_000)
+	if got.Floor() != before.Floor() {
+		t.Errorf("floor = %d after compaction, want it unchanged at %d", got.Floor(), before.Floor())
+	}
+	if got.Total() != 30_000 {
+		t.Errorf("Total = %d, want 30000", got.Total())
+	}
+	if got.ToolResults <= got.Prose {
+		t.Errorf("composition lost while shrinking: results=%d prose=%d", got.ToolResults, got.Prose)
+	}
+}
+
+// TestWithLiveTotalOnAnEmptyComposition: with nothing priced at all the whole
+// total is pending rather than invented as a split across rows that would each
+// be a guess.
+func TestWithLiveTotalOnAnEmptyComposition(t *testing.T) {
+	got := ContextBreakdown{ToolCount: 4, ExternalToolCount: 1}.WithLiveTotal(50_000)
+	if got.Pending != 50_000 || got.Total() != 50_000 {
+		t.Errorf("Pending = %d, Total = %d, want both 50000", got.Pending, got.Total())
+	}
+	if got.System != 0 || got.Prose != 0 {
+		t.Errorf("invented a composition: system=%d prose=%d", got.System, got.Prose)
+	}
+	if got.ToolCount != 4 || got.ExternalToolCount != 1 {
+		t.Errorf("counts = %d/%d, want 4/1", got.ToolCount, got.ExternalToolCount)
+	}
+}
+
+// TestWithLiveTotalBelowTheFloorStaysConsistent: a degenerate reading (a total
+// smaller than the floor itself) must still leave rows that sum to it rather
+// than a negative or a contradiction.
+func TestWithLiveTotalBelowTheFloorStaysConsistent(t *testing.T) {
+	got := ContextBreakdown{System: 6_000, ToolSchemas: 4_000, Prose: 1_000}.WithLiveTotal(2_000)
+	if got.Total() != 2_000 {
+		t.Errorf("Total = %d, want 2000", got.Total())
+	}
+	for name, v := range map[string]int64{"System": got.System, "ToolSchemas": got.ToolSchemas, "Prose": got.Prose, "Pending": got.Pending} {
+		if v < 0 {
+			t.Errorf("%s = %d, want no negative bucket", name, v)
+		}
+	}
+}
+
+// TestWithLiveTotalCarriesEverySkillBucket: the five existing
+// WithLiveTotal fixtures all leave Skills at zero, so the field was
+// threaded through Conversation, buckets and conversationBuckets without
+// a single case exercising it - and dropping it from any of the three
+// broke the sum invariant with nothing failing.
+func TestWithLiveTotalCarriesEverySkillBucket(t *testing.T) {
+	base := ContextBreakdown{
+		System: 1_000, ToolSchemas: 500, ExternalSchemas: 250,
+		Memory: 100, Summary: 50,
+		Skills: 4_000, SkillCount: 2,
+		Prose: 800, ToolResults: 600, Reasoning: 200,
+	}
+	// Above the composition, at it, between floor and it, and below the
+	// floor: every branch of WithLiveTotal.
+	for _, total := range []int64{20_000, base.Total(), 3_000, 1_500, 900, 1} {
+		got := base.WithLiveTotal(total)
+		if got.Total() != total {
+			t.Errorf("WithLiveTotal(%d).Total() = %d, want exactly %d", total, got.Total(), total)
+		}
+		if got.SkillCount != base.SkillCount {
+			t.Errorf("WithLiveTotal(%d) changed SkillCount to %d: a count is not a token cost",
+				total, got.SkillCount)
+		}
+		if got.Skills < 0 {
+			t.Errorf("WithLiveTotal(%d) drove Skills negative: %d", total, got.Skills)
+		}
+	}
+
+	// A total above the composition leaves the priced buckets alone and
+	// puts the remainder on Pending - Skills included, or the skill cost
+	// would be double counted against the same tokens.
+	got := base.WithLiveTotal(20_000)
+	if got.Skills != base.Skills {
+		t.Errorf("an above-composition total rescaled Skills to %d, want %d", got.Skills, base.Skills)
+	}
+	if got.Pending != 20_000-base.Total() {
+		t.Errorf("Pending = %d, want %d", got.Pending, 20_000-base.Total())
+	}
+
+	// Between floor and composition, compaction dropped history: the
+	// floor stays whole and Skills scales with the rest of the
+	// conversation rather than being spared or zeroed.
+	shrunk := base.WithLiveTotal(base.Floor() + 100)
+	if shrunk.Floor() != base.Floor() {
+		t.Errorf("a shrinking total rescaled the floor: %d, want %d", shrunk.Floor(), base.Floor())
+	}
+	if shrunk.Skills == 0 || shrunk.Skills >= base.Skills {
+		t.Errorf("Skills = %d, want it scaled down but not erased (was %d)", shrunk.Skills, base.Skills)
+	}
+}
+
+// TestScaleFieldsPutsAnUnattributableTotalOnTheLastField pins the
+// degenerate arm: nothing priced, but a total to account for.
+//
+// It is tested directly because it is not reachable through
+// WithLiveTotal today - that function only calls scaleFields with the
+// whole bucket set when total <= floor, and a zero sum there implies
+// floor == 0, which contradicts total > 0. The arm still has to be
+// right: callers order the fields so the LAST one is the only bucket
+// that can honestly carry an amount nothing explains (Pending), and
+// spreading the remainder evenly instead would invent a composition the
+// session never had.
+func TestScaleFieldsPutsAnUnattributableTotalOnTheLastField(t *testing.T) {
+	var first, middle, last int64
+	scaleFields([]*int64{&first, &middle, &last}, 900)
+
+	if first != 0 || middle != 0 {
+		t.Errorf("the remainder was spread across buckets (%d, %d, %d); that invents a composition", first, middle, last)
+	}
+	if last != 900 {
+		t.Errorf("last field = %d, want the whole 900", last)
+	}
+
+	// A previously-scaled set is zeroed first, so a stale composition
+	// cannot survive underneath the new total.
+	stale := []int64{5, 7, 11}
+	scaleFields([]*int64{&stale[0], &stale[1], &stale[2]}, 0)
+	if stale[0] != 0 || stale[1] != 0 || stale[2] != 0 {
+		t.Errorf("scaling to zero left %v behind", stale)
+	}
+}
+
+// TestWithLiveTotalOfNothingKeepsOnlyTheCounts: a provider that reported
+// no input tokens yet - a turn that has not been priced - must not leave
+// stale magnitudes on screen. The counts stay, because "19 tools" is true
+// before a single token is spent.
+func TestWithLiveTotalOfNothingKeepsOnlyTheCounts(t *testing.T) {
+	base := ContextBreakdown{
+		System: 1_000, Skills: 400, Prose: 200,
+		ToolCount: 19, ExternalToolCount: 3, SkillCount: 2,
+	}
+	for _, total := range []int64{0, -1, -900} {
+		got := base.WithLiveTotal(total)
+		if got.Total() != 0 {
+			t.Errorf("WithLiveTotal(%d).Total() = %d, want 0", total, got.Total())
+		}
+		if got.ToolCount != 19 || got.ExternalToolCount != 3 || got.SkillCount != 2 {
+			t.Errorf("WithLiveTotal(%d) dropped the counts: %+v", total, got)
+		}
+	}
+}
+
+// TestScaleFieldsRefusesNonsense: no fields to scale, or a negative
+// target, leaves everything untouched rather than writing a negative
+// magnitude into a bucket that is displayed.
+func TestScaleFieldsRefusesNonsense(t *testing.T) {
+	scaleFields(nil, 100) // must not panic
+
+	a, b := int64(7), int64(11)
+	scaleFields([]*int64{&a, &b}, -1)
+	if a != 7 || b != 11 {
+		t.Errorf("a negative target rewrote the buckets to (%d, %d), want (7, 11)", a, b)
+	}
+}
+
+// TestGeneralEditVariantsSatisfyTheClosedUnion exercises isGeneralEdit() on
+// every concrete GeneralEdit implementation, mirroring uievent's
+// TestAllBodyTypesSatisfyBody. SetFullDiskAccess in particular is not
+// constructed anywhere else in this package's tests - only the settings
+// screen (a different package) builds one - so without this the marker
+// method's body for that variant never runs under `go test ./internal/uikit/...`.
+func TestGeneralEditVariantsSatisfyTheClosedUnion(t *testing.T) {
+	edits := []GeneralEdit{
+		SetTheme{Name: "dark"},
+		SetMouse{On: true},
+		SetShowReasoning{On: true},
+		SetShowIterationNotices{On: true},
+		SetShowPromptCacheNotices{On: true},
+		SetScrollLines{N: 10},
+		SetApprovalDefault{Mode: "auto"},
+		SetScreenReader{On: true},
+		SetReducedMotion{On: true},
+		SetFullDiskAccess{On: true},
+	}
+	for _, e := range edits {
+		e.isGeneralEdit() // must not panic; the assertion is that this compiles and runs
+	}
+}
+
+// TestSessionSummaryWorktreeBound is the routing-predicate table both the
+// picker dispatch and the typed-/resume router build on. Every arm matters:
+// a drifted copy of this predicate is how legacy instance-less rows were
+// once misrouted into the scoped creator and failed as "worktree deleted".
+func TestSessionSummaryWorktreeBound(t *testing.T) {
+	cases := []struct {
+		name string
+		s    SessionSummary
+		want bool
+	}{
+		{"instance-bound row", SessionSummary{Worktree: "wt1", WorktreeInstanceID: "wt_01"}, true},
+		{"bare worktree metadata (legacy)", SessionSummary{Worktree: "wt1"}, false},
+		{"route pseudo-row", SessionSummary{Worktree: "wt1", WorktreeInstanceID: "wt_01", WorktreeRoute: true}, false},
+		{"instance without worktree name", SessionSummary{WorktreeInstanceID: "wt_01"}, false},
+		{"plain row", SessionSummary{ID: "s1"}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.s.WorktreeBound(); got != tc.want {
+			t.Errorf("%s: WorktreeBound()=%v want %v", tc.name, got, tc.want)
+		}
 	}
 }

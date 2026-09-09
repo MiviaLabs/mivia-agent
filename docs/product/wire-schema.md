@@ -26,6 +26,9 @@ The `done` event carries `session_id`. A caller that did not set `--session` rea
 | `thinking` | `text` | Model reasoning, for providers that expose it. |
 | `tool_start` | `tool_call_id`, `name`, `input`, `origin_task_id`, `origin_agent`, `origin_depth`, `origin_task_description` | A tool call started. `input` is a bounded, redacted preview. The `origin_*` fields appear only when a subagent made the call, not the root loop. |
 | `tool_end` | `tool_call_id`, `name`, `output`, `status`, `origin_*` | A tool call ended. `status` is `ok` or `failed`. An absent `status` means an older mivia build; read it as `ok`. |
+| `hook` | `hook_event`, `program`, `tool`, `tool_call_id`, `input`, `output`, `status`, `message` | One lifecycle hook run. `hook_event` is the phase (`PreToolUse`, `PostToolUse`, `Stop`), `program` the script, `tool` the call it ran for. `status` is `blocked` when the hook STOPPED the call and `ok` otherwise - a blocked call never produces a `tool_end`, so this line is the only account of why it did not run. Every run produces a line, including a silent one: a matcher that selects nothing is otherwise indistinguishable from a working hook. `input` is redacted at the producer. |
+| `assistant_reset` | `message`, `origin_*` | Discard the answer you have for this turn and start again. The agent is re-driving the turn after a retry, so the whole answer arrives a second time. `message` is a short reason with no content in it. The `origin_*` fields appear only when a subagent is retrying. |
+| `subagent_begin` | `origin_task_id`, `origin_agent`, `origin_depth`, `name`, `input` | One subagent started. `input` is the bounded task text it was given. |
 | `subagent_done` | `origin_task_id` | One subagent finished all its work. |
 | `subagent_heartbeat` | `origin_task_id`, `message` | A subagent is alive but produced no new event. |
 
@@ -79,14 +82,61 @@ All mivia processes that share one store directory see each other's activity thr
 | Type | Meaning |
 |------|---------|
 | `external_turn_start` | A turn started in another process. `text` holds the user input, `run_id` identifies the turn. |
-| `external_chunk` | Answer text from the other process. |
-| `external_thinking` | Reasoning text from the other process. |
-| `external_tool_start` / `external_tool_end` | A tool call made by the other process, with the same fields as the local types. |
+| `external_chunk` | Answer text from the other process's ROOT agent. |
+| `external_thinking` | Reasoning text from the other process's ROOT agent. |
+| `external_tool_start` / `external_tool_end` | A tool call made by the other process's ROOT agent, with the same fields as the local types. |
+| `external_assistant_reset` | Discard the answer you have for that run's turn. Same meaning as the local `assistant_reset`, for the other process's ROOT agent. |
+| `external_subagent_assistant_reset` | The same discard, for one of its subagents. |
+| `external_subagent_chunk` | Answer text from one of the other process's subagents. |
+| `external_subagent_thinking` | Reasoning text from one of its subagents. |
+| `external_subagent_tool_start` / `external_subagent_tool_end` | A tool call made by one of its subagents. |
+| `external_subagent_begin` | One of its subagents started. `name` is the agent, `input` the task it was given. |
+| `external_subagent_heartbeat` | Progress from one of its subagents. `message` carries the elapsed time, step count and tool count. |
+| `external_subagent_done` | One of its subagents finished. `status` carries the terminal classification. This ends one RUN, not the turn - the turn ends with `external_done`. |
 | `external_done` | The other process's turn finished. |
 | `external_error` | The other process's turn failed. |
 | `external_compaction` | Another process compacted this session's context. Same payload as `compaction`, plus `run_id`. |
+| `external_dropped` | Relayed events were lost before they reached you. `dropped` is how many since the previous report; `total_dropped` is the running total for the current hub connection. Carries `session_id` like every other `external_*` type. |
+
+### Telling a subagent's activity from the root agent's
+
+**The type says who produced the event.** A subagent's output uses the
+`external_subagent_*` types; the root agent's uses the plain ones. A consumer
+that appends every `external_chunk` to one answer buffer therefore gets the
+root agent's answer and nothing else, which is what it was always assumed to
+be doing.
+
+The `origin_task_id`, `origin_agent` and `origin_depth` fields ride the
+subagent types and say WHICH RUN produced the line. Two runs of one agent share
+a name but not a task id, so `origin_agent` is a label and `origin_task_id` is
+the key. They never appear on a root type.
+
+An earlier version of this relay put a subagent's output on the ROOT types and
+added the origin fields to them. That was a mistake, and this section used to
+argue for it on the grounds that a local same-machine stream can afford weaker
+rules than the chat-sync wire. It cannot. A consumer keyed on `type` - the only
+thing a consumer can key on before it has heard of a new field - spliced every
+subagent's answer into the root agent's, silently, and no version of adding
+fields fixes a consumer that never reads them.
+
+A reader that predates the subagent types drops them with a warning, one per
+line, and shows the root agent's turn correctly. That cost is deliberate and is
+much smaller than the corruption it replaces.
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
+
+The relay is lossy on purpose. Every queue between the two processes is bounded and drops its oldest entry when a slow reader falls behind, so a busy turn can lose events rather than stall the process that is producing them. Two consequences for a consumer:
+
+- Events of one turn always arrive in the order the other process published them. A later event never overtakes an earlier one, so `external_done` is the last event you receive for its `run_id`.
+- Events can be missing, and you are told when. Each loss produces one `external_dropped` event; a stream with no loss never emits one. The total counts loss on your own connection to the hub only, and it restarts at zero if the hub owner changes (the process you were connected to exited and another took over), so treat a total lower than the previous one as a new connection rather than as an error.
+
+  A THIRD loss is not reported either, and it is the one a new consumer meets first: a reader that predates the `external_subagent_*` types drops those lines in its own parser. `external_dropped` counts hub-side loss only, so a consumer comparing totals concludes the relay is lossless while its own parser is discarding a subagent's whole contribution. If you see no subagent activity at all, check that your reader knows the types before you look for loss.
+
+  Two further losses cannot be reported at all. Events still queued when a connection closes are lost silently. So are events lost at the very end of a turn: the count travels only on a later event, and after the last one there is none.
+
+  Treat `external_chunk` text as a live preview, not as the authoritative transcript. Read the stored session with `mivia sessions show` for the complete answer, especially after an `external_dropped`.
+
+A turn whose start was lost is not reported at all: you never receive `external_done` for a `run_id` you have not already seen, so a `run_id` that appears for the first time is always a real turn beginning.
 
 ## Session commands
 

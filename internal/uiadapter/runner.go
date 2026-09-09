@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -13,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
@@ -22,11 +24,23 @@ import (
 // CommandRunner bridges the UI slash-command loop with the backend session,
 // config, and agent state.
 type CommandRunner struct {
-	sess          *chat.Session
-	pool          *SessionPool
-	res           *config.Resolved
-	agentState    *cliagents.AgentSessionState
-	settingsStore *SettingsStore
+	compactionMu     sync.Mutex
+	compactionActive bool
+	sess             *chat.Session
+	pool             *SessionPool
+	res              *config.Resolved
+	agentState       *cliagents.AgentSessionState
+	settingsStore    *SettingsStore
+
+	// loginService builds the miviaauth.Service /login talks to. A field
+	// rather than a direct miviaauth.DefaultService() call so tests in
+	// this package can substitute a stub sessionClient without a real
+	// HTTP round trip or a real ~/.mivia/auth.json.
+	loginService func() (*miviaauth.Service, error)
+
+	// summariesFn overrides the worktree-row listing source for tests
+	// (nil = the real three-arm UNION query). Package-internal only.
+	summariesFn func() ([]ports.SessionSummary, error)
 }
 
 // Compile-time check that CommandRunner satisfies ports.CommandRunner.
@@ -40,10 +54,11 @@ func NewCommandRunner(sess *chat.Session, res *config.Resolved, state *cliagents
 	}
 	pool := NewSessionPool(sess, res, state, toolsOn)
 	return &CommandRunner{
-		sess:       sess,
-		pool:       pool,
-		res:        res,
-		agentState: state,
+		sess:         sess,
+		pool:         pool,
+		res:          res,
+		agentState:   state,
+		loginService: miviaauth.DefaultService,
 	}
 }
 
@@ -60,10 +75,11 @@ func (r *CommandRunner) Pool() *SessionPool {
 // NewCommandRunnerWithPool constructs a CommandRunner with an explicit SessionPool.
 func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config.Resolved, state *cliagents.AgentSessionState) *CommandRunner {
 	return &CommandRunner{
-		sess:       sess,
-		pool:       pool,
-		res:        res,
-		agentState: state,
+		sess:         sess,
+		pool:         pool,
+		res:          res,
+		agentState:   state,
+		loginService: miviaauth.DefaultService,
 	}
 }
 
@@ -71,16 +87,53 @@ func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config
 func (r *CommandRunner) SetSettingsStore(s *SettingsStore) {
 	if r != nil {
 		r.settingsStore = s
+		// The store fans operator-wide runtime settings (approval posture)
+		// across every pooled session, so it needs the same pool the runner
+		// switches sessions through.
+		if s != nil {
+			s.pool = r.pool
+		}
 	}
 }
 
-// SetActiveSession updates the active session for subsequent commands.
+// SetActiveSession updates the active session for subsequent commands. It
+// also swaps r.agentState to that session's own private entry state (see
+// SessionPool.AgentState), so commands run against the session actually on
+// screen see and mutate ONLY that session's selected agent, skill scope, and
+// tier plan - not whichever pooled session happened to switch last
+// (bug-audit "pooled worktree sessions share mutable agent state"). A
+// session the pool has no entry for (no pool, or a caller that bypassed
+// pool-based creation) keeps whatever agentState was already bound, matching
+// the pre-fork behavior.
 func (r *CommandRunner) SetActiveSession(sess *chat.Session) {
 	if r != nil {
 		r.sess = sess
+		if r.pool != nil && sess != nil {
+			if state := r.pool.EnsureAgentState(sess.SessionID); state != nil {
+				r.agentState = state
+			}
+		}
 		if r.settingsStore != nil {
 			r.settingsStore.SetActiveSession(sess)
+			r.settingsStore.agentState = r.agentState
 		}
+	}
+}
+
+// SetActiveSessionID implements ports.CommandRunner: it repoints the runner
+// at the pooled session with the given id via SetActiveSession, without
+// resuming/loading it (SelectSession's job). The Screen calls this on every
+// tab focus change, including the fast path that reuses an already-open,
+// already-cached conversation without ever calling SelectSession again - see
+// SetActiveSession's doc comment for why r.sess/r.agentState must track the
+// session actually on screen. A no-op when there is no pool, no id, or no
+// live pooled session for id (nothing to point at).
+func (r *CommandRunner) SetActiveSessionID(id string) {
+	if r == nil || r.pool == nil || id == "" {
+		return
+	}
+	if sess := r.pool.Session(id); sess != nil {
+		r.SetActiveSession(sess)
 	}
 }
 
@@ -116,11 +169,13 @@ func DefaultCommands() []composer.Command {
 		{Name: "effort", Desc: "set reasoning effort level for active model"},
 		{Name: "help", Desc: "show the keymap dialog"},
 		{Name: "hooks", Desc: "list armed lifecycle hooks"},
+		{Name: "login", Desc: "sign in to your mivia account"},
 		{Name: "model", Desc: "pick or switch model"},
 		{Name: "queue", Desc: "manage queued messages"},
 		{Name: "quit", Desc: "exit mivia"},
 		{Name: "resume", Desc: "resume a previous session"},
 		{Name: "settings", Desc: "open the settings screen"},
+		{Name: "tab", Desc: "switch active session tab"},
 		{Name: "theme", Desc: "pick a theme"},
 		{Name: "yolo", Desc: "toggle YOLO mode (auto-approve all tool executions)"},
 	}
@@ -209,6 +264,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return r.handleModel(args)
 	case "queue":
 		return ports.CommandOutcome{OpenQueue: true}
+	case "login":
+		return r.handleLogin(args)
 	case "agents", "agent":
 		return r.handleAgents(args)
 	case "new":
@@ -334,161 +391,6 @@ func (r *CommandRunner) handleCost() ports.CommandOutcome {
 	}
 	u := sess.ContextUsage()
 	notice := fmt.Sprintf("Context: %d tokens used.", u.UsedTokens)
-	return ports.CommandOutcome{Notice: notice}
-}
-
-func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
-	if r.activeSession() == nil || r.res == nil {
-		return ports.CommandOutcome{Err: "session or configuration not initialized"}
-	}
-	if args != "" {
-		return r.SelectModel(context.Background(), args)
-	}
-	groups := r.availableModelsByProvider()
-	if len(groups) == 0 {
-		return ports.CommandOutcome{Err: "no models loaded"}
-	}
-	return ports.CommandOutcome{ModelChoiceGroups: groups}
-}
-
-// availableModelsByProvider returns the selectable catalog grouped by
-// provider, in catalog order. The first group's provider name is the
-// currently selected provider; later groups keep their catalog order
-// so the picker stays stable across re-opens. An empty catalog
-// falls back to the session's current model in a single flat group
-// with no provider header.
-func (r *CommandRunner) availableModelsByProvider() []ports.ModelChoiceGroup {
-	if r.res == nil {
-		return nil
-	}
-	var groups []ports.ModelChoiceGroup
-	for _, group := range r.res.ModelCatalog() {
-		if !group.Selectable {
-			continue
-		}
-		names := make([]string, 0, len(group.Models))
-		for _, m := range group.Models {
-			names = append(names, m.Name)
-		}
-		if len(names) == 0 {
-			continue
-		}
-		groups = append(groups, ports.ModelChoiceGroup{
-			Provider: group.Provider,
-			Models:   names,
-		})
-	}
-	sess := r.activeSession()
-	if len(groups) == 0 && sess != nil {
-		if cur := sess.CurrentModel(); cur != "" {
-			return []ports.ModelChoiceGroup{{Models: []string{cur}}}
-		}
-	}
-	return groups
-}
-
-func resolveProviderAndModel(res *config.Resolved, selProvider, name string) (string, string) {
-	name = strings.TrimSpace(name)
-	providerName := res.ProviderName
-	if selProvider != "" {
-		providerName = selProvider
-	}
-
-	// 1. Explicit provider prefix matching a catalog provider
-	for _, group := range res.ModelCatalog() {
-		prefix := group.Provider + "/"
-		if strings.HasPrefix(strings.ToLower(name), prefix) {
-			return group.Provider, name[len(prefix):]
-		}
-	}
-
-	// 1b. Prefix matching a configured provider runtime
-	if res.ProviderRuntimes != nil {
-		for p := range res.ProviderRuntimes {
-			prefix := strings.ToLower(p) + "/"
-			if strings.HasPrefix(strings.ToLower(name), prefix) {
-				return p, name[len(prefix):]
-			}
-		}
-	}
-
-	// 1c. Name containing a slash matching known provider name
-	if p, m, ok := strings.Cut(name, "/"); ok && p != "" && m != "" {
-		for _, group := range res.ModelCatalog() {
-			if strings.EqualFold(group.Provider, p) {
-				return group.Provider, m
-			}
-		}
-		if res.ProviderRuntimes != nil {
-			for rName := range res.ProviderRuntimes {
-				if strings.EqualFold(rName, p) {
-					return rName, m
-				}
-			}
-		}
-	}
-
-	// 2. Search unique provider in catalog. A name matching more than one
-	// Selectable provider is NOT resolved here - silently picking the first
-	// catalog-order match would be an unannounced provider switch (different
-	// auth, base URL, and wire behavior) on nothing but name coincidence,
-	// the exact class of surprise a same-named model across providers (e.g.
-	// "claude-sonnet-5" under both an OpenAI-compatible proxy and the native
-	// anthropic provider) causes. Falling through here leaves providerName
-	// as today's default (current selection), and SwitchModelCommand's
-	// resulting "not available" error carries the ambiguity via
-	// res.OtherProvidersWithModel in SelectModel's error path below - naming
-	// every match so the user picks explicitly with /model <provider> <name>
-	// rather than the tool guessing for them.
-	var matchedProvider string
-	matches := 0
-	for _, group := range res.ModelCatalog() {
-		if !group.Selectable {
-			continue
-		}
-		for _, m := range group.Models {
-			if m.Name == name {
-				matchedProvider = group.Provider
-				matches++
-				break
-			}
-		}
-	}
-	if matches == 1 {
-		return matchedProvider, name
-	}
-
-	return providerName, name
-}
-
-// SelectModel switches the session's active model.
-func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.CommandOutcome {
-	sess := r.activeSession()
-	if sess == nil || r.res == nil {
-		return ports.CommandOutcome{Err: "session or configuration not initialized"}
-	}
-	selProvider := ""
-	if sel := sess.CurrentSelection(); sel.ProviderName != "" {
-		selProvider = sel.ProviderName
-	}
-	providerName, modelName := resolveProviderAndModel(r.res, selProvider, name)
-
-	discarded, err := cliagents.SwitchModelCommand(sess, r.res, providerName, modelName)
-	if err != nil {
-		msg := fmt.Sprintf("failed to switch model to %q (%s): %v", modelName, providerName, err)
-		if others := r.res.OtherProvidersWithModel(providerName, modelName); len(others) == 1 {
-			msg += fmt.Sprintf(" (found under provider %s - run /model %s %s to switch)", others[0], others[0], modelName)
-		} else if len(others) > 1 {
-			msg += fmt.Sprintf(" (found under providers: %s - run /model <provider> %s to switch)", strings.Join(others, ", "), modelName)
-		}
-		return ports.CommandOutcome{Err: msg}
-	}
-	r.res.ProviderName = providerName
-	r.res.Model = modelName
-	notice := fmt.Sprintf("Model set to %s (%s).", modelName, providerName)
-	if discarded != "" {
-		notice += fmt.Sprintf(" (Reasoning effort override %q discarded).", discarded)
-	}
 	return ports.CommandOutcome{Notice: notice}
 }
 
@@ -629,7 +531,7 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("no active session")
 	}
-	infos, err := sess.ListSessions()
+	infos, err := sess.ListAllSessions()
 	if err != nil {
 		return nil, err
 	}
@@ -644,20 +546,29 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 		if title == "" {
 			title = info.Name
 		}
+		// Route pseudo-rows keep the "Worktree · <name>" label the REPL's
+		// session catalog uses, so both surfaces name them alike.
+		if info.WorktreeRoute && info.Worktree != "" {
+			title = "Worktree · " + info.Worktree
+		}
 		active := r.SessionActive(id)
 		state := "done"
 		if active {
 			state = "running"
 		}
 		out = append(out, ports.SessionSummary{
-			ID:            id,
-			Title:         title,
-			UpdatedAt:     info.UpdatedAt,
-			Active:        active,
-			State:         state,
-			IsCurrent:     id == currID,
-			Turns:         info.TurnCount,
-			ContextTokens: info.TokenCount,
+			ID:                 id,
+			Title:              title,
+			UpdatedAt:          info.UpdatedAt,
+			Active:             active,
+			State:              state,
+			IsCurrent:          id == currID,
+			Turns:              info.TurnCount,
+			ContextTokens:      info.TokenCount,
+			Worktree:           info.Worktree,
+			WorktreeRoute:      info.WorktreeRoute,
+			WorktreeDir:        info.Dir,
+			WorktreeInstanceID: info.WorktreeInstance.ID,
 		})
 	}
 	return out, nil
@@ -686,7 +597,18 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 		return ports.CommandOutcome{Err: "session ID is empty"}
 	}
 	if r.pool != nil {
+		// Tripwire 1 router: if the typed id matches a LISTED bound row,
+		// resume through the root-scoped creator instead of an unbound
+		// Load - today byte-identical (bound ids are never listed), and
+		// correct-by-construction if storage ever starts leaking them.
+		if summary, ok := selectWorktreeSummary(r.summariesFor(), id); ok {
+			return r.ResumeInWorktree(ctx, summary)
+		}
 		conv, err := r.pool.GetOrCreate(id)
+		// See handleNew: drained after the build, so a resumed session that
+		// could not rebuild its own tool surface says so instead of leaving
+		// the reason for a later, unrelated command to report.
+		toolScope := r.pool.takeToolScopeNotice()
 		if err != nil {
 			return ports.CommandOutcome{Err: resumeErrorText(id, err)}
 		}
@@ -696,7 +618,7 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 		return ports.CommandOutcome{
 			Conversation:    conv,
 			ClearTranscript: true,
-			Notice:          fmt.Sprintf("Resumed session %s.", id),
+			Notice:          appendToolScope(fmt.Sprintf("Resumed session %s.", id), toolScope),
 		}
 	}
 	sess := r.activeSession()
@@ -736,6 +658,12 @@ func (r *CommandRunner) handleNew() ports.CommandOutcome {
 		return ports.CommandOutcome{Err: "no session pool available"}
 	}
 	conv, err := r.pool.CreateFresh()
+	// Drained AFTER the build, like the worktree route does: the slot holds
+	// whatever reason this entry could not get its own tool surface. Left
+	// undrained, the operator kept typing into a silently degraded session
+	// and the stranded string later appended itself to an unrelated command's
+	// outcome.
+	toolScope := r.pool.takeToolScopeNotice()
 	if err != nil {
 		return ports.CommandOutcome{Err: "failed to create new session: " + err.Error()}
 	}
@@ -745,7 +673,7 @@ func (r *CommandRunner) handleNew() ports.CommandOutcome {
 	return ports.CommandOutcome{
 		Conversation:    conv,
 		ClearTranscript: true,
-		Notice:          "New session started.",
+		Notice:          appendToolScope("New session started.", toolScope),
 	}
 }
 

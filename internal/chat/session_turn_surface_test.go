@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -182,14 +184,16 @@ func TestUnadmittedToolHandlerServesTheCallSynchronously(t *testing.T) {
 	if !result.Handled {
 		t.Fatal("advertised-but-unadmitted tool was not recognized")
 	}
-	if !result.Ran {
-		t.Fatalf("expected the call to be served synchronously (Ran=true), got denial: %q", result.Content)
+	// The handler hands the tool back; the loop runs it through the shared
+	// shim. "Served" now means admitted for execution, not executed here.
+	if result.Execute == nil {
+		t.Fatalf("expected the call to be admitted for execution, got denial: %q", result.Content)
 	}
-	if result.Content != "main.go:1:package main" {
-		t.Fatalf("Content = %q, want the tool's real, unprefixed result", result.Content)
+	if result.Execute.Name() != "grep" {
+		t.Fatalf("admitted %q, want grep", result.Execute.Name())
 	}
-	if strings.Contains(result.Content, "error:") || strings.Contains(result.Content, "next step") {
-		t.Fatalf("synchronous result must carry no denial/error framing, got %q", result.Content)
+	if strings.Contains(result.Content, "next step") {
+		t.Fatalf("an admitted call must carry no retry framing, got %q", result.Content)
 	}
 
 	// Still auto-staged, so it becomes natively admitted at the next step
@@ -199,209 +203,15 @@ func TestUnadmittedToolHandlerServesTheCallSynchronously(t *testing.T) {
 		t.Fatalf("expected grep still staged for native admission, got %+v (has=%v)", stage, has)
 	}
 
-	// A second call in the same turn dedups against the first (same turn,
-	// same tool, same input) rather than re-running the tool.
+	// A second identical call in the same turn returns the same result. This
+	// tool is READ-class and fixed-body, so it re-runs (its capability says
+	// reads always execute fresh) and the bodies match either way - the
+	// assertion cannot tell dedup from a re-run and does not need to. The
+	// comment here used to claim dedup; TestDeferredToolSuppressesHookRunsOn
+	// Duplicate is where a genuine duplicate is proven, with a counter.
 	result2 := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{"pattern":"package"}`))
-	if !result2.Ran || result2.Content != result.Content {
-		t.Fatalf("second identical call = %+v, want the same successful result via dedup", result2)
-	}
-}
-
-// A same-turn duplicate must not re-execute the tool (proven by a call
-// counter, not by content equality - the earlier assertion would pass
-// identically for a genuine re-run of a fixed-body tool) and must not
-// report a hook run for a hook that did not fire on this call: a
-// dedup-served duplicate is answered with the OWNER's HookRuns (DC-9), so
-// reporting them here would show a hook firing that never fired.
-func TestDeferredToolSuppressesHookRunsOnDuplicate(t *testing.T) {
-	s := prefixResetSession(t)
-	tool := &countingTool{name: "grep"}
-	full := tools.NewRegistry()
-	full.Register(tool)
-	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
-
-	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
-		return runtime.HookVerdict{Runs: []runtime.HookRun{{Event: "PreToolUse", Program: "guard.sh"}}}
-	}
-	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
-	t.Cleanup(dispatcher.Close)
-	s.SetDispatcher(dispatcher)
-	s.ToolBaseResolver = func() *tools.Registry { return full }
-	s.mu.Lock()
-	s.turnID = 7
-	s.mu.Unlock()
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-
-	first := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if !first.Ran || len(first.HookRuns) != 1 {
-		t.Fatalf("owner call: Ran=%v HookRuns=%+v, want Ran=true and 1 hook run", first.Ran, first.HookRuns)
-	}
-
-	second := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if !second.Ran || second.Content != first.Content {
-		t.Fatalf("second identical call = %+v, want the same successful result via dedup", second)
-	}
-	if calls := tool.runs.Load(); calls != 1 {
-		t.Fatalf("the tool executed %d times, want exactly 1 (the duplicate must not re-run it)", calls)
-	}
-	if len(second.HookRuns) != 0 {
-		t.Fatalf("a dedup-served duplicate must report no hook runs, got %+v", second.HookRuns)
-	}
-}
-
-// A PostToolUse hook's advisory text must reach the model, not just the
-// operator's transcript - parity with dispatcherShim.Run's hookContext
-// threading. runDeferredToolNow returns it unframed; framing happens at
-// the internal/agent call site that has appendHookContext in scope.
-func TestDeferredToolReturnsHookContextForTheModel(t *testing.T) {
-	s := prefixResetSession(t)
-	full := tools.NewRegistry()
-	full.Register(fixedBodyTool{name: "grep", body: "main.go:1:package main"})
-	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
-
-	post := func(context.Context, runtime.Request, runtime.Result) runtime.HookResult {
-		return runtime.HookResult{Context: "gofmt rewrote 2 files"}
-	}
-	dispatcher := runtime.New(runtime.Policy{PostInvokeHook: post})
-	t.Cleanup(dispatcher.Close)
-	s.SetDispatcher(dispatcher)
-	s.ToolBaseResolver = func() *tools.Registry { return full }
-	s.mu.Lock()
-	s.turnID = 7
-	s.mu.Unlock()
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-
-	if !result.Ran {
-		t.Fatalf("expected the call to be served, got denial: %q", result.Content)
-	}
-	if result.HookContext != "gofmt rewrote 2 files" {
-		t.Fatalf("HookContext = %q, want the PostToolUse hook's advisory text", result.HookContext)
-	}
-	if result.Content != "main.go:1:package main" {
-		t.Fatalf("Content = %q, want the unframed tool result - framing happens at the agent call site", result.Content)
-	}
-}
-
-// A dedup-served duplicate's HookRuns must be nil (the hook did not run for
-// THIS call), but its HookContext is still the owner's real advisory text -
-// DC-9 answers a duplicate with the owner's post-hook Result, and
-// dispatcherShim.Run appends that same context for its own duplicates.
-func TestDeferredToolReportsHookContextForADuplicate(t *testing.T) {
-	s := prefixResetSession(t)
-	full := tools.NewRegistry()
-	full.Register(fixedBodyTool{name: "grep", body: "ok"})
-	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
-
-	post := func(context.Context, runtime.Request, runtime.Result) runtime.HookResult {
-		return runtime.HookResult{Context: "fmt.sh ran"}
-	}
-	dispatcher := runtime.New(runtime.Policy{PostInvokeHook: post})
-	t.Cleanup(dispatcher.Close)
-	s.SetDispatcher(dispatcher)
-	s.ToolBaseResolver = func() *tools.Registry { return full }
-	s.mu.Lock()
-	s.turnID = 7
-	s.mu.Unlock()
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-
-	first := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if !first.Ran || first.HookContext != "fmt.sh ran" {
-		t.Fatalf("owner call: Ran=%v HookContext=%q", first.Ran, first.HookContext)
-	}
-	second := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if !second.Ran {
-		t.Fatalf("second identical call = %+v, want served via dedup", second)
-	}
-	if len(second.HookRuns) != 0 {
-		t.Fatalf("a dedup-served duplicate must report no hook RUNS, got %+v", second.HookRuns)
-	}
-	if second.HookContext != "fmt.sh ran" {
-		t.Fatalf("a dedup-served duplicate must still carry the owner's hook CONTEXT, got %q", second.HookContext)
-	}
-}
-
-// A PreToolUse block is the case an operator most needs to see: the call
-// never ran, but the denying hook did. Today's model-facing text on this
-// path is unchanged (the generic "queued to load... retry" message) - see
-// runDeferredToolNow's doc comment for why that is a deliberate half-fix.
-func TestDeferredToolReportsAPreToolUseBlock(t *testing.T) {
-	s := prefixResetSession(t)
-	full := tools.NewRegistry()
-	full.Register(fixedBodyTool{name: "grep", body: "should never run"})
-	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
-
-	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
-		return runtime.HookVerdict{Denied: true, Reason: "policy forbids this", Runs: []runtime.HookRun{
-			{Event: "PreToolUse", Program: "guard.sh", Denied: true, Output: "policy forbids this"},
-		}}
-	}
-	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
-	t.Cleanup(dispatcher.Close)
-	s.SetDispatcher(dispatcher)
-	s.ToolBaseResolver = func() *tools.Registry { return full }
-	s.mu.Lock()
-	s.turnID = 7
-	s.mu.Unlock()
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-
-	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if result.Ran {
-		t.Fatalf("a PreToolUse block must not report Ran, got %+v", result)
-	}
-	if len(result.HookRuns) != 1 || !result.HookRuns[0].Denied {
-		t.Fatalf("the blocking run must still be reported: %+v", result.HookRuns)
-	}
-	if !strings.Contains(result.Content, "next step") {
-		t.Fatalf("the model-facing text on this path is unchanged (deliberate half-fix), got %q", result.Content)
-	}
-}
-
-// A hook can fire successfully while the TOOL's own execution still fails -
-// a distinct case from a PreToolUse block (which never reaches the tool at
-// all). The hook run must still be reported even though ok=false. Proven by
-// an execution-reached flag (not just an error path, which any
-// pre-execute dispatcher failure would also satisfy) and by asserting
-// Denied==false on the reported run (a PreToolUse block's run IS denied -
-// this is the one cheap assertion that separates the two cases).
-func TestDeferredToolReportsHookRunsWhenToolItselfFails(t *testing.T) {
-	s := prefixResetSession(t)
-	tool := &failingTool{name: "grep"}
-	full := tools.NewRegistry()
-	full.Register(tool)
-	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
-
-	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
-		return runtime.HookVerdict{Runs: []runtime.HookRun{{Event: "PreToolUse", Program: "guard.sh"}}}
-	}
-	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
-	t.Cleanup(dispatcher.Close)
-	s.SetDispatcher(dispatcher)
-	s.ToolBaseResolver = func() *tools.Registry { return full }
-	s.mu.Lock()
-	s.turnID = 7
-	s.mu.Unlock()
-
-	var opts agent.Options
-	s.wireStepBoundaryAdmission(&opts, nil)
-
-	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if result.Ran {
-		t.Fatalf("a failing tool execution must not report Ran, got %+v", result)
-	}
-	if !tool.reached.Load() {
-		t.Fatal("the tool's own Execute was never reached - this test would also pass for a pre-execute dispatcher failure, which is not what it claims to cover")
-	}
-	if len(result.HookRuns) != 1 || result.HookRuns[0].Denied {
-		t.Fatalf("the hook that DID run before the tool failed must be reported and NOT marked Denied (that would mean a PreToolUse block, a different case), got %+v", result.HookRuns)
+	if result2.Execute == nil {
+		t.Fatalf("second identical call = %+v, want the tool admitted again", result2)
 	}
 }
 
@@ -454,17 +264,76 @@ func TestUnadmittedToolHandlerFallsBackWithoutWiring(t *testing.T) {
 	}
 }
 
-// TestUnadmittedToolHandlerCapsTheSynchronousResult pins the review finding:
-// a deferred tool's synchronous result must honor s.MaxToolResultChars, the
-// same session-level budget every other tool call is capped by - the
-// dispatcher's own output-ceiling safety floor (256 KiB) is far too loose to
-// stand in for an operator's configured budget on its own.
-func TestUnadmittedToolHandlerCapsTheSynchronousResult(t *testing.T) {
+// A DENIED deferred call must not be recorded as a successful one.
+//
+// The refusal returns ok=true, which the caller reads as Ran and records with
+// failed=false - so under a "deny" policy the operator's transcript showed a
+// green tool call whose body read "tool call denied by user". The SDK path
+// records the opposite on purpose, and its comment names this exact class:
+// "the reason a denial used to reach every viewer as a success". The deferred
+// path reintroduced it.
+func TestADeniedDeferredCallIsNotRecordedAsASuccess(t *testing.T) {
 	s := prefixResetSession(t)
-	s.MaxToolResultChars = 16
+	tool := &failingTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(tool)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	dispatcher := runtime.New(runtime.Policy{})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.ApprovalPolicy = config.ApprovalPolicyDeny
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+
+	if tool.reached.Load() {
+		t.Fatal("the policy denied the call but the tool ran anyway")
+	}
+	if !result.Failed {
+		t.Error("a denied call is not marked Failed, so every viewer - the TUI, " +
+			"the NDJSON status mapping, the remote reader - shows the refusal as a " +
+			"completed, successful tool call")
+	}
+}
+
+// countingWriteTool is ExecutionWrite, so Capability.Dedups() is true: a
+// same-turn duplicate delivery is answered from the record rather than
+// executing the side effect twice.
+type countingWriteTool struct {
+	name string
+	runs atomic.Int32
+}
+
+func (t *countingWriteTool) Name() string               { return t.name }
+func (t *countingWriteTool) Description() string        { return "counting write tool" }
+func (t *countingWriteTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *countingWriteTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionWrite}
+}
+func (t *countingWriteTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.runs.Add(1)
+	return t.name + " ran", nil
+}
+
+// TestStagedPendingCallIsHotServedWithoutRecharging pins the hot-serve change:
+// a root-turn call to a name that is ALREADY staged (by load_tools, or by an
+// earlier deferred call whose publication deferred) must fall through the
+// staged notice to the synchronous serve - and must NOT charge a second
+// admission attempt, because the call that staged the name already spent it.
+// The stage itself stays pending: native publication at the boundary remains
+// what makes the tool admitted for later steps and turns.
+func TestStagedPendingCallIsHotServedWithoutRecharging(t *testing.T) {
+	s := prefixResetSession(t)
 
 	full := tools.NewRegistry()
-	full.Register(fixedBodyTool{name: "grep", body: strings.Repeat("x", 1000)})
+	full.Register(fixedBodyTool{name: "read_file"})
+	full.Register(fixedBodyTool{name: "grep", body: "main.go:1:package main"})
 	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
 
 	dispatcher := runtime.New(runtime.Policy{})
@@ -473,16 +342,92 @@ func TestUnadmittedToolHandlerCapsTheSynchronousResult(t *testing.T) {
 	s.ToolBaseResolver = func() *tools.Registry { return full }
 
 	s.mu.Lock()
-	s.turnID = 1
+	s.turnID = 7
 	s.mu.Unlock()
+	if _, err := s.StageToolAdmission([]string{"grep"}, 7); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	// The staged notice no longer answers a root turn calling a staged name.
+	if msg, ok := opts.StagedToolMessage("grep"); ok {
+		t.Fatalf("a root turn calling a staged tool must hot-serve, got notice %q", msg)
+	}
+
+	attemptsBefore := s.admissionAttempts
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if result.Execute == nil {
+		t.Fatalf("staged call must be admitted for execution, got denial: %q", result.Content)
+	}
+	if s.admissionAttempts != attemptsBefore {
+		t.Fatalf("hot-serving an already-staged name charged another attempt (%d -> %d); "+
+			"the staging call already spent it", attemptsBefore, s.admissionAttempts)
+	}
+
+	stage, has := s.PendingAdmission()
+	if !has || !slices.Contains(stage.Names, "grep") {
+		t.Fatalf("the stage must stay pending for native publication, got %+v (has=%v)", stage, has)
+	}
+
+	// While the surface is switching, the staged notice is the honest answer.
+	s.mu.Lock()
+	s.switching = true
+	s.mu.Unlock()
+	if msg, ok := opts.StagedToolMessage("grep"); !ok || !strings.Contains(msg, "staged for loading") {
+		t.Fatalf("a switching surface must keep the staged notice, got ok=%v %q", ok, msg)
+	}
+	s.mu.Lock()
+	s.switching = false
+	s.mu.Unlock()
+
+	// A scoped turn keeps the notice too: for it, "callable at the next
+	// boundary" is true, while serveUnadmittedTool could only refuse.
+	turn := &TurnOptions{Tools: tools.NewRegistry()}
+	var scopedOpts agent.Options
+	s.wireStepBoundaryAdmission(&scopedOpts, turn)
+	if msg, ok := scopedOpts.StagedToolMessage("grep"); !ok || !strings.Contains(msg, "staged for loading") {
+		t.Fatalf("a scoped turn must keep the staged notice, got ok=%v %q", ok, msg)
+	}
+}
+
+// TestHotServingAStagedWriteToolStillAsksApproval pins that the hot-serve
+// shortcut is not a way past a prompt: the per-call approval decision runs
+// before the skip-the-charge branch, so a staged WRITE tool under a deny
+// policy is refused and rendered as a failure, exactly like a fresh deferred
+// call would be.
+func TestHotServingAStagedWriteToolStillAsksApproval(t *testing.T) {
+	s := prefixResetSession(t)
+
+	write := &countingWriteTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(fixedBodyTool{name: "read_file"})
+	full.Register(write)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	dispatcher := runtime.New(runtime.Policy{})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+
+	s.mu.Lock()
+	s.turnID = 7
+	s.ApprovalPolicy = config.ApprovalPolicyDeny
+	s.mu.Unlock()
+	if _, err := s.StageToolAdmission([]string{"grep"}, 7); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
 
 	var opts agent.Options
 	s.wireStepBoundaryAdmission(&opts, nil)
 	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
-	if !result.Ran {
-		t.Fatalf("expected the call to run, got denial: %q", result.Content)
+
+	if write.runs.Load() != 0 {
+		t.Fatal("the policy denied the call but the staged hot-serve ran the tool anyway")
 	}
-	if len(result.Content) > 200 {
-		t.Fatalf("synchronous result was not capped to s.MaxToolResultChars (16): got %d bytes", len(result.Content))
+	if !result.Failed {
+		t.Error("a denied hot-serve is not marked Failed, so every viewer shows the " +
+			"refusal as a completed, successful tool call")
 	}
 }

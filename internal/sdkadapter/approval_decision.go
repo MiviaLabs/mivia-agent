@@ -1,0 +1,139 @@
+package sdkadapter
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
+)
+
+// policyContextKey carries the DECIDING policy to the gate.
+type policyContextKey struct{}
+
+// WithApprovalPolicy stamps the policy this call was decided under.
+//
+// A gate implementation may hold a reference to the session it was built
+// against, and one gate can now serve several sessions - /new inherits it, so
+// the UI has a single approver to render from. Without this the gate answers
+// from ITS session's policy while the decision above was made with the
+// CALLER's, and a transient /yolo on one conversation auto-approved write
+// tools in another whose own policy said to prompt.
+func WithApprovalPolicy(ctx context.Context, policy string) context.Context {
+	if policy == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, policyContextKey{}, policy)
+}
+
+// ApprovalPolicyFromContext returns the policy this call was decided under,
+// and false when the caller stamped none - a direct gate caller that never
+// went through DecideApproval.
+func ApprovalPolicyFromContext(ctx context.Context) (string, bool) {
+	policy, ok := ctx.Value(policyContextKey{}).(string)
+	return policy, ok && policy != ""
+}
+
+// ApprovalRequest is one call awaiting a decision.
+type ApprovalRequest struct {
+	// ToolCallID is the in-flight call id. The UI's resolver matches a
+	// decision back to the blocked gate by it.
+	ToolCallID string
+	Name       string
+	Class      tools.ExecutionClass
+	// ResourceKey is what the call acts on when the tool can name it. It is
+	// the granularity a standing "always" decision is recorded at.
+	ResourceKey string
+	Args        json.RawMessage
+}
+
+// ApprovalDecision is the answer, and the reason when it is a refusal.
+type ApprovalDecision struct {
+	Approved bool
+	// Reason is empty when Approved. It is operator-facing text, never a
+	// path or a secret.
+	Reason string
+}
+
+// ApprovalDeps is what a decision needs. Every field may be nil or empty; the
+// zero value denies anything that requires a decision, which is the direction
+// this whole layer exists to guarantee.
+type ApprovalDeps struct {
+	Policy   string
+	Standing *ApprovalStanding
+	Gate     func(ctx context.Context, name string, args json.RawMessage) ApprovalResult
+	// EmitPending announces the prompt before the gate blocks, so a UI can
+	// render it while waiting. Optional.
+	EmitPending func(toolCallID, name, detail, input string)
+}
+
+// DecideApproval answers whether one call may run.
+//
+// This is the ONE implementation of the policy. It was previously reachable
+// only through the SDK tool wrapper, which meant every other route to
+// executing a tool had no approval at all - and there are several. A threat
+// model found a deferred-tool path invoking the runtime dispatcher directly
+// and writing a file under a "deny" policy with a live approver attached.
+//
+// Re-implementing this decision at each such site is what the last three
+// fixes in this area were about. So the decision moved here, and the callers
+// ask instead of deciding.
+func DecideApproval(ctx context.Context, deps ApprovalDeps, req ApprovalRequest) ApprovalDecision {
+	if IsAutoApproval(deps.Policy) {
+		return ApprovalDecision{Approved: true}
+	}
+	// An unset policy means this caller configured none. It is not a licence
+	// to run: it is treated as auto only where the caller has opted out of
+	// the layer entirely (see NeedsApprovalLayer). Reaching here with one
+	// means a decision IS required.
+	//
+	// Read-class and unclassified calls bypass the prompt unless the policy
+	// is "always" or "deny", matching the legacy threshold.
+	if !IsAlwaysApproval(deps.Policy) && !IsDenyApproval(deps.Policy) && req.Class < tools.ExecutionWrite {
+		return ApprovalDecision{Approved: true}
+	}
+	if IsDenyApproval(deps.Policy) {
+		return ApprovalDecision{Reason: `auto-denied (approval policy is "deny")`}
+	}
+	// The standing key names the CALL, not the tool. Keying it by name alone
+	// let one approval authorize every other call that tool could make.
+	standingKey := StandingKey{
+		Name:        req.Name,
+		Class:       req.Class,
+		ResourceKey: req.ResourceKey,
+		Args:        req.Args,
+	}
+	if deps.Standing != nil {
+		if v, ok := deps.Standing.Lookup(standingKey); ok {
+			if !v {
+				return ApprovalDecision{Reason: "standing decision"}
+			}
+			return ApprovalDecision{Approved: true}
+		}
+	}
+	if deps.Gate == nil {
+		// A call that needs approval with nobody to ask is denied, never run.
+		// The absence of an approver must never read as approval.
+		return ApprovalDecision{Reason: "no approver is attached to this session"}
+	}
+	if deps.EmitPending != nil {
+		deps.EmitPending(req.ToolCallID, req.Name, approvalClassName(req.Class), string(req.Args))
+	}
+	// The gate is asked under the policy THIS decision used, so a gate shared
+	// across sessions cannot answer from a different one's.
+	res := deps.Gate(WithApprovalPolicy(ctx, deps.Policy), req.Name, req.Args)
+	if res.ApprovedForClass && deps.Standing != nil {
+		if res.Approved {
+			deps.Standing.Allow(standingKey)
+		} else {
+			deps.Standing.Deny(standingKey)
+		}
+	}
+	if res.Approved {
+		return ApprovalDecision{Approved: true}
+	}
+	reason := res.Err
+	if reason == "" {
+		reason = "denied"
+	}
+	return ApprovalDecision{Reason: reason}
+}

@@ -2,7 +2,7 @@
 //
 // The CLI's internal/workspace/ package is the full lifecycle host:
 // the mivia-specific namespacing helpers (AgentsPath, SkillsDir,
-// SessionsDir, WorktreesDir, ContextStorePath, MemoryDBPath) in
+// SessionsDir, WorktreesDir, and ContextStorePath) in
 // namespace.go, the os.Root-based sandbox primitives in root.go,
 // and the longpath platform handling in longpath_unix.go /
 // longpath_windows.go. None of these move to the SDK; they are
@@ -59,8 +59,11 @@ const Unbounded = sdkws.Unbounded
 // Re-exported sentinels so CLI callers can errors.Is against
 // sdkadapter.ErrEscape etc. without an extra SDK import.
 var (
-	ErrEscape       = sdkws.ErrEscape
-	ErrInvalidLimit = sdkws.ErrInvalidLimit
+	ErrEscape = sdkws.ErrEscape
+	// ErrInvalidLimit wraps the SDK's ErrInvalidOptions (the SDK
+	// collapsed its shape-only construction sentinels, including
+	// the former ErrInvalidLimit, into one shared sentinel).
+	ErrInvalidLimit = sdkws.ErrInvalidOptions
 	ErrSecretPath   = sdkws.ErrSecretPath
 	ErrTooLarge     = sdkws.ErrTooLarge
 )

@@ -142,7 +142,9 @@ func TestManualCompactSummaryStaysLoadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Production installs the session redaction policy beside the manager
-	// (configureSessionContext); the summary gate refuses requests without it.
+	// (configureSessionContext). It is not a precondition for the summary:
+	// it governs what the checkpoint may persist. It is installed here so
+	// this test drives the same shape production does.
 	session.SetContextRedactionPolicy(contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}})
 	if _, err := session.SendUser(context.Background(), "first", io.Discard); err != nil {
 		t.Fatal(err)

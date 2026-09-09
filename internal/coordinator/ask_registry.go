@@ -56,7 +56,7 @@ func newAskRegistry() *askRegistry {
 	}
 }
 
-func (c *coordinator) ensureAsks() *askRegistry {
+func (c *Coordinator) ensureAsks() *askRegistry {
 	if c.asks == nil {
 		c.asks = newAskRegistry()
 	}
@@ -65,7 +65,7 @@ func (c *coordinator) ensureAsks() *askRegistry {
 
 // TryRegisterAsk records an open ask if under maxAsks (maxAsks<=0 → 4).
 // Returns false when the per-task ask quota is already exhausted.
-func (c *coordinator) TryRegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string, maxAsks int) bool {
+func (c *Coordinator) TryRegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string, maxAsks int) bool {
 	if maxAsks <= 0 {
 		maxAsks = 4
 	}
@@ -89,12 +89,12 @@ func (c *coordinator) TryRegisterAsk(runID, askerTaskID, askerRole, askID string
 }
 
 // RegisterAsk records an open ask without a quota check (tests / internal).
-func (c *coordinator) RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string) {
+func (c *Coordinator) RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string) {
 	_ = c.TryRegisterAsk(runID, askerTaskID, askerRole, askID, ancestors, 1<<30)
 }
 
 // AsksUsedByTask returns how many asks this task has registered.
-func (c *coordinator) AsksUsedByTask(runID, taskID string) int {
+func (c *Coordinator) AsksUsedByTask(runID, taskID string) int {
 	if c.asks == nil {
 		return 0
 	}
@@ -104,7 +104,7 @@ func (c *coordinator) AsksUsedByTask(runID, taskID string) int {
 }
 
 // ReferralSpawnsUsed returns referral-as-spawn count for the run.
-func (c *coordinator) ReferralSpawnsUsed(runID string) int {
+func (c *Coordinator) ReferralSpawnsUsed(runID string) int {
 	if c.asks == nil {
 		return 0
 	}
@@ -115,7 +115,7 @@ func (c *coordinator) ReferralSpawnsUsed(runID string) int {
 
 // TryIncReferralSpawn increments the run's referral-as-spawn counter if under
 // max (max<=0 → 4). Returns false when the cap is already reached.
-func (c *coordinator) TryIncReferralSpawn(runID string, max int) bool {
+func (c *Coordinator) TryIncReferralSpawn(runID string, max int) bool {
 	if max <= 0 {
 		max = 4
 	}
@@ -130,12 +130,12 @@ func (c *coordinator) TryIncReferralSpawn(runID string, max int) bool {
 }
 
 // IncReferralSpawn increments the run's referral-as-spawn counter (unbounded).
-func (c *coordinator) IncReferralSpawn(runID string) {
+func (c *Coordinator) IncReferralSpawn(runID string) {
 	_ = c.TryIncReferralSpawn(runID, 1<<30)
 }
 
 // DecReferralSpawn rolls back a TryIncReferralSpawn when spawn fails.
-func (c *coordinator) DecReferralSpawn(runID string) {
+func (c *Coordinator) DecReferralSpawn(runID string) {
 	if c.asks == nil || runID == "" {
 		return
 	}
@@ -147,7 +147,7 @@ func (c *coordinator) DecReferralSpawn(runID string) {
 }
 
 // AskLookup returns the asker task for an open ask, if any.
-func (c *coordinator) AskLookup(askID string) (askerTaskID string, ok bool) {
+func (c *Coordinator) AskLookup(askID string) (askerTaskID string, ok bool) {
 	if c.asks == nil {
 		return "", false
 	}
@@ -161,7 +161,7 @@ func (c *coordinator) AskLookup(askID string) (askerTaskID string, ok bool) {
 }
 
 // AskChainInfo returns depth and whether adding toRole would cycle.
-func (c *coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string) {
+func (c *Coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string) {
 	if c.asks == nil || parentAskID == "" {
 		return 0, false, nil
 	}
@@ -183,7 +183,7 @@ func (c *coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle
 
 // ClaimAskAnswer atomically claims an open ask for answering. Returns the
 // asker task id. Fails if unknown, closed, or already claimed.
-func (c *coordinator) ClaimAskAnswer(askID string) (askerTaskID string, err error) {
+func (c *Coordinator) ClaimAskAnswer(askID string) (askerTaskID string, err error) {
 	if c.asks == nil {
 		return "", fmt.Errorf("unknown ask")
 	}
@@ -209,7 +209,7 @@ func (c *coordinator) ClaimAskAnswer(askID string) (askerTaskID string, err erro
 // claimed=true means the caller holds the claim (must CloseAsk or Unclaim).
 // err is set when the id is a sealed/claimed registry ask (refuse further answers).
 // claimed=false and err=nil means the id is not a registry ask (phase-03 question).
-func (c *coordinator) BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error) {
+func (c *Coordinator) BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error) {
 	if c.asks == nil || askID == "" {
 		return "", false, nil
 	}
@@ -228,7 +228,7 @@ func (c *coordinator) BeginAskAnswer(askID string) (askerTaskID string, claimed 
 }
 
 // CompleteAskAnswer permanently closes an open or claimed ask.
-func (c *coordinator) CompleteAskAnswer(askID string) error {
+func (c *Coordinator) CompleteAskAnswer(askID string) error {
 	if c.asks == nil {
 		return fmt.Errorf("unknown ask")
 	}
@@ -250,7 +250,7 @@ func (c *coordinator) CompleteAskAnswer(askID string) error {
 }
 
 // IsAskAnswered reports whether askID is permanently closed (answered or abandoned).
-func (c *coordinator) IsAskAnswered(askID string) bool {
+func (c *Coordinator) IsAskAnswered(askID string) bool {
 	if c.asks == nil {
 		return false
 	}
@@ -261,14 +261,14 @@ func (c *coordinator) IsAskAnswered(askID string) bool {
 
 // CloseAsk permanently retires an ask without a peer answer (timeout/cancel/
 // undelivered/failed referral). No-op if already closed. Does not reopen via Unclaim.
-func (c *coordinator) CloseAsk(askID string) {
+func (c *Coordinator) CloseAsk(askID string) {
 	_ = c.SealAskAnswer(askID)
 }
 
 // SealAskAnswer permanently closes an open or claimed ask. Returns true only
 // when this call performed the seal (caller may live-inject). Returns false if
 // already sealed or askID is not a registry ask — skip DeliverAnswer/mailbox.
-func (c *coordinator) SealAskAnswer(askID string) bool {
+func (c *Coordinator) SealAskAnswer(askID string) bool {
 	if c.asks == nil || askID == "" {
 		return false
 	}
@@ -295,7 +295,7 @@ func (c *coordinator) SealAskAnswer(askID string) bool {
 // would make the responder's later SealAskAnswer return false and the durable
 // real answer would never be delivered). Returns true only when this call
 // performed the seal.
-func (c *coordinator) SealOpenAskAnswer(askID string) bool {
+func (c *Coordinator) SealOpenAskAnswer(askID string) bool {
 	if c.asks == nil || askID == "" {
 		return false
 	}
@@ -316,7 +316,7 @@ func (c *coordinator) SealOpenAskAnswer(askID string) bool {
 
 // UnclaimAskAnswer reopens an ask after a claimed answer failed before durable
 // delivery. No-op if the ask was permanently closed (timeout/cancel/etc.).
-func (c *coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
+func (c *Coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
 	if c.asks == nil || askID == "" || askerTaskID == "" {
 		return
 	}
@@ -335,7 +335,7 @@ func (c *coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
 // recordAskTarget records a successfully mailbox-delivered ask against its
 // target task so finalize can decline it if the target completes without
 // answering. Dedupes: an ask is recorded at most once per target.
-func (c *coordinator) recordAskTarget(runID, taskID, askID string) {
+func (c *Coordinator) recordAskTarget(runID, taskID, askID string) {
 	if c.asks == nil || runID == "" || taskID == "" || askID == "" {
 		return
 	}
@@ -356,6 +356,19 @@ func (c *coordinator) recordAskTarget(runID, taskID, askID string) {
 		}
 	}
 	c.asks.byTarget[key] = append(c.asks.byTarget[key], askID)
+}
+
+// askerTaskID reports the task that registered askID, or "" when the ask is
+// unknown or its owner was already released.
+//
+// It exists so a referral spawned to answer an ask can name the task that
+// asked. That relationship is real - one task's work causes another's - and
+// the registry is the only place it is recorded.
+func (c *Coordinator) askerTaskID(askID string) string {
+	reg := c.asks
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return reg.askOwner[askID].taskID
 }
 
 // releaseAskSlotLocked releases the per-task quota slot held by askID, if the
@@ -397,7 +410,7 @@ func (reg *askRegistry) pruneAskTargetLocked(askID string) {
 // asksTargeting returns the still-open ask IDs that were delivered to
 // runID/taskID. Closed and claimed asks are excluded: they are no longer open
 // for a terminal decline (a claimed ask may still deliver a real answer).
-func (c *coordinator) asksTargeting(runID, taskID string) []string {
+func (c *Coordinator) asksTargeting(runID, taskID string) []string {
 	if c.asks == nil || runID == "" || taskID == "" {
 		return nil
 	}
@@ -420,7 +433,7 @@ func (c *coordinator) asksTargeting(runID, taskID string) []string {
 // asksByTask is reset — the open/closed/claimed maps are untouched so a
 // retried task's in-flight ask bookkeeping is preserved. Called at the retry
 // attempt boundary (mintRetryAttempt).
-func (c *coordinator) resetTaskAsks(runID, taskID string) {
+func (c *Coordinator) resetTaskAsks(runID, taskID string) {
 	if c.asks == nil || runID == "" || taskID == "" {
 		return
 	}

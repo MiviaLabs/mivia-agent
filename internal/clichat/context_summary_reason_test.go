@@ -8,16 +8,16 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// A workspace that has not configured summarization gets structural-only
+// A workspace whose summarizer cannot be built gets structural-only
 // compaction: /compact returns instantly, makes no LLM call, and - before
 // this - said nothing at all. The operator sees a compaction "work" while the
-// summary they configured never runs, with no way to tell which of the three
-// conditions is missing. summaryWiring's own doc calls the false return "a
+// summary never runs, with no way to tell which of the two conditions is
+// missing. summaryWiring's own doc calls the false return "a
 // policy state, never an error", which is right, but a silent policy state is
 // undiagnosable.
 func summaryReasonResolved(t *testing.T, mutate func(*config.Resolved)) *config.Resolved {
 	t.Helper()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	mutate(res)
 	return res
 }
@@ -36,7 +36,11 @@ func TestSummaryDisabledReasonNamesTheMissingCondition(t *testing.T) {
 		mutate func(*config.Resolved)
 		want   string
 	}{
-		{"flag off", func(r *config.Resolved) { off := false; r.Context.Summary.Enabled = &off }, "context.summary"},
+		// The former "flag off" case is gone: the summarizer is always
+		// enabled, so an `enabled = false` workspace no longer loads. The
+		// "no binding" case replaces it. Both remaining cases are real
+		// failures, and the case count is unchanged.
+		{"no binding", func(r *config.Resolved) { r.Model = "" }, "binding"},
 		{"no endpoint", func(r *config.Resolved) { r.BaseURL = "" }, "endpoint"},
 	}
 	for _, tc := range cases {
@@ -64,7 +68,7 @@ func TestSummaryDisabledReasonNamesTheMissingCondition(t *testing.T) {
 // longer a blocker: a workspace without it summarizes, so nothing should be
 // reported as disabling the summary.
 func TestSummaryDisabledReasonIgnoresMissingRedaction(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	res.RedactionPolicy = nil
 	res.Privacy = config.PrivacyConfig{}
 	sess := chat.NewSession(res, nullCompleter{})
@@ -74,7 +78,7 @@ func TestSummaryDisabledReasonIgnoresMissingRedaction(t *testing.T) {
 }
 
 func TestSummaryDisabledReasonIsEmptyWhenWired(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	sess := chat.NewSession(res, nullCompleter{})
 	if _, _, ok := summaryWiring(sess, res); !ok {
 		t.Fatal("harness precondition: summaryWiring should be enabled here")

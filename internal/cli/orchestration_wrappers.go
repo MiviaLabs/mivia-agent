@@ -6,7 +6,6 @@ package cli
 
 import (
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -16,9 +15,22 @@ const HandlerDelegate = cliorchestrate.HandlerDelegate
 // ToolDispatchTasks re-exports cliorchestrate.ToolDispatchTasks.
 const ToolDispatchTasks = cliorchestrate.ToolDispatchTasks
 
+// OrchestrationCoordinator re-exports the cliorchestrate narrow coordinator
+// interface so callers that import cli can name it.
+type OrchestrationCoordinator = cliorchestrate.OrchestrationCoordinator
+
 // ActiveCoordinator delegates to cliorchestrate.ActiveCoordinator.
-func ActiveCoordinator() (coordinator.Coordinator, bool) {
+func ActiveCoordinator() (OrchestrationCoordinator, bool) {
 	return cliorchestrate.ActiveCoordinator()
+}
+
+// SetSubagentTaskRouteSink delegates to
+// cliorchestrate.SetSubagentTaskRouteSink. Its parameter is spelled as the
+// unnamed func type on purpose: internal/newtui assigns this function
+// itself to uiadapter.SubagentTaskRouteRegistrar, which requires identical
+// function types.
+func SetSubagentTaskRouteSink(fn func(coord OrchestrationCoordinator, callID, runID, taskID string)) {
+	cliorchestrate.SetSubagentTaskRouteSink(fn)
 }
 
 // SetActiveSessionCaller delegates to cliorchestrate.SetActiveSessionCaller.

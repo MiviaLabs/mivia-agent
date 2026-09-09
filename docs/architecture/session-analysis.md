@@ -1,7 +1,7 @@
 # Session-Analysis Skill: Ledger Surface
 
 `session-analysis` is a read-only, metadata-only process-quality analysis skill
-(`.mivia/skills/session-analysis/`). It analyzes chat sessions recorded in the
+(`.agents/skills/session-analysis/`). It analyzes chat sessions recorded in the
 durable chat ledger. This document records the design surface and the hostile
 audit/review findings that shaped it (both challenges returned conditional-fail
 verdicts; every must-fix landed).
@@ -10,20 +10,20 @@ verdicts; every must-fix landed).
 
 Early drafts read `.mivia/sessions/<name>/meta.json` (the legacy file-backed
 session store). That design was wrong twice over: the file store is not the
-default (`.mivia/mivia.toml:614` `store_backend = "sqlite"`; chat is
-unconditionally SQLite-backed per `internal/cli/context_setup.go:26-34`), and
+default (`.mivia/mivia.toml:479` `store_backend = "sqlite"`; chat is
+unconditionally SQLite-backed per `internal/clichat/context_setup.go`), and
 reading file transcripts re-opened the content-privacy surface. The skill's
 surface is the SQLite ledger, opened read-only.
 
-Ledger resolution (mirrors `internal/cli/chat_repository_binding.go:124-141`,
-`internal/workspace/namespace.go:78-84`):
+Ledger resolution (mirrors `internal/clichat/chat_repository_binding.go:125-141`,
+`internal/workspace/namespace.go:98` `GlobalContextStorePath`):
 
 1. `[subagents].store_path` in `.mivia/mivia.toml` (expand `~`; join relative
    to the workspace root) — pins this workspace to its own file.
 2. Else `~/.mivia/context.db` — the **global ledger, shared across every
    workspace on the machine**. Sessions are isolated inside it by workspace ID.
 
-Principal scoping (mirrors `internal/cli/context_setup_session.go:91-107`):
+Principal scoping (mirrors `internal/clichat/context_setup_session.go:93-103`):
 `workspace_id = "workspace-" + hex(sha256(realpath(root))[:8])` (hex of the first
 8 bytes = 16 hex chars, matching `context_setup_session.go`;
 `hex.EncodeToString(digest[:8])`), `subject_id = "local-user"`. Every query is scoped by both. The audit rated
@@ -33,7 +33,7 @@ metadata.
 
 ## Query parity: the harness's own read path
 
-The companion `queries.py` embeds `ListSessions` (`internal/storage/chat_sessions.go:221`)
+The companion `queries.py` embeds `ListSessions` (`internal/storage/chat_sessions.go:285`)
 verbatim — the three-arm union (snapshots/projections, live sessions deduped by
 `NOT EXISTS`, worktree routes with the active-instance guard) — plus derived
 queries that keep its parity predicates:
@@ -66,7 +66,7 @@ Schema gate: `user_version >= 11` required (the `session_id` column is v11).
 - **Stalled** = `session_type='live' AND checkpoint_count=0`; snapshots are
   never stalled (they have no checkpoint relationship).
 - **Staleness labels**: `token_count`/`turn_count` are save-time estimates,
-  invalidated by compaction (`internal/cli/sessions_command.go:317-318` label
+  invalidated by compaction (`internal/clichat/sessions_command.go:321` labels
   them STALE); `payload_bytes` is current, post-compaction.
 - **Anchor bias**: per-arm anchor translation table + whole-store context line
   in every report.
@@ -83,14 +83,18 @@ Schema gate: `user_version >= 11` required (the `session_id` column is v11).
 
 ## Fixture strategy
 
-`queries.py --selftest` builds a golden in-memory DB from the real v11 DDL
+`queries.py --selftest` builds a golden in-memory DB from the v11-era DDL
 (chat_sessions, context_sessions, context_checkpoints, chat_session_dirs,
 worktree_routes, worktree_instances, chat_session_admissions), seeds
 representative rows (projection, copy, arm-2 dedup, stalled, tombstoned,
 unknown-model recovery artifact, active/inactive instance routes, orphan dir,
 admissions, stale rows), and asserts exact outputs — including that no message
-value or title ever appears in the JSON. This is hermetic: no dependency on the
-machine-shared ledger, no sqlite3 CLI, no delegation. The repo's committed-skill
+value or title ever appears in the JSON. The schema has since advanced past
+v11 (currently v16; see `internal/storage/context_schema_v16.go`), but the
+`user_version >= 11` gate and the v11-shaped tables this fixture covers
+remain valid: verify the fixture's table shapes still match production before
+trusting it blindly on a schema this many versions stale. This is hermetic: no
+dependency on the machine-shared ledger, no sqlite3 CLI, no delegation. The repo's committed-skill
 gate is `internal/agents/project_agents_fixture_test.go`
 (`TestCommittedSkillsDeclareValidTools` pins the catalogue; the roster matrix
 passes because the skill is owned by the unrestricted root agent `mivia`, which

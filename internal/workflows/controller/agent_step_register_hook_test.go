@@ -67,7 +67,7 @@ func TestCoordinatorRunnerHooksValidatedChildRun(t *testing.T) {
 // identity.
 func TestCoordinatorRunnerSkipsHookOnRunIDMismatch(t *testing.T) {
 	base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
-	runner := NewCoordinatorRunner(&inspectingCoordinator{Coordinator: base, rewriteRunID: true})
+	runner := NewCoordinatorRunner(&inspectingCoordinator{stepCoordinator: base, rewriteRunID: true})
 	rec := &childRunRecorder{}
 	runner.RegisterChildRun = rec.hook
 	spec := validStepRequest()

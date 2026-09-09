@@ -203,7 +203,7 @@ func SiblingFiles(chunks map[string]*ChunkPlan, chunkID string) []string {
 // dropping its content (an adversarial audit found this exact regression).
 // A record that reached pushed/succeeded with a commit SHA always wins over
 // a stale no_diff record from an earlier attempt on the same run.
-func ChunkRunNoDiff(ctx context.Context, repo workflowledger.Repository, run workflowledger.RunSnapshot) bool {
+func ChunkRunNoDiff(ctx context.Context, repo LedgerRepository, run workflowledger.RunSnapshot) bool {
 	if run.Status != workflowledger.RunStatusSucceeded {
 		return false
 	}
@@ -231,7 +231,7 @@ func ChunkRunNoDiff(ctx context.Context, repo workflowledger.Repository, run wor
 // (the deliverer writes pushed after the push, succeeded after the PR is
 // created). Without this evidence a missing remote ref means "never pushed",
 // not "merged" - a delivery_pending run's PR may never have been created.
-func RunPushed(ctx context.Context, repo workflowledger.Repository, run workflowledger.RunSnapshot) bool {
+func RunPushed(ctx context.Context, repo LedgerRepository, run workflowledger.RunSnapshot) bool {
 	records, err := repo.ListDeliveries(ctx, run.RunID)
 	if err != nil {
 		return false

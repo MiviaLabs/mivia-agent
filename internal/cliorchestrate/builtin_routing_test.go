@@ -14,7 +14,7 @@ import (
 
 // TestCleanLoadShipsBuiltInInRoutingSchema pins the production load path: a
 // clean workspace resolves the compiled general-purpose agent, and the
-// dispatch_tasks schema then offers it in the agent enum and roster prose.
+// dispatch_tasks schema then offers it in the agent roster prose.
 func TestCleanLoadShipsBuiltInInRoutingSchema(t *testing.T) {
 	home, ws := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -30,25 +30,22 @@ func TestCleanLoadShipsBuiltInInRoutingSchema(t *testing.T) {
 	tool := &dispatchTasksTool{agentReg: reg, cfg: config.DefaultSubagentConfig, repo: ledger.NewMemoryLedgerRepository()}
 	items := tool.Parameters()["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
 	agent := items["properties"].(map[string]any)["agent"].(map[string]any)
-	enum, ok := agent["enum"].([]string)
-	if !ok {
-		t.Fatalf("agent enum missing on a clean load: %#v", agent)
-	}
-	found := false
-	for _, name := range enum {
-		if name == "general-purpose" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("agent enum = %v, want it to offer general-purpose", enum)
+	// The roster is prose, not an enum: see taskItemSchema.
+	if enum, found := agent["enum"]; found {
+		t.Fatalf("agent enum = %#v; the roster travels in the description", enum)
 	}
 	description := agent["description"].(string)
 	if !strings.Contains(description, "Optional") {
 		t.Fatalf("agent description must state the field is optional: %q", description)
 	}
-	if !strings.Contains(description, "general-purpose") {
-		t.Fatalf("agent roster prose must name the built-in: %q", description)
+	// The always-available clause, NOT the bare name: agentRoutingBaseDescription
+	// already contains "general-purpose" ("when general-purpose is available"),
+	// and it ships even for a nil registry - so asserting the name alone passes
+	// with the roster entirely gone. agentRoutingDescription emits this clause
+	// only when reg.Get(BuiltInGeneralPurposeName) succeeds, which is the
+	// resolution this test exists to prove.
+	if !strings.Contains(description, "Built-in general-purpose is always available.") {
+		t.Fatalf("agent roster prose must record that the built-in resolved: %q", description)
 	}
 }
 
@@ -76,7 +73,7 @@ func TestCleanRegistryDispatchesBuiltInAgent(t *testing.T) {
 	}
 	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: ledger.NewMemoryLedgerRepository(), agentReg: reg}
 
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"general-purpose","prompt":"work"}]}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"general-purpose","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("Execute error = %v", err)
 	}
@@ -85,6 +82,42 @@ func TestCleanRegistryDispatchesBuiltInAgent(t *testing.T) {
 	}
 	if strings.Contains(out, "failed") {
 		t.Fatalf("Execute output reports a failure: %q", out)
+	}
+}
+
+func TestDispatchTasksDefaultsBlankAgentToGeneralPurpose(t *testing.T) {
+	reg := agents.NewRegistry()
+	if err := reg.Publish(agents.ResolvedAgent{Name: agents.BuiltInGeneralPurposeName}); err != nil {
+		t.Fatal(err)
+	}
+	tool := &dispatchTasksTool{agentReg: reg, cfg: config.DefaultSubagentConfig}
+	tasks, err := tool.buildTasks("call", []dispatchTaskParam{{ID: "t1", Prompt: "work"}, {ID: "t2", Agent: " ", Prompt: "more"}}, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range tasks {
+		if task.AgentName != agents.BuiltInGeneralPurposeName || task.Name != agents.BuiltInGeneralPurposeName {
+			t.Fatalf("task route = name %q agent %q, want general-purpose", task.Name, task.AgentName)
+		}
+	}
+}
+
+func TestDispatchTasksUsesOneshotOnlyWhenGeneralPurposeUnavailable(t *testing.T) {
+	tool := &dispatchTasksTool{agentReg: agents.NewRegistry(), cfg: config.DefaultSubagentConfig}
+	tasks, err := tool.buildTasks("call", []dispatchTaskParam{{ID: "t1", Prompt: "work"}}, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tasks[0].Name != HandlerOneshot || tasks[0].AgentName != "" {
+		t.Fatalf("task = %+v, want one-shot route", tasks[0])
+	}
+}
+
+func TestDispatchTasksRejectsDuplicateCanonicalTaskIDsBeforeSpawn(t *testing.T) {
+	tool := &dispatchTasksTool{agentReg: agents.NewRegistry(), cfg: config.DefaultSubagentConfig}
+	_, err := tool.buildTasks("call", []dispatchTaskParam{{ID: "same", Prompt: "one"}, {ID: " same ", Prompt: "two"}}, 60)
+	if err == nil || !strings.Contains(err.Error(), "duplicate task id") {
+		t.Fatalf("err = %v, want duplicate canonical task id rejection", err)
 	}
 }
 

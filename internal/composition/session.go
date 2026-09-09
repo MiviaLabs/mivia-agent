@@ -172,7 +172,7 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 }
 
 func buildSessionSummarizer(sess *chat.Session, in SessionInput) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
-	if sess == nil || in.Config == nil || !in.Config.Context.Summary.SummaryEnabled() {
+	if sess == nil || in.Config == nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
 	endpoint := strings.TrimSpace(in.Config.BaseURL)

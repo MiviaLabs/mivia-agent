@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -134,15 +133,30 @@ func (m *Model) trim() {
 	if over <= 0 {
 		return
 	}
-	// The rows that leave are exactly the survivor's new top: every row
-	// above it, separators included.
-	rows := m.layout()[over].top
+	// Keep the reader on the same CONTENT, not on an arithmetic guess.
+	//
+	// Subtracting the departing row count assumes the survivors lay out
+	// unchanged, and they need not: a coalesced work run cut below
+	// minWorkRun stops coalescing, so one leader row becomes several
+	// headers and everything under it moves. The reader drifted by a row
+	// for free. Instead, note which block sits at the top of the viewport
+	// and how far into it, then put the viewport back on that block after
+	// the survivors have been laid out again.
+	anchor, into := over, 0
+	if !m.follow {
+		spans := m.layout()
+		for i := over; i < len(m.blocks); i++ {
+			if spans[i].height > 0 && spans[i].top <= m.offset {
+				anchor, into = i, m.offset-spans[i].top
+			}
+		}
+	}
 	m.dropped += over
 	m.blocks = append([]Block(nil), m.blocks[over:]...)
 	if !m.follow {
-		// Keep the reader where they were reading: the rows above them
-		// went away, so their offset must shrink by the same amount.
-		m.offset -= rows
+		if idx := anchor - over; idx >= 0 && idx < len(m.blocks) {
+			m.offset = m.layout()[idx].top + into
+		}
 	}
 	m.reindexFocus(over)
 	m.clampOffset()
@@ -192,7 +206,13 @@ func (m Model) Rows() []string {
 			continue
 		}
 		if s.runSize > 0 {
-			emit(row, m.leaderRow(s, i))
+			// The group indent is applied here for the same reason
+			// renderSpanRows applies it to an ordinary block: a run is
+			// activity, so its row hangs under the turn's prose with
+			// everything else. Emitting leaderRow unpadded drew the one
+			// row that summarises a turn's work at column 1, out of line
+			// with every block it stands for.
+			emit(row, strings.Repeat(" ", s.indent)+m.leaderRow(s, i))
 			row++
 			continue
 		}
@@ -224,17 +244,34 @@ func (m Model) Rows() []string {
 // View is the visible rows joined, which is what the screen draws.
 func (m Model) View() string { return strings.Join(m.Rows(), "\n") }
 
-// ExpandBlockAtScreenRow expands the collapsed block that draws on the
-// given viewport row, if any. y is relative to the transcript's own
-// top row, the way a mouse event reports it. It reports false when the
-// row holds no collapsed block header, so a click can fall through.
+// ToggleBlockAtScreenRow opens or closes the block whose HEADER draws on
+// the given viewport row. x and y are relative to the transcript's own
+// top-left, the way a mouse event reports them. It reports false when the
+// row holds no collapsible header, so a click can fall through.
+//
+// Only the header row acts; a click on a body row falls through, so
+// expanded content is never folded away by a stray click.
+//
+// CLOSING additionally requires the click to land on the collapse
+// MARKER, the "v"/">" glyph in the header's first cell. Opening does not.
+// The asymmetry is about drag-select, which shares this surface: a left
+// press both arms a drag and reaches this function, so a press anywhere
+// on a header would fold the block the user was about to select text
+// from. Restricting the destructive direction to the marker is the
+// disclosure-triangle convention, and nobody begins a text selection on
+// the triangle. Opening stays available across the whole header because
+// revealing content cannot destroy what the user was reaching for.
+//
+// Either direction cancels a live selection. The rows under it just
+// moved or vanished, and a selection left anchored across them copies
+// text the user never highlighted - the same rule push, ScrollBy and
+// SetSize already follow (selection.go).
 //
 // Clicking a coalesced leader row (R2) opens the whole run: the row the
 // user sees stands in for every member, so the click means "show me
-// these". Only header rows are clickable - clicking expanded content
-// must never collapse it by surprise; the keyboard toggle stays the
-// only way back.
-func (m Model) ExpandBlockAtScreenRow(y int) (Model, bool) {
+// these". Closing that run again is per-member - collapse them and the
+// layout re-coalesces them on its own.
+func (m Model) ToggleBlockAtScreenRow(x, y int) (Model, bool) {
 	if y < 0 || !m.FocusedRowVisible(y) {
 		return m, false
 	}
@@ -246,18 +283,31 @@ func (m Model) ExpandBlockAtScreenRow(y int) (Model, bool) {
 			continue
 		}
 		if s.runSize > 0 {
+			m.invalidateSelection()
 			m.expandRun(i)
 			return m, true
 		}
-		if m.blocks[i].Collapsible && m.blocks[i].Collapsed {
-			m.blocks = slices.Clone(m.blocks)
-			m.blocks[i].Collapsed = false
-			m.clampOffset()
-			return m, true
+		if !m.blocks[i].Collapsible {
+			return m, false
 		}
-		return m, false
+		if !m.blocks[i].Collapsed && !hitsCollapseMarker(x, s.indent) {
+			return m, false
+		}
+		m.invalidateSelection()
+		m.blocks = slices.Clone(m.blocks)
+		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
+		m.clampOffset()
+		return m, true
 	}
 	return m, false
+}
+
+// hitsCollapseMarker reports whether column x lands on a header's
+// collapse glyph. The marker occupies one column at the block's indent,
+// and the space after it is included so a one-column target does not
+// have to be hit exactly.
+func hitsCollapseMarker(x, indent int) bool {
+	return x >= indent && x <= indent+1
 }
 
 // FocusedRowVisible reports whether y is inside the viewport.
@@ -357,12 +407,17 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	if !blk.Prose && len(blk.Body) > 0 {
 		blk.Collapsible = true
 	}
-	// R2: a finished read-only lookup collapses by default whatever its
-	// body size - the header already carries the path and the line
-	// count - and consecutive collapsed lookups coalesce into one
-	// leader row. Failed calls never coalesce.
+	// A call that has ENDED successfully collapses by default, whatever
+	// its body size: the header already carries the target, the duration
+	// and the outcome, which is what a reader scanning finished work
+	// needs. Consecutive collapsed calls then coalesce into one summary
+	// row (layout.go, runAt), which is what turns a long turn from a wall
+	// into a line.
+	//
+	// A FAILURE stays open. It is the one block worth the rows, and the
+	// reader should not have to open it to learn what went wrong.
 	if !blk.Prose && len(blk.Body) > 0 && blk.Header.Role != theme.RoleDanger &&
-		render.ReadOnlyToolClass(blk.Header.Label) != "" {
+		blk.Kind == uievent.KindToolEnd {
 		blk.Collapsible = true
 		blk.Collapsed = true
 	} else if blk.Collapsible && defaultCollapsed(blk.Body) {

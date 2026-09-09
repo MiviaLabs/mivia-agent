@@ -6,8 +6,19 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+// newTestBenchSession builds a plain in-memory session for race/benchmark
+// tests that never touch persistence - relocated from concurrency_test.go
+// (deleted with the legacy file-backed session store) minus its now-unused
+// SessionDir setup.
+func newTestBenchSession(tb testing.TB, model string) *Session {
+	tb.Helper()
+	res := &config.Resolved{Model: model, SystemPrompt: "sys"}
+	return NewSession(res, &fakeCompleter{out: "ok"})
+}
 
 // TestSessionMessagesConcurrentReadWrite verifies that concurrent reads of
 // s.Messages from the TUI (using MessagesCopy) do not race with writes from

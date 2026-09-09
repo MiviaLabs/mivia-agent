@@ -48,13 +48,17 @@ func (s *agentsSection) renderListLines(selectedRowIdx int) []string {
 	aligned := render.Columns(agentRowGap, cells)
 
 	var listLines []string
+	headerWidth := s.width/2 - 4
+	if headerWidth <= 0 {
+		headerWidth = 36
+	}
 	for i, row := range s.rows {
 		if row.isHeader {
 			headerText := row.header
 			if strings.HasPrefix(headerText, "  (") {
 				listLines = append(listLines, render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(headerText))
 			} else {
-				listLines = append(listLines, render.Role(s.theme, s.tier, theme.RoleAccent).Bold(true).Render(headerText))
+				listLines = append(listLines, render.SectionHeader(s.theme, s.tier, headerText, headerWidth))
 			}
 			continue
 		}
@@ -103,12 +107,14 @@ func (s *agentsSection) renderDetail(ag ports.AgentView) []string {
 		originLabel = "Built-in (shipped with mivia)"
 	}
 
+	// Pill/Badge for scope
+	badge := render.Role(s.theme, s.tier, theme.RoleBorder).Render("[" + originLabel + "]")
 	lines := []string{
-		accent.Bold(true).Render(ag.Name) + "  " + subtle.Render(originLabel),
+		accent.Bold(true).Render(ag.Name) + "  " + badge,
 	}
 
 	if ag.Description != "" {
-		lines = append(lines, fg.Render(ag.Description))
+		lines = append(lines, "", fg.Render(ag.Description))
 	}
 
 	var meta []string

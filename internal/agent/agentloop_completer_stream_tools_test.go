@@ -100,6 +100,7 @@ func TestChatStreamReportsRealFinishReason(t *testing.T) {
 	w, err := newAgentLoopCompleterWithDefaults(
 		&streamingToolCompleter{}, turnRequestDefaults{},
 		func(finish string) { recorded = finish }, nil, nil,
+		provider.ContextAccountingProfile{},
 	)
 	if err != nil {
 		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)

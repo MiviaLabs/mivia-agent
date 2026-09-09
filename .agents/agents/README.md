@@ -7,9 +7,23 @@ delivery loop in `AGENTS.md` and `.agents/rules/05-adlc-agentic-development-life
 | Role | ADLC step | Reads | Writes | Output verdict |
 |------|-----------|-------|--------|----------------|
 | `planner.md` | 0-1 (Plan + Breakdown) | yes | no | plan block in context |
-| `plan-reviewer.md` | 0 (challenge) | yes | no | `Block` / `PASS` / `REJECT` |
+| `plan-reviewer.md` | 0 (challenge) | yes | no | `approved` / `changes_requested` |
 | `builder.md` | 5 (implement) | yes | yes | chunk log + `## Done` |
-| `reviewer.md` | 6 (review) | yes | no | `Block` / `PASS` / `REJECT` |
+| `reviewer.md` | 6 (review) | yes | no | `approved` / `changes_requested` |
+
+**Real dispatch note:** `planner.md` and `plan-reviewer.md` map to ADLC
+steps 0-1 conceptually, but neither the ADLC rule's own Step 0 dispatch
+example nor the compiled workflow engine calls them by name today. Step
+0's example dispatches the generic `reviewer` + `auditor` roles. The
+compiled engine's shape varies by workflow: `feature-delivery.toml` uses
+`workflow-engineer` plus a `panel-reviewer`/`review-synthesizer` panel;
+`bug-fix.toml`/`bug-fix-fast.toml` instead gate review with an active
+`agent = "reviewer"` triage step (their panel/review layers are currently
+cut, see `docs/development/debug-cut.md`). `planner`/`plan-reviewer` are
+standalone roles a human can select or dispatch directly for ad-hoc plan
+work outside the automated loop. Treat this table as role-to-step mapping
+by design intent, not as a claim about what currently executes
+automatically.
 
 ## File schema
 
@@ -45,7 +59,8 @@ session). A file of the same name overrides `general-purpose`; the
 
 ## Adding a role
 
-1. Pick a name that matches lowercase identifier conventions (`[a-z0-9_-]+`).
+1. Pick a name that matches `^[a-z0-9][a-z0-9_-]*$`. The `mivia` role is a
+   compiled root role and has no Markdown file here.
 2. Match the frontmatter schema above (`name`, `description`, `tools`, etc.).
 3. Include clear guidelines and, for ADLC roles, a "Disallowed operations" section.
 4. Run `make agents-check` before committing.

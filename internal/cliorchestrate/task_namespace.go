@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -35,7 +35,7 @@ var globalDispatchFallback atomic.Uint64
 //  1. runtime.TaskIdentityFrom(ctx): a NESTED call (a subagent dispatching
 //     further subagents) - contextForTask already stamped this task's own
 //     RunID/TaskID, and toolcallctx never propagates into nested execution.
-//  2. toolcallctx.ToolCallFromContext(ctx): a top-level, model-made call -
+//  2. sdkagentloop.ToolCallFromContext(ctx): a top-level, model-made call -
 //     the UI derives the same namespaced id from the same ToolCallID (see
 //     dispatchTaskIDs, internal/ui/screen/conversation/events.go).
 //  3. globalDispatchFallback: neither value is present (a caller outside
@@ -52,7 +52,7 @@ func (t *dispatchTasksTool) dispatchNamespace(ctx context.Context) string {
 	if id, ok := runtime.TaskIdentityFrom(ctx); ok {
 		return id.RunID + ":" + id.TaskID
 	}
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok && tc.ID != "" {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok && tc.ID != "" {
 		return tc.ID
 	}
 	return fmt.Sprintf("dispatch:%d", globalDispatchFallback.Add(1))
@@ -66,6 +66,7 @@ func (t *dispatchTasksTool) dispatchNamespace(ctx context.Context) string {
 // Execute, the latter because an empty id is a validation error the
 // caller already rejects elsewhere.
 func namespacedTaskID(namespace, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
 	if namespace == "" || rawID == "" {
 		return rawID
 	}

@@ -148,10 +148,13 @@ R2. **Coalesce repeated read-only tool calls, display-only.** Consecutive
 line with a count and the file list (`Read a.rs, b.rs`; drop to
 `Read 4 files` when the list does not fit). Hard constraint: coalescing
 must change only rendering. Children stay real blocks in `Model.blocks`,
-so focus, click-to-expand (`ExpandBlockAtScreenRow`,
-`viewport.go:199-227`), the `FocusedText` copy contract
+so focus, click-to-toggle (`ToggleBlockAtScreenRow`,
+`viewport.go`), the `FocusedText` copy contract
 (`focus.go:184-201`), and `Dump()` keep per-child identity and full
-content. State-changing tools (edits, commands) never coalesce.
+content. State-changing tools (edits, commands) never coalesce **into a
+read row** - R2a supersedes the stronger form of this sentence: they do
+join the generic work run, which is the point of it. A FAILURE still
+never coalesces, in either kind.
 
 R3. **Show the marker only where a body exists, and say what expanding
 costs.** Stop forcing `Collapsible` in `push()` (`viewport.go:103-111`).
@@ -172,6 +175,42 @@ Reserve the `│` rail for two moments only: the focused block, and the
 failed/error block, where rail plus `RoleDanger` earns its weight. This
 is the D4 drift correction; it supersedes the §3-tier justification in
 `block.go:168-173`'s comment, which must be rewritten.
+
+R2a. **Coalesce a wall of finished work into one row.** *(Implemented,
+amends R2.)* R2 folds consecutive same-class read-only lookups. That
+leaves the common shape untouched: a long turn whose activity is a
+dozen mixed calls — reads, edits, commands, subagents — each drawing its
+own header. Three or more CONSECUTIVE FINISHED calls now draw as one
+row instead:
+
+```
+  > work read_file, edit, run_command +1 more  5 calls  4.2s
+```
+
+Rules, all of them load-bearing:
+
+- **Finished only.** A call that has not ended keeps its own row. Work
+  still running is the one thing the reader is waiting on.
+- **Failures never fold.** A `RoleDanger` block keeps its header, its
+  body and its place. A summary row that could swallow a failure would
+  hide the one block worth the rows.
+- **Three is the floor.** Two headers are not a wall; folding them costs
+  two tool names to save one row.
+- **The read row wins a tie.** It names its targets, so it says strictly
+  more about the same blocks than the generic row does.
+- **Display-only, exactly as R2 requires.** Children stay real blocks:
+  focus, click-to-toggle, `FocusedText` copy and `Dump()` all keep
+  per-child identity and full content.
+- **The duration is the SUM of the members' own durations**, which is
+  what the blocks carry (`Block.ElapsedMS`). Calls the loop issued in
+  parallel therefore add to more than the wall clock; no block records
+  when the run started, so sum is the only honest number available.
+
+The fold is driven by each member's own collapsed state, not by a
+separate per-run flag, so collapsing the members again re-forms the run
+with no extra state to keep, migrate, or leak. That is also why the
+default changed: a call that ends successfully now collapses whatever
+its body size, the way R2's read-only lookups already did.
 
 ### P0 — deduplication and grammar
 
@@ -299,7 +338,7 @@ duration follows R5 (`23.5s`).
    (`output_formatter_test.go`, `defaults_test.go`).
 3. **R1, R2, R9, R10** are structural. Affected surfaces: eviction and
    `trim`/`missed` accounting, focus walk and `FocusedText`/`y` copy,
-   `ExpandBlockAtScreenRow` and mouse routing, the ctrl+o pager screen
+   `ToggleBlockAtScreenRow` and mouse routing, the ctrl+o pager screen
    (`internal/ui/screen/transcript`), the `[` scrollback dump, and the
    repaint budget (rule 2.5). R2 must be display-only (see its clause)
    or copy and audit regress silently.

@@ -49,7 +49,7 @@ func TestAutoCompactionSummarySurvivesTheTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
@@ -108,7 +108,7 @@ func TestAgentLoopCompactionSummarySurvivesTheTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
@@ -161,7 +161,7 @@ func TestPlainCompactionEmitsTypedEventToTheTurnCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {

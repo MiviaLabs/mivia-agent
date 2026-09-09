@@ -290,7 +290,7 @@ If you change the prefix, branches with the old prefix remain. Remove them manua
 
 ## Named agents
 
-Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.agents/agents/<name>.md`. Workspace definitions live in `<workspace>/.agents/agents/<name>.md`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
+Named agents are separate definition files, one definition per file. User-owned definitions live in `~/.agents/agents/<name>.md`. Workspace definitions live in `<workspace>/.agents/agents/<name>.md`. Create those two directories as needed. The filename is canonical: `<name>.md` (Markdown with a YAML frontmatter block) or `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
 ## MCP servers
 
@@ -368,7 +368,7 @@ Nothing is blocked by default: protection is opt-in, not a built-in set a projec
 
 Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
 
-This key is a project decision. A project that omits it leaves every path writable by workflow agents, including `.git` (commit history and hooks a workflow agent could rewrite or bypass), `.mivia/mivia.toml` (this very blocklist — an agent that can edit it can remove its own restrictions), `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, `go.work`, and the workflow definition the run executes. Recommended starting values, including `.git` and `.mivia/mivia.toml`, ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
+This key is a project decision. A project that omits it leaves every path writable by workflow agents. That includes `.git`, the live Git hooks, this blocklist, and the workflow definition the run executes. The recommended starting values are `.git`, `.githooks`, `scripts`, `Makefile`, `.mivia/hooks`, `.claude`, the config file itself, and `.mivia/policy`. install_git_hooks.sh points the hooks path at `.githooks`. The hooks therefore live outside `.git`. Blocking `.git` alone does not protect the hooks. `scripts` covers both the hook implementations and the gate scripts those hooks run: with `scripts` writable, an agent rewrites a gate to exit 0 and every check the protected hook invokes passes. `Makefile` decides which gates run at all. The config file must block itself. An agent that can edit it can empty this key and give itself write access to every other entry. `.mivia/policy` holds the pattern files the hook guard reads. `.mivia/hooks` holds the guard script itself, and `.claude` holds `settings.json`, which registers that guard as a PreToolUse handler; either one writable lets an agent silently disable enforcement. A project that also wants workflow-run protection for its control-surface trees (`.mivia/`, `.agents/`, `.claude/`), its Go module files, or its workflow definitions lists them here too. `.mivia/mivia.toml.example` ships this set, and this repository's own `.mivia/mivia.toml` uses it. `scripts/verify_agent_config.py` fails the build when the live config stops covering it.
 
 ## Redaction and persisted orchestration history
 
@@ -417,13 +417,13 @@ A deadline interrupt and a `Ctrl+C` interrupt differ in one way after the turn e
 
 ## Bounded prompt budget
 
-`[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. The recommended value is `200000`.
+`[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. It has no default, and leaving it unset is the normal setting.
 
-When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`). A bounded budget makes history compaction fire earlier - at 80% of the budget, targeting 50% - and cuts token cost on long sessions.
+When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`), so each model runs to its own capacity: a 1M-window model gets a 1M budget and a 200k one gets 200k. One cap applied over a mixed catalogue instead holds every model to the smallest, which is why no value is recommended here.
 
-The recall-versus-price dial works as follows: larger values keep more history in the prompt at higher cost; smaller values compact sooner and spend fewer tokens. The escape hatch is any explicit value up to `10000000` (10M).
+Set it when you want compaction to fire earlier than the model's own window would cause. History compacts at 80% of the budget, targeting 50%, so a smaller budget means more frequent and cheaper compactions, and a larger one means fewer and larger summarizer calls that invalidate more of the prefix cache. The dial is recall versus price: larger values keep more history in the prompt at higher cost. Any explicit value up to `10000000` (10M) is accepted.
 
-When the knob is unset and the active budget exceeds `200000`, `mivia doctor` and `mivia config show` print a `prompt_budget_advisory` suggesting the recommended cap. Set `[chat] max_prompt_tokens = 200000` to suppress the advisory.
+`mivia doctor` and `mivia config show` always report the active budget as `prompt_budget`, the number the context gauge divides by and compaction measures against, which is stated nowhere else. It names where the budget came from: the model window, or an explicit cap. When a cap holds the budget below half the model's declared window, the line names the window too, because a large model held to a small budget otherwise reads as a small model in every surface that shows it.
 
 ## Tool result ceiling
 
@@ -489,11 +489,13 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 ## LLM compaction summaries
 
-`[context.summary] enabled` (default `true`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
+The compaction summarizer is always enabled. A bounded provider call summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
 
-Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
+Two conditions must hold, or the summary stays off: a resolved provider endpoint, and a resolved provider/model binding. A configured `[privacy]` redaction policy is NOT one of them: `[privacy]` governs what the checkpoint may persist, not whether the summary may run. A summary the redaction policy refuses is dropped, never sent or stored.
 
-Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call.
+The retired `[context.summary] enabled` key is refused at load. Remove the line from any config that still sets `enabled = false`.
+
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once at the adapter, then fails the turn closed instead of degrading silently. The governed summarizer already retries once inline, so one adapter attempt costs two provider requests and a failed pair costs four; see `plans/sdk-window-compaction-adoption-plan.md`.
 
 The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
 
@@ -589,7 +591,7 @@ store_path = "~/.mivia/my-project/context.db"
 
 The hub is keyed to the store directory, not the workspace, so anything that moves `store_path` (for example a picked project's own `.mivia/mivia.toml` overriding the shared default) moves the process to a different hub.
 
-Rendering is directional today. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The TUI and classic REPL publish their own turns to the hub but do not yet render turns received from other processes. The full event vocabulary is specified in [Wire schema](wire-schema.md).
+Rendering is directional today. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The classic REPL and line mode publish their own turns to the hub but do not yet render turns received from other processes. The TUI publishes nothing: it never joins the hub, and its session is constructed with no event bus. The full event vocabulary is specified in [Wire schema](wire-schema.md).
 
 `default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The HTTP client wall is derived from the configured request budgets: it is the maximum of the 15-minute floor and every configured per-request budget plus a 60-second margin. The wall therefore never cuts a request before its own budget does; a spent budget reports as a terminal deadline, not a transport fault. The stream watchdogs stop a hung provider call long before either bound.
 

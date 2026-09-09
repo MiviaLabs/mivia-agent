@@ -78,7 +78,7 @@ func TestWatchJoinedRunReclaimsOrphanedClaim(t *testing.T) {
 	}
 
 	bRepo := ledger.NewStorageLedgerRepository(bStore)
-	b := New(bRepo, subagents.New(dispatcher, subagents.Policy{Workers: 1})).(*coordinator)
+	b := New(bRepo, subagents.New(dispatcher, subagents.Policy{Workers: 1}))
 	b.claimLease = 30 * time.Millisecond // the orphan claim ages past this almost immediately
 
 	h, err := b.EnsureSingleTaskRun(context.Background(), req)

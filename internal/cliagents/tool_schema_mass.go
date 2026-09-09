@@ -118,7 +118,7 @@ func RecordSchemaMass(sess *chat.Session, state *AgentSessionState, plan ToolTie
 }
 
 func recordSchemaMassLocked(sess *chat.Session, state *AgentSessionState, plan ToolTierPlan, admitted []string, agentName, publication string) {
-	mass := measureSchemaMass(sess.AdvertisedToolSpecs(), state.ToolBase, plan, admitted, agentName, publication)
+	mass := measureSchemaMass(sess.AdvertisedToolSpecs(), entryBase(sess, state), plan, admitted, agentName, publication)
 	state.LastSchemaMass = mass
 	publishSchemaMass(sess, mass)
 }

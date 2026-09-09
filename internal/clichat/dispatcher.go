@@ -88,6 +88,12 @@ func newSessionDispatcherMinimal(reg *tools.Registry, comp provider.Completer, m
 		skillsReg = skillReg[0]
 	}
 	return NewSessionDispatcher(SessionDispatcherOpts{
+		// Explicitly unwired, and stated rather than omitted so the check in
+		// cliagents cannot be satisfied by forgetting. This helper has no
+		// production caller - every one of its callers is a test - so there is
+		// no operator to ask. A production caller MUST pass the session's
+		// ApprovalSnapshot, or every subagent it builds runs ungated.
+		Approval:           nil,
 		Registry:           reg,
 		Completer:          comp,
 		Model:              model,
@@ -119,6 +125,15 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
+	if opts.OnToolCancelReady == nil {
+		// Default wiring for every production caller: resolves the
+		// coordinator InitCoordinator installs for d (called by the
+		// caller of NewSessionDispatcher, AFTER this function returns -
+		// see cliorchestrate.ToolCancelReadyHook's own doc comment for why
+		// that ordering is safe). A caller that already set this field
+		// (tests supplying their own hook) keeps its own wiring.
+		opts.OnToolCancelReady = cliorchestrate.ToolCancelReadyHook(d)
+	}
 	maxTokens := sessionOutputCeiling(opts)
 	authority := opts.Authority()
 	// Spool is shared by read_output and every nested multi_step loop so a
@@ -138,24 +153,24 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget)
 		},
 		func() error {
-			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool, opts.Approval, opts.OnToolCancelReady)
 		},
 		func() error { return registerAgentHandlers(d, opts) },
 		func() error {
-			return registerSkillHandlers(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+			return registerSkillHandlers(d, authority, opts.Completer, opts.Model, dial, opts.Config, sessionResultBudgets(opts), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool, opts.Approval)
 		},
 	} {
 		if err := register(); err != nil {
 			return nil, err
 		}
 	}
-	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
+	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
-	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry); err != nil {
+	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
-	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool); err != nil {
+	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
 	if err := registerLoadToolsTool(d, opts); err != nil {
@@ -192,7 +207,7 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools))
+	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools), opts.ToolDenylist)
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {

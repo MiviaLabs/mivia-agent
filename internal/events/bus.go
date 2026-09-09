@@ -89,6 +89,9 @@ func (b *Bus) subscribe(kind Kind, h Handler, bufSize int) {
 		return
 	}
 	sub := newSubscription(b.ctx, b, h, bufSize)
+	// Record the kind even for a single-kind registration, so removal takes one
+	// code path for every subscription rather than two.
+	sub.kinds = []Kind{kind}
 	b.subs[kind] = append(b.subs[kind], sub)
 	b.wg.Add(1)
 	go func() {
@@ -106,6 +109,12 @@ func (b *Bus) subscribe(kind Kind, h Handler, bufSize int) {
 // on interface equality). Unsubscribe never panics, so the bus lock is
 // always released even for uncomparable handler types.
 //
+// When one handler is registered BOTH by Subscribe and by SubscribeAcross,
+// which subscription this removes depends on registration order: it takes the
+// first match in the named kind's slice. Both outcomes are defensible and
+// neither is a guarantee - a caller that needs a specific one must hold the
+// *Subscription handle and call its Unsubscribe.
+//
 // Unsubscribe blocks until the target's queued events have been drained and
 // its delivery goroutine has exited, for every caller. Handlers must NOT call
 // Unsubscribe from inside HandleEvent: joining the delivery goroutine that is
@@ -120,9 +129,13 @@ func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 		return
 	}
 	subs := b.subs[kind]
-	for i, s := range subs {
+	for _, s := range subs {
 		if sameHandler(s.handler, target) {
-			b.subs[kind] = append(subs[:i], subs[i+1:]...)
+			// Remove from EVERY kind the subscription holds, not just the one
+			// named. A subscription registered across kinds (SubscribeAcross)
+			// whose goroutine is stopped but whose pointer survives under
+			// another kind receives events into a queue nobody drains.
+			b.removeSubLocked(s)
 			b.mu.Unlock()
 			// Join outside the lock: the delivery goroutine may need to run
 			// handlers that call back into the bus, and holding b.mu across

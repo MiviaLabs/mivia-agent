@@ -22,201 +22,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
-
-// sdkTurnState is the per-run state shared by the SDK path's
-// completer wrapper and tool shims, and the SINGLE place bridge and
-// adapter errors surface (they are recorded here, never returned
-// ad hoc from inside per-call hooks that have no error channel).
-// steps counts completed Completer calls (the SDK loop's iteration
-// counter as the host observes it) so tool dispatches can stamp
-// runtime.Request.Step and re-issue an identical read in a later
-// iteration without the turn-scoped dedup suppressing it. pass1
-// carries the newest pass-1 result parts from the dispatcher shim to
-// the turn shaping wrapper so a budget degrade reports the ORIGINAL
-// body's true total and pages the original bytes, exactly like the
-// legacy shapeBatch chain. dispatcher and spool hold the CURRENT
-// surface rotation values: the CLI Surface hook can swap either
-// mid-run (agentloop_adapter.go's surface bridge), and the shims
-// read them per call instead of the wrap-time Options copy. shape
-// owns the turn-level shaping counter so a surface rotation that
-// rebuilds the registry keeps charging ONE shared budget. bridgeErr
-// records the first surface-bridge failure so the run can fail with
-// it after RunSteerable returns (the SDK Surface hook has no error
-// channel; a nil return keeps the prior surface).
-type sdkTurnState struct {
-	steps      atomic.Int64
-	pass1      pass1Map
-	dispatcher atomic.Pointer[runtime.Dispatcher]
-	spool      atomic.Pointer[remainder.Spool]
-	// streamTee holds the teeWriter installed as the SDK run's
-	// StreamingWriter, so RunAgentLoopOnce can feed it to
-	// recordInterruptedPartial when a canceled run leaves streamed
-	// bytes that the SDK's hard-fail Result never carried.
-	streamTee atomic.Pointer[teeWriter]
-	// advertised holds the run's pinned advertised ToolSpec snapshot:
-	// the request-0 seed from Options.AdvertisedToolSpecs, replaced by
-	// each surface rotation's non-nil ToolSpecs (the legacy keep-rule:
-	// nil keeps the prior snapshot). The completer reads it per Chat
-	// call and REPLACES the wire request's registry-derived tools with
-	// it, so deferred tools outside the registry reach the wire from
-	// request 0. See sdk_advertised.go's applyAdvertisedTools for the
-	// recovery-request safety note.
-	advertised atomic.Pointer[[]provider.ToolSpec]
-	shapeOnce  sync.Once
-	shape      *turnShapeCounter
-	errMu      sync.Mutex
-	bridgeErr  error
-	// Tool-event synthesis state (sdk_tool_events.go): outcomes keyed
-	// by tool call ID, and the once-per-iteration stream-revoke
-	// gate (streamRevoked, armed at the first tool call, reset by the
-	// EventIterationStart bus subscription).
-	toolMu        sync.Mutex
-	toolOutcomes  map[string]*toolCallOutcome
-	streamRevoked atomic.Bool
-}
-
-func newSDKTurnState() *sdkTurnState { return &sdkTurnState{} }
-
-// seedSurface installs the run's initial dispatcher and spool. It
-// runs once from the single sdkTurnState construction site
-// (buildAgentLoopOptions) so every later read starts from the
-// caller's Options values, not zero.
-func (s *sdkTurnState) seedSurface(dispatcher *runtime.Dispatcher, spool *remainder.Spool) {
-	s.rotateSurface(dispatcher, spool)
-}
-
-// rotateSurface installs a surface rotation's dispatcher and spool.
-// Nil values keep the current one, mirroring the legacy Surface
-// contract's zero-field-means-keep rule.
-func (s *sdkTurnState) rotateSurface(dispatcher *runtime.Dispatcher, spool *remainder.Spool) {
-	if dispatcher != nil {
-		s.dispatcher.Store(dispatcher)
-	}
-	if spool != nil {
-		s.spool.Store(spool)
-	}
-}
-
-// currentDispatcher returns the live dispatcher, or nil when no
-// rotation and no seed ever installed one.
-func (s *sdkTurnState) currentDispatcher() *runtime.Dispatcher { return s.dispatcher.Load() }
-
-// currentSpool returns the live remainder spool, or nil when no
-// rotation and no seed ever installed one.
-func (s *sdkTurnState) currentSpool() *remainder.Spool { return s.spool.Load() }
-
-// setStreamTee installs the run's StreamingWriter tee. It runs once
-// from the single sdkTurnState construction site
-// (buildAgentLoopOptions); a run without a FinalWriter never installs
-// one and currentStreamTee stays nil.
-func (s *sdkTurnState) setStreamTee(t *teeWriter) { s.streamTee.Store(t) }
-
-// currentStreamTee returns the run's StreamingWriter tee, or nil when
-// the run streamed nowhere.
-func (s *sdkTurnState) currentStreamTee() *teeWriter { return s.streamTee.Load() }
-
-// setAdvertised installs the advertised ToolSpec snapshot. A nil
-// argument keeps the prior snapshot, mirroring the legacy Surface
-// contract's nil-means-keep rule; a non-nil slice (empty included)
-// replaces it.
-func (s *sdkTurnState) setAdvertised(specs []provider.ToolSpec) {
-	if specs == nil {
-		return
-	}
-	s.advertised.Store(&specs)
-}
-
-// currentAdvertised returns the live advertised snapshot, or nil when
-// neither a seed nor a rotation installed one.
-func (s *sdkTurnState) currentAdvertised() []provider.ToolSpec {
-	if p := s.advertised.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// shapeCounter lazily builds the one turn-level shaping counter a
-// run (and every surface rotation inside it) shares.
-func (s *sdkTurnState) shapeCounter() *turnShapeCounter {
-	s.shapeOnce.Do(func() { s.shape = newTurnShapeCounter() })
-	return s.shape
-}
-
-// resetIterationShaping resets nextIndex at the top of each iteration.
-// A new broadcast channel is installed so the previous one - which the
-// now-completed waiters drained - does not leak as a permanently-open
-// pipe. The new channel reads as zero (open) for fresh waiters in
-// the new iteration. The close of the previous channel must NOT
-// re-close an already-closed one: abortIterationShaping can race this
-// path during teardown and has already closed `old`; closing twice
-// panics. The aborted flag tells us which side owns the channel's
-// closure; only close when we still own it.
-func (s *sdkTurnState) resetIterationShaping() {
-	if s.shape != nil {
-		s.shape.mu.Lock()
-		s.shape.nextIndex = 0
-		s.shape.aborted = false
-		old := s.shape.signal
-		s.shape.signal = make(chan struct{})
-		owned := !s.shape.closedByAbort
-		s.shape.closedByAbort = false
-		s.shape.mu.Unlock()
-		if owned {
-			close(old)
-		}
-	}
-}
-
-// abortIterationShaping wakes any waiters when a batch aborts.
-func (s *sdkTurnState) abortIterationShaping() {
-	if s.shape != nil {
-		s.shape.abort()
-	}
-}
-
-// recordBridgeError keeps the FIRST bridge error; later ones are
-// dropped because the first is the cause the operator needs.
-func (s *sdkTurnState) recordBridgeError(err error) {
-	if err == nil {
-		return
-	}
-	s.errMu.Lock()
-	defer s.errMu.Unlock()
-	if s.bridgeErr == nil {
-		s.bridgeErr = err
-	}
-}
-
-// bridgeError returns the recorded bridge error, if any.
-func (s *sdkTurnState) bridgeError() error {
-	s.errMu.Lock()
-	defer s.errMu.Unlock()
-	return s.bridgeErr
-}
-
-// currentStep is the 1-based iteration the in-flight tool batch
-// belongs to: the completer bumps steps at the top of each Chat, so a
-// batch spawned by iteration N's response sees N.
-func (s *sdkTurnState) currentStep() int { return int(s.steps.Load()) }
-
-// pass1Map hands pass-1 resultParts from the dispatcher shim
-// (innermost) to the turn shaping wrapper (outermost), keyed by tool
-// call ID so parallel calls under MaxConcurrentTools > 1 do not race.
-type pass1Map struct {
-	mu    sync.Mutex
-	parts map[string]resultParts
-}
 
 // dispatcherShim wraps one SDK-converted tool with the legacy tool
 // execution contract. A nil dispatcher falls back to the raw CLI tool
@@ -251,12 +65,19 @@ func (d *dispatcherShim) Name() string { return d.inner.Name() }
 // A verbatim SDK bound would expire at the same instant and win the
 // race, replacing that envelope with a bare ErrRunTimeout - and a
 // static profile can never see a per-call raise, so it would also
-// kill budgets the shim legitimately extended. An undeclared (zero)
-// Timeout passes through, so the [tools] tool_run_timeout_seconds
-// registry default still backstops profile-less tools.
+// kill budgets the shim legitimately extended.
+//
+// Positivity alone cannot tell a declared budget from the converter's
+// registry-wide run-timeout backstop (the SDK's New no longer takes a
+// registry default, so ConvertToolRegistry publishes that backstop in
+// the adapter's profile for tools with no declared Timeout). The
+// decision therefore consults the CLI tool directly: only a declared
+// CLI Capability.Timeout is suppressed; a profile-less tool keeps the
+// inner value, so the [tools] tool_run_timeout_seconds backstop (or
+// TimeoutNone when unset) still governs it.
 func (d *dispatcherShim) ExecutionProfile() sdktools.ExecutionProfile {
 	p := sdktools.ExecutionProfileOf(d.inner)
-	if p.Timeout > 0 {
+	if capable, ok := d.cli.(tools.CapableTool); ok && capable.Capability(nil).Timeout > 0 {
 		p.Timeout = sdktools.TimeoutNone
 	}
 	return p
@@ -290,14 +111,33 @@ func (d *dispatcherShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 // every tool call bounded no matter what the request or the parent
 // deadline look like.
 func armDispatcherTimeout(ctx context.Context, opts Options, args []byte, capability tools.Capability) (context.Context, context.CancelFunc, time.Duration) {
-	callTimeout := resolveToolCallTimeout(opts.ToolTimeout, capability.Timeout)
+	callTimeout := ResolveToolCallTimeout(ctx, opts.ToolTimeout, args, capability)
+	narrowed, cancel := context.WithTimeout(ctx, callTimeout)
+	return narrowed, cancel, callTimeout
+}
+
+// ResolveToolCallTimeout is the budget one tool call gets: the tool's declared
+// Capability.Timeout, else the session default, else DefaultToolTimeout - and
+// a larger model-requested timeout_seconds when the parent deadline leaves
+// room for it.
+//
+// Exported as a DURATION rather than as a narrowed context because the
+// deferred-tool path (internal/chat) needs the same number and must NOT
+// narrow its own ctx. Its approval decision is inline and happens before the
+// dispatcher call, so a narrowed ctx there would put this deadline around the
+// operator reading the prompt: uiadapter's gate selects on ctx.Done() and
+// answers "canceled", which would auto-deny a prompt mid-read and report a
+// refusal nobody made. That path passes the duration as Request.Timeout
+// instead, and the dispatcher arms it around the handler alone - which is
+// also all it covers here, since the approval wrapper sits OUTSIDE this shim.
+func ResolveToolCallTimeout(ctx context.Context, toolTimeout time.Duration, args []byte, capability tools.Capability) time.Duration {
+	callTimeout := resolveToolCallTimeout(toolTimeout, capability.Timeout)
 	if requested := requestedToolTimeout(args); requested > callTimeout {
 		if clamped := clampToDeadline(ctx, requested); clamped > 0 {
 			callTimeout = clamped
 		}
 	}
-	narrowed, cancel := context.WithTimeout(ctx, callTimeout)
-	return narrowed, cancel, callTimeout
+	return callTimeout
 }
 
 // Run executes one tool call the way the legacy loop does: through the
@@ -311,15 +151,24 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	if err != nil {
 		return sdktools.Out{}, fmt.Errorf("agent: tool %q: marshal arguments: %w", d.inner.Name(), err)
 	}
-	capability := tools.Capability{}
-	if capable, ok := d.cli.(tools.CapableTool); ok {
-		capability = capable.Capability(args)
-	}
+	// tools.CapabilityOf, not a zero Capability. The zero value's Class is
+	// ExecutionRead (iota 0), so Dedups() was false and SkipDedup was TRUE for
+	// any tool that declares no capability - meaning an unclassified tool
+	// never deduped and a duplicate delivery re-ran its side effect. The
+	// canonical default is ExecutionExternal: a tool that says nothing about
+	// itself is assumed to have side effects.
+	//
+	// Unclassified is not hypothetical - workflow_run, workflow_deliver,
+	// post_message and every ledger tool ship without a Capability method -
+	// and d.cli is itself nil whenever an SDK tool has no CLI registry match,
+	// which CapabilityOf also answers with the safe default.
+	capability := tools.CapabilityOf(d.cli, args)
 	ctx, cancelTimeout, callTimeout := armDispatcherTimeout(ctx, d.opts, args, capability)
 	defer cancelTimeout()
-	var result, hookContext string
 	dispatcher, spool := d.dispatcherAndSpool()
 	callKey := toolCallKeyFromContext(ctx, d.inner.Name())
+	ctx, cleanupExplicitCancel := d.armExplicitCancel(ctx, callKey)
+	defer cleanupExplicitCancel()
 	// Legacy "running" tool_start: the analogue of loop_tool_exec.go's
 	// pre-dispatch emission, keyed on the call ID in context.
 	if callKey != "" {
@@ -331,6 +180,34 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		Kind: runtime.Tool, Name: d.inner.Name(), Input: args, Timeout: callTimeout,
 		Step: d.turn.currentStep(), SkipDedup: !capability.Dedups(),
 	})
+	return d.composeRunOutput(callKey, args, r, spool, capability)
+}
+
+// armExplicitCancel derives a second, independent cancel from ctx (already
+// narrowed by armDispatcherTimeout) and registers it in d.turn's registry
+// under callKey, so an external cancel-by-ID request can end this call
+// without waiting for its timeout. Both RunUnadmittedTool's throwaway shim
+// and the registry-installed shim funnel through Run, so this is the single
+// site both paths register through. The returned cleanup func cancels the
+// context and deregisters the call; callers defer it once.
+func (d *dispatcherShim) armExplicitCancel(ctx context.Context, callKey string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	if d.turn == nil || callKey == "" {
+		return ctx, cancel
+	}
+	d.turn.registerCancel(callKey, cancel)
+	return ctx, func() {
+		d.turn.deregisterCancel(callKey)
+		cancel()
+	}
+}
+
+// composeRunOutput turns one dispatcher outcome into Run's model-visible
+// result: capped, spooled, hook-annotated content and a recorded outcome -
+// split out of Run to keep it under the per-function line budget. Always
+// returns a nil error: see Run's own doc comment for why an errored call
+// must never surface as a hard Run failure.
+func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime.Result, spool *remainder.Spool, capability tools.Capability) (sdktools.Out, error) {
 	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
 	// fidelity, runtime/dispatcher.go), which did not run for THIS call - so
 	// emitting them here would show a hook firing that never happened for
@@ -346,13 +223,13 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	// in loop_tools.go operates on the originalBody for exactly this
 	// reason). Capture it BEFORE the notice rewrite.
 	originalBody := string(r.Output)
-	result = originalBody
+	result := originalBody
 	if r.IsDuplicate() {
 		result = duplicateDeliveryNotice
 	} else if r.Err != nil && strings.TrimSpace(result) == "" {
 		result = fmt.Sprintf("error: %v", r.Err)
 	}
-	hookContext = r.HookContext
+	hookContext := r.HookContext
 	// D10 mirror: an ephemeral body is capped with a NIL spool so the
 	// notice never mints a ref the scrub exists to remove.
 	_, ephemeral := d.cli.(tools.EphemeralResultTool)
@@ -374,7 +251,19 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		})
 	}
 	body := appendHookContext(capped, hookContext)
-	d.recordToolEventOutcome(callKey, args, body, r.Err, ephemeral, r.IsDuplicate(), originalBody)
+	// One failure judgement, read by both the loop breaker and the operator
+	// row. They used to disagree: the breaker counted r.Err OR the body scan,
+	// while the recorded outcome counted r.Err alone - so a dispatch_tasks
+	// whole-batch rejection envelope (returned with a NIL Go error on
+	// purpose, to keep its run_id/hint fields) fed the breaker while every
+	// viewer was told the call completed.
+	failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
+	if d.turn != nil {
+		if reminder := d.turn.recordProgress(failed, d.inner.Name(), args, capability); reminder != "" {
+			body = AppendSystemReminder(body, reminder)
+		}
+	}
+	d.recordToolEventOutcome(callKey, args, body, failed, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
 }
 
@@ -395,9 +284,12 @@ func (d *dispatcherShim) dispatcherAndSpool() (*runtime.Dispatcher, *remainder.S
 }
 
 // toolCallKeyFromContext returns the lookup key for the in-flight tool call:
-// call.ID when non-empty, falling back to call.Name for ID-less test fixtures.
+// call.ID when non-empty, else call.Name. The fallback is not a test
+// affordance - a provider stream can send the tool-call NAME delta before, or
+// without, the ID delta, and every recorder on this path has to agree on the
+// key or an outcome lands where nothing looks for it.
 func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		if tc.ID != "" {
 			return tc.ID
 		}
@@ -417,7 +309,7 @@ func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
 // (loop_tools.go emitToolEnd's rule); a later shim (ref-only notice,
 // turn-shaping re-cut) that rewrites the body overwrites the record so
 // tool_end matches the post-shaping body.
-func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body string, dispatchErr error, ephemeral bool, isDuplicate bool, originalBody string) {
+func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body string, failed bool, ephemeral bool, isDuplicate bool, originalBody string) {
 	if d.turn == nil || callID == "" {
 		return
 	}
@@ -427,81 +319,48 @@ func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body
 			preview = et.EphemeralResultMarker(args)
 		}
 	}
-	d.turn.recordToolOutcomeWithPreview(callID, d.inner.Name(), body, dispatchErr != nil, preview, isDuplicate, originalBody)
-}
-
-// store records the pass-1 parts for callID.
-func (m *pass1Map) store(callID string, p resultParts) {
-	if callID == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.parts == nil {
-		m.parts = make(map[string]resultParts)
-	}
-	m.parts[callID] = p
-}
-
-// take returns the stored parts for callID when body is exactly the
-// parts' model-visible output (hook context appended), clearing the
-// record. A body rewritten by an intermediate shim (the ref-only
-// notice) misses and leaves the caller on its default single-pass path.
-//
-// The miss path ALWAYS deletes the stored entry: the dispatcher shim
-// already ran for this call, so the entry can never again serve a
-// later shaping pass (no other wrapper will see the original body
-// either). Leaving it orphaned grows the map monotonically across a
-// long session and balloons memory under MaxConcurrentTools > 1.
-func (m *pass1Map) take(callID string, body string) (resultParts, bool) {
-	if callID == "" {
-		return resultParts{}, false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.parts == nil {
-		return resultParts{}, false
-	}
-	p, ok := m.parts[callID]
-	if !ok {
-		return resultParts{}, false
-	}
-	delete(m.parts, callID)
-	if p.cappedBody == "" {
-		return resultParts{}, false
-	}
-	if body != appendHookContext(p.cappedBody, p.hookContext) {
-		return resultParts{}, false
-	}
-	return p, true
-}
-
-// purge removes any stored pass-1 entry for callID. Callers that
-// observe a mismatch via take should follow up with purge so the
-// entry does not leak; the take helper already deletes on miss, but
-// purge is the public seam for callers that never called take at all
-// (e.g. an aborted or skipped call). Safe on a missing key.
-func (m *pass1Map) purge(callID string) {
-	if callID == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.parts, callID)
+	d.turn.recordToolOutcomeWithPreview(callID, d.inner.Name(), body, failed, preview, isDuplicate, originalBody)
 }
 
 // applyDispatcherShim wraps every tool in the converted SDK registry
 // with the dispatcher shim. It is a no-op when no dispatcher is wired
 // and no result cap is configured, so callers that never set either
 // knob keep the bare converter product.
-func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) {
-	if sdkReg == nil || opts.Dispatcher == nil {
-		return
+// applyDispatcherShim wraps every tool in sdkReg so it executes through the
+// dispatcher, and REFUSES rather than leaving one ungoverned.
+//
+// The shim is where the per-call timeout, the dedup declaration, the result
+// cap, the hook gate and advisory, the duplicate rules and the failure
+// outcome live. A tool the model can call without it runs with none of them.
+//
+// This used to degrade silently in three ways instead of refusing: a nil
+// dispatcher returned early and left the WHOLE registry unwrapped, a
+// non-SchemaTool was skipped, and a failed re-Add put the ORIGINAL ungoverned
+// tool back. None was reachable in a shipped session - composition always
+// builds a dispatcher and every adapter is a SchemaTool - but that was a
+// property of the callers, not of this code, and the failure mode was every
+// contract dropped at once with nothing logged.
+//
+// An empty registry with no dispatcher is fine: there is nothing to govern.
+func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) error {
+	if sdkReg == nil || len(sdkReg.Tools()) == 0 {
+		return nil
+	}
+	// Both the wrap-time value AND the turn's live one: Run executes against
+	// turn.currentDispatcher(), which a surface rotation can populate after
+	// this check. Testing only opts.Dispatcher would refuse a turn that is in
+	// fact governed; testing only the live one would miss a turn that never
+	// rotates. Refuse when NEITHER can govern the call.
+	if opts.Dispatcher == nil && (turn == nil || turn.currentDispatcher() == nil) {
+		return fmt.Errorf("agent: no dispatcher wired, so %d tool(s) would execute "+
+			"with no timeout, dedup, result cap, hooks or recorded outcome",
+			len(sdkReg.Tools()))
 	}
 	for _, t := range sdkReg.Tools() {
 		st, ok := t.(sdktools.SchemaTool)
 		if !ok {
-			continue
+			return fmt.Errorf("agent: tool %q carries no schema, so it cannot be "+
+				"governed by the dispatcher", t.Name())
 		}
 		name := t.Name()
 		var cliTool tools.Tool
@@ -513,7 +372,74 @@ func applyDispatcherShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts
 		sdkReg.Remove(name)
 		wrapped := &dispatcherShim{inner: t, schema: st, cli: cliTool, opts: opts, turn: turn}
 		if err := sdkReg.Add(wrapped); err != nil {
-			_ = sdkReg.Add(t)
+			// Deliberately NOT re-adding t. Restoring the unwrapped tool is
+			// how the failure path handed the model an ungoverned one.
+			return fmt.Errorf("agent: tool %q: install dispatcher shim: %w", name, err)
 		}
 	}
+	return nil
+}
+
+// RunUnadmittedTool executes ONE tool the host authorized for this call but
+// that is absent from the SDK registry, through the SAME shim an admitted
+// call uses.
+//
+// This is the fix for DC-35. The deferred path used to invoke the runtime
+// dispatcher itself, which made it a second implementation of tool execution:
+// the timeout, the dedup declaration, the result cap, the hook plumbing, the
+// duplicate contracts and the failure outcome all had to be re-honoured by
+// hand, and five of them were not. Each omission shipped as its own bug.
+// Delegating here means those contracts hold by construction rather than by
+// anyone remembering them, and a tenth contract added to Run tomorrow reaches
+// this path for free.
+//
+// It does NOT decide approval. That decision belongs to the host, which must
+// make it before it charges an admission attempt or stages a publication for
+// the call - so it happens upstream, and this function only executes what the
+// host already approved.
+//
+// opts and turn are the loop's own, so the call lands in the same turn state,
+// dedup buckets and outcome record as every other call in the turn.
+func RunUnadmittedTool(ctx context.Context, opts Options, turn *sdkTurnState, cliTool tools.Tool, args json.RawMessage) (string, error) {
+	inner, err := sdkadapter.ConvertTool(cliTool)
+	if err != nil {
+		return "", err
+	}
+	// Through DecodeArguments, exactly as an admitted call is. This path used
+	// to hand the raw bytes straight to Run, so it skipped the validity check
+	// the adapter performs - and json.Marshal of a RawMessage holding only
+	// whitespace fails deep inside Run, where the error had nowhere sensible
+	// to go. Validating here rejects it with the tool's name instead.
+	in, err := inner.DecodeArguments(args)
+	if err != nil {
+		return "", err
+	}
+	shim := &dispatcherShim{inner: inner, schema: inner, cli: cliTool, opts: opts, turn: turn}
+	// Ref-only spooling is applied by wrapping registry tools, and this tool is
+	// deliberately not in the registry - so it has to be wrapped here, or an
+	// operator's ref_only_tools entry would apply to a deferred tool only
+	// after it loaded.
+	// Same wrapper stack the registry builds, in the same order: the
+	// dispatcher shim innermost, then ref-only, then turn shaping. Both outer
+	// layers wrap REGISTRY tools, and this tool is deliberately not in the
+	// registry, so each has to be applied here or the deferred call escapes
+	// it - ref_only_tools silently inlining a body, and a deferred result
+	// never charged against the turn's batch budget.
+	runner := wrapTurnShaping(wrapRefOnly(shim, cliTool, opts, turn), cliTool, opts, turn)
+	out, err := runner.Run(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	body, _ := out.Value.(string)
+	// Drain the pass-1 entry the shim stored. The shaping wrapper consumes it
+	// when a batch budget is active; with shaping off nothing does, and the
+	// entry holds this call's capped body for the life of the turn state -
+	// which pass1Map's own comment names as a leak. take deletes either way,
+	// so this is a no-op when shaping already claimed it.
+	if turn != nil {
+		if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
+			turn.pass1.take(tc.ID, body)
+		}
+	}
+	return body, nil
 }

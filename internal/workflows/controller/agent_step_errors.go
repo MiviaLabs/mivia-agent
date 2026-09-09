@@ -14,7 +14,7 @@ const maxErrorTextBytes = 4096
 // content-addressed and returns its reference. It returns "" when the cause
 // is nil or persistence fails: a failed attempt must still complete, so
 // missing detail never fails the attempt CAS.
-func storeErrorText(ctx context.Context, repo workflowledger.Repository, cause error) string {
+func storeErrorText(ctx context.Context, repo LedgerRepository, cause error) string {
 	if cause == nil {
 		return ""
 	}

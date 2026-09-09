@@ -63,7 +63,7 @@ boundaries of the input space:
 ### Step four: hunt the fault classes
 
 Check the function against the fault classes. Read
-`references/method-faults.md` for the full catalog with examples.
+`.agents/skills/logic-review/references/method-faults.md` for the full catalog with examples.
 The short list:
 
 - inverted, duplicated, or always-true conditions
@@ -85,11 +85,12 @@ repo. A rule that lives only in a comment is a finding.
 For each path from the function pass, find the test that drives it.
 Apply the mutation check: flip the branch, drop the guard, or break
 the return value. Ask which test fails. A path with no failing test
-is a gap. Confirm a gap with a scratch test under `/tmp` when the
+is a gap. Confirm a gap with a scratch test in the host's temporary
+directory when the
 confirm is cheap. Never edit repo code to prove a finding.
 
 Then read each test as code. Tests carry the same fault classes as
-the code they test. Read `references/test-faults.md` for the full
+the code they test. Read `.agents/skills/logic-review/references/test-faults.md` for the full
 catalog. The short list:
 
 - the expected value comes from calling the code under test
@@ -110,21 +111,31 @@ test gap. Do not report it.
 
 ## Evidence
 
-- Confirm every finding with a run: `go test ./<pkg>/`, or a scratch
-  test under `/tmp`. Report the command and its output.
-- When the function touches shared state, run
-  `go test -race ./<pkg>/`.
-- A finding without a reproduction is a guess. Do not report it.
+This skill declares no command execution. Read the tool list before you
+plan the evidence.
+
+- When the invoking agent has command execution, confirm every finding with
+  a run: `go test ./<pkg>/`. Report the command and its output. When the
+  function touches shared state, run `go test -race ./<pkg>/`. A scratch
+  test needs a write tool as well, which this skill does not declare
+  either; without both, do not claim one.
+- Without command execution, give the reproduction as the exact input, the
+  path through the code, and the wrong result, and report the evidence
+  `NOT_RUN` with that reason. Do not report it as a confirmed run.
+- A finding with neither a run nor a traced reproduction is a guess. Do not
+  report it.
 
 ## Output format
 
-Report four sections.
+Report five sections.
 
 1. The contract. One line per function reviewed.
 2. The path table. One row per path: path, driving test, verdict.
    Verdicts: pinned, weak, untested.
 3. Findings. Reproduction, severity, file:line, minimal fix.
-4. Handoffs. Suite-level gaps go to `test-review`. Gate concerns go
+4. Evidence. The command behind each finding and its output. A finding
+   traced but not run is `NOT_RUN` with the reason.
+5. Handoffs. Suite-level gaps go to `test-review`. Gate concerns go
    to `review`.
 
 ## Bounds

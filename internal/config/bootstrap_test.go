@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,7 +56,7 @@ func TestLoadWithoutAutoBootstrapLeavesConfigMissing(t *testing.T) {
 	isolateHomeAndConfigEnv(t)
 
 	_, err := Load(LoadOptions{AllowMissingConfig: true})
-	if err == nil || !strings.Contains(err.Error(), "models must be non-empty") {
+	if err == nil || !strings.Contains(err.Error(), "is not configured") {
 		t.Fatalf("err = %v, want the no-provider-configured error", err)
 	}
 	if _, statErr := os.Stat(UserConfigPath()); !os.IsNotExist(statErr) {
@@ -143,5 +144,43 @@ func TestWriteUserEnvKeyPreservesExistingKeys(t *testing.T) {
 	// rides on profile/%TEMP% ACL inheritance, not on mode bits.
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("perm = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+// TestAutoBootstrapUserConfigReportsStatFailure pins the non-ErrNotExist stat
+// branch: when the user config path cannot be stat'd at all, bootstrap
+// reports that failure instead of silently treating the path as absent and
+// writing over an unreadable tree. The failure is forced by making the
+// ~/.mivia namespace a regular file, so stat of ~/.mivia/mivia.toml fails
+// with ENOTDIR rather than ErrNotExist.
+func TestAutoBootstrapUserConfigReportsStatFailure(t *testing.T) {
+	isolateHomeAndConfigEnv(t)
+	namespace := filepath.Dir(UserConfigPath())
+	if err := os.WriteFile(namespace, []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatalf("write blocking file at %s: %v", namespace, err)
+	}
+
+	// Windows reports a path under a regular file as ERROR_PATH_NOT_FOUND,
+	// which Go maps to ErrNotExist. There the absent-path classification is
+	// correct and the stat branch this test pins is unreachable.
+	if _, statErr := os.Stat(UserConfigPath()); errors.Is(statErr, os.ErrNotExist) {
+		t.Skip("platform reports a path under a regular file as ErrNotExist; ENOTDIR is not observable")
+	}
+	path, err := autoBootstrapUserConfig()
+	if err == nil {
+		t.Fatal("expected a stat failure when the config namespace is a regular file")
+	}
+	if !strings.Contains(err.Error(), "stat ") {
+		t.Fatalf("err = %v, want the stat branch, not the write branch", err)
+	}
+	if path != "" {
+		t.Fatalf("path = %q, want empty on a stat failure", path)
+	}
+	data, readErr := os.ReadFile(namespace)
+	if readErr != nil {
+		t.Fatalf("re-read %s: %v", namespace, readErr)
+	}
+	if string(data) != "not a directory\n" {
+		t.Fatalf("blocking file content = %q, want it untouched", data)
 	}
 }

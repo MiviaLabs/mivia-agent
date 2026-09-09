@@ -78,10 +78,10 @@ func TestRegisterOrchestrationToolsFailsOnDuplicateName(t *testing.T) {
 	}
 	t.Cleanup(d.Close)
 	reg := tools.NewRegistry()
-	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", ""); err != nil {
+	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", "", nil); err != nil {
 		t.Fatalf("first RegisterOrchestrationTools call: %v", err)
 	}
-	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", ""); err == nil {
+	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", "", nil); err == nil {
 		t.Fatal("RegisterOrchestrationTools must fail on a duplicate tool name")
 	}
 }
@@ -102,7 +102,7 @@ func TestRegisterOrchestrationToolsOrderMatchesCatalog(t *testing.T) {
 	}
 	t.Cleanup(d.Close)
 	reg := tools.NewRegistry()
-	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", ""); err != nil {
+	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", "", nil); err != nil {
 		t.Fatalf("RegisterOrchestrationTools: %v", err)
 	}
 	want := []string{"dispatch_tasks", "inspect_agents", "join_run", "cancel_run"}

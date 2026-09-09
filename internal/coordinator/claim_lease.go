@@ -10,7 +10,7 @@ import (
 
 const defaultRunClaimLease = 5 * time.Minute
 
-func (c *coordinator) claimRun(ctx context.Context, runID string) error {
+func (c *Coordinator) claimRun(ctx context.Context, runID string) error {
 	err := c.repo.ClaimRun(ctx, runID, c.holderID)
 	if !errors.Is(err, ledger.ErrClaimHeld) {
 		return err
@@ -26,7 +26,7 @@ func (c *coordinator) claimRun(ctx context.Context, runID string) error {
 	return err
 }
 
-func (c *coordinator) startClaimHeartbeat(h *RunHandle) func() {
+func (c *Coordinator) startClaimHeartbeat(h *RunHandle) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

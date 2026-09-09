@@ -127,7 +127,11 @@ func TestPanelDeletedDiffClaimsTheDeletedKind(t *testing.T) {
 // move the selection.
 func TestPanelLiveAppendHoldsTheSelection(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // select b.go
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // model row -> files header
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // files header -> a.go
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // a.go -> b.go
 	s = next.(Screen)
 	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {
 		t.Fatalf("precondition: selection is %q, want b.go", sel)
@@ -158,7 +162,11 @@ func TestPanelLiveAppendHoldsTheSelection(t *testing.T) {
 // background turn causes.
 func TestPanelSelectionSurvivesLiveUpdates(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // move to b.go
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // model row -> files header
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // files header -> a.go
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // a.go -> b.go
 	s = next.(Screen)
 	if sel, ok := s.panel.list.Selected(); !ok || !strings.Contains(sel, "b.go") {
 		t.Fatalf("precondition: selected %q, want \"b.go\"", sel)
@@ -182,18 +190,25 @@ func TestPanelEmptyStateNamesItsSections(t *testing.T) {
 	}
 }
 
-// TestPanelToggleCycle: ctrl+b walks closed -> open with the list
-// focused -> open with the composer focused -> closed, and no state
-// leaves the key dead.
+// TestPanelToggleCycle: ctrl+b is a plain toggle. One press opens the
+// panel focused in its list, the next closes it, whether focus sits in
+// the list or (via tab) in the composer.
 func TestPanelToggleCycle(t *testing.T) {
 	s := panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...)
 
 	s = openPanel(t, s) // closed -> open + focused
 
-	next, _ := s.Update(ctrl('b')) // focused -> composer, panel stays
+	next, _ := s.Update(ctrl('b')) // open + list focused -> closed
+	s = next.(Screen)
+	if s.panel.open || s.panel.focused {
+		t.Fatalf("second ctrl+b: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
+	}
+
+	s = openPanel(t, s)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // focus back to the composer
 	s = next.(Screen)
 	if !s.panel.open || s.panel.focused {
-		t.Fatalf("second ctrl+b: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
+		t.Fatalf("tab: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
 	}
 	// The composer takes keys while the panel stays on screen.
 	next, _ = s.Update(key("h"))
@@ -202,15 +217,10 @@ func TestPanelToggleCycle(t *testing.T) {
 		t.Fatalf("composer value %q after defocus, want \"h\" (panel must not eat typing)", got)
 	}
 
-	next, _ = s.Update(ctrl('b')) // open + composer -> closed
+	next, _ = s.Update(ctrl('b')) // open + composer focused -> closed
 	s = next.(Screen)
 	if s.panel.open || s.panel.focused {
 		t.Fatalf("third ctrl+b: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
-	}
-	// The transcript renders the diffs too, so the panel's section
-	// header form is the panel-shaped string to test for.
-	if strings.Contains(s.View(), "files changed (") {
-		t.Error("closed panel still draws the sidebar")
 	}
 }
 
@@ -225,9 +235,23 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 		diffEvent("c3", "internal/ui/a.go", 9, 2, "package a", "// second edit"),
 	}
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 30, diffs...))
-	view := s.View()
-	plain := ansi.Strip(view)
-	for _, want := range []string{"files changed (2)", "subagents (0)"} {
+	down, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // model row -> files header
+	s = down.(Screen)
+	down, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // files header -> a.go
+	s = down.(Screen)
+	// Asserted against the SIDEBAR's own rows, at a width where a row is
+	// not clipped. Reading the whole View() let this test pass off the
+	// transcript instead: the directory it checked for was coming from a
+	// diff block's header, so the assertion said nothing about the panel.
+	sidebarOf := func(s Screen) string {
+		rows := s.panelRows(60, max(1, max(1, s.contentHeight())-2))
+		for i := range rows {
+			rows[i] = ansi.Strip(rows[i])
+		}
+		return strings.Join(rows, "\n")
+	}
+	plain := sidebarOf(s)
+	for _, want := range []string{"model", "files changed (2)", "subagents (0)"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("section header %q missing:\n%s", want, plain)
 		}
@@ -247,7 +271,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	// A live re-edit keeps the file in place but flips its glyph.
 	next, _ := s.Update(diffEvent("c4", "cmd/b.go", 5, 5, "package b2"))
 	s = next.(Screen)
-	plain = ansi.Strip(s.View())
+	plain = sidebarOf(s)
 	if !strings.Contains(plain, "~ b.go") || strings.Contains(plain, "+ b.go") {
 		t.Errorf("live re-edit did not flip the kind glyph:\n%s", plain)
 	}
@@ -262,12 +286,12 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
-	// The metrics line ("Elapsed: .., Tools: N, Step: N") can clip on a
+	// The metrics line (elapsed, tools, step) can clip on a
 	// narrow sidebar pane (clipRowsToWidth never re-wraps), so this checks
 	// only its always-first, never-clipped label - the exact content is
 	// pinned unclipped by TestPanelAgentRowRendersElapsedToolsStep.
 	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") ||
-		!strings.Contains(plain, "running") || !strings.Contains(plain, "Elapsed:") {
+		!strings.Contains(plain, "tools") {
 		t.Errorf("subagent progress did not reach the section live:\n%s", plain)
 	}
 	// A later update folds in place rather than appending a row. (The
@@ -280,7 +304,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
-	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") || !strings.Contains(plain, "done") {
+	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") {
 		t.Errorf("subagent update did not fold in place:\n%s", plain)
 	}
 }
@@ -304,9 +328,9 @@ func TestPanelEscReturnsFocusToComposerPanelStaysOpen(t *testing.T) {
 }
 
 // TestPanelWideSplitFrameContract: at and above the wide breakpoint the
-// cockpit splits - the chat column left, the file list right, separated
-// by ONE vertical rule on the sidebar's edge and nothing else framed
-// but the composer's own box - and the whole frame keeps its exact
+// cockpit splits - the chat column left, the file list right - with
+// nothing framed at all: no vertical rule between the panes, and the
+// composer is a filled bar, not a box. The whole frame keeps its exact
 // size and gutter.
 func TestPanelWideSplitFrameContract(t *testing.T) {
 	for _, w := range []int{uikitconfig.BreakpointWide, 200} {
@@ -319,13 +343,14 @@ func TestPanelWideSplitFrameContract(t *testing.T) {
 				t.Errorf("width %d: split view missing %q:\n%s", w, want, plain)
 			}
 		}
-		// The split frames nothing extra: only the framed composer box border is drawn (no vertical rule separating panes).
+		// The split frames nothing: no vertical rule separating panes, and
+		// no box anywhere (the composer draws a filled bar, not a border).
 		first := ansi.Strip(strings.Split(view, "\n")[3])
 		if strings.Contains(first, "│") {
 			t.Errorf("width %d: split drawn with unexpected vertical rule on content row: %q", w, first)
 		}
-		if got := strings.Count(view, "╭"); got != 1 {
-			t.Errorf("width %d: framed %d boxes, want 1 (framed composer)", w, got)
+		if got := strings.Count(view, "╭"); got != 0 {
+			t.Errorf("width %d: framed %d boxes, want 0 (the composer is a filled bar)", w, got)
 		}
 		// The top bar names the product, not a tab strip that no longer
 		// exists.
@@ -342,6 +367,8 @@ func TestPanelWideSplitFrameContract(t *testing.T) {
 func TestPanelDialogSitsInTheLeftColumnWithListStillVisible(t *testing.T) {
 	w := uikitconfig.BreakpointWide
 	s := openPanel(t, panelScreen(t, w, 30, sampleDiffs()...))
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog {
@@ -391,6 +418,8 @@ func TestPanelDialogSitsInTheLeftColumnWithListStillVisible(t *testing.T) {
 // and the post-edit source; d again returns to the diff.
 func TestPanelDialogDiffSourceToggle(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	next, _ = s.Update(key("d"))
@@ -426,6 +455,8 @@ func TestPanelDialogScrollReachesTheTail(t *testing.T) {
 		},
 	}}
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 16, long))
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	last := "tailrow-"
@@ -462,6 +493,8 @@ func TestPanelNarrowCollapsesToListFullWidth(t *testing.T) {
 		t.Errorf("composer vanished under the narrow panel:\n%s", plain)
 	}
 
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog || !strings.Contains(s.View(), "@@") {
@@ -538,6 +571,8 @@ func TestPanelLiveEntryAppearsWhileComposerFocused(t *testing.T) {
 // close rather than hide the decision the user must make.
 func TestPanelApprovalClosesTheDialog(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog {
@@ -608,6 +643,7 @@ type scriptedHandle struct{ ch chan uievent.Event }
 func (h scriptedHandle) ID() string                   { return "scripted" }
 func (h scriptedHandle) Events() <-chan uievent.Event { return h.ch }
 func (h scriptedHandle) Cancel()                      {}
+func (h scriptedHandle) CancelToolCall(string) bool   { return false }
 
 // TestPanelDTypesIntoTheFilterWhileNoDialogShows: the view toggle acts
 // on content, and the only content surface is the dialog - with the
@@ -619,6 +655,8 @@ func TestPanelDDoesNotFilter(t *testing.T) {
 	if s.panel.sourceView {
 		t.Error("d flipped sourceView with no dialog on screen to show it")
 	}
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog || !strings.Contains(s.View(), "@@") {
@@ -636,12 +674,15 @@ func TestPanelEscDefocusesToComposer(t *testing.T) {
 	}
 }
 
-// TestPanelCursorMarkerIsTheFocusSignal: the "> " marker and SIDEBAR focused header
-// show while the list holds focus.
+// TestPanelCursorMarkerIsTheFocusSignal: the "> " marker shows on the
+// selected row while the list holds focus, and the model section heads
+// the list.
 func TestPanelCursorMarkerIsTheFocusSignal(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	if !strings.Contains(s.View(), "> ~ a.go") || !strings.Contains(s.View(), "SIDEBAR") {
-		t.Errorf("focused list does not mark the selected row or header:\n%s", s.View())
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
+	if !strings.Contains(s.View(), "> ~ a.go") || !strings.Contains(s.View(), "model") {
+		t.Errorf("focused list does not mark the selected row or show the model section:\n%s", s.View())
 	}
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	s = next.(Screen)
@@ -659,6 +700,8 @@ func TestPanelCursorMarkerIsTheFocusSignal(t *testing.T) {
 // that swallows keys for a surface nothing renders.
 func TestPanelEnterGatedOnDialogFit(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 7, sampleDiffs()...))
+	// Select by what the row IS: the header rows above it move.
+	s.panel.selectNavKind(navFile, 0) // a.go
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if s.panel.dialog {
@@ -800,6 +843,7 @@ func TestPanel_SelectionKey_PreservesCursorOnStatusUpdate(t *testing.T) {
 	p := newPanel(theme.Theme{Name: "test"}, theme.TierASCII)
 	p.open = true
 	p.observeAgentStart("sub-1", "invoke_subagent")
+	p.selectNavKind(navAgent, 0)
 	// Initially highlighted
 	if k := p.selectionKey(); k != "a:sub-1" {
 		t.Errorf("initial selectionKey = %q, want 'a:sub-1'", k)
@@ -825,13 +869,16 @@ func TestPanel_SelectedAgent_DisambiguatesDuplicateLabels(t *testing.T) {
 	for _, id := range []string{"task-a", "task-b", "task-c", "task-d"} {
 		p.observeAgentStart(id, "reviewer")
 	}
-	// All four rows render identically.
+	// All four agent rows render identically, which is the whole point:
+	// only position can tell them apart. The rows above them (context
+	// header, model, subagents header) are not part of that.
 	labels := p.rowLabels()
-	if len(labels) != 4 || labels[0] != labels[1] || labels[1] != labels[2] || labels[2] != labels[3] {
-		t.Fatalf("expected 4 identical labels, got %v", labels)
+	agents := labels[len(labels)-4:]
+	if len(labels) != 7 || agents[0] != agents[1] || agents[1] != agents[2] || agents[2] != agents[3] {
+		t.Fatalf("expected 4 identical agent labels at the end, got %v", labels)
 	}
 
-	p.list.MoveTo(2) // highlight task-c, the third row
+	p.selectNavKind(navAgent, 2) // highlight task-c
 
 	a, ok := p.selectedAgent()
 	if !ok || a.ID != "task-c" {
@@ -841,7 +888,7 @@ func TestPanel_SelectedAgent_DisambiguatesDuplicateLabels(t *testing.T) {
 		t.Errorf("selectionKey() = %q, want 'a:task-c'", k)
 	}
 
-	p.list.MoveTo(0) // highlight task-a, the first row
+	p.selectNavKind(navAgent, 0) // highlight task-a
 	a, ok = p.selectedAgent()
 	if !ok || a.ID != "task-a" {
 		t.Fatalf("selectedAgent() = %+v, ok=%v; want task-a", a, ok)
@@ -1106,6 +1153,8 @@ func TestScrollPanelInSplitMode(t *testing.T) {
 	n, _ := scr.Update(diffEv)
 	scr = n.(Screen)
 	scr = openPanel(t, scr)
+	// Select by what the row IS: the header rows above it move.
+	scr.panel.selectNavKind(navFile, 0) // long.go
 	scr.scrollPanel(1)
 	if scr.panel.offset == 0 && scr.panelBodyRows() > 0 {
 		t.Errorf("expected offset > 0 after scrolling down, got %d", scr.panel.offset)

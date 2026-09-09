@@ -58,7 +58,7 @@ func TestExternalEventBelongsToSession(t *testing.T) {
 // chunks, keyed by run_id, not a single shared scalar.
 func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi from run A"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "reply A"})
@@ -98,8 +98,17 @@ func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 	if len(byType["external_done"]) != 2 {
 		t.Fatalf("expected 2 external_done lines, got %d", len(byType["external_done"]))
 	}
-	if len(state.seenRunIDs) != 0 {
-		t.Fatalf("expected seenRunIDs cleared after both runs ended, got %+v", state.seenRunIDs)
+	// Both runs stay tracked after their terminals, deliberately: the entry is
+	// what stops a late or duplicated event from re-minting a finished turn.
+	// Eviction is by age (maxTrackedExternalRuns), not by terminal.
+	for _, id := range []string{"turn:1", "turn:7"} {
+		r, ok := state.runs[id]
+		if !ok {
+			t.Fatalf("%s was forgotten on its terminal; a late event would re-mint it", id)
+		}
+		if !r.done {
+			t.Fatalf("%s was not marked done by its terminal", id)
+		}
 	}
 }
 
@@ -113,7 +122,7 @@ func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 // non-delta aggregate for the same run (that would show the reply twice).
 func TestRenderExternalEventStreamsDeltasLiveWithoutDuplicatingContent(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "Hello, ", Detail: "delta"})
@@ -142,7 +151,7 @@ func TestRenderExternalEventStreamsDeltasLiveWithoutDuplicatingContent(t *testin
 // silent drop.
 func TestRenderExternalEventFallsBackToAggregateWithoutDeltas(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "whole reply at once"})
@@ -176,20 +185,13 @@ func decodeNDJSONLines(t *testing.T, s string) []ndjsonEvent {
 	return out
 }
 
-// bufSink relays events through the exact production filter/render path
-// (externalEventBelongsToSession + renderExternalEvent), writing to a
-// bytes.Buffer instead of chatHubSink's hardcoded os.Stdout - the only
-// difference from the real line-mode sink, so this exercises real
-// production logic, not a reimplementation of it.
+// newBufSink returns the REAL production sink with its destination redirected
+// to a buffer. It used to re-spell chatHubSink's body instead, which meant a
+// change to the shipped sink - deleting the loss report, for instance - left
+// every test green because no test ever called it.
 func newBufSink(sess *chat.Session) (hub.Sink, *hubOutBuffer) {
 	buf := &hubOutBuffer{}
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
-	return func(ev events.Event) {
-		if !externalEventBelongsToSession(sess, ev) {
-			return
-		}
-		renderExternalEvent(buf, state, ev)
-	}, buf
+	return newChatHubSink(sess, buf), buf
 }
 
 type hubOutBuffer struct {
@@ -332,7 +334,7 @@ func TestHubDoesNotBleedBetweenSiblingSessions(t *testing.T) {
 // open forever.
 func TestRenderExternalEventSubagentLifecycleDoesNotEndTheTurn(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "audit the repo"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindSubagentStart, SessionID: "s1", TurnID: "turn:1", ToolCallID: "c1", Name: "read_file"})
@@ -350,8 +352,15 @@ func TestRenderExternalEventSubagentLifecycleDoesNotEndTheTurn(t *testing.T) {
 	if len(byType["external_done"]) != 1 {
 		t.Fatalf("expected exactly 1 external_done (turn end only), got %d", len(byType["external_done"]))
 	}
-	if len(byType["external_tool_start"]) != 1 || len(byType["external_tool_end"]) != 1 {
-		t.Fatalf("expected paired external_tool_start/-end for the subagent's nested call, got %d/%d",
+	// The subagent's nested call relays under the SUBAGENT types, never the
+	// root ones: a consumer keyed on type must be able to keep a subagent's
+	// activity out of the root turn, and type is the only thing it can key on.
+	if len(byType["external_subagent_tool_start"]) != 1 || len(byType["external_subagent_tool_end"]) != 1 {
+		t.Fatalf("expected paired external_subagent_tool_start/-end, got %d/%d",
+			len(byType["external_subagent_tool_start"]), len(byType["external_subagent_tool_end"]))
+	}
+	if len(byType["external_tool_start"]) != 0 || len(byType["external_tool_end"]) != 0 {
+		t.Fatalf("a subagent's tool call was relayed as the root agent's: %d/%d",
 			len(byType["external_tool_start"]), len(byType["external_tool_end"]))
 	}
 	// The run must still be live (one external_turn_start, no re-mint)
@@ -383,7 +392,7 @@ func TestRenderExternalCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 	renderExternalEvent(&buf, state, events.Event{
 		Kind: events.KindCompaction, SessionID: "s1", TurnID: "turn:3",
 		Detail: "context compacted: 10000 -> 3000 tokens", Compaction: &typed,

@@ -15,83 +15,13 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-# Mirrors SanitizeModelFacingText(description, 200) in internal/skills/loader.go.
-# A longer description is truncated mid-sentence in the model-facing skill surface,
-# which degrades skill selection with no other signal that it happened.
-SKILL_DESCRIPTION_MAX = 200
-
-# Mirrors trigger caps in internal/skills/loader.go.
-SKILL_TRIGGER_MAX = 64       # per trigger
-SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
-
-# Mirrors knownSkillKeys in internal/skills/loader.go. Keep the two in sync:
-# the loader hard-errors on anything else, so a key accepted here but rejected
-# there would pass `make verify` and then fail at runtime.
-SKILL_KNOWN_KEYS = {
-    "name", "description", "triggers", "user-invocable", "argument-hint",
-    "short-description", "tools",
-}
-
-
-def frontmatter_keys(body: str) -> list[str]:
-    """Top-level keys in a SKILL.md frontmatter block.
-
-    Mirrors the subset grammar in internal/skills/frontmatter.go: indented
-    lines belong to a block sequence, comments and blanks are skipped.
-    """
-    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    if not lines or lines[0].strip() != "---":
-        return []
-    keys = []
-    for line in lines[1:]:
-        stripped = line.strip()
-        if stripped == "---":
-            break
-        if not stripped or stripped.startswith("#") or line[:1] in (" ", "\t"):
-            continue
-        if ":" in stripped:
-            keys.append(stripped.split(":", 1)[0].strip())
-    return keys
-
-
-def split_flow_items(inner: str) -> list[str]:
-    """Split a flow sequence inner string with quote awareness.
-
-    Matches the Go splitFlowSequence behaviour: commas inside single or
-    double quotes are preserved.
-    """
-    inner = inner.strip()
-    if not inner:
-        return []
-    items = []
-    current: list[str] = []
-    in_single = False
-    in_double = False
-    for ch in inner:
-        if ch == '"' and not in_single:
-            in_double = not in_double
-            current.append(ch)
-        elif ch == "'" and not in_double:
-            in_single = not in_single
-            current.append(ch)
-        elif ch == "," and not in_single and not in_double:
-            item = "".join(current).strip().strip("\"'")
-            if item:
-                items.append(item)
-            current = []
-        else:
-            current.append(ch)
-    item = "".join(current).strip().strip("\"'")
-    if item or items:
-        items.append(item)
-    return items
-
-
-def fail(msg: str) -> None:
-    print(f"verify_agent_config: {msg}", file=sys.stderr)
-    raise SystemExit(1)
+from verify_common import ROOT, fail, rel_to_root  # noqa: E402
+from verify_skill_tree import (  # noqa: E402
+    check_claude_skill_aliases,
+    check_no_dead_skill_tree,
+    check_skill_dir,
+)
+from check_agents import _parse_frontmatter  # noqa: E402
 
 
 def text(rel: str) -> str:
@@ -152,6 +82,140 @@ def check_hook_events() -> None:
                 )
 
 
+# .mivia/mivia.toml binds this repository's own workflow agent steps. Two of
+# its keys protect the controls that protect everything else, and nothing else
+# in the tree asserts either one:
+#
+#   - write_path_blocklist must hold the live Git hook paths, the config file
+#     itself, and .mivia/policy. install_git_hooks.sh points core.hooksPath at
+#     .githooks, so blocking .git alone leaves the hooks writable. Omitting the
+#     config file lets a workflow agent step empty the list and restore write
+#     access to all of them.
+#   - AGENTS.md names the PreToolUse run-command-guard hook as one of the three
+#     layers enforcing "never bypass Git hooks". check_hook_events only
+#     validates a declared event name, so deleting the declaration passed.
+#
+# A commit once trimmed the blocklist to the three hook paths and justified it
+# with the commit-time gates. None of those gates reads this key.
+SELF_PROTECTING_BLOCKLIST = (
+    ".git",
+    ".githooks",
+    "scripts/git-hooks",
+    # The hooks are only as good as what they run. With scripts/ writable, a
+    # workflow agent step rewrites verify_agent_config.py to exit 0 and every
+    # gate the protected hook invokes passes, .githooks untouched. The Makefile
+    # decides which gates run at all.
+    "scripts/verify_agent_config.py",
+    "scripts/agent_hook_guard.py",
+    "scripts/secret_scan.py",
+    "Makefile",
+    ".mivia/mivia.toml",
+    ".mivia/policy",
+    # .mivia/hooks holds run-command-guard.py, the PreToolUse guard's own
+    # program (layer 3). .claude/settings.json registers that guard as the
+    # handler (layer 2's declaration). Either writable lets a workflow agent
+    # step silently disable enforcement while this very check stays green -
+    # this tuple's own name claims coverage it did not have until now.
+    ".mivia/hooks",
+    ".claude/settings.json",
+)
+
+RUN_COMMAND_GUARD = "run-command-guard.py"
+
+
+def check_workflow_self_protection() -> None:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        return
+    rel = ".mivia/mivia.toml"
+    path = ROOT / rel
+    if not path.is_file():
+        fail(f"missing {rel}")
+    with path.open("rb") as handle:
+        data = tomllib.load(handle)
+    blocklist = ((data.get("tools") or {}).get("write_path_blocklist")) or []
+    if not isinstance(blocklist, list):
+        fail(f"{rel}: tools.write_path_blocklist must be a list")
+    entries = {str(item).strip().strip("/") for item in blocklist}
+    removals = {
+        str(item).strip().strip("/")
+        for item in (((data.get("tools") or {}).get("write_path_blocklist_remove")) or [])
+    }
+    for want in SELF_PROTECTING_BLOCKLIST:
+        # A parent entry covers its children: 'scripts' blocks
+        # 'scripts/git-hooks'. Exact membership would force a redundant entry
+        # and reject a strictly stronger list.
+        if not any(want == e or want.startswith(e + "/") for e in entries):
+            fail(
+                f"{rel}: tools.write_path_blocklist does not cover {want!r}. "
+                f"A workflow agent step can then write it, and for "
+                f"'.mivia/mivia.toml' that means emptying this key and "
+                f"restoring write access to every other entry."
+            )
+        if any(r == want or want.startswith(r + "/") for r in removals):
+            fail(
+                f"{rel}: tools.write_path_blocklist_remove removes {want!r}, "
+                "so the effective workflow denylist does not protect it."
+            )
+    for group in data.get("hooks") or []:
+        if not isinstance(group, dict) or group.get("event") != "PreToolUse":
+            continue
+        for handler in group.get("handlers") or []:
+            argv = (handler or {}).get("argv") or []
+            if not argv or RUN_COMMAND_GUARD not in str(argv[0]):
+                continue
+            # The declaration is not the control. internal/hooks/exec.go
+            # resolveProgram resolves a relative argv[0] against .mivia/, so
+            # check the file the config actually names: asserting only the
+            # string in argv let the guard be deleted with every gate green.
+            # A guard bound to another tool is not this guard. parseMatcher
+            # in internal/hooks/config.go treats an absent or empty matcher as
+            # match-all, so only a non-empty matcher has to be checked.
+            matcher = group.get("matcher")
+            if matcher is not None and not isinstance(matcher, str):
+                fail(
+                    f"{rel}: PreToolUse matcher must be a string; "
+                    f"internal/hooks/config.go refuses {matcher!r}, and "
+                    f"internal/hooksession downgrades that to a warning, "
+                    f"which drops every lifecycle hook in this config."
+                )
+            # Only nil and "" are match-all in parseMatcher. A
+            # whitespace-only pattern compiles and matches nothing.
+            if isinstance(matcher, str) and matcher != "":
+                try:
+                    bound = re.search(matcher, "run_command") is not None
+                except re.error:
+                    fail(f"{rel}: PreToolUse matcher {matcher!r} does not compile.")
+                if not bound:
+                    fail(
+                        f"{rel}: the PreToolUse guard is bound to matcher "
+                        f"{matcher!r}, which does not match 'run_command'. The "
+                        f"hook then never fires on the tool it exists to gate."
+                    )
+            if (handler or {}).get("on_timeout") != "block":
+                fail(
+                    f"{rel}: the PreToolUse guard has on_timeout="
+                    f"{(handler or {}).get('on_timeout')!r}. A guard that fails "
+                    f"open on timeout is not a control."
+                )
+            program = (ROOT / ".mivia" / str(argv[0])).resolve()
+            if not program.is_file():
+                fail(
+                    f"{rel}: the PreToolUse handler names {argv[0]!r}, which "
+                    f"does not exist. The hook then fails at run time, and the "
+                    f"never-bypass-Git-hooks layer AGENTS.md names is absent."
+                )
+            if not os.access(program, os.X_OK):
+                fail(f"{rel}: {argv[0]!r} is not executable, so the hook cannot run.")
+            return
+    fail(
+        f"{rel}: no PreToolUse handler runs {RUN_COMMAND_GUARD}. AGENTS.md "
+        f"names it as one of the three layers enforcing the never-bypass-Git-"
+        f"hooks rule, and no other check asserts the declaration is present."
+    )
+
+
 # The session-tool catalog in internal/clichat/session_tool_catalog.go is the
 # single source of truth for the dispatcher-owned tools every root binding
 # advertises: the pinned wire tools[] array (advertisedToolSpecs) ships the
@@ -163,6 +227,8 @@ def check_hook_events() -> None:
 # here keeps the gate in lockstep with the Go side: adding or renaming a
 # session tool in the catalog automatically updates the exemption, and a
 # catalog that stops parsing fails closed instead of passing silently.
+
+
 def session_tool_catalog_names() -> set[str]:
     path = ROOT / "internal" / "clichat" / "session_tool_catalog.go"
     if not path.is_file():
@@ -227,6 +293,53 @@ def check_agents_directory() -> list[Path]:
     return agent_files
 
 
+def _frontmatter_list(value: str) -> set[str]:
+    """Parse a block or inline frontmatter list of names."""
+    value = value.strip()
+    if not value or value == "[]":
+        return set()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    return {
+        item.strip().strip("\"'")
+        for item in value.replace(",", "\n").splitlines()
+        if item.strip()
+    }
+
+
+def check_agent_skill_contract(root: Path) -> None:
+    """Require role skill names to resolve and their tools to be granted."""
+    agents_dir = root / ".agents" / "agents"
+    skills_dir = root / ".agents" / "skills"
+    skill_tools: dict[str, set[str]] = {}
+    for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
+        frontmatter, _ = _parse_frontmatter(skill_path.read_text(encoding="utf-8"))
+        skill_tools[skill_path.parent.name] = _frontmatter_list(frontmatter.get("tools", ""))
+    for role_path in sorted(agents_dir.glob("*.md")):
+        if role_path.name == "README.md":
+            continue
+        frontmatter, _ = _parse_frontmatter(role_path.read_text(encoding="utf-8"))
+        role_skills = _frontmatter_list(frontmatter.get("skills", ""))
+        if not role_skills:
+            continue
+        missing_skills = sorted(role_skills - skill_tools.keys())
+        if missing_skills:
+            fail(
+                f"{rel_to_root(role_path)} declares unknown skill(s) "
+                f"{missing_skills}; each skills: name must resolve to "
+                f".agents/skills/<name>/"
+            )
+        role_tools = _frontmatter_list(frontmatter.get("tools", ""))
+        for skill_name in sorted(role_skills):
+            missing_tools = sorted(skill_tools[skill_name] - role_tools)
+            if missing_tools:
+                fail(
+                    f"{rel_to_root(role_path)} grants skill {skill_name!r} "
+                    f"without required tool(s) {missing_tools}; "
+                    f"agent.tools must be a superset of skill.tools"
+                )
+
+
 def model_facing_prompts() -> list[tuple[str, str]]:
     """Prose the model is instructed by, as (source, text) pairs.
 
@@ -255,6 +368,126 @@ def model_facing_prompts() -> list[tuple[str, str]]:
     return out
 
 
+def makefile_defines_target(makefile: str, target: str) -> bool:
+    """True when `target` opens a rule that has prerequisites or a recipe.
+
+    Make allows several targets on one rule line, so the name may appear
+    anywhere before the colon. A `.PHONY:` line is excluded: it declares a
+    target, it does not define one.
+    """
+    lines = makefile.split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith("\t") or ":" not in line:
+            continue
+        # A comment is prose, not a rule. The word `verify` inside
+        # `# verifier-integration is no longer a verify prerequisite` used to
+        # satisfy this check, so deleting the whole verify: rule passed while
+        # `make verify` printed "Nothing to be done".
+        if line.lstrip().startswith("#"):
+            continue
+        head, _, rest = line.partition(":")
+        if "#" in head:
+            continue
+        if head.startswith(".PHONY") or head.startswith("."):
+            continue
+        if target not in head.split():
+            continue
+        # `verify := x`, `verify ::= x` and `verify ?= x` are assignments. The
+        # partition on ":" leaves head ending in the operator's first half.
+        if head.rstrip().endswith(("=", "!", "?", "+")):
+            continue
+        prereqs = rest.strip()
+        if prereqs.startswith(";"):
+            return bool(prereqs[1:].strip())
+        if prereqs.startswith("=") or prereqs.startswith(":="):
+            continue  # `verify := x` seen as head "verify " rest "= x"
+        # A target-specific variable (`verify: CFLAGS=-g`) sets a variable for
+        # a rule defined elsewhere; on its own it defines nothing.
+        if prereqs and not _is_target_specific_variable(prereqs):
+            return True
+        for following in lines[index + 1 :]:
+            if following.startswith("\t"):
+                return True  # has a recipe
+            if following.lstrip().startswith("#"):
+                continue  # a comment between target and recipe is still one rule
+            if following.strip():
+                break
+    return False
+
+
+def _is_target_specific_variable(prereqs: str) -> bool:
+    """True for `NAME=value` / `NAME := value` and nothing else."""
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*[:+?]?=", prereqs))
+
+
+LOCKED_LIST_HEAD = "Additional tools below are authorized"
+
+
+def check_locked_list_excludes_core(config_path: Path, core: set[str]) -> None:
+    """No tool in [tools] core may be advertised as locked in a prompt.
+
+    A core tool is always advertised. Telling the model to call load_tools for
+    one costs the same wasted turn as deferring a prompted tool, in the other
+    direction.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        return
+    with config_path.open("rb") as handle:
+        data = tomllib.load(handle)
+    prompt = ((data.get("chat") or {}).get("system_prompt")) or ""
+    if LOCKED_LIST_HEAD not in prompt:
+        return
+    tail = prompt.split(LOCKED_LIST_HEAD, 1)[1]
+    for line in tail.split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        name = stripped[2:].split(":", 1)[0].strip()
+        if name in core:
+            fail(
+                f"{rel_to_root(config_path)}: [chat] system_prompt lists "
+                f"{name!r} as a locked tool, but [tools] core advertises it "
+                f"already. The model is told to load_tools something it can "
+                f"call, which wastes the same turn a deferred prompted tool "
+                f"does."
+            )
+
+
+def agent_core_override(body: str) -> set[str] | None:
+    """The agent's own tools_core list, or None when it declares no override.
+
+    internal/config/agents.go lets one agent replace the global core tier. The
+    global-only check passed while such an agent's prompt named tools its own
+    core deferred - the same defect one scope down.
+    """
+    block = body.split("---")
+    if len(block) < 3:
+        return None
+    names: list[str] = []
+    in_key = False
+    for line in block[1].split("\n"):
+        if re.match(r"^tools_core\s*:", line):
+            in_key = True
+            inline = line.split(":", 1)[1].strip()
+            if inline.startswith("["):
+                return {
+                    n.strip().strip("\"'")
+                    for n in inline.strip("[]").split(",")
+                    if n.strip()
+                }
+            continue
+        if in_key:
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                names.append(stripped[2:].strip().strip("\"'"))
+                continue
+            if stripped:
+                break
+    return set(names) if in_key else None
+
+
 def check_core_tier_covers_prompted_tools() -> None:
     """Every tool a system prompt tells the model to use must be in [tools] core.
 
@@ -268,14 +501,32 @@ def check_core_tier_covers_prompted_tools() -> None:
     config_path = ROOT / ".mivia" / "mivia.toml"
     if not config_path.is_file():
         return
-    match = re.search(
-        r"^\s*core\s*=\s*\[(.*?)\]", config_path.read_text(encoding="utf-8"), re.S | re.M
-    )
-    if not match:
-        return  # feature inert: nothing is deferred, nothing to check
-    core = set(re.findall(r'"([^"]+)"', match.group(1)))
-    if not core:
+    # Parse the config, do not pattern-match it. The regex here read only
+    # double-quoted entries, and this repository's own [tools] core uses TOML
+    # single quotes, so `core` came back empty and the whole check below - the
+    # unknown-tool rule and the prompted-deferred-tool rule - was dead code
+    # that reported ok on a tree with ten deferred tools.
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
         return
+    with config_path.open("rb") as handle:
+        data = tomllib.load(handle)
+    tools_table = data.get("tools")
+    if not isinstance(tools_table, dict) or "core" not in tools_table:
+        return  # feature inert: nothing is deferred, nothing to check
+    raw = tools_table["core"]
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        fail(
+            ".mivia/mivia.toml [tools] core must be a list of tool-name strings; "
+            "a shape this gate cannot read must fail, not pass silently"
+        )
+    core = {item for item in raw if item}
+    if not core:
+        fail(
+            ".mivia/mivia.toml [tools] core is declared but empty, which defers "
+            "every tool. Remove the key to disable the tier split instead"
+        )
 
     known = workspace_tool_names()
     if not known:
@@ -291,19 +542,50 @@ def check_core_tier_covers_prompted_tools() -> None:
             f"silently defers the tool it was meant to keep"
         )
     deferred = known - core - NON_DEFERRABLE_TOOLS
-    if not deferred:
-        return
-
+    # No early return on an empty deferred set: that is exactly the state
+    # where every entry in a hand-maintained "locked tools" list is wrong,
+    # and check_locked_list_excludes_core below must still run.
     for rel, body in model_facing_prompts():
-        for tool in sorted(deferred):
+        # An agent may replace the global tier with its own tools_core
+        # (internal/config/agents.go). Checking only the global set let such an
+        # agent's prompt name tools its OWN core defers - the same defect one
+        # scope down, invisible to a global-only check.
+        source = ROOT / rel
+        override = (
+            agent_core_override(source.read_text(encoding="utf-8"))
+            if source.is_file()
+            else None
+        )
+        # `is not None`, not truthiness: ToolsCore is *[]string in
+        # internal/config/agents_parse.go, so an explicit empty list is an
+        # override that defers EVERY tool, not an absent one.
+        agent_deferred = (
+            (known - override - NON_DEFERRABLE_TOOLS)
+            if override is not None
+            else deferred
+        )
+        scope = (
+            "its own tools_core"
+            if override is not None
+            else "[tools] core in .mivia/mivia.toml"
+        )
+        for tool in sorted(agent_deferred):
             if re.search(r"\b" + re.escape(tool) + r"\b", body):
                 fail(
-                    f"{rel} instructs the model to use {tool!r}, but [tools] core "
-                    f"in .mivia/mivia.toml defers it. A prompted tool whose schema "
-                    f"is withheld costs a wasted turn every session (plan tools/07 "
-                    f"was rejected on this). Add {tool!r} to core, or stop naming "
-                    f"it in the prompt."
+                    f"{rel} instructs the model to use {tool!r}, but {scope} "
+                    f"defers it. A prompted tool whose schema is withheld costs "
+                    f"a wasted turn every session (plan tools/07 was rejected "
+                    f"on this). Add {tool!r} to core, or stop naming it in the "
+                    f"prompt."
                 )
+
+    # The inverse direction. A prompt that tells the model to load_tools a
+    # tool that is already core costs the same wasted turn a deferred
+    # prompted tool does. This must run unconditionally, not only when
+    # `deferred` is non-empty - a core set covering everything deferrable is
+    # exactly the state where every "locked" entry in a hand-copied prompt
+    # list is guaranteed wrong.
+    check_locked_list_excludes_core(config_path, core)
 
 
 def main() -> None:
@@ -583,9 +865,19 @@ def main() -> None:
         "test",
         "build",
     ]:
-        # accept "target:" or "target " in .PHONY / recipes
-        if not re.search(rf"(?m)^[a-zA-Z0-9_.-]*{re.escape(target)}[a-zA-Z0-9_.-]*\s*:", makefile) and target not in makefile:
-            fail(f"Makefile: missing target {target}")
+        # A real rule, not a mention. The old test was two proxies joined by
+        # `or`: a regex that let `verify-fast:` satisfy `verify`, and a bare
+        # substring that any word in the help text satisfied. Deleting a whole
+        # recipe left the gate green while `make verify` silently skipped the
+        # target. Require the name to open a rule, and require that rule to
+        # carry a recipe line or prerequisites.
+        if not makefile_defines_target(makefile, target):
+            fail(
+                f"Makefile: no rule defines target {target}. A .PHONY listing "
+                f"or a mention in the help text is not a rule: `make {target}` "
+                f"would print \"Nothing to be done\" and every gate it runs "
+                f"would be skipped."
+            )
     if "cmd/mivia" not in makefile:
         fail("Makefile: build must target cmd/mivia")
 
@@ -602,90 +894,18 @@ def main() -> None:
             if rule_id not in sg:
                 fail(f"semgrep/agent-standards.yml: missing {rule_id}")
 
-    # Skill frontmatter when skills exist. .agents/skills is the shared
-    # cross-tool mirror; .mivia/skills is the copy the compiled mivia binary
-    # itself loads at runtime (internal/workspace.SkillsDir). Both are checked
-    # so the two mirrors cannot silently diverge.
-    skill_dirs = [d for d in (ROOT / ".agents" / "skills", ROOT / ".mivia" / "skills") if d.is_dir()]
-    for skills_dir in skill_dirs:
-        for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
-            body = skill_path.read_text(encoding="utf-8")
-            name = skill_path.parent.name
-            if not body.lstrip().startswith("---"):
-                fail(f"{skill_path.relative_to(ROOT)}: missing YAML frontmatter")
-            if f"name: {name}" not in body and f'name: "{name}"' not in body:
-                fail(f"{skill_path.relative_to(ROOT)}: frontmatter name must be {name}")
-            # Unknown keys are rejected by internal/skills/loader.go at load time.
-            # Catch them here so `make verify` fails before the loader does.
-            for key in frontmatter_keys(body):
-                if key not in SKILL_KNOWN_KEYS:
-                    fail(
-                        f"{skill_path.relative_to(ROOT)}: unknown frontmatter key "
-                        f"{key!r}; recognised: {sorted(SKILL_KNOWN_KEYS)} "
-                        f"(rejected by internal/skills/loader.go)"
-                    )
-            # Check description length.
-            for line in body.splitlines():
-                if line.startswith("description:"):
-                    description = line.split(":", 1)[1].strip()
-                    if len(description) > SKILL_DESCRIPTION_MAX:
-                        fail(
-                            f"{skill_path.relative_to(ROOT)}: description is "
-                            f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
-                            f"(silently truncated by internal/skills/loader.go)"
-                        )
-                    break
-            # Check trigger entries are non-empty and joined block within cap.
-            in_triggers = False
-            trigger_items = []
-            for line in body.splitlines():
-                stripped = line.strip()
-                if stripped == "triggers:" or stripped.startswith("triggers: ["):
-                    if stripped == "triggers:":
-                        in_triggers = True
-                    elif stripped.startswith("triggers: ["):
-                        # Flow sequence: extract items. Handle trailing content after ].
-                        inner = stripped[len("triggers: ["):]
-                        # Find the closing bracket, handling trailing whitespace/comments.
-                        bracket_idx = inner.find("]")
-                        if bracket_idx >= 0:
-                            inner = inner[:bracket_idx]
-                        # Also strip any trailing comment before the bracket
-                        # (already handled by find("]") above).
-                        inner = inner.strip()
-                        for part in split_flow_items(inner):
-                            item = part.strip().strip("\"'")
-                            if item:
-                                trigger_items.append(item)
-                    continue
-                if in_triggers:
-                    # Comments and blank lines are skipped in the Go parser
-                    # but stay in the block - handle them the same way.
-                    if stripped == "" or stripped.startswith("#"):
-                        continue
-                    if stripped.startswith("- "):
-                        item = stripped[2:].strip()
-                        if item:
-                            trigger_items.append(item)
-                    elif line.startswith("  ") or line.startswith("\t"):
-                        # Still in block sequence (indented continuation).
-                        continue
-                    else:
-                        in_triggers = False
-            if trigger_items:
-                joined = "\n".join(trigger_items)
-                if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
-                    fail(
-                        f"{skill_path.relative_to(ROOT)}: triggers joined block is "
-                        f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
-                        f"(silently truncated by internal/skills/loader.go)"
-                    )
-                for item in trigger_items:
-                    if not item:
-                        fail(
-                            f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
-                        )
+    # .agents/skills is the only workspace skill home. The compiled mivia
+    # binary loads it at runtime: internal/workspace.SkillsDir(root) returns
+    # <root>/.agents/skills.
+    #
+    check_no_dead_skill_tree(ROOT)
+    # check_skill_dir owns the missing-directory guard, so both entry points
+    # inherit it. A copy here would drift from the one in verify_skill_tree.
+    check_skill_dir(ROOT / ".agents" / "skills")
+    check_claude_skill_aliases(ROOT)
+    check_agent_skill_contract(ROOT)
 
+    check_workflow_self_protection()
     check_agents_directory()
     check_core_tier_covers_prompted_tools()
 

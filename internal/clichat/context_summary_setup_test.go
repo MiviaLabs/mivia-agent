@@ -13,17 +13,29 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// summaryWiringResolved builds the smallest resolved config that can open the
-// summary gate: a provider endpoint, a compiled [privacy] policy, and the
-// [context.summary] flag under test.
-func summaryWiringResolved(t *testing.T, enabled bool) *config.Resolved {
+// summaryWiringResolved builds the smallest resolved config that wires the
+// summarizer: a resolved provider endpoint and a usable provider/model
+// binding. The summarizer is always enabled, so no flag opens the gate. A
+// [privacy] policy is compiled in as well, but it is not a precondition: see
+// TestSummaryWiringDoesNotRequireRedaction.
+func summaryWiringResolved(t *testing.T) *config.Resolved {
 	t.Helper()
 	res := resolvedWithPatterns(t, []string{`(?i)token\s*=\s*\S+`}, nil)
 	res.ProviderName = "stub"
 	res.Model = "stub-model"
 	res.BaseURL = "https://api.stub.invalid"
 	res.SystemPrompt = "sys"
-	res.Context.Summary.Enabled = &enabled
+	return res
+}
+
+// summaryWiringUnwirable builds a resolved config the summarizer cannot be
+// built from, so compaction stays structural-only. The cause is the missing
+// provider endpoint, which is a failure, not a configuration: no supported
+// config turns the summarizer off.
+func summaryWiringUnwirable(t *testing.T) *config.Resolved {
+	t.Helper()
+	res := summaryWiringResolved(t)
+	res.BaseURL = ""
 	return res
 }
 
@@ -32,17 +44,25 @@ func summaryWiringSession(t *testing.T, res *config.Resolved) *chat.Session {
 	return chat.NewSession(res, stubAgentCompleter{})
 }
 
-// TestSummaryWiringDisabledByDefault pins the off switch: with the flag unset,
-// setup stays structural-only and no summarizer exists.
-func TestSummaryWiringDisabledByDefault(t *testing.T) {
-	res := summaryWiringResolved(t, false)
+// TestSummaryWiringNeedsABinding pins the structural-only shape: when the
+// summarizer cannot be built, setup wires NOTHING - no summarizer, and a zero
+// policy that carries neither an enabled flag nor an endpoint allowlist.
+//
+// This replaces TestSummaryWiringDisabledByDefault, whose premise (an
+// `enabled = false` flag) is no longer a reachable configuration. The cause
+// here is a session with no resolved provider/model binding, which is a
+// failure the wiring still has to survive. Every assertion is unchanged.
+func TestSummaryWiringNeedsABinding(t *testing.T) {
+	res := summaryWiringResolved(t)
+	res.Model = ""
 	summarizer, policy, ok := summaryWiring(summaryWiringSession(t, res), res)
 	if ok || summarizer != nil || policy.SummaryEnabled || policy.EndpointAllowlist != nil {
-		t.Fatalf("disabled flag wired a summarizer: ok=%v summarizer=%v policy=%+v", ok, summarizer != nil, policy)
+		t.Fatalf("a session with no binding wired a summarizer: ok=%v summarizer=%v policy=%+v", ok, summarizer != nil, policy)
 	}
 }
 
-// TestSummaryWiringDoesNotRequireRedaction pins the opt-out default. A
+// TestSummaryWiringDoesNotRequireRedaction pins the always-enabled
+// summarizer. A
 // workspace with no [privacy] section still gets a summarizer: compaction
 // drops its messages permanently, so gating the only record of what was
 // removed on an unrelated section meant those workspaces compacted blind.
@@ -52,7 +72,7 @@ func TestSummaryWiringDisabledByDefault(t *testing.T) {
 // of the checkpoint (Metadata persists a digest only). A wiring that claimed
 // redaction was configured would silently persist content instead.
 func TestSummaryWiringDoesNotRequireRedaction(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	res.RedactionPolicy = nil
 	res.Privacy = config.PrivacyConfig{}
 	summarizer, policy, ok := summaryWiring(summaryWiringSession(t, res), res)
@@ -71,7 +91,7 @@ func TestSummaryWiringDoesNotRequireRedaction(t *testing.T) {
 // resolved provider endpoint the summary stays disabled. Setup never invents
 // an endpoint (INV-AG-10 spirit: no invented refs, no invented allowlists).
 func TestSummaryWiringRequiresEndpoint(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	res.BaseURL = ""
 	summarizer, _, ok := summaryWiring(summaryWiringSession(t, res), res)
 	if ok || summarizer != nil {
@@ -83,7 +103,7 @@ func TestSummaryWiringRequiresEndpoint(t *testing.T) {
 // policy, and the endpoint together produce a Summarizer whose captured
 // PolicySnapshot satisfies every check Summarizer.available applies.
 func TestSummaryWiringEnabled(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	session := summaryWiringSession(t, res)
 	binding := session.CurrentBinding()
 	summarizer, policy, ok := summaryWiring(session, res)
@@ -117,7 +137,7 @@ func TestSummaryWiringEnabled(t *testing.T) {
 // the redaction policy changes, so a policy switch cannot silently reuse a
 // summarizer captured under the previous policy.
 func TestSummaryPolicyDigestTracksPolicyContent(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	_, policy, ok := summaryWiring(summaryWiringSession(t, res), res)
 	if !ok {
 		t.Fatal("summary wiring refused an enabled config")
@@ -136,7 +156,7 @@ func TestSummaryPolicyDigestTracksPolicyContent(t *testing.T) {
 // would keep charging the expensive session model for every compaction
 // summary.
 func TestSummaryWiringUsesOverrideBinding(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	provider, model := "openrouter", "cheap-model"
 	res.Context.Summary.Provider = &provider
 	res.Context.Summary.Model = &model
@@ -181,7 +201,7 @@ func TestSummaryWiringUsesOverrideBinding(t *testing.T) {
 // as the cause. The session binding (whose model would be more expensive)
 // must not be substituted.
 func TestSummaryWiringOverrideDegradesOnUnusableProvider(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	provider, model := "openrouter", "cheap-model"
 	res.Context.Summary.Provider = &provider
 	res.Context.Summary.Model = &model
@@ -202,7 +222,7 @@ func TestSummaryWiringOverrideDegradesOnUnusableProvider(t *testing.T) {
 // branch: an override whose provider has no runtime entry (hand-built
 // Resolved bypassing load validation) stays structural-only.
 func TestSummaryWiringOverrideMissingRuntimeDegrades(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	provider, model := "openrouter", "cheap-model"
 	res.Context.Summary.Provider = &provider
 	res.Context.Summary.Model = &model
@@ -218,7 +238,7 @@ func TestSummaryWiringOverrideMissingRuntimeDegrades(t *testing.T) {
 // for an override model that is not a valid model identifier: the override
 // cannot be built and compaction stays structural-only.
 func TestSummaryWiringOverrideInvalidModelDegrades(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	provider, badModel := "openrouter", "bad\x00model"
 	res.Context.Summary.Provider = &provider
 	res.Context.Summary.Model = &badModel
@@ -238,7 +258,7 @@ func TestSummaryWiringOverrideInvalidModelDegrades(t *testing.T) {
 // would make the captured EndpointAllowlist dishonest - the policy would
 // claim an endpoint the summary calls do not actually use.
 func TestSummaryWiringOverrideEmptyEndpointDegrades(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	provider, model := "openrouter", "cheap-model"
 	res.Context.Summary.Provider = &provider
 	res.Context.Summary.Model = &model
@@ -256,7 +276,7 @@ func TestSummaryWiringOverrideEmptyEndpointDegrades(t *testing.T) {
 // zero-generation BindingRevision, so the override stays structural-only
 // instead of capturing an invalid revision.
 func TestSummaryWiringOverrideZeroGenerationSessionDegrades(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	provider, model := "openrouter", "cheap-model"
 	res.Context.Summary.Provider = &provider
 	res.Context.Summary.Model = &model
@@ -274,7 +294,7 @@ func TestSummaryWiringOverrideZeroGenerationSessionDegrades(t *testing.T) {
 // resolved binding gets the binding reason, and the override branch is
 // skipped.
 func TestSummaryDisabledReasonNamesMissingSessionBinding(t *testing.T) {
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	if reason := SummaryDisabledReason(&chat.Session{}, res); reason != "the session has no resolved provider/model binding" {
 		t.Fatalf("SummaryDisabledReason = %q, want the missing-binding reason", reason)
 	}
@@ -291,7 +311,7 @@ func TestEnableSessionContextWiresSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	var captured *contextmgr.ContextManager
 	var capturedPolicy contextstate.PolicySnapshot
 	original := setContextManagerForSetup

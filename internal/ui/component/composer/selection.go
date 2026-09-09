@@ -12,8 +12,8 @@ import (
 
 // Mouse text selection over the input body. bubbles' textarea has no
 // mouse support at all, so the composer owns the region: the screen
-// injects the absolute rect (body rows only - menu and border rows are
-// not selectable), the composer keeps the anchor/focus pair in
+// injects the absolute rect (body rows only - the padding rows are not
+// selectable, and the completion popup is an overlay above the bar), the composer keeps the anchor/focus pair in
 // body-local cells, paints the reverse-video highlight on the padded
 // body lines inside View, and derives SelectedText from its own value
 // re-wrapped with textarea's exact word-wrap rule.
@@ -81,7 +81,7 @@ func (m Model) highlightBodyLines(body string) string {
 }
 
 // selectionRows renders the visible body as plain display rows: prompt
-// columns first (so cell coordinates match the frame exactly), then
+// columns first (so cell coordinates match the drawn bar exactly), then
 // each logical line word-wrapped at the inner width. Mirrors
 // textarea.view for the parts that matter here: this composer never
 // shows line numbers and wraps at the textarea's width. DynamicHeight
@@ -99,7 +99,7 @@ func (m Model) selectionRows() []string {
 	var out []string
 	for _, logical := range strings.Split(m.Value(), "\n") {
 		for wi, row := range wrapLikeTextarea(logical, inner) {
-			out = append(out, promptCells(promptWidth, wi == 0)+strings.TrimRight(row, " "))
+			out = append(out, promptCells(promptGlyph(m.Tier), promptWidth, wi == 0)+strings.TrimRight(row, " "))
 		}
 	}
 	if len(out) > h {
@@ -115,12 +115,12 @@ func (m *Model) invalidateSelection() {
 	m.selValue = ""
 }
 
-// promptCells is the prompt area as plain cells: the "> " glyph on the
+// promptCells is the prompt area as plain cells: the prompt glyph on the
 // first logical row, two spaces of continuation indent after - matching
 // SetPromptFunc. Display width decides how many cells it occupies,
 // which is what the selection coordinates count.
-func promptCells(w int, first bool) string {
-	prompt := "> "
+func promptCells(glyph string, w int, first bool) string {
+	prompt := glyph
 	if !first {
 		prompt = ""
 	}

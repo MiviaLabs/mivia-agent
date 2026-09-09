@@ -25,7 +25,7 @@ func (h echoInputHandler) Invoke(_ context.Context, req runtime.Request) (json.R
 	return json.RawMessage(`{"ok":true}`), nil
 }
 
-func resumeFixture(t *testing.T, snap ledger.TaskSnapshot) (*coordinator, *ledger.StorageLedgerRepository, chan json.RawMessage) {
+func resumeFixture(t *testing.T, snap ledger.TaskSnapshot) (*Coordinator, *ledger.StorageLedgerRepository, chan json.RawMessage) {
 	t.Helper()
 	store := storage.NewMemory()
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -58,7 +58,7 @@ func resumeFixture(t *testing.T, snap ledger.TaskSnapshot) (*coordinator, *ledge
 		t.Fatal(err)
 	}
 	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
-	return New(fresh, p).(*coordinator), fresh, seen
+	return New(fresh, p), fresh, seen
 }
 
 // The defect: resume rebuilt Task{ID, Name, DependsOn} and dropped Input, so

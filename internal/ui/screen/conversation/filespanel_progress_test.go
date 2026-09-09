@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -229,32 +230,92 @@ func TestElapsedForFreezesOnTerminal(t *testing.T) {
 	}
 }
 
-// TestPanelAgentRowRendersElapsedToolsStep pins the two-line row shape: the
-// agent's name/status/badge on line 1, an indented "Elapsed: .. , Tools:
-// N, Step: N" metrics line on line 2 - moved out of the chat transcript
-// and into the sidebar, per the UX request this replaces.
+// TestPanelAgentRowRendersElapsedToolsStep pins the two-line row shape:
+// the agent's name/status/badge on line 1, an indented elapsed/tools/step
+// metrics line on line 2 - moved out of the chat transcript and into the
+// sidebar, per the UX request this replaces.
 func TestPanelAgentRowRendersElapsedToolsStep(t *testing.T) {
 	s := New(loadTheme(t), theme.TierASCII, nil, nil, nil, 40, fixedNow)
 	row := subagentRow{
 		ID: "task-1", Status: "running", Step: 29, ToolCalls: 142,
 		StartedAt: fixedNow().Add(-(10*time.Minute + 40*time.Second)),
 	}
-	lines := s.panelAgentRow(row, false)
+	lines := s.panelAgentRow(row, 40, false)
 	if len(lines) != 2 {
 		t.Fatalf("panelAgentRow returned %d lines, want 2: %v", len(lines), lines)
 	}
-	plain := ansi.Strip(lines[1])
-	for _, want := range []string{"Elapsed: 10m 40s", "Tools: 142", "Step: 29"} {
-		if !strings.Contains(plain, want) {
-			t.Errorf("metrics line %q missing %q", plain, want)
-		}
+	if strings.Contains(ansi.Strip(lines[0]), "[running]") {
+		t.Errorf("name line %q contains text status badge [running]", ansi.Strip(lines[0]))
+	}
+	// Visual indicator check:
+	if !strings.Contains(lines[0], s.subagentMark("running")) {
+		t.Errorf("name line %q missing visual indicator for running", lines[0])
+	}
+	// The elapsed time survives at every sidebar width; how many of the
+	// other facts fit beside it is agentMetrics's business, pinned by
+	// TestAgentMetricsDropsWholeFactsInsteadOfClipping.
+	if plain := ansi.Strip(lines[1]); !strings.Contains(plain, "10m 40s") {
+		t.Errorf("metrics line %q does not carry the elapsed time", plain)
 	}
 	if strings.Contains(ansi.Strip(lines[0]), "29/") {
 		t.Errorf("name line %q still carries the old inline step badge", ansi.Strip(lines[0]))
 	}
 }
 
-// TestPanelWindowGroupsNeverSplitsAGroup pins the windowing contract added
+// TestAgentMetricsDropsWholeFactsInsteadOfClipping is the discriminator
+// for the metrics line fitting the sidebar. The line used to be one fixed
+// string handed to the width clipper, which on a narrow sidebar produced
+// "Elapsed: 0s, Tools:" - a label with its number sliced off, so the row
+// showed a fact's name and not the fact. Every surviving part must now be
+// whole, and elapsed - what a reader watching a long run is actually
+// watching - must be the last to go.
+func TestAgentMetricsDropsWholeFactsInsteadOfClipping(t *testing.T) {
+	row := subagentRow{Status: "running", Step: 29, ToolCalls: 142}
+	elapsed := 10*time.Minute + 40*time.Second
+	for _, inner := range []int{6, 10, 14, 20, 24, 30, 40, 60} {
+		got := ansi.Strip(agentMetrics(row, elapsed, inner))
+		if inner >= len(agentMetricsIndent)+len("10m 40s") && ansi.StringWidth(got) > inner {
+			t.Errorf("inner=%d: metrics line %q is %d columns wide", inner, got, ansi.StringWidth(got))
+		}
+		if !strings.Contains(got, "10m 40s") {
+			t.Errorf("inner=%d: elapsed was dropped before the other facts: %q", inner, got)
+		}
+		// No fact may appear half-written: every part the line kept must
+		// carry its number.
+		for _, half := range []string{"tool", "step"} {
+			if strings.HasSuffix(strings.TrimSpace(got), half) {
+				t.Errorf("inner=%d: metrics line ends mid-fact: %q", inner, got)
+			}
+		}
+	}
+	wide := ansi.Strip(agentMetrics(row, elapsed, 60))
+	for _, want := range []string{"10m 40s", "142 tools", "step 29"} {
+		if !strings.Contains(wide, want) {
+			t.Errorf("a wide sidebar dropped %q: %q", want, wide)
+		}
+	}
+}
+
+// TestSubagentMarkAnimatesWithStatuslineFrame tests that animated states
+// advance their glyph with the statusline frame.
+func TestSubagentMarkAnimatesWithStatuslineFrame(t *testing.T) {
+	th := loadTheme(t)
+	s := New(th, theme.TierTrueColor, nil, nil, nil, 80, fixedNow)
+
+	// At frame 0 vs frame 1 vs frame 2
+	m0 := s.subagentMark("running")
+	// Update statusline directly with TickMsg when active:
+	s.statusline.Start("running", fixedNow())
+	m1 := s.subagentMark("running")
+	s.statusline, _ = s.statusline.Update(statusline.TickMsg{})
+	m2 := s.subagentMark("running")
+
+	if m1 == m2 {
+		t.Errorf("subagentMark glyph did not animate across statusline frames: %q == %q", m1, m2)
+	}
+	_ = m0
+}
+
 // for two-line agent rows: clipping to a tight maxRows must drop or keep a
 // whole group (an agent's name+metrics pair), never leave a metrics line
 // stranded without its name line above it.
@@ -347,5 +408,115 @@ func TestObserveAgentHistory_UpdatesRunningAgent(t *testing.T) {
 	p.observeAgentHistory("task-1", "completed")
 	if p.agents[0].Status != "completed" {
 		t.Errorf("status = %q, want completed", p.agents[0].Status)
+	}
+}
+
+// TestSubagentMarkEveryStatusBranch covers subagentMark's remaining status
+// cases: "running" and "stalled" already have dedicated coverage elsewhere
+// (agent_stall_test.go, TestObserveAgentHistory_...), but "thinking", every
+// name in the failed/error/interrupted/timed_out group, "cancelled"/
+// "canceled", and the default (unknown status) case were never exercised.
+func TestSubagentMarkEveryStatusBranch(t *testing.T) {
+	s := newTestScreen(t)
+	for _, status := range []string{
+		"thinking", "failed", "error", "interrupted", "timed_out",
+		"completed", "done", "cancelled", "canceled", "unknown-status",
+	} {
+		if got := s.subagentMark(status); got == "" {
+			t.Errorf("subagentMark(%q) = empty string, want a rendered glyph", status)
+		}
+	}
+}
+
+// TestMatchesAgentID_ExactMatch pins matchesAgentID's own exact-equality
+// fast path, distinct from TestMatchesAgentID_ReverseNamespaced (which
+// covers the namespace-stripped fallback).
+func TestMatchesAgentID_ExactMatch(t *testing.T) {
+	if !matchesAgentID("task-1", "task-1") {
+		t.Fatal("matchesAgentID(x, x) = false, want true")
+	}
+}
+
+// TestAgentIndex_TwoAmbiguousSuffixMatchesReturnsMiss pins agentIndex's
+// own ambiguity guard: two rows whose namespaced ids share the SAME bare
+// suffix as id must not let a second match silently pick the first one.
+func TestAgentIndex_TwoAmbiguousSuffixMatchesReturnsMiss(t *testing.T) {
+	rows := []subagentRow{{ID: "call-a:task-1"}, {ID: "call-b:task-1"}}
+	if got := agentIndex(rows, "task-1"); got != -1 {
+		t.Fatalf("agentIndex() = %d, want -1 for an ambiguous bare id", got)
+	}
+}
+
+// TestAmbiguousAgentID_TrueWithTwoMatches pins ambiguousAgentID's own
+// count++ branch: it is only exercised by an id with more than one
+// distinct-ID namespaced match.
+func TestAmbiguousAgentID_TrueWithTwoMatches(t *testing.T) {
+	rows := []subagentRow{{ID: "call-a:task-1"}, {ID: "call-b:task-1"}}
+	if !ambiguousAgentID(rows, "task-1") {
+		t.Fatal("ambiguousAgentID() = false, want true for two namespaced matches")
+	}
+}
+
+// TestObserveAgentStart_AmbiguousIDIsANoop pins observeAgentStart's own
+// ambiguous-id early return: a start event for a bare id that matches two
+// existing namespaced rows must not append a spurious third row.
+func TestObserveAgentStart_AmbiguousIDIsANoop(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-a:task-1", "worker-a")
+	p.observeAgentStart("call-b:task-1", "worker-b")
+	p.observeAgentStart("task-1", "ambiguous")
+	if len(p.agents) != 2 {
+		t.Fatalf("expected the ambiguous bare-id start to be a no-op, got %d rows: %+v", len(p.agents), p.agents)
+	}
+}
+
+// TestObserveAgentEnd_AmbiguousIDIsANoop mirrors the start-side guard
+// above for observeAgentEnd: an end event for an ambiguous bare id must
+// not mutate either matching row's status.
+func TestObserveAgentEnd_AmbiguousIDIsANoop(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-a:task-1", "worker-a")
+	p.observeAgentStart("call-b:task-1", "worker-b")
+	p.observeAgentEnd("task-1", true)
+	for _, a := range p.agents {
+		if a.Status != "running" {
+			t.Fatalf("ambiguous end changed a row's status: %+v", p.agents)
+		}
+	}
+}
+
+// TestObserveAgentHistory_RenamesAnExistingRow pins the name != "" branch
+// of observeAgentHistory's existing-row update path (as opposed to the
+// status-only update TestObserveAgentHistory_UpdatesRunningAgent covers).
+func TestObserveAgentHistory_RenamesAnExistingRow(t *testing.T) {
+	var p panel
+	p.observeAgentStart("task-1", "old-name")
+	p.observeAgentHistory("task-1", "completed", "new-name")
+	if p.agents[0].Name != "new-name" {
+		t.Fatalf("Name = %q, want the history rename to take", p.agents[0].Name)
+	}
+}
+
+// TestObserveAgent_RenamesAnExistingRunningRow pins observeAgent's own
+// pr.AgentName != "" branch on an already-tracked row.
+func TestObserveAgent_RenamesAnExistingRunningRow(t *testing.T) {
+	var p panel
+	p.observeAgentStart("task-1", "old-name")
+	p.observeAgent("task-1", &uievent.Progress{AgentName: "renamed", Status: "running"})
+	if p.agents[0].Name != "renamed" {
+		t.Fatalf("Name = %q, want the progress rename to take", p.agents[0].Name)
+	}
+}
+
+// TestObserveAgent_AmbiguousNewIDIsANoop pins observeAgent's own
+// ambiguous-id guard on the NEW-row path (distinct from the
+// already-tracked-row path every other observeAgent test drives).
+func TestObserveAgent_AmbiguousNewIDIsANoop(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-a:task-1", "worker-a")
+	p.observeAgentStart("call-b:task-1", "worker-b")
+	p.observeAgent("task-1", &uievent.Progress{Status: "running"})
+	if len(p.agents) != 2 {
+		t.Fatalf("expected the ambiguous bare-id progress event to be a no-op, got %d rows: %+v", len(p.agents), p.agents)
 	}
 }

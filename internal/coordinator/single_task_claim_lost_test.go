@@ -53,7 +53,7 @@ func TestSingleTaskAdmissionWinnerJoinsWhenClaimLost(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	c := New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1}))
 
 	req := EnsureRunRequest{
 		RunID:          NewRunID(),

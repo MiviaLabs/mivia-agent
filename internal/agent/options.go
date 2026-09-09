@@ -24,14 +24,40 @@ type UnadmittedToolResult struct {
 	// all (not advertised, a hallucinated name); the caller falls through to
 	// its own generic "not available" denial. True for every other case.
 	Handled bool
-	// Ran is true when the tool was actually executed synchronously and
-	// Content is its real, successful result: the caller must render it
-	// exactly like an ordinary successful tool call - no "error: " prefix,
-	// no failed tool_end, no denial framing anywhere the model or the
-	// operator can see. False means Content is a human-readable denial
-	// reason instead (e.g. staged but could not run synchronously); the
-	// caller applies its own "error: " framing as before.
+	// Execute, when non-nil, is a tool the host has AUTHORIZED for this call
+	// but which is absent from the SDK registry - the deferred-tool case. The
+	// loop runs it through the same shim an admitted call uses
+	// (RunUnadmittedTool), so every execution contract holds by construction.
+	//
+	// The host decides; the loop executes. That split is deliberate: approval
+	// has to happen before the host charges an admission attempt or stages a
+	// publication, so it cannot be deferred to here - and execution has to
+	// happen through the shim, so it cannot be done there. Returning the tool
+	// is what lets each side own its half.
+	//
+	// When set, Ran/Failed/Content are ignored: the shim produces them.
+	Execute tools.Tool
+	// Ran is true when the tool call REACHED THE DISPATCHER and Content is
+	// its real result: the caller renders it exactly like an ordinary
+	// admitted tool call - no "error: " prefix and no denial framing of its
+	// own. False means Content is a human-readable denial reason instead
+	// (e.g. staged but could not run synchronously); the caller applies its
+	// own "error: " framing as before.
+	//
+	// Ran does NOT mean the call succeeded - see Failed. It used to, and
+	// that is exactly why an executed-then-errored call had to report
+	// Ran=false to avoid being rendered green, which made the caller tell
+	// the model the call never happened and to retry it. The two questions
+	// - did it run, did it succeed - are now two fields, because collapsing
+	// them left no truthful answer for a call that ran and failed.
 	Ran bool
+	// Failed marks a Ran call that did not succeed: the tool errored, or a
+	// PreToolUse hook blocked it, or approval refused it. The caller records
+	// a FAILED outcome for it, which is what stops the TUI, the NDJSON
+	// status mapping and any remote viewer from showing a refusal or a
+	// broken tool as a completed call. Meaningless when Ran is false, where
+	// the caller already records a failure.
+	Failed bool
 	// Content is the tool's real result (Ran) or the denial text (!Ran).
 	Content string
 	// HookRuns are the lifecycle hooks that executed for this call, for the
@@ -231,10 +257,33 @@ type Options struct {
 	// compiled redaction policy applied to summary input and output through
 	// the summary validators.
 	SummaryConfig SummaryConfig
+	// PreferSDKCompaction opts a turn that ALSO carries a
+	// PreparationManager into the SDK's own mid-run Window compaction
+	// (sdkCompactionAdopted), instead of the PreparationManager
+	// driving compaction through the per-request Trim pass
+	// (sdkPrepareTrim). Ignored when PreparationManager is nil: that
+	// case already adopts whenever MaxContextTokens and
+	// SummaryConfig.Summarizer are both set, unaffected by this
+	// field. Every existing production call site wires a
+	// PreparationManager, so this field defaults to false and must be
+	// set explicitly - flipping the default would silently change
+	// every production turn's compaction mechanism at once. See
+	// plans/sdk-window-compaction-adoption-plan.md.
+	PreferSDKCompaction bool
 	// BeforeStep, when set, is called on the loop goroutine at the top of each
 	// step before history pruning and request build (plan 53.03). Returned
 	// messages are appended to the loop history. Nil is a no-op.
 	BeforeStep func() []provider.Message
+	// ObserveRequestHistory, when set, is called on the loop goroutine at each
+	// step with the prepared history about to be sent, immediately after
+	// pruning and compaction. It is an OBSERVER: the slice must not be
+	// retained or mutated, and the hook must not block the step.
+	//
+	// It exists because the loop's carried history is only written back to the
+	// host when the turn ends, so a host that wants to describe the context
+	// mid-turn has nothing to describe until then. This is the one place the
+	// exact billed message list is in hand on every step. Nil is a no-op.
+	ObserveRequestHistory func([]provider.Message)
 	// InterruptCh, when non-nil, resolves the channel a parent can signal to
 	// softly interrupt the in-flight LLM call (plan 54). It is re-read once
 	// per LLM call. Nil disables the signal path. A steer never cancels a tool
@@ -268,7 +317,25 @@ type Options struct {
 	// one consistent read so the registry/dispatcher/spec agreement invariant
 	// (M3) holds for the step. Nil is a no-op.
 	Surface func() Surface
+	// OnToolCancelReady, when non-nil, is invoked exactly once per SDK-backed
+	// run - as soon as the run's per-turn cancel registry exists, before any
+	// tool call executes - with a ToolCanceler the host can retain past the
+	// call that constructed it and invoke later, from any goroutine, to
+	// cancel ONE in-flight tool call by its call ID without aborting the
+	// rest of the turn or any concurrent sibling call. The turn's internal
+	// state (sdkTurnState) is not exported; this is the minimal seam a host
+	// needs to reach it. A legacy (non-SDK) run never calls this hook, so a
+	// host relying on it alone sees no cancel capability on that backend -
+	// treat a nil ToolCanceler, or one that always returns false, as "not
+	// supported here" rather than an error.
+	OnToolCancelReady func(ToolCanceler)
 }
+
+// ToolCanceler cancels one in-flight tool call by its call ID. It returns
+// whether a matching in-flight call was found; a miss (already finished,
+// unknown ID, or nothing in flight) is a no-op that returns false. Safe to
+// call from any goroutine and more than once for the same ID.
+type ToolCanceler func(callID string) bool
 
 // Surface is one step's host-supplied tool surface: the registry the loop
 // dispatches against, the runtime dispatcher for per-turn dedup, the tool

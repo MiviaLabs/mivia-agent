@@ -16,10 +16,10 @@ import (
 // status, then returns a coordinator and a live (not yet canceled) run handle
 // over that run. Direct unit tests drive the DAG methods below deterministically
 // instead of racing a goroutine.
-func seededCancelRaceRun(t *testing.T, repo ledger.LedgerRepository, taskStatus string) (*coordinator, *RunHandle) {
+func seededCancelRaceRun(t *testing.T, repo ledger.LedgerRepository, taskStatus string) (*Coordinator, *RunHandle) {
 	t.Helper()
 	ctx := context.Background()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "cancel-race-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -86,7 +86,7 @@ func (getTaskFailingRepo) GetTask(context.Context, string, string) (ledger.TaskS
 // caller falls through to the normal failure path instead of inventing a cancel.
 func TestIsCancelClaimedTreatsReadFailureAsNotClaimed(t *testing.T) {
 	repo := &getTaskFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	h := c.newRunHandle("run", "", map[string]string{}, "", false)
 	if c.isCancelClaimed(h, "t1") {
 		t.Fatal("isCancelClaimed = true for an unreadable ledger; a read failure must be treated as not claimed")
@@ -99,7 +99,7 @@ func TestIsCancelClaimedTreatsReadFailureAsNotClaimed(t *testing.T) {
 // surfaced as failed with the read error joined into the run error.
 func TestStartReadyTreatsUnreadableLedgerAsFailure(t *testing.T) {
 	repo := &getTaskFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	h := c.newRunHandle("run", "", map[string]string{"t1": "attempt-1"}, "", false)
 
 	pending := map[string]subagents.Task{"t1": {ID: "t1", Name: "worker"}}
@@ -120,7 +120,7 @@ func TestStartReadyTreatsUnreadableLedgerAsFailure(t *testing.T) {
 // context is still live is not being canceled, so markCanceledWithoutResults
 // must leave every result untouched.
 func TestMarkCanceledWithoutResultsSkipsLiveRun(t *testing.T) {
-	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
+	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository())
 	h := c.newRunHandle("run", "", map[string]string{}, "", false)
 	results := map[string]subagents.Result{"t1": {TaskID: "t1", Status: "completed"}}
 	tasks := []subagents.Task{{ID: "t1", Name: "worker"}}
@@ -142,7 +142,7 @@ func TestMarkCanceledWithoutResultsSkipsLiveRun(t *testing.T) {
 func TestMarkCanceledWithoutResultsLedgerAware(t *testing.T) {
 	ctx := context.Background()
 	repo := ledger.NewMemoryLedgerRepository()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "cancel-ledger-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -230,7 +230,7 @@ func TestMarkCanceledWithoutResultsOverwritesRunningLedger(t *testing.T) {
 // overwriting blind.
 func TestMarkCanceledWithoutResultsKeepsOnLedgerReadError(t *testing.T) {
 	repo := &getTaskFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	h := c.newRunHandle("run", "", map[string]string{}, "", false)
 	h.cancel()
 	results := map[string]subagents.Result{"t1": {TaskID: "t1", Status: "failed", Err: errors.New("boom")}}
@@ -246,7 +246,7 @@ func TestMarkCanceledWithoutResultsKeepsOnLedgerReadError(t *testing.T) {
 // branch: a task with no result at all when the run is canceled (never reached
 // the pool) is given a canceled result so finalizeDAG never emits "missing".
 func TestMarkCanceledWithoutResultsFillsMissingResult(t *testing.T) {
-	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
+	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository())
 	h := c.newRunHandle("run", "", map[string]string{}, "", false)
 	h.cancel()
 	results := map[string]subagents.Result{}
@@ -263,7 +263,7 @@ func TestMarkCanceledWithoutResultsFillsMissingResult(t *testing.T) {
 // context.Canceled for the window where the ledger has already claimed the task
 // but poolCtx has not been canceled yet.
 func TestCanceledResultFallsBackToContextCanceled(t *testing.T) {
-	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
+	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository())
 	h := c.newRunHandle("run", "", map[string]string{}, "", false)
 	res := canceledResult(h, "t1")
 	if res.Status != "canceled" || !errors.Is(res.Err, context.Canceled) {

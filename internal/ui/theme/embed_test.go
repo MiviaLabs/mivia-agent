@@ -1,13 +1,23 @@
 package theme
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestEmbeddedThemesLoad(t *testing.T) {
 	themes, err := Embedded()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"mivia-dark": false, "mivia-light": false, "mivia-high-contrast": false}
+	want := map[string]bool{
+		"dracula-classic":     false,
+		"mivia-dark":          false,
+		"mivia-light":         false,
+		"mivia-high-contrast": false,
+		"nord-aurora":         false,
+	}
 	for _, th := range themes {
 		if _, ok := want[th.Name]; ok {
 			want[th.Name] = true
@@ -38,5 +48,37 @@ func TestLoadUserDirMissingIsNotError(t *testing.T) {
 	}
 	if len(themes) != 0 {
 		t.Fatalf("expected no themes for missing dir, got %v", themes)
+	}
+}
+
+func TestLoadUserDirSortsAndMarksThemesAsUserThemes(t *testing.T) {
+	dir := t.TempDir()
+	for name, themeName := range map[string]string{"z.json": "zeta", "a.json": "alpha"} {
+		data := []byte(`{"name":"` + themeName + `"}`)
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	themes, err := LoadUserDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(themes) != 2 || themes[0].Name != "alpha" || themes[1].Name != "zeta" {
+		t.Fatalf("user themes = %+v, want sorted alpha/zeta", themes)
+	}
+	for _, th := range themes {
+		if th.FirstParty {
+			t.Errorf("user theme %q marked first-party", th.Name)
+		}
+	}
+}
+
+func TestLoadUserDirRejectsUnnamedTheme(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"label":"broken"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadUserDir(dir); err == nil {
+		t.Fatal("expected unnamed user theme to be rejected")
 	}
 }

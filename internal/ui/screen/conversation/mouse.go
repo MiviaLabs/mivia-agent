@@ -40,10 +40,11 @@ func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
 }
 
 // handleClick routes one mouse click. The row layout mirrors View:
-// transcript rows, then the approval prompt, then the completion menu,
-// then the input line, and finally the status row at the bottom.
+// transcript rows, then the approval prompt, then the composer bar (with
+// the completion popup overlaid on the rows just above it), and finally
+// the status row at the bottom.
 //
-// Left button only. A click on a collapsed block header expands it; a
+// Left button only. A click on a block header opens or closes it; a
 // click on a completion row accepts it; a click on the input line
 // places the cursor. With the panel open wide the chat column keeps
 // its normal geometry (the split draws no frame around it), and the
@@ -64,6 +65,13 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	if next, cmd, handled := s.handleModalClick(x, y, topGutter); handled {
 		return next, cmd
 	}
+	if !s.embedded && y == topGutter {
+		clickCol := x - 1
+		if tab, ok := s.topbar.HitTab(clickCol); ok {
+			next, cmd := s.switchToSessionID(tab.ID)
+			return next, cmd
+		}
+	}
 	if next, cmd, handled := s.handleTopbarDoubleClick(x, y, topGutter); handled {
 		return next, cmd
 	}
@@ -83,20 +91,34 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	transcriptRows := s.transcriptHeight()
 	// The status row sits at the screen bottom, so the input row sits
 	// above it. The composer owns the exact numbers (InputRowFromBottom, InputColumnOffset).
-	inputRow := s.height - bottomGutter - 1 - s.composer.InputRowFromBottom()
+	statusRow := s.height - bottomGutter - 1
+	inputRow := statusRow - s.composer.InputRowFromBottom()
 	colOffset := s.composer.InputColumnOffset()
 	menuRows := s.composer.MenuRows()
 
-	topBorder := 0
-	if colOffset > 0 {
-		topBorder = 1
-	}
-	menuStart := inputRow - topBorder - menuRows
+	// The popup ends on the row above the bar's first row, which is
+	// Height() rows above the status row - not a fixed distance above the
+	// input row, since the textarea grows to several rows and inputRow is
+	// its last one (overlayComposerPopup anchors on the same row).
+	menuStart := statusRow - s.composer.Height() - menuRows
 
 	switch {
+	// The completion popup (slash or mention: menuRows > 0 for either) is
+	// an overlay drawn over the transcript's rows directly above the bar
+	// (menuStart .. menuStart+menuRows-1), so it is tested BEFORE the
+	// transcript: a click on it is a click on the popup, whatever the
+	// transcript drew underneath.
+	case menuRows > 0 && y >= menuStart && y < menuStart+menuRows:
+		comp := s.composer
+		if comp.MenuClickRow(y - menuStart) {
+			s.composer = comp
+		}
 	case y-transcriptTop < transcriptRows && s.transcriptShown():
-		next, expanded := s.transcript.ExpandBlockAtScreenRow(y - transcriptTop)
-		if expanded {
+		// x-1 drops the screen gutter, so the transcript sees its own
+		// column space and can tell a click on the collapse marker from
+		// one anywhere else on the header.
+		next, toggled := s.transcript.ToggleBlockAtScreenRow(x-1, y-transcriptTop)
+		if toggled {
 			s.transcript = next
 		}
 	case y == inputRow:
@@ -105,12 +127,6 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		comp := s.composer
 		comp.ClickToColumn(x - 1 - colOffset)
 		s.composer = comp
-	// The menu sits directly above the composer frame: menu rows run from menuStart to menuStart+menuRows-1.
-	case s.composer.MenuActive() && y >= menuStart && y < menuStart+menuRows:
-		comp := s.composer
-		if comp.MenuClickRow(y - menuStart) {
-			s.composer = comp
-		}
 	}
 	return s, nil
 }
@@ -175,6 +191,7 @@ func (s Screen) handleTopbarDoubleClick(x, y, topGutter int) (Screen, tea.Cmd, b
 			if !s.panel.open {
 				s.panel.openPanel()
 				s.transcript = s.transcript.ClearFocus()
+				s.syncTopbarModel()
 				s.reflow()
 				return s, tea.ClearScreen, true
 			}

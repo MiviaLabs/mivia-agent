@@ -27,7 +27,7 @@ import (
 //     (the exact condition the removed waitMailboxTerminal sleep-polled for).
 type broadcastRun struct {
 	tool    *sendToTaskTool
-	coord   coordinator.Coordinator
+	coord   *coordinator.Coordinator
 	handle  *coordinator.RunHandle
 	runID   string
 	ctx     context.Context

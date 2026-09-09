@@ -5,12 +5,12 @@ import "fmt"
 import "github.com/MiviaLabs/mivia-agent/internal/subagents"
 
 // validateTasks validates a task DAG. Returns nil if valid.
-func (c *coordinator) validateTasks(tasks []subagents.Task) error {
+func (c *Coordinator) validateTasks(tasks []subagents.Task) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("empty task list")
 	}
 	if c.pool != nil && c.pool.MaxFanout() != subagents.Unlimited && c.pool.MaxFanout() > 0 && len(tasks) > c.pool.MaxFanout() {
-		return fmt.Errorf("task count exceeds fan-out limit")
+		return fmt.Errorf("task count exceeds fan-out limit: got %d tasks, configured limit is %d; split the batch across multiple dispatch_tasks calls", len(tasks), c.pool.MaxFanout())
 	}
 	byID := map[string]bool{}
 	for _, t := range tasks {

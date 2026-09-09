@@ -576,7 +576,7 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 	}
 	reg := tools.NewRegistry()
 	dispatcher := runtime.New(runtime.Policy{})
-	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err != nil {
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"ledger_read", "list_run_events", "read_output"} {
@@ -593,11 +593,11 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 	}
 	// cliagents.RegisterSessionTool must keep rejecting unprivileged tools; these
 	// two deliberately go through registerLedgerTools instead.
-	if err := cliagents.RegisterSessionTool(dispatcher, tools.NewRegistry(), &ledgerReadTool{}); err == nil {
+	if err := cliagents.RegisterSessionTool(dispatcher, tools.NewRegistry(), &ledgerReadTool{}, nil); err == nil {
 		t.Fatal("cliagents.RegisterSessionTool accepted an unprivileged tool")
 	}
 	// Re-registering must fail rather than shadow an existing name.
-	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err == nil {
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil, nil); err == nil {
 		t.Fatal("duplicate registration was accepted")
 	}
 }
@@ -655,5 +655,23 @@ func TestLedgerReadKeepsFramingUnderResultCap(t *testing.T) {
 	if contentPos < notePos || contentPos < framePos {
 		t.Fatalf("content must be encoded after the framing fields (content=%d note=%d content_is_data=%d): %s",
 			contentPos, notePos, framePos, out)
+	}
+}
+
+// TestRegisterLedgerTools_DenylistSkipsRegistration pins the operator
+// denylist's own continue branch: a tool named on the denylist must be
+// skipped entirely rather than registered, so it never reaches the
+// registry or dispatcher.
+func TestRegisterLedgerTools_DenylistSkipsRegistration(t *testing.T) {
+	reg := tools.NewRegistry()
+	dispatcher := runtime.New(runtime.Policy{})
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil, []string{"ledger_read"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Get("ledger_read"); ok {
+		t.Fatal("ledger_read is on the denylist and must not be registered")
+	}
+	if _, ok := reg.Get("list_run_events"); !ok {
+		t.Fatal("list_run_events is not denied and must still be registered")
 	}
 }

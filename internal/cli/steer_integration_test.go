@@ -79,7 +79,7 @@ func (t pingTool) Execute(context.Context, json.RawMessage) (string, error) {
 
 type steerSendTarget struct {
 	runID, taskID string
-	coord         coordinator.Coordinator
+	coord         *coordinator.Coordinator
 	handle        *coordinator.RunHandle
 }
 
@@ -109,7 +109,7 @@ func registerSteerPing(t *testing.T, reg *tools.Registry, ready <-chan steerSend
 	}})
 }
 
-func assertSteerLedgerParent(t *testing.T, coord coordinator.Coordinator, runID, taskID string) {
+func assertSteerLedgerParent(t *testing.T, coord *coordinator.Coordinator, runID, taskID string) {
 	t.Helper()
 	list, err := coord.ListRunMessages(context.Background(), runID, taskID)
 	if err != nil {

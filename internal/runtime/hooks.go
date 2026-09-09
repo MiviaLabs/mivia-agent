@@ -112,7 +112,18 @@ func boundHookContext(text string) string {
 		return text
 	}
 	cut := text[:MaxHookContextBytes]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	// Back off across the rune at the CUT BOUNDARY only (DC-6). Validating the
+	// whole prefix (utf8.ValidString) trims all the way back to the first
+	// invalid byte ANYWHERE in the hook's text, amputating context the bound
+	// allowed while still announcing an 8 KiB cut. It is also O(n^2).
+	// DecodeLastRuneInString reports (RuneError, 1) only for a byte that cannot
+	// start a rune or an incomplete trailing sequence; a real U+FFFD decodes
+	// with size 3 and is kept. Mirrors chatsync.truncateString.
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		cut = cut[:len(cut)-1]
 	}
 	return cut + fmt.Sprintf("\n... hook context truncated at %d bytes", MaxHookContextBytes)

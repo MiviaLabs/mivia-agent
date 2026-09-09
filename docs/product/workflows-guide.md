@@ -71,6 +71,9 @@ mivia workflow delete wfr-ABCDEF1234
 # Delete a run stranded by a dead executor (claim-free or expired claim only;
 # a live executor's fresh claim is still refused)
 mivia workflow delete wfr-ABCDEF1234 --force
+
+# Remove orphaned ledger content rows left behind by deleted runs
+mivia workflow gc
 ```
 
 A run without `--allow-publish` finishes as `delivery_pending`. It stays there until someone delivers it with the grant.
@@ -81,7 +84,7 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 |------|------------|---------|-------------|
 | `--workspace <dir>` | all commands | `.` | Directory that owns the repository and run store |
 | `--config <path>` | `workflow *` commands | user default | Config file path |
-| `--force` | `workflow resume`, `workflow delete` | false | Crash recovery override: clear/take over a stale execution claim (resume), or delete a non-terminal run stranded by a dead executor (delete). A live executor's fresh claim is refused either way |
+| `--force` | `workflow resume`, `workflow deliver`, `workflow delete` | false | Crash recovery override: clear/take over a stale execution claim (resume/deliver), or delete a non-terminal run stranded by a dead executor (delete). A live executor's fresh claim is refused either way |
 | `--allow-publish` | `workflow run`, `workflow deliver`, `workflow resume` | false | Grant publish approval for the run |
 | `--accept-verifier-change` | `workflow resume` | false | Resume a run whose `[verifiers.<name>]` declarations changed after admission. Without it the resume fails closed. Acceptance is per-invocation and never rewrites the admission record, so a later resume needs the flag again while the definitions differ. Turning `go_module_baseline` on mid-run cannot be accepted |
 | `--watch` | `workflow runs` | false | Poll every 5s; return when every matched run is terminal |
@@ -229,7 +232,7 @@ Three levels of observability:
 
 While a workflow step runs, three clocks keep it observable:
 
-- The run claim is refreshed every **100s** (`DefaultClaimLease` / 3).
+- The run claim is refreshed every **40s** (`DefaultClaimLease` (2 minutes) / 3).
 - The agent sub-step emits a **30s** `subagent_heartbeat`.
 - An `agent` step's join watchdog emits a `step_heartbeat` progress event once
   per watchdog tick while the join is live: every `min(bound/8, 30s)`, i.e. up
@@ -242,9 +245,12 @@ is documented in `.agents/rules/70-long-running-heartbeat.md`.
 
 ## The shipped workflow: feature-delivery
 
-The repository ships two workflows: `feature-delivery` and `bug-fix`. This section
-documents `feature-delivery`, which runs a full plan, review, implement, and verify cycle:
-The next section documents `bug-fix`.
+The repository ships several workflows under `.mivia/workflows/`:
+`feature-delivery`, `bug-fix`, `bug-fix-fast`, and three end-to-end test
+workflows (`e2e-pr-metadata-test`, `e2e-scope-escape-test`,
+`e2e-split-test`). This section documents `feature-delivery`, which runs a
+full plan, review, implement, and verify cycle. The next section documents
+`bug-fix`.
 
 ```mermaid
 flowchart TD
@@ -539,7 +545,7 @@ on_failure = "failure"
 | `kind` | One of: `agent`, `agent_gate`, `agent_panel`, `evidence_gate`, `human_gate` |
 | `agent` | Agent name for `agent` and `agent_gate` steps; the synthesis agent for `agent_panel` steps |
 | `skill` | Skill to invoke under the agent's policy |
-| `panel` | `[steps.panel]` table for `agent_panel` steps: `failure_policy = "require_all"`, `require_distinct_bindings = true`, and 2-4 `[[steps.panel.members]]`, each with its own `id`, `agent`, `provider`, `model`, `skill`, `template`, and `output_schema` |
+| `panel` | `[steps.panel]` table for `agent_panel` steps: `failure_policy = "require_all"` (or `"allow_partial"`), `require_distinct_bindings = true`, and 2-4 `[[steps.panel.members]]`, each with its own `id`, `agent`, `provider`, `model`, `skill`, `template`, and `output_schema` |
 | `verifier` | Verifier name for `evidence_gate` steps (for example: `go-test`). Names resolve against the workspace's `[verifiers.<name>]` tables in `.mivia/mivia.toml`; the binary ships no built-in profiles. Each referenced profile's definition is pinned into the run snapshot at admission and verified on resume |
 | `template` | Prompt template file path |
 | `output_schema` | JSON schema file for output validation |
@@ -738,7 +744,7 @@ invocation.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Nothing is blocked by default — protection is opt-in. A project names what it wants protected, including `.git` and `.mivia/mivia.toml` if it wants them back (recommended: an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates); `[tools].write_path_blocklist_remove` removes an entry it (or a layer above it) added. A project that omits the key leaves `.git`, `.mivia/mivia.toml`, `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, and Go module files all writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
+Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Nothing is blocked by default — protection is opt-in. A project names what it wants protected. The recommended set is `.git`, `.githooks`, `scripts`, `Makefile`, `.mivia/hooks`, `.claude`, the config file itself, and `.mivia/policy`. An agent that can edit Git metadata can rewrite history. An agent that can plant a hook, or rewrite a gate script the hook runs, can bypass the host gates. An agent that can edit the config can delete the entries that stop it. `[tools].write_path_blocklist_remove` removes an entry it (or a layer above it) added. A project that omits the key leaves every path writable by workflow agents: Git metadata, the hooks, the config, the control-surface trees, the Go module files, and the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
 
 ### Blocked writes are a host problem, never a review failure
 

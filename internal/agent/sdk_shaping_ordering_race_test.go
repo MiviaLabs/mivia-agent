@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -56,7 +56,7 @@ func TestSDKTurnShaping_LateEnteringPredecessorStillChargesFirst(t *testing.T) {
 	runCall := func(index int, delay time.Duration) {
 		defer wg.Done()
 		time.Sleep(delay)
-		ctx := toolcallctx.WithToolCall(context.Background(), sdkToolCallFor(fmt.Sprintf("c%d", index), index))
+		ctx := sdkagentloop.WithToolCall(context.Background(), sdkToolCallFor(fmt.Sprintf("c%d", index), index))
 		out, err := mkWrapper().Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)})
 		if err != nil {
 			t.Error(err)
@@ -83,7 +83,7 @@ func TestSDKTurnShaping_LateEnteringPredecessorStillChargesFirst(t *testing.T) {
 // index 0 charges first however late its goroutine is scheduled.
 func TestSDKTurnShaping_ExactWaitWithBatchOrder(t *testing.T) {
 	counter := newTurnShapeCounter()
-	order := toolcallctx.NewBatchOrder([]int{0, 1})
+	order := sdkagentloop.NewBatchOrder([]int{0, 1})
 	body := strings.Repeat("x", 48<<10)
 	budget := 64 << 10
 
@@ -99,8 +99,8 @@ func TestSDKTurnShaping_ExactWaitWithBatchOrder(t *testing.T) {
 	runCall := func(index int, delay time.Duration) {
 		defer wg.Done()
 		time.Sleep(delay)
-		ctx := toolcallctx.WithBatchOrder(context.Background(), order)
-		ctx = toolcallctx.WithToolCall(ctx, sdkToolCallFor(fmt.Sprintf("c%d", index), index))
+		ctx := sdkagentloop.WithBatchOrder(context.Background(), order)
+		ctx = sdkagentloop.WithToolCall(ctx, sdkToolCallFor(fmt.Sprintf("c%d", index), index))
 		out, err := mkWrapper().Run(ctx, sdktools.InOut{Value: json.RawMessage(`{}`)})
 		if err != nil {
 			t.Error(err)
@@ -130,11 +130,11 @@ func TestSDKTurnShaping_ExactWaitWithBatchOrder(t *testing.T) {
 func TestSDKTurnShaping_SettledPredecessorResolvesInstantly(t *testing.T) {
 	t.Run("already settled", func(t *testing.T) {
 		counter := newTurnShapeCounter()
-		order := toolcallctx.NewBatchOrder([]int{0, 2})
+		order := sdkagentloop.NewBatchOrder([]int{0, 2})
 		order.Settle(0) // rejected pre-registry; index 1 was never dispatched
 
-		ctx := toolcallctx.WithBatchOrder(context.Background(), order)
-		ctx = toolcallctx.WithToolCall(ctx, sdkToolCallFor("c2", 2))
+		ctx := sdkagentloop.WithBatchOrder(context.Background(), order)
+		ctx = sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c2", 2))
 		w := &turnShapeWrapper{
 			inner: &bigBodyTool{body: "small"}, toolName: "big_body_tool",
 			counter: counter, env: newShapeEnv(nil, "s"), budget: 64 << 10,
@@ -150,10 +150,10 @@ func TestSDKTurnShaping_SettledPredecessorResolvesInstantly(t *testing.T) {
 
 	t.Run("settles mid-wait", func(t *testing.T) {
 		counter := newTurnShapeCounter()
-		order := toolcallctx.NewBatchOrder([]int{0, 1})
+		order := sdkagentloop.NewBatchOrder([]int{0, 1})
 
-		ctx := toolcallctx.WithBatchOrder(context.Background(), order)
-		ctx = toolcallctx.WithToolCall(ctx, sdkToolCallFor("c1", 1))
+		ctx := sdkagentloop.WithBatchOrder(context.Background(), order)
+		ctx = sdkagentloop.WithToolCall(ctx, sdkToolCallFor("c1", 1))
 		w := &turnShapeWrapper{
 			inner: &bigBodyTool{body: "small"}, toolName: "big_body_tool",
 			counter: counter, env: newShapeEnv(nil, "s"), budget: 64 << 10,

@@ -36,6 +36,19 @@ func unsupportedSDKOption(field string) error {
 	return fmt.Errorf("agent: SDK backend does not support Options.%s", field)
 }
 
+// sdkExtensions returns out.Extensions, allocating it on first use. The
+// SDK's Options/Extensions split (agentloop.Options.Extensions) moved
+// OnToolCallError, Surface, StreamingWriter, WorkBudget, ToolBudget, and
+// ContinueOnStop off Options itself; a nil Extensions means every member
+// at its zero value, so lazily allocating here changes nothing the SDK's
+// own Validate observes.
+func sdkExtensions(out *sdkagentloop.Options) *sdkagentloop.Extensions {
+	if out.Extensions == nil {
+		out.Extensions = &sdkagentloop.Extensions{}
+	}
+	return out.Extensions
+}
+
 // buildAgentLoopOptions projects a Loop and CLI Options onto the
 // SDK's agentloop.Options. Completer and Tools come from the Loop;
 // the remaining mapped fields come from Options. Every unsupported
@@ -54,9 +67,11 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	}
 	turn := newSDKTurnState()
 	seedSDKTurnState(turn, opts)
+	if opts.OnToolCancelReady != nil {
+		opts.OnToolCancelReady(turn.cancelCall)
+	}
 	// Item 8: WorkLimits token reservations ride the SDK's WorkBudget
-	// hook over the loop's workLimitMeter, with the legacy outputCap
-	// clamp on Options.MaxTokens.
+	// hook over the loop's workLimitMeter (legacy outputCap clamp).
 	budgetHook, clampedMaxTokens, err := newSDKWorkBudgetHook(l, opts)
 	if err != nil {
 		return sdkagentloop.Options{}, nil, err
@@ -71,38 +86,37 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	}
 	// MaxSteps passes through verbatim. The SDK's Validate accepts 0
 	// and treats it as uncapped via unboundedOrSet (MaxInt32), matching
-	// the legacy loop's MaxSteps <= 0 == unbounded contract. A
-	// positive MaxSteps is the requested cap as-is. The previous
-	// defaultSDKMaxIterations = 25 substitution was removed: it capped
-	// the SDK path at a value the legacy loop never honored, breaking
-	// the parity the field-mapping doc advertises.
+	// the legacy loop's MaxSteps <= 0 == unbounded contract. The
+	// previous defaultSDKMaxIterations = 25 substitution was removed:
+	// it capped the SDK path below the parity the field-mapping doc
+	// advertises.
 	maxIterations := opts.MaxSteps
 	out := sdkagentloop.Options{
-		Completer:          completer,
-		Tools:              sdkTools,
-		Model:              opts.Model,
-		MaxIterations:      maxIterations,
-		MaxCallsPerTurn:    opts.MaxToolCallsPerBatch,
-		MaxConcurrentTools: opts.MaxConcurrentTools,
-		SessionID:          opts.SessionID,
+		Completer: completer,
+		Tools:     sdkTools,
+		Model:     opts.Model,
+		Bounds:    sdkagentloop.Bounds{MaxIterations: maxIterations, MaxCallsPerTurn: opts.MaxToolCallsPerBatch, MaxConcurrentTools: opts.MaxConcurrentTools},
+		SessionID: opts.SessionID,
+	}
+	if err := adoptSDKRows(l, &out, opts, completer, turn); err != nil {
+		return sdkagentloop.Options{}, nil, err
 	}
 	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's
-	// TurnResultBudget stays unset because its semantics (omit the
+	// result-budget field stays unset because its semantics (omit the
 	// over-budget result) contradict the CLI's degrade-with-notice
 	// contract. The negative derived-budget mode has no SDK analogue
 	// and was rejected above.
 	// WorkLimits.MaxTurns clamps MaxIterations, mirroring the legacy
 	// clamp at loop.go's runOnceLegacy (see applySDKStepBound).
 	applySDKStepBound(&out, opts)
-	// Stop-time continuations ride the SDK's own ContinueOnStop hook;
-	// see installSDKContinueOnStop.
+	// Stop-time continuations ride the SDK's ContinueOnStop hook.
 	installSDKContinueOnStop(l, &out, opts, turn, turnUserText)
 	// MaxToolCalls rides the ToolBudget bridge (agentloop_toolbudget.go),
 	// sharing l.workLimits with the WorkBudget bridge above.
-	out.WorkBudget = budgetHook
-	out.ToolBudget = newSDKToolBudget(l)
+	sdkExtensions(&out).WorkBudget = budgetHook
+	sdkExtensions(&out).ToolBudget = newSDKToolBudget(l)
 	// Surface rotation: the CLI's per-step Surface hook (legacy
 	// applySurfaceHook) bridges onto the SDK's own Options.Surface,
 	// consulted at the top of every iteration from the second one on -
@@ -116,13 +130,15 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	// returns nil (keep prior surface); RunAgentLoopOnce fails the run
 	// with the recorded error after RunSteerable returns.
 	if opts.Surface != nil {
-		out.Surface = bridgeSDKBridgeSurface(l, opts, turn)
+		sdkExtensions(&out).Surface = bridgeSDKBridgeSurface(l, opts, turn)
 	}
 	// WatchdogInterval deliberately does NOT map to
-	// HeartbeatInterval: a positive HeartbeatInterval requires a Bus
-	// the CLI path does not wire, and Validate would reject the
-	// options. The watchdog's steer-latency role is carried by the
-	// MailboxPending poller in the steer bridge instead.
+	// HeartbeatInterval: the heartbeat row is adopted only where an
+	// event surface is wired (RunAgentLoopOnce's
+	// installSDKEventBridge), because a positive HeartbeatInterval
+	// without a Bus fails the SDK's Validate. The watchdog's
+	// steer-latency role is carried by the MailboxPending poller in
+	// the steer bridge instead.
 	return out, turn, nil
 }
 
@@ -141,7 +157,7 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 // positive turn limit becomes the bound even above the default 25.
 func applySDKStepBound(out *sdkagentloop.Options, opts Options) {
 	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
-		out.MaxIterations = limit
+		out.Bounds.MaxIterations = limit
 	}
 }
 
@@ -155,7 +171,7 @@ func applySDKStepBound(out *sdkagentloop.Options, opts Options) {
 // every completed call of the turn (the deleted replay_step_budget.go's
 // rule, which outlived that file's budget arithmetic).
 func installSDKContinueOnStop(l *Loop, out *sdkagentloop.Options, opts Options, turn *sdkTurnState, turnUserText string) {
-	out.ContinueOnStop = newSDKContinueOnStop(l, *out, opts, turn, turnUserText)
+	sdkExtensions(out).ContinueOnStop = newSDKContinueOnStop(l, *out, opts, turn, turnUserText)
 }
 
 // attachSDKObservability wires the run's live stream tee. The operator wire
@@ -171,7 +187,7 @@ func attachSDKObservability(out *sdkagentloop.Options, opts Options, turn *sdkTu
 func attachSDKStreamingWriter(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
 	if opts.FinalWriter != nil {
 		tw := &teeWriter{w: opts.FinalWriter, opts: opts}
-		out.StreamingWriter = tw
+		sdkExtensions(out).StreamingWriter = tw
 		turn.setStreamTee(tw)
 	}
 }
@@ -206,7 +222,8 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
 		streamTransport:       opts.WireStreamTransport,
-	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage)
+		contextWindow:         sdkContextWindowForwarded(opts),
+	}, func(finishReason string) { l.LastFinishReason = finishReason }, turn.bumpIteration, onUsage, l.contextAccounting())
 	if err != nil {
 		return nil, err
 	}
@@ -232,32 +249,36 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 	if opts.ToolRunTimeout > 0 {
 		runTimeout = opts.ToolRunTimeout
 	}
-	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg, sdktools.WithDefaultRunTimeout(runTimeout))
+	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg, runTimeout)
 	if err != nil {
 		return nil, err
 	}
-	applyDispatcherShim(sdkReg, cliReg, opts, turn)
-	emitPending := func(toolCallID, name, detail, input string) {
-		// toolCallID is the in-flight call id from the SDK's
-		// toolcallctx. It must reach EventToolPending.ToolCallID so the
-		// UI's approval resolver can match a user decision back to this
-		// specific gate; without it, every Resolve is a silent no-op and
-		// the gate blocks forever after approval. The legacy path stamps
-		// the same field from task.call.ID at loop_tool_exec.go:70; this
-		// closure is its SDK-path equivalent.
-		emit(opts, Event{
-			Kind:       EventToolPending,
-			ToolCallID: toolCallID,
-			Name:       name,
-			Detail:     detail,
-			Input:      input,
-		})
+	if err := applyDispatcherShim(sdkReg, cliReg, opts, turn); err != nil {
+		return nil, err
+	}
+	// toolCallID is the in-flight call id from the SDK's toolcallctx. It must
+	// reach EventToolPending.ToolCallID so the UI's approval resolver can
+	// match a user decision back to this specific gate; without it, every
+	// Resolve is a silent no-op and the gate blocks forever after approval.
+	// The legacy path stamps the same field from task.call.ID at
+	// loop_tool_exec.go:70. Shared with the deferred-tool path in
+	// internal/chat, which needs an identical prompt.
+	emitPending := ToolPendingEmitter(opts)
+	recordDenied := func(toolCallID, name, reason string) {
+		// Record an OUTCOME rather than emitting a tool_end directly. The
+		// loop's emitter already owns that emission, and emitting here as
+		// well would give a refused call two tool_end events. Recording is
+		// also what carries the REASON: the no-outcome fallback can only
+		// report that the call failed, not why, and a denial with no cause
+		// is most of the way back to a denial nobody saw.
+		turn.recordToolOutcome(toolCallID, name, "tool call denied by user: "+reason, true)
 	}
 	if err := sdkadapter.WrapRegistryWithAdmission(sdkReg, cliReg, sdkadapter.AdmissionPredicates{
 		ApprovalGate:     opts.ApprovalGate,
 		ApprovalStanding: opts.ApprovalStanding,
 		ApprovalPolicy:   opts.ApprovalPolicy,
 		EmitPending:      emitPending,
+		RecordDenied:     recordDenied,
 		// StagedMessage and UnadmittedToolHandler are NOT threaded into
 		// the SDK admission wrapper on purpose: the SDK's decodeAndRun
 		// rejects calls to tools absent from the SDK registry BEFORE
@@ -273,9 +294,9 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 		return nil, err
 	}
 	applyRefOnlyShim(sdkReg, cliReg, opts.RefOnlyTools, turn.currentSpool(), BatchDegradeFloorBytes, opts.SessionID, turn)
-	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
+	// Host-side turn shaping replaces the SDK's result budget: the
 	// CLI contract degrades with an honest notice and never omits a
-	// call, so the SDK's TurnResultBudget stays unset.
+	// call, so the SDK's result budget stays unset.
 	applyTurnShaping(sdkReg, cliReg, opts, turn)
 	return sdkReg, nil
 }
@@ -362,14 +383,14 @@ func cliToolSpecsToSDKDefs(specs []provider.ToolSpec) []sdkshape.ToolDefinition 
 // Fields the SDK accepts at zero but interprets differently are NOT
 // rejected here: the accepted-semantic-gap table lives on the
 // agentloop adapter's package doc. Today that is a negative
-// BatchResultBudgetBytes (the SDK's TurnResultBudget is a literal
+// BatchResultBudgetBytes (the SDK's former result-budget field was a literal
 // byte budget only, not the CLI's "derived from MaxContextTokens" mode).
 // It passes through to the SDK silently; the CLI caller accepts the
 // difference. MaxConcurrentTools is carried via sdkagentloop.Options.MaxConcurrentTools.
 func rejectUnsupportedSDKBatches(opts Options) error {
 	// All options are carried on the SDK path: Surface via bridgeSDKBridgeSurface,
 	// BeforeStep via Steer injector, RefOnlyTools and RemainderSpool via ref-only shim,
-	// BatchResultBudgetBytes via TurnResultBudget, MailboxPendingInterrupt via bridgeSteerSignals,
+	// BatchResultBudgetBytes via the host shaping wrapper, MailboxPendingInterrupt via bridgeSteerSignals,
 	// WorkLimits fields via buildAgentLoopOptions/WorkBudget/ToolBudget bridges,
 	// and MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
 	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,

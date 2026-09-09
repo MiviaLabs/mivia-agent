@@ -14,7 +14,7 @@ import (
 )
 
 func TestAskRegistryOneAnswer(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	c.RegisterAsk("run", "task-a", "reviewer", "msg-ask-1", nil)
 	if n := c.AsksUsedByTask("run", "task-a"); n != 1 {
 		t.Fatalf("asks used = %d", n)
@@ -36,7 +36,7 @@ func TestAskRegistryOneAnswer(t *testing.T) {
 		t.Fatal("open lookup after answer")
 	}
 	// Nil asks registry paths.
-	bare := &coordinator{}
+	bare := &Coordinator{}
 	if _, err := bare.ClaimAskAnswer("x"); err == nil {
 		t.Fatal("nil asks")
 	}
@@ -44,7 +44,7 @@ func TestAskRegistryOneAnswer(t *testing.T) {
 		t.Fatal("nil complete")
 	}
 	// Complete on open ask.
-	c2 := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c2 := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	c2.RegisterAsk("r", "t", "a", "m-open", nil)
 	if err := c2.CompleteAskAnswer("m-open"); err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestAskRegistryOneAnswer(t *testing.T) {
 }
 
 func TestAskChainInfoCycleAndDepth(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	c.RegisterAsk("run", "t1", "a", "ask1", nil)
 	depth, cycle, anc := c.AskChainInfo("ask1", "b")
 	if depth != 1 || cycle || len(anc) != 1 {
@@ -133,7 +133,7 @@ func TestSpawnReferralFromAskRunsHandler(t *testing.T) {
 func TestFindLiveTaskByRoleQueuedAndRetryPending(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	// Active run (parent keeps handle live).
 	_ = d.Register(runtime.Subagent, "p", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
 		<-ctx.Done()
@@ -222,7 +222,7 @@ func TestFindLiveTaskByRole(t *testing.T) {
 // (CompleteAskAnswer does not decrement asksByTask → the 5th register is
 // refused).
 func TestAskSlotReleasedOnAnswer(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	const maxAsks = 4
 	for i := 0; i < maxAsks; i++ {
 		if !c.TryRegisterAsk("run", "t1", "worker", fmt.Sprintf("ask-%d", i), nil, maxAsks) {
@@ -250,7 +250,7 @@ func TestAskSlotReleasedOnAnswer(t *testing.T) {
 // SealOpenAskAnswer for a never-claimed ask) must release its per-task quota
 // slot. RED on HEAD (no decrement → the 5th register is refused).
 func TestAskSlotReleasedOnSeal(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	const maxAsks = 4
 	for i := 0; i < 3; i++ {
 		if !c.TryRegisterAsk("run", "t1", "worker", fmt.Sprintf("ask-%d", i), nil, maxAsks) {
@@ -284,7 +284,7 @@ func TestAskSlotReleasedOnSeal(t *testing.T) {
 // terminal end — it must NOT release the quota slot (a claimed ask is still
 // occupying its budget).
 func TestUnclaimDoesNotReleaseSlot(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	if !c.TryRegisterAsk("run", "t1", "worker", "ask-a", nil, 1) {
 		t.Fatal("register ask-a failed")
 	}
@@ -306,7 +306,7 @@ func TestUnclaimDoesNotReleaseSlot(t *testing.T) {
 // attempt-1 owner was purged at the retry boundary. Passes trivially on HEAD
 // (no release mechanism at all); pins the purge behavior of the new mechanism.
 func TestResetTaskAsksPurgesStaleOwners(t *testing.T) {
-	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
 	const maxAsks = 4
 	// Attempt 1: register one ask.
 	if !c.TryRegisterAsk("run", "t1", "worker", "ask-0", nil, maxAsks) {

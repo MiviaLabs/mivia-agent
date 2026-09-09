@@ -81,8 +81,8 @@ func TestClickComposerPositionsCursor(t *testing.T) {
 	next, _ = s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	s = next.(Screen)
 
-	// The input sits framed above the status row and bottom gutter:
-	// inputRow is 24 - 1(bottom gutter) - 1(status) - 2(composer bottom border + input row) = 20.
+	// The input sits in its padded bar above the status row and bottom gutter:
+	// inputRow is 24 - 1(bottom gutter) - 1(status) - 2(bottom padding + input row) = 20.
 	inputRow := 24 - 1 - 1 - 2
 	next, _ = s.Update(leftClick(1+2+2+3, inputRow)) // column 8 on screen == column 5 in input == after "hel"
 	s = next.(Screen)
@@ -114,10 +114,10 @@ func TestClickCompletionRowAcceptsIt(t *testing.T) {
 		t.Fatal("precondition: the menu is open")
 	}
 
-	// Layout at height 24: bottom gutter 23, status row 22, composer bottom border 21,
-	// composer input line 20, composer top border 19,
-	// menu rows 17-18 (2 rows directly above composer frame).
-	next, _ = s.Update(leftClick(4, 18)) // second menu row: "agents"
+	// Layout at height 24: bottom gutter 23, status row 22, composer bottom
+	// padding 21, composer input line 20, composer top padding 19, then the
+	// popup overlaid above the bar: footer hint 18, item rows 16-17.
+	next, _ = s.Update(leftClick(4, 17)) // second item row: "agents"
 	s = next.(Screen)
 	if s.composer.MenuActive() {
 		t.Error("clicking a row must accept it and close the menu")
@@ -361,10 +361,9 @@ func TestMouseWheel_ScrollsFileDiffWhenThreadWasCached(t *testing.T) {
 	}
 	s := threadScreen(t, stubThreads{"sa-1": thread}, true)
 
-	// Move cursor down to subagent row and open subagent thread (caches s.thread)
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Select the subagent row and open its thread (caches s.thread)
+	s.panel.selectNavKind(navAgent, 0)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if s.thread == nil || !s.panel.dialog || s.panel.dialogAgent != "sa-1" {
 		t.Fatal("precondition: subagent thread open and cached")
@@ -374,14 +373,13 @@ func TestMouseWheel_ScrollsFileDiffWhenThreadWasCached(t *testing.T) {
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	s = next.(Screen)
 
-	// Move cursor up to file row and open file diff dialog
+	// Select the file row and open its diff dialog
 	lines := make([]uievent.DiffLine, 50)
 	for i := range lines {
 		lines[i] = uievent.DiffLine{Kind: uievent.DiffLineAdd, Text: "new content line"}
 	}
 	s.panel.entries[0].Diff.Hunks = []uievent.DiffHunk{{Header: "@@ -1,5 +1,50 @@", Lines: lines}}
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	s = next.(Screen)
+	s.panel.selectNavKind(navFile, 0)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog || s.panel.dialogAgent != "" {
@@ -394,5 +392,57 @@ func TestMouseWheel_ScrollsFileDiffWhenThreadWasCached(t *testing.T) {
 
 	if s.panel.offset == 0 {
 		t.Errorf("mouse wheel down on file diff should increment panel offset, got %d", s.panel.offset)
+	}
+}
+
+// TestClickMentionRowAcceptsIt: the mention popup is the same overlay the
+// slash menu uses, drawn over the transcript above the bar. A click on one
+// of its rows must accept that mention; it must not fall through to the
+// transcript rows underneath.
+func TestClickMentionRowAcceptsIt(t *testing.T) {
+	s := sized(t, 0)
+	s.SetMentions([]composer.Mention{{Path: "alpha.go"}, {Path: "beta.go"}})
+	next, _ := s.Update(keyMsg("@"))
+	s = next.(Screen)
+	next, _ = s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	if !s.composer.MentionMenuActive() {
+		t.Fatal("precondition: the mention picker is open")
+	}
+
+	// Same rows as the slash popup: bar top padding 19, popup footer 18,
+	// item rows 16-17, popup padding 15.
+	next, _ = s.Update(leftClick(4, 17)) // second item row: beta.go
+	s = next.(Screen)
+	if s.composer.MentionMenuActive() {
+		t.Error("clicking a mention row must accept it and close the picker")
+	}
+	if got := s.composer.Value(); got != "@beta.go" {
+		t.Errorf("accepted %q, want @beta.go", got)
+	}
+}
+
+// TestClickPopupRowWithMultiLineInput: the popup sits above the bar's
+// FIRST row, and the bar grows with the textarea. With three input lines
+// the popup is two rows higher than with one; a click must be mapped
+// against the bar's real top, not a fixed distance above its last row.
+func TestClickPopupRowWithMultiLineInput(t *testing.T) {
+	s := sized(t, 0)
+	s.SetMentions([]composer.Mention{{Path: "alpha.go"}, {Path: "beta.go"}})
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	s.composer.SetValue("first line\nsecond line\n@")
+	if !s.composer.MentionMenuActive() || s.composer.Height() != 5 {
+		t.Fatalf("precondition: picker open over a three-line bar, got active=%v height=%d", s.composer.MentionMenuActive(), s.composer.Height())
+	}
+	// Rows at height 24: status 22, bottom padding 21, input rows 18-20,
+	// top padding 17, popup footer 16, item rows 14-15, popup padding 13.
+	next, _ = s.Update(leftClick(4, 15)) // second item row: beta.go
+	s = next.(Screen)
+	if s.composer.MentionMenuActive() {
+		t.Error("clicking the second item row must accept it and close the picker")
+	}
+	if got := s.composer.Value(); got != "first line\nsecond line\n@beta.go" {
+		t.Errorf("accepted %q, want the mention appended on the third line", got)
 	}
 }

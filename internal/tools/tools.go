@@ -6,9 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +82,66 @@ type Registry struct {
 	mu    sync.RWMutex
 	order []Tool
 	by    map[string]Tool
+
+	// workspace is the live confinement root this registry resolves
+	// relative paths against, for registries built by NewDefaultRegistry.
+	// It is a POINTER, not a name/bool snapshot, and every derivation
+	// (Clone, CloneForGeneration(Excluding), ScopedRegistry(WithTail))
+	// carries the same pointer forward: WorkspaceRoot/WorkspaceUnrestricted
+	// then read the operator's live Settings -> General full-disk toggle
+	// through it instead of freezing the value construction saw (bug-audit
+	// findings "full-disk access does not reach active worktree registries"
+	// / "new worktree posture depends on random map iteration"). Hand-assembled
+	// registries leave this nil, and the accessors report that as "unknown"
+	// rather than an implied confinement root.
+	workspace *workspace.Root
+}
+
+// workspaceRootPtr returns the live workspace this registry was built or
+// derived from, nil for a hand-assembled registry. Callers deriving a new
+// registry from this one carry the pointer forward so the derivation stays
+// live too.
+func (r *Registry) workspaceRootPtr() *workspace.Root {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.workspace
+}
+
+// WorkspaceRoot reports the absolute root this registry resolves relative
+// paths against; empty for hand-assembled registries.
+func (r *Registry) WorkspaceRoot() string {
+	ws := r.workspaceRootPtr()
+	if ws == nil {
+		return ""
+	}
+	return ws.Abs
+}
+
+// WorkspaceUnrestricted reports whether the registry may escape its root
+// (--full-disk); false for hand-assembled registries. Reads the live root,
+// so it reflects a Settings -> General toggle applied after construction.
+func (r *Registry) WorkspaceUnrestricted() bool {
+	ws := r.workspaceRootPtr()
+	if ws == nil {
+		return false
+	}
+	return ws.Unrestricted()
+}
+
+// SetWorkspaceUnrestricted re-arms the live confinement root this registry
+// was built or derived from. Every registry sharing that root (clones,
+// scopes, generations) observes the change immediately through
+// WorkspaceUnrestricted, since they all read the same *workspace.Root. No-op
+// for a hand-assembled registry with no workspace.
+func (r *Registry) SetWorkspaceUnrestricted(on bool) {
+	ws := r.workspaceRootPtr()
+	if ws == nil {
+		return
+	}
+	ws.SetUnrestricted(on)
 }
 
 // NewRegistry builds an empty registry.
@@ -99,6 +157,7 @@ func (r *Registry) Clone() *Registry {
 		return nil
 	}
 	out := NewRegistry()
+	out.workspace = r.workspaceRootPtr()
 	for _, tool := range r.List() {
 		out.Register(tool)
 	}
@@ -123,6 +182,7 @@ func (r *Registry) CloneForGenerationExcluding(excludedNames ...string) *Registr
 		excluded[name] = struct{}{}
 	}
 	out := NewRegistry()
+	out.workspace = r.workspaceRootPtr()
 	for _, tool := range r.List() {
 		if _, privileged := tool.(PrivilegedTool); privileged {
 			continue
@@ -159,6 +219,30 @@ func (r *Registry) List() []Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]Tool(nil), r.order...)
+}
+
+// ExternalOrigin is implemented by a tool that a server supplied at runtime
+// rather than one compiled into the binary. It exists so a caller can tell
+// the two apart without a type switch on every provider package: what makes
+// the distinction worth drawing is that a server's tools are the ones an
+// operator can actually remove, schemas and all.
+type ExternalOrigin interface {
+	// OriginServer identifies the server that supplied the tool.
+	OriginServer() string
+}
+
+// ExternalOrigins maps the name of every registered tool that a server
+// supplied to that server's id. Compiled-in tools are absent, so an empty
+// result means every registered tool is built in.
+func (r *Registry) ExternalOrigins() map[string]string {
+	registered := r.List()
+	out := make(map[string]string, len(registered))
+	for _, t := range registered {
+		if ext, ok := t.(ExternalOrigin); ok {
+			out[t.Name()] = ext.OriginServer()
+		}
+	}
+	return out
 }
 
 // OpenAITools returns the tools array for chat completions.
@@ -202,171 +286,6 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 		return "", err
 	}
 	return t.Execute(ctx, args)
-}
-
-func validateSchema(object map[string]any, schema map[string]any) error {
-	properties, _ := schema["properties"].(map[string]any)
-	for _, name := range requiredFields(schema) {
-		if _, present := object[name]; !present {
-			return fmt.Errorf("invalid arguments: missing required field %q", name)
-		}
-	}
-	additional := true
-	if raw, present := schema["additionalProperties"]; present {
-		additional, _ = raw.(bool)
-	}
-	for name, value := range object {
-		property, known := properties[name]
-		if !known {
-			if !additional {
-				return fmt.Errorf("invalid arguments: unknown field")
-			}
-			continue
-		}
-		definition, _ := property.(map[string]any)
-		if err := validateProperty(name, value, definition); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// requiredFields returns the schema's required field names, accepting both the
-// JSON-decoded []any form and a literal []string form.
-func requiredFields(schema map[string]any) []string {
-	if raw, ok := schema["required"].([]string); ok {
-		return raw
-	}
-	var required []string
-	if raw, ok := schema["required"].([]any); ok {
-		for _, name := range raw {
-			if s, ok := name.(string); ok {
-				required = append(required, s)
-			}
-		}
-	}
-	return required
-}
-
-// validateProperty validates a single known property against its definition:
-// enum membership, type match, numeric bounds and array constraints.
-func validateProperty(name string, value any, definition map[string]any) error {
-	kind, _ := definition["type"].(string)
-	if enum, ok := schemaEnum(definition["enum"]); ok && !enumContains(enum, value) {
-		return fmt.Errorf("invalid arguments: field %q must be one of the declared values", name)
-	}
-	if !schemaTypeMatches(value, kind, definition) {
-		return fmt.Errorf("invalid arguments: field %q must be %s", name, kind)
-	}
-	// minimum/maximum for integer/number fields.
-	if kind == "integer" || kind == "number" {
-		if err := validateNumberBounds(name, value, definition); err != nil {
-			return err
-		}
-	}
-	// minItems/maxItems and per-item enums for array fields.
-	if kind == "array" {
-		if err := validateArrayConstraints(name, value, definition); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateNumberBounds enforces minimum/maximum on integer and number fields.
-func validateNumberBounds(name string, value any, definition map[string]any) error {
-	numVal, ok := value.(float64)
-	if !ok {
-		return nil
-	}
-	if min, ok := definition["minimum"].(float64); ok && numVal < min {
-		return fmt.Errorf("invalid arguments: field %q must be >= %v", name, min)
-	}
-	if max, ok := definition["maximum"].(float64); ok && numVal > max {
-		return fmt.Errorf("invalid arguments: field %q must be <= %v", name, max)
-	}
-	return nil
-}
-
-// validateArrayConstraints enforces minItems/maxItems and enum-on-items for
-// array fields.
-func validateArrayConstraints(name string, value any, definition map[string]any) error {
-	values, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	if minItems, ok := definition["minItems"].(float64); ok && int(minItems) > len(values) {
-		return fmt.Errorf("invalid arguments: field %q must have >= %d items", name, int(minItems))
-	}
-	if maxItems, ok := definition["maxItems"].(float64); ok && int(maxItems) < len(values) {
-		return fmt.Errorf("invalid arguments: field %q must have <= %d items", name, int(maxItems))
-	}
-	if items, ok := definition["items"].(map[string]any); ok {
-		if itemEnum, ok := schemaEnum(items["enum"]); ok {
-			for _, item := range values {
-				if !enumContains(itemEnum, item) {
-					return fmt.Errorf("invalid arguments: array items for %q must be one of the declared values", name)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func schemaTypeMatches(value any, kind string, definition map[string]any) bool {
-	switch kind {
-	case "string":
-		_, ok := value.(string)
-		return ok
-	case "boolean":
-		_, ok := value.(bool)
-		return ok
-	case "number", "integer":
-		number, ok := value.(float64)
-		return ok && (kind != "integer" || math.Trunc(number) == number)
-	case "object":
-		_, ok := value.(map[string]any)
-		return ok
-	case "array":
-		values, ok := value.([]any)
-		if !ok {
-			return false
-		}
-		items, _ := definition["items"].(map[string]any)
-		itemType, _ := items["type"].(string)
-		for _, item := range values {
-			if !schemaTypeMatches(item, itemType, items) {
-				return false
-			}
-		}
-		return true
-	default:
-		return true
-	}
-}
-
-func enumContains(values []any, value any) bool {
-	for _, candidate := range values {
-		if reflect.DeepEqual(candidate, value) {
-			return true
-		}
-	}
-	return false
-}
-
-func schemaEnum(raw any) ([]any, bool) {
-	switch values := raw.(type) {
-	case []any:
-		return values, true
-	case []string:
-		out := make([]any, len(values))
-		for i, value := range values {
-			out[i] = value
-		}
-		return out, true
-	default:
-		return nil, false
-	}
 }
 
 // Capability returns scheduling metadata, using a conservative external
@@ -415,25 +334,6 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 		key = ""
 	}
 	return Capability{Class: class, ResourceKey: key}
-}
-
-func schemaObject(props map[string]any, required []string) map[string]any {
-	if required == nil {
-		required = []string{}
-	}
-	return map[string]any{
-		"type":                 "object",
-		"properties":           props,
-		"required":             required,
-		"additionalProperties": false,
-	}
-}
-
-func decodeArgs[T any](raw json.RawMessage, dst *T) error {
-	if err := json.Unmarshal(raw, dst); err != nil {
-		return fmt.Errorf("invalid arguments: %w", err)
-	}
-	return nil
 }
 
 // Secret path filtering is entirely configuration-driven. There is no
@@ -496,4 +396,25 @@ func pathCapabilityKey(args json.RawMessage, ws *workspace.Root) string {
 		}
 	}
 	return "path:" + filepath.ToSlash(filepath.Clean(input.Path))
+}
+
+// CapabilityOf reports the execution class of one tool VALUE.
+//
+// A tool that declares no capability is ExecutionExternal - the most
+// restrictive class - so an unclassified tool is gated rather than waved
+// through. That default is load-bearing on the approval paths: several real
+// tools declare no capability (post_message and run_messages in
+// internal/clichat, every workflow_* tool in internal/workflows/ledger), and
+// classifying one of those below Write would run it unprompted under a
+// write-only policy.
+//
+// This is deliberately the TOOL-value form. CapabilityFor above answers the
+// same question from a registry and a NAME, and carries a name-based fallback
+// for the compiled-in tools; the two are not interchangeable, and the approval
+// paths hold a tool rather than a name.
+func CapabilityOf(t Tool, args json.RawMessage) Capability {
+	if capable, ok := t.(CapableTool); ok {
+		return capable.Capability(args)
+	}
+	return Capability{Class: ExecutionExternal}
 }

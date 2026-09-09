@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -38,71 +37,6 @@ func (c erroringPlainCompleter) ChatTurn(_ context.Context, req provider.Request
 		_, _ = io.WriteString(req.StreamWriter, c.partial)
 	}
 	return nil, c.err
-}
-
-// TestNoMessageLossErroredPlainLegacyTurnIsPersisted pins the fix for the
-// legacy (no session/context store) plain path: sendPlainLegacy previously
-// discarded a non-interrupted error's history entirely ("Non-interrupted
-// errors keep today's drop-everything behavior"); the user's question and
-// any already-streamed partial reply must survive into the session's
-// in-memory history and the on-disk autosave, while the original error must
-// still surface to the caller exactly as before.
-func TestNoMessageLossErroredPlainLegacyTurnIsPersisted(t *testing.T) {
-	upstream := errors.New("upstream 500")
-	const partial = "Both fixes work. Here is the pro"
-	const question = "prove it"
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, erroringPlainCompleter{partial: partial, err: upstream})
-	sess.SetSessionStore(store, NewSaveManager(store, "test-model", "test-provider"))
-
-	var sink strings.Builder
-	_, sendErr := sess.SendUser(context.Background(), question, &sink)
-	if !errors.Is(sendErr, upstream) {
-		t.Fatalf("SendUser error = %v, want the original upstream error surfaced unchanged", sendErr)
-	}
-
-	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), partial, question)
-
-	names, err := store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) == 0 {
-		t.Fatal("errored turn was never persisted: no session on disk")
-	}
-	loaded, err := store.Load(names[0].Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertInterruptedPlainPersisted(t, loaded, partial, question)
-}
-
-// TestErroredPlainLegacyTurnBudgetExceededStillDiscards is defense-in-depth,
-// mirroring finishErroredContextTurn's identical guard on the agent path: an
-// over-budget history must never be adopted or persisted even if some future
-// completer implementation raises ErrPromptBudgetExceeded from ChatStream
-// itself rather than the pre-flight check in sendPlainLegacy.
-func TestErroredPlainLegacyTurnBudgetExceededStillDiscards(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, erroringPlainCompleter{err: agent.ErrPromptBudgetExceeded})
-	sess.SetSessionStore(store, NewSaveManager(store, "test-model", "test-provider"))
-
-	var sink strings.Builder
-	if _, err := sess.SendUser(context.Background(), "too much history", &sink); !errors.Is(err, agent.ErrPromptBudgetExceeded) {
-		t.Fatalf("SendUser error = %v, want ErrPromptBudgetExceeded surfaced unchanged", err)
-	}
-	names, _ := store.List()
-	if len(names) != 0 {
-		t.Fatal("budget-exceeded turn must not be persisted")
-	}
 }
 
 // TestNoMessageLossErroredPlainContextTurnIsPersisted is the durable-context
@@ -158,4 +92,67 @@ func TestNoMessageLossErroredPlainContextTurnIsPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInterruptedPlainPersisted(t, loaded, partial, question)
+}
+
+// TestErroredPlainContextTurnCommitFailureKeepsTheTurnUnwrapped covers the
+// case TestNoMessageLossErroredPlainContextTurnIsPersisted does not: the
+// durable commit ITSELF also fails (not just the upstream provider call). On
+// this path (commitErroredPlainContext), the exchange must still be adopted
+// into memory (best-effort catch-up on the next successful commit), and the
+// original upstream error must surface UNCHANGED - deliberately NOT tagged
+// with ErrPersistence, unlike commitPlainContextTurn's and
+// commitInterruptedPlainContext's own commit-failure branches. The stream
+// itself failed upstream here, so the buffered partial text is incomplete
+// and untrustworthy; tagging it ErrPersistence would wrongly claim "the
+// answer is fine, only the save failed."
+func TestErroredPlainContextTurnCommitFailureKeepsTheTurnUnwrapped(t *testing.T) {
+	upstream := errors.New("upstream 500")
+	commitFailure := errors.New("disk full")
+	const partial = "Both fixes work. Here is the pro"
+	const question = "prove it"
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, erroringPlainCompleter{partial: partial, err: upstream})
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: plainCommitFailurePublisher{err: commitFailure},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	sess.SetContextStore(store)
+	beforeRevision := sess.contextRevision
+	beforeHead := sess.contextHead
+
+	var sink strings.Builder
+	_, sendErr := sess.SendUser(context.Background(), question, &sink)
+	if !errors.Is(sendErr, upstream) {
+		t.Fatalf("SendUser error = %v, want it to wrap the original upstream error", sendErr)
+	}
+	if errors.Is(sendErr, ErrPersistence) {
+		t.Fatalf("SendUser error = %v, want it NOT tagged ErrPersistence - the stream itself failed, not just the save", sendErr)
+	}
+
+	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), partial, question)
+	if got := sess.contextRevision; got != beforeRevision {
+		t.Fatalf("contextRevision = %+v, want unchanged %+v - nothing landed durably", got, beforeRevision)
+	}
+	if got := sess.contextHead; got != beforeHead {
+		t.Fatalf("contextHead = %+v, want unchanged %+v - nothing landed durably", got, beforeHead)
+	}
 }

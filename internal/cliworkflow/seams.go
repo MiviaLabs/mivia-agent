@@ -16,11 +16,12 @@ package cliworkflow
 import (
 	"context"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"io"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -77,7 +78,7 @@ var (
 	NewSessionDispatcherFunc func(opts cliagents.SessionDispatcherOpts) (*runtime.Dispatcher, error)
 
 	// InitCoordinatorFunc stands for cli.initCoordinator (orchestration_state.go).
-	InitCoordinatorFunc func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) coordinator.Coordinator
+	InitCoordinatorFunc func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator
 
 	// InjectBaselineMessagingFunc stands for cli.injectBaselineMessaging
 	// (messaging_tools.go).
@@ -85,7 +86,7 @@ var (
 
 	// MessagingDisallowedFunc stands for cli.messagingDisallowed
 	// (agent_task_handler.go).
-	MessagingDisallowedFunc func(names []string) map[string]struct{}
+	MessagingDisallowedFunc func(agent agents.ResolvedAgent) map[string]struct{}
 
 	// SessionAutoDeliveryRepairLoopFunc stands for
 	// cli.sessionAutoDeliveryRepairLoop (session_delivery_repair.go).
@@ -174,7 +175,7 @@ var (
 
 	// StackDecomposedChunksFunc stands for cli.stackDecomposedChunks
 	// (stack_admit_integration.go).
-	StackDecomposedChunksFunc func(ctx context.Context, repo workflowledger.Repository, runID string) (chunks int, ok bool)
+	StackDecomposedChunksFunc func(ctx context.Context, repo delivery.LedgerRepository, runID string) (chunks int, ok bool)
 
 	// OpenContextStoreFunc stands for cli.openContextStore (context_setup.go).
 	OpenContextStoreFunc func(root string, cfg config.SubagentConfig) (*storage.SQLite, error)

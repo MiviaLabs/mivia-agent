@@ -11,9 +11,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/remainder"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -79,6 +76,160 @@ type AgentSessionState struct {
 	// MemoryConfig is the resolved [memory] section, read alongside Memory
 	// to build the core-tier injection block (coreMemoryBlock).
 	MemoryConfig config.MemoryConfig
+	// fullDisk is the shared, operator-wide full-disk posture and re-arm
+	// list. It is a POINTER so Fork gives every per-session state a private
+	// Selected/SkillScope/TierPlan (bug-audit "pooled worktree sessions
+	// share mutable agent state") while every fork still drives and
+	// observes the SAME confinement posture: full-disk access is an
+	// operator setting, not a per-session one, and toggling it from
+	// whichever session happens to be active must still reach every live
+	// worktree root (bug-audit "full-disk access does not reach active
+	// worktree registries"). Never nil after newFullDiskState.
+	fullDisk *fullDiskState
+}
+
+// fullDiskState is the operator-wide full-disk posture: every live
+// workspace root's confinement re-arm, and the authoritative on/off value.
+// Shared by pointer across every AgentSessionState Fork produces so an
+// operator toggle from any pooled session reaches every other one.
+type fullDiskState struct {
+	mu     sync.Mutex
+	on     bool
+	reArms []func(on bool)
+}
+
+func newFullDiskState() *fullDiskState {
+	return &fullDiskState{}
+}
+
+// fullDiskStateLocked returns this state's shared full-disk posture,
+// lazily initializing it. Most states are built as struct literals (tests,
+// startup wiring), not through a constructor, so fullDisk is nil until
+// first use; every accessor below routes through this instead of assuming
+// newFullDiskState already ran. Callers hold s.mu.
+func (s *AgentSessionState) fullDiskStateLocked() *fullDiskState {
+	if s.fullDisk == nil {
+		s.fullDisk = newFullDiskState()
+	}
+	return s.fullDisk
+}
+
+// seedFullDisk records the launch-time full-disk posture (the operator's
+// `--full-disk` flag or persisted [workspace_access] full_disk setting)
+// before any re-arm has registered, so the first SetFullDiskReArm call does
+// not stomp a "born unrestricted" root back to false. Only
+// ConfigureChatWorkspace, which knows that launch value, calls it.
+func (s *AgentSessionState) seedFullDisk(on bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	fd.on = on
+	fd.mu.Unlock()
+}
+
+// FullDiskOn reports the authoritative full-disk posture: the value ApplyFullDisk
+// last set, or the seeded launch value before any toggle. A newly built worktree
+// registry uses this - not a peer session's live value - to decide its own
+// initial posture, so worktree creation is deterministic regardless of
+// session-map iteration order.
+func (s *AgentSessionState) FullDiskOn() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	return fd.on
+}
+
+// SetFullDiskReArm registers one live confinement re-arm (ConfigureChatWorkspace
+// for the launch root, SessionPool for each worktree root it rebuilds) and
+// immediately synchronizes it to the current authoritative posture, so a root
+// joining after the operator already toggled full-disk access does not start
+// out of step.
+func (s *AgentSessionState) SetFullDiskReArm(fn func(on bool)) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.mu.Lock()
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	on := fd.on
+	fd.reArms = append(fd.reArms, fn)
+	fd.mu.Unlock()
+	fn(on)
+}
+
+// ApplyFullDisk drives every live re-arm, reporting whether at least one was
+// wired. Nil-receiver and empty-list safe: without a chat workspace there is
+// nothing to re-arm and the setting stays persistence-only (next launch).
+func (s *AgentSessionState) ApplyFullDisk(on bool) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	fd := s.fullDiskStateLocked()
+	s.mu.Unlock()
+	fd.mu.Lock()
+	fd.on = on
+	fns := append([]func(bool){}, fd.reArms...)
+	fd.mu.Unlock()
+	if len(fns) == 0 {
+		return false
+	}
+	for _, fn := range fns {
+		fn(on)
+	}
+	return true
+}
+
+// Fork returns a new AgentSessionState for one pooled session entry,
+// carrying this state's CURRENT selection and admission plan as that
+// entry's own private starting point. Every session-independent facility -
+// tool base, MCP manager, ledger, memory store, skill registry, workspace
+// root, and the operator-wide full-disk posture - is shared with the state
+// it forked from (the full-disk fields by shared pointer, so a toggle from
+// any fork still reaches every worktree root; see fullDiskState). Only
+// Selected, SkillScope, TierPlan, LastSchemaMass and the Baseline* fields
+// are private to the fork from this point on: a later /agent switch or
+// deferred-tool admission in ONE pooled session no longer rewrites another
+// session's policy through one shared pointer (bug-audit "pooled worktree
+// sessions share mutable agent state"). The fork never inherits
+// ownedLedgerStore - only the state that opened a durable ledger may close
+// it.
+func (s *AgentSessionState) Fork() *AgentSessionState {
+	if s == nil {
+		return &AgentSessionState{fullDisk: newFullDiskState()}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &AgentSessionState{
+		Global:             s.Global,
+		Selected:           s.Selected,
+		AllowProjectSkills: s.AllowProjectSkills,
+		Registry:           s.Registry,
+		WorkspaceRoot:      s.WorkspaceRoot,
+		ToolBase:           s.ToolBase,
+		MCPManager:         s.MCPManager,
+		SkillScope:         s.SkillScope,
+		TierPlan:           s.TierPlan,
+		SkillRegFull:       s.SkillRegFull,
+		LedgerRepo:         s.LedgerRepo,
+		LastSchemaMass:     s.LastSchemaMass,
+		BaselinePrompt:     s.BaselinePrompt,
+		BaselineMaxSteps:   s.BaselineMaxSteps,
+		BaselineCaptured:   s.BaselineCaptured,
+		Memory:             s.Memory,
+		MemoryConfig:       s.MemoryConfig,
+		fullDisk:           s.fullDiskStateLocked(),
+	}
 }
 
 // DisplayName is the status dialog's "agent" row: the locked, nil-safe read
@@ -129,6 +280,13 @@ func (s *AgentSessionState) Context() AgentSessionContext {
 
 // ledgerRepo is the session-owned ledger repository for callers that do NOT
 // hold s.mu. Surface builds read the field directly under the lock.
+// LedgerRepoValue is the locked, nil-safe read of the session's ledger
+// repository, for callers outside this package that must hand it to a
+// per-root build (SessionPool's worktree registry adoption).
+func (s *AgentSessionState) LedgerRepoValue() ledger.LedgerRepository {
+	return s.ledgerRepo()
+}
+
 func (s *AgentSessionState) ledgerRepo() ledger.LedgerRepository {
 	if s == nil {
 		return nil
@@ -247,9 +405,12 @@ func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 		state.Selected = nil
 		return nil
 	}
+	if err := ensureRootMCPTools(sess, res, state); err != nil {
+		return fmt.Errorf("MCP tools: %w", err)
+	}
 	var candidate *agentSurface
 	var err error
-	if sess.Tools != nil && state.ToolBase != nil {
+	if base := entryBase(sess, state); sess.Tools != nil && base != nil {
 		candidate, err = buildAgentScopedSurface(sess, res, state, nil)
 		if err != nil {
 			return fmt.Errorf("root surface: %w", err)
@@ -257,17 +418,18 @@ func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSe
 	}
 	state.Selected = nil
 	if candidate == nil {
-		if res != nil {
-			res.SystemPrompt = state.BaselinePrompt
-		}
+		// The session's own AgentSettings carry the active prompt; res is
+		// the pool's SHARED launch config and must keep holding the
+		// original baseline for every future fresh entry, not this
+		// session's current selection (bug-audit "pooled worktree sessions
+		// share mutable agent state" - a /agent switch in one session
+		// silently rewrote the launch baseline every sibling and future
+		// /new session started from).
 		sess.SetAgentSettings(state.BaselinePrompt, state.BaselineMaxSteps, CoreMemoryBlockForState(state))
 		return nil
 	}
 	candidate.commitTo(state)
 	prompt := promptWithDeferredIndex(state.BaselinePrompt, state.TierPlan)
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 	commitAgentSwitchSurface(sess, res, state, candidate, config.RootAgentName, prompt, state.BaselineMaxSteps)
 	return nil
 }
@@ -311,7 +473,7 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 	if err != nil {
 		return err
 	}
-	if err := ensureSelectedMCPTools(state, selected); err != nil {
+	if err := ensureSelectedMCPTools(sess, state, selected); err != nil {
 		return fmt.Errorf("MCP tools: %w", err)
 	}
 	if !state.BaselineCaptured {
@@ -320,12 +482,12 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 	}
 	prompt, maxSteps := selectedAgentSettings(&selected, state)
 	var candidate *agentSurface
-	if sess.Tools != nil && state.ToolBase != nil {
+	if base := entryBase(sess, state); sess.Tools != nil && base != nil {
 		candidate, err = buildAgentScopedSurface(sess, res, state, &selected)
 		if err != nil {
 			return err
 		}
-		WarnDisabledAgentTools(&selected, DisabledForAgent(&selected, state.ToolBase))
+		WarnDisabledAgentTools(&selected, DisabledForAgent(&selected, base))
 		warnAdvertisedToolsTruncated(&selected, candidate.advertisedDropped)
 	}
 	// Commit selection and every session-owned surface only after all candidate
@@ -336,16 +498,12 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 		candidate.commitTo(state)
 	}
 	if candidate == nil {
-		if res != nil {
-			res.SystemPrompt = prompt
-		}
+		// See restoreRootSurface's matching comment: res is the pool's
+		// SHARED launch config, never this session's private prompt.
 		sess.SetAgentSettings(prompt, maxSteps, CoreMemoryBlockForState(state))
 		return nil
 	}
 	prompt = promptWithDeferredIndex(prompt, state.TierPlan)
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 	commitAgentSwitchSurface(sess, res, state, candidate, sel.Name, prompt, maxSteps)
 	return nil
 }
@@ -383,234 +541,4 @@ func selectedMaxTurns(selected *agents.ResolvedAgent, baseline int) int {
 		return *selected.MaxTurns
 	}
 	return baseline
-}
-
-// agentSurface is a fully built, not-yet-installed binding surface. It carries
-// every piece of agentSessionState the build computed, because a build that
-// fails halfway must leave the live state untouched: a tier plan or skill scope
-// belonging to an agent that was never selected is an authority grant nobody
-// asked for. Only the caller's commit block writes these onto the state.
-type agentSurface struct {
-	registry   *tools.Registry
-	dispatcher *runtime.Dispatcher
-	skillReg   *skills.Registry
-	// plan is the binding's frozen tier split; skillRegFull the unfiltered
-	// registry the build loaded; skillScope the policy built against registry.
-	plan         ToolTierPlan
-	skillRegFull *skills.Registry
-	skillScope   AgentSkillScope
-	// advertised is the binding's pinned tools[] array (plan
-	// tools-advertising/01): the session admissible union, computed once from
-	// base and plan, independent of what is currently admitted. advertisedDropped
-	// counts names truncated by tools.MaxAdvertisedTools.
-	advertised        []provider.ToolSpec
-	advertisedDropped int
-}
-
-// commitTo installs a successfully built surface's derived state. Callers hold
-// state.mu.
-func (s *agentSurface) commitTo(state *AgentSessionState) {
-	state.TierPlan = s.plan
-	state.SkillRegFull = s.skillRegFull
-	state.SkillScope = s.skillScope
-}
-
-// buildAgentScopedSurface builds a fresh agent binding's surface: it loads
-// skills from disk, freezes this binding's core/deferred tool split, and admits
-// nothing. Every admission after this point reuses the frozen plan.
-func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, selected *agents.ResolvedAgent) (*agentSurface, error) {
-	root := state.WorkspaceRoot
-	if root == "" {
-		root = "."
-	}
-	skillReg, warnings, err := LoadSessionSkills(root, state.AllowProjectSkills)
-	if err != nil {
-		return nil, fmt.Errorf("load skills: %w", err)
-	}
-	WarnSkillLoad(warnings)
-	skillReg = FilterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
-	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	plan := PlanToolTiers(base, selected, res)
-	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
-		selected: selected, base: base, skillReg: skillReg, plan: plan,
-	})
-}
-
-// buildWidenedWith derives the same binding's surface with admitted appended as
-// a tail (plan tools/05 D7). It reuses the frozen tier plan and the already
-// loaded skill registry, so it performs no disk I/O and cannot change the
-// prompt index, the core block, or the skill policy.
-func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *AgentSessionState, admitted []string) (*agentSurface, error) {
-	if state.SkillRegFull == nil {
-		return nil, fmt.Errorf("tool admission: no skill registry captured for this binding")
-	}
-	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
-		selected: state.Selected, base: base, skillReg: state.SkillRegFull,
-		plan: state.TierPlan, admitted: admitted,
-		// TryPublishAgentSurface (the admission-widening publication path
-		// this candidate feeds) never writes AdvertisedToolSpecs onto the
-		// session by design (plan tools-advertising/01: admission changes
-		// execution authority only) - computing the advertised union here
-		// would be thrown away unread on every load_tools call.
-		skipAdvertised: true,
-	})
-}
-
-// AgentSurface is the exported view of a widened agent surface. It exposes the
-// built dispatcher so callers outside cliagents can close it or probe it.
-type AgentSurface struct {
-	// Dispatcher is the built tool dispatcher. The caller must close it when
-	// it is no longer needed or will not be published to a session.
-	Dispatcher *runtime.Dispatcher
-}
-
-// BuildWidenedWith derives the same binding's surface with admitted appended as
-// a tail and returns it for the caller to inspect or publish. See buildWidenedWith.
-func BuildWidenedWith(sess *chat.Session, res *config.Resolved, state *AgentSessionState, admitted []string) (*AgentSurface, error) {
-	s, err := buildWidenedWith(sess, res, state, admitted)
-	if err != nil {
-		return nil, err
-	}
-	return &AgentSurface{Dispatcher: s.dispatcher}, nil
-}
-
-// surfaceBuildRequest is one surface build's inputs. binding is the only
-// optional field: it overrides the live session binding for a generation that
-// is built but not yet published, which is what a model switch is.
-type surfaceBuildRequest struct {
-	selected *agents.ResolvedAgent
-	base     *tools.Registry
-	skillReg *skills.Registry
-	plan     ToolTierPlan
-	admitted []string
-	binding  *chat.ModelBinding
-	// skipAdvertised skips the advertised-union computation for a build whose
-	// caller never applies agentSurface.advertised to the session (currently
-	// only buildWidenedWith: TryPublishAgentSurface never writes
-	// AdvertisedToolSpecs, so computing it there was pure wasted work on the
-	// admission-widening hot path - up to MaxAdvertisedTools schema
-	// constructions thrown away on every load_tools call).
-	skipAdvertised bool
-}
-
-func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *AgentSessionState, req surfaceBuildRequest) (*agentSurface, error) {
-	selected, base, skillReg, plan, admitted := req.selected, req.base, req.skillReg, req.plan, req.admitted
-	binding := sess.CurrentBinding()
-	if req.binding != nil {
-		binding = *req.binding
-	}
-	if binding.Completer == nil {
-		return nil, fmt.Errorf("dispatcher: nil completer")
-	}
-	root := state.WorkspaceRoot
-	if root == "" {
-		root = "."
-	}
-	// Start from the pre-scope base so switching to a wider agent regains tools.
-	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
-	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
-	// agreement (INV-AG-29 execution denial).
-	registry := TieredRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions, plan, admitted)
-	// Authority is the root agent's whole authorized set, deferred tier
-	// included: the tier split decides what the root model is shown, never what
-	// this session may delegate. The skill policy and every nested handler read
-	// authority; only the model-facing surface reads registry.
-	authority, _ := ScopedRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions)
-	// The skill policy is built against the final live authority registry
-	// The skill policy is built against the final live authority registry
-	// (plan 43) and returned for the caller to install on commit.
-	skillScope := SkillScopeFromAgentAndRegistry(selected, authority)
-	var dispatcher *runtime.Dispatcher
-	if NewSessionDispatcherVar != nil {
-		var err error
-		dispatcher, err = NewSessionDispatcherVar(dispatcherOptsForSurface(sess, res, state, binding, registry, authority, skillReg, skillScope, plan, root))
-		if err != nil {
-			return nil, fmt.Errorf("dispatcher: %w", err)
-		}
-	}
-	// The advertised union is computed from base (the full pre-scope
-	// registry) and the frozen plan, NOT from registry: registry is scoped to
-	// core-plus-admitted execution authority, while the advertised snapshot
-	// must cover the whole admissible union regardless of what has been
-	// admitted so far (plan tools-advertising/01). Skipped entirely when the
-	// caller (buildWidenedWith) never applies it to the session.
-	var advertised []provider.ToolSpec
-	var advertisedDropped int
-	if !req.skipAdvertised {
-		advertised, advertisedDropped = advertisedToolSpecs(base, plan, state.Registry)
-	}
-	return &agentSurface{
-		registry:          registry,
-		dispatcher:        dispatcher,
-		skillReg:          FilterSkillsForScope(skillReg, skillScope),
-		plan:              plan,
-		skillRegFull:      skillReg,
-		skillScope:        skillScope,
-		advertised:        advertised,
-		advertisedDropped: advertisedDropped,
-	}, nil
-}
-
-// dispatcherOptsForSurface builds the SessionDispatcherOpts for one surface
-// build. The session owns the ledger store, so no rebuilt dispatcher opens one
-// it would then close on publication - under the spool this surface carries.
-// Callers hold state.mu, so the repository field is read directly.
-func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, binding chat.ModelBinding, registry, authority *tools.Registry, skillReg *skills.Registry, skillScope AgentSkillScope, plan ToolTierPlan, root string) SessionDispatcherOpts {
-	cfg := config.SubagentConfig{}
-	var modelCatalog []config.ProviderModelGroup
-	if res != nil {
-		cfg = res.Subagents
-		modelCatalog = res.ModelCatalog()
-	}
-	var contextWiring ContextDispatcherWiring
-	if ContextDispatcherForVar != nil {
-		contextWiring = ContextDispatcherForVar(sess, cfg)
-	}
-	return SessionDispatcherOpts{
-		Registry:          registry,
-		AuthorityRegistry: authority,
-		// The session owns the ledger store, so no rebuilt dispatcher opens one
-		// it would then close on publication - under the spool this surface
-		// carries. Callers hold state.mu, so the field is read directly.
-		Repo: state.LedgerRepo,
-		// Same story for the memory store (plan 77, E2): the same instance
-		// configureChatWorkspace opened, never a second Open.
-		Memory:                    state.Memory,
-		MemoryConfig:              state.MemoryConfig,
-		Completer:                 binding.Completer,
-		Model:                     binding.Model,
-		ProviderName:              binding.ProviderName,
-		ModelGeneration:           binding.ModelGeneration,
-		ModelGenerationFunc:       sess.CurrentModelGeneration,
-		ModelCatalog:              modelCatalog,
-		CompleterFactory:          NewProviderCompleterFactory(res),
-		Config:                    cfg,
-		ToolResultCapBytes:        sess.MaxToolResultChars,
-		ToolRunTimeout:            sess.ToolRunTimeout,
-		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
-		RefOnlyTools:              sess.RefOnlyTools,
-		WorkspaceRoot:             root,
-		MaxContextTokens:          sess.PromptBudget(),
-		MaxTokens:                 sess.MaxTokens,
-		Budget:                    sess.PromptBudget,
-		Reasoning:                 sess.ReasoningSetting,
-		SharedSQLite:              contextWiring.SharedSQLite,
-		ContextPreparationManager: contextWiring.Preparation,
-		ContextPreparationInput:   contextWiring.PreparationInput,
-		SkillReg:                  skillReg,
-		SkillScope:                skillScope,
-		AgentRegistry:             state.Registry,
-		DeferredTools:             plan.Candidates,
-		Session:                   sess,
-		// This session already handed out truncated-output refs against the
-		// spool the live surface holds. Reuse it so the republication below is
-		// an identity re-publish rather than a revocation.
-		RemainderSpool: func() *remainder.Spool {
-			if RemainderSpoolFromRegistryVar != nil {
-				return RemainderSpoolFromRegistryVar(sess.Tools)
-			}
-			return nil
-		}(),
-	}
 }

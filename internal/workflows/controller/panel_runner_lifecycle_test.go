@@ -96,7 +96,7 @@ func (timeoutPanelHandler) Invoke(ctx context.Context, _ runtime.Request) (json.
 	return nil, ctx.Err()
 }
 
-type timeoutPanelMember struct{ c coordinator.Coordinator }
+type timeoutPanelMember struct{ c *coordinator.Coordinator }
 
 func (p timeoutPanelMember) EnsureMember(ctx context.Context, _ string, member string) (*coordinator.RunHandle, error) {
 	return p.c.EnsureSingleTaskRun(ctx, coordinator.EnsureRunRequest{

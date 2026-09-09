@@ -22,15 +22,6 @@ func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
 // nonsensical ceiling could otherwise do is refuse to store a turn - which is
 // precisely the failure these bounds are configured to avoid.
 func resolveContextConfig(c ContextConfig) ContextConfig {
-	// Compaction summaries are opt-out. An absent [context.summary] key
-	// resolves to enabled, so a workspace that configures nothing still keeps
-	// an account of what compaction dropped; only an explicit
-	// `enabled = false` turns it off. Normalizing here means every consumer
-	// reads a decided value instead of re-deriving the default.
-	if c.Summary.Enabled == nil {
-		enabled := true
-		c.Summary.Enabled = &enabled
-	}
 	// Normalize the optional provider/model override: lowercase the provider
 	// name so it compares against canonical [providers.<name>] keys and the
 	// runtime table. Pairing and configured-ness are validated where an error

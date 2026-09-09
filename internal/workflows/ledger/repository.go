@@ -36,13 +36,15 @@ type RecoveredRun struct {
 // repository enforces intra-process serialization and claim fencing. CAS
 // methods take the caller's observed version and fail with
 // ErrConflict when the recorded version has moved.
-type Repository interface {
-	// CreateRun admits a run: persists the run snapshot (typed fields + the
-	// canonical snapshot JSON) and records the wf_run_created event. Returns
-	// ErrDuplicate if the run already exists, ErrInvalidTransition if the
-	// snapshot status is not pending.
-	CreateRun(ctx context.Context, snap RunSnapshot, snapshotJSON []byte) error
+// The storage boundary is decomposed into small, consumer-side interfaces
+// below. Repository composes them for callers (the workflow engine and its
+// admin surface) that legitimately span the whole contract; narrower
+// consumers (controller, delivery, status tools) depend on the individual
+// subsets, and each implementation is compile-time checked against every
+// subset it implements.
 
+// RunReader reads run snapshots.
+type RunReader interface {
 	// GetRun returns the current run snapshot with the DERIVED active step
 	// (see Projection.ActiveStepID). Returns ErrNotFound if absent.
 	GetRun(ctx context.Context, runID string) (RunSnapshot, error)
@@ -53,12 +55,39 @@ type Repository interface {
 	// GetRunSnapshot returns the canonical snapshot JSON stored at admission.
 	// Returns ErrNotFound if absent.
 	GetRunSnapshot(ctx context.Context, runID string) ([]byte, error)
+}
+
+// RunWriter mutates run-level state.
+type RunWriter interface {
+	// CreateRun admits a run: persists the run snapshot (typed fields + the
+	// canonical snapshot JSON) and records the wf_run_created event. Returns
+	// ErrDuplicate if the run already exists, ErrInvalidTransition if the
+	// snapshot status is not pending.
+	CreateRun(ctx context.Context, snap RunSnapshot, snapshotJSON []byte) error
 
 	// CompareAndSetRunStatus atomically transitions the run status, bumping
 	// the run version. Returns ErrConflict on version mismatch, ErrInvalidTransition
 	// on an illegal edge. finishedAt is persisted when the new status is terminal.
 	CompareAndSetRunStatus(ctx context.Context, runID string, expectedVersion uint64, status RunStatus, finishedAt *time.Time) error
 
+	// RecordRunResumed appends the wf_run_resumed audit event for a run that
+	// is being resumed (crash recovery, operator resume, or controller
+	// re-entry). It mutates no run state; the event is purely observational.
+	// Returns ErrNotFound when the run is absent.
+	RecordRunResumed(ctx context.Context, runID string) error
+
+	// DeleteRun removes a settled run's durable record: the wf_run_deleted
+	// tombstone plus every prior event and the run's claim are removed from
+	// the store, and the in-memory projection is dropped. Shared
+	// content-addressed blobs are never deleted. Returns ErrNotFound when
+	// the run has no record (never created or already deleted). The caller
+	// must hold the execution lock and a claim (or otherwise guarantee no
+	// concurrent writer) before calling.
+	DeleteRun(ctx context.Context, runID string) error
+}
+
+// StepAttemptStore records and reads step attempts.
+type StepAttemptStore interface {
 	// CreateStepAttempt records a fresh numbered attempt for a step. The
 	// (runID, stepID, attemptNo) triple is unique: a second create for the
 	// same triple never appends a second event (ErrDuplicate in-process, or
@@ -88,9 +117,6 @@ type Repository interface {
 	// carries Version 1 and StartedAt == FinishedAt == the append instant.
 	// Returns ErrNotFound if the run is absent.
 	RecordStepAttemptOutcome(ctx context.Context, attempt StepAttempt, outcome AttemptOutcome) error
-
-	// CompareAndSetPanelPhase records one claim-fenced panel phase intent.
-	CompareAndSetPanelPhase(ctx context.Context, runID string, attemptID string, expectedVersion uint64, from PanelPhase, to PanelPhase, synthesis *PanelSynthesisExecution) error
 
 	// SetStepAttemptPrompt records the content-addressed prompt reference for
 	// one attempt (the prompt body lives in content-addressed storage and is
@@ -122,7 +148,10 @@ type Repository interface {
 	// ListTransitions returns the route decisions derived from completed
 	// attempts, ordered by event sequence.
 	ListTransitions(ctx context.Context, runID string) ([]TransitionRecord, error)
+}
 
+// LoopCounterStore mints and reads named loop counters.
+type LoopCounterStore interface {
 	// IncrementLoopCounter mints the next iteration number for a named loop
 	// under the run claim, after catch-up. Counters are derived state: the
 	// returned number is persisted via a wf_loop_incremented event and rebuilt
@@ -131,7 +160,10 @@ type Repository interface {
 
 	// GetLoopCounters returns the run's derived loop counters.
 	GetLoopCounters(ctx context.Context, runID string) ([]LoopCounter, error)
+}
 
+// ApprovalStore records and resolves human-gate requests.
+type ApprovalStore interface {
 	// CreateApproval records a pending human-gate request (provisional).
 	CreateApproval(ctx context.Context, a ApprovalRecord) error
 
@@ -140,7 +172,10 @@ type Repository interface {
 
 	// ListApprovals returns the run's approval records.
 	ListApprovals(ctx context.Context, runID string) ([]ApprovalRecord, error)
+}
 
+// DeliveryStore records idempotent delivery attempts.
+type DeliveryStore interface {
 	// UpsertDelivery records a delivery attempt keyed by idempotency key.
 	UpsertDelivery(ctx context.Context, d DeliveryRecord) error
 
@@ -150,29 +185,20 @@ type Repository interface {
 
 	// ListDeliveries returns the run's delivery records.
 	ListDeliveries(ctx context.Context, runID string) ([]DeliveryRecord, error)
+}
 
+// EventReader reads a run's audit trail.
+type EventReader interface {
 	// ListEvents returns the run's audit trail, ordered by event sequence,
 	// paged (limit <= 0 means DefaultEventPageSize, offset skips events).
 	// Summaries are bounded and never contain raw payloads. Unknown kinds
 	// and undecodable payloads are skipped. Returns ErrNotFound when the
 	// run is absent.
 	ListEvents(ctx context.Context, runID string, limit, offset int) ([]EventRecord, error)
+}
 
-	// DeleteRun removes a settled run's durable record: the wf_run_deleted
-	// tombstone plus every prior event and the run's claim are removed from
-	// the store, and the in-memory projection is dropped. Shared
-	// content-addressed blobs are never deleted. Returns ErrNotFound when
-	// the run has no record (never created or already deleted). The caller
-	// must hold the execution lock and a claim (or otherwise guarantee no
-	// concurrent writer) before calling.
-	DeleteRun(ctx context.Context, runID string) error
-
-	// RecordRunResumed appends the wf_run_resumed audit event for a run that
-	// is being resumed (crash recovery, operator resume, or controller
-	// re-entry). It mutates no run state; the event is purely observational.
-	// Returns ErrNotFound when the run is absent.
-	RecordRunResumed(ctx context.Context, runID string) error
-
+// RunClaimManager owns the exclusive execution-claim contract.
+type RunClaimManager interface {
 	// ClaimRun acquires the exclusive execution claim on a run. Returns
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
 	ClaimRun(ctx context.Context, runID, holder string) error
@@ -203,15 +229,66 @@ type Repository interface {
 	// or the backend cannot expose claims; err is reserved for backend
 	// failures. It never mutates claim state.
 	GetRunClaim(ctx context.Context, runID string) (holder string, acquiredAt time.Time, ok bool, err error)
+}
 
+// PanelPhaseStore records claim-fenced panel phase transitions.
+type PanelPhaseStore interface {
+	// CompareAndSetPanelPhase records one claim-fenced panel phase intent.
+	CompareAndSetPanelPhase(ctx context.Context, runID string, attemptID string, expectedVersion uint64, from PanelPhase, to PanelPhase, synthesis *PanelSynthesisExecution) error
+}
+
+// ContentStore is the shared content-addressed blob store.
+type ContentStore interface {
 	// StoreContent persists bytes under a content-addressed reference
 	// (shared content store; idempotent).
 	StoreContent(ctx context.Context, ref string, data []byte) error
 
 	// LoadContent retrieves stored bytes. Returns ErrContentNotFound if absent.
 	LoadContent(ctx context.Context, ref string) ([]byte, error)
+}
 
+// Recoverer is the startup recovery surface. It mutates no run status.
+type Recoverer interface {
 	// Recover brings the projection up to date, classifies every run, and
 	// clears stale claims on terminal runs only. It mutates no run status.
 	Recover(ctx context.Context) ([]RecoveredRun, error)
 }
+
+// Repository is the durable storage boundary for workflow runs: the full
+// composed contract. Implementations must be concurrency-safe and return
+// defensive copies.
+//
+// Concurrency contract: mutations are serialized per run. When a caller holds
+// an execution claim (ClaimRun), only that holder can mutate the run. The
+// repository enforces intra-process serialization and claim fencing. CAS
+// methods take the caller's observed version and fail with
+// ErrConflict when the recorded version has moved.
+type Repository interface {
+	RunReader
+	RunWriter
+	StepAttemptStore
+	LoopCounterStore
+	ApprovalStore
+	DeliveryStore
+	EventReader
+	RunClaimManager
+	PanelPhaseStore
+	ContentStore
+	Recoverer
+}
+
+// Compile-time checks: the shipped implementations satisfy every subset.
+var (
+	_ RunReader        = (*StorageRepository)(nil)
+	_ RunWriter        = (*StorageRepository)(nil)
+	_ StepAttemptStore = (*StorageRepository)(nil)
+	_ LoopCounterStore = (*StorageRepository)(nil)
+	_ ApprovalStore    = (*StorageRepository)(nil)
+	_ DeliveryStore    = (*StorageRepository)(nil)
+	_ EventReader      = (*StorageRepository)(nil)
+	_ RunClaimManager  = (*StorageRepository)(nil)
+	_ PanelPhaseStore  = (*StorageRepository)(nil)
+	_ ContentStore     = (*StorageRepository)(nil)
+	_ Recoverer        = (*StorageRepository)(nil)
+	_ Repository       = (*StorageRepository)(nil)
+)

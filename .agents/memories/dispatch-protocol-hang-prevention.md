@@ -4,6 +4,7 @@ title: Avoid blocking subagent dispatches and prevent Step 1 hangs
 content: Never use wait:"run" for multi-agent dispatches; cap batch concurrency to 3, set explicit task timeouts, and fail fast if stuck at Step 1.
 importance: high
 tags: [orchestration, dispatch_tasks, subagents, concurrency, timeouts]
+updated: 2026-09-04
 ---
 
 # Subagent Dispatch & Hang Prevention Protocol

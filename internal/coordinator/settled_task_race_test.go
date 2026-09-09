@@ -21,7 +21,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func settledRaceFixture(t *testing.T) (*coordinator, ledger.LedgerRepository) {
+func settledRaceFixture(t *testing.T) (*Coordinator, ledger.LedgerRepository) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	ctx := context.Background()
@@ -41,7 +41,7 @@ func settledRaceFixture(t *testing.T) (*coordinator, ledger.LedgerRepository) {
 	}
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	return New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator), repo
+	return New(repo, subagents.New(d, subagents.Policy{Workers: 1})), repo
 }
 
 func TestLateResultAgainstSettledTaskJoinsNoError(t *testing.T) {

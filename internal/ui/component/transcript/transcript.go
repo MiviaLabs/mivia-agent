@@ -78,6 +78,27 @@ type Model struct {
 	// value-copy discipline.
 	selRect  sel.Rect
 	selState sel.Selection
+
+	// Now is the clock the transcript times tool calls against. It is a
+	// field so tests can freeze it; nil means time.Now.
+	//
+	// The UI has to do this timing itself: uievent.ToolEndBody carries a
+	// DurationMS, but no producer sets it (uiadapter.translateToolEnd and
+	// thread.LoadHistory are the only two, and agent.Event has no
+	// duration to give them), so every tool header rendered "0ms" and the
+	// work row's cost was always dropped. What is measured here is the
+	// wall time between this transcript seeing the start event and seeing
+	// the end event, which is the interval the person watching the screen
+	// actually waited. A DurationMS the producer does supply still wins.
+	Now func() time.Time
+}
+
+// now reads the transcript's clock.
+func (m Model) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
 }
 
 // New returns an empty Model with no block focused, following the tail.
@@ -126,6 +147,18 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	case uievent.ReasoningDeltaBody:
 		return m.handleReasoningDelta(b)
 	case uievent.TextEndBody:
+		// A pending REASONING span must be flushed, not discarded. text.end
+		// carries the answer, which says nothing about the reasoning that
+		// preceded it, so discarding here wiped the whole reasoning block of
+		// any agent that reasoned and then answered with no tool call in
+		// between - the exact shape of a subagent run.
+		//
+		// Only reasoning is flushed. A pending TEXT span is already contained
+		// in this event's own Text (the loop sends the full accumulated
+		// answer), so flushing that would render the answer twice.
+		if m.pendingKind == uievent.KindReasoning {
+			m = m.flushPending()
+		}
 		m.clearPending()
 		if b.Text == "" {
 			return m, nil
@@ -136,6 +169,8 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 			Input: b.Text,
 			Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
 		})
+	case uievent.AssistantResetBody:
+		return m.handleAssistantReset(b)
 	case uievent.TurnStartBody:
 		m = m.flushPending()
 		return m.pushBlock(Block{
@@ -151,6 +186,10 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(planBlockValue(m.Theme, m.Tier, b))
 	case uievent.NoticeBody:
+		// Deliberately NOT flushPending, unlike every sibling arm here:
+		// text.end re-sends the whole answer, so committing the partial
+		// span would render it twice. See
+		// TestMidStreamNoticeDoesNotDuplicateTheAnswer.
 		return m.pushBlock(noticeBlockValue(b))
 	case uievent.HookBody:
 		m = m.flushPending()
@@ -263,6 +302,20 @@ func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 }
 
 func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cmd) {
+	// Providers may return reasoning only after they streamed answer text.
+	// That text is still pending and text.end will commit it. Do not switch
+	// the shared pending span to reasoning: appendPending would flush the
+	// answer early, then text.end would commit the same answer again.
+	if m.pendingKind == uievent.KindTextDelta {
+		if b.Text == "" {
+			return m, nil
+		}
+		words := b.WordCount
+		if words == 0 {
+			words = len(strings.Fields(b.Text))
+		}
+		return m.pushBlock(reasoningBlock(b.Text, words))
+	}
 	if b.WordCount == 0 {
 		return m, m.appendPending(uievent.KindReasoning, b.Text)
 	}
@@ -271,21 +324,25 @@ func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cm
 		raw = b.Text
 	}
 	m.clearPending()
+	return m.pushBlock(reasoningBlock(raw, b.WordCount))
+}
+
+func reasoningBlock(text string, words int) Block {
 	var body []string
-	if raw != "" {
-		body = strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	if text != "" {
+		body = strings.Split(strings.TrimRight(text, "\n"), "\n")
 	}
-	return m.pushBlock(Block{
+	return Block{
 		Kind:        uievent.KindReasoning,
 		Collapsible: true,
 		Collapsed:   true,
 		Header: Header{
 			Label: "reasoning",
-			Meta:  fmt.Sprintf("%d words", b.WordCount),
+			Meta:  fmt.Sprintf("%d words", words),
 			State: "hidden",
 		},
 		Body: body,
-	})
+	}
 }
 
 func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
@@ -305,6 +362,7 @@ func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
 func (m Model) handleToolPending(b uievent.ToolPendingBody) (Model, tea.Cmd) {
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolPending, CallID: b.ToolCallID, Args: b.Args,
+		StartedAt: m.now(),
 		Header: Header{
 			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "pending", Role: theme.RoleWarning,
@@ -319,6 +377,10 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 			blk.Args = b.Args
 		}
 		blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
+		// StartedAt is deliberately NOT touched here. The pending and
+		// push paths both stamp it, and a call announced as pending was
+		// first seen then - so overwriting it now would discard the
+		// queued wait, which is part of what the reader sat through.
 		if d := render.FormatToolDetail(b.Name, b.Args); d != "" {
 			blk.Header.Detail = d
 		}
@@ -327,6 +389,7 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 	}
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolStart, CallID: b.ToolCallID, Args: b.Args,
+		StartedAt: m.now(),
 		Header: Header{
 			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "running", Role: theme.RoleInfo,
@@ -359,7 +422,7 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
-	w := m.width - uikitconfig.BodyIndent
+	w := m.width - groupIndent - uikitconfig.BodyIndent
 	if w <= 0 {
 		w = 80
 	}
@@ -373,6 +436,13 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 	end := toolEndBlockValue(m.Theme, m.Tier, w, b, existingArgs)
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
+		// The producer's duration wins; otherwise use the interval this
+		// transcript actually observed. Without the fallback every
+		// header reads "0ms", because no producer sets DurationMS.
+		blk.ElapsedMS = end.ElapsedMS
+		if blk.ElapsedMS == 0 && !blk.StartedAt.IsZero() {
+			blk.ElapsedMS = int(m.now().Sub(blk.StartedAt) / time.Millisecond)
+		}
 		// Carry the raw diff onto the live block, not just its rendered
 		// lines: a merged block that keeps only the rendering cannot be
 		// re-rendered when the theme changes, which is the whole point of
@@ -387,6 +457,12 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		blk.Header = end.Header
 		if blk.Header.Detail == "" && startDetail != "" && b.Diff == nil {
 			blk.Header.Detail = startDetail
+		}
+		// end.Header's meta was formatted from the producer's duration.
+		// When that was absent and the interval was measured here
+		// instead, the meta has to say the measured number.
+		if blk.ElapsedMS != end.ElapsedMS {
+			blk.Header.Meta = render.FormatElapsed(blk.ElapsedMS)
 		}
 		if b.Diff != nil {
 			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)
@@ -419,6 +495,13 @@ func (m *Model) clearPending() {
 }
 
 func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
+	// A change of kind ends the previous span. Without this, a text delta
+	// arriving after reasoning deltas concatenates into the same buffer and
+	// the reasoning renders as prose, attributed to the model's answer.
+	if m.pendingKind != "" && m.pendingKind != kind && m.pending != "" {
+		flushed := m.flushPending()
+		*m = flushed
+	}
 	m.pending += text
 	m.pendingKind = kind
 	if m.flushWait {
@@ -483,7 +566,7 @@ func (m Model) restyle(b Block) Block {
 		// styled at push time, so the theme change must restyle it.
 		b.Body = usageBlockValue(m.Theme, m.Tier, *b.Usage).Body
 	case b.Diff != nil:
-		w := m.width - uikitconfig.BodyIndent
+		w := m.width - groupIndent - uikitconfig.BodyIndent
 		if w <= 0 {
 			w = 80
 		}

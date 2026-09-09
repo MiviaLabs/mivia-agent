@@ -1,0 +1,367 @@
+package conversation
+
+// Subagent observation for the sidebar: how dispatch, progress and
+// history events become subagentRow entries and statuses.
+
+import (
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+)
+
+func matchesAgentID(aID, id string) bool {
+	if aID == id {
+		return true
+	}
+	if aID == "" || id == "" {
+		return false
+	}
+	if idx := strings.Index(aID, ":"); idx >= 0 {
+		if aID[idx+1:] == id {
+			return true
+		}
+	}
+	if idx := strings.Index(id, ":"); idx >= 0 {
+		if id[idx+1:] == aID {
+			return true
+		}
+	}
+	return false
+}
+
+// crossNamespaceSuffixIndex is observeAgent's own fallback for a heartbeat
+// whose Origin.TaskID carries a DIFFERENT namespace prefix than the row it
+// belongs to - e.g. a row registered under a dispatch_tasks call's own id
+// ("call-1:task-a") receiving a heartbeat namespaced under a different
+// coordinator TaskIdentity ("run-9:task-a", per dispatchNamespace's
+// ambient-context fallback). matchesAgentID only strips a namespace off ONE
+// side and compares to the OTHER side's full string, so two DIFFERENTLY
+// namespaced ids sharing a raw suffix never match there.
+//
+// This is deliberately NOT folded into matchesAgentID/agentIndex, which
+// observeAgentStart, observeAgentEnd, and observeAgentHistory also use: two
+// independent dispatch_tasks calls can legitimately reuse the same raw task
+// id ("call-a:task-1" and "call-b:task-1" for two unrelated subagents), and
+// those START/END/HISTORY events for that shape must keep creating or
+// addressing two distinct rows. Only a live PROGRESS update - which can
+// never register a new dispatch group, only advance one already dispatched
+// - gets this broader match, and only as a last resort after the exact and
+// single-sided-namespace checks above have already missed. Two or more
+// candidate rows still refuse the match, same as ambiguousAgentID's guard,
+// so a genuine collision across dispatch groups is never silently guessed.
+func crossNamespaceSuffixIndex(rows []subagentRow, id string) int {
+	idIdx := strings.Index(id, ":")
+	if idIdx < 0 {
+		return -1
+	}
+	suffix := id[idIdx+1:]
+	found := -1
+	for i, row := range rows {
+		rIdx := strings.Index(row.ID, ":")
+		if rIdx < 0 || row.ID[rIdx+1:] != suffix {
+			continue
+		}
+		if found >= 0 {
+			return -1
+		}
+		found = i
+	}
+	return found
+}
+
+// agentIndex prefers the exact full ID. A namespace-stripped legacy ID may
+// fall back only when one row has that suffix; otherwise attribution would
+// update an arbitrary task in a parallel batch.
+func agentIndex(rows []subagentRow, id string) int {
+	for i, row := range rows {
+		if row.ID == id {
+			return i
+		}
+	}
+	found := -1
+	for i, row := range rows {
+		if matchesAgentID(row.ID, id) {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	return found
+}
+
+func ambiguousAgentID(rows []subagentRow, id string) bool {
+	count := 0
+	for _, row := range rows {
+		if row.ID != id && matchesAgentID(row.ID, id) {
+			count++
+		}
+	}
+	return id != "" && count > 1
+}
+
+// observeAgentStart records or updates one subagent's running status. A
+// start means a NEW task under an old id - not history. Leaving it
+// terminal would badge a genuinely running dispatch as already finished.
+// Start events carry no group/call identity that could distinguish a
+// genuinely out-of-order start arriving after its own dispatch's end;
+// resetting is the lesser evil - worst case a finished row briefly shows
+// running until its end event re-terminates it.
+func (p *panel) observeAgentStart(id, name string) {
+	p.agents = slices.Clone(p.agents)
+	if i := agentIndex(p.agents, id); i >= 0 {
+		a := p.agents[i]
+		if name != "" {
+			p.agents[i].Name = name
+		}
+		if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
+			p.agents[i].Status = "running"
+			now := time.Now()
+			p.agents[i].LastProgress = now
+			p.agents[i].StartedAt = now
+		}
+		p.rebindIfOpen()
+		return
+	}
+	now := time.Now()
+	if ambiguousAgentID(p.agents, id) {
+		return
+	}
+	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: "running", LastProgress: now, StartedAt: now})
+	p.rebindIfOpen()
+}
+
+// observeAgentEnd updates a tracked subagent's terminal state upon completion or failure.
+func (p *panel) observeAgentEnd(id string, ok bool) {
+	status := "completed"
+	if !ok {
+		status = "failed"
+	}
+	p.agents = slices.Clone(p.agents)
+	if i := agentIndex(p.agents, id); i >= 0 {
+		p.agents[i].Status = status
+		p.agents[i].LastProgress = time.Now()
+		p.rebindIfOpen()
+		return
+	}
+	if ambiguousAgentID(p.agents, id) {
+		return
+	}
+}
+
+// observeAgentGroupStart registers a dispatch_tasks call's fanned-out
+// per-task ids as one running row each - instead of observeAgentStart's
+// single row for the whole call - and remembers the group under callID so
+// observeAgentGroupEnd can resolve every member's terminal status when the
+// outer call completes.
+func (p *panel) observeAgentGroupStart(callID string, ids []string, names map[string]string) {
+	if p.dispatchGroups == nil {
+		p.dispatchGroups = map[string][]string{}
+	}
+	p.dispatchGroups[callID] = ids
+	for _, id := range ids {
+		name := ""
+		if names != nil {
+			name = names[id]
+			if name == "" {
+				prefix := callID + ":"
+				rawID := strings.TrimPrefix(id, prefix)
+				name = names[rawID]
+			}
+		}
+		p.observeAgentStart(id, name)
+	}
+}
+
+// observeAgentGroupEnd resolves a dispatch_tasks group's per-task terminal
+// status from statuses (task id -> status, parsed from the tool's own JSON
+// result), falling back to ok for any member statuses does not cover. A
+// no-op when callID names no tracked group (the ordinary single-row path
+// handles it instead).
+func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, ok bool) {
+	ids, found := p.dispatchGroups[callID]
+	if !found {
+		return
+	}
+	delete(p.dispatchGroups, callID)
+	prefix := callID + ":"
+	for _, id := range ids {
+		rawID := strings.TrimPrefix(id, prefix)
+		status := statuses[id]
+		if status == "" {
+			status = statuses[rawID]
+		}
+		if status != "" {
+			p.setAgentStatus(id, status)
+			continue
+		}
+		p.observeAgentEnd(id, ok)
+	}
+}
+
+// setAgentStatus overwrites one tracked subagent's status verbatim - unlike
+// observeAgentEnd, which only ever writes "completed" or "failed".
+func (p *panel) setAgentStatus(id, status string) {
+	p.agents = slices.Clone(p.agents)
+	if i := agentIndex(p.agents, id); i >= 0 {
+		p.agents[i].Status = status
+		p.agents[i].LastProgress = time.Now()
+		p.rebindIfOpen()
+		return
+	}
+}
+
+// isDispatchGroup reports whether callID names a tracked dispatch_tasks
+// group, so the caller can choose the group-aware end path over the
+// ordinary single-row one.
+func (p panel) isDispatchGroup(callID string) bool {
+	_, found := p.dispatchGroups[callID]
+	return found
+}
+
+// reconcileTerminal transitions all non-terminal subagents to a terminal state
+// when a turn ends without explicit tool end events (cancellation, error, interrupt).
+func (p *panel) reconcileTerminal(reason string) {
+	status := statusCancelled
+	switch reason {
+	case "error", "failed":
+		status = statusFailed
+	case "interrupted":
+		status = statusInterrupted
+	case "completed":
+		status = statusCompleted
+	}
+	p.agents = slices.Clone(p.agents)
+	changed := false
+	for i, a := range p.agents {
+		if isNonTerminalStatus(a.Status) {
+			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
+			changed = true
+		}
+	}
+	if changed {
+		p.rebindIfOpen()
+	}
+	// The rows are settled; the group's MEMBER LIST is spent, but its call
+	// id must stay known.
+	//
+	// This map does double duty: observeAgentGroupEnd reads the member ids,
+	// and observeToolStartInto uses mere key presence as the fence that
+	// suppresses the agent loop's SECOND tool.start for one call ("queued"
+	// then "running"). A superseded stream is still drained after the turn
+	// ends - that is handleTurnEventFrom's stale-source contract - so that
+	// second start can legitimately arrive after this settle. Deleting the
+	// key would open the fence: the late start re-fans the call out and
+	// observeAgentStart resets every terminal row to "running" with a fresh
+	// clock, which is the exact phantom-activity symptom this function
+	// exists to prevent (and which holds the spinner clock armed forever).
+	//
+	// Emptying the value releases what is worth releasing while the key
+	// keeps the fence shut. A real ToolEndBody still deletes the key via
+	// observeAgentGroupEnd, whose member loop is then correctly a no-op
+	// because this call already settled every row.
+	for callID := range p.dispatchGroups {
+		p.dispatchGroups[callID] = nil
+	}
+}
+
+// observeAgentHistory idempotently registers or updates a subagent from replayed history.
+func (p *panel) observeAgentHistory(id, status string, names ...string) {
+	name := ""
+	if len(names) > 0 {
+		name = names[0]
+	}
+	p.agents = slices.Clone(p.agents)
+	if i := agentIndex(p.agents, id); i >= 0 {
+		if isNonTerminalStatus(p.agents[i].Status) {
+			p.agents[i].Status = status
+		}
+		if name != "" {
+			p.agents[i].Name = name
+		}
+		p.rebindIfOpen()
+		return
+	}
+	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: status})
+	p.rebindIfOpen()
+}
+
+// activeAgentCount returns the count of currently running/pending subagents.
+func (p panel) activeAgentCount() int {
+	count := 0
+	for _, a := range p.agents {
+		if isNonTerminalStatus(a.Status) {
+			count++
+		}
+	}
+	return count
+}
+
+// observeAgent records progress for a subagent. It preserves the subagent's
+// starting state and name, updates steps/toolcalls, and advances the stall clock
+// only when real forward progress occurs.
+func (p *panel) observeAgent(id string, pr *uievent.Progress) {
+	log := slices.Clone(pr.Log)
+	p.agents = slices.Clone(p.agents)
+	i := agentIndex(p.agents, id)
+	if i < 0 {
+		i = crossNamespaceSuffixIndex(p.agents, id)
+	}
+	if i >= 0 {
+		a := p.agents[i]
+		if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
+			return
+		}
+		row := a
+		if pr.AgentName != "" {
+			row.Name = pr.AgentName
+		}
+		if pr.Status != "" {
+			row.Status = pr.Status
+		}
+		if pr.Step > 0 {
+			row.Step = pr.Step
+		}
+		if pr.TotalSteps > 0 {
+			row.Total = pr.TotalSteps
+		}
+		if pr.ToolCalls > 0 {
+			row.ToolCalls = pr.ToolCalls
+		}
+		if len(log) > 0 {
+			combinedLog := make([]string, 0, len(a.Log)+len(log))
+			combinedLog = append(combinedLog, a.Log...)
+			combinedLog = append(combinedLog, log...)
+			row.Log = combinedLog
+		}
+		if progressAdvances(a, row) {
+			row.LastProgress = time.Now()
+		}
+		p.agents[i] = row
+		p.rebindIfOpen()
+		return
+	}
+	now := time.Now()
+	if ambiguousAgentID(p.agents, id) {
+		return
+	}
+	row := subagentRow{
+		ID:           id,
+		Name:         pr.AgentName,
+		Status:       pr.Status,
+		Step:         pr.Step,
+		Total:        pr.TotalSteps,
+		ToolCalls:    pr.ToolCalls,
+		Log:          log,
+		LastProgress: now,
+		StartedAt:    now,
+	}
+	p.agents = append(p.agents, row)
+	p.rebindIfOpen()
+}
+
+// openPanel shows the panel with focus in its list, refreshing the list
+// over everything observed while it was closed, and lands the cursor on

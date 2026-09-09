@@ -20,10 +20,12 @@ func TestAllBodyTypesSatisfyBody(t *testing.T) {
 		ToolEndBody{},
 		PlanBody{},
 		NoticeBody{},
+		WorkflowStatusBody{},
 		HookBody{},
 		UsageBody{},
 		ErrorBody{},
 		TurnEndBody{},
+		AssistantResetBody{},
 	}
 	for _, b := range bodies {
 		b.isBody() // must not panic; the assertion is that this compiles and runs

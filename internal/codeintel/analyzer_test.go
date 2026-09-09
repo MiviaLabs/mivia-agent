@@ -59,7 +59,15 @@ func TestAnalyzerResolvesSymbolInThisRepo(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// Measured 5.22s in isolation under -race for this repo's module. The
+	// 120s this budget replaces was already generous by that measure and
+	// still timed out in the real race job: go test -race ./... runs every
+	// package's test binary concurrently with no -p cap, and a full-module
+	// go/packages load here (this analyzer's real cost - it type-checks the
+	// whole repo, not just one file) is exactly the kind of CPU/memory-heavy
+	// work that starves hardest under that contention. 300s matches the
+	// scale of contention actually observed, not a guess.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	result, err := a.References(ctx, "sdkadapter.Mint", nil, 50)

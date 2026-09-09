@@ -545,7 +545,7 @@ func runLateWorkflowBuildFailureTests(t *testing.T, sentinel error, reset func()
 	})
 	t.Run("controller", func(t *testing.T) {
 		reset()
-		workflowBuildController = func(workflowledger.Repository, controller.AgentStepRunner, *definition.CompiledWorkflow, map[string]controller.StepRuntime, map[string]any, string, []byte) (*controller.LinearController, error) {
+		workflowBuildController = func(controller.LedgerRepository, controller.AgentStepRunner, *definition.CompiledWorkflow, map[string]controller.StepRuntime, map[string]any, string, []byte) (*controller.LinearController, error) {
 			return nil, sentinel
 		}
 		check(t)

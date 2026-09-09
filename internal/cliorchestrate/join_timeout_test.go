@@ -15,13 +15,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// wedgedCoordinator embeds the Coordinator interface and overrides only
+// wedgedCoordinator embeds the coordinator type and overrides only
 // Join/Inspect/Cancel to simulate the exact production failure observed on
 // run-BAUJAKBOCGZDDXLQRWDJN436OE: a task stuck "running" forever (e.g. an
 // upstream HTTP call ignoring its context) so coordinator.Join never fires
 // h.done. Embedded interface = unexpected method calls panic loudly.
 type wedgedCoordinator struct {
-	coordinator.Coordinator
+	*coordinator.Coordinator
 
 	mu       sync.Mutex
 	canceled int
@@ -103,7 +103,7 @@ func configForJoinTest() struct{} { return struct{}{} } // removed below
 // return made the join-timeout graceful cancel unreachable - the wedged task
 // silently leaked to its full budget.
 type wedgedWithWorkCoordinator struct {
-	coordinator.Coordinator
+	*coordinator.Coordinator
 
 	mu       sync.Mutex
 	canceled int
@@ -300,4 +300,29 @@ func (w *wedgedCoordinator) canceledCount() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.canceled
+}
+
+// TestJoinFailureFallback_SalvagesWorkDirectly pins joinFailureFallback's
+// own salvaged-result branch directly, distinct from
+// TestJoinRunTool_TimeoutSalvagesWorkAndStillCancelsWedgedRun which drives
+// it indirectly through the join_run tool: given a coordinator whose
+// Inspect reports salvageable work, a Join error that satisfies
+// errors.Is(err, context.Canceled) must return the salvaged snapshot and
+// result with a nil error, not the bare join error.
+func TestJoinFailureFallback_SalvagesWorkDirectly(t *testing.T) {
+	w := &wedgedWithWorkCoordinator{}
+	handle := &coordinator.RunHandle{}
+	snap, result, err := joinFailureFallback(w, handle, false, context.Canceled)
+	if err != nil {
+		t.Fatalf("joinFailureFallback err = %v, want nil once salvaged", err)
+	}
+	if result == nil {
+		t.Fatal("joinFailureFallback returned a nil result for salvageable work")
+	}
+	if snap.RunID != "run-wedged-work" {
+		t.Errorf("snap.RunID = %q, want run-wedged-work", snap.RunID)
+	}
+	if w.canceledCount() != 0 {
+		t.Errorf("canceled = %d, want 0: isNew is false so this call must not own the run", w.canceledCount())
+	}
 }

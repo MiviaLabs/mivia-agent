@@ -1,9 +1,12 @@
 package statusline
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -47,7 +50,7 @@ func TestStartArmsAndReturnsTickCmd(t *testing.T) {
 	got := m.View(start.Add(3 * time.Second))
 	// "3.0s" is the shared FormatElapsed ladder (transcript-polish.md R5),
 	// not the old Go time.Duration String() output.
-	for _, want := range []string{"thinking", "3.0s"} {
+	for _, want := range []string{"THINKING", "3.0s"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("statusline view missing %q: %q", want, got)
 		}
@@ -92,54 +95,63 @@ func TestSetLabelDoesNotResetElapsed(t *testing.T) {
 	m.Start("thinking", start)
 	m.SetLabel("running tool")
 	got := m.View(start.Add(5 * time.Second))
-	if !strings.Contains(got, "running tool") || !strings.Contains(got, "5.0s") {
+	if !strings.Contains(got, "RUNNING~") || !strings.Contains(got, "5.0s") {
 		t.Errorf("got %q, want label updated and elapsed clock preserved", got)
 	}
 }
 
-// TestMarkCarriesItsStateRole pins the mock's ANIM table: the BRAND
-// MARK carries the state colour (running info, pending warning, failed
-// danger, done success); the label word and elapsed time stay subtle.
-// Motion and the mark's colour carry the activity, not the label - the
-// split the mock's view 18 draws.
+// TestMarkCarriesItsStateRole pins that the BRAND MARK carries the state
+// colour (running fg, pending warning, failed danger, done success).
+// Waiting and pending labels wear RoleWarning; all other labels stay subtle.
 func TestMarkCarriesItsStateRole(t *testing.T) {
 	th := loadTheme(t)
 	cases := []struct {
-		label string
-		role  theme.Role
+		label     string
+		markRole  theme.Role
+		labelRole theme.Role
 	}{
-		{"running", theme.RoleInfo},
-		{"pending", theme.RoleWarning},
-		{"failed", theme.RoleDanger},
-		{"done", theme.RoleSuccess},
+		{"running", theme.RoleFG, theme.RoleFGSubtle},
+		{"waiting", theme.RoleWarning, theme.RoleWarning},
+		{"pending", theme.RoleWarning, theme.RoleWarning},
+		{"failed", theme.RoleDanger, theme.RoleFGSubtle},
+		{"done", theme.RoleSuccess, theme.RoleFGSubtle},
 	}
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			m := New(th, theme.TierTrueColor)
 			m.Start(c.label, time.Now())
 			got := m.View(time.Now())
-			want := render.Role(th, theme.TierTrueColor, c.role)
-			if !strings.Contains(got, want.Render("✦")) && !strings.Contains(got, want.Render("⬖")) && !strings.Contains(got, want.Render("◈")) && !strings.Contains(got, want.Render("◆")) {
-				t.Errorf("got %q, want the mark styled with %s", got, c.role)
+			wantMark := render.Role(th, theme.TierTrueColor, c.markRole)
+			hasGlyph := strings.Contains(got, wantMark.Render("⠶")) ||
+				strings.Contains(got, wantMark.Render("⠛")) ||
+				strings.Contains(got, wantMark.Render("⠿")) ||
+				strings.Contains(got, wantMark.Render("⣿")) ||
+				strings.Contains(got, wantMark.Render("⣶")) ||
+				strings.Contains(got, wantMark.Render("⬖")) ||
+				strings.Contains(got, wantMark.Render("◈")) ||
+				strings.Contains(got, wantMark.Render("◆"))
+			if !hasGlyph {
+				t.Errorf("got %q, want the mark styled with %s", got, c.markRole)
 			}
-			if subtle := render.Role(th, theme.TierTrueColor, theme.RoleFGSubtle).Render(c.label); !strings.Contains(got, subtle) {
-				t.Errorf("got %q, want the label to stay subtle", got)
+			wantLabel := render.Role(th, theme.TierTrueColor, c.labelRole).Render(fmt.Sprintf("%-8s", strings.ToUpper(c.label)))
+			if !strings.Contains(got, wantLabel) {
+				t.Errorf("got %q, want the label styled with %s (%q)", got, c.labelRole, wantLabel)
 			}
 		})
 	}
 }
 
-// TestThinkingLabelHasNoStateRole: "thinking" has no colour in the
-// wireframes table (only motion), so it must render in the line's own
-// subtle style rather than picking up a state colour by accident.
+// TestThinkingLabelHasNoStateRole: "thinking" has no status colour
+// (monochrome), so its label renders in RoleFGSubtle rather than
+// picking up a warning/danger color.
 func TestThinkingLabelHasNoStateRole(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor)
 	m.Start("thinking", time.Now())
 	got := m.View(time.Now())
-	want := render.Role(th, theme.TierTrueColor, theme.RoleFGSubtle).Render("thinking")
+	want := render.Role(th, theme.TierTrueColor, theme.RoleFGSubtle).Render("THINKING")
 	if !strings.Contains(got, want) {
-		t.Errorf("got %q, want thinking in the line's own subtle style: %q", got, want)
+		t.Errorf("got %q, want thinking in subtle style: %q", got, want)
 	}
 }
 
@@ -185,7 +197,7 @@ func TestNoticeTakesTheRowWhileSet(t *testing.T) {
 		t.Errorf("got %q, want the notice", got)
 	}
 	m.ClearNotice()
-	if got := m.View(time.Now()); !strings.Contains(got, "thinking") {
+	if got := m.View(time.Now()); !strings.Contains(got, "THINKING") {
 		t.Errorf("got %q, want the turn line back", got)
 	}
 }
@@ -223,6 +235,115 @@ func TestSetLabelClearsThePreviousDetail(t *testing.T) {
 	}
 }
 
+// TestSetQueuedShowsBesideTheActiveTurnLine pins the fix for a message
+// queued while a turn is running: the queued count must appear ALONGSIDE
+// the turn's own status (label, detail, elapsed clock), not replace it.
+// Before this, callers used Notice("message queued...") for this, and
+// Notice fully overwrites the turn line (see View()'s early return), so
+// the running/thinking status disappeared for the rest of the turn.
+func TestSetQueuedShowsBesideTheActiveTurnLine(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.Start("thinking", start)
+	m.SetQueued(2)
+	got := m.View(start.Add(3 * time.Second))
+	for _, want := range []string{"THINKING", "3.0s", "queued: 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("got %q, want %q alongside the active turn", got, want)
+		}
+	}
+}
+
+// TestSetQueuedZeroHidesThePill pins that clearing the queue (SetQueued(0))
+// removes the pill instead of showing "queued: 0".
+func TestSetQueuedZeroHidesThePill(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.SetQueued(3)
+	m.SetQueued(0)
+	got := m.View(time.Now())
+	if strings.Contains(got, "queued") {
+		t.Errorf("got %q, want no queued pill once the count is zero", got)
+	}
+}
+
+// TestSetQueuedSurvivesLabelChange pins that a label change (a tool
+// starting, a phase advancing) does not clear the queued pill - only
+// Start (a new turn) and SetQueued(0) should.
+func TestSetQueuedSurvivesLabelChange(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.SetQueued(1)
+	m.SetLabel("running")
+	got := m.View(time.Now())
+	if !strings.Contains(got, "queued: 1") {
+		t.Errorf("got %q, want the queued pill to survive a label change", got)
+	}
+}
+
+// TestStartClearsAStaleQueuedPill: a new turn must not inherit a queued
+// count left over from the previous one.
+func TestStartClearsAStaleQueuedPill(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.SetQueued(2)
+	m.Start("thinking", time.Now())
+	got := m.View(time.Now())
+	if strings.Contains(got, "queued") {
+		t.Errorf("got %q, want no stale queued pill after a new Start", got)
+	}
+}
+
+func TestStatusLineBadgeFixedFourteenRunes(t *testing.T) {
+	th := loadTheme(t)
+	labels := []string{"thinking", "running", "waiting", "pending", "done", "failed", "x", "running tool long label"}
+	for _, tier := range []theme.Tier{theme.TierTrueColor, theme.TierASCII} {
+		for _, lbl := range labels {
+			m := New(th, tier)
+			m.Start(lbl, time.Now())
+			v := m.View(time.Now())
+			// Find the capsule [ ... ]
+			plain := ansi.Strip(v)
+			open := strings.Index(plain, "[")
+			close := strings.Index(plain, "]")
+			if open < 0 || close < 0 || close <= open {
+				t.Fatalf("tier %v, label %q: no capsule found in view %q", tier, lbl, plain)
+			}
+			badge := plain[open : close+1]
+			if w := ansi.StringWidth(badge); w != 14 {
+				t.Errorf("tier %v, label %q: badge %q width = %d, want 14", tier, lbl, badge, w)
+			}
+		}
+	}
+}
+
+func TestStatusLineDividerTierGated(t *testing.T) {
+	th := loadTheme(t)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := start.Add(3 * time.Second)
+
+	// TrueColor tier uses hairline middle dot divider " · "
+	mTrue := New(th, theme.TierTrueColor)
+	mTrue.Start("running", start)
+	mTrue.SetDetail("go test ./...")
+	vTrue := mTrue.View(now)
+	if !strings.Contains(vTrue, "go test ./... · 3.0s") {
+		t.Errorf("got %q, want 'go test ./... · 3.0s' on TrueColor tier", vTrue)
+	}
+
+	// ASCII tier uses " - " divider
+	mAscii := New(th, theme.TierASCII)
+	mAscii.Start("running", start)
+	mAscii.SetDetail("go test ./...")
+	vAscii := mAscii.View(now)
+	if !strings.Contains(vAscii, "go test ./... - 3.0s") {
+		t.Errorf("got %q, want 'go test ./... - 3.0s' on ASCII tier", vAscii)
+	}
+	if strings.Contains(vAscii, "·") {
+		t.Errorf("ASCII tier must not contain unicode middle dot '·': %q", vAscii)
+	}
+}
+
 func TestStatusLineSafetyPillsAndTelemetry(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierASCII)
@@ -246,5 +367,15 @@ func TestStatusLineSafetyPillsAndTelemetry(t *testing.T) {
 	gotAuto := m.View(start)
 	if !strings.Contains(gotAuto, "[AUTO]") {
 		t.Errorf("got %q, want [AUTO] pill in ASCII mode", gotAuto)
+	}
+}
+
+func TestMarkViewAndMarkGlyphDelegateToTheMark(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	if got := m.MarkView(); got != m.Mark().View() {
+		t.Errorf("MarkView() = %q, want it to match Mark().View() = %q", got, m.Mark().View())
+	}
+	if got := m.MarkGlyph(); got != m.Mark().Glyph() {
+		t.Errorf("MarkGlyph() = %q, want it to match Mark().Glyph() = %q", got, m.Mark().Glyph())
 	}
 }

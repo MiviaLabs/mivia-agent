@@ -10,10 +10,12 @@ directly with `python3 scripts/test_check_mutation.py`.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import check_mutation as cm
@@ -78,11 +80,196 @@ def test_tokenizer_skips_comments_and_strings() -> None:
         assert len(eq_sites) == 1, f"want exactly 1 real '==' site, got {len(eq_sites)}"
 
 
+def test_tokenizer_offsets_survive_multibyte_utf8_before_site() -> None:
+    # Regression guard: site.start/site.end are BYTE offsets (go/scanner
+    # positions). An em-dash (3 bytes in UTF-8, 1 Python str character)
+    # earlier in the file used to desync run_mutant's str-based slice
+    # (text = original.decode("utf-8"); text[site.start:site.end]) from
+    # the real byte span, silently mutating the wrong text. Byte-slicing
+    # the raw bytes directly - what run_mutant and sweep_diff's line-
+    # number lookup do now - must land exactly on "continue" regardless.
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "snippet.go"
+        source = (
+            "package p\n\n"
+            "// a note with an em-dash — right here, three of them — —\n"
+            "func f() {\n"
+            "\tfor {\n"
+            "\t\tcontinue\n"
+            "\t}\n"
+            "}\n"
+        )
+        f.write_bytes(source.encode("utf-8"))
+        sites = mt.sites_for_file(f)
+        continue_sites = [s for s in sites if s.kind == "CONTINUE"]
+        assert len(continue_sites) == 1, continue_sites
+        site = continue_sites[0]
+
+        raw = f.read_bytes()
+        assert raw[site.start : site.end] == b"continue", (
+            f"byte-offset slice landed on {raw[site.start:site.end]!r}, "
+            "not b'continue' - offsets and byte slicing disagree"
+        )
+
+        # The bug this guards against: decoding to str first and slicing
+        # with the same (byte) offsets lands somewhere else entirely once
+        # multi-byte characters precede the site.
+        decoded = raw.decode("utf-8")
+        mis_sliced = decoded[site.start : site.end]
+        assert mis_sliced != "continue", (
+            "expected byte/str offset drift to be present in this fixture "
+            "(str-slicing should land on the WRONG text) - if this now "
+            "passes, the fixture no longer demonstrates the bug this test "
+            "exists to catch a regression of"
+        )
+
+        # The actual gate: assert on the PRODUCTION functions, not on a
+        # reimplementation of them here. Asserting only the tokenizer's
+        # offsets (above) tests something that was never broken - reverting
+        # either fixed line left this whole suite green until these two.
+        assert cm.apply_mutation(raw, site) == raw.replace(b"continue", b"", 1), (
+            "apply_mutation did not remove the 'continue' the site names; "
+            "it sliced the wrong span"
+        )
+        assert cm.line_of_offset(raw, site.start) == 6, (
+            "line_of_offset mis-located the site; sweep_diff matches this "
+            "number against git's changed lines, so a wrong one silently "
+            "drops the site from the sweep"
+        )
+
+
+def test_denylist_spans_survive_multibyte_utf8_before_snippet() -> None:
+    # Companion to the above for the third offset consumer: denylisted_spans
+    # resolves each entry's span, and is_denylisted compares it against
+    # go/scanner BYTE offsets. Resolving in a decoded str shifts the span
+    # left once multi-byte characters precede the snippet, so the entry
+    # stops covering its own site (an audited equivalent mutant runs anyway)
+    # or slides onto an earlier one (a real site never runs, reported clean).
+    with tempfile.TemporaryDirectory() as td:
+        pkg = Path(td)
+        f = pkg / "snippet.go"
+        source = (
+            "package p\n\n"
+            "// three em-dashes — — — before the denylisted comparison\n"
+            "func f(a, b int) bool {\n"
+            "\treturn a == b\n"
+            "}\n"
+        )
+        f.write_bytes(source.encode("utf-8"))
+
+        spans = cm.denylisted_spans(pkg, [{"file": "snippet.go", "snippet": "a == b"}])
+        eq_sites = [s for s in mt.sites_for_file(f) if s.kind == "=="]
+        assert len(eq_sites) == 1, eq_sites
+
+        assert cm.is_denylisted(eq_sites[0], spans), (
+            "the denylisted '==' was not recognised as denylisted - the span "
+            "was resolved in code points and drifted off its own site"
+        )
+
+
+def test_restore_and_verify_raises_when_a_mutant_is_left_behind() -> None:
+    # A mutant left on disk is a commit hazard, not a dirty file: the
+    # pre-commit hook's gofmt step re-stages fully-staged Go files from the
+    # WORKING TREE, so a mutant present then is committed silently while the
+    # sweep still reports 100% (it restores before it reports). One shipped
+    # that way. restore_and_verify must fail loudly rather than trust that
+    # calling write_bytes worked - the restore path swallows write errors.
+    with tempfile.TemporaryDirectory() as td:
+        good = Path(td) / "good.go"
+        good.write_bytes(b"package p\n\nfunc f(a, b int) bool { return a == b }\n")
+        originals = {good: good.read_bytes()}
+
+        # A file mutated after the snapshot is put back, and reports clean.
+        good.write_bytes(b"package p\n\nfunc f(a, b int) bool { return a != b }\n")
+        cm.restore_and_verify(originals)
+        assert good.read_bytes() == originals[good]
+
+        # A file that cannot be restored must raise, naming the file, rather
+        # than returning as though the restore had worked.
+        unwritable = Path(td) / "gone" / "missing.go"
+        try:
+            cm.restore_and_verify({unwritable: b"package p\n"})
+        except cm.MutationError as err:
+            assert "missing.go" in str(err), err
+        else:
+            raise AssertionError("restore_and_verify accepted a file it could not restore")
+
+
+def test_verify_restored_reports_only_drifted_files() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        clean = Path(td) / "clean.go"
+        drifted = Path(td) / "drifted.go"
+        clean.write_bytes(b"package p\n")
+        drifted.write_bytes(b"package p\n")
+        originals = {clean: clean.read_bytes(), drifted: drifted.read_bytes()}
+
+        assert cm.verify_restored(originals) == []
+
+        drifted.write_bytes(b"package q\n")
+        messages = cm.verify_restored(originals)
+        assert len(messages) == 1, messages
+        assert "drifted.go" in messages[0]
+
+
 def test_classify_matrix() -> None:
     assert cm.classify(False, "pass") == cm.DISCARDED
     assert cm.classify(True, "timeout") == cm.KILLED
     assert cm.classify(True, "fail") == cm.KILLED
     assert cm.classify(True, "pass") == cm.SURVIVED
+
+
+def test_build_failure_markers_present_only_on_build_or_setup_failure() -> None:
+    # Locked against a real `go test` run on a deliberately broken file:
+    # "FAIL\tmvtest [build failed]" on a compile error, no marker on an
+    # ordinary failing-test run ("--- FAIL: TestAdd ... FAIL\tmvtest ...").
+    build_failed_output = "# mvtest [mvtest.test]\n./x.go:4:13: invalid operation\nFAIL\tmvtest [build failed]\nFAIL\n"
+    test_failed_output = "--- FAIL: TestAdd (0.00s)\n    x_test.go:7: bad\nFAIL\nFAIL\tmvtest\t0.001s\nFAIL\n"
+    assert any(m in build_failed_output for m in cm.BUILD_FAILURE_MARKERS)
+    assert not any(m in test_failed_output for m in cm.BUILD_FAILURE_MARKERS)
+
+
+def test_parse_coverage_profile_reads_blocks_keyed_by_file() -> None:
+    profile = (
+        "mode: set\n"
+        "mvtest/x.go:3.24,5.2 1 1\n"
+        "mvtest/x.go:7.24,9.2 1 0\n"
+    )
+    blocks = cm.parse_coverage_profile(profile)
+    assert blocks == {"mvtest/x.go": [(3, 5, 1), (7, 9, 0)]}
+    # A "mode:" header or a blank line must never be mistaken for a block.
+    assert cm.parse_coverage_profile("mode: count\n\n") == {}
+
+
+def test_line_definitely_uncovered_only_when_every_overlapping_block_is_zero() -> None:
+    blocks = [(3, 5, 1), (7, 9, 0), (10, 12, 0)]
+    # Covered block: a mutation here could still be killed - never skip.
+    assert cm.line_definitely_uncovered(blocks, 4) is False
+    # Uncovered block: every overlapping block ran zero times.
+    assert cm.line_definitely_uncovered(blocks, 8) is True
+    # No block claims this line at all: a profile gap, not proof of dead
+    # code - must never skip on that uncertainty.
+    assert cm.line_definitely_uncovered(blocks, 20) is False
+
+
+def test_coverage_key_matches_go_tool_cover_profile_file_field() -> None:
+    module = cm.module_path()
+    path = ROOT / "internal" / "config" / "load.go"
+    assert cm.coverage_key(path) == f"{module}/internal/config/load.go"
+
+
+def test_site_is_dead_code_never_skips_on_a_missing_or_absent_profile() -> None:
+    class FakeSite:
+        path = ROOT / "internal" / "config" / "load.go"
+
+    site = FakeSite()
+    # No profile at all (coverage computation failed) - never skip.
+    assert cm.site_is_dead_code(site, 1, None) is False
+    # A profile that never mentions this file - never skip.
+    assert cm.site_is_dead_code(site, 1, {}) is False
+    # A profile that does cover this file, with the line proven dead.
+    key = cm.coverage_key(site.path)
+    assert cm.site_is_dead_code(site, 8, {key: [(7, 9, 0)]}) is True
+    assert cm.site_is_dead_code(site, 4, {key: [(3, 5, 1)]}) is False
 
 
 def test_denylist_path_maps_nested_packages_to_flat_filenames() -> None:
@@ -162,6 +349,143 @@ def test_policy_mutation_discovery_and_floor() -> None:
         assert cm.resolve_floor("pkg/a", 90.0, pdir) == 90.0
         assert cm.resolve_floor("pkg/a", 0.70, pdir) == 70.0
         assert cm.load_denylist("pkg/a", pdir)["floor"] == 0.85
+
+
+def test_take_moved_consumes_the_deletion_multiset() -> None:
+    counter = Counter({"x := 1": 1, "if err != nil {": 2})
+    assert cm.take_moved(counter, "\tx := 1") is True
+    assert cm.take_moved(counter, "x := 1") is False, (
+        "one deleted copy licenses exactly one skip"
+    )
+    assert cm.take_moved(counter, "if err != nil {") is True
+    assert counter == Counter({"x := 1": 0, "if err != nil {": 1})
+
+
+def test_take_moved_never_matches_blank_or_edited_text() -> None:
+    counter = Counter({"return nil": 3})
+    assert cm.take_moved(counter, "") is False
+    assert cm.take_moved(counter, "   ") is False
+    assert cm.take_moved(counter, "Return nil") is False
+    assert cm.take_moved(counter, "return  nil") is False
+    assert counter == Counter({"return nil": 3}), "no skip must consume the counter"
+
+
+def test_parse_deleted_lines_skips_headers_and_blank_deletions() -> None:
+    fixture = (
+        "diff --git a/internal/x/x.go b/internal/x/x.go\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/internal/x/x.go\n"
+        "+++ b/internal/x/x.go\n"
+        "@@ -1,4 +0,0 @@\n"
+        "-package x\n"
+        "-\n"
+        "-- indented content\n"
+    )
+    got = cm.parse_deleted_lines(fixture)
+    assert got == Counter({"package x": 1, "- indented content": 1}), got
+    assert cm.parse_deleted_lines("--- /dev/null\n+++ b/internal/x/x.go\n") == Counter()
+
+
+@contextlib.contextmanager
+def _isolated_journal(tmp: str):
+    """_isolated_journal points the crash journal at a temp directory.
+
+    Without it a journal test reads and clears the repository's own journal,
+    so a real stranded mutant could be dropped by a test run."""
+    original = cm.inflight_dir
+    cm.inflight_dir = lambda: Path(tmp) / "journal"
+    try:
+        yield
+    finally:
+        cm.inflight_dir = original
+
+
+def test_recover_inflight_restores_a_file_a_killed_sweep_left_mutated() -> None:
+    """The journal is the only restore path that survives SIGKILL.
+
+    run_mutant restores in a `finally`, and SIGTERM is re-raised as
+    KeyboardInterrupt so that `finally` runs. Neither runs on SIGKILL, an OOM
+    kill, or a power loss. This simulates that: journal, mutate, then abandon
+    the file with no restore, exactly as a killed process leaves it."""
+    with tempfile.TemporaryDirectory() as tmp, _isolated_journal(tmp):
+        target = Path(tmp) / "victim.go"
+        original = b"package p\n\nfunc f() { return }\n"
+        target.write_bytes(original)
+
+        token = cm.inflight_begin(target, original)
+        target.write_bytes(b"package p\n\nfunc f() { }\n")
+        assert target.read_bytes() != original, "the mutation did not apply"
+
+        restored = cm.recover_inflight()
+        assert str(target) in restored, f"recover did not report the file: {restored}"
+        assert target.read_bytes() == original, "the file was not restored"
+
+        assert cm.recover_inflight() == [], "the journal was not cleared"
+        cm.inflight_end(token)
+
+
+def test_recover_inflight_leaves_an_already_restored_file_alone() -> None:
+    """A sweep that restored its file and then died still leaves a journal
+    entry. Recovery must drop it silently rather than report a phantom."""
+    with tempfile.TemporaryDirectory() as tmp, _isolated_journal(tmp):
+        target = Path(tmp) / "victim.go"
+        original = b"package p\n"
+        target.write_bytes(original)
+        cm.inflight_begin(target, original)
+
+        assert cm.recover_inflight() == [], "an already-restored file was reported"
+        assert target.read_bytes() == original
+
+
+def test_inflight_dir_sits_outside_the_worktree() -> None:
+    """A backup inside the worktree could be formatted, staged, or committed.
+    The journal must live under the git directory instead."""
+    directory = cm.inflight_dir()
+    assert ".git" in directory.parts, f"journal is not under the git dir: {directory}"
+
+
+def test_run_mutant_journals_the_file_while_it_is_mutated() -> None:
+    """run_mutant must journal BEFORE it mutates, not merely restore after.
+
+    This is the wiring test. The unit tests above drive inflight_begin
+    directly, so they still pass if run_mutant never calls it - and a sweep
+    killed mid-mutant would then strand the file with nothing to recover
+    from. This asserts the journal exists at the moment the mutated file is
+    on disk, by inspecting it from inside the stubbed test subprocess."""
+    from mutation_tokenize import Site
+
+    with tempfile.TemporaryDirectory() as tmp, _isolated_journal(tmp):
+        target = Path(tmp) / "victim.go"
+        original = b"package p\n\nfunc f() bool { return true }\n"
+        target.write_bytes(original)
+        site = Site(target, original.index(b"true"), original.index(b"true") + 4,
+                    "true", "false", "bool")
+
+        seen = {}
+        real_run = cm.subprocess.run
+
+        def spy(cmd, *args, **kwargs):
+            if cmd and cmd[0] == "go":
+                journal = cm.inflight_dir()
+                seen["entries"] = sorted(journal.glob("*.bak")) if journal.is_dir() else []
+                seen["mutated"] = target.read_bytes() != original
+                backups = [b.read_bytes() for b in seen["entries"]]
+                seen["backup_is_original"] = original in backups
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            return real_run(cmd, *args, **kwargs)
+
+        cm.subprocess.run = spy
+        try:
+            cm.run_mutant(site, original, "internal/x", str(tmp))
+        finally:
+            cm.subprocess.run = real_run
+
+        assert seen.get("mutated"), "the file was not mutated when the tests ran"
+        assert seen.get("entries"), "run_mutant did not journal the file before mutating it"
+        assert seen.get("backup_is_original"), "the journal did not hold the pre-mutation bytes"
+        assert target.read_bytes() == original, "run_mutant did not restore the file"
+        leftover = cm.inflight_dir()
+        assert not sorted(leftover.glob("*.json")), "run_mutant did not clear its journal entry"
 
 
 def main() -> int:

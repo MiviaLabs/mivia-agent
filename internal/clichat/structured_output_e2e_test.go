@@ -112,6 +112,7 @@ func dispatchWithSchema(t *testing.T, tool *cliorchestrate.DispatchTasksToolForT
 			"prompt":        "return structured result",
 			"output_schema": schema,
 		}},
+		"wait": "run",
 	}
 	raw, err := json.Marshal(args)
 	if err != nil {
@@ -196,6 +197,7 @@ func TestE2E_DispatchNoSchemaKeepsFreeText(t *testing.T) {
 		"tasks": []map[string]any{{
 			"id": "t1", "agent": "worker", "prompt": "say something",
 		}},
+		"wait": "run",
 	})
 	body, err := tool.Execute(context.Background(), args)
 	if err != nil {

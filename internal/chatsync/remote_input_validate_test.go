@@ -1,0 +1,378 @@
+package chatsync
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// rejectionRecorder collects onRejected reasons safely across the poller's
+// own callback goroutine and the test goroutine reading them - a plain
+// slice written under the callback and read under the test raced under
+// -race, since nothing serialized the two.
+type rejectionRecorder struct {
+	mu      sync.Mutex
+	reasons []string
+}
+
+func (r *rejectionRecorder) add(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reasons = append(r.reasons, reason)
+}
+
+func (r *rejectionRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reasons...)
+}
+
+// newRejectionPoller builds a poller against a server that unconditionally
+// offers the given SessionInput and consumes it successfully, wired to a
+// fixed author id and an onRejected recorder. Tests use it to drive
+// validateRemoteInput's refusal paths end to end through pollOnce.
+func newRejectionPoller(t *testing.T, sessionID string, input SessionInput, expectedAuthor string) (*InputPoller, *rejectionRecorder) {
+	t.Helper()
+	rejections := &rejectionRecorder{}
+	mux := http.NewServeMux()
+	served := false
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if served {
+			_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+			return
+		}
+		served = true
+		in := input
+		_ = json.NewEncoder(w).Encode(NextInput{Input: &in})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/inputs/{inputID}/consume", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		now := time.Now().Format(time.RFC3339)
+		out := input
+		out.ConsumedAt = &now
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, sessionID, 1, fixedAuthorUserIDProvider(expectedAuthor), t.TempDir())
+	poller.SetOnRejected(func(id, sessID, reason string) {
+		rejections.add(reason)
+	})
+	return poller, rejections
+}
+
+func TestInputPoller_RejectsSessionIDMismatch(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-mine", SessionInput{
+		ID: "inp-1", SessionID: "sess-other", AuthorUserID: "user-1", Kind: "message", Body: "hi",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "session id mismatch")
+}
+
+// TestInputPoller_AcceptsCancelKindWithEmptyBody pins the "cancel" kind's
+// whole reason for existing: it carries an instruction, not text, so an
+// empty Body must NOT be rejected the way it is for "message".
+func TestInputPoller_AcceptsCancelKindWithEmptyBody(t *testing.T) {
+	mux := http.NewServeMux()
+	served := false
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if served {
+			_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+			return
+		}
+		served = true
+		_ = json.NewEncoder(w).Encode(NextInput{Input: &SessionInput{
+			ID: "inp-cancel-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "cancel", Body: "",
+		}})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/inputs/{inputID}/consume", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		now := time.Now().Format(time.RFC3339)
+		_ = json.NewEncoder(w).Encode(SessionInput{
+			ID: "inp-cancel-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "cancel", Body: "", ConsumedAt: &now,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-1", 1, fixedAuthorUserIDProvider("user-1"), t.TempDir())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+
+	select {
+	case ri := <-poller.Inputs():
+		if ri.ID != "inp-cancel-1" || ri.Kind != "cancel" || ri.Body != "" {
+			t.Errorf("received input = %+v, want cancel kind with empty body", ri)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for cancel input delivery")
+	}
+}
+
+// TestInputPoller_CancelKindStillEnforcesSessionIDMatch proves "cancel"
+// gets no exemption from the checks that are not about body shape: session
+// ownership still applies exactly as it does for "message".
+func TestInputPoller_CancelKindStillEnforcesSessionIDMatch(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-mine", SessionInput{
+		ID: "inp-1", SessionID: "sess-other", AuthorUserID: "user-1", Kind: "cancel", Body: "",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "session id mismatch")
+}
+
+// TestInputPoller_CancelKindStillEnforcesAuthorMatch proves "cancel" gets
+// no exemption from author-identity verification either: a remote cancel
+// from anyone but the CLI's own verified principal is still refused.
+func TestInputPoller_CancelKindStillEnforcesAuthorMatch(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "attacker", Kind: "cancel", Body: "",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "does not match")
+}
+
+// TestInputPoller_RejectsUnknownKind pins the allowlist boundary itself: an
+// unrecognized kind ("bogus") - neither "message" nor the new "cancel" - is
+// still refused, same as TestInputPoller_RejectsUnsupportedKind.
+func TestInputPoller_RejectsUnknownKind(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "bogus", Body: "hi",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "unsupported kind")
+}
+
+func TestInputPoller_RejectsUnsupportedKind(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "system", Body: "hi",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "unsupported kind")
+}
+
+func TestInputPoller_RejectsEmptyBody(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message", Body: "",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "empty body")
+}
+
+func TestInputPoller_RejectsOversizedBody(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message",
+		Body: strings.Repeat("a", maxRemoteInputBodyBytes+1),
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "exceeds")
+}
+
+func TestInputPoller_RejectsControlCharsInBody(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message",
+		Body: "hello\x00world",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "control character")
+}
+
+// TestInputPoller_RejectsBidiOverrideInBody guards against the "Trojan
+// Source" class (CVE-2021-42574): a body built entirely from ordinary
+// printable runes can still DISPLAY completely differently than it reads
+// once a bidi override/isolate character is inserted. This body becomes
+// real model input under whatever approval policy is already bound (very
+// likely auto-approve), so what a person reviewing the transcript sees must
+// match what the model actually receives.
+func TestInputPoller_RejectsBidiOverrideInBody(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message",
+		Body: "run tests‮noop⁩ --harmless",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "control character")
+}
+
+// TestInputPoller_RejectsAuthorMismatch is the DC-13 successor: an input
+// authored by anyone other than the CLI's own verified principal must never
+// reach Inputs(), even though the server already consumed it. This replaces
+// TestSessionPool_DoesNotExecuteRemoteInput's blanket "polling never runs"
+// assertion (uiadapter no longer disables polling outright - see
+// internal/uiadapter/session_pool.go) with the actual safety property: an
+// unverified author's instruction is still refused at the source.
+func TestInputPoller_RejectsAuthorMismatch(t *testing.T) {
+	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
+		ID: "inp-attacker", SessionID: "sess-1", AuthorUserID: "attacker", Kind: "message",
+		Body: "rm -rf /",
+	}, "user-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "does not match")
+}
+
+// TestInputPoller_RejectsWhenNoAuthorProviderConfigured pins the fail-closed
+// default: a nil AuthorUserIDProvider (no verified identity available at
+// all) must refuse every input rather than silently trust it.
+func TestInputPoller_RejectsWhenNoAuthorProviderConfigured(t *testing.T) {
+	rejections := &rejectionRecorder{}
+	mux := http.NewServeMux()
+	served := false
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if served {
+			_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+			return
+		}
+		served = true
+		_ = json.NewEncoder(w).Encode(NextInput{Input: &SessionInput{
+			ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message", Body: "hi",
+		}})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/inputs/{inputID}/consume", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		now := time.Now().Format(time.RFC3339)
+		_ = json.NewEncoder(w).Encode(SessionInput{
+			ID: "inp-1", SessionID: "sess-1", AuthorUserID: "user-1", Kind: "message", Body: "hi", ConsumedAt: &now,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-1", 1, nil, t.TempDir())
+	poller.SetOnRejected(func(id, sessID, reason string) { rejections.add(reason) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+	assertNeverDelivered(t, poller, rejections, "unverifiable")
+}
+
+func assertNeverDelivered(t *testing.T, poller *InputPoller, rejections *rejectionRecorder, wantReasonSubstr string) {
+	t.Helper()
+	// A single fixed sleep raced onRejected's async callback under -race's
+	// much heavier per-goroutine overhead (observed on CI: the callback
+	// fired just after the 300ms window closed). Poll instead, so a slow
+	// but eventually-correct rejection is not mistaken for a missing one -
+	// this still fails fast on an actual delivery, which is the case this
+	// function exists to catch.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ri := <-poller.Inputs():
+			t.Fatalf("unexpected delivery of an input that should have been rejected: %+v", ri)
+		case <-deadline:
+			got := rejections.snapshot()
+			if len(got) == 0 {
+				t.Fatal("onRejected was never called")
+			}
+			if !strings.Contains(got[0], wantReasonSubstr) {
+				t.Errorf("rejection reason = %q, want substring %q", got[0], wantReasonSubstr)
+			}
+			return
+		case <-time.After(10 * time.Millisecond):
+			if got := rejections.snapshot(); len(got) > 0 {
+				if !strings.Contains(got[0], wantReasonSubstr) {
+					t.Errorf("rejection reason = %q, want substring %q", got[0], wantReasonSubstr)
+				}
+				return
+			}
+		}
+	}
+}
+
+// TestInputPoller_LedgerPreventsRedeliveryAfterCrash pins the item-2 ledger:
+// a pending_input.json left behind AFTER the delivered-ids ledger recorded
+// its id (the crash window between recordDelivered and clearPendingInput)
+// must not be redelivered on the next Start - the UI almost certainly
+// already ran it once.
+func TestInputPoller_LedgerPreventsRedeliveryAfterCrash(t *testing.T) {
+	stateDir := t.TempDir()
+
+	pendingData, err := json.Marshal(pendingInputState{
+		Input: &SessionInput{
+			ID: "inp-already-delivered", SessionID: "sess-ledger", AuthorUserID: "user-1",
+			Kind: "message", Body: "already ran once",
+		},
+		Consumed: true,
+	})
+	if err != nil {
+		t.Fatalf("marshal pending state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, pendingInputFileName), pendingData, 0o600); err != nil {
+		t.Fatalf("write pending file: %v", err)
+	}
+	ledgerData, err := json.Marshal([]string{"inp-already-delivered"})
+	if err != nil {
+		t.Fatalf("marshal ledger: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, deliveredIDsFileName), ledgerData, 0o600); err != nil {
+		t.Fatalf("write ledger file: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-ledger", 1, fixedAuthorUserIDProvider("user-1"), stateDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller.Start(ctx)
+	defer poller.Stop(context.Background())
+
+	select {
+	case ri := <-poller.Inputs():
+		t.Fatalf("unexpected redelivery of an already-delivered input: %+v", ri)
+	case <-time.After(300 * time.Millisecond):
+	}
+}

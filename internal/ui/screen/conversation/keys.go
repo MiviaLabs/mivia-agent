@@ -1,12 +1,12 @@
 package conversation
 
 import (
+	"context"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -64,6 +64,13 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	}
 
 	key := msg.String()
+	// Ctrl+W starts a new worktree-bound session when the composer is
+	// empty; non-empty keeps the composer's delete-word binding.
+	if key == "ctrl+w" && s.composer.IsEmpty() && !s.embedded && s.runner != nil {
+		out := s.runner.StartInNewWorktree(context.Background(), "")
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	}
 	if s.composer.MenuActive() {
 		if id, ok := s.keys.Match(keymap.ContextCompletion, key); ok {
 			return s.completionAction(id)
@@ -119,6 +126,14 @@ func (s Screen) handleModalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 		return next, cmd, true
 	}
 	if next, cmd, handled := s.handleBlackboardKey(msg); handled {
+		return next, cmd, true
+	}
+	// The login dialog is checked last. It only ever opens from the
+	// composer via /login, which is unreachable while any earlier modal
+	// (approval, a picker, history, the queue, the blackboard) already
+	// holds focus, so this ordering is defensive only - there is no
+	// state today where two of these are open at once.
+	if next, cmd, handled := s.handleLoginKey(msg); handled {
 		return next, cmd, true
 	}
 	return s, nil, false
@@ -259,6 +274,36 @@ func (s Screen) handleBlackboardKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 	}
 }
 
+// handleLoginKey routes a key when the /login dialog is open: Esc
+// cancels with no notice (the same rule the queue overlay and history
+// follow), ctrl+c closes the dialog and runs the ordinary quit-arm flow
+// (keys.go's own handleQueueKey "ctrl+c" case is the precedent), and
+// Enter on the password field submits. Every other key reaches
+// loginDialog.Update, which routes Tab/Enter-on-email to focus the
+// password field and everything else to the focused field's own input.
+func (s Screen) handleLoginKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if s.login == nil {
+		return s, nil, false
+	}
+	switch msg.String() {
+	case "esc":
+		s.login = nil
+		return s, tea.ClearScreen, true
+	case "ctrl+c":
+		s.login = nil
+		next, cmd, _ := s.quit()
+		return next, tea.Batch(cmd, tea.ClearScreen), true
+	case "enter":
+		if s.login.focus == 1 {
+			next, cmd := s.submitLogin()
+			return next, cmd, true
+		}
+	}
+	next, cmd := s.login.Update(msg)
+	s.login = &next
+	return s, cmd, true
+}
+
 // handleApprovalKey routes a key when the approval prompt is active.
 func (s Screen) handleApprovalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
 	if !s.approval.Active() {
@@ -322,7 +367,8 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 // handlePanelKey routes a key into the open, focused panel: its content
 // dialog first (any key closes it; the view toggle, the half-page
 // scrolls, and ctrl+c survive), then the list. The list is a focusable
-// pane, not a modal: ctrl+c, ctrl+b, ctrl+t, and ctrl+o stay live over
+// pane, not a modal: ctrl+c, ctrl+b (which closes the panel outright),
+// ctrl+t, and ctrl+o stay live over
 // it (a ctrl-modified key carries no Text, so the picker would silently
 // swallow them), esc hands focus back to the composer WITHOUT closing
 // the panel, the files bindings navigate, and every other key feeds the
@@ -357,121 +403,23 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok {
 		switch id {
 		case keymap.IDPanelToggle:
-			// The middle state of ctrl+b's cycle: focus returns to the
-			// composer; the panel stays open and live beside it.
-			s.panelFocus(false)
-			return s, nil, true
-		case keymap.IDThemeDialog, keymap.IDOpenPager:
+			// ctrl+b toggles the sidebar and nothing else: it closes
+			// from here rather than first handing focus back, so one
+			// press always hides an open sidebar. tab and esc are the
+			// keys that move focus without closing.
+			return s, nil, false
+		case keymap.IDThemeDialog, keymap.IDOpenPager,
+			keymap.IDTabNext, keymap.IDTabPrev,
+			keymap.IDTabClose,
+			keymap.IDTab1, keymap.IDTab2, keymap.IDTab3,
+			keymap.IDTab4, keymap.IDTab5, keymap.IDTab6,
+			keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
 			// Still reachable: the conversation is on screen beside the
 			// panel, so its global surfaces stay one key away.
 			return s, nil, false
 		}
 	}
 	return s.handlePanelListKey(msg)
-}
-
-func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
-	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
-		switch id {
-		case keymap.IDCancel:
-			s.panelFocus(false)
-			return s, nil, true
-		case keymap.IDPagerRowUp:
-			msg = tea.KeyPressMsg{Code: tea.KeyUp}
-		case keymap.IDPagerRowDown:
-			msg = tea.KeyPressMsg{Code: tea.KeyDown}
-		}
-	}
-	// Sidebar navigation: only arrow/nav keys and Enter act on the list (no search filter)
-	switch msg.Code {
-	case tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown, tea.KeyEnter:
-		// allowed nav keys
-	default:
-		if msg.String() == "j" {
-			msg = tea.KeyPressMsg{Code: tea.KeyDown}
-		} else if msg.String() == "k" {
-			msg = tea.KeyPressMsg{Code: tea.KeyUp}
-		} else {
-			return s, nil, true
-		}
-	}
-	next, cmd := s.panel.list.Update(msg)
-	s.panel.list = next
-	s.panel.offset = 0 // a moved selection restarts the content at its top
-	if cmd != nil {
-		if _, ok := cmd().(picker.SelectMsg); ok && s.panelDialogFits() {
-			// Enter on a subagent row opens its thread when one
-			// resolves (openThread builds or reuses the embedded
-			// screen); either way the dialog is named for the agent.
-			// A file row keeps the diff/source dialog.
-			if a, isAgent := s.panel.selectedAgent(); isAgent {
-				s.panel.dialogAgent = a.ID
-				_, openCmd := s.openThread(a.ID)
-				s.panel.dialog, s.panel.offset = true, 0
-				return s, openCmd, true
-			} else {
-				s.panel.dialogAgent = ""
-			}
-			s.panel.dialog, s.panel.offset = true, 0
-		}
-	}
-	return s, nil, true
-}
-
-// panelDialogKey applies the content dialog's one rule: any key closes
-// it back to the list, except the view toggle, the half-page scrolls,
-// and the emergency exit (which closes it and runs the ordinary quit
-// flow, so the second-press warning lands on a visible status row).
-func (s Screen) panelDialogKey(msg tea.KeyPressMsg) app.Screen {
-	if msg.String() == "ctrl+c" {
-		s.panel.dialog = false
-		next, _, _ := s.quit()
-		return next
-	}
-	switch msg.String() {
-	case "up", "k":
-		s.scrollPanel(-1)
-		return s
-	case "down", "j":
-		s.scrollPanel(1)
-		return s
-	case "pgup":
-		s.scrollPanel(-max(1, s.panelBodyRows()/2))
-		return s
-	case "pgdown":
-		s.scrollPanel(max(1, s.panelBodyRows()/2))
-		return s
-	case "home":
-		s.panel.offset = 0
-		return s
-	case "end":
-		s.panel.offset = 100000
-		s.scrollPanel(0)
-		return s
-	}
-	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
-		switch id {
-		case keymap.IDFileToggleView:
-			s.panel.sourceView = !s.panel.sourceView
-			s.panel.offset = 0
-			return s
-		case keymap.IDPagerHalfUp:
-			s.scrollPanel(-1)
-			return s
-		case keymap.IDPagerHalfDown:
-			s.scrollPanel(1)
-			return s
-		case keymap.IDCancel:
-			s.panel.dialog, s.panel.dialogAgent = false, ""
-			s.panel.offset = 0
-			s.closeThread()
-			return s
-		}
-	}
-	s.panel.dialog, s.panel.dialogAgent = false, ""
-	s.panel.offset = 0
-	s.closeThread()
-	return s
 }
 
 // panelFocus moves keyboard focus between the panel's list and the
@@ -555,6 +503,8 @@ func (s Screen) transcriptAction(id keymap.ID) (app.Screen, tea.Cmd) {
 			s.statusline.Notice("copied the block")
 			return s, tea.SetClipboard(text)
 		}
+	case keymap.IDCancelToolCall:
+		return s.cancelFocusedToolCall()
 	}
 	return s, nil
 }
@@ -570,9 +520,13 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	// transcript - identical between the two constructions.
 	if s.embedded {
 		switch id {
-		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog, keymap.IDBlackboardDialog:
+		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog, keymap.IDBlackboardDialog,
+			keymap.IDTabPrev, keymap.IDTabNext, keymap.IDTabClose, keymap.IDTab1, keymap.IDTab2, keymap.IDTab3, keymap.IDTab4, keymap.IDTab5, keymap.IDTab6, keymap.IDTab7, keymap.IDTab8, keymap.IDTab9:
 			return s, nil, true
 		}
+	}
+	if next, cmd, handled := s.tabGlobalAction(id); handled {
+		return next, cmd, true
 	}
 	switch id {
 	case keymap.IDThemeDialog:
@@ -601,13 +555,11 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	}
 	switch id {
 	case keymap.IDPanelToggle:
-		// ctrl+b drives the panel's three states. This site handles the
-		// two the global context can see: closed opens the panel focused
-		// in its list, and open-with-the-composer-focused closes it (a
-		// close also drops the filter - a hidden list must not resurface
-		// later as an unexplained short list). The middle state - the
-		// list focused - claims ctrl+b earlier, in handlePanelKey, to
-		// hand focus back without closing.
+		// ctrl+b is a plain toggle: closed opens the panel focused in
+		// its list, open closes it whichever pane holds focus (a close
+		// also drops the filter - a hidden list must not resurface later
+		// as an unexplained short list). Focus moves between the list
+		// and the composer with tab and esc, never with this key.
 		if s.panel.open {
 			s.panel.open, s.panel.focused, s.panel.dialog, s.panel.dialogAgent = false, false, false, ""
 			s.panel.list.ClearFilter()
@@ -616,6 +568,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 			s.panel.openPanel()
 			s.transcript = s.transcript.ClearFocus()
 		}
+		s.syncTopbarModel()
 		s.reflow()
 		// The toggle rewraps every chat row and changes the surface's
 		// shape. Terminals that coalesce positioned writes (the
@@ -734,7 +687,7 @@ func (s Screen) cancelTurn() (app.Screen, tea.Cmd, bool) {
 	if s.active == nil {
 		return s, nil, false
 	}
-	s.approval.Clear()
+	s.approval.ClearAll()
 	s.active.Cancel()
 	s.statusline.Stop()
 	return s, nil, true
@@ -747,7 +700,7 @@ func (s Screen) quit() (app.Screen, tea.Cmd, bool) {
 	if !s.quitArmed {
 		s.quitArmed = true
 		if s.active != nil {
-			s.approval.Clear()
+			s.approval.ClearAll()
 			s.active.Cancel()
 			s.statusline.Stop()
 			s.statusline.Notice("cancelled")

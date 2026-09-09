@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -22,9 +23,10 @@ import (
 // through a copy instead; this mirrors orchestrationStorePathFor in
 // internal/clichat/storage_reset.go.
 func workflowToolSubagentConfig(root string, res *config.Resolved) config.SubagentConfig {
+	storeRoot := workflowStoreRoot(root)
 	if res != nil {
 		clone := *res
-		ApplyWorkflowStoreRoot(&clone, root)
+		ApplyWorkflowStoreRoot(&clone, storeRoot)
 		return clone.Subagents
 	}
 	configPath := SessionEngineConfigPath(root, nil)
@@ -32,8 +34,30 @@ func workflowToolSubagentConfig(root string, res *config.Resolved) config.Subage
 	if err != nil || loaded == nil {
 		return config.DefaultSubagentConfig
 	}
-	ApplyWorkflowStoreRoot(loaded, root)
+	ApplyWorkflowStoreRoot(loaded, storeRoot)
 	return loaded.Subagents
+}
+
+// workflowStoreRoot anchors a run's durable ledger to the MAIN checkout when
+// the caller is a linked worktree.
+//
+// A workflow creates its own git worktree under the main repository
+// (localengine's admissionIdentity uses vcs.MainRepoRoot, because that is
+// where worktrees live), so a ledger that followed the caller's root into a
+// linked worktree sat in a different lifecycle domain from the worktrees it
+// owns: removing the caller's worktree destroyed the only record of those
+// runs, orphaning their wf/ worktrees and branches in the operator's main
+// checkout - invisible to workflow_list_runs, never reaped, unrecoverable.
+// Project memory already resolves the identical hazard the identical way (see
+// canonicalRepoRoot: "a disposable worktree would lose memories on removal").
+// The ENGINE root is untouched: a run still executes against the caller's
+// checkout, only its ledger is anchored.
+func workflowStoreRoot(root string) string {
+	mainRoot, err := vcs.MainRepoRoot(root)
+	if err != nil || strings.TrimSpace(mainRoot) == "" {
+		return root // not a git checkout, or the probe failed: keep today's root
+	}
+	return mainRoot
 }
 
 // SessionEngineConfigPath is the config file identity for session workflow
@@ -52,7 +76,7 @@ func SessionEngineConfigPath(root string, res *config.Resolved) string {
 // falls back to the workspace project config. Returns nil when the workspace
 // has no .mivia/workflows/ or the service cannot be built.
 func workflowToolService(root string, res *config.Resolved) *workflowledger.Service {
-	return WorkflowToolServiceWithBus(root, res, nil, false, nil)
+	return WorkflowToolServiceWithBus(root, res, nil, false, false, nil)
 }
 
 // WorkflowToolServiceWithBus builds the service like workflowToolService and
@@ -70,7 +94,7 @@ func workflowToolService(root string, res *config.Resolved) *workflowledger.Serv
 // the instance the access gate compares. The engine stamps it on every child
 // run it registers. Nil (no session wiring) keeps child-run registration
 // skipped: fail-closed, one notice.
-func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) *workflowledger.Service {
+func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) *workflowledger.Service {
 	if !workflowledger.HasWorkflows(root) {
 		return nil
 	}
@@ -97,7 +121,13 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// claim, so it never races a live executor, and delivery refuses runs
 	// without an active policy. The one-shot sweep inherits the session's
 	// quiet flag so --quiet also silences its recovery notices.
-	if provider != nil {
+	// runSweep, NOT "provider != nil": the two were one flag, so wiring a
+	// session bus for progress also armed the recovery sweep. Parked-run
+	// recovery belongs to the process's own launch workspace, while progress
+	// publishing belongs to every root a session can run a workflow from -
+	// including each worktree root the pool rebuilds. Conflating them meant a
+	// worktree root had to take both or neither, and it took neither.
+	if runSweep {
 		go engine.ReconcileParkedRuns(context.Background(), quiet)
 		go engine.reconcileParkedRunsPeriodic(context.Background())
 	}
@@ -120,11 +150,11 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 // The parked-delivery sweep (see WorkflowToolServiceWithBus) already runs when
 // provider != nil, so no sweep is launched here. quiet (--quiet) is forwarded
 // to that sweep so the session-start recovery notices honor it.
-func WireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) {
+func WireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) {
 	if opts == nil {
 		return
 	}
-	svc := WorkflowToolServiceWithBus(root, res, provider, quiet, sessionRepo)
+	svc := WorkflowToolServiceWithBus(root, res, provider, runSweep, quiet, sessionRepo)
 	if svc == nil {
 		return
 	}

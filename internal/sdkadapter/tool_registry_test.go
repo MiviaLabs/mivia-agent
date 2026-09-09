@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -306,5 +307,144 @@ func TestRelaxTopLevelAdditionalPropertiesRemoveKeyAndMarshal(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte(`"type":"object"`)) {
 		t.Fatalf("other keys lost during relax: %s", got)
+	}
+}
+
+// capablePrivilegedCLITool declares a result budget through its
+// Capability and the host privilege marker, the two host surfaces the
+// adapter must forward onto the SDK's ResultBudgetTool and
+// PrivilegedTool capabilities.
+type capablePrivilegedCLITool struct {
+	fakeCLITool
+}
+
+func (f *capablePrivilegedCLITool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionWrite, MaxResultBytes: 512}
+}
+
+func (f *capablePrivilegedCLITool) Privileged() {}
+
+// TestConvertToolRegistryForwardsBudgetAndPrivilege pins the
+// conversion: the SDK adapter publishes the CLI tool's result budget
+// and privilege marker, and the admission wrapper forwards both.
+func TestConvertToolRegistryForwardsBudgetAndPrivilege(t *testing.T) {
+	reg := tools.NewRegistry()
+	tool := &capablePrivilegedCLITool{fakeCLITool: fakeCLITool{name: "writer"}}
+	reg.Register(tool)
+	sdkReg, err := ConvertToolRegistry(reg)
+	if err != nil {
+		t.Fatalf("ConvertToolRegistry: %v", err)
+	}
+	got, ok := sdkReg.Get("writer")
+	if !ok {
+		t.Fatal("writer missing from the converted registry")
+	}
+	if n, ok := sdktools.ResultBudgetOf(got); !ok || n != 512 {
+		t.Fatalf("ResultBudgetOf = %d, %v; want 512, true", n, ok)
+	}
+	if !sdktools.IsPrivileged(got) {
+		t.Fatal("privilege marker lost in conversion")
+	}
+	// Through the admission wrapper the same facts must survive.
+	wrapped := WrapToolWithAdmission(got, tool, AdmissionPredicates{})
+	if n, ok := sdktools.ResultBudgetOf(wrapped); !ok || n != 512 {
+		t.Fatalf("wrapped ResultBudgetOf = %d, %v; want 512, true", n, ok)
+	}
+	if !sdktools.IsPrivileged(wrapped) {
+		t.Fatal("privilege marker lost under the admission wrapper")
+	}
+}
+
+// budgetedCLITool declares its result bound through the host
+// ResultBudgetTool interface only. It has no Capability, so the
+// adapter must fall through to ResultBudgetBytes.
+type budgetedCLITool struct {
+	fakeCLITool
+	budget int
+}
+
+func (f *budgetedCLITool) ResultBudgetBytes() int { return f.budget }
+
+// TestSDKToolAdapterBudgetFallsThroughToResultBudgetBytes pins the
+// second half of the budget rule: a tool with no Capability budget
+// publishes its ResultBudgetBytes, and a tool that declares neither
+// publishes zero (unbounded).
+func TestSDKToolAdapterBudgetFallsThroughToResultBudgetBytes(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&budgetedCLITool{fakeCLITool: fakeCLITool{name: "budgeted"}, budget: 4096})
+	reg.Register(&fakeCLITool{name: "plain"})
+	sdkReg, err := ConvertToolRegistry(reg)
+	if err != nil {
+		t.Fatalf("ConvertToolRegistry: %v", err)
+	}
+	budgeted, ok := sdkReg.Get("budgeted")
+	if !ok {
+		t.Fatal("budgeted missing from the converted registry")
+	}
+	if n, ok := sdktools.ResultBudgetOf(budgeted); !ok || n != 4096 {
+		t.Fatalf("ResultBudgetOf(budgeted) = %d, %v; want 4096, true", n, ok)
+	}
+	plain, ok := sdkReg.Get("plain")
+	if !ok {
+		t.Fatal("plain missing from the converted registry")
+	}
+	if n, ok := sdktools.ResultBudgetOf(plain); !ok || n != 0 {
+		t.Fatalf("ResultBudgetOf(plain) = %d, %v; want 0, true", n, ok)
+	}
+	if sdktools.IsPrivileged(plain) {
+		t.Fatal("a tool with no privilege marker must not report privileged")
+	}
+}
+
+// TestWrapperLayersForwardBudgetAndPrivilege pins that each wrap
+// layer forwards the budget and the privilege marker. Go interface
+// wrappers strip optional interfaces, so a layer that does not
+// forward hides the facts the loop's shaping and scope checks read.
+// Each case adds one layer, so a missing method in one layer alone
+// fails its own case.
+func TestWrapperLayersForwardBudgetAndPrivilege(t *testing.T) {
+	gate := func(context.Context, string, json.RawMessage) ApprovalResult {
+		return ApprovalResult{Approved: true}
+	}
+	staged := func(string) (string, bool) { return "", false }
+	cases := []struct {
+		name string
+		pred AdmissionPredicates
+		want string
+	}{
+		{
+			name: "approval layer only",
+			pred: AdmissionPredicates{ApprovalGate: gate, ApprovalPolicy: "write-only"},
+			want: "*sdkadapter.approvalGatedToolAdapter",
+		},
+		{
+			name: "admission layer only",
+			pred: AdmissionPredicates{StagedMessage: staged},
+			want: "*sdkadapter.admissionCheckedToolAdapter",
+		},
+		{
+			name: "both layers",
+			pred: AdmissionPredicates{ApprovalGate: gate, ApprovalPolicy: "write-only", StagedMessage: staged},
+			want: "*sdkadapter.admissionCheckedToolAdapter",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cli := &capablePrivilegedCLITool{fakeCLITool: fakeCLITool{name: "writer"}}
+			inner, err := newSDKToolAdapter(cli, 0)
+			if err != nil {
+				t.Fatalf("newSDKToolAdapter: %v", err)
+			}
+			wrapped := WrapToolWithAdmission(inner, cli, tc.pred)
+			if got := fmt.Sprintf("%T", wrapped); got != tc.want {
+				t.Fatalf("outermost wrapper = %s, want %s", got, tc.want)
+			}
+			if n, ok := sdktools.ResultBudgetOf(wrapped); !ok || n != 512 {
+				t.Fatalf("ResultBudgetOf = %d, %v; want 512, true", n, ok)
+			}
+			if !sdktools.IsPrivileged(wrapped) {
+				t.Fatal("privilege marker lost across the wrap layers")
+			}
+		})
 	}
 }

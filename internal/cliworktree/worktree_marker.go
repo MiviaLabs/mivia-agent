@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -128,11 +128,41 @@ func publishWorktreeMarker(name, target string) error {
 	return err
 }
 
+const maxMarkerExcludeAttempts = 5
+
+// ensureWorktreeMarkerExcluded prepares .git/info/exclude for the marker
+// line. It retries the whole operation, fresh os.Root and all, on a
+// not-exist error: TestWorktreeMarkerExcludeIsConcurrentAndIdempotent drives
+// 8 goroutines through this path against one shared .git directory, and
+// under CI-runner load an "info" lookup can transiently miss a sibling
+// goroutine's still-committing mkdir even though this goroutine's own
+// preceding Lstat just confirmed it - the same class of spurious
+// concurrent-access race publishWorktreeMarker below already retries for
+// Windows renames. ensureRegularGitInfoDir is idempotent (it recreates
+// "info" if missing), so a retry here is self-healing rather than papering
+// over a directory that never gets created.
 func ensureWorktreeMarkerExcluded(root string) error {
 	commonDir, err := worktreeGitCommonDir(root)
 	if err != nil {
 		return err
 	}
+	var lastErr error
+	for attempt := 0; attempt < maxMarkerExcludeAttempts; attempt++ {
+		lastErr = ensureWorktreeMarkerExcludedOnce(commonDir)
+		if lastErr == nil || !errors.Is(lastErr, os.ErrNotExist) {
+			return lastErr
+		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	return lastErr
+}
+
+// ensureWorktreeMarkerExcludedOnce is a var so
+// TestMarkerExcludeRetriesTransientNotExist can inject controlled failures,
+// the same seam pattern renameWorktreeMarker uses for the publish retry.
+var ensureWorktreeMarkerExcludedOnce = ensureWorktreeMarkerExcludedOnceImpl
+
+func ensureWorktreeMarkerExcludedOnceImpl(commonDir string) error {
 	gitRoot, err := os.OpenRoot(commonDir)
 	if err != nil {
 		return fmt.Errorf("open Git common directory: %w", err)
@@ -144,23 +174,10 @@ func ensureWorktreeMarkerExcluded(root string) error {
 	return updateWorktreeMarkerExclude(gitRoot, filepath.Join("info", "exclude"))
 }
 
+// worktreeGitCommonDir delegates to the vcs implementation, which the
+// workflow engine also needs for the lifecycle lock.
 func worktreeGitCommonDir(root string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
-	cmd.WaitDelay = worktreeMarkerWaitDelay
-	cmd.Dir = root
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("resolve Git common directory: %w", err)
-	}
-	commonDir := strings.TrimSpace(string(output))
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(root, commonDir)
-	}
-	commonDir, err = filepath.EvalSymlinks(filepath.Clean(commonDir))
-	if err != nil {
-		return "", fmt.Errorf("resolve Git common directory: %w", err)
-	}
-	return commonDir, nil
+	return vcs.WorktreeGitCommonDir(root)
 }
 
 func ensureRegularGitInfoDir(root *os.Root) error {

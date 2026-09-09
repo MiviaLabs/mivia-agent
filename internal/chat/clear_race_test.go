@@ -1,32 +1,32 @@
 package chat
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-type blockingSessionStore struct {
+// blockingCatalogStore delays LoadSession until release is closed - the
+// context-catalog counterpart of the legacy blockingSessionStore's
+// LoadWithInfo block, for proving a stale in-flight Load cannot resurrect
+// history a concurrent /clear already purged.
+type blockingCatalogStore struct {
+	contextstate.Store
+	contextstate.SessionCatalog
 	started chan struct{}
 	release chan struct{}
-	msgs    []provider.Message
 }
 
-func (s *blockingSessionStore) Save(string, []provider.Message, string, string) error { return nil }
-func (s *blockingSessionStore) Load(name string) ([]provider.Message, error) {
-	msgs, _, err := s.LoadWithInfo(name)
-	return msgs, err
-}
-func (s *blockingSessionStore) LoadWithInfo(string) ([]provider.Message, SessionInfo, error) {
+func (s blockingCatalogStore) LoadSession(ctx context.Context, principal contextstate.Principal, name string) ([]byte, contextstate.SessionCatalogInfo, error) {
 	close(s.started)
 	<-s.release
-	return append([]provider.Message(nil), s.msgs...), SessionInfo{Model: "saved"}, nil
+	return s.SessionCatalog.LoadSession(ctx, principal, name)
 }
-func (s *blockingSessionStore) List() ([]SessionInfo, error) { return nil, nil }
-func (s *blockingSessionStore) Delete(string) error          { return nil }
 
 func historyBlob(s *Session) string {
 	var parts []string
@@ -82,8 +82,7 @@ func TestClearIsNotUndoneByInFlightTurn(t *testing.T) {
 // Load has the same shape: it replaces Messages wholesale, so an in-flight turn
 // must not overwrite the freshly loaded session with the pre-load history.
 func TestLoadIsNotUndoneByInFlightTurn(t *testing.T) {
-	sess := NewSession(&config.Resolved{Model: "m"}, &fakeCompleter{out: "reply"})
-	sess.SessionDir = t.TempDir()
+	sess, _ := contextCatalogSession(t)
 	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "saved"}}
 	if err := sess.Save("target"); err != nil {
 		t.Fatal(err)
@@ -111,15 +110,23 @@ func TestLoadIsNotUndoneByInFlightTurn(t *testing.T) {
 }
 
 func TestLoadCannotResurrectAfterClear(t *testing.T) {
-	store := &blockingSessionStore{started: make(chan struct{}), release: make(chan struct{}), msgs: []provider.Message{{Role: provider.RoleUser, Content: "saved-secret"}}}
-	sess := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, nil)
+	sess, store := contextCatalogSession(t)
+	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "saved-secret"}}
+	if err := sess.Save("saved"); err != nil {
+		t.Fatal(err)
+	}
 	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "current"}}
-	sess.SetSessionStore(store, nil)
+
+	blocking := blockingCatalogStore{Store: store, SessionCatalog: store, started: make(chan struct{}), release: make(chan struct{})}
+	sess.mu.Lock()
+	sess.contextStore = blocking
+	sess.mu.Unlock()
+
 	result := make(chan error, 1)
 	go func() { result <- sess.Load("saved") }()
-	<-store.started
+	<-blocking.started
 	_ = sess.Clear()
-	close(store.release)
+	close(blocking.release)
 	if err := <-result; !errors.Is(err, ErrStaleOperation) {
 		t.Fatalf("stale load error = %v, want ErrStaleOperation", err)
 	}
@@ -127,5 +134,3 @@ func TestLoadCannotResurrectAfterClear(t *testing.T) {
 		t.Fatalf("clear was overwritten by stale load: %s", got)
 	}
 }
-
-var _ SessionStore = (*blockingSessionStore)(nil)

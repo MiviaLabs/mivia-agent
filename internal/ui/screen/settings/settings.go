@@ -200,20 +200,55 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 			return s, tea.ClearScreen
 		}
 	}
-	// Every other message (a section's own async save-result Msg -
-	// generalSavedMsg, mcpFailedMsg, and so on) has nowhere else to go:
-	// a section's Update is the only thing that knows its own message
-	// types, so anything unrecognized here is routed to the nav-selected
-	// section - NOT gated on s.focus == render.Right, because the user
-	// may have already pressed esc back to the nav pane while a save
-	// from that same section was still in flight, and a dropped Failed
-	// result would silently hide a rejected write. Without this
-	// forwarding at all, a section's awaitSave Cmd would fire its
-	// result Msg into the void: the save itself would still land in the
-	// store, but the section would never learn it finished.
+	// Route section-specific save result messages directly to the section
+	// that owns them, regardless of which section is currently active in
+	// nav - see routeToOwningSection's own doc comment for why.
+	if next, cmd, routed := s.routeToOwningSection(msg); routed {
+		return next, cmd
+	}
 	next, cmd := s.sections[s.nav].Update(msg)
 	s.sections[s.nav] = next
 	return s, cmd
+}
+
+// routeToOwningSection delivers a section-local async save-result Msg
+// (generalSavedMsg, mcpFailedMsg, and so on) to the section instance
+// that actually owns it, by concrete type, rather than to whichever
+// section s.nav currently points at. Without this, navigating away
+// from General (or any section) while its awaitSave Cmd is still in
+// flight would deliver the result to the WRONG section's Update -
+// which drops it silently - so a rejected write's SaveFailed would
+// never rebuild the row that needs it. Returns routed=false for every
+// Msg type no section owns exclusively, which falls through to the
+// nav-selected section the same way Update always did.
+func (s Screen) routeToOwningSection(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
+	var owns func(section) bool
+	switch msg.(type) {
+	case generalSavedMsg, generalFailedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*generalSection); return ok }
+	case projectsSavedMsg, projectsFailedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*projectsSection); return ok }
+	case modelsSavedMsg, modelsFailedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*modelsSection); return ok }
+	case mcpSavedMsg, mcpFailedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*mcpSection); return ok }
+	case agentsSavedMsg, agentsFailedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*agentsSection); return ok }
+	case automationsSavedMsg, automationsFailedMsg, automationsRunMsg, automationsWatchEndedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*automationsSection); return ok }
+	case skillsSavedMsg, skillsFailedMsg:
+		owns = func(sec section) bool { _, ok := sec.(*skillsSection); return ok }
+	default:
+		return s, nil, false
+	}
+	for i, sec := range s.sections {
+		if owns(sec) {
+			next, cmd := sec.Update(msg)
+			s.sections[i] = next
+			return s, cmd, true
+		}
+	}
+	return s, nil, false
 }
 
 // handleKey dispatches within ContextSettings only - this screen does
@@ -384,10 +419,12 @@ func (s Screen) statusRow() string {
 	if s.notice != "" {
 		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render(s.notice)
 	}
-	hint := s.keys.Hint(
-		keymap.IDSettingsSelect, keymap.IDSettingsNew, keymap.IDSettingsDelete,
-		keymap.IDSettingsFilter, keymap.IDSettingsBack, keymap.IDSettingsHelp,
-	)
+	var hintIDs []keymap.ID
+	if s.nav >= 0 && s.nav < len(s.sections) {
+		hintIDs = append(hintIDs, s.sections[s.nav].Hints()...)
+	}
+	hintIDs = append(hintIDs, keymap.IDSettingsBack, keymap.IDSettingsHelp)
+	hint := s.keys.Hint(hintIDs...)
 	return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(hint)
 }
 

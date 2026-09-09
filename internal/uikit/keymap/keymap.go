@@ -51,38 +51,51 @@ type ID string
 
 // Action identifiers.
 const (
-	IDCancel        ID = "cancel"
-	IDQuit          ID = "quit"
-	IDSend          ID = "send"
-	IDNewline       ID = "newline"
-	IDClearLine     ID = "clear-line"
-	IDHelp          ID = "help"
-	IDThemeDialog   ID = "theme-dialog"
-	IDFocusNext     ID = "focus-next"
-	IDFocusPrev     ID = "focus-prev"
-	IDToggleBlock   ID = "toggle-block"
-	IDExpandAll     ID = "expand-all"
-	IDCollapseAll   ID = "collapse-all"
-	IDCopyBlock     ID = "copy-block"
-	IDScrollUp      ID = "scroll-up"
-	IDScrollDown    ID = "scroll-down"
-	IDScrollTop     ID = "scroll-top"
-	IDScrollBottom  ID = "scroll-bottom"
-	IDOpenPager     ID = "open-pager"
-	IDToggleReason  ID = "toggle-reasoning"
-	IDApproveOnce   ID = "approve-once"
-	IDApproveAlways ID = "approve-always"
-	IDDenyOnce      ID = "deny-once"
-	IDDenyAlways    ID = "deny-always"
-	IDAcceptPrefix  ID = "accept-prefix"
-	IDMenuNext      ID = "menu-next"
-	IDMenuPrev      ID = "menu-prev"
-	IDMenuAccept    ID = "menu-accept"
-	IDMenuDismiss   ID = "menu-dismiss"
-	IDDialogUp      ID = "dialog-up"
-	IDDialogDown    ID = "dialog-down"
-	IDDialogAccept  ID = "dialog-accept"
-	IDDialogCancel  ID = "dialog-cancel"
+	IDCancel      ID = "cancel"
+	IDQuit        ID = "quit"
+	IDSend        ID = "send"
+	IDNewline     ID = "newline"
+	IDClearLine   ID = "clear-line"
+	IDHelp        ID = "help"
+	IDThemeDialog ID = "theme-dialog"
+	IDFocusNext   ID = "focus-next"
+	IDFocusPrev   ID = "focus-prev"
+	IDToggleBlock ID = "toggle-block"
+	IDExpandAll   ID = "expand-all"
+	IDCollapseAll ID = "collapse-all"
+	IDCopyBlock   ID = "copy-block"
+	// IDCancelToolCall is distinct from IDCancel: IDCancel already means
+	// "return to the composer" inside ContextTranscript. This cancels ONE
+	// in-flight tool call - the block currently focused, if it is still
+	// running - and leaves the rest of the turn (and any concurrent
+	// sibling tool call) running.
+	IDCancelToolCall ID = "cancel-tool-call"
+	// IDCancelSubagentTask cancels the ONE coordinator task backing the
+	// subagent row currently selected in the files panel - not the whole
+	// run it belongs to, and not its sibling tasks. Distinct from
+	// IDCancelToolCall (a transcript tool-call block) and from IDCancel
+	// (ContextFiles's own "return to the composer" / "close the dialog"):
+	// this reaches past the UI into the coordinator itself.
+	IDCancelSubagentTask ID = "cancel-subagent-task"
+	IDScrollUp           ID = "scroll-up"
+	IDScrollDown         ID = "scroll-down"
+	IDScrollTop          ID = "scroll-top"
+	IDScrollBottom       ID = "scroll-bottom"
+	IDOpenPager          ID = "open-pager"
+	IDToggleReason       ID = "toggle-reasoning"
+	IDApproveOnce        ID = "approve-once"
+	IDApproveAlways      ID = "approve-always"
+	IDDenyOnce           ID = "deny-once"
+	IDDenyAlways         ID = "deny-always"
+	IDAcceptPrefix       ID = "accept-prefix"
+	IDMenuNext           ID = "menu-next"
+	IDMenuPrev           ID = "menu-prev"
+	IDMenuAccept         ID = "menu-accept"
+	IDMenuDismiss        ID = "menu-dismiss"
+	IDDialogUp           ID = "dialog-up"
+	IDDialogDown         ID = "dialog-down"
+	IDDialogAccept       ID = "dialog-accept"
+	IDDialogCancel       ID = "dialog-cancel"
 
 	// Transcript mode (the pager). One ID per less-compatible action, so
 	// the help screen names every key the pager answers to
@@ -138,11 +151,17 @@ const (
 	IDSettingsProjectDefault ID = "settings-project-default"
 	IDSettingsClearOverride  ID = "settings-clear-override"
 	IDSettingsToggle         ID = "settings-toggle"
-	IDSettingsTrigger        ID = "settings-trigger"
-	IDSettingsFilter         ID = "settings-filter"
-	IDSettingsReveal         ID = "settings-reveal"
-	IDSettingsBack           ID = "settings-back"
-	IDSettingsHelp           ID = "settings-help"
+	// IDSettingsCycleBack steps a multi-value settings row to its PREVIOUS
+	// value. A forward-only cycler cannot reach a neighbour without applying
+	// everything in between, and these rows apply on the keypress - so for a
+	// strength-ordered row (approval default) the backward step is what lets
+	// an operator tighten without first applying a weaker posture.
+	IDSettingsCycleBack ID = "settings-cycle-back"
+	IDSettingsTrigger   ID = "settings-trigger"
+	IDSettingsFilter    ID = "settings-filter"
+	IDSettingsReveal    ID = "settings-reveal"
+	IDSettingsBack      ID = "settings-back"
+	IDSettingsHelp      ID = "settings-help"
 
 	// Blackboard & agent messaging center.
 	IDBlackboardDialog ID = "blackboard-dialog"
@@ -150,6 +169,20 @@ const (
 	// Force-send: interrupt the current turn (composer) or force-send
 	// the selected queued message (dialog).
 	IDForceSend ID = "force-send"
+
+	// Session tabs navigation.
+	IDTabPrev  ID = "tab-prev"
+	IDTabNext  ID = "tab-next"
+	IDTabClose ID = "tab-close"
+	IDTab1     ID = "tab-1"
+	IDTab2     ID = "tab-2"
+	IDTab3     ID = "tab-3"
+	IDTab4     ID = "tab-4"
+	IDTab5     ID = "tab-5"
+	IDTab6     ID = "tab-6"
+	IDTab7     ID = "tab-7"
+	IDTab8     ID = "tab-8"
+	IDTab9     ID = "tab-9"
 )
 
 // Binding is one row of the table.
@@ -194,6 +227,18 @@ func Default() []Binding {
 		// unbound everywhere and rule 1.1 permits function keys.
 		{ID: IDSettingsDialog, Context: ContextGlobal, Keys: []string{"f2"}, Help: "settings", Short: "settings"},
 		{ID: IDBlackboardDialog, Context: ContextGlobal, Keys: []string{"f3"}, Help: "blackboard & agent messages", Short: "blackboard"},
+		{ID: IDTabPrev, Context: ContextGlobal, Keys: []string{"f6"}, Help: "switch to previous session tab", Short: "tab-prev"},
+		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"f7"}, Help: "switch to next session tab", Short: "tab-next"},
+		{ID: IDTabClose, Context: ContextGlobal, Keys: []string{"f8"}, Help: "detach current session tab", Short: "tab-close"},
+		{ID: IDTab1, Context: ContextGlobal, Keys: []string{"alt+1"}, Help: "switch to session tab 1", Hidden: true},
+		{ID: IDTab2, Context: ContextGlobal, Keys: []string{"alt+2"}, Help: "switch to session tab 2", Hidden: true},
+		{ID: IDTab3, Context: ContextGlobal, Keys: []string{"alt+3"}, Help: "switch to session tab 3", Hidden: true},
+		{ID: IDTab4, Context: ContextGlobal, Keys: []string{"alt+4"}, Help: "switch to session tab 4", Hidden: true},
+		{ID: IDTab5, Context: ContextGlobal, Keys: []string{"alt+5"}, Help: "switch to session tab 5", Hidden: true},
+		{ID: IDTab6, Context: ContextGlobal, Keys: []string{"alt+6"}, Help: "switch to session tab 6", Hidden: true},
+		{ID: IDTab7, Context: ContextGlobal, Keys: []string{"alt+7"}, Help: "switch to session tab 7", Hidden: true},
+		{ID: IDTab8, Context: ContextGlobal, Keys: []string{"alt+8"}, Help: "switch to session tab 8", Hidden: true},
+		{ID: IDTab9, Context: ContextGlobal, Keys: []string{"alt+9"}, Help: "switch to session tab 9", Hidden: true},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer
@@ -224,17 +269,6 @@ func Default() []Binding {
 		{ID: IDMenuPrev, Context: ContextCompletion, Keys: []string{"up"}, Help: "previous"},
 		{ID: IDMenuDismiss, Context: ContextCompletion, Keys: []string{"esc"}, Help: "dismiss"},
 
-		// Transcript, scoped to the live window.
-		{ID: IDFocusNext, Context: ContextTranscript, Keys: []string{"tab"}, Help: "focus the next block"},
-		{ID: IDFocusPrev, Context: ContextTranscript, Keys: []string{"shift+tab"}, Help: "focus the previous block"},
-		// "space", not " ": bubbletea/v2 Key.String reports the space bar
-		// as the word. A literal " " here silently never matches.
-		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{"space", "enter"}, Help: "collapse or expand"},
-		{ID: IDExpandAll, Context: ContextTranscript, Keys: []string{"ctrl+e"}, Help: "expand all"},
-		{ID: IDCollapseAll, Context: ContextTranscript, Keys: []string{"ctrl+g"}, Help: "collapse all"},
-		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
-		{ID: IDCancel, Context: ContextTranscript, Keys: []string{"esc"}, Help: "return to the composer"},
-
 		// Approval. wireframes-panes.md section 7. up/down (and the less
 		// spellings k/j) scroll the inline diff preview; the decision keys
 		// are letters the arrows never collide with.
@@ -252,7 +286,27 @@ func Default() []Binding {
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
 		{ID: IDForceSend, Context: ContextDialog, Keys: []string{"f", "F"}, Help: "force send the selected queued message", Short: "force"},
-	}, pagerBindings()...), append(filesBindings(), settingsBindings()...)...)
+	}, append(transcriptBindings(), pagerBindings()...)...), append(filesBindings(), settingsBindings()...)...)
+}
+
+// transcriptBindings is the transcript's live-window section, split out of
+// Default to keep that function under the per-function line budget.
+func transcriptBindings() []Binding {
+	return []Binding{
+		{ID: IDFocusNext, Context: ContextTranscript, Keys: []string{"tab"}, Help: "focus the next block"},
+		{ID: IDFocusPrev, Context: ContextTranscript, Keys: []string{"shift+tab"}, Help: "focus the previous block"},
+		// "space", not " ": bubbletea/v2 Key.String reports the space bar
+		// as the word. A literal " " here silently never matches.
+		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{"space", "enter"}, Help: "collapse or expand"},
+		{ID: IDExpandAll, Context: ContextTranscript, Keys: []string{"ctrl+e"}, Help: "expand all"},
+		{ID: IDCollapseAll, Context: ContextTranscript, Keys: []string{"ctrl+g"}, Help: "collapse all"},
+		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
+		// "x": unbound elsewhere in ContextTranscript (tab, shift+tab,
+		// space, enter, ctrl+e, ctrl+g, y, esc are all already claimed).
+		// A no-op unless the focused block is a still-running tool call.
+		{ID: IDCancelToolCall, Context: ContextTranscript, Keys: []string{"x"}, Help: "cancel this tool call, if it is still running"},
+		{ID: IDCancel, Context: ContextTranscript, Keys: []string{"esc"}, Help: "return to the composer"},
+	}
 }
 
 // settingsBindings is the full-screen settings modal's section. It does
@@ -271,7 +325,8 @@ func settingsBindings() []Binding {
 		{ID: IDSettingsDefault, Context: ContextSettings, Keys: []string{"d"}, Help: "set as default model", Short: "default"},
 		{ID: IDSettingsProjectDefault, Context: ContextSettings, Keys: []string{"p"}, Help: "make default for this project", Short: "project default"},
 		{ID: IDSettingsClearOverride, Context: ContextSettings, Keys: []string{"c"}, Help: "clear this project's default override", Short: "clear override"},
-		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled"},
+		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled", Short: "toggle"},
+		{ID: IDSettingsCycleBack, Context: ContextSettings, Keys: []string{"-"}, Help: "previous value", Short: "prev"},
 		// Automations-only today: fires a manual run and opens a live
 		// watch on it. Harmless no-op on any other section (their
 		// handleKey switches do not have a "t" case).
@@ -327,6 +382,10 @@ func filesBindings() []Binding {
 		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "scroll the content half a page down"},
 		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "scroll the content half a page up"},
 		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source (in the dialog)", Short: "diff"},
+		// "x": unbound elsewhere in ContextFiles, mirroring
+		// ContextTranscript's IDCancelToolCall mnemonic. A no-op unless the
+		// selected row is a subagent task still running.
+		{ID: IDCancelSubagentTask, Context: ContextFiles, Keys: []string{"x"}, Help: "cancel this subagent task, if it is still running"},
 		{ID: IDCancel, Context: ContextFiles, Keys: []string{"esc"}, Help: "clear the filter, then return to the composer"},
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
@@ -20,6 +21,16 @@ func runLogoutCapture(t *testing.T, args []string) (stdout, stderr string, err e
 	var outBuf, errBuf bytes.Buffer
 	err = runLogoutWithIO(args, &outBuf, &errBuf)
 	return outBuf.String(), errBuf.String(), err
+}
+
+// storedTestSession is an on-disk session in the shape the /v1 contract
+// writes: a bearer and the refresh token that outlives it.
+func storedTestSession() miviaauth.Token {
+	return miviaauth.Token{
+		Bearer:       "stored-bearer",
+		RefreshToken: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+	}
 }
 
 func TestLogoutWithNothingStoredSucceedsAndSkipsNetwork(t *testing.T) {
@@ -50,7 +61,7 @@ func TestLogoutWithStoredTokenSucceedsDespiteRevoke500(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := miviaauth.Save(authPath, miviaauth.Token{Bearer: "stored-bearer"}); err != nil {
+	if err := miviaauth.Save(authPath, storedTestSession()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,12 +72,18 @@ func TestLogoutWithStoredTokenSucceedsDespiteRevoke500(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, err := runLogoutCapture(t, []string{"--server-url", srv.URL})
+	stdout, stderr, err := runLogoutCapture(t, []string{"--server-url", srv.URL})
 	if err != nil {
 		t.Fatalf("logout error = %v, want offline-safe success despite the 500", err)
 	}
 	if !strings.Contains(stdout, "Logged out.") {
 		t.Fatalf("stdout = %q, want a logout confirmation", stdout)
+	}
+	// The local file is gone but the server-side session is not, and its
+	// refresh token stays valid for up to 30 days. Saying nothing would leave
+	// the user believing the session ended everywhere.
+	if !strings.Contains(stderr, "Warning:") {
+		t.Errorf("stderr = %q, want a warning that the server was not reached", stderr)
 	}
 	if !revokeHit {
 		t.Fatal("logout with a stored token should have attempted the revoke call")
@@ -76,21 +93,22 @@ func TestLogoutWithStoredTokenSucceedsDespiteRevoke500(t *testing.T) {
 	}
 }
 
-func TestLogoutWithStoredTokenAndRevoke204Succeeds(t *testing.T) {
+func TestLogoutWithStoredTokenAndSuccessfulRevoke(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	authPath := config.UserAuthPath()
 	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := miviaauth.Save(authPath, miviaauth.Token{Bearer: "stored-bearer"}); err != nil {
+	if err := miviaauth.Save(authPath, storedTestSession()); err != nil {
 		t.Fatal(err)
 	}
 
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
 

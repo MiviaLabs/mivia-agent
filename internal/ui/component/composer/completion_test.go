@@ -217,17 +217,18 @@ func TestIsSubsequence(t *testing.T) {
 	}
 }
 
-// TestViewPutsTheMenuAboveTheInput pins rule 2.8: the composer never
-// moves while the menu grows or shrinks.
-func TestViewPutsTheMenuAboveTheInput(t *testing.T) {
+// TestViewKeepsTheInputAboveTheBottomPadding pins rule 2.8: with a menu
+// open, View still draws only the bar (the menu is an overlay), and the
+// input row sits one above the bottom padding row, exactly where it sits
+// with the menu closed.
+func TestViewKeepsTheInputAboveTheBottomPadding(t *testing.T) {
 	m := typed(t, "/c")
 	rows := strings.Split(m.View(), "\n")
 	if len(rows) < 2 {
-		t.Fatalf("got %d rows, want the menu plus the input", len(rows))
+		t.Fatalf("got %d rows, want the input plus its padding rows", len(rows))
 	}
-	// With framed composer, the input row sits inside the frame (one above bottom border).
 	if !strings.Contains(ansi.Strip(rows[len(rows)-2]), "/c") {
-		t.Errorf("the input must sit inside the frame above the bottom border, got %q", rows[len(rows)-2])
+		t.Errorf("the input must sit one row above the bottom padding, got %q", rows[len(rows)-2])
 	}
 	if got, want := m.Height(), len(rows); got != want {
 		t.Errorf("Height() = %d but View drew %d rows", got, want)
@@ -237,7 +238,7 @@ func TestViewPutsTheMenuAboveTheInput(t *testing.T) {
 func TestHeightWithNoMenu(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 40)
 	if got := m.Height(); got != 3 {
-		t.Errorf("got height %d, want 3 with no menu showing (1 input row + 2 frame rows)", got)
+		t.Errorf("got height %d, want 3 with no menu showing (1 input row + 2 padding rows)", got)
 	}
 	narrow := New(loadTheme(t), theme.TierASCII, 4)
 	if got := narrow.Height(); got != 1 {
@@ -345,21 +346,59 @@ func TestOffsetNeverGoesNegative(t *testing.T) {
 	}
 }
 
-func TestComposerFrameHintWhenMenuActive(t *testing.T) {
+// TestComposerPopupCarriesTheHintNotTheBar: the navigation hint lives in
+// the popup's footer row while a menu is open; the bar itself stays bare.
+func TestComposerPopupCarriesTheHintNotTheBar(t *testing.T) {
 	m := typed(t, "/mo")
 	m.SetWidth(80)
 	if !m.MenuActive() {
 		t.Fatal("expected menu active")
 	}
-	view := m.View()
-	if !strings.Contains(view, "navigate") || !strings.Contains(view, "complete") {
-		t.Errorf("expected navigation and completion hint in frame, got view:\n%s", view)
+	pop := strings.Join(m.Popup(), "\n")
+	if !strings.Contains(pop, "navigate") || !strings.Contains(pop, "complete") {
+		t.Errorf("expected navigation and completion hint in the popup, got:\n%s", pop)
+	}
+	if bar := ansi.Strip(m.View()); strings.Contains(bar, "navigate") || strings.Contains(bar, "[") {
+		t.Errorf("the bar must not carry the hint, got:\n%s", bar)
 	}
 
 	// Narrow terminal fallback
-	m.SetWidth(60)
-	viewNarrow := m.View()
-	if !strings.Contains(viewNarrow, "[ / Commands ]") {
-		t.Errorf("expected fallback hint in narrow frame, got view:\n%s", viewNarrow)
+	m.SetWidth(40)
+	popNarrow := strings.Join(m.Popup(), "\n")
+	if !strings.Contains(popNarrow, "[ / Commands ]") {
+		t.Errorf("expected fallback hint in the narrow popup, got:\n%s", popNarrow)
+	}
+}
+
+// TestPopupIsAnOverlayNotRows: opening a menu adds rows to Popup and none
+// to the bar - Height is what it was, so the transcript never reflows.
+func TestPopupIsAnOverlayNotRows(t *testing.T) {
+	closed := New(loadTheme(t), theme.TierTrueColor, 80)
+	open := typed(t, "/mo")
+	open.SetWidth(80)
+	if !open.MenuActive() {
+		t.Fatal("expected menu active")
+	}
+	if got, want := open.Height(), closed.Height(); got != want {
+		t.Errorf("Height with menu open = %d, want %d (the popup must not claim bar rows)", got, want)
+	}
+	if got := strings.Count(open.View(), "\n") + 1; got != open.Height() {
+		t.Errorf("View draws %d rows, Height says %d", got, open.Height())
+	}
+	pop := open.Popup()
+	if len(pop) < 2 || open.MenuRows() != len(pop) {
+		t.Fatalf("popup rows = %d, MenuRows = %d; want items + footer and the two to agree", len(pop), open.MenuRows())
+	}
+	for i, row := range pop {
+		if w := ansi.StringWidth(row); w != open.PopupWidth() {
+			t.Errorf("popup row %d is %d cols, want %d", i, w, open.PopupWidth())
+		}
+	}
+	// The popup spans the bar's padded region: left padding, popup, right padding.
+	if 2*open.PopupOffset()+open.PopupWidth() != 80 {
+		t.Errorf("popup must sit inside the bar's padding: 2*%d + %d != 80", open.PopupOffset(), open.PopupWidth())
+	}
+	if closed.Popup() != nil {
+		t.Error("no menu, no popup")
 	}
 }

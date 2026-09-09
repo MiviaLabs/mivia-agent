@@ -17,6 +17,12 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Start from the exact paths the plan's own `inspected` list names (see `evidence.plan` above) -
+that is the planner's own read-set, not a claim to trust blindly. Read every one of those paths
+yourself and verify the plan's claims against what they actually contain; add any further path
+the plan should have inspected but did not. This does not replace independent verification, it
+bounds where independent verification starts instead of re-discovering the scope from zero.
+
 Check the scope, acceptance criteria, affected interfaces, compatibility risks, security and
 hook boundaries, negative paths, structured-input cases, fuzz decision, and requested host
 evidence gates. Independently verify each claim the plan makes by reading the cited source

@@ -624,14 +624,15 @@ func TestRunAgentLoopOnceScopedDispatcherRejectsBlankNameTool(t *testing.T) {
 // TestRunAgentLoopOnceNilToolsFailsAtSDKNew covers the sdkagentloop.New
 // error return: a nil registry survives the adapter's own checks (the
 // converter returns nil,nil) and fails inside the SDK's Validate with
-// ErrNoTools.
+// ErrInvalidOptions (the SDK collapsed its shape-only sentinels,
+// including the former ErrNoTools, into one wrapped sentinel).
 func TestRunAgentLoopOnceNilToolsFailsAtSDKNew(t *testing.T) {
 	loop := &Loop{Completer: &beforeStepCompleter{}, Tools: nil}
 	_, err := RunAgentLoopOnce(context.Background(), loop, Options{
 		Model:    "m",
 		MaxSteps: 2,
 	}, nil)
-	if !errors.Is(err, sdkagentloop.ErrNoTools) {
-		t.Fatalf("err = %v, want the SDK's ErrNoTools sentinel", err)
+	if !errors.Is(err, sdkagentloop.ErrInvalidOptions) {
+		t.Fatalf("err = %v, want the SDK's ErrInvalidOptions sentinel", err)
 	}
 }

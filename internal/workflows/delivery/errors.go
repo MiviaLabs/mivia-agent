@@ -19,7 +19,7 @@ const maxErrorBytes = 4 << 10
 // ownership of the run's own PR instead of misjudging it as foreign. Best
 // effort: storage failures are swallowed — the caller's original error is the
 // result.
-func markFailed(ctx context.Context, repo ledger.Repository, key string, req Request, err error) {
+func markFailed(ctx context.Context, repo LedgerRepository, key string, req Request, err error) {
 	errText := err.Error()
 	if len(errText) > maxErrorBytes {
 		// Rune-safe cut: a raw byte slice could split a multi-byte rune and

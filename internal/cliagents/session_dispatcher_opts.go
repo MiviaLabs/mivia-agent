@@ -1,8 +1,10 @@
 package cliagents
 
 import (
+	"context"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -13,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -26,6 +29,10 @@ import (
 // other cliagents code can reference the type without importing cli.
 // internal/cli/dispatcher.go re-exports it via a type alias.
 type SessionDispatcherOpts struct {
+	// ToolDenylist is the operator's mandatory_tool_denylist. Session-owned
+	// tools are registered after the registry has been scoped, so this is the
+	// only point at which the operator's guardrail can refuse one.
+	ToolDenylist []string
 	// Registry is the advertised surface: what the root model is shown and what
 	// the root loop may invoke. Under a deferred tool tier this is only the core
 	// block plus whatever has been admitted.
@@ -37,9 +44,19 @@ type SessionDispatcherOpts struct {
 	// Nil defaults to Registry, which is the correct answer whenever nothing is
 	// deferred.
 	AuthorityRegistry *tools.Registry
-	Completer         provider.Completer
-	Model             string
-	ProviderName      string
+	// Approval supplies the operator's live approval wiring to every nested
+	// loop this dispatcher builds: the gate, the policy and the standing
+	// cache. Read per invocation, never captured - the gate is installed
+	// after the dispatcher is built, and the policy changes mid-session.
+	//
+	// Nil leaves subagents ungated, which is what they were before this
+	// existed: a delegated write tool then skips an approval the same call
+	// would face on the root path.
+	Approval func() sdkadapter.ApprovalDeps
+
+	Completer    provider.Completer
+	Model        string
+	ProviderName string
 	// AllowWorkspaceAgentProviders is the user-owned opt-in for static workflow
 	// panel provider routing.
 	AllowWorkspaceAgentProviders bool
@@ -152,6 +169,17 @@ type SessionDispatcherOpts struct {
 	// runs on the invoking goroutine, so it must be cheap and safe for
 	// concurrent calls.
 	Sink func(runtime.Event)
+
+	// OnToolCancelReady, when set, is forwarded onto every MultiStepHandler
+	// this dispatcher registers as that task's
+	// subagents.MultiStepHandler.OnToolCancelReady: the per-task sink for
+	// the ability to cancel ONE in-flight tool call within ONE running
+	// subagent task. Nil (the default for every caller that predates this
+	// field) leaves nested loops exactly as before - no cancel-by-ID
+	// capability offered for their tool calls. Production callers set this
+	// from cliorchestrate.ToolCancelReadyHook(d) for the SAME dispatcher d
+	// this Opts value builds handlers on.
+	OnToolCancelReady func(ctx context.Context, canceler agent.ToolCanceler)
 }
 
 // Authority resolves the full authorized set nested principals are scoped from.

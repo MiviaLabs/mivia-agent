@@ -49,11 +49,12 @@ func ResolvedSubagentRequestTimeout(cfg SubagentConfig) time.Duration {
 // it ever reached its own documented allowance.
 const DefaultSubagentTotalTimeoutSec = 3600 // 60 minutes
 
-// DefaultPromptCapTokens is the recommended [chat] max_prompt_tokens value.
-// It bounds the per-request prompt budget for models with large context
-// windows. The planner compacts history at 80% of the budget. It is a
-// recommendation, not a compiled default: an unset knob keeps the
-// window-derived budget.
+// DefaultPromptCapTokens is a reference [chat] max_prompt_tokens value, used
+// by tests as a representative operator cap. It is NOT a default and no
+// longer a recommendation: one cap over a mixed catalogue holds every model
+// to the smallest of them, so an unset knob - each model running to its own
+// window minus its output reserve - is the normal configuration. The planner
+// compacts history at 80% of whatever the budget turns out to be.
 const DefaultPromptCapTokens = 200_000
 
 // DefaultOutputReserveTokens is the completion allowance assumed when the
@@ -139,19 +140,24 @@ func boolPtr(v bool) *bool { return &v }
 
 // DefaultMemoryConfig is the resolved default for [memory] (plan 68).
 var DefaultMemoryConfig = MemoryConfig{
-	StoreBackend:     "sqlite",
-	MaxEntryBytes:    8192,
-	MaxEntries:       500,
-	MaxSearchResults: 8,
+	StoreBackend:                "markdown",
+	MaxEntryBytes:               8192,
+	MaxEntries:                  500,
+	MaxSearchResults:            8,
+	IndexRefreshIntervalSeconds: 30,
 }
 
 // [memory] bounds. Below the entry floor a memory cannot hold its template;
 // above the ceiling a save would dominate the store. max_search_results is
-// capped so one tool call stays a small, bounded read.
+// capped so one tool call stays a small, bounded read. The index refresh
+// interval is capped so an open session's fallback scans cannot spread more
+// than a day apart.
 const (
 	MinMemoryEntryBytes    = 256
 	MaxMemoryEntryBytes    = 65536
 	MaxMemorySearchResults = 50
+
+	MaxMemoryIndexRefreshIntervalSeconds = 86400
 )
 
 // DefaultMessagingConfig is the resolved default for [subagents.messaging].

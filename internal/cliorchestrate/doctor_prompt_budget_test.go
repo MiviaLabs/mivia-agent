@@ -50,54 +50,55 @@ func runDoctorForPromptBudget(t *testing.T, profileWindow, profileOutput int, ma
 	return out.String(), errOut.String()
 }
 
-// TestDoctorPromptBudgetAdvisoryShown: with an unbounded prompt budget
-// (max_prompt_tokens unset, context window 1000000 minus 32768 default output
-// reserve = 967232), doctor must print the prompt_budget advisory.
-func TestDoctorPromptBudgetAdvisoryShown(t *testing.T) {
+// TestDoctorReportsTheWindowDerivedBudget: with [chat] max_prompt_tokens
+// unset the budget is the model window minus the output reserve, which is a
+// bound. Doctor must report that number as a fact and must not call it
+// unbounded or push a fixed cap, which on a large-window model amounted to
+// advising the operator to discard most of the capacity they pay for.
+func TestDoctorReportsTheWindowDerivedBudget(t *testing.T) {
 	stdout, _ := runDoctorForPromptBudget(t, 1000000, 384000, "")
-	if !strings.Contains(stdout, "prompt_budget: unbounded (967232 tokens)") {
-		t.Fatalf("stdout missing unbounded prompt_budget advisory:\n%s", stdout)
+	if !strings.Contains(stdout, "prompt_budget: 967232 tokens (from the model window)") {
+		t.Fatalf("stdout missing the window-derived prompt_budget line:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "recommended 200000") {
-		t.Fatalf("stdout missing 'recommended 200000' hint:\n%s", stdout)
+	for _, banned := range []string{"unbounded", "recommended"} {
+		if strings.Contains(stdout, banned) {
+			t.Errorf("stdout still says %q about an uncapped budget:\n%s", banned, stdout)
+		}
 	}
 }
 
-// TestDoctorPromptBudgetAdvisoryAbsentWhenCapped: an explicit
-// [chat] max_prompt_tokens = 200000 must suppress the advisory entirely.
-func TestDoctorPromptBudgetAdvisoryAbsentWhenCapped(t *testing.T) {
+// TestDoctorNamesTheWindowACapDiscards is the diagnosis worth making: a cap
+// holding the budget far below the model's window is invisible everywhere
+// else and makes a large model read as a small one. The threshold matches
+// ports.ModelInfo.BudgetIsCapped so the doctor and the sidebar agree.
+func TestDoctorNamesTheWindowACapDiscards(t *testing.T) {
 	stdout, _ := runDoctorForPromptBudget(t, 1000000, 384000, "200000")
-	if strings.Contains(stdout, "prompt_budget") {
-		t.Fatalf("stdout contains prompt_budget advisory despite [chat] max_prompt_tokens:\n%s", stdout)
+	want := "prompt_budget: 200000 tokens (capped by [chat] max_prompt_tokens; the model window is 1000000)"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout does not name the window the cap discards:\n%s", stdout)
 	}
 }
 
-// TestDoctorPromptBudgetAdvisoryAbsentForSmallWindow: an active prompt budget
-// (200000 - 32768 = 167232) at or below 200000 must not print the advisory.
-func TestDoctorPromptBudgetAdvisoryAbsentForSmallWindow(t *testing.T) {
+// TestDoctorReportsAModestCapWithoutTheWindow: a cap that leaves most of the
+// window in play is a normal setting, not a finding, so it is reported
+// without the window comparison that flags a discarding cap.
+func TestDoctorReportsAModestCapWithoutTheWindow(t *testing.T) {
+	stdout, _ := runDoctorForPromptBudget(t, 1000000, 384000, "600000")
+	if !strings.Contains(stdout, "prompt_budget: 600000 tokens (capped by [chat] max_prompt_tokens)") {
+		t.Fatalf("stdout missing the plain capped line:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "the model window is") {
+		t.Errorf("a modest cap was reported as if it discarded the window:\n%s", stdout)
+	}
+}
+
+// TestDoctorReportsSmallWindowsToo: the budget line is the only place doctor
+// states the number the gauge and compaction actually use, so it is reported
+// for every model, not only large ones.
+func TestDoctorReportsSmallWindowsToo(t *testing.T) {
 	stdout, _ := runDoctorForPromptBudget(t, 200000, 128000, "")
-	if strings.Contains(stdout, "prompt_budget") {
-		t.Fatalf("stdout contains prompt_budget advisory for a small context window:\n%s", stdout)
-	}
-}
-
-// TestDoctorPromptBudgetAdvisoryAbsentAtExactCap: a budget of exactly 200000
-// (232768 window minus 32768 reserve) must not print the advisory - the guard
-// is '<= cap', not '< cap'.
-func TestDoctorPromptBudgetAdvisoryAbsentAtExactCap(t *testing.T) {
-	stdout, _ := runDoctorForPromptBudget(t, 200000+config.DefaultOutputReserveTokens, 100000, "")
-	if strings.Contains(stdout, "prompt_budget") {
-		t.Fatalf("stdout contains prompt_budget advisory at the exact cap:\n%s", stdout)
-	}
-}
-
-// TestDoctorPromptBudgetAdvisoryAbsentWhenCapAboveBudget: an explicit cap above
-// the window-derived budget (500000 vs 616000) must still suppress the advisory
-// - the guard is on MaxPromptTokens being set, not on the cap binding.
-func TestDoctorPromptBudgetAdvisoryAbsentWhenCapAboveBudget(t *testing.T) {
-	stdout, _ := runDoctorForPromptBudget(t, 1000000, 384000, "500000")
-	if strings.Contains(stdout, "prompt_budget") {
-		t.Fatalf("stdout contains prompt_budget advisory with an explicit cap above the budget:\n%s", stdout)
+	if !strings.Contains(stdout, "prompt_budget: 167232 tokens (from the model window)") {
+		t.Fatalf("stdout missing the prompt_budget line for a small window:\n%s", stdout)
 	}
 }
 

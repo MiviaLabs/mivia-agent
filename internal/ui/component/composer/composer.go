@@ -23,9 +23,11 @@ import (
 // slash-completion menu, and the @-mention picker.
 //
 // Dynamic height: the textarea grows from 1 line to maxInputLines as the
-// user types, and shrinks when lines are removed. The frame around the input
-// always occupies a fixed gutter (top and bottom border rows) so the rest of
-// the cockpit layout never reflows (ux-rules.md rule 2.7, 2.8).
+// user types, and shrinks when lines are removed. The body has no border,
+// only a solid fill with one padding row above and below; the completion
+// and mention menus are an overlay (Popup) the owning screen draws above
+// the bar, so opening one never adds a row and the rest of the cockpit
+// layout never reflows (ux-rules.md rules 2.7, 2.8).
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
@@ -47,21 +49,37 @@ type Model struct {
 }
 
 // maxInputLines is the maximum number of visible textarea rows before it
-// scrolls internally rather than growing the frame further.
+// scrolls internally rather than growing the bar further.
 const maxInputLines = 6
 
 // promptWidth is the display width of the accent prompt rendered by this
-// package ("› "). Two columns: one for the glyph, one for the space.
+// package. Two columns: one for the glyph, one for the space.
 const promptWidth = 2
 
-// frameInset is the total column overhead the border removes from the inner
-// textarea width: one left border cell + one right border cell + lipgloss's
-// two internal padding columns = 4.
-const frameInset = 4
+// promptGlyph is the prompt drawn on the first input row: "› " on tiers
+// that can show it, the ASCII "> " otherwise. selectionRows uses the same
+// glyph so copied text matches what View draws.
+func promptGlyph(tier theme.Tier) string {
+	if tier == theme.TierASCII || tier == theme.TierNoTTY {
+		return "> "
+	}
+	return "› "
+}
 
-// minFramedWidth is the narrowest terminal that can still hold the border,
-// prompt, cursor, and one text cell.
-const minFramedWidth = 8
+// padInset is the total column overhead the padding removes from the inner
+// textarea width: two columns each side of the filled bar. It is the same
+// four columns the old rounded border plus its inner padding used to take,
+// so the geometry the owning screen relies on is unchanged - only the
+// border characters are gone, replaced by fill.
+const padInset = 4
+
+// padCols is the padding on each side of the bar (padInset / 2).
+const padCols = 2
+
+// minPaddedWidth is the narrowest terminal that can still hold the padding,
+// prompt, cursor, and one text cell. Below it, View draws the bare filled
+// body with no padding rows or columns at all.
+const minPaddedWidth = 8
 
 // New returns a focused, empty composer sized to width.
 func New(t theme.Theme, tier theme.Tier, width int) Model {
@@ -85,8 +103,8 @@ func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	ta.MaxHeight = maxInputLines
 	ta.ShowLineNumbers = false
 
-	// Remove the border that textarea draws by default; the composer draws
-	// its own themed frame via render.BorderedWithHint.
+	// Remove the border that textarea draws by default; the composer fills
+	// its own background instead (render.FillBG in View), with no frame.
 	ta.SetStyles(noopStyles(ta.Styles()))
 
 	// Rebind InsertNewline to shift+enter and alt+enter.
@@ -103,9 +121,10 @@ func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	return ta
 }
 
-// noopStyles returns styles with the built-in textarea border stripped so we
-// can draw our own frame.  Prompt is set to two spaces as a placeholder; the
-// real prompt is injected via SetPromptFunc after theme is applied.
+// noopStyles returns styles with the built-in textarea border stripped so
+// the composer can fill its own bar. Prompt is set to two spaces as a
+// placeholder; the real prompt is injected via SetPromptFunc after theme
+// is applied.
 func noopStyles(s textarea.Styles) textarea.Styles {
 	blank := lipgloss.NewStyle()
 	s.Focused.Base = blank
@@ -137,7 +156,7 @@ func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 
 	// Prompt: themed accent prompt on the first line, blank indent on
 	// continuation lines.
-	prompt := render.Role(t, tier, theme.RoleAccent).Render("> ")
+	prompt := render.Role(t, tier, theme.RoleAccent).Render(promptGlyph(tier))
 	cont := strings.Repeat(" ", promptWidth)
 	m.input.SetPromptFunc(promptWidth, func(info textarea.PromptInfo) string {
 		if info.LineNumber == 0 {
@@ -165,7 +184,7 @@ func (m Model) Commands() []Command {
 // composer holds no filesystem access.
 func (m *Model) SetMentions(mentions []Mention) {
 	m.mmenu.all = slices.Clone(mentions)
-	m.mmenu.refresh(m.input.Value(), m.input.Column())
+	m.mmenu.refresh(m.input.Value(), m.cursorOffset())
 }
 
 // Mentions returns the active @-mention candidate list.
@@ -217,7 +236,7 @@ func (m Model) AcceptMention() Model {
 	if !m.MentionMenuActive() {
 		return m
 	}
-	cur := m.input.Column()
+	cur := m.cursorOffset()
 	text := m.input.Value()
 	newText, newCursor := m.mmenu.replaceInText(text, cur)
 	m.input.SetValue(newText)
@@ -244,12 +263,13 @@ func (m Model) AcceptCommonPrefix() (Model, bool) {
 	return m, true
 }
 
-// SetWidth resizes the input. The caller passes the full column count.
+// SetWidth resizes the input. The caller passes the full column count;
+// the textarea gets what is left after the prompt and the bar's padding.
 func (m *Model) SetWidth(width int) {
 	m.width = width
 	inner := width - promptWidth
-	if width >= minFramedWidth {
-		inner = width - promptWidth - frameInset
+	if width >= minPaddedWidth {
+		inner = width - promptWidth - padInset
 	}
 	if inner < 1 {
 		inner = 1
@@ -287,11 +307,31 @@ func (m *Model) SetValue(s string) {
 	m.input.SetValue(s)
 	m.input.CursorEnd()
 	m.menu.refresh(s)
-	m.mmenu.refresh(s, m.input.Column())
+	m.mmenu.refresh(s, m.cursorOffset())
 }
 
 // CursorLine returns the current line index (0-based) of the cursor.
 func (m Model) CursorLine() int { return m.input.Line() }
+
+// cursorOffset is the cursor's byte offset into Value(). The textarea
+// reports the cursor as a logical line plus a rune column within it;
+// the mention trigger slices the whole value, so the lines before the
+// cursor's count too - Column() alone points into the FIRST line and
+// hides an "@" typed on any later one.
+func (m Model) cursorOffset() int {
+	lines := strings.Split(m.input.Value(), "\n")
+	row, col := m.input.Line(), m.input.Column()
+	off := 0
+	for i := 0; i < row && i < len(lines); i++ {
+		off += len(lines[i]) + 1 // the line and its newline
+	}
+	if row >= 0 && row < len(lines) {
+		r := []rune(lines[row])
+		col = min(max(col, 0), len(r))
+		off += len(string(r[:col]))
+	}
+	return off
+}
 
 // IsEmpty reports whether the input has no text or only whitespace.
 func (m Model) IsEmpty() bool { return len(strings.TrimSpace(m.input.Value())) == 0 }
@@ -319,17 +359,33 @@ func (m *Model) ClickToColumn(x int) {
 	m.input.SetCursorColumn(pos)
 }
 
-// MenuClickRow accepts the completion row at rendered index row (0 = top).
-// Returns false when the menu is closed or the row is out of range.
+// MenuClickRow accepts the completion or mention item under popup row
+// `row` (0 = the popup's top row, which is its blank padding; item i sits
+// on row i+1). Both menus share the popup, so a click routes to whichever
+// is open. Returns false when no menu is open or the row holds no item
+// (the padding row, the "n of m" count, the footer).
 func (m *Model) MenuClickRow(row int) bool {
-	if !m.MenuActive() || row < 0 {
+	// row is relative to the popup's first row, and the popup's first row
+	// is its blank top padding: item i sits on popup row i+1.
+	row--
+	if row < 0 {
 		return false
 	}
-	end := min(m.menu.offset+uikitconfig.MaxCompletionRows, len(m.menu.matches))
-	if idx := m.menu.offset + row; idx < end {
-		m.menu.cursor = idx
-		*m = m.AcceptSelected()
-		return true
+	switch {
+	case m.MenuActive():
+		end := min(m.menu.offset+uikitconfig.MaxCompletionRows, len(m.menu.matches))
+		if idx := m.menu.offset + row; idx < end {
+			m.menu.cursor = idx
+			*m = m.AcceptSelected()
+			return true
+		}
+	case m.MentionMenuActive():
+		end := min(m.mmenu.offset+uikitconfig.MaxCompletionRows, len(m.mmenu.matches))
+		if idx := m.mmenu.offset + row; idx < end {
+			m.mmenu.cursor = idx
+			*m = m.AcceptMention()
+			return true
+		}
 	}
 	return false
 }
@@ -345,62 +401,59 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.invalidateSelection()
 	}
 	m.menu.refresh(m.input.Value())
-	m.mmenu.refresh(m.input.Value(), m.input.Column())
+	m.mmenu.refresh(m.input.Value(), m.cursorOffset())
 	return m, cmd
 }
 
-// Height is the total row count View draws. It is: border-top(1) +
-// textarea-rows (dynamic 1–maxInputLines) + border-bottom(1) +
-// completion-menu-rows (when open). Below minFramedWidth the border is
-// omitted, so height equals textarea-rows + menu-rows.
+// Height is the total row count View draws: padding-top(1) +
+// textarea-rows (dynamic 1-maxInputLines) + padding-bottom(1). Below
+// minPaddedWidth the padding is omitted, so height equals textarea-rows.
+// The completion popup is NOT counted: it is an overlay the screen draws
+// over the rows above the bar (Popup), never a row the bar claims.
 func (m Model) Height() int {
 	taRows := m.input.Height()
 	if taRows < 1 {
 		taRows = 1
 	}
-	var frame int
-	if m.width >= minFramedWidth {
-		frame = 2 // top + bottom border
+	if m.width >= minPaddedWidth {
+		return taRows + 2 // top + bottom padding row
 	}
-	base := taRows + frame
-	// menu rows (slash or mention — only one open at a time)
-	if v := m.activeMenuView(); v != "" {
-		return base + strings.Count(v, "\n") + 1
-	}
-	return base
+	return taRows
 }
 
-// MenuRows returns the row count the active completion or mention menu occupies (0 when closed).
-func (m Model) MenuRows() int {
-	if v := m.activeMenuView(); v != "" {
-		return strings.Count(v, "\n") + 1
-	}
-	return 0
-}
+// MenuRows returns the row count the completion popup occupies when drawn
+// (the top padding row, the items, the count row when the list scrolls,
+// and the footer), or 0 when no menu is open. Mouse routing uses it to
+// find the popup's first row.
+func (m Model) MenuRows() int { return len(m.Popup()) }
 
-// InputRowFromBottom is how many rows above the screen's status row the top
-// input line sits (for mouse routing). When framed, the bottom border is 1 row
-// above the status row, so the input is 2 above. When bare, the input is 1 above.
+// InputRowFromBottom is how many rows above the screen's status row the
+// LAST input line sits (for mouse routing): the textarea's bottom row,
+// which is the only one when the input is a single line. When padded, the
+// bottom padding row is 1 row above the status row, so the input is 2
+// above. When bare, the input is 1 above. The bar's first row is Height()
+// rows above the status row.
 func (m Model) InputRowFromBottom() int {
-	if m.width < minFramedWidth {
+	if m.width < minPaddedWidth {
 		return 1
 	}
 	return 2
 }
 
-// InputColumnOffset is how many display columns the left border and padding put
-// before the prompt. Mouse clicks subtract it to land on the input's own column space.
+// InputColumnOffset is how many display columns of left padding sit before
+// the prompt. Mouse clicks subtract it to land on the input's own column space.
 func (m Model) InputColumnOffset() int {
-	if m.width < minFramedWidth {
+	if m.width < minPaddedWidth {
 		return 0
 	}
-	return 2
+	return padCols
 }
 
-// Framed reports whether View draws the themed border around the body.
-// The owning screen uses it for selection-region geometry: border rows
-// are not selectable.
-func (m Model) Framed() bool { return m.width >= minFramedWidth }
+// Padded reports whether View draws the padding rows and columns around the
+// body. The owning screen uses it for selection-region geometry: padding
+// rows are not selectable. (This used to be Framed(); the padding occupies
+// exactly the cells the border did.)
+func (m Model) Padded() bool { return m.width >= minPaddedWidth }
 
 // activeMenuView returns whichever menu is currently showing, prefer slash
 // over mention when both are somehow active (cannot happen in practice).
@@ -411,65 +464,41 @@ func (m Model) activeMenuView() string {
 	return m.mmenu.view(m.Theme, m.Tier, m.width)
 }
 
-// View renders the active menu above the textarea, which is styled with the
-// subtle card background (RoleBGSubtle) matching the web app, and optionally
-// wrapped in a themed frame. The textarea is the last block, so it never
-// moves as the menu grows or shrinks (ux-rules.md rule 2.8).
+// View renders the textarea's body as a solid filled bar: one padding row
+// above, two padding columns each side, one padding row below, all in the
+// subtle card background (RoleBGSubtle) matching the web app. No border is
+// drawn; the fill is the frame. The completion and mention menus are not
+// part of this view: they are an overlay (Popup) the screen draws over the
+// rows above the bar, so the bar never moves when a menu opens or closes
+// (ux-rules.md rules 2.7, 2.8).
 func (m Model) View() string {
 	body := m.input.View()
+	// The command mark goes on before the selection highlight so a dragged
+	// selection still reads as selected over it.
+	if w := m.menu.matchedCommandWidth(m.Value()); w > 0 {
+		body = m.markCommandToken(body, w)
+	}
 	if m.selState.Active {
 		body = m.highlightBodyLines(body)
 	}
 
-	if m.width >= minFramedWidth {
-		hint := "[ ↵ Send  •  / Commands ]"
-		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			hint = "[ Enter: Send  •  / Commands ]"
-		}
-		if m.MenuActive() {
-			hint = "[ ↑/↓: navigate • Tab: complete • Enter: select • Esc: dismiss ]"
-			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-				hint = "[ Up/Down: navigate • Tab: complete • Enter: select • Esc: dismiss ]"
-			}
-			if !render.HintFits(m.width, hint) {
-				hint = "[ / Commands ]"
-			}
-		} else if m.MentionMenuActive() {
-			hint = "[ ↑/↓: navigate • Tab/Enter: insert • Esc: dismiss ]"
-			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-				hint = "[ Up/Down: navigate • Tab/Enter: insert • Esc: dismiss ]"
-			}
-			if !render.HintFits(m.width, hint) {
-				hint = "[ @ Mentions ]"
-			}
-		} else if m.input.Value() != "" {
-
-			lineCount := strings.Count(m.input.Value(), "\n") + 1
-			if lineCount > 1 {
-				hint = "[ " + strconv.Itoa(lineCount) + " lines  •  ↵ Send  •  Esc Cancel ]"
-				if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-					hint = "[ " + strconv.Itoa(lineCount) + " lines  •  Enter: Send  •  Esc Cancel ]"
-				}
-			} else {
-				hint = "[ ↵ Send  •  Esc Cancel ]"
-				if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-					hint = "[ Enter: Send  •  Esc Cancel ]"
-				}
-			}
-		}
-		inner := m.width - frameInset
+	if m.width >= minPaddedWidth {
+		inner := m.width - padInset
+		pad := strings.Repeat(" ", padCols)
 		lines := strings.Split(body, "\n")
 		for i, ln := range lines {
 			w := ansi.StringWidth(ln)
 			if w < inner {
-				lines[i] = ln + strings.Repeat(" ", inner-w)
+				ln += strings.Repeat(" ", inner-w)
 			} else if w > inner {
-				lines[i] = ansi.Truncate(ln, inner, "")
+				ln = ansi.Truncate(ln, inner, "")
 			}
+			lines[i] = pad + ln + pad
 		}
-		body = strings.Join(lines, "\n")
-		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, body)
-		body = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleFGSubtle, m.width, body, hint)
+		blank := strings.Repeat(" ", m.width)
+		rows := append([]string{blank}, lines...)
+		rows = append(rows, blank)
+		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(rows, "\n"))
 	} else if m.width > 0 {
 		lines := strings.Split(body, "\n")
 		for i, ln := range lines {
@@ -480,12 +509,149 @@ func (m Model) View() string {
 				lines[i] = ansi.Truncate(ln, m.width, "")
 			}
 		}
-		body = strings.Join(lines, "\n")
-		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, body)
-	}
-
-	if v := m.activeMenuView(); v != "" {
-		return v + "\n" + body
+		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(lines, "\n"))
 	}
 	return body
+}
+
+// markCommandToken restyles the leading "/name" on the first drawn row, w
+// columns wide, so an input the composer recognises as a command looks
+// different from one it does not.
+//
+// Accent AND bold, not one of them: accent is this theme's role for something
+// that will act, which is exactly what a recognised command is, and bold is
+// what survives on a tier with no colour to spend. The token sits after the
+// prompt, which owns the first promptWidth columns.
+func (m Model) markCommandToken(body string, w int) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 {
+		// Defensive only: strings.Split never returns an empty slice (even
+		// Split("", "\n") yields [""], len 1), so this branch is unreachable
+		// for any real body and is not covered by a test. Left in place as a
+		// guard against a future stdlib-contract change, not dead code to
+		// delete.
+		return body
+	}
+	total := ansi.StringWidth(lines[0])
+	left := promptWidth
+	right := min(total, left+w)
+	if right <= left {
+		return body
+	}
+	style := render.Role(m.Theme, m.Tier, theme.RoleAccent).Bold(true)
+	lines[0] = ansi.Cut(lines[0], 0, left) +
+		style.Render(ansi.Cut(lines[0], left, right)) +
+		ansi.Cut(lines[0], right, total)
+	return strings.Join(lines, "\n")
+}
+
+// Popup is the completion or mention menu as an overlay: nil when no menu
+// is open, otherwise rows of exactly PopupWidth() columns, filled with the
+// bar's own background so the popup reads as rising out of the bar. One
+// blank padding row comes first so the items never touch the popup's top
+// edge, then the item rows (the highlighted one on RoleBGSelection), then
+// the "n of m" count when the list scrolls, then one footer row carrying
+// the key hint. The owning screen draws it OVER the rows directly above the
+// bar (see conversation.overlayComposerPopup): View reserves no row for
+// it, so opening the menu never reflows the transcript (ux-rules.md
+// rules 2.7, 2.8, 5.7).
+func (m Model) Popup() []string {
+	raw := m.activeMenuView()
+	if raw == "" {
+		return nil
+	}
+	w := m.PopupWidth()
+	inner := w - 2 // one column of padding each side
+	if inner < 1 {
+		return nil
+	}
+	items := strings.Split(raw, "\n")
+	sel := -1
+	if m.MenuActive() {
+		sel = m.menu.cursor - m.menu.offset
+	} else if m.MentionMenuActive() {
+		sel = m.mmenu.cursor - m.mmenu.offset
+	}
+	fit := func(ln string) string {
+		if lw := ansi.StringWidth(ln); lw < inner {
+			return ln + strings.Repeat(" ", inner-lw)
+		} else if lw > inner {
+			return ansi.Truncate(ln, inner, "")
+		}
+		return ln
+	}
+	rows := make([]string, 0, len(items)+2)
+	rows = append(rows, render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Repeat(" ", w)))
+	for i, ln := range items {
+		row := " " + fit(ln) + " "
+		if i == sel {
+			row = render.FillBG(m.Theme, m.Tier, theme.RoleBGSelection, row)
+		} else {
+			row = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, row)
+		}
+		rows = append(rows, row)
+	}
+	footer := strings.Repeat(" ", w)
+	if hint := m.menuHint(); hint != "" {
+		footer = strings.Repeat(" ", w-ansi.StringWidth(hint)-1) +
+			render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(hint) + " "
+	}
+	rows = append(rows, render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, footer))
+	return rows
+}
+
+// PopupWidth is the column count each Popup row occupies: the bar's
+// padded span, so the popup's edges align with the bar's own fill.
+func (m Model) PopupWidth() int {
+	if m.width >= minPaddedWidth {
+		return m.width - padInset
+	}
+	return m.width
+}
+
+// PopupOffset is the column the popup starts at, relative to the bar's
+// first column: the bar's left padding, so the two line up.
+func (m Model) PopupOffset() int {
+	if m.width >= minPaddedWidth {
+		return padCols
+	}
+	return 0
+}
+
+// menuHint is the navigation hint drawn in the popup's footer row while a
+// completion or mention menu is open, or "" otherwise. The idle bar carries
+// no hint: the placeholder already names "/" for commands, and Enter to
+// send needs no reminder. Each hint has a shorter fallback for narrow bars.
+func (m Model) menuHint() string {
+	ascii := m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY
+	var hint, short string
+	switch {
+	case m.MenuActive():
+		hint, short = "[ ↑/↓: navigate • Tab: complete • Enter: select • Esc: dismiss ]", "[ / Commands ]"
+		if ascii {
+			hint = "[ Up/Down: navigate • Tab: complete • Enter: select • Esc: dismiss ]"
+		}
+	case m.MentionMenuActive():
+		hint, short = "[ ↑/↓: navigate • Tab/Enter: insert • Esc: dismiss ]", "[ @ Mentions ]"
+		if ascii {
+			hint = "[ Up/Down: navigate • Tab/Enter: insert • Esc: dismiss ]"
+		}
+	default:
+		return ""
+	}
+	if hintFits(m.PopupWidth(), hint) {
+		return hint
+	}
+	if hintFits(m.PopupWidth(), short) {
+		return short
+	}
+	return ""
+}
+
+// hintFits reports whether hint fits the popup's footer row with one
+// column to spare each side. Unlike render.HintFits (border-specific,
+// still used by the approval prompt's box) there are no corners or bars to
+// reserve space for.
+func hintFits(width int, hint string) bool {
+	return hint != "" && ansi.StringWidth(hint)+2 <= width
 }

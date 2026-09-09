@@ -10,17 +10,8 @@ type MemoryConfig struct {
 	// Enabled controls whether the memory tools are wired. nil (the key
 	// omitted) means enabled, so existing configs load unchanged.
 	Enabled *bool `toml:"enabled"`
-	// StoreBackend is "memory" (ephemeral, in-process) or "sqlite"
-	// (durable, default). Mirrors [subagents] store_backend.
+	// StoreBackend is "memory" (ephemeral) or "markdown" (durable).
 	StoreBackend string `toml:"store_backend"`
-	// StorePath is the project memory database file. Empty resolves by the
-	// three-tier rule in resolveMemoryConfig: a workspace with its own
-	// project config defaults to <workspace>/.mivia/memory.db; an ad-hoc
-	// directory defaults to a temp-dir store keyed by the sanitized root.
-	// A repo owner may point it at a tracked path and commit memories with
-	// the repository. Relative paths resolve against the workspace root;
-	// "~/..." expands to the home directory.
-	StorePath string `toml:"store_path"`
 	// OrgID is the org identity for org-scoped memory, honored from the
 	// user config file only. Empty means org scope is unavailable.
 	OrgID string `toml:"org_id"`
@@ -30,6 +21,12 @@ type MemoryConfig struct {
 	MaxEntries int `toml:"max_entries"`
 	// MaxSearchResults caps memory_search results. Default 8.
 	MaxSearchResults int `toml:"max_search_results"`
+	// IndexRefreshIntervalSeconds bounds the background memory index
+	// reconciler's full-scan fallback, and how long a read may skip its own
+	// rescan because the reconciler marked the scope fresh. Zero means the
+	// default; values above MaxMemoryIndexRefreshIntervalSeconds are a load
+	// error. The watcher itself has no interval: events apply as they arrive.
+	IndexRefreshIntervalSeconds int `toml:"index_refresh_interval_seconds"`
 	// BlockPatterns are regexes; a save whose content matches any of them is
 	// refused. Configuration-only, like the privacy redaction patterns.
 	BlockPatterns []string `toml:"block_patterns"`

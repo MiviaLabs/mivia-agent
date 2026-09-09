@@ -380,7 +380,7 @@ kind = "human_gate"
 [[transitions]]
 from = "plan"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }
 `)
 	_, _, err := ParseWorkflowTOML(data, "my-workflow.toml")
 	if err == nil {
@@ -405,7 +405,7 @@ kind = "human_gate"
 [[transitions]]
 from = "plan"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }
 `)
 	_, _, err := ParseWorkflowTOML(data, "my-workflow.toml")
 	if err == nil {
@@ -430,7 +430,7 @@ kind = "human_gate"
 [[transitions]]
 from = "plan"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }
 `)
 	_, _, err := ParseWorkflowTOML(data, "my-workflow.toml")
 	if err == nil {
@@ -561,7 +561,7 @@ kind = "human_gate"
 [[transitions]]
 from = "plan"
 to = "success"
-match = { status = "approved" }
+match = { status = "succeeded" }
 `
 	assertParseError(t, body, "dup-step.toml", `duplicate step ID "plan"`)
 }
@@ -572,10 +572,10 @@ func TestParseWorkflowTOML_TransitionValidation(t *testing.T) {
 			"[[steps]]\nid = \"plan\"\nkind = \"human_gate\"\n\n" + transition + "\n"
 	}
 	tests := []struct{ name, transition, substr string }{
-		{"missing from", "[[transitions]]\nfrom = \"\"\nto = \"success\"\nmatch = { status = \"approved\" }", "from is required"},
-		{"missing to", "[[transitions]]\nfrom = \"plan\"\nto = \"\"\nmatch = { status = \"approved\" }", "to is required"},
-		{"unknown from", "[[transitions]]\nfrom = \"start\"\nto = \"success\"\nmatch = { status = \"approved\" }", `from "start" is not a declared step`},
-		{"unknown to", "[[transitions]]\nfrom = \"plan\"\nto = \"finish\"\nmatch = { status = \"approved\" }", `to "finish" is not a declared step or terminal`},
+		{"missing from", "[[transitions]]\nfrom = \"\"\nto = \"success\"\nmatch = { status = \"succeeded\" }", "from is required"},
+		{"missing to", "[[transitions]]\nfrom = \"plan\"\nto = \"\"\nmatch = { status = \"succeeded\" }", "to is required"},
+		{"unknown from", "[[transitions]]\nfrom = \"start\"\nto = \"success\"\nmatch = { status = \"succeeded\" }", `from "start" is not a declared step`},
+		{"unknown to", "[[transitions]]\nfrom = \"plan\"\nto = \"finish\"\nmatch = { status = \"succeeded\" }", `to "finish" is not a declared step or terminal`},
 		{"missing match status", "[[transitions]]\nfrom = \"plan\"\nto = \"success\"\nmatch = {}", "match.status is required"},
 	}
 	for _, tc := range tests {
@@ -610,7 +610,7 @@ func TestParseWorkflowTOML_InputValidation(t *testing.T) {
 	base := func(inputs string) string {
 		return "version = 1\nname = \"input-validation\"\ninitial_step = \"plan\"\n\n" +
 			inputs + "\n\n[[steps]]\nid = \"plan\"\nkind = \"human_gate\"\n\n" +
-			"[[transitions]]\nfrom = \"plan\"\nto = \"success\"\nmatch = { status = \"approved\" }\n"
+			"[[transitions]]\nfrom = \"plan\"\nto = \"success\"\nmatch = { status = \"succeeded\" }\n"
 	}
 	tests := []struct{ name, inputs, substr string }{
 		{"missing type", "[inputs]\ntitle = { type = \"\" }", "type is required"},

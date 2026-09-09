@@ -52,6 +52,7 @@ type Screen struct {
 	sessionPicker *sessionPicker      // non-nil while the /resume picker is open
 	palettePicker *picker.Model       // non-nil while the universal command palette is open
 	effortPicker  *picker.Model       // non-nil while the /effort picker is open
+	login         *loginDialog        // non-nil while the /login dialog is open
 
 	// threads resolves a dispatched subagent's conversation for the
 	// panel's thread dialog; nil is valid (every entry then falls back
@@ -64,6 +65,28 @@ type Screen struct {
 	// valid - /settings still opens, every section reads "unavailable".
 	// Set via SetSettings, the same seam SetCommandRunner uses.
 	settings ports.Settings
+
+	// remoteInputs is the inbound steering port (ports.RemoteInputs); nil is
+	// valid - no channel means no remote-origin turns, ever. Set via
+	// SetRemoteInputs, the same seam SetCommandRunner uses. See remote_input.go.
+	remoteInputs <-chan ports.RemoteInputEvent
+
+	// notices is the out-of-band advisory port (ports.Notices); nil is valid -
+	// no channel means no out-of-turn advisories are rendered. Set via
+	// SetNotices, the same seam SetRemoteInputs uses. See notices.go.
+	notices <-chan uievent.Event
+	// workflowStatus is the replaceable liveness stream, separate from
+	// notices; workflow is the newest value read from it, drawn on the status
+	// row (status.go). The zero value means nothing is running and the row
+	// says nothing about workflows.
+	workflowStatus <-chan uievent.Event
+	workflow       uievent.WorkflowStatusBody
+
+	// mounter resolves untracked sessions on demand for remote steering.
+	mounter ports.SessionMounter
+
+	// mounting tracks in-flight mounts and queued inputs for unmounted sessions.
+	mounting map[string][]ports.RemoteInputEvent
 
 	// embedded marks the subagent-thread construction of this same
 	// Screen type: no top bar, no activity panel, wrapped event Msgs -
@@ -84,6 +107,8 @@ type Screen struct {
 	topbar       topbar.Model
 	transcript   transcript.Model
 	composer     composer.Model
+	commands     []composer.Command
+	mentions     []composer.Mention
 	statusline   statusline.Model
 	approval     approval.Model
 	history      history.Model
@@ -91,10 +116,14 @@ type Screen struct {
 	blackboard   blackboard.Model
 	welcome      welcome.Model
 
-	sessions map[string]*sessionState
+	sessions     map[string]*sessionState
+	sessionOrder []string
 
-	active ports.TurnHandle
-	queue  []string
+	active                    ports.TurnHandle
+	compaction                ports.CompactionHandle
+	compactionSessionID       string
+	compactionCancelRequested bool
+	queue                     []string
 
 	// pendingForce holds the FORCED text parked between the keypress and
 	// the async turnEndedMsg; NOT the displaced turn's text - chat.Session's
@@ -102,6 +131,22 @@ type Screen struct {
 	pendingForce *string
 
 	now func() time.Time
+
+	// tickArmed is the one spinner clock's in-flight flag, shared by
+	// POINTER across every copy of this Screen (session switches, the
+	// embedded thread screen, the value receivers this package returns)
+	// because the clock is process-wide state, not per-copy state.
+	//
+	// statusline.TickMsg is self-re-arming: handling one returns the Cmd
+	// for the next. Every UNCONDITIONAL statusline.TickCmd() therefore
+	// starts a clock that lives until the whole surface goes idle, and a
+	// second one does not replace the first - it runs beside it. Subagent
+	// progress events (see events.go) arrive continuously while a dispatch
+	// batch runs, so an unguarded arm there multiplied the clock once per
+	// event: the marks animate N times too fast and the entire cockpit
+	// repaints N times per interval, which is what makes input and
+	// scrolling lag. armTick is the only way to start the clock.
+	tickArmed *bool
 
 	// keys is the one dispatch table. See keys.go for the context order.
 	keys *keymap.Map
@@ -147,6 +192,10 @@ type Screen struct {
 	lastClickTime time.Time
 	lastClickX    int
 	lastClickY    int
+	// lastNavClickTime/Row detect a double-click on the sidebar's model
+	// row (handleNavClick), the way lastClick* does for the top bar.
+	lastNavClickTime time.Time
+	lastNavClickRow  int
 }
 
 // New builds a Screen. themes is the candidate set offered by ctrl+t;
@@ -171,6 +220,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		panel:        newPanel(th, tier),
 		keys:         keymap.New(keymap.Default()),
 		now:          now,
+		tickArmed:    new(bool),
 	}
 	s.approval.SetWidth(contentWidth(width))
 	s.history.SetWidth(contentWidth(width))
@@ -178,6 +228,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	s.blackboard.SetWidth(contentWidth(width))
 	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
+		s.registerSession(conv.ID())
 		if rp, ok := conv.(interface{ ShowReasoning() bool }); ok {
 			s.transcript = s.transcript.SetHideReasoning(!rp.ShowReasoning())
 		}
@@ -192,7 +243,9 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	return s
 }
 
-func (s Screen) Init() tea.Cmd { return nil }
+func (s Screen) Init() tea.Cmd {
+	return tea.Batch(s.awaitRemoteInput(), s.awaitNotice(), s.awaitWorkflowStatus())
+}
 
 // ViewFlags holds the alternate screen: the conversation is the cockpit.
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
@@ -220,6 +273,31 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	// rows their highlight paints on.
 	scr.syncSelectionRects()
 	return scr, cmd
+}
+
+// handleAppSettingsMsg folds the app-level settings/routing messages into
+// the immutable-update flow: ScreenResumedMsg refreshes the topbar, and the
+// settings layer's permanent, host-authored disclosure (the full-disk live
+// re-arm's never-silent notice) is folded into the transcript. The returned
+// Screen replaces the router's stack entry.
+func (s Screen) handleAppSettingsMsg(msg tea.Msg) (app.Screen, tea.Cmd) {
+	switch msg := msg.(type) {
+	case app.ScreenResumedMsg:
+		s.refreshTopbar()
+		return s, nil
+	case app.SettingsNoticeMsg:
+		return s.handleSettingsNoticeMsg(msg)
+	}
+	return s, nil
+}
+
+// handleSettingsNoticeMsg folds the settings layer's permanent, host-
+// authored disclosure (the full-disk live re-arm's never-silent notice)
+// into the transcript through the immutable-update flow: Notice mutates
+// this local copy and the returned Screen replaces the router's entry.
+func (s Screen) handleSettingsNoticeMsg(msg app.SettingsNoticeMsg) (app.Screen, tea.Cmd) {
+	s.Notice(msg.Text)
+	return s, nil
 }
 
 // contentWidth is the usable column count: the terminal minus the
@@ -299,6 +377,12 @@ func (s *Screen) resize() {
 // renders into it. Toggling the panel and resizing the terminal both
 // change that width; Update's reservedRows comparison cannot see a
 // width-only change, so the explicit call is the only reliable trigger.
+// syncTopbarModel hides the top bar's model capsule and context badge
+// while the sidebar is open: the sidebar's context and model sections
+// say them instead, so each is named once on screen. Called from every
+// path that opens or closes the panel.
+func (s *Screen) syncTopbarModel() { s.topbar.SetSessionHidden(s.panel.open) }
+
 func (s *Screen) reflow() {
 	w := s.chatWidth()
 	s.topbar.SetWidth(w)
@@ -334,7 +418,21 @@ func (s *Screen) refreshTopbar() {
 		// the same event had just installed, which is what left the
 		// gauge frozen at turn-start history for the whole turn.
 		if s.liveUsage != nil {
-			u = *s.liveUsage
+			live := *s.liveUsage
+			// The provider reports a total and no composition. The
+			// session's estimate has the composition and is the only
+			// source for it, so it is carried over and reconciled with
+			// the authoritative total. Taking the live reading whole
+			// would blank every bucket row for the length of a turn
+			// while the header above them kept reporting a real share.
+			parts := u.Breakdown
+			if parts.Total() == 0 {
+				// The session has not priced the running turn yet, so the
+				// last composition the bar held is the best one available.
+				parts = s.topbar.Usage().Breakdown
+			}
+			live.Breakdown = parts.WithLiveTotal(live.InputTokens)
+			u = live
 		} else if (u.InputTokens+u.OutputTokens == 0) && (s.topbar.Usage().InputTokens+s.topbar.Usage().OutputTokens > 0) {
 			u = s.topbar.Usage()
 		}
@@ -346,11 +444,18 @@ func (s *Screen) refreshTopbar() {
 		}
 	}
 	s.refreshActivity()
+	s.refreshTabs()
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
+	if next, cmd, handled := s.updateAsyncPortMsg(msg); handled {
+		return next, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		if next, cmd, handled := s.handleCompactionKey(msg); handled {
+			return next, cmd
+		}
 		return s.handleKey(msg)
 	case tea.PasteMsg:
 		// Paste lands in the composer; see handlePaste for the why.
@@ -365,16 +470,15 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case threadEndedMsg:
 		if s.embedded {
 			s.statusline.Stop()
-			s.approval.Clear()
+			s.approval.ClearAll()
 			s.panel.reconcileTerminal("interrupted")
 			s.active = nil
 			return s, nil
 		}
 		return s.forwardThreadMsg(msg)
 
-	case app.ScreenResumedMsg:
-		s.refreshTopbar()
-		return s, nil
+	case app.ScreenResumedMsg, app.SettingsNoticeMsg:
+		return s.handleAppSettingsMsg(msg)
 	case turnEndedMsg:
 		return s.handleTurnEndedMsg(msg)
 	case approval.DecisionMsg:
@@ -383,22 +487,13 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		}
 		return s, nil
 	case statusline.TickMsg:
-		next, cmd := s.statusline.Update(msg)
-		s.statusline = next
-		// Ticks are idempotent repaint clocks: the embedded thread (if
-		// one is cached) gets its own copy.
-		s.forwardSharedMsg(msg)
-		return s, cmd
+		return s.handleStatuslineTick(msg)
+	case compactionEventMsg:
+		return s.handleCompactionMessage(msg.event)
 	case sessionPickerTickMsg:
-		// A stray in-flight tick after the picker closed (or with no
-		// runner to ask) is a silent no-op: returning a nil Cmd lets the
-		// self-re-arming loop lapse instead of ticking forever.
-		if s.sessionPicker == nil || s.runner == nil {
-			return s, nil
-		}
-		next := s.sessionPicker.refresh(s.runner.SessionActive)
-		s.sessionPicker = &next
-		return s, sessionPickerTickCmd()
+		return s.handleSessionPickerTick()
+	case loginResultMsg:
+		return s.applyCommandOutcome(msg.outcome)
 	case transcript.FlushMsg:
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next
@@ -428,6 +523,51 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	return s, nil
 }
 
+// updateAsyncPortMsg handles every message this screen produces for ITSELF
+// out of band: the two port readers that re-arm one value at a time
+// (ports.RemoteInputs, ports.Notices) and the results of requests issued
+// earlier in a Cmd. They share a shape the rest of update's switch does not -
+// each one owns its own re-arm or completion - so they are dispatched
+// together here, which also keeps update inside the repo's per-function line
+// budget. handled is false for anything else, leaving update's switch
+// authoritative.
+func (s Screen) updateAsyncPortMsg(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case remoteInputMsg:
+		next, cmd := s.handleRemoteInput(msg.event)
+		return next, cmd, true
+	case noticeMsg:
+		next, cmd := s.handleNotice(msg.event)
+		return next, cmd, true
+	case workflowStatusMsg:
+		next, cmd := s.handleWorkflowStatus(msg.event)
+		return next, cmd, true
+	case sessionMountedMsg:
+		next, cmd := s.handleSessionMountedMsg(msg)
+		return next, cmd, true
+	case subagentTaskCancelResultMsg:
+		next, cmd := s.handleSubagentTaskCancelResult(msg)
+		return next, cmd, true
+	case threadToolCallCancelResultMsg:
+		next, cmd := s.handleThreadToolCallCancelResult(msg)
+		return next, cmd, true
+	}
+	return s, nil, false
+}
+
+// handleSessionPickerTick refreshes the open /resume picker's per-row
+// activity state. A stray in-flight tick after the picker closed (or with
+// no runner to ask) is a silent no-op: returning a nil Cmd lets the
+// self-re-arming loop lapse instead of ticking forever.
+func (s Screen) handleSessionPickerTick() (app.Screen, tea.Cmd) {
+	if s.sessionPicker == nil || s.runner == nil {
+		return s, nil
+	}
+	next := s.sessionPicker.refresh(s.runner.SessionActive)
+	s.sessionPicker = &next
+	return s, sessionPickerTickCmd()
+}
+
 // applyTheme adopts a new theme across every component this screen
 // owns. Theme and Tier are plain value fields all the way down - there
 // is no shared pointer - so a component this misses keeps rendering in
@@ -446,7 +586,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 // transcript when it changes (docs/design/ux-rules.md rule 2.7).
 func (s Screen) reservedRows() int {
 	// the top bar, a one-row margin under it so content never touches its
-	// edge, the composer and its menu, and the status row. The embedded
+	// edge, the composer (its completion popup is an overlay and claims no
+	// row), and the status row. The embedded
 	// subagent-thread construction has no top bar: the dialog frame it
 	// renders inside is the chrome above it.
 	rows := 1
@@ -494,7 +635,7 @@ func (s Screen) View() string {
 			lines = append(lines, "")
 		}
 		switch {
-		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil || s.overlay != "":
+		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil || s.login != nil || s.overlay != "":
 			lines = append(lines, s.centerRows()...)
 		case !s.embedded && s.panel.open:
 			lines = append(lines, s.narrowPanelRows()...)
@@ -510,6 +651,8 @@ func (s Screen) View() string {
 		}
 		lines = append(lines, s.chatTailRows()...)
 	}
+
+	lines = s.overlayComposerPopup(lines)
 
 	if s.height > 0 {
 		innerH := s.contentHeight()
@@ -545,6 +688,7 @@ func overlayRows(text string, height int) []string {
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
 func (s *Screen) SetCommands(cmds []composer.Command) {
+	s.commands = cmds
 	s.composer.SetCommands(cmds)
 	if s.thread != nil {
 		s.thread.SetCommands(cmds)
@@ -555,6 +699,7 @@ func (s *Screen) SetCommands(cmds []composer.Command) {
 // picker. The caller (harness or demo) builds this list from the workspace
 // index; the screen holds no filesystem access.
 func (s *Screen) SetMentions(mentions []composer.Mention) {
+	s.mentions = mentions
 	s.composer.SetMentions(mentions)
 	if s.thread != nil {
 		s.thread.SetMentions(mentions)
@@ -586,6 +731,16 @@ func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
 // this is ever called) still opens the screen with every section
 // reading "unavailable".
 func (s *Screen) SetSettings(store ports.Settings) { s.settings = store }
+
+// SetRemoteInputs supplies the inbound steering channel (ports.RemoteInputs).
+// Must be called before Init runs (buildApp wires it right after
+// construction, alongside SetSubagentThreads); Init arms the one read loop
+// that lives for the screen's whole life. nil (the default) means this
+// screen never receives remote-origin turns - see remote_input.go.
+func (s *Screen) SetRemoteInputs(ch <-chan ports.RemoteInputEvent) { s.remoteInputs = ch }
+
+// SetSessionMounter supplies the session mounter for background remote steering.
+func (s *Screen) SetSessionMounter(m ports.SessionMounter) { s.mounter = m }
 
 // SetHideComposer toggles visibility of the composer. When true, the
 // composer is omitted from layout and rendering (e.g. for subagent

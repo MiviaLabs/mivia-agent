@@ -20,11 +20,15 @@ from __future__ import annotations
 import argparse
 import atexit
 import json
+import os
 import re
 import signal
+import concurrent.futures
 import subprocess
 import sys
 import tempfile
+import uuid
+from collections import Counter
 from pathlib import Path
 
 from mutation_tokenize import MutationError, sites_for_file, sites_from_tokens
@@ -93,19 +97,29 @@ def denylisted_spans(pkg_dir: Path, denylist: list[dict]) -> dict:
     spans: dict[Path, list[tuple[int, int]]] = {}
     for entry in denylist:
         file_path = pkg_dir / entry["file"]
-        text = file_path.read_text()
-        snippet = entry["snippet"]
-        count = text.count(snippet)
+        # Resolve in BYTES, not in a decoded str: the spans returned here are
+        # compared against Site.start/Site.end (is_denylisted), which are
+        # go/scanner byte offsets. Indexing a decoded str would return a
+        # code-point offset, so any multi-byte character earlier in the file
+        # shifts the span left, out from under the site it is meant to cover -
+        # and the entry then either stops denylisting its own site (an audited
+        # equivalent mutant runs anyway and reports SURVIVED) or slides over a
+        # DIFFERENT, earlier site, which is then never mutated at all: a
+        # coverage hole the sweep reports as clean. This is DC-36, and its own
+        # probe says to slice the raw bytes the position came from.
+        raw = file_path.read_bytes()
+        snippet = entry["snippet"].encode("utf-8")
+        count = raw.count(snippet)
         if count == 0:
             raise MutationError(
-                f"denylist entry for {entry['file']}: snippet no longer matches: {snippet!r}"
+                f"denylist entry for {entry['file']}: snippet no longer matches: {entry['snippet']!r}"
             )
         if count > 1:
             raise MutationError(
                 f"denylist entry for {entry['file']}: snippet matches {count} sites, "
-                f"widen it to match one: {snippet!r}"
+                f"widen it to match one: {entry['snippet']!r}"
             )
-        start = text.index(snippet)
+        start = raw.index(snippet)
         spans.setdefault(file_path, []).append((start, start + len(snippet)))
     return spans
 
@@ -178,34 +192,358 @@ def classify(build_ok: bool, test_outcome: str) -> str:
     return SURVIVED
 
 
+def apply_mutation(original: bytes, site) -> bytes:
+    """apply_mutation returns original with site's span replaced by site.new.
+
+    site.start/site.end are BYTE offsets (go/scanner positions, via
+    token.FileSet.Offset - always byte-based). Slicing a decoded str with
+    them is only correct while every preceding byte is single-byte ASCII:
+    a multi-byte UTF-8 character earlier in the file (an em-dash, a curly
+    quote, any non-ASCII comment text) shifts the str's character indices
+    out from under the byte offsets, so the slice would remove or replace
+    the wrong span - sometimes producing a build failure (misclassified
+    "discarded"), sometimes a no-op-looking edit that leaves the real
+    mutation site untouched (misclassified "survived" even though a
+    correct test kills the real mutant). Slicing the raw bytes instead
+    keeps the offsets valid regardless of file content. site.new is always
+    plain ASCII ("", "&&", "||", "==", "!=", "<", "<="), so
+    .encode("utf-8") is exact and lossless.
+
+    Pure and byte-in/byte-out so a test can assert the fix directly,
+    without spawning go build/go test - see DC-36's gate."""
+    return original[: site.start] + site.new.encode("utf-8") + original[site.end :]
+
+
+def line_of_offset(data: bytes, offset: int) -> int:
+    """line_of_offset returns the 1-based line number of a BYTE offset.
+
+    Counts newlines in the raw bytes for the same reason apply_mutation
+    slices them: counting in a decoded str would mis-locate every site
+    that follows a multi-byte character, and sweep_diff matches this line
+    number against the set of lines git reports as changed - so a wrong
+    number silently drops a real mutation site from the sweep, or pulls in
+    one that is not in the diff at all.
+
+    Pure so a test can assert the fix directly - see DC-36's gate."""
+    return data.count(b"\n", 0, offset) + 1
+
+
+# BUILD_FAILURE_MARKERS are the substrings `go test` itself prints in
+# stdout/stderr when a mutant fails to compile: "[build failed]" for the
+# package (or its test binary) failing to build, "[setup failed]" for a
+# package that fails to even load (e.g. an import cycle). Verified against
+# a real `go test` run on a deliberately broken file - confirmed neither
+# marker appears on an ordinary failing-test run, only on the two build/
+# load failure modes go test itself distinguishes that way.
+BUILD_FAILURE_MARKERS = ("[build failed]", "[setup failed]")
+
+
 def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
-    """run_mutant applies one mutation, builds, tests, and restores the
-    original bytes no matter how the run ends."""
-    text = original.decode("utf-8")
-    mutated = text[: site.start] + site.new + text[site.end :]
-    site.path.write_text(mutated)
+    """run_mutant applies one mutation, runs pkg's test target once, and
+    restores the original bytes no matter how the run ends.
+
+    A standalone `go build ./pkg` used to run before this test call. It was
+    redundant: compiling the test binary already fails a broken mutant the
+    same way, and `go test` marks that failure in its own output with
+    "[build failed]" or "[setup failed]" (see BUILD_FAILURE_MARKERS) - the
+    same discarded verdict a separate build step produced, for one fewer
+    compiler invocation per mutant."""
+    # Journal the pre-mutation bytes BEFORE mutating. The finally below
+    # restores on every in-process exit; the journal is what restores when
+    # this process is killed outright. See recover_inflight.
+    token = inflight_begin(site.path, original)
+    site.path.write_bytes(apply_mutation(original, site))
     try:
-        build = subprocess.run(
-            ["go", "build", f"./{pkg}"], cwd=ROOT, capture_output=True, text=True
-        )
-        if build.returncode != 0:
-            print(f"discarded (build failed): {site.path.name}:{site.start} {site.kind}")
-            return classify(False, "pass")
         target = test_target(Path(pkg_dir), pkg)
         try:
             test = subprocess.run(
-                ["go", "test", target],
+                # -failfast: a mutant is KILLED the moment one test fails, so
+                # running the rest of the package's suite after that proves
+                # nothing and costs a full suite per mutant. On a package whose
+                # suite takes a minute, that was the difference between a sweep
+                # that finishes and one the pre-push supervisor kills. It does
+                # not change a verdict: the exit code still says pass or fail,
+                # and a SURVIVED mutant runs every test either way.
+                ["go", "test", "-failfast", target],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
                 timeout=TEST_TIMEOUT_SECONDS,
             )
+            if test.returncode != 0 and any(
+                marker in test.stdout or marker in test.stderr
+                for marker in BUILD_FAILURE_MARKERS
+            ):
+                print(f"discarded (build failed): {site.path.name}:{site.start} {site.kind}")
+                return classify(False, "pass")
             outcome = "pass" if test.returncode == 0 else "fail"
         except subprocess.TimeoutExpired:
             outcome = "timeout"
         return classify(True, outcome)
     finally:
         site.path.write_bytes(original)
+        inflight_end(token)
+
+
+# COVERAGE_BLOCK_RE matches one data line of a `go tool cover` profile:
+# "<file>:<startLine>.<startCol>,<endLine>.<endCol> <numStmt> <count>".
+# The leading "mode: <mode>" line and any blank line never match and are
+# skipped by the caller.
+COVERAGE_BLOCK_RE = re.compile(
+    r"^(?P<file>.+):(?P<start_line>\d+)\.\d+,(?P<end_line>\d+)\.\d+ \d+ (?P<count>\d+)$"
+)
+
+
+def module_path() -> str:
+    """module_path reads the module line from the repo's own go.mod, so
+    coverage_key can build the import-path form `go tool cover` profiles
+    key their per-file blocks by, without hardcoding the module name."""
+    for line in (ROOT / "go.mod").read_text().splitlines():
+        if line.startswith("module "):
+            return line.split(None, 1)[1].strip()
+    raise MutationError("go.mod: no module line found")
+
+
+def coverage_key(path: Path) -> str:
+    """coverage_key returns path's coverage-profile identifier: its
+    import path, matching the "<file>" field `go tool cover` profiles
+    use (always the module path plus the path relative to the repo
+    root, regardless of the OS path separator)."""
+    return f"{module_path()}/{path.relative_to(ROOT).as_posix()}"
+
+
+def parse_coverage_profile(text: str) -> dict[str, list[tuple[int, int, int]]]:
+    """parse_coverage_profile maps each covered file (by coverage_key's
+    import-path form) to its (startLine, endLine, count) blocks, from a
+    `go tool cover` profile's text. Unrecognized lines (the "mode:"
+    header, blanks) are skipped rather than raised on, since a profile's
+    exact line set is not this kit's contract to enforce."""
+    blocks: dict[str, list[tuple[int, int, int]]] = {}
+    for line in text.splitlines():
+        m = COVERAGE_BLOCK_RE.match(line)
+        if not m:
+            continue
+        blocks.setdefault(m.group("file"), []).append(
+            (int(m.group("start_line")), int(m.group("end_line")), int(m.group("count")))
+        )
+    return blocks
+
+
+def line_definitely_uncovered(blocks: list[tuple[int, int, int]], line_no: int) -> bool:
+    """line_definitely_uncovered reports whether every coverage block
+    overlapping line_no ran zero times.
+
+    Returns False - never skip - when no block overlaps the line at all:
+    an unmatched line is a profile gap (a generated file, a coverage
+    version mismatch, an off-by-one in a hand-rolled parse), not proof
+    the line is dead. Only a line every overlapping block agrees on as
+    zero-run is provably unreachable by every test in the target; a
+    mutation there can never be killed, so running the real build+test
+    for it is guaranteed to reproduce the same SURVIVED verdict this
+    returns immediately. This is the sole use of the coverage profile:
+    it can only skip a mutant whose outcome is already certain, never
+    guess at one whose outcome depends on running the tests."""
+    overlapping = [count for start, end, count in blocks if start <= line_no <= end]
+    if not overlapping:
+        return False
+    return all(count == 0 for count in overlapping)
+
+
+def compute_coverage_blocks(pkg: str, pkg_dir: Path) -> dict[str, list[tuple[int, int, int]]] | None:
+    """compute_coverage_blocks runs pkg's own test target once, unmutated,
+    with -coverpkg=./pkg so an external <pkg>_test target still attributes
+    coverage to the package under test, and returns its parsed per-file
+    blocks.
+
+    Returns None on any failure to produce a usable profile (a nonzero
+    exit, a missing or unreadable profile file, a timeout): every caller
+    treats None as "skip nothing", so a coverage-run problem only costs
+    the speedup, never a correctness risk - the sweep falls back to its
+    original always-run-the-mutant behaviour."""
+    target = test_target(pkg_dir, pkg)
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="mutation-cov-", suffix=".out", delete=False
+    )
+    cov_path = Path(tmp.name)
+    tmp.close()
+    try:
+        result = subprocess.run(
+            ["go", "test", f"-coverpkg=./{pkg}", f"-coverprofile={cov_path}", target],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=TEST_TIMEOUT_SECONDS * 4,
+        )
+        if result.returncode != 0 or not cov_path.exists():
+            return None
+        return parse_coverage_profile(cov_path.read_text())
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    finally:
+        try:
+            cov_path.unlink()
+        except OSError:
+            pass
+
+
+def site_is_dead_code(
+    site, line_no: int, coverage: dict[str, list[tuple[int, int, int]]] | None
+) -> bool:
+    """site_is_dead_code reports whether coverage proves line_no is never
+    executed by the test target the coverage profile was built for, so
+    running the real build+test for site is certain to report SURVIVED -
+    see line_definitely_uncovered. coverage=None (no usable profile)
+    always returns False: a caller must never skip on uncertainty."""
+    if coverage is None:
+        return False
+    blocks = coverage.get(coverage_key(site.path))
+    if blocks is None:
+        return False
+    return line_definitely_uncovered(blocks, line_no)
+
+
+def verify_restored(originals: dict[Path, bytes]) -> list[str]:
+    """verify_restored returns a message per file whose bytes on disk are
+    not the pre-sweep snapshot, after restoration was supposed to have run.
+
+    This exists because a mutant left on disk is not merely a stale file: a
+    mutating sweep runs inside the pre-commit hook, and that hook's gofmt
+    step does `gofmt -w <file>; git add -- <file>` for any fully-staged Go
+    file. That re-stages whatever is in the WORKING TREE at that instant, so
+    a mutant present then is staged and committed - silently, because the
+    sweep restores before it reports and therefore still prints 100%.
+
+    That is not hypothetical. A commit shipped shouldSkipCanceledTask with
+    its nil guard inverted this way; the fix became dead code, every gate
+    passed, and it was caught only because `git status` happened to show one
+    stray modified file afterwards. The risk is highest with several sweeps
+    running against one checkout at once, where another run can have a file
+    mutated exactly when this one's hook stages it.
+
+    Restoration is best-effort by design (the restore path swallows write
+    errors so one unwritable file cannot mask a whole run's results), so
+    "we called write_bytes" is not evidence the bytes are back. This checks."""
+    drifted = []
+    for path, original in sorted(originals.items()):
+        try:
+            if path.read_bytes() != original:
+                drifted.append(f"{path}: on-disk bytes are not the pre-sweep original")
+        except OSError as err:
+            drifted.append(f"{path}: could not be read back to verify restoration: {err}")
+    return drifted
+
+
+def inflight_dir() -> Path:
+    """inflight_dir returns the crash journal directory, inside the git dir.
+
+    The git directory sits outside the worktree, so a backup written here can
+    never be formatted, staged, or committed. `git rev-parse --git-dir` is
+    used rather than ROOT/".git" because a worktree's .git is a file."""
+    proc = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        return ROOT / ".git" / "mutation-inflight"
+    git_dir = Path(proc.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = ROOT / git_dir
+    return git_dir / "mutation-inflight"
+
+
+def write_durable(path: Path, data: bytes) -> None:
+    """write_durable writes data and forces it out of the page cache. A
+    backup still in cache when the machine dies restores nothing."""
+    with open(path, "wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def inflight_begin(path: Path, original: bytes) -> str:
+    """inflight_begin records path's pre-mutation bytes and returns its token.
+
+    Call this BEFORE writing the mutation. Each call takes its own token, so
+    the parallel workers never share a journal file."""
+    directory = inflight_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    write_durable(directory / f"{token}.bak", original)
+    write_durable(
+        directory / f"{token}.json",
+        json.dumps({"path": str(path.resolve())}).encode("utf-8"),
+    )
+    return token
+
+
+def inflight_end(token: str) -> None:
+    """inflight_end drops one journal entry after its file is restored."""
+    directory = inflight_dir()
+    for suffix in (".bak", ".json"):
+        try:
+            (directory / f"{token}{suffix}").unlink()
+        except OSError:
+            pass
+
+
+def recover_inflight() -> list[str]:
+    """recover_inflight restores every file a killed sweep left mutated, and
+    returns one message per file it put back.
+
+    This is the only restore path that survives a process which never runs
+    Python again. run_mutant restores in a `finally`, and SIGTERM is re-raised
+    as KeyboardInterrupt so that `finally` runs, but neither helps against
+    SIGKILL, an OOM kill, or a power loss. The sweep mutates one file per
+    worker at a time, so one hard kill can strand several files at once.
+
+    An entry whose file already matches its backup is dropped silently: the
+    sweep restored it and died before it could clear the journal."""
+    directory = inflight_dir()
+    if not directory.is_dir():
+        return []
+    restored = []
+    for marker in sorted(directory.glob("*.json")):
+        token = marker.stem
+        try:
+            target = Path(json.loads(marker.read_text(encoding="utf-8"))["path"])
+            original = (directory / f"{token}.bak").read_bytes()
+        except (OSError, ValueError, KeyError):
+            inflight_end(token)
+            continue
+        try:
+            if target.read_bytes() != original:
+                write_durable(target, original)
+                restored.append(str(target))
+        except FileNotFoundError:
+            # The file is gone: a deleted temp tree, or a branch switch that
+            # removed it. A file that does not exist is not a stranded
+            # mutant, so drop the entry instead of reporting it every run.
+            pass
+        except OSError as err:
+            restored.append(f"{target}: could not be restored: {err}")
+            continue
+        inflight_end(token)
+    return restored
+
+
+def restore_and_verify(originals: dict[Path, bytes]) -> None:
+    """restore_and_verify rewrites every snapshot and then proves it landed,
+    raising MutationError naming the files if any did not. Callers run this
+    on the way out of a sweep so a leftover mutant fails the run loudly
+    instead of being left for a commit to pick up - see verify_restored."""
+    for path, original in originals.items():
+        try:
+            path.write_bytes(original)
+        except OSError:
+            pass
+    drifted = verify_restored(originals)
+    if drifted:
+        raise MutationError(
+            "mutation sweep did not restore every file it mutated; a leftover "
+            "mutant can be staged by the pre-commit hook's gofmt re-add and "
+            "committed silently. Restore these from git before committing:\n  "
+            + "\n  ".join(drifted)
+        )
 
 
 def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> dict:
@@ -231,9 +569,18 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
                 pass
 
     atexit.register(restore_all)
+    coverage = compute_coverage_blocks(pkg, pkg_dir)
     killed = survived = discarded = 0
     try:
         for site in sites:
+            line_no = line_of_offset(originals[site.path], site.start)
+            if site_is_dead_code(site, line_no, coverage):
+                survived += 1
+                print(
+                    f"SURVIVED (no coverage, test skipped): {site.path.name}:{site.start} "
+                    f"{site.kind} {site.old!r} -> {site.new!r}"
+                )
+                continue
             outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
             if outcome == KILLED:
                 killed += 1
@@ -246,11 +593,15 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
             else:
                 discarded += 1
     finally:
-        restore_all()
+        # Restore AND prove it landed: an unrestored mutant here is a commit
+        # hazard, not just a dirty file. See verify_restored.
         try:
-            atexit.unregister(restore_all)
-        except Exception:
-            pass
+            restore_and_verify(originals)
+        finally:
+            try:
+                atexit.unregister(restore_all)
+            except Exception:
+                pass
     total = killed + survived
     rate = 100.0 * killed / total if total else 100.0
     return {"killed": killed, "survived": survived, "discarded": discarded, "rate": rate}
@@ -441,6 +792,52 @@ def _probe_floor(tmp_path: Path) -> list[str]:
     return problems
 
 
+def _probe_moved_lines() -> list[str]:
+    """Check: take_moved consumes the deletion multiset exactly, never
+    matches blank or case-altered text, and reports False when nothing
+    matches."""
+    problems = []
+    counter = Counter({"x := 1": 1, "if err != nil {": 2})
+    if not take_moved(counter, "\tx := 1"):
+        problems.append("moved lines: an exact deleted match was not treated as a move")
+    if take_moved(counter, "x := 1"):
+        problems.append("moved lines: one deleted copy licensed two skips")
+    if not take_moved(counter, "if err != nil {"):
+        problems.append("moved lines: a second distinct deleted text did not match")
+    if counter != Counter({"x := 1": 0, "if err != nil {": 1}):
+        problems.append("moved lines: the deletion counter was not consumed exactly")
+    if take_moved(counter, "   ") or take_moved(counter, ""):
+        problems.append("moved lines: a blank line must never count as a move")
+    if take_moved(counter, "X := 1"):
+        problems.append("moved lines: matching must be exact, not case-folded")
+    return problems
+
+
+def _probe_parse_deleted_lines() -> list[str]:
+    """Check: the -U0 deletion parser skips file headers (including
+    /dev/null) and hunk headers, counts deleted lines stripped of git's
+    single '-' prefix, and ignores blank deletions."""
+    problems = []
+    fixture = (
+        "diff --git a/internal/x/x.go b/internal/x/x.go\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/internal/x/x.go\n"
+        "+++ b/internal/x/x.go\n"
+        "@@ -1,4 +0,0 @@\n"
+        "-package x\n"
+        "-\n"
+        "-- indented content\n"
+    )
+    got = parse_deleted_lines(fixture)
+    if got != Counter({"package x": 1, "- indented content": 1}):
+        problems.append(
+            f"deleted lines: parsed {dict(got)!r}, want exactly the two non-blank deletions"
+        )
+    if parse_deleted_lines("--- /dev/null\n+++ b/internal/x/x.go\n") != Counter():
+        problems.append("deleted lines: file headers must not count as deletions")
+    return problems
+
+
 def run_probe() -> bool:
     """run_probe exercises the kit's own invariants against planted
     fixtures: no fixture is a checked-in .go file. Returns True on
@@ -457,6 +854,8 @@ def run_probe() -> bool:
         problems += _probe_classify()
         problems += _probe_test_target(tmp_path)
         problems += _probe_floor(tmp_path)
+        problems += _probe_moved_lines()
+        problems += _probe_parse_deleted_lines()
 
     if problems:
         print("\n".join(problems))
@@ -496,11 +895,150 @@ def changed_lines_for_file(diff_args: list[str], path: Path) -> set[int]:
     return lines
 
 
+def take_moved(counter: Counter, line_text: str) -> bool:
+    """take_moved reports whether line_text is a VERBATIM MOVE in the diff
+    being swept, consuming one occurrence if so.
+
+    A refactor commit moves existing code between files: git reports the old
+    location as deletions and the new location as additions, so every operator
+    in the moved body sits on a "changed line" and the sweep re-mutates code
+    that the commit which first added it already swept - against the same
+    package tests, for the same answer. Matching a site's line text against
+    the diff's deletions (a multiset, so N deleted copies license exactly N
+    skips) skips that redundant work while every genuinely new or edited line
+    stays swept.
+
+    Matching is stripped and exact: indentation may differ when code moves
+    between scopes, but any other difference means the line was edited, and
+    edited lines must be swept. Pure so a test can assert the contract."""
+    text = line_text.strip()
+    if not text:
+        return False
+    if counter.get(text, 0) > 0:
+        counter[text] -= 1
+        return True
+    return False
+
+
+def parse_deleted_lines(diff_text: str) -> Counter:
+    """parse_deleted_lines counts, by stripped text, every non-blank deleted
+    line in `git diff -U0` output.
+
+    File headers (`--- a/path`, `--- /dev/null`) and hunk headers are skipped;
+    any other '-' line is one deleted source line with git's single '-' prefix
+    stripped, so a deleted line whose own text starts with '-' renders with two
+    dashes and is still counted. Pure so a test can assert the parsing."""
+    counter: Counter = Counter()
+    for line in diff_text.splitlines():
+        if line.startswith(("diff --git ", "index ", "@@")):
+            continue
+        if line.startswith(("--- a/", "--- b/", "--- /dev/null")):
+            continue
+        if line.startswith("-"):
+            text = line[1:].strip()
+            if text:
+                counter[text] += 1
+    return counter
+
+
+def deleted_lines_counter(diff_args: list[str], rel_paths: list[str]) -> Counter:
+    """deleted_lines_counter returns parse_deleted_lines over one git call
+    covering every changed file in the sweep scope. A failed git call yields
+    an empty counter: the sweep then treats no line as moved and mutates
+    every changed-line site, which is the pre-move-aware behavior - never
+    a silent pass."""
+    if not rel_paths:
+        return Counter()
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "-U0", "--", *rel_paths],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return Counter()
+    return parse_deleted_lines(r.stdout)
+
+
+def mutation_sweep_workers(package_count: int) -> int:
+    """mutation_sweep_workers bounds how many package sweeps run at once.
+
+    Each worker holds one `go test` subprocess, so the cap is about memory and
+    CPU, not correctness: one worker reproduces the old serial behaviour
+    exactly. MIVIA_MUTATION_WORKERS overrides it (1 forces serial, which is
+    what to reach for when diagnosing a sweep result)."""
+    if package_count <= 1:
+        return 1
+    override = os.environ.get("MIVIA_MUTATION_WORKERS", "").strip()
+    if override:
+        try:
+            n = int(override)
+        except ValueError:
+            n = 0
+        if n >= 1:
+            return min(n, package_count)
+    return max(1, min(4, package_count))
+
+
+def sweep_one_package(pkg: str, sites_with_lines: list) -> tuple[int, int, int, list[str]]:
+    """sweep_one_package runs every mutation site of ONE package and returns
+    its counts plus the report lines, instead of printing them.
+
+    Returning the lines is what lets the caller sweep packages concurrently and
+    still print one stable, package-ordered report. The originals map and its
+    restore stay inside this call, so a worker restores exactly the files it
+    mutated even when another worker fails."""
+    pkg_dir = ROOT / pkg
+    coverage = compute_coverage_blocks(pkg, pkg_dir)
+    originals: dict[Path, bytes] = {}
+    killed = survived = discarded = 0
+    lines: list[str] = []
+    try:
+        for site, line_no in sites_with_lines:
+            if site.path not in originals:
+                originals[site.path] = site.path.read_bytes()
+            if site_is_dead_code(site, line_no, coverage):
+                survived += 1
+                lines.append(
+                    f"SURVIVED on diff line (no coverage, test skipped): "
+                    f"{site.path.name}:{line_no} {site.kind} {site.old!r} -> "
+                    f"{site.new!r} (missing test assertion)"
+                )
+                continue
+            outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
+            if outcome == KILLED:
+                killed += 1
+            elif outcome == SURVIVED:
+                survived += 1
+                lines.append(
+                    f"SURVIVED on diff line: {site.path.name}:{line_no} "
+                    f"{site.kind} {site.old!r} -> {site.new!r} (missing test assertion)"
+                )
+            else:
+                discarded += 1
+    finally:
+        # This is the path the pre-commit hook runs, so it is the one that can
+        # hand a mutant to `git add`. See verify_restored.
+        restore_and_verify(originals)
+    return killed, survived, discarded, lines
+
+
 def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
+    """sweep_diff runs mutants on every changed line of the diff, per package,
+    and returns (stats, failed). Sites on verbatim-moved lines - the same
+    stripped bytes deleted elsewhere in this diff - are skipped: a refactor
+    commit moving existing code between files would otherwise re-mutate the
+    whole moved body against the same package tests the origin commit already
+    swept, making commit cost proportional to text churn instead of semantic
+    change. See take_moved."""
     files = changed_go_files(diff_args)
     if not files:
         print("mutation diff sweep: no changed non-test .go files in scope")
         return {"killed": 0, "survived": 0, "discarded": 0, "rate": 100.0}, False
+
+    skipped = 0
+    deleted = deleted_lines_counter(
+        diff_args, [str(f.relative_to(ROOT)) for f in files]
+    )
+    file_lines: dict[Path, list[str]] = {}
 
     pkg_sites: dict[str, list] = {}
     for f in files:
@@ -516,42 +1054,71 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
         if not changed_lines:
             continue
 
-        file_text = f.read_text()
+        file_bytes = f.read_bytes()
         data = load_denylist(pkg, DENYLIST_DIR)
         spans = denylisted_spans(ROOT / pkg, data.get("denylist", []))
 
         for site in sites_for_file(f):
             if is_denylisted(site, spans):
                 continue
-            line_no = file_text.count("\n", 0, site.start) + 1
-            if line_no in changed_lines:
-                pkg_sites.setdefault(pkg, []).append((site, line_no))
+            line_no = line_of_offset(file_bytes, site.start)
+            if line_no not in changed_lines:
+                continue
+            if f not in file_lines:
+                file_lines[f] = file_bytes.decode("utf-8", errors="replace").split("\n")
+            idx = line_no - 1
+            if idx < len(file_lines[f]) and take_moved(deleted, file_lines[f][idx]):
+                skipped += 1
+                continue
+            pkg_sites.setdefault(pkg, []).append((site, line_no))
+
+    if skipped:
+        print(
+            f"mutation diff sweep: skipped {skipped} mutation site(s) on verbatim-moved "
+            "lines (the same bytes are deleted elsewhere in this diff; they were "
+            "already swept where they were first written)"
+        )
 
     total_killed = total_survived = total_discarded = 0
     failed = False
 
-    for pkg, sites_with_lines in pkg_sites.items():
-        pkg_dir = ROOT / pkg
-        originals: dict[Path, bytes] = {}
-        try:
-            for site, line_no in sites_with_lines:
-                if site.path not in originals:
-                    originals[site.path] = site.path.read_bytes()
-                outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
-                if outcome == KILLED:
-                    total_killed += 1
-                elif outcome == SURVIVED:
-                    total_survived += 1
-                    failed = True
-                    print(
-                        f"SURVIVED on diff line: {site.path.name}:{line_no} "
-                        f"{site.kind} {site.old!r} -> {site.new!r} (missing test assertion)"
-                    )
-                else:
-                    total_discarded += 1
-        finally:
-            for path, original in originals.items():
-                path.write_bytes(original)
+    # One package at a time was the whole cost of this gate. Each mutant runs
+    # its package's test target once, so a broad diff cost
+    # sum-over-packages(sites x suite), which on this repo reached hours and
+    # the pre-push supervisor killed it - a gate that cannot finish enforces
+    # nothing. Packages are swept CONCURRENTLY instead.
+    #
+    # Safe because a package sweep only ever mutates files under its OWN
+    # directory, and each worker keeps its own originals map and restores it
+    # in its own finally - the same restore contract as the serial loop, per
+    # package rather than globally. Threads (not processes) because every unit
+    # of work is a blocking `go test` subprocess, and the Go build cache is
+    # already concurrency-safe.
+    results = [None] * len(pkg_sites)
+    items = list(pkg_sites.items())
+    max_workers = mutation_sweep_workers(len(items))
+    if max_workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(sweep_one_package, pkg, sites): idx
+                for idx, (pkg, sites) in enumerate(items)
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                results[futures[fut]] = fut.result()
+    else:
+        for idx, (pkg, sites) in enumerate(items):
+            results[idx] = sweep_one_package(pkg, sites)
+
+    # Print in a STABLE package order, not completion order, so the report
+    # reads the same whatever the scheduler did.
+    for killed, survived, discarded, lines in results:
+        total_killed += killed
+        total_survived += survived
+        total_discarded += discarded
+        if survived:
+            failed = True
+        for line in lines:
+            print(line)
 
     total = total_killed + total_survived
     rate = 100.0 * total_killed / total if total else 100.0
@@ -560,6 +1127,11 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
 
 
 def main() -> int:
+    # Heal a previous run that was killed mid-mutation before doing anything
+    # else. A stranded mutant is not a stale file: the pre-commit hook's
+    # gofmt step re-stages the working tree, so it gets committed silently.
+    for restored in recover_inflight():
+        print(f"check_mutation: restored a file a killed sweep left mutated: {restored}")
     parser = argparse.ArgumentParser(description="mutation kit: per-package kill rate")
     parser.add_argument("--pkg", help="package directory to mutate, e.g. internal/cli")
     parser.add_argument("--floor", type=float, help="override the stored floor for this run")

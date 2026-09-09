@@ -12,8 +12,11 @@ import (
 // whole mechanism rests on this plumbing, so it is pinned against a real
 // git process, not inspected.
 func TestDisableDetachedMaintenanceReachesSpawnedGit(t *testing.T) {
+	// git is a hard dependency of this repository's test suite (hooks,
+	// worktrees, bare-origin fixtures), so its absence is a broken
+	// environment, not a condition to skip past.
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
+		t.Fatalf("git is required on PATH: %v", err)
 	}
 	t.Setenv("GIT_CONFIG_COUNT", "")
 	DisableDetachedMaintenance()

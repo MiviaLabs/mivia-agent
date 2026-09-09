@@ -29,36 +29,38 @@ var (
 const sessionLeaseTTL = 2 * time.Minute
 
 // ReclaimSession transfers write ownership of an existing, non-tombstoned
-// live context session to principal's own freshly minted capability, then
-// returns its current snapshot. It exists because Principal.capability is
-// minted fresh and random per process and never persisted anywhere it could
-// be recovered - a later process resuming a session by id (an id it learned
-// through LoadSession/ListSessions, both scoped only to workspace+subject
-// with no capability check) has no way to reconstruct the capability the
-// original process held, so authorizing every other durable-write path on an
-// exact capability match would make cross-process resume impossible by
-// construction. Reclaiming is scoped the same way those reads already are:
-// knowing the session's id, workspace and subject is what LoadSession and
-// DeleteSessionSnapshot already treat as sufficient authority for the same
-// session, so extending that authority to "take over its capability" adds no
-// new trust boundary.
+// live context session to principal's fresh capability, then returns its snapshot.
 //
-// A managed worktree session is rejected: those are addressed by name
-// through the chat_sessions catalog (worktree_catalog_keys), never through
-// this capability-gated context_sessions row, so reclaiming one here would
-// be meaningless.
+// Principal.capability is random per process and never persisted. Resuming
+// processes find sessions by id through LoadSession or ListSessions (scoped to
+// workspace and subject). Requiring the original capability would prevent
+// cross-process resume. Authorization matches LoadSession and DeleteSessionSnapshot:
+// workspace, subject, and session id grant authority to take over the capability.
+// Managed worktree sessions are rejected because they use worktree_catalog_keys.
 //
-// The takeover deliberately does NOT stamp a fresh lease_at - only a real
-// heartbeat tick (RenewLease) may mark a lease fresh. Stamping here (an
-// earlier version did) meant every successful reclaim, even a totally
-// uncontested one, poisoned the row against any other reclaim for the next
-// sessionLeaseTTL - breaking one-shot commands (mivia compact, a quick chat
-// -p turn) that never renew a lease at all. Tradeoff accepted instead: a
-// THIRD process reclaiming within the sub-heartbeat-interval window right
-// after this takeover can still succeed (benign churn, loud
-// ErrPrincipalMismatch on the loser's next write) rather than the silent
-// eviction this feature exists to prevent.
+// Takeover does not update lease_at; only RenewLease marks leases fresh. Stamping
+// lease_at on reclaim would block subsequent reclaims for sessionLeaseTTL, breaking
+// one-shot commands (such as compact or single-turn chat) that never renew leases.
+// A third process reclaiming within the sub-heartbeat window can still succeed,
+// returning ErrPrincipalMismatch on the loser's next write instead of silent eviction.
 func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Principal, sessionID string) (contextstate.Snapshot, error) {
+	return s.reclaimSession(ctx, principal, sessionID, contextstate.WorktreeInstance{})
+}
+
+// ReclaimWorktreeSession is ReclaimSession for a row bound to instance: the
+// caller has already re-bound that instance (StartInRoute before Load), so it
+// is the legitimate owner. Every guard ReclaimSession applies still applies;
+// the only difference is which namespace the row must live in. An instance
+// mismatch (or a plain row) is refused exactly as ReclaimSession refuses a
+// bound one.
+func (s *SQLite) ReclaimWorktreeSession(ctx context.Context, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+	if err := instance.Validate(); err != nil || instance.IsZero() {
+		return contextstate.Snapshot{}, fmt.Errorf("%w: invalid worktree instance", contextstate.ErrInvalidDTO)
+	}
+	return s.reclaimSession(ctx, principal, sessionID, instance)
+}
+
+func (s *SQLite) reclaimSession(ctx context.Context, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
 	if err := principal.Validate(); err != nil {
 		return contextstate.Snapshot{}, err
 	}
@@ -73,7 +75,13 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	if err != nil {
 		return contextstate.Snapshot{}, err
 	}
-	leaseAt, leaseHolder, err := reclaimRowState(ctx, tx, principal, sessionID)
+	if !instance.IsZero() {
+		if err := requireActiveWorktreeTx(ctx, tx, principal, instance); err != nil {
+			_ = tx.Rollback()
+			return contextstate.Snapshot{}, err
+		}
+	}
+	leaseAt, leaseHolder, err := reclaimRowState(ctx, tx, principal, sessionID, instance)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -94,7 +102,7 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	// UPDATE's predicate evaluates against. That is what makes the zero-rows
 	// disambiguation below correct instead of racy. See the doc comment above
 	// for why this UPDATE never writes lease_at.
-	result, err := tx.ExecContext(ctx, `UPDATE context_sessions SET capability_digest=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL AND (lease_at IS NULL OR lease_at < ?)`, principal.CapabilityDigest(), principal.WorkspaceID, sessionID, principal.SubjectID, staleCutoff)
+	result, err := tx.ExecContext(ctx, `UPDATE context_sessions SET capability_digest=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS ? AND (lease_at IS NULL OR lease_at < ?)`, principal.CapabilityDigest(), principal.WorkspaceID, sessionID, principal.SubjectID, nullableText(instance.ID), staleCutoff)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -119,7 +127,7 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 		}
 		return contextstate.Snapshot{}, err
 	}
-	snapshot, err := loadContextTx(ctx, tx, principal, sessionID, contextstate.WorktreeInstance{})
+	snapshot, err := loadContextTx(ctx, tx, principal, sessionID, instance)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -131,7 +139,7 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 // existence, subject ownership, tombstone, and the managed-worktree
 // rejection. It returns the row's lease state for the caller's takeover
 // decision; the caller owns the transaction and rolls back on any error.
-func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string) (sql.NullInt64, sql.NullString, error) {
+func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (sql.NullInt64, sql.NullString, error) {
 	var subjectID string
 	var tombstoned int
 	var instanceID sql.NullString
@@ -150,8 +158,11 @@ func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Pri
 	if tombstoned != 0 {
 		return leaseAt, leaseHolder, contextstate.ErrSessionTombstoned
 	}
-	if instanceID.Valid {
+	if instance.IsZero() && instanceID.Valid {
 		return leaseAt, leaseHolder, fmt.Errorf("%w: managed worktree sessions cannot be reclaimed", contextstate.ErrInvalidDTO)
+	}
+	if !instance.IsZero() && (!instanceID.Valid || instanceID.String != instance.ID) {
+		return leaseAt, leaseHolder, contextstate.ErrWorktreeDeleted
 	}
 	return leaseAt, leaseHolder, nil
 }

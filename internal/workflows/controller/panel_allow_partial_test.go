@@ -20,7 +20,7 @@ import (
 // member failure fails the attempt) with allow_partial (a single member
 // failure is noted and the panel proceeds to synthesis with the successful
 // members; the attempt fails only if ALL members fail).
-func panelAllowPartialFixture(t *testing.T, runID string, policy string, memberHandler runtime.Handler, synthesisOutput string) (*LinearController, workflowledger.Repository) {
+func panelAllowPartialFixture(t *testing.T, runID string, policy string, memberHandler runtime.Handler, synthesisOutput string) (*LinearController, LedgerRepository) {
 	t.Helper()
 	step := definition.Step{
 		ID: "review", Kind: "agent_panel", Agent: "review-synthesizer", Skill: "review-synthesis",

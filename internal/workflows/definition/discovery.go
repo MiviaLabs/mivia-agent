@@ -48,13 +48,22 @@ func DiscoverWorkflows(workspaceRoot string) ([]DiscoveredWorkflow, error) {
 		if entry.IsDir() || !strings.HasSuffix(name, ".toml") {
 			continue
 		}
+		path := filepath.Join(dir, name)
 		data, err := readRegularWorkflowFile(root, name)
 		if err != nil {
-			return nil, fmt.Errorf("workflow file %s: %w", filepath.Join(dir, name), err)
+			// Record the broken file and keep going. Failing the whole
+			// listing here meant one unreadable or oversized definition
+			// disabled every OTHER workflow in the directory too.
+			out = append(out, DiscoveredWorkflow{
+				Name: strings.TrimSuffix(name, ".toml"),
+				Path: path,
+				Err:  fmt.Errorf("workflow file %s: %w", path, err),
+			})
+			continue
 		}
 		out = append(out, DiscoveredWorkflow{
 			Name: strings.TrimSuffix(name, ".toml"),
-			Path: filepath.Join(dir, name),
+			Path: path,
 			Raw:  data,
 		})
 	}

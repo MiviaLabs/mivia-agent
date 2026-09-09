@@ -174,8 +174,10 @@ type SummarySnapshot struct {
 }
 
 // TestContextSummaryIntegrationEndToEnd drives the real production wiring with
-// no seam overrides: [context.summary] enabled plus [privacy] and an endpoint
-// produce a Summarizer; a compacting turn sends a real summary request through
+// no seam overrides: an always-enabled summarizer plus a resolved endpoint and
+// a resolved provider/model binding produce a Summarizer. [privacy] is not a
+// precondition. It governs what the checkpoint may persist. A compacting turn
+// sends a real summary request through
 // the LLMSummaryProvider; the reply is validated and injected into the next
 // provider request. The commit path stays structural-only (summary failures
 // must never fail a finished turn), so the durable checkpoint carries no
@@ -186,7 +188,7 @@ func TestContextSummaryIntegrationEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
@@ -227,7 +229,7 @@ func TestContextSummaryIntegrationDegradesOnBadReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{garbage: true}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
@@ -270,7 +272,7 @@ func TestContextSummaryIntegrationManualCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
@@ -308,7 +310,7 @@ func TestContextSummaryIntegrationManualCompactDegrades(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{garbage: true}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
@@ -342,7 +344,7 @@ func TestContextSummaryIntegrationManualCompactThreadsFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	res := summaryWiringResolved(t, true)
+	res := summaryWiringResolved(t)
 	completer := &summaryScriptedCompleter{}
 	session := chat.NewSession(res, completer)
 	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {

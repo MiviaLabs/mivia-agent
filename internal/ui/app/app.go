@@ -73,6 +73,13 @@ type ScreenResumedMsg struct{}
 // scroll return; turning it on restores in-app drag-select and wheel.
 type MouseCaptureMsg struct{ On bool }
 
+// SettingsNoticeMsg carries one permanent, host-authored notice from the
+// settings layer into the conversation transcript (routed to the base
+// screen's Notice seam). The full-disk live re-arm sends it: lifting
+// confinement is never silent, and a transcript notice is part of the
+// conversation record, not transient chrome.
+type SettingsNoticeMsg struct{ Text string }
+
 // ThemeSelectedMsg asks the router to adopt a new app-wide theme by
 // name and pop the screen that offered the choice (the theme picker).
 // Theme identity is app-level state no Screen owns, so the message -
@@ -104,6 +111,10 @@ type Options struct {
 	// recovery. The effect on a real terminal cannot be tested here;
 	// the decision function and the ClearScreen Cmd are.
 	FullRepaint bool
+
+	// PersistTheme is called after a valid theme selection. It is a command
+	// factory so the app router remains independent of configuration storage.
+	PersistTheme func(name string) tea.Cmd
 }
 
 var _ tea.Model = Model{}
@@ -224,6 +235,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelAllSelections()
 		}
 		return m, nil
+	case SettingsNoticeMsg:
+		return m.deliverSettingsNotice(msg)
 	case ThemeSelectedMsg:
 		return m.applyTheme(msg)
 	case tea.KeyPressMsg:
@@ -272,6 +285,19 @@ func (m Model) deliverTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// deliverSettingsNotice routes a permanent, host-authored notice from the
+// settings layer to the screen that owns the conversation record, found
+// structurally (the Notice seam) so the app package needs no import of the
+// concrete conversation screen (which imports app for its own messages).
+// While Settings is pushed it stays on the stack UNDER the modal, so the
+// notice reaches the transcript and is waiting when the operator pops back.
+func (m Model) deliverSettingsNotice(msg SettingsNoticeMsg) (tea.Model, tea.Cmd) {
+	// Broadcast hands the message to every screen's Update; the concrete
+	// conversation screen owns the transcript and folds the notice into its
+	// immutable state, and the returned screens replace the stack.
+	return m.broadcast(msg)
+}
+
 // broadcast hands a Msg to every screen on the stack and batches the
 // Cmds they return.
 func (m Model) broadcast(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -303,6 +329,9 @@ func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if th, ok := m.themeByName(msg.Name); ok {
 		m.Theme = th
+		if m.Opts.PersistTheme != nil {
+			cmds = append(cmds, m.Opts.PersistTheme(th.Name))
+		}
 		m.stack = slices.Clone(m.stack)
 		// Broadcast to every screen on the stack, not just the top (the
 		// picker itself): the base screen underneath is the one that

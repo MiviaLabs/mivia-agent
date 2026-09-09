@@ -81,13 +81,13 @@ func (h ensureAuthorityValidator) Invoke(ctx context.Context, req runtime.Reques
 }
 
 func TestCoordinatorExposesEnsureRun(t *testing.T) {
-	if _, ok := reflect.TypeOf((*Coordinator)(nil)).Elem().MethodByName("EnsureRun"); !ok {
+	if _, ok := reflect.TypeOf((*Coordinator)(nil)).MethodByName("EnsureRun"); !ok {
 		t.Fatal("Coordinator has no EnsureRun method")
 	}
 }
 
 func TestCoordinatorExposesSingleTaskEnsureOperations(t *testing.T) {
-	typ := reflect.TypeOf((*Coordinator)(nil)).Elem()
+	typ := reflect.TypeOf((*Coordinator)(nil))
 	for _, name := range []string{"EnsureSingleTaskRun", "EnsureTerminalSingleTaskRun"} {
 		if _, ok := typ.MethodByName(name); !ok {
 			t.Fatalf("Coordinator has no %s method", name)
@@ -302,7 +302,7 @@ func TestEnsureRunRejectsUnfingerprintableTask(t *testing.T) {
 func TestEnsureRunReturnsRegisteredHandles(t *testing.T) {
 	task := idempotencyTask()
 	repo := ledger.NewMemoryLedgerRepository()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	runID := NewRunID()
 	req := EnsureRunRequest{RunID: runID, Tasks: []subagents.Task{task}, IdempotencyKey: "step"}
 	h, err := c.EnsureRun(context.Background(), req)

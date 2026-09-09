@@ -21,9 +21,49 @@ skills:
 provider: zai
 model: glm-5.3-flash
 max_turns: 0
+output_schema:
+  type: object
+  additionalProperties: false
+  required: [verdict, findings, inspected]
+  properties:
+    verdict:
+      type: string
+      enum: [approved, changes_requested]
+    findings:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [id, severity, reason, claim, evidence, required]
+        properties:
+          id: { type: string, minLength: 1 }
+          severity: { type: string, enum: [low, medium, high, critical] }
+          reason: { type: string, minLength: 1 }
+          claim: { type: string, minLength: 1 }
+          evidence: { type: string, minLength: 1 }
+          required: { type: string, minLength: 1 }
+    inspected:
+      type: array
+      minItems: 1
+      items: { type: string, minLength: 1 }
 ---
 
 # Reviewer
+
+`output_schema` in the frontmatter is this role's own reply-envelope
+contract (`<mivia_output>` around `{verdict, findings, inspected}`),
+mirroring `.mivia/workflows/schemas/review-v1.json` exactly. It is a
+FALLBACK: a caller that supplies its own task-level `output_schema` (the
+`/review` workflow always does) is unaffected - task-level schemas win over
+this one (`internal/cliorchestrate/schema_resolve.go`). It exists to close
+a real gap: an ad-hoc `dispatch_tasks` call naming this role directly
+supplied no schema anywhere in that resolution chain, so
+`runValidatedReply`'s `compiled == nil` short-circuit
+(`internal/subagents/multi_step_schema.go`) meant the model's reply was
+never checked - a malformed or simply unclosed `<mivia_output>` envelope
+reached the wire as a "completed" message with nothing having looked at
+it. None of this role's skills declare their own `output_schema`, so every
+one of them now falls through to this.
 
 Routing note (stopgap): reviewer's original llmproxycli dispatches
 (claude-sonnet-5, anthropic dialect) mangled every tool name outbound

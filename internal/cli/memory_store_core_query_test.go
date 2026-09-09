@@ -11,7 +11,7 @@ import (
 
 func TestCoreMemoryBlockEmptyWhenInjectCoreDisabled(t *testing.T) {
 	root := t.TempDir()
-	mc := config.MemoryConfig{StoreBackend: "sqlite", StorePath: ".mivia/memory.db", InjectCore: false}
+	mc := config.MemoryConfig{StoreBackend: "markdown", InjectCore: false}
 	store, err := openMemoryStore(root, mc)
 	if err != nil {
 		t.Fatalf("openMemoryStore: %v", err)
@@ -37,7 +37,7 @@ func TestCoreMemoryBlockEmptyWhenInjectCoreDisabled(t *testing.T) {
 
 func TestCoreMemoryBlockRendersPromotedEntries(t *testing.T) {
 	root := t.TempDir()
-	mc := config.MemoryConfig{StoreBackend: "sqlite", StorePath: ".mivia/memory.db", InjectCore: true}
+	mc := config.MemoryConfig{StoreBackend: "markdown", InjectCore: true}
 	store, err := openMemoryStore(root, mc)
 	if err != nil {
 		t.Fatalf("openMemoryStore: %v", err)
@@ -68,7 +68,7 @@ func TestCoreMemoryBlockRendersPromotedEntries(t *testing.T) {
 
 func TestCoreMemoryBlockEmptyWhenNoCoreEntries(t *testing.T) {
 	root := t.TempDir()
-	mc := config.MemoryConfig{StoreBackend: "sqlite", StorePath: ".mivia/memory.db", InjectCore: true}
+	mc := config.MemoryConfig{StoreBackend: "markdown", InjectCore: true}
 	store, err := openMemoryStore(root, mc)
 	if err != nil {
 		t.Fatalf("openMemoryStore: %v", err)

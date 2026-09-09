@@ -23,30 +23,86 @@ import (
 // Workflow/invocation/UI-system kinds are deliberately excluded: they are
 // process-local concerns (e.g. terminal resize), not conversation content.
 var relayedKinds = []events.Kind{
-	// KindTurnStart's Detail carries the user's own submitted text (see
-	// tui_start.go's existing publish and chat_hub.go's publishTurnStartForHub)
-	// - a hub receiver treats it as "a new external turn is starting," using
-	// Detail for the synthetic user turn it inserts. Its TurnID is a
-	// throwaway, surface-local label (never the same id space as the
-	// TurnID on every event that follows) - correlation with those later
-	// events relies on the single-turn-in-flight ordering that already holds
-	// for a session, not on TurnID equality.
+	// KindTurnStart's Detail carries the user's own submitted text (published
+	// by chat.Session.publishTurnStart, internal/chat/turn_events.go) - a hub
+	// receiver treats it as "a new external turn is starting," using Detail for
+	// the synthetic user turn it inserts.
+	//
+	// Its TurnID IS the turn's real id, the same "turn:N" every later event of
+	// that turn carries, so a receiver may correlate on TurnID equality. That
+	// was not always true: the publish used to happen in the surface, before
+	// the id was minted, so this comment used to warn that the id was "a
+	// throwaway, surface-local label". Moving the publish into the session
+	// fixed it, and also gave the TUI - which had no publish at all - the turn
+	// boundaries every other surface had.
 	events.KindTurnStart,
 	events.KindAssistant,
 	events.KindThinking,
 	events.KindToolStart,
 	events.KindToolEnd,
+	events.KindSubagentBegin,
 	events.KindSubagentStart,
 	events.KindSubagentEnd,
 	events.KindSubagentHeartbeat,
 	events.KindSubagentDone,
-	events.KindTurnEnd,
+	// KindAssistantReset travels with the prose it discards. A peer that
+	// relays the replacement answer but not the discard shows the rejected
+	// attempt and the replacement stacked, with nothing to tell them apart.
+	events.KindAssistantReset,
+
 	// KindCompaction carries the typed, content-free compaction payload (see
 	// events.CompactionEvent) - safe to relay by construction (INV-AG-32:
 	// no prompts, tool arguments, hidden content, or summary payloads).
 	events.KindCompaction,
+
+	// KindTurnEnd and KindError were withheld until three separate things were
+	// true, because each of them alone made relaying a terminal worse than not
+	// relaying it. All three now hold:
+	//
+	//  1. Order. The relay subscribes with SubscribeAcross, so every relayed
+	//     kind shares one queue and one delivery goroutine, and the socket path
+	//     preserves order from there (TestRelayPreservesCrossKindPublishOrder).
+	//     Under SubscribeMany each kind had its own queue and a terminal could
+	//     overtake the deltas of the turn it closes.
+	//  2. Loss. Every queue on this path is bounded drop-oldest, so a terminal
+	//     can arrive with none of its predecessors. The receiver now drops a
+	//     terminal for a run it has never seen rather than minting a turn in
+	//     order to close it, and marks a finished run done instead of deleting
+	//     it, so a straggler cannot re-open it (internal/clichat, see
+	//     TestExternalTerminalForAnUnseenRunIsDropped).
+	//  3. Privacy. toWire classifies through chat.TurnErrorMessage, so
+	//     publishTurnEnd's Err never reaches the wire verbatim - a second
+	//     process is told exactly what the local NDJSON surface is told, and no
+	//     more (TestToWireNeverSerializesRawErrorText).
+	//
+	// Withholding them was itself a defect, not a safe default: a second
+	// surface saw turns that started, streamed, and then simply stopped, with
+	// no way to tell a finished turn from a stalled one.
+	events.KindTurnEnd,
 	events.KindError,
 }
+
+// RelayedKinds returns the kinds a hub participant forwards, as a copy.
+//
+// It exists so a renderer's test can drive EVERY relayed kind instead of a
+// list written by hand beside it. A hand list is how a kind gets added to the
+// relay with no arm in the renderer: the relay carries it, nothing renders it,
+// and no test notices because the test only knew the kinds someone remembered
+// to write down.
+func RelayedKinds() []events.Kind {
+	return append([]events.Kind(nil), relayedKinds...)
+}
+
+// relayBufSize is the relay subscription's queue capacity. It is set
+// explicitly because the relay is ONE subscription spanning every relayed kind
+// (SubscribeAcross), so all of them now share one budget where per-kind
+// subscriptions each had a private default. Assistant deltas are published per
+// write and dominate that budget, so the default 256 would make the bus - not
+// the socket - the first place a busy turn sheds events. It sits above
+// connBufSize deliberately: the connection's own drop-oldest queue is the
+// intended backpressure point, since a drop there is at least per-connection
+// rather than shared by every client.
+const relayBufSize = 4 * connBufSize
 
 // dialSocketTimeout bounds how long a client waits to connect to an
 // already-elected hub before treating it as unreachable (stale socket file,
@@ -60,11 +116,35 @@ const dialSocketTimeout = 500 * time.Millisecond
 // unhurried retry over a tight loop.
 const reconnectBackoff = 2 * time.Second
 
+// Receipt carries the transport facts about one received event - things the
+// hub knows and events.Event deliberately does not, because they describe the
+// delivery rather than the conversation.
+type Receipt struct {
+	// Dropped is the cumulative number of events this hub failed to deliver to
+	// this process, counting both its share of the relay's bounded bus queue
+	// and its own connection's bounded outbound queue. For the owner, whose
+	// sink is fed by every connected client, it is the accumulated total of
+	// each source's forward deltas rather than whichever peer's absolute number
+	// arrived last. It is monotonic non-decreasing for the life of one hub
+	// membership and restarts at zero on failover, so a receiver treats a
+	// decrease as a new connection. See WireEvent.Dropped.
+	Dropped uint64
+}
+
 // Sink renders an event this process did not itself originate (received
 // from the hub) onto whatever live surface this process presents - stdout
 // NDJSON for line-mode, the TUI's renderer for the TUI. nil is valid: a
 // surface with nothing useful to do with it yet just drops it.
-type Sink func(events.Event)
+//
+// A Sink MUST be safe for concurrent use. The owner runs one read-loop
+// goroutine per connected client and calls the sink from each of them, so two
+// deliveries can be in flight at once; a sink that writes must serialize its
+// writes or its output interleaves.
+//
+// The Receipt is separate from the event because loss is a property of the
+// delivery, not of the turn: folding a transport counter into events.Event
+// would put it on every local publish site that has nothing to say about it.
+type Sink func(events.Event, Receipt)
 
 // Handle is a live hub membership. Leave unwinds it (releases the election
 // lock if this process owned it, or closes the client connection) and stops

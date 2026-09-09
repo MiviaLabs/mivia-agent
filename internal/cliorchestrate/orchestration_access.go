@@ -20,7 +20,7 @@ const (
 // to callers outside this package that cannot name the unexported type.
 type RunAccess interface {
 	// GetCoordinator returns the coordinator for this run.
-	GetCoordinator() coordinator.Coordinator
+	GetCoordinator() OrchestrationCoordinator
 	// GetHandle returns the run handle.
 	GetHandle() *coordinator.RunHandle
 }

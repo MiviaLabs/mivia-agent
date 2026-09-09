@@ -48,13 +48,17 @@ func (s *skillsSection) renderListLines(selectedRowIdx int) []string {
 	aligned := render.Columns(skillRowGap, cells)
 
 	var listLines []string
+	headerWidth := s.width/2 - 4
+	if headerWidth <= 0 {
+		headerWidth = 36
+	}
 	for i, row := range s.rows {
 		if row.isHeader {
 			headerText := row.header
 			if strings.HasPrefix(headerText, "  (") {
 				listLines = append(listLines, render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(headerText))
 			} else {
-				listLines = append(listLines, render.Role(s.theme, s.tier, theme.RoleAccent).Bold(true).Render(headerText))
+				listLines = append(listLines, render.SectionHeader(s.theme, s.tier, headerText, headerWidth))
 			}
 			continue
 		}
@@ -100,12 +104,13 @@ func (s *skillsSection) renderDetail(sk ports.SkillView) []string {
 		originLabel = "Global (user home: " + sk.Name + "/SKILL.md)"
 	}
 
+	badge := render.Role(s.theme, s.tier, theme.RoleBorder).Render("[" + originLabel + "]")
 	lines := []string{
-		accent.Bold(true).Render("/"+sk.Name) + "  " + subtle.Render(originLabel),
+		accent.Bold(true).Render("/"+sk.Name) + "  " + badge,
 	}
 
 	if sk.Description != "" {
-		lines = append(lines, fg.Render(sk.Description))
+		lines = append(lines, "", fg.Render(sk.Description))
 	}
 
 	var meta []string

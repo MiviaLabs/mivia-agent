@@ -46,7 +46,7 @@ func (r *claimProbeCanceledRepo) ClaimRun(ctx context.Context, runID, holderID s
 func TestRunDAGSeededClaimProbeCanceledSettlesTasksCanceled(t *testing.T) {
 	ctx := context.Background()
 	repo := &claimProbeCanceledRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "claim-probe-cancel-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -124,7 +124,7 @@ func TestRunDAGSeededProbeFailureLiveCtxTerminalizesRetryQueueCanceled(t *testin
 	repo := &claimProbeLiveFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
 	c := newIdempotencyCoordinator(repo).WithRetryPolicy(RetryPolicy{
 		MaxRetries: 1, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond, BackoffFactor: 2, JitterFraction: 0,
-	}).(*coordinator)
+	})
 	const runID = "probe-live-retry-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -189,7 +189,7 @@ func TestRunDAGSeededProbeFailureLiveCtxTerminalizesRetryQueueCanceled(t *testin
 func TestRecordRunResultsMissingResultNeverTerminalizes(t *testing.T) {
 	ctx := context.Background()
 	repo := ledger.NewMemoryLedgerRepository()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "missing-never-terminalizes"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatalf("CreateRun: %v", err)

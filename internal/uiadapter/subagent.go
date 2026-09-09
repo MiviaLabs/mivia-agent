@@ -9,26 +9,138 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
+
+// subagentTaskTimeout bounds any single I/O call this package makes into
+// the coordinator or a content-ref resolver on behalf of a UI action:
+// canceling a task, canceling a tool call, or (subagent_resolve.go)
+// resolving a persisted tool-call trace reference. One constant, reused by
+// every caller, so a UI action never hangs indefinitely on a stalled
+// backend and every caller times out after the same interval.
+const subagentTaskTimeout = 30 * time.Second
+
+// subagentTaskRoute is the coordinator identity backing one registered
+// callID: the coordinator that dispatched it, the run it belongs to, and
+// its own task ID within that run - everything CancelSubagentTask needs to
+// reach SubagentTaskCoordinator.CancelTask.
+//
+// The coordinator is per-route, not one field on the registry, because ONE
+// SubagentThreads is shared by every pooled session (see SessionPool) while
+// a coordinator is created per *runtime.Dispatcher, so per session
+// (internal/cliorchestrate.InitCoordinator). A single registry-wide
+// coordinator would bind every session's routes to whichever session
+// dispatched last, and a lookup for another session's run would then miss
+// and surface as the misleading "run is no longer active". Carrying it here
+// costs nothing: the registering caller dispatched the task and therefore
+// knows exactly which coordinator owns it.
+// SubagentTaskCoordinator is this package's consumer-side view of a
+// coordinator: only the three members CancelSubagentTask and
+// CancelSubagentToolCall need to resolve a registered callID to a live
+// run/task and stop it. The full coordinator carries far more; this package
+// depends on the subset, not the fat interface.
+type SubagentTaskCoordinator interface {
+	HandleForRun(runID string) *coordinator.RunHandle
+	CancelTask(ctx context.Context, h *coordinator.RunHandle, taskID string) error
+	CancelSubagentToolCall(ctx context.Context, h *coordinator.RunHandle, taskID, callID string) (bool, error)
+}
+
+// Compile-time check that the real coordinator satisfies this subset.
+var _ SubagentTaskCoordinator = (*coordinator.Coordinator)(nil)
+
+// toolCallContentResolver is this package's consumer-side view of a ledger
+// repository: the one method a later slice's SubagentTranscriptConversation.
+// History() needs to resolve a persisted tool-call content reference back
+// into its bytes. It is declared structurally, not by importing
+// internal/ledger, because internal/ledger is not in uiadapter's
+// import-layers.json allow-list (INV-TUI-29). Both
+// *ledger.MemoryLedgerRepository and *ledger.StorageLedgerRepository already
+// satisfy this method set today without either type being named here.
+type toolCallContentResolver interface {
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
+}
+
+type subagentTaskRoute struct {
+	coord  SubagentTaskCoordinator
+	runID  string
+	taskID string
+}
 
 // SubagentThreads implements ports.SubagentThreads by dynamically resolving
 // threads registered during runtime subagent executions.
 type SubagentThreads struct {
 	mu      sync.Mutex
 	threads map[string]ports.Conversation
+	// routes maps a registered callID to the coordinator run/task identity
+	// backing it (see RegisterTaskRoute), so CancelSubagentTask can resolve
+	// a UI-facing callID down to what SubagentTaskCoordinator.CancelTask
+	// needs. A callID with no route (never registered by a caller that knew
+	// the coordinator identity) cannot be canceled through this path.
+	routes map[string]subagentTaskRoute
+	// contentResolver is the ledger repository a later slice's
+	// SubagentTranscriptConversation.History() will use to resolve a
+	// persisted tool-call content reference back into its bytes. It is
+	// guarded by mu like every other field on this struct (INV-TUI-29:
+	// no second mutex). Not yet consumed in this slice - see
+	// SetContentResolver and resolver below.
+	contentResolver toolCallContentResolver
 }
+
+// SetContentResolver wires the ledger repository a later slice's
+// SubagentTranscriptConversation.History() will use to resolve a persisted
+// tool-call content reference back into its bytes (see resolver below).
+// Guarded by mu, the same lock every other field on this struct uses
+// (INV-TUI-29: no second mutex).
+func (s *SubagentThreads) SetContentResolver(r toolCallContentResolver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.contentResolver = r
+}
+
+// resolver returns the content resolver wired by SetContentResolver, or nil
+// if none has been wired. Guarded by mu (INV-TUI-29: no second mutex). Not
+// yet consumed in this slice - a later slice's
+// SubagentTranscriptConversation.History() will read it.
+func (s *SubagentThreads) resolver() toolCallContentResolver {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contentResolver
+}
+
+// SubagentTaskRouteRegistrar hands a new SubagentThreads registry's route
+// sink to the CLI-side dispatch path
+// (internal/cliorchestrate.SetSubagentTaskRouteSink, re-exported as
+// cli.SetSubagentTaskRouteSink), so every task a later dispatch spawns
+// publishes its (coordinator, runID, taskID) identity back into that
+// registry. Without it the route table stays empty and BOTH
+// CancelSubagentTask and CancelSubagentToolCall report a miss for every
+// real row, because both resolve through resolveTaskRoute.
+//
+// Nil (the zero value) is a safe no-op: a headless one-shot run, a build
+// that never imports internal/cli, or a test simply gets no live routes.
+// Mirrors SubagentProgressRegistrar's and SessionBusRegistrar's
+// indirection shape, and for the same reason - internal/uiadapter must
+// never import internal/cli* (INV-TUI-29). Only internal/newtui, which
+// imports both, wires this at startup.
+var SubagentTaskRouteRegistrar func(sink func(coord SubagentTaskCoordinator, callID, runID, taskID string))
 
 // Compile-time check that SubagentThreads satisfies ports.SubagentThreads.
 var _ ports.SubagentThreads = (*SubagentThreads)(nil)
 
-// NewSubagentThreads creates a new SubagentThreads registry.
+// NewSubagentThreads creates a new SubagentThreads registry and, when a
+// SubagentTaskRouteRegistrar is installed, hands it this registry's
+// RegisterTaskRoute so live dispatches populate the route table.
 func NewSubagentThreads() *SubagentThreads {
-	return &SubagentThreads{
+	s := &SubagentThreads{
 		threads: make(map[string]ports.Conversation),
 	}
+	if SubagentTaskRouteRegistrar != nil {
+		SubagentTaskRouteRegistrar(s.RegisterTaskRoute)
+	}
+	return s
 }
 
 // RegisterThread adds or replaces an active conversation thread for a tool call ID.
@@ -38,15 +150,104 @@ func (s *SubagentThreads) RegisterThread(callID string, conv ports.Conversation)
 	s.threads[callID] = conv
 }
 
+// RegisterTaskRoute records the coordinator identity backing a registered
+// callID, so a later CancelSubagentTask(callID) or
+// CancelSubagentToolCall(callID, ...) call can reach that coordinator. A
+// caller that dispatches a coordinator task and knows its own coordinator,
+// callID, runID, and taskID together calls this at dispatch time (the live
+// wiring runs from internal/cliorchestrate through
+// SubagentTaskRouteRegistrar); a callID with no route was never wired this
+// way (e.g. a reconstruction from persisted history, which carries no live
+// coordinator identity) and both cancels report ok=false for it.
+//
+// A nil coord is recorded as-is rather than rejected: resolveTaskRoute
+// turns it into a clear "no coordinator wired" error, which is more
+// diagnosable than a route that silently never existed.
+func (s *SubagentThreads) RegisterTaskRoute(coord SubagentTaskCoordinator, callID, runID, taskID string) {
+	if callID == "" || runID == "" || taskID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routes == nil {
+		s.routes = map[string]subagentTaskRoute{}
+	}
+	s.routes[callID] = subagentTaskRoute{coord: coord, runID: runID, taskID: taskID}
+}
+
+// CancelSubagentTask stops the coordinator's execution of the ONE dispatched
+// task backing callID, leaving its sibling tasks and the parent run
+// untouched. See ports.SubagentThreads.CancelSubagentTask's doc comment for
+// how this differs from TurnHandle.Cancel()/ActiveTurn().Cancel() (which
+// only detach a UI listener from the live event stream).
+func (s *SubagentThreads) CancelSubagentTask(callID string) (bool, error) {
+	coord, h, taskID, err := s.resolveTaskRoute(callID)
+	if err != nil {
+		return false, err
+	}
+	if h == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), subagentTaskTimeout)
+	defer cancel()
+	if err := coord.CancelTask(ctx, h, taskID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CancelSubagentToolCall cancels ONE in-flight tool call within the ONE
+// dispatched task backing callID, leaving the task itself, its siblings,
+// and the parent run untouched. See ports.SubagentThreads.CancelSubagentToolCall's
+// doc comment for the ok/error split; the route resolution here is
+// identical to CancelSubagentTask's, deliberately not duplicated into a
+// third copy - see resolveTaskRoute.
+func (s *SubagentThreads) CancelSubagentToolCall(callID, toolCallID string) (bool, error) {
+	coord, h, taskID, err := s.resolveTaskRoute(callID)
+	if err != nil {
+		return false, err
+	}
+	if h == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), subagentTaskTimeout)
+	defer cancel()
+	return coord.CancelSubagentToolCall(ctx, h, taskID, toolCallID)
+}
+
+// resolveTaskRoute resolves callID down to the coordinator that dispatched
+// it, its RunHandle, and its task ID - the shared first half of both
+// CancelSubagentTask and CancelSubagentToolCall. A nil handle with a nil
+// error means "no route registered for this callID" (a safe no-op for the
+// caller); a non-nil error means a route WAS found but the coordinator
+// itself could not serve it.
+func (s *SubagentThreads) resolveTaskRoute(callID string) (SubagentTaskCoordinator, *coordinator.RunHandle, string, error) {
+	s.mu.Lock()
+	route, ok := s.routes[callID]
+	s.mu.Unlock()
+	if !ok {
+		return nil, nil, "", nil
+	}
+	if route.coord == nil {
+		return nil, nil, "", fmt.Errorf("uiadapter: no coordinator wired to reach subagent task %q", callID)
+	}
+	h := route.coord.HandleForRun(route.runID)
+	if h == nil {
+		return nil, nil, "", fmt.Errorf("uiadapter: run %q for subagent task %q is no longer active", route.runID, callID)
+	}
+	return route.coord, h, route.taskID, nil
+}
+
 // registerReconstructed registers a reconstruction under key, but never at
-// the cost of richer live state: an existing registration that is not
-// itself a reconstruction (a live streaming conversation, or any foreign
-// ports.Conversation) always wins and the reconstruction is dropped for
-// that key. Replacing an older reconstruction with a fresh one is an
-// idempotent refresh and is allowed. This is what keeps a History() replay
-// (screen construction, session switch, transcript reset) from displacing
-// an in-flight or fully-streamed subagent thread with a prompt+summary
-// stub built from persisted tool-call JSON.
+// the cost of richer state: an existing registration that is not itself a
+// reconstruction (a live streaming conversation, or any foreign
+// ports.Conversation) always wins and the reconstruction is dropped. An
+// older reconstruction may be refreshed by a fresh one (idempotent) UNLESS
+// it already resolved incoming's own tool_calls_ref (carryForwardResolved,
+// subagent_resolve.go), in which case the richer, already-resolved
+// existing one is kept instead. This keeps a History() replay (screen
+// construction, session switch, transcript reset) from displacing live,
+// streamed, or resolved state with a stub built from persisted JSON.
 func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTranscriptConversation) {
 	if key == "" {
 		return
@@ -55,11 +256,20 @@ func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTransc
 	defer s.mu.Unlock()
 	if existing, ok := s.threads[key]; ok {
 		stc, isTranscript := existing.(*SubagentTranscriptConversation)
-		if !isTranscript || !stc.isReconstructed() {
+		if !isTranscript || !stc.isReconstructed() || carryForwardResolved(stc, conv) {
 			return
 		}
 	}
 	s.threads[key] = conv
+}
+
+// DroppedEvents reports how many events this conversation could not hand to a
+// listener. Non-zero means the live view is behind what History() holds, not
+// that content was lost.
+func (c *SubagentTranscriptConversation) DroppedEvents() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dropped
 }
 
 // Thread retrieves the conversation thread for a given tool call ID.
@@ -104,10 +314,41 @@ func (s *SubagentThreads) HandleEvent(ev agent.Event, opts TranslateOptions) {
 	}
 
 	conv := s.getOrCreate(keys, ev.Origin.Agent)
+	if ev.Kind == agent.EventSubagentBegin {
+		description := ev.Origin.TaskDescription
+		if description == "" {
+			description = ev.Detail
+		}
+		conv.recordInitialTask(description, time.Now())
+	}
 	translated := TranslateEventWithOptions(ev, opts)
 	for _, e := range translated {
 		conv.RecordEvent(e)
 	}
+}
+
+// recordInitialTask adds the parent task as the first user message on the
+// live thread. EventSubagentBegin is emitted before the nested loop starts,
+// but its translated notice/progress events are not conversation content.
+// Recording the event here keeps a dialog opened before the first assistant
+// event in sync with a dialog rebuilt from persisted dispatch arguments.
+func (c *SubagentTranscriptConversation) recordInitialTask(text string, at time.Time) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.history) > 0 && c.history[0].Role == "user" && c.history[0].Text == text {
+		return
+	}
+	c.active = true
+	c.history = append([]ports.Message{{Role: "user", Text: text, At: at}}, c.history...)
+	c.reconstructed = false
+	c.notifyListeners(uievent.Event{
+		Kind: uievent.KindTurnStart,
+		At:   at,
+		Body: uievent.TurnStartBody{Input: text},
+	})
 }
 
 func (s *SubagentThreads) getOrCreate(keys []string, title string) *SubagentTranscriptConversation {
@@ -168,6 +409,46 @@ type SubagentTranscriptConversation struct {
 	// reconstructed conversation clears the flag, because from then on it
 	// carries state no replay can rebuild.
 	reconstructed bool
+	// dropped counts events a listener's channel could not accept.
+	//
+	// The channel is bounded and the send is non-blocking, so a burst that
+	// outruns the UI's drain is shed. That is the right trade for a live view
+	// - a slow render must not stall the agent - but until this counter
+	// existed the loss was SILENT, and the dialog showed a truncated answer
+	// that looked complete. History() keeps every event regardless
+	// (applyEvent runs before this), so a non-zero count means "the live view
+	// is behind", not "content is gone".
+	//
+	// The session event bus solves the same problem by dropping the OLDEST
+	// entry and counting it (internal/events/subscription.go trySend). This
+	// drops the newest, which is a different trade and is left as it was;
+	// what it was missing is the count.
+	dropped uint64
+	// sourceToolCallsRef is the tool-call trace reference this
+	// conversation's dispatch result carried by-reference (see
+	// encodedTaskResult.ToolCallsRef), set by setPendingToolCalls when a
+	// reconstruction is registered with a non-empty ref. Read by
+	// History()'s resolveToolCallsPending (subagent_resolve.go) the first
+	// time this conversation's dialog is opened.
+	sourceToolCallsRef string
+	// contentResolver is the ledger repository setPendingToolCalls wires
+	// alongside sourceToolCallsRef, so History()'s resolveToolCallsPending
+	// (subagent_resolve.go) can resolve the ref back into bytes without
+	// this conversation importing internal/ledger (INV-TUI-29).
+	contentResolver toolCallContentResolver
+	// resolved marks that sourceToolCallsRef has already been resolved
+	// SUCCESSFULLY into history, so History() does not re-resolve it on
+	// every call. See resolveAttempted for the failure-caching half of
+	// this contract.
+	resolved bool
+	// resolveAttempted marks that a resolution attempt has already run,
+	// whether it succeeded or failed. A failed attempt (LoadContent
+	// error, malformed JSON) sets this WITHOUT setting resolved, so
+	// History() falls back to the static notice on every call but never
+	// re-issues LoadContent - a transient or permanent resolver failure
+	// must not turn every dialog render into another I/O call. See
+	// resolveToolCallsPending's doc comment for the full reasoning.
+	resolveAttempted bool
 }
 
 // NewSubagentTranscriptConversation creates a new thread conversation.
@@ -199,6 +480,19 @@ func (c *SubagentTranscriptConversation) isReconstructed() bool {
 	return c.reconstructed
 }
 
+// setPendingToolCalls wires a tool-call trace reference and the resolver
+// that can later resolve it, onto a freshly constructed reconstruction.
+// Resolution itself does not happen here or anywhere yet in this slice -
+// History() still renders the existing "(tool calls recorded)" notice
+// unchanged; a later slice's History() reads these fields to actually
+// resolve the ref into bytes.
+func (c *SubagentTranscriptConversation) setPendingToolCalls(ref string, resolver toolCallContentResolver) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sourceToolCallsRef = ref
+	c.contentResolver = resolver
+}
+
 func isDoneNotice(e uievent.Event) bool {
 	if e.Kind == uievent.KindNotice {
 		if b, ok := e.Body.(uievent.NoticeBody); ok {
@@ -222,6 +516,44 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	c.reconstructed = false
 	c.applyEvent(e)
 	c.notifyListeners(e)
+}
+
+// recordToolStart folds one tool.start into the open assistant message.
+//
+// The loop emits TWO tool_start events per tool call - "queued" from the
+// PointPreTool hook and "running" from the dispatcher shim, both carrying the
+// same ToolCallID (internal/agent/sdk_tool_events.go; pinned by
+// internal/agent/agentloop_maxconcurrent_test.go). Appending blind listed
+// every subagent tool call twice, the second copy with null arguments and no
+// output, and a thread reopened on that history rendered both: LoadHistory
+// replays start/end per entry, and transcript.findLive refuses a call id
+// whose latest block is already a tool_end, so the duplicate pushed a second
+// row instead of merging. The second leg now updates the row the first
+// opened, and only fills a field it actually carries.
+//
+// A start with no ToolCallID cannot be matched to a sibling leg, so it always
+// appends: an unidentified call is listed once too many, never swallowed.
+func (c *SubagentTranscriptConversation) recordToolStart(idx int, body uievent.ToolStartBody, args string) {
+	calls := c.history[idx].ToolCalls
+	if body.ToolCallID != "" {
+		for i := range calls {
+			if calls[i].ID != body.ToolCallID {
+				continue
+			}
+			if body.Name != "" {
+				calls[i].Name = body.Name
+			}
+			if len(body.Args) > 0 {
+				calls[i].Arguments = args
+			}
+			return
+		}
+	}
+	c.history[idx].ToolCalls = append(calls, ports.ToolCall{
+		ID:        body.ToolCallID,
+		Name:      body.Name,
+		Arguments: args,
+	})
 }
 
 // applyEvent folds one translated uievent into message history.
@@ -250,11 +582,7 @@ func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 		c.ensureLastAssistantMessage(e.At)
 		lastIdx := len(c.history) - 1
 		argsBytes, _ := json.Marshal(body.Args)
-		c.history[lastIdx].ToolCalls = append(c.history[lastIdx].ToolCalls, ports.ToolCall{
-			ID:        body.ToolCallID,
-			Name:      body.Name,
-			Arguments: string(argsBytes),
-		})
+		c.recordToolStart(lastIdx, body, string(argsBytes))
 	case uievent.KindToolEnd:
 		body, _ := e.Body.(uievent.ToolEndBody)
 		c.ensureLastAssistantMessage(e.At)
@@ -262,6 +590,9 @@ func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 		for i := range c.history[lastIdx].ToolCalls {
 			if c.history[lastIdx].ToolCalls[i].ID == body.ToolCallID {
 				c.history[lastIdx].ToolCalls[i].Output = body.Result
+				if body.Diff != nil {
+					c.history[lastIdx].ToolCalls[i].Diff = body.Diff
+				}
 				break
 			}
 		}
@@ -280,6 +611,26 @@ func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 		if c.history[lastIdx].Text == "" {
 			c.history[lastIdx].Text = body.Text
 		}
+	case uievent.KindAssistantReset:
+		// A schema retry discards the reply it is replacing, and this dialog
+		// is the ONLY viewer a subagent's own reset ever reaches: the root
+		// transcript filters every subagent kind but tool output, so nothing
+		// downstream can repair what is kept here.
+		//
+		// Both shapes were wrong without this. Streaming concatenated the
+		// rejected reply with its replacement. Not streaming was worse: the
+		// text-end arm above writes only into an EMPTY message, so the
+		// rejected reply stayed and the accepted one was dropped.
+		//
+		// Only the message's text goes. Tool calls and their diffs record work
+		// that really ran and is not re-driven; reasoning is not re-sent by
+		// the retry, so clearing it would lose it outright.
+		if len(c.history) > 0 {
+			lastIdx := len(c.history) - 1
+			if c.history[lastIdx].Role == "assistant" {
+				c.history[lastIdx].Text = ""
+			}
+		}
 	}
 }
 
@@ -293,6 +644,7 @@ func (c *SubagentTranscriptConversation) notifyListeners(e uievent.Event) {
 		select {
 		case ch <- e:
 		default:
+			c.dropped++
 		}
 	}
 	if e.Kind == uievent.KindTurnEnd || isDoneNotice(e) {
@@ -369,8 +721,14 @@ func (c *SubagentTranscriptConversation) Send(_ context.Context, in intent.Send)
 	return h, nil
 }
 
-// History returns a copy of the thread history.
+// History returns a copy of the thread history, first resolving a pending
+// sourceToolCallsRef into real tool-call rows if this conversation carries
+// one that has not been resolved yet (see resolveToolCallsPending in
+// subagent_resolve.go) - the actual fix that replaces the static
+// "(tool calls recorded)" notice with the tool calls it stands in for,
+// once a resumed subagent thread's dialog is opened.
 func (c *SubagentTranscriptConversation) History() []ports.Message {
+	c.resolveToolCallsPending()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]ports.Message, len(c.history))
@@ -410,6 +768,17 @@ type subagentTurnHandle struct {
 
 func (h *subagentTurnHandle) ID() string                   { return h.id }
 func (h *subagentTurnHandle) Events() <-chan uievent.Event { return h.events }
+
+// Cancel DETACHES this listener - it removes this handle's channel from the
+// conversation's listener set and closes it. It does NOT abort anything: the
+// coordinator task behind the thread keeps running.
+//
+// That diverges from ports.TurnHandle.Cancel's authoritative meaning (abort
+// the turn); see that method's doc comment for the divergence, the
+// foreign-conversation hazard it creates at the ui/screen/conversation
+// thread.go call sites, and why a separate Detach() has not been added.
+// To actually stop a subagent task, use
+// ports.SubagentThreads.CancelSubagentTask.
 func (h *subagentTurnHandle) Cancel() {
 	h.once.Do(func() {
 		if h.cancel != nil {
@@ -417,3 +786,15 @@ func (h *subagentTurnHandle) Cancel() {
 		}
 	})
 }
+
+// CancelToolCall always reports a miss on a subagent transcript handle.
+// This handle is a UI-side listener on a replayed event stream; it holds
+// no registry of the subagent's in-flight tool calls and never could.
+//
+// Per-tool-call cancellation for subagents DOES ship - it goes through
+// ports.SubagentThreads.CancelSubagentToolCall (SubagentThreads.
+// CancelSubagentToolCall above), which resolves the task's registered
+// ToolCanceler through the coordinator. The thread dialog uses that path,
+// never this method. The method exists only because ports.TurnHandle
+// requires it.
+func (h *subagentTurnHandle) CancelToolCall(string) bool { return false }

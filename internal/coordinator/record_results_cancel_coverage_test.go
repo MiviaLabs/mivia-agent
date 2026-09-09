@@ -20,7 +20,7 @@ import (
 func TestRecordRunResultsCancelOverrideWithoutPoolCancel(t *testing.T) {
 	ctx := context.Background()
 	repo := ledger.NewMemoryLedgerRepository()
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 	const runID = "cancel-override-run"
 	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)

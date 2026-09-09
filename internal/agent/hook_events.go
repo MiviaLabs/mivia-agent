@@ -33,6 +33,7 @@ func emitHookRuns(opts Options, toolCallID string, runs []runtime.HookRun) {
 			Detail:     hookRunDetail(run),
 			Input:      redactToolInput(run.Input),
 			Output:     hookRunOutput(run),
+			HookStdout: hookRunStdout(run),
 			Denied:     run.Denied,
 			Program:    run.Program,
 			Tool:       run.Tool,
@@ -80,4 +81,15 @@ func hookRunOutput(run runtime.HookRun) string {
 		parts = append(parts, warning)
 	}
 	return truncatePreview(redact.Text(strings.Join(parts, "\n")), maxHookEventOutput)
+}
+
+// hookRunStdout is what the hook PRINTED, and nothing else.
+//
+// hookRunOutput appends the operator diagnostic, which names the hook's
+// absolute path on purpose - the operator is the one who has to go find the
+// file. That is right for a local transcript row and wrong for a payload that
+// leaves the machine, so the two forms are kept apart at the source rather
+// than by asking a remote boundary to recognise a path inside free text.
+func hookRunStdout(run runtime.HookRun) string {
+	return truncatePreview(redact.Text(strings.TrimSpace(run.Output)), maxHookEventOutput)
 }

@@ -23,7 +23,7 @@ func seedContextCrashState(t *testing.T, v int) *sql.DB {
 	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
 		t.Fatal(err)
 	}
-	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8, applyContextSchemaV9, applyContextSchemaV10, applyContextSchemaV11, applyContextSchemaV12, applyContextSchemaV13, applyContextSchemaV14, applyContextSchemaV15}
+	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8, applyContextSchemaV9, applyContextSchemaV10, applyContextSchemaV11, applyContextSchemaV12, applyContextSchemaV13, applyContextSchemaV14, applyContextSchemaV15, applyContextSchemaV16}
 	// A migration added without extending this list would silently go untested:
 	// the loop below would panic for the new version, or worse, a caller passing
 	// a lower v would still pass. Fail loudly instead.
@@ -453,7 +453,7 @@ func TestNewerSchemaFailsBeforeRepairMutation(t *testing.T) {
 	statements := []string{
 		`ALTER TABLE worktree_instances ADD COLUMN future_value TEXT`,
 		`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at,future_value) VALUES('workspace','wt-a','wt_1111111111111111','/tmp/wt-a','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'keep-me')`,
-		`PRAGMA user_version = 16`,
+		`PRAGMA user_version = 17`,
 		`UPDATE context_schema_migrations SET dirty=1 WHERE version=7`,
 	}
 	for _, statement := range statements {
@@ -496,7 +496,7 @@ func TestNewerSchemaDoesNotCreateMigrationTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`PRAGMA user_version = 16`); err != nil {
+	if _, err := db.Exec(`PRAGMA user_version = 17`); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -561,13 +561,22 @@ func assertContextSchemaClean(t *testing.T, db *sql.DB) {
 	if dirty {
 		t.Fatal("schema still dirty after repair")
 	}
-	for _, table := range []string{"context_sessions", "chat_sessions", "chat_session_admissions", "chat_session_dirs", "worktree_routes", "worktree_instances", "worktree_catalog_keys", "worktree_routes_v9_contract", "chat_sessions_v11_contract"} {
+	for _, table := range []string{"context_sessions", "chat_sessions", "chat_session_admissions", "chat_session_dirs", "worktree_routes", "worktree_instances", "worktree_catalog_keys", "worktree_routes_v9_contract", "chat_sessions_v11_contract", "memory_sources", "memory_entries"} {
 		var count int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
 			t.Fatalf("table %s missing after repair", table)
+		}
+	}
+	for _, index := range []string{"memory_entries_project_idx", "memory_entries_org_idx", "memory_sources_project_idx"} {
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name = ?`, index).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("index %s missing after repair", index)
 		}
 	}
 }
@@ -744,5 +753,45 @@ func TestRepairReportsAnUnreadableSchemaVersion(t *testing.T) {
 	}
 	if err := repairContextSchema(store.db); err == nil {
 		t.Fatal("repair proceeded without reading the schema version")
+	}
+}
+
+// TestRepairSurfacesV16EnsureFailure pins repairContextSchema's own v==16
+// branch: a dirty v16 row over an already-fully-migrated store whose
+// memory_sources table has since been corrupted (missing a required
+// column) must surface ensureContextSchemaV16's validation failure rather
+// than silently clear the dirty flag over a broken index.
+func TestRepairSurfacesV16EnsureFailure(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v16-ensure-fail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+
+	// Corrupt the v16 witness table: drop it and recreate without
+	// source_hash, so validateMemoryIndexSchema's column check fails once
+	// repair re-runs v16's ensure step.
+	if _, err := db.Exec(`DROP TABLE memory_sources`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE memory_sources (
+  scope TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '', org_id TEXT NOT NULL DEFAULT '',
+  source_path TEXT NOT NULL, indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(scope, project_id, org_id, source_path)
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 15`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(16, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repairContextSchema(db); err == nil {
+		t.Fatal("repairContextSchema accepted a corrupted v16 memory index table")
 	}
 }

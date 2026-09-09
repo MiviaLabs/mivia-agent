@@ -115,7 +115,7 @@ or a wire form. Seed it with the valid cases. Add an invariant check inside the 
 A perf test documents the measured baseline in a comment and asserts the
 allocation budget with `testing.AllocsPerRun`.
 
-Run mutation tests via `scripts/check_mutation.py --pkg <pkg>` or `scripts/check_mutation.py --diff` to prove assertions catch deliberate code mutations.
+Assertions must catch deliberate code mutations, which `scripts/check_mutation.py --pkg <pkg>` or `scripts/check_mutation.py --diff` proves. This skill declares no command execution, so name the gate as work the implementer must run and report it `NOT_RUN` here, rather than claiming a mutation result.
 
 ## Repo-specific requirements
 
@@ -125,12 +125,15 @@ The rules below hold in this repository:
 - **Invariant verification**: Every invariant listed in `.mivia/invariants.md` must have a corresponding, non-skipping test verified via `make invariants` and `scripts/validate_invariants.py`.
 - **AST test quality**: Empty test bodies, zero-assertion tests, tautological assertions, and unreviewed `t.Skip` additions are blocked by `scripts/check_test_quality.py`.
 - **Structure and file limits**: Packages follow `.mivia/policy/go-structure.json` and pass `scripts/check_go_structure.py`.
-- **Run the offline gates**: `make verify` must pass cleanly before any code is committed.
+- **The offline gates**: `make verify` must pass cleanly before any code is committed. This skill declares no command execution, so that is implementer work; report it under Evidence.
 
 ## Output format
 
-Report three sections:
+Report four sections:
 
 1. **A per-test verdict list**: For each test: `tests-what-it-claims`, `weak`, `vacuous`, or `untested` with `file:line`.
 2. **A prioritized gap list**: Each gap states a reproduction, a severity, and a concrete test that would catch it.
 3. **A coverage summary**: State the line coverage and any reachable uncovered lines.
+4. **Evidence**: Name every gate this review depends on and its status. This
+   skill declares no command execution, so a gate nobody ran is `NOT_RUN` with
+   the reason, never an assumed pass.

@@ -89,8 +89,10 @@ the coordinator's per-task retry policy described under
 [Retry](#retry) below, which does not read provider HTTP responses.
 
 Retryable exchanges are transport errors, 408, 429, 502, 503, 504, and other
-5xx. Wrapped `context.Canceled` and `context.DeadlineExceeded` are never
-retried, so a user cancel keeps its identity all the way up.
+5xx except 501 (Not Implemented) and 505 (HTTP Version Not Supported), which
+are permanent by definition. Wrapped `context.Canceled` and
+`context.DeadlineExceeded` are never retried, so a user cancel keeps its
+identity all the way up.
 
 Backoff:
 
@@ -150,7 +152,7 @@ Two further layers catch what the transport cannot see:
 
 ## Context compaction and elision recoverability
 
-Compaction elides prior-turn oversized tool-result bodies to reclaim context budget. Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
+Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/contextmgr` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
 
 When a spool is configured on the loop (`agent.Options.RemainderSpool`) plus a session principal, the elision notice includes a principal-scoped remainder ref:
 
@@ -189,7 +191,7 @@ flowchart TD
         model_ops["dispatch_tasks / inspect_agents / join_run / cancel_run"]
     end
 
-    subgraph Coordinator["Coordinator (interface)"]
+    subgraph Coordinator["Coordinator"]
         coord_ops["Spawn / Inspect / Join / Cancel / SubscribeLifecycle\nWithRetryPolicy / ResumeInterruptedRun"]
     end
 
@@ -213,7 +215,7 @@ flowchart TD
 
 | Component | Package | Role |
 |-----------|---------|------|
-| `Coordinator` interface | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
+| `Coordinator` | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
 | `Engine` / `ClaimsTracker` | `internal/ledgercore` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
 | `LedgerRepository` interface | `internal/ledger` | Storage boundary: 20 methods for run/task/event CRUD with CAS, including run-claim leasing (`ClaimRun`, `ReleaseRun`, `ClearRunClaim`) |
@@ -221,10 +223,9 @@ flowchart TD
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
 | `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
-| `MetricsAdapter` | `internal/events` | Per-kind event counts and handler timing |
-| `Diagnostics` | `internal/cli` | ListRuns, ActiveHandles, MetricsSnapshot (privacy-safe operator views) |
-| `OutputFormatter` | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
-| `SettingsScreen` | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
+| `Diagnostics` | `internal/cliorchestrate` | ListRuns, ActiveHandles (privacy-safe operator views) |
+| `FormatToolOutput` / `FormatCommandOutput` / etc. | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
+| `Screen` (settings) | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
 ### Lifecycle
 

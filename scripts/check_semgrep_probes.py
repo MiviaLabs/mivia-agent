@@ -29,11 +29,100 @@ CONFIG = ROOT / "semgrep" / "agent-standards.yml"
 # rule's `paths.include` globs (checked against the actual YAML below).
 PROBES = [
     (
+        "mivia.go.no-test-func-outside-test-file",
+        "internal/probe-test-husk/viol.go",
+        'package probe\n\nimport "testing"\n\nfunc TestRelocatedButNeverRun(t *testing.T) {\n\tt.Fatal("never executed")\n}\n',
+        "internal/probe-test-husk/clean.go",
+        'package probe\n\nimport "testing"\n\n// WaitForIdle is a legitimate exported test helper (test_exports.go pattern).\nfunc WaitForIdle(t *testing.T) {\n\tt.Helper()\n}\n',
+    ),
+    (
+        "mivia.go.no-test-func-outside-test-file",
+        "internal/probe-testmain-husk/viol.go",
+        'package probe\n\nimport "testing"\n\nfunc TestMain(m *testing.M) {\n\t_ = m\n}\n\nfunc Test(t *testing.T) {\n\tt.Fatal("never executed")\n}\n',
+        "internal/probe-testmain-husk/clean.go",
+        'package probe\n\nimport "testing"\n\n// RunSuite is a legitimate helper: not a Test-shaped name.\nfunc RunSuite(m *testing.M) {\n\t_ = m\n}\n\n// Testify is not runnable by go test (lowercase after Test).\nfunc Testify(t *testing.T) {\n\tt.Helper()\n}\n',
+    ),
+    (
+        "mivia.go.no-validstring-rune-boundary-backoff",
+        "internal/probe-utf8-backoff/viol.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func cut(s string, n int) string {\n"
+        "\ts = s[:n]\n"
+        "\tfor len(s) > 0 && !utf8.ValidString(s) {\n"
+        "\t\ts = s[:len(s)-1]\n"
+        "\t}\n"
+        "\treturn s\n}\n",
+        "internal/probe-utf8-backoff/clean.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func cutOK(s string, n int) string {\n"
+        "\ts = s[:n]\n"
+        "\tfor len(s) > 0 {\n"
+        "\t\tr, size := utf8.DecodeLastRuneInString(s)\n"
+        "\t\tif r != utf8.RuneError || size > 1 {\n"
+        "\t\t\tbreak\n"
+        "\t\t}\n"
+        "\t\ts = s[:len(s)-1]\n"
+        "\t}\n"
+        "\treturn s\n}\n",
+    ),
+    (
+        # Same rule, second shape: the ValidString call sits on a line BELOW
+        # the `for`, inside the loop body, in a loop that walks an index
+        # DOWNWARD. This is the shape internal/hooks/protocol.go carried
+        # before 04f36f5b; a rule keyed on the `for` line alone cannot see it.
+        "mivia.go.no-validstring-rune-boundary-backoff",
+        "internal/probe-utf8-backoff/viol_body.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func cutBody(s string, limit int) string {\n"
+        "\tcut := s[:limit]\n"
+        "\tfor i := limit - 1; i >= 0 && limit-i < utf8.UTFMax; i-- {\n"
+        "\t\tif utf8.RuneStart(s[i]) {\n"
+        "\t\t\tif utf8.ValidString(s[:i]) {\n"
+        "\t\t\t\treturn s[:i]\n"
+        "\t\t\t}\n"
+        "\t\t\treturn cut\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\treturn cut\n}\n",
+        "internal/probe-utf8-backoff/clean_body.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func declaredRuneLen(b byte) int { return int(b) }\n\n"
+        "func cutBodyOK(s string, limit int) string {\n"
+        "\tcut := s[:limit]\n"
+        "\tfor i := limit - 1; i >= 0 && limit-i < utf8.UTFMax; i-- {\n"
+        "\t\tif !utf8.RuneStart(s[i]) {\n"
+        "\t\t\tcontinue\n"
+        "\t\t}\n"
+        "\t\tif declaredRuneLen(s[i]) > limit-i {\n"
+        "\t\t\treturn s[:i]\n"
+        "\t\t}\n"
+        "\t\treturn cut\n"
+        "\t}\n"
+        "\treturn cut\n}\n",
+    ),
+    (
+        "mivia.go.no-chat-principal-as-sync-handle",
+        "internal/probe-sync-handle/viol.go",
+        'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/chatsync"\n\n'
+        "type sess struct{ SessionID string }\n\n"
+        "func handle(s sess) chatsync.LocalHandle { return chatsync.LocalHandle(s.SessionID) }\n",
+        "internal/probe-sync-handle/clean.go",
+        'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/chatsync"\n\n'
+        "func stored(id chatsync.SyncIdentity) chatsync.LocalHandle { return id.LocalHandle }\n",
+    ),
+    (
         "mivia.go.ui-no-harness-imports",
         "internal/ui/probe-isolation/viol.go",
         "package probe\n\nimport _ \"github.com/MiviaLabs/mivia-agent/internal/cli\"\n",
         "internal/ui/probe-isolation/clean.go",
         "package probe\n\nimport _ \"github.com/MiviaLabs/mivia-agent/internal/uikit/ports\"\n",
+    ),
+    (
+        "mivia.go.hub-wire-no-raw-error-text",
+        "internal/hub/probe-raw-error/viol.go",
+        "package probe\n\nfunc errText(err error) string { return err.Error() }\n",
+        "internal/hub/probe-raw-error/clean.go",
+        "package probe\n\nimport \"github.com/MiviaLabs/mivia-agent/internal/chat\"\n\ntype ev struct{ Err error }\n\nfunc f(e ev) string { return chat.TurnErrorMessage(e.Err) }\n",
     ),
     (
         "mivia.generic.no-wildcard-bash-allow",
@@ -86,23 +175,23 @@ PROBES = [
     ),
     (
         "mivia.generic.no-skill-freeform-output-heading",
-        ".claude/skills/probe-output-heading/SKILL.md",
+        ".agents/skills/probe-output-heading/SKILL.md",
         "# Probe Skill\n\n## Output\nFree-form text here.\n",
-        ".claude/skills/probe-output-heading-clean/SKILL.md",
+        ".agents/skills/probe-output-heading-clean/SKILL.md",
         "# Probe Skill\n\n## ReportFormat\nmivia-report/v1\n",
     ),
     (
         "mivia.generic.skills-require-mivia-report-v1",
-        ".claude/skills/probe-report-format/SKILL.md",
+        ".agents/skills/probe-report-format/SKILL.md",
         "# Probe Skill\n\nReportFormat: legacy-format\n",
-        ".claude/skills/probe-report-format-clean/SKILL.md",
+        ".agents/skills/probe-report-format-clean/SKILL.md",
         "# Probe Skill\n\nReportFormat: mivia-report/v1\n",
     ),
     (
         "mivia.generic.architecture-review-must-stay-portable",
-        ".mivia/skills/architecture-review/viol.md",
+        ".agents/skills/architecture-review/viol.md",
         "This skill follows the ADLC process.\n",
-        ".mivia/skills/architecture-review/clean.md",
+        ".agents/skills/architecture-review/clean.md",
         "This skill reviews architecture using discovered project conventions and generic checks.\n",
     ),
     (
@@ -239,6 +328,42 @@ PROBES = [
         'package probe\n\nimport "path/filepath"\n\nfunc p(root string) string {\n\treturn filepath.Join(root, ".mivia", "skills", "shared")\n}\n',
         "internal/probe/mivia_skills_clean.go",
         'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/workspace"\n\nfunc p(root string) string {\n\treturn workspace.SkillsDir(root) + "/shared"\n}\n',
+    ),
+    (
+        "mivia.go.no-truncation-call-inside-envelope-literal",
+        "internal/chatsync/probe-trunc-order/viol.go",
+        "package probe\n\n"
+        "type Envelope struct{ Trunc *int }\n\n"
+        "type payload struct {\n\tEnvelope\n\tDetail string\n}\n\n"
+        "func applyTruncation(e *Envelope, field, value string, maxBytes int) string { return value }\n\n"
+        "func build(env Envelope, detail string) *payload {\n"
+        "\treturn &payload{Envelope: env, Detail: applyTruncation(&env, \"detail\", detail, 200)}\n}\n",
+        "internal/chatsync/probe-trunc-order/clean.go",
+        "package probe\n\n"
+        "func buildClean(env Envelope, detail string) *payload {\n"
+        "\td := applyTruncation(&env, \"detail\", detail, 200)\n"
+        "\treturn &payload{Envelope: env, Detail: d}\n}\n",
+    ),
+    (
+        "mivia.go.no-locked-field-reread",
+        "internal/chatsync/probe-locked-reread/viol.go",
+        "package probe\n\nimport \"sync\"\n\n"
+        "type Poller struct {\n\tmu        sync.Mutex\n\tsessionID string\n}\n\n"
+        "func (p *Poller) doConsume() string {\n"
+        "\tp.mu.Lock()\n\tsessID := p.sessionID\n\tp.mu.Unlock()\n\n"
+        "\tfirst := callNext(sessID)\n\t_ = first\n\n"
+        "\treturn callConsume(p.sessionID)\n}\n\n"
+        "func callNext(id string) string    { return id }\n"
+        "func callConsume(id string) string { return id }\n",
+        "internal/chatsync/probe-locked-reread/clean.go",
+        "package probe\n\nimport \"sync\"\n\n"
+        "type PollerOK struct {\n\tmu        sync.Mutex\n\tsessionID string\n}\n\n"
+        "func (p *PollerOK) doConsumeOK() string {\n"
+        "\tp.mu.Lock()\n\tsessID := p.sessionID\n\tp.mu.Unlock()\n\n"
+        "\tfirst := callNextOK(sessID)\n\t_ = first\n\n"
+        "\treturn callConsumeOK(sessID)\n}\n\n"
+        "func callNextOK(id string) string    { return id }\n"
+        "func callConsumeOK(id string) string { return id }\n",
     ),
 ]
 

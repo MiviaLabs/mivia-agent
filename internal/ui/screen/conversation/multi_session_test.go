@@ -2,11 +2,13 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -45,9 +47,19 @@ type testTurnHandle struct {
 func (h *testTurnHandle) ID() string                   { return h.id }
 func (h *testTurnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *testTurnHandle) Cancel()                      {}
+func (h *testTurnHandle) CancelToolCall(string) bool   { return false }
 
 type testMultiSessionRunner struct {
 	convs map[string]ports.Conversation
+	// activeID mirrors uiadapter.CommandRunner.sess: whichever session id
+	// the runner last learned about, via SelectSession (a resumed/newly
+	// visited tab) or SetActiveSessionID (any other focus change,
+	// including cycling back to an already-open tab).
+	activeID string
+}
+
+func (r *testMultiSessionRunner) SetActiveSessionID(id string) {
+	r.activeID = id
 }
 
 func (r *testMultiSessionRunner) Run(context.Context, string, string) ports.CommandOutcome {
@@ -65,11 +77,27 @@ func (r *testMultiSessionRunner) SelectEffort(context.Context, string) ports.Com
 func (r *testMultiSessionRunner) SessionActive(string) bool {
 	return false
 }
+func (r *testMultiSessionRunner) CompleteLogin(context.Context, string, []byte) ports.CommandOutcome {
+	return ports.CommandOutcome{}
+}
+func (r *testMultiSessionRunner) StartInWorktree(context.Context, ports.SessionSummary) ports.CommandOutcome {
+	return ports.CommandOutcome{}
+}
+
+func (r *testMultiSessionRunner) StartInNewWorktree(context.Context, string) ports.CommandOutcome {
+	return ports.CommandOutcome{}
+}
+
+func (r *testMultiSessionRunner) ResumeInWorktree(context.Context, ports.SessionSummary) ports.CommandOutcome {
+	return ports.CommandOutcome{}
+}
+
 func (r *testMultiSessionRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
 	conv, ok := r.convs[id]
 	if !ok {
 		return ports.CommandOutcome{Err: "session not found"}
 	}
+	r.activeID = id
 	return ports.CommandOutcome{
 		Conversation:    conv,
 		ClearTranscript: true,
@@ -501,5 +529,456 @@ func TestMultiSession_QueueIsolationAcrossSessions(t *testing.T) {
 
 	if len(s.queue) != 1 || s.queue[0] != "Queued on A" {
 		t.Errorf("expected restored queue on Session A = [\"Queued on A\"], got %v", s.queue)
+	}
+}
+
+// liveUsage is one turn's provider-reported accounting, so it belongs to that
+// turn's session. Held on the Screen and never carried in sessionState, a
+// reading from session A's running turn kept overriding the top bar after a
+// switch: session B showed A's context fill and A's spend, and A's TurnEnd
+// arrives on the background path which cannot clear the screen-global field -
+// so a session the user never sent a turn to never corrects itself.
+func TestMultiSession_LiveUsageDoesNotFollowTheSwitch(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	next, _ := s.Update(uievent.EventMsg{SessionID: "sess-A", Event: uievent.Event{
+		Kind:   uievent.KindUsage,
+		TurnID: "turn-sess-A",
+		Body:   uievent.UsageBody{InputTokens: 123456, CostUSD: 9.99},
+	}})
+	s = next.(Screen)
+	if s.liveUsage == nil {
+		t.Fatal("precondition: session A's usage event was not recorded")
+	}
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+	if got := s.topbar.Usage().InputTokens; got == 123456 {
+		t.Errorf("session B's top bar reports session A's %d input tokens", got)
+	}
+	if got := s.topbar.Usage().CostUSD; got == 9.99 {
+		t.Errorf("session B's top bar reports session A's $%.2f spend", got)
+	}
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+	if got := s.topbar.Usage().InputTokens; got != 123456 {
+		t.Errorf("switching back to A lost its own live usage: got %d, want 123456", got)
+	}
+}
+
+// A remote input for an unmounted session is buffered while the mount runs.
+// When the mount fails the buffer was discarded with a notice that named only
+// the error, so the user's message vanished with no way to see what was lost.
+func TestRemoteInputMountFailureReportsTheDroppedInput(t *testing.T) {
+	s, _, _, _ := setupTwoSessionScreen(t)
+	s.mounting = map[string][]ports.RemoteInputEvent{
+		"sess-gone": {{SessionID: "sess-gone", Body: "please run the migration"}},
+	}
+	next, _ := s.Update(sessionMountedMsg{sessionID: "sess-gone", err: errMountFailed})
+	s = next.(Screen)
+	view := s.View()
+	if !strings.Contains(view, "please run the migration") {
+		t.Errorf("the dropped remote input is not reported anywhere the user can see it:\n%s", view)
+	}
+}
+
+var errMountFailed = errors.New("worktree was removed")
+
+// backgroundEvent feeds one event for a session that is NOT in the
+// foreground, i.e. through sessionState.handleTurnEvent.
+func backgroundEvent(t *testing.T, s Screen, sessionID string, body uievent.Body) Screen {
+	t.Helper()
+	next, _ := s.Update(uievent.EventMsg{SessionID: sessionID, Event: uievent.Event{TurnID: "turn-" + sessionID, Body: body}})
+	return next.(Screen)
+}
+
+// The background handler is a partial copy of the foreground one, and every
+// case it omits is state the owning session never recovers. Its TurnEnd left
+// the snapshotted liveUsage set, so switching back showed a stale mid-turn
+// reading (the very symptom the per-session enrolment was meant to remove);
+// its ToolEnd matched dispatch rows by call id, which never matches the
+// "callID:taskID" rows a dispatch group registers, so finished subagents
+// stayed "running"; and its ToolStart recorded nothing on the blackboard, so
+// cross-agent messages and findings raised while backgrounded were lost.
+func TestMultiSession_BackgroundPathKeepsSessionStateWhole(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	const call = "tc-dispatch"
+	args := map[string]any{"tasks": []any{map[string]any{"id": "t1", "agent": "alpha"}}}
+
+	next, _ := s.Update(uievent.EventMsg{SessionID: "sess-A", Event: uievent.Event{
+		Kind: uievent.KindUsage, TurnID: "turn-sess-A",
+		Body: uievent.UsageBody{InputTokens: 4242, CostUSD: 1.25},
+	}})
+	s = next.(Screen)
+	next, _ = s.Update(uievent.EventMsg{SessionID: "sess-A", Event: uievent.Event{
+		Kind: uievent.KindToolStart, TurnID: "turn-sess-A",
+		Body: uievent.ToolStartBody{ToolCallID: call, Name: "dispatch_tasks", Args: args},
+	}})
+	s = next.(Screen)
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Everything below reaches session A through the BACKGROUND path.
+	s = backgroundEvent(t, s, "sess-A", uievent.ToolStartBody{ToolCallID: "tc-msg", Name: "post_message",
+		Args: map[string]any{"kind": "finding", "body": "a finding raised while backgrounded"}})
+	s = backgroundEvent(t, s, "sess-A", uievent.ToolEndBody{ToolCallID: call, OK: true,
+		Result: `{"tasks":[{"id":"t1","status":"succeeded"}]}`})
+
+	// Asserted BEFORE TurnEnd on purpose: reconcileTerminal stamps every
+	// non-terminal row with the TURN's reason, which masks a group whose
+	// rows were never resolved from the call's own result.
+	for _, row := range s.sessions["sess-A"].panel.agents {
+		if row.Status != "succeeded" {
+			t.Errorf("dispatch row %q = %q after its call ended, want the per-task status from the result", row.ID, row.Status)
+		}
+	}
+
+	s = backgroundEvent(t, s, "sess-A", uievent.TurnEndBody{Reason: "completed"})
+
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	if s.liveUsage != nil {
+		t.Errorf("session A's own TurnEnd did not clear its live usage: %+v", *s.liveUsage)
+	}
+	if got := s.topbar.Usage().InputTokens; got == 4242 {
+		t.Errorf("top bar still reports the mid-turn reading %d after the turn ended", got)
+	}
+	if n := s.blackboard.FindingsCount(); n == 0 {
+		t.Error("a finding posted while the session was backgrounded was dropped")
+	}
+}
+
+func TestTopSessionBar_MultiSessionTabs(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Initially 1 session registered (sess-A)
+	if tabs := s.topbar.Tabs(); len(tabs) != 0 {
+		t.Errorf("single session should not show tabs, got %d tabs", len(tabs))
+	}
+
+	// Switch to sess-B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	tabs := s.topbar.Tabs()
+	if len(tabs) != 2 {
+		t.Fatalf("expected 2 tabs after opening second session, got %d", len(tabs))
+	}
+	if tabs[0].ID != "sess-A" || tabs[0].IsCurrent {
+		t.Errorf("tab 0 want sess-A background, got %+v", tabs[0])
+	}
+	if tabs[1].ID != "sess-B" || !tabs[1].IsCurrent {
+		t.Errorf("tab 1 want sess-B current, got %+v", tabs[1])
+	}
+
+	// Tool pending in background session A
+	s2, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolPending,
+			TurnID: "turn-sess-A",
+			Body: uievent.ToolPendingBody{
+				ToolCallID: "tc-pending",
+				Name:       "write",
+				Args:       map[string]any{"file": "test.txt"},
+			},
+		},
+	})
+	s = s2.(Screen)
+	tabs = s.topbar.Tabs()
+	if !tabs[0].NeedsAction {
+		t.Errorf("expected tab 0 to show NeedsAction: true after ToolPending, got %+v", tabs[0])
+	}
+
+	// View rendering contains tabs
+	view := ansi.Strip(s.View())
+	if !strings.Contains(view, "1:Session A") || !strings.Contains(view, "2:Session B") {
+		t.Errorf("view missing session tabs: %q", view)
+	}
+}
+
+func TestTopSessionBar_ClickSwitchesSession(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	if s.convID() != "sess-B" {
+		t.Fatalf("expected current session to be sess-B, got %q", s.convID())
+	}
+
+	// Locate Tab 0 (sess-A) click column
+	s0, e0, ok := s.topbar.TabBounds(0)
+	if !ok {
+		t.Fatal("expected TabBounds ok for tab 0")
+	}
+	clickX := 1 + (s0+e0)/2 // 1 for screen gutter
+	topGutter := 1
+
+	// Single click on Tab 0
+	next, _ = s.Update(leftClick(clickX, topGutter))
+	s = next.(Screen)
+
+	if s.convID() != "sess-A" {
+		t.Errorf("single click on tab 0 should switch to sess-A, got %q", s.convID())
+	}
+}
+
+func TestTopSessionBar_KeyboardNavigation(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// F6: Previous Tab (from B to A)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("F6 should switch to sess-A, got %q", s.convID())
+	}
+
+	// F7: Next Tab (from A to B)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("F7 should switch to sess-B, got %q", s.convID())
+	}
+
+	// Alt+1: Direct switch to Tab 1 (sess-A)
+	next, _ = s.Update(tea.KeyPressMsg{Code: '1', Mod: tea.ModAlt})
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("Alt+1 should switch to sess-A, got %q", s.convID())
+	}
+}
+
+// Cycling back to an already-open tab with the keyboard (F6/F7/Alt+N, or a
+// tab click) takes the fast path in switchToSessionID, which reuses the
+// cached sessionState and never calls runner.SelectSession again. Before the
+// fix, that meant the runner's notion of the "active" session stayed pinned
+// to whichever session it last resumed - so a /model (or any other
+// per-session runner command) issued after switching focus back to an idle
+// tab still acted on the OTHER, possibly-busy session, refusing the switch
+// on that session's state instead of the one actually on screen.
+func TestMultiSession_FastTabSwitchUpdatesRunnerActiveSession(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	// Visit sess-B once through the runner, as a picker/resume would.
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+	if runner.activeID != "sess-B" {
+		t.Fatalf("precondition: runner active id = %q, want sess-B", runner.activeID)
+	}
+
+	// Switch back to sess-A with a plain tab-cycle key. sess-A is already
+	// cached from screen setup, so this takes the fast path that bypasses
+	// the runner entirely.
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Fatalf("F6 should switch the screen to sess-A, got %q", s.convID())
+	}
+	if runner.activeID != "sess-A" {
+		t.Errorf("runner active id = %q after switching the visible tab to sess-A - a /model command now would wrongly act on sess-B", runner.activeID)
+	}
+
+	// And the reverse: cycling forward to sess-B (also already cached).
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Fatalf("F7 should switch the screen to sess-B, got %q", s.convID())
+	}
+	if runner.activeID != "sess-B" {
+		t.Errorf("runner active id = %q after switching the visible tab to sess-B, want sess-B", runner.activeID)
+	}
+}
+
+func TestTopSessionBar_SlashCommandTab(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// /tab prev
+	next, _ = s.runSlashCommand("/tab prev")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("/tab prev should switch to sess-A, got %q", s.convID())
+	}
+
+	// /tab next
+	next, _ = s.runSlashCommand("/tab next")
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("/tab next should switch to sess-B, got %q", s.convID())
+	}
+
+	// /tab 1
+	next, _ = s.runSlashCommand("/tab 1")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("/tab 1 should switch to sess-A, got %q", s.convID())
+	}
+
+	// /tab Session B
+	next, _ = s.runSlashCommand("/tab Session B")
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("/tab Session B should switch to sess-B, got %q", s.convID())
+	}
+}
+
+func TestTopSessionBar_ComposerDraftPreserved(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Type uncommitted draft into Session A
+	s = typeText(t, s, "uncommitted draft in session A")
+	if s.composer.Value() != "uncommitted draft in session A" {
+		t.Fatalf("composer value mismatch: %q", s.composer.Value())
+	}
+
+	// Switch to Session B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Session B should have an empty composer
+	if s.composer.Value() != "" {
+		t.Errorf("session B composer should be empty, got: %q", s.composer.Value())
+	}
+
+	// Type draft in Session B
+	s = typeText(t, s, "uncommitted draft in session B")
+
+	// Switch back to Session A
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	// Session A draft must be preserved
+	if s.composer.Value() != "uncommitted draft in session A" {
+		t.Errorf("session A draft lost after switching back: got %q", s.composer.Value())
+	}
+
+	// Switch back to Session B
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Session B draft must be preserved
+	if s.composer.Value() != "uncommitted draft in session B" {
+		t.Errorf("session B draft lost after switching back: got %q", s.composer.Value())
+	}
+}
+
+func TestTopSessionBar_KeyboardNavigation_Accelerators(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Register sess-B then switch back to sess-A
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	// Alt+2: Switch to Tab 2 (sess-B)
+	next, _ = s.Update(tea.KeyPressMsg{Code: '2', Mod: tea.ModAlt})
+	s = next.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("Alt+2 should switch to sess-B, got %q", s.convID())
+	}
+
+	// Alt+3..9 when tab does not exist should safely no-op
+	for r := '3'; r <= '9'; r++ {
+		next, _ = s.Update(tea.KeyPressMsg{Code: r, Mod: tea.ModAlt})
+		s = next.(Screen)
+		if s.convID() != "sess-B" {
+			t.Errorf("Alt+%c should no-op, got convID %q", r, s.convID())
+		}
+	}
+	_ = runner
+}
+
+func TestTopSessionBar_EdgeCases(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+	s.width = 120
+	s.height = 24
+
+	// Register sess-B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Exact session ID match with /tab (switch to sess-A)
+	next, _ = s.runSlashCommand("/tab sess-A")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("/tab sess-A should switch to sess-A, got %q", s.convID())
+	}
+
+	// Unknown session returns error and stays on current session
+	next, _ = s.runSlashCommand("/tab nonexistent")
+	s = next.(Screen)
+	if s.convID() != "sess-A" {
+		t.Errorf("failed /tab should remain on current session, got %q", s.convID())
+	}
+
+	// Backward wrap-around: from sess-A (index 0), switchTabRelative(-1) wraps to sess-B (index 1)
+	nextScreen, _ := s.switchTabRelative(-1)
+	s = nextScreen.(Screen)
+	if s.convID() != "sess-B" {
+		t.Errorf("switchTabRelative(-1) from index 0 should wrap to sess-B, got %q", s.convID())
+	}
+
+	// Edge checks on switchToSessionID
+	sameScreen, cmd := s.switchToSessionID("")
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionID(\"\") to return unchanged screen and nil cmd")
+	}
+	sameScreen, cmd = s.switchToSessionID(s.convID())
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionID(current) to return unchanged screen and nil cmd")
+	}
+
+	// Edge checks on switchToSessionIndex
+	sameScreen, cmd = s.switchToSessionIndex(-1)
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionIndex(-1) to return unchanged screen and nil cmd")
+	}
+	sameScreen, cmd = s.switchToSessionIndex(999)
+	if cmd != nil || sameScreen.(Screen).convID() != s.convID() {
+		t.Error("expected switchToSessionIndex(999) to return unchanged screen and nil cmd")
+	}
+
+	// len(sessionOrder) <= 1 relative switch
+	singleSessScreen := s
+	singleSessScreen.sessionOrder = []string{"sess-B"}
+	nextSingle, cmd := singleSessScreen.switchTabRelative(1)
+	if cmd != nil || nextSingle.(Screen).convID() != "sess-B" {
+		t.Error("expected single session relative switch to return nil cmd")
+	}
+
+	// Uncached session ID with runner available
+	sWithNewID, _ := s.switchToSessionID("sess-C")
+	if sWithNewID.(Screen).convID() != "sess-B" {
+		t.Errorf("expected session sess-B when sess-C fails in runner, got %q", sWithNewID.(Screen).convID())
+	}
+
+	// Uncached session ID with no runner
+	sNoRunner := s
+	sNoRunner.runner = nil
+	sNoRunnerScreen, _ := sNoRunner.switchToSessionID("sess-C")
+	if sNoRunnerScreen.(Screen).convID() != "sess-B" {
+		t.Errorf("expected unchanged session when no runner, got %q", sNoRunnerScreen.(Screen).convID())
 	}
 }

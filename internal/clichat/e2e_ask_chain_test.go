@@ -338,6 +338,7 @@ func TestE2E_AskChainThreeAgentRelay(t *testing.T) {
 			{"id": "end-1", "agent": "go-engineer",
 				"prompt": chainEndMarker + " you are go-engineer; answer any relayed ask from the auditor"},
 		},
+		"wait": "run",
 	})
 	body, err := tool.Execute(context.Background(), args)
 	if err != nil {

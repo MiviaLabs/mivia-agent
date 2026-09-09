@@ -85,3 +85,33 @@ func TestApplySelectedAgentPromptStillAppliesSelectedAgentSettings(t *testing.T)
 		t.Fatalf("MaxSteps = %d, want %d", sess.MaxSteps, maxTurns)
 	}
 }
+
+// TestConfigureChatWorkspaceNeverAttachesReconciler pins the reconciler
+// plan's one-shot exclusion at the seam itself: ConfigureChatWorkspace opens
+// the memory store for the long-lived chat path AND for the one-shot compact
+// and sessions commands, so it must never attach the background reconciler.
+// If the start ever moves inside, every one-shot run leaks a watcher.
+func TestConfigureChatWorkspaceNeverAttachesReconciler(t *testing.T) {
+	root := t.TempDir()
+	res := memoryTestResolved(true)
+	sess := chat.NewSession(res, nil)
+	state := &AgentSessionState{}
+	memClose, err := ConfigureChatWorkspace(sess, root, true, res, state, false, false, false)
+	if err != nil {
+		t.Fatalf("configureChatWorkspace: %v", err)
+	}
+	defer memClose()
+	inner, ok := markdownStoreOf(state.Memory)
+	if !ok {
+		t.Fatalf("state.Memory = %T, want the markdown-backed store", state.Memory)
+	}
+	inner.mu.Lock()
+	attached := inner.reconcilerAttached
+	inner.mu.Unlock()
+	if attached {
+		t.Fatal("ConfigureChatWorkspace attached a reconciler; one-shot callers would leak watchers")
+	}
+	if scopeFresh(inner, memory.ScopeProject) {
+		t.Fatal("one-shot reads must never skip their rescan via freshness")
+	}
+}

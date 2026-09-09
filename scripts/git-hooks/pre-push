@@ -21,35 +21,78 @@ require_cmd() {
 run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }
 
 require_cmd python3
-run_verify python3 scripts/verify_agent_config.py
-run_verify python3 scripts/git-hooks/file-size-check --tracked
-run_verify python3 scripts/check_go_structure.py --strict --all
-
-git diff --check
 
 # Secret scan: merge-base range when available, else all tracked files.
+# Git hands the refs being pushed on stdin, one
+# `<local ref> <local sha> <remote ref> <remote sha>` line per ref. Read them
+# HERE, before any child process runs: a child that reads stdin would consume
+# the lines and this hook would silently fall back to sweeping HEAD. The
+# supervisor (run_with_timeout) forwards its stdin to the job for the same
+# reason.
+# A delete (local sha all zeros) has nothing to scan and builds no range.
+# "A ref line was read" below means "a non-delete line was read", so a
+# delete-only push takes the HEAD fallback.
 # A Mivia-managed worktree must not use HEAD^ as a base. That base can
-# hide files from earlier commits on a new branch. Use an upstream or
-# an origin base. If neither exists, scan all tracked files.
+# hide files from earlier commits on a new branch. Use the remote's sha
+# when it exists locally, else the pushed ref's upstream, else an origin
+# base, anchored on the PUSHED sha rather than HEAD. A pushed ref with no
+# base at all is scanned --tracked rather than dropped.
 # MIVIA_PUSH_VERIFY_BASE/TIP override all automatic detection.
+ZERO_SHA='0000000000000000000000000000000000000000'
+PUSH_BASES=()
+PUSH_TIPS=()
+if [[ ! -t 0 ]]; then
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    [[ -n "$local_sha" && "$local_sha" != "$ZERO_SHA" ]] || continue
+    if [[ -n "$remote_sha" && "$remote_sha" != "$ZERO_SHA" ]] \
+        && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+      push_base="$(git merge-base "$local_sha" "$remote_sha" 2>/dev/null || true)"
+    else
+      push_base="$(
+        git merge-base "$local_sha" "${local_ref#refs/heads/}@{upstream}" 2>/dev/null \
+        || git merge-base "$local_sha" origin/main 2>/dev/null \
+        || git merge-base "$local_sha" origin/master 2>/dev/null \
+        || true
+      )"
+    fi
+    PUSH_BASES+=("$push_base")
+    PUSH_TIPS+=("$local_sha")
+  done
+fi
 if [[ -n "${MIVIA_PUSH_VERIFY_BASE:-}" && -n "${MIVIA_PUSH_VERIFY_TIP:-}" ]]; then
-  BASE_REF="$MIVIA_PUSH_VERIFY_BASE"
-  TIP_REF="$MIVIA_PUSH_VERIFY_TIP"
-else
-  BASE_REF="$(
+  PUSH_BASES=("$MIVIA_PUSH_VERIFY_BASE")
+  PUSH_TIPS=("$MIVIA_PUSH_VERIFY_TIP")
+elif ((${#PUSH_TIPS[@]} == 0)); then
+  if [[ ! -t 0 ]]; then
+    printf 'pre-push: no ref lines on stdin; sweeping HEAD\n' >&2
+  fi
+  PUSH_BASES=("$(
     git merge-base HEAD '@{upstream}' 2>/dev/null \
     || git merge-base HEAD origin/main 2>/dev/null \
     || git merge-base HEAD origin/master 2>/dev/null \
     || true
-  )"
-  TIP_REF="HEAD"
+  )")
+  PUSH_TIPS=("HEAD")
 fi
 
-if [[ -n "${BASE_REF:-}" ]]; then
-  run_verify python3 scripts/secret_scan.py --base "$BASE_REF" --tip "$TIP_REF"
-else
-  run_verify python3 scripts/secret_scan.py --tracked
-fi
+TRACKED_SCANNED=0
+for i in "${!PUSH_TIPS[@]}"; do
+  if [[ -n "${PUSH_BASES[$i]}" ]]; then
+    run_verify python3 scripts/secret_scan.py --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+  elif ((TRACKED_SCANNED == 0)); then
+    run_verify python3 scripts/secret_scan.py --tracked
+    TRACKED_SCANNED=1
+  fi
+done
+
+run_verify python3 scripts/verify_agent_config.py
+run_verify python3 scripts/test_agent_skill_contract.py
+run_verify python3 scripts/check_memories.py
+run_verify python3 scripts/check_gate_scripts.py
+run_verify python3 scripts/git-hooks/file-size-check --tracked
+run_verify python3 scripts/check_go_structure.py --strict --all
+
+git diff --check
 
 run_verify python3 scripts/check_docs_ownership.py
 
@@ -57,6 +100,9 @@ run_verify python3 scripts/test_git_hooks.py
 run_verify python3 scripts/test_agent_hook_guard.py
 run_verify python3 scripts/test_secret_scan.py
 run_verify python3 scripts/test_docs_ownership.py
+run_verify python3 scripts/test_verify_skill_tree.py
+run_verify python3 scripts/test_check_memories.py
+run_verify python3 scripts/test_check_gate_scripts.py
 run_verify python3 scripts/test_check_provider_docs.py
 run_verify python3 scripts/test_semgrep_rules.py
 
@@ -124,6 +170,46 @@ run_go_gates() {
   run_verify go vet ./...
   if [[ -d cmd/mivia ]]; then
     run_verify go build -o /dev/null ./cmd/mivia
+  fi
+
+  # Mutation sweep, moved here from pre-commit. It runs one `go test` per
+  # mutation site, so its cost scales with the diff; on a broad change that ran
+  # past ten minutes on EVERY commit, until the supervisor killed it and the
+  # commit failed with a timeout traceback rather than a verdict. A gate that
+  # cannot finish enforces nothing, and one that makes committing unaffordable
+  # gets bypassed.
+  #
+  # This is the same sweep, at the boundary that actually matters: nothing
+  # reaches a remote unswept. It sweeps the PUSH RANGE rather than the index -
+  # `--staged` reads `git diff --cached`, which is empty here - so it covers
+  # every commit being pushed, not just the last one.
+  if command -v go >/dev/null 2>&1; then
+    # The same ranges the secret scan built from git's stdin ref lines (or
+    # the HEAD fallback / env override). The arrays are shell globals filled
+    # before any child ran; a pair with no base keeps the skip notice, since
+    # there is nothing to diff that range against.
+    local i
+    for i in "${!PUSH_TIPS[@]}"; do
+      if [[ -n "${PUSH_BASES[$i]}" ]]; then
+        run_verify python3 "$ROOT/scripts/check_mutation.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+        # test-quality and diff-coverage, on the SAME push range. Both are
+        # part of CI's `verify` job (make verify -> test-quality, and
+        # verify-go -> diff-coverage), and neither ran here before, so the
+        # two failure classes they own reached CI unfiltered: an unregistered
+        # t.Skip and an uncovered changed line. Both are cheap to fix and
+        # expensive to discover from a red pipeline fifteen minutes later.
+        #
+        # Range-scoped, not --diff/--staged, for the same reason the mutation
+        # sweep is: those modes read the working tree or the index, which are
+        # empty at push time, so they inspect at most the last commit while CI
+        # judges every commit being pushed. A local pass that looked at less
+        # than CI is what made "green locally, red in CI" the normal outcome.
+        run_verify python3 "$ROOT/scripts/check_test_quality.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+        run_verify python3 "$ROOT/scripts/diff_coverage.py" --base "${PUSH_BASES[$i]}" --tip "${PUSH_TIPS[$i]}"
+      else
+        printf 'pre-push: no base for a mutation range; skipping sweep\n' >&2
+      fi
+    done
   fi
 }
 

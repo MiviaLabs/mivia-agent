@@ -23,7 +23,7 @@ func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MIVIA_CONFIG", "")
 	_, err := Load(LoadOptions{AllowMissingConfig: true})
-	if err == nil || !strings.Contains(err.Error(), "models must be non-empty") {
+	if err == nil || !strings.Contains(err.Error(), "is not configured") {
 		t.Fatalf("missing config error = %v", err)
 	}
 }

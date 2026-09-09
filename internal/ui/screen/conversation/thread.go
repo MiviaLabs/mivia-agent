@@ -105,23 +105,7 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 				})
 			}
 			for _, tc := range m.ToolCalls {
-				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
-					Kind: uievent.KindToolStart,
-					Body: uievent.ToolStartBody{
-						ToolCallID: tc.ID,
-						Name:       tc.Name,
-						Args:       parseToolArgs(tc.Arguments),
-					},
-				})
-				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
-					Kind: uievent.KindToolEnd,
-					Body: uievent.ToolEndBody{
-						ToolCallID: tc.ID,
-						Name:       tc.Name,
-						OK:         true,
-						Result:     tc.Output,
-					},
-				})
+				s.transcript = replayHistoricalToolCall(s.transcript, tc)
 				if isSubagentTool(tc.Name) || (s.threads != nil && isThreadRegistered(s.threads, tc.ID)) {
 					status := "completed"
 					if tc.Output == "" && isLastMsg && m.Text == "" {
@@ -134,8 +118,9 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 							} `json:"tasks"`
 						}
 						if json.Unmarshal([]byte(tc.Arguments), &args) == nil && len(args.Tasks) > 0 {
+							resultAgents := historicalTaskAgents(tc.Output, tc.ID)
 							for i, t := range args.Tasks {
-								tid := t.ID
+								tid := strings.TrimSpace(t.ID)
 								if tid == "" {
 									// Must match dispatchTaskIDs' fallback in
 									// events.go: never embed the raw
@@ -148,13 +133,13 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 									// was tc.ID+":"+t.ID, not t.ID verbatim.
 									tid = namespacedTaskID(tc.ID, tid)
 								}
-								s.panel.observeAgentHistory(tid, status)
+								s.panel.observeAgentHistory(tid, status, resultAgents[tid])
 							}
 						} else {
-							s.panel.observeAgentHistory(tc.ID, status)
+							s.panel.observeAgentHistory(tc.ID, status, "")
 						}
 					} else {
-						s.panel.observeAgentHistory(tc.ID, status)
+						s.panel.observeAgentHistory(tc.ID, status, "")
 					}
 				}
 			}
@@ -168,6 +153,41 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 		}
 	}
 	s.refreshTopbar()
+}
+
+// historicalTaskAgents reconstructs routed names from a persisted
+// dispatch_tasks result. The result task_id is the full namespaced identity;
+// matching that identity avoids assigning one parallel task's agent to
+// another task with the same legacy suffix.
+func historicalTaskAgents(output, namespace string) map[string]string {
+	var rows []struct {
+		TaskID string `json:"task_id"`
+		Agent  string `json:"agent"`
+	}
+	if json.Unmarshal([]byte(output), &rows) != nil {
+		var envelope struct {
+			TaskResults []struct {
+				TaskID string `json:"task_id"`
+				Agent  string `json:"agent"`
+			} `json:"task_results"`
+		}
+		if json.Unmarshal([]byte(output), &envelope) != nil {
+			return nil
+		}
+		rows = envelope.TaskResults
+	}
+	result := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if row.TaskID == "" || row.Agent == "" {
+			continue
+		}
+		fullID := row.TaskID
+		if namespace == "" || !strings.HasPrefix(fullID, namespace+":") {
+			fullID = namespacedTaskID(namespace, fullID)
+		}
+		result[fullID] = row.Agent
+	}
+	return result
 }
 
 // setSurface is the embedded screen's resize entry point: the dialog
@@ -199,6 +219,12 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 		s.thread.SetHideComposer(true)
 		return true, nil
 	}
+	// DETACH, not abort: this drops the previous thread's UI listener. It
+	// relies on the subagent transcript handles' divergent Cancel (see
+	// ports.TurnHandle.Cancel). conv here is whatever SubagentThreads.Thread
+	// returned, and a FOREIGN ports.Conversation implementing Cancel to the
+	// port's letter would have a real turn aborted here. Only register
+	// detach-implementing conversations with SubagentThreads.
 	if s.thread != nil && s.thread.active != nil {
 		s.thread.active.Cancel()
 	}
@@ -208,6 +234,12 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	}
 	thread := NewThread(s.Theme, s.Tier, conv, render.DialogBodyWidth(contentWidth(s.width)), s.now)
 	thread.themes = s.themes
+	// One surface, one spinner clock: the embedded thread screen shares
+	// the parent's in-flight flag so a thread turn and the main turn
+	// cannot each run their own self-re-arming tick loop.
+	if s.tickArmed != nil {
+		thread.tickArmed = s.tickArmed
+	}
 	thread.threadID = callID
 	thread.SetCommands(s.composer.Commands())
 	thread.SetCommandRunner(s.runner)
@@ -227,6 +259,8 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 // the thread Conversation keeps the authoritative history, so a later
 // reopen rebuilds from it without losing anything.
 func (s *Screen) closeThread() {
+	// DETACH, not abort - same divergence and same foreign-conversation
+	// hazard as openThread's call above; see ports.TurnHandle.Cancel.
 	if s.thread != nil && s.thread.active != nil {
 		s.thread.active.Cancel()
 	}
@@ -241,61 +275,12 @@ func (s *Screen) closeThread() {
 // Everything else goes to the embedded screen's OWN Update - its composer,
 // its completion menu, its transcript - never the main chat's.
 func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+b", "ctrl+c":
+	if msg.String() == "esc" || msg.String() == "ctrl+b" || msg.String() == "ctrl+c" {
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 		return s, tea.ClearScreen
-	case "pgup":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "pgdown":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "home", "ctrl+home":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollToTop()
-			return s, nil
-		}
-	case "end", "ctrl+end":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollToBottom()
-			return s, nil
-		}
-	case "ctrl+u":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "ctrl+d":
-		if s.thread != nil {
-			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
-			return s, nil
-		}
-	case "up":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
-			return s, nil
-		}
-	case "down":
-		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
-			s.thread.transcript = s.thread.transcript.ScrollBy(1)
-			return s, nil
-		}
-	// Typeable keys belong to any composer that can take input; j and k scroll only hidden-composer dialogs.
-	case "k":
-		if s.thread != nil && s.thread.hideComposer {
-			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
-			return s, nil
-		}
-	case "j":
-		if s.thread != nil && s.thread.hideComposer {
-			s.thread.transcript = s.thread.transcript.ScrollBy(1)
-			return s, nil
-		}
+	}
+	if next, cmd, handled := s.threadDialogScrollKey(msg); handled {
+		return next, cmd
 	}
 	if s.thread == nil {
 		return s, nil
@@ -314,6 +299,95 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		s.thread = &t
 	}
 	return s, cmd
+}
+
+// threadDialogScrollKey handles every named key threadDialogKey answers
+// itself rather than forwarding to the embedded screen's Update: scrolling
+// (pgup/pgdown/home/end/ctrl+u/ctrl+d/up/down/j/k, gated the same way the
+// original single switch was) plus tab/shift+tab/x, which mirror the main
+// transcript's own ContextTranscript bindings
+// (keymap.IDFocusNext/IDFocusPrev/IDCancelToolCall) at THIS dialog's own
+// transcript: the composer is always hidden here (see openThread's doc
+// comment), so there is no composer-side shift+tab to enter focus mode
+// from - these three cases are that entry point, plus navigation, plus the
+// cancel action, scoped to s.thread.transcript rather than the outer
+// s.transcript. See cancel_thread_tool_call.go's doc comment for why
+// reusing the same keys here is unambiguous. Split out of threadDialogKey
+// to keep it under the per-function line budget; reports handled=false for
+// any key not in this table so the caller falls through to its own
+// composer-Update path.
+func (s Screen) threadDialogScrollKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	composerReady := s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "")
+	hidden := s.thread != nil && s.thread.hideComposer
+	switch msg.String() {
+	case "pgup":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "pgdown":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "home", "ctrl+home":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollToTop()
+			return s, nil, true
+		}
+	case "end", "ctrl+end":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollToBottom()
+			return s, nil, true
+		}
+	case "ctrl+u":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "ctrl+d":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
+			return s, nil, true
+		}
+	case "up":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
+			return s, nil, true
+		}
+	case "down":
+		if composerReady {
+			s.thread.transcript = s.thread.transcript.ScrollBy(1)
+			return s, nil, true
+		}
+	// Typeable keys belong to any composer that can take input; j and k scroll only hidden-composer dialogs.
+	case "k":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
+			return s, nil, true
+		}
+	case "j":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.ScrollBy(1)
+			return s, nil, true
+		}
+	case "tab":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.FocusNext()
+			return s, nil, true
+		}
+	case "shift+tab":
+		if hidden {
+			s.thread.transcript = s.thread.transcript.FocusPrev()
+			return s, nil, true
+		}
+	case "x":
+		if hidden {
+			next, cmd := s.cancelFocusedThreadToolCall()
+			return next, cmd, true
+		}
+	}
+	return s, nil, false
 }
 
 // routeThreadDialogArrows turns up and down over a visible, non-empty

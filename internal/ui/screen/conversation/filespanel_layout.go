@@ -6,10 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/mark"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
 // panelWindowGroups clips row-groups to a window around the selected group,
@@ -33,8 +36,28 @@ func panelWindowRange(groups [][]string, selGroup, maxRows int, filterActive boo
 	return panelWindowGroupBounds(groupLens, selGroup, maxRows, filterActive)
 }
 
-// panelWindowGroupBounds computes the [startGroup, endGroup) slice bounds for row-groups
-// given their individual line heights.
+// panelWindowGroupBounds computes the [startGroup, endGroup) slice bounds
+// for row-groups given their individual line heights.
+//
+// The window is built out of WHOLE groups and never exceeds limit lines.
+// Both halves of that matter, and the previous version had only the
+// first: it picked a line range and then widened it outwards to whole
+// groups at each end, so a two-line agent group straddling either
+// boundary pushed the window over the limit. The caller draws into a
+// fixed pane and clips the overflow off the BOTTOM, so the rows lost
+// were the selected agent's - the row the window exists to show. With
+// twenty agents the selection fell off the pane entirely.
+//
+// The anchor group is always whole and always inside: it is the row the
+// next key acts on, and a window that clips it is a window that hides
+// the selection. Growth goes upward first, so a selection deep in a long
+// list settles at the BOTTOM of the pane - where the newest subagent is,
+// and where the eye already is on a list that has been growing.
+//
+// A single group taller than the whole limit still overflows; there is
+// no window that both holds it whole and fits. It is returned alone, so
+// what survives the caller's clip is its first line rather than someone
+// else's.
 func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive bool) (int, int) {
 	limit := maxRows
 	if filterActive && limit > 1 {
@@ -43,88 +66,28 @@ func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive
 	if limit <= 0 || len(groupLens) == 0 {
 		return 0, len(groupLens)
 	}
-	offsets := make([]int, len(groupLens)+1)
 	total := 0
-	for i, l := range groupLens {
-		offsets[i] = total
+	for _, l := range groupLens {
 		total += l
 	}
-	offsets[len(groupLens)] = total
 	if total <= limit {
 		return 0, len(groupLens)
 	}
-	selRow := 0
-	if selGroup >= 0 && selGroup < len(groupLens) {
-		selRow = offsets[selGroup]
+	anchor := selGroup
+	if anchor < 0 || anchor >= len(groupLens) {
+		anchor = 0
 	}
-	start := 0
-	if selRow >= limit {
-		start = selRow - limit + 1
+	lo, hi := anchor, anchor+1
+	used := groupLens[anchor]
+	for lo > 0 && used+groupLens[lo-1] <= limit {
+		lo--
+		used += groupLens[lo]
 	}
-	if start > total-limit {
-		start = total - limit
+	for hi < len(groupLens) && used+groupLens[hi] <= limit {
+		used += groupLens[hi]
+		hi++
 	}
-	end := start + limit
-	startGroup := 0
-	for startGroup < len(groupLens) && offsets[startGroup+1] <= start {
-		startGroup++
-	}
-	endGroup := len(groupLens)
-	for endGroup > 0 && offsets[endGroup-1] >= end {
-		endGroup--
-	}
-	return startGroup, endGroup
-}
-
-// panelGroupLens returns the line count of each group in the sidebar layout:
-// 1 line for SIDEBAR title, 1 line for files header, 1 line per file entry,
-// 1 line for subagents header, and 2 lines per agent row.
-func panelGroupLens(fileCount, agentCount int) []int {
-	lens := make([]int, 0, 3+fileCount+agentCount)
-	lens = append(lens, 1) // SIDEBAR title
-	lens = append(lens, 1) // files changed header
-	for i := 0; i < fileCount; i++ {
-		lens = append(lens, 1)
-	}
-	lens = append(lens, 1) // subagents header
-	for i := 0; i < agentCount; i++ {
-		lens = append(lens, 2)
-	}
-	return lens
-}
-
-// panelGroupToPickerIdx maps a group index to its corresponding picker cursor index,
-// or -1 if the group is a non-selectable header (SIDEBAR, files header, subagents header).
-func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
-	if gIdx < 2 {
-		return -1
-	}
-	if gIdx < 2+fileCount {
-		return gIdx - 2
-	}
-	if gIdx == 2+fileCount {
-		return -1
-	}
-	agentIdx := gIdx - (3 + fileCount)
-	if agentIdx >= 0 && agentIdx < agentCount {
-		return fileCount + agentIdx
-	}
-	return -1
-}
-
-// panelSelGroup computes the group index for the currently selected picker item.
-func panelSelGroup(selIdx, fileCount, agentCount int) int {
-	if selIdx < 0 {
-		return -1
-	}
-	if selIdx < fileCount {
-		return 2 + selIdx
-	}
-	agentIdx := selIdx - fileCount
-	if agentIdx < agentCount {
-		return 3 + fileCount + agentIdx
-	}
-	return -1
+	return lo, hi
 }
 
 // flattenGroups concatenates row-groups back into a flat line list, in
@@ -146,6 +109,218 @@ func clipRowsToWidth(rows []string, inner int) []string {
 		}
 	}
 	return rows
+}
+
+// panelModelRow draws the sidebar's model row: the provider dimmed and
+// the model name in the foreground role, with the same "> " marker and
+// selection background the file rows use. The context share is its own
+// section (panelContextRows), not a suffix here.
+func (s Screen) panelModelRow(selected bool) string {
+	info := s.topbar.Info()
+	name := info.Name
+	if name == "" {
+		name = "no model"
+	}
+	prefix, style := "  ", render.Role(s.Theme, s.Tier, theme.RoleFG)
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	if selected {
+		prefix = "> "
+		style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
+		subtle = render.WithBg(subtle, s.Theme, s.Tier, theme.RoleBGSelection)
+	}
+	row := subtle.Render(prefix)
+	if info.Provider != "" {
+		row += subtle.Render(info.Provider + "/")
+	}
+	row += style.Render(name)
+	return row
+}
+
+// contextDetailMinRows is the sidebar body height at which the context
+// section earns its detail block. Below it the section stays at its three
+// summary rows so files and subagents - the live things - keep the column.
+const contextDetailMinRows = 24
+
+// contextSummaryRows and contextDetailRows are the section's two heights:
+// header + bar + totals, and those plus one row per bucket. A capped budget
+// adds one more row in either mode to say so.
+const (
+	contextSummaryRows = 3
+	contextDetailRows  = contextSummaryRows + 9
+)
+
+// contextSectionRows is how many rows the context section draws in a sidebar
+// body of maxRows. Every consumer of the sidebar's group map calls it, so the
+// click map and the drawn rows cannot disagree about the section's height.
+//
+// The height depends on the body and on whether the budget is capped, both of
+// which are fixed for a session, so nothing below the section moves as tokens
+// accumulate.
+func (s Screen) contextSectionRows(maxRows int) int {
+	if s.panel.contextCollapsed {
+		return 1 // the header alone
+	}
+	rows := contextSummaryRows
+	if maxRows >= contextDetailMinRows {
+		rows = contextDetailRows
+	}
+	if s.topbar.Info().BudgetIsCapped() {
+		rows++
+	}
+	return rows
+}
+
+// tokensShort renders a token count the way the sidebar's narrow column can
+// carry it: "940", "21k", "1.2M". It matches chat.FormatTokenK's k convention
+// rather than inventing a second one, and adds the M step because a 1M-window
+// model would otherwise print a four-digit k.
+func tokensShort(n int64) string {
+	switch {
+	case n < 0:
+		return "0"
+	case n < 1000:
+		return strconv.FormatInt(n, 10)
+	case n < 1_000_000:
+		return strconv.FormatInt(n/1000, 10) + "k"
+	default:
+		// One decimal, but never a bare ".0": a 1M window is "1M", not
+		// "1.0M", and the extra glyph is a column the sidebar cannot spare.
+		return strings.TrimSuffix(strconv.FormatFloat(float64(n)/1_000_000, 'f', 1, 64), ".0") + "M"
+	}
+}
+
+// panelSpreadRow lays a label against a value across the sidebar's full inner
+// width, the label left and the value right. When the two cannot both fit the
+// value wins: it is the number the row exists to report, and a clipped label
+// is still readable from its first letters.
+func panelSpreadRow(inner int, label, value string, labelStyle, valueStyle lipgloss.Style) string {
+	if inner <= 0 {
+		return ""
+	}
+	valueW := ansi.StringWidth(value)
+	if valueW >= inner {
+		return valueStyle.Render(ansi.Truncate(value, inner, ""))
+	}
+	label = ansi.Truncate(label, max(0, inner-valueW-1), "")
+	gap := inner - ansi.StringWidth(label) - valueW
+	return labelStyle.Render(label) + strings.Repeat(" ", gap) + valueStyle.Render(value)
+}
+
+// panelContextBar draws the fill as two runs rather than one: the floor - the
+// system prompt, tool schemas and carried memory that are on every request
+// whatever was said - in the dimmest role, and the conversation on top of it
+// in the share's own role. The split is the actionable one, because only the
+// second run is what compaction can give back. Empty cells keep the hollow
+// glyph, so the floor run stays distinguishable from open space even in a
+// theme where the two roles are close.
+func (s Screen) panelContextBar(inner, pct, floorPct int) string {
+	if inner <= 0 {
+		return ""
+	}
+	full, empty := render.ContextGlyphs(s.Tier)
+	fill := render.ContextCells(pct, inner)
+	floor := min(fill, render.ContextCells(floorPct, inner))
+	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	share := render.Role(s.Theme, s.Tier, render.ContextRole(pct))
+	return border.Render(strings.Repeat(full, floor)) +
+		share.Render(strings.Repeat(full, fill-floor)) +
+		border.Render(strings.Repeat(empty, inner-fill))
+}
+
+// panelContextRows draws the sidebar's first section. Three rows always: a
+// "context" header with the share of the budget in use, the two-tone bar, and
+// what that share is in tokens. On a tall enough body (contextDetailMinRows) a
+// bucket block follows, one row each, answering the question the bar raises -
+// which of these can I actually get back. The rows sum to the header's own
+// number because the accounting scales them to it (chat.ContextBreakdown).
+//
+// The row count depends only on maxRows, never on what the session holds, so
+// nothing below the section moves as tokens accumulate (ux-rules 2.7).
+func (s Screen) panelContextRows(inner, maxRows int) []string {
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	pct, known := s.topbar.ContextPercent()
+	usage := s.topbar.Usage()
+	budget := s.topbar.Info().ContextWindow
+
+	share, shareStyle := "unknown", subtle
+	if known {
+		share, shareStyle = strconv.Itoa(pct)+"%", render.Role(s.Theme, s.Tier, render.ContextRole(pct))
+	}
+	header := panelSpreadRow(inner,
+		sectionMarker(s.panel.contextCollapsed)+"context", share, subtle, shareStyle)
+	if s.panel.contextCollapsed {
+		// Folded, the section keeps the one fact a folded gauge must
+		// still carry: how full the window is. Hiding that would make
+		// folding cost the reader the thing they fold everything else to
+		// keep an eye on.
+		return []string{header}
+	}
+	rows := []string{
+		header,
+		s.panelContextBar(inner, pct, floorPercent(usage, budget)),
+	}
+
+	totals := ""
+	if known {
+		totals = panelSpreadRow(inner,
+			tokensShort(usage.InputTokens)+" of "+tokensShort(budget),
+			tokensShort(max(0, budget-usage.InputTokens))+" free", border, border)
+	}
+	rows = append(rows, totals)
+
+	// A budget far below the model's own window is a choice made in config,
+	// not the model's limit. Unsaid, the gauge reads as capacity that went
+	// missing: a 400k budget on a 1M-window model looks like 600k lost.
+	if info := s.topbar.Info(); info.BudgetIsCapped() {
+		rows = append(rows, panelSpreadRow(inner,
+			"capped from "+tokensShort(info.DeclaredWindow), "", border, border))
+	}
+
+	if maxRows < contextDetailMinRows {
+		return rows
+	}
+	b := usage.Breakdown
+	for _, bucket := range []struct {
+		label  string
+		tokens int64
+	}{
+		{"system", b.System},
+		{"tools (" + strconv.Itoa(b.ToolCount) + ")", b.ToolSchemas},
+		// MCP schemas get their own row because they are the part of the
+		// floor an operator can actually remove, by turning a server off.
+		// Named for what supplies them rather than the generic "servers":
+		// the reader is looking for the cost of their MCP setup, and a row
+		// that does not say "mcp" is a row they scan past. Drawn at zero
+		// when no server is connected, so the block keeps its height.
+		{"mcp (" + strconv.Itoa(b.ExternalToolCount) + ")", b.ExternalSchemas},
+		{"memory", b.Memory + b.Summary},
+		// An invoked skill's instruction body rides as a user message, so
+		// folding it into "messages" hid what a live turn is actually
+		// spending on it. Reads zero between turns by design: the session
+		// persists "/skill args" rather than the body (see
+		// chat.ContextBreakdown.Skills).
+		{"skills (" + strconv.Itoa(b.SkillCount) + ")", b.Skills},
+		{"messages", b.Prose},
+		{"results", b.ToolResults},
+		{"thinking", b.Reasoning},
+		// What the provider is pricing that the session has not adopted yet.
+		// It empties into the rows above when the turn finishes.
+		{"this turn", b.Pending},
+	} {
+		rows = append(rows, panelSpreadRow(inner, bucket.label, tokensShort(bucket.tokens), border, subtle))
+	}
+	return rows
+}
+
+// floorPercent is the share of the budget taken by the parts compaction
+// cannot reclaim. It returns 0 when the budget is unknown, so an unbound
+// session draws no floor rather than a bar computed against nothing.
+func floorPercent(usage ports.Usage, budget int64) int {
+	if budget <= 0 {
+		return 0
+	}
+	return int(usage.Breakdown.Floor() * 100 / budget)
 }
 
 func (s Screen) panelFileRow(e fileEntry, selected bool) string {
@@ -187,12 +362,8 @@ func (s Screen) panelFileRow(e fileEntry, selected bool) string {
 	return row
 }
 
-// statusBadgeRole maps a subagent row's display status to its badge color.
-// theme.RoleInfo is the default for "running"/"pending" (no explicit case),
-// so every terminal status needs its own case here - otherwise it renders
-// indistinguishably from an actively running row, defeating the point of
-// adding it to the terminal vocabulary (isTerminalStatus).
-func statusBadgeRole(status string) theme.Role {
+// statusIndicatorRole maps a subagent row's display status to its indicator color.
+func statusIndicatorRole(status string) theme.Role {
 	switch status {
 	case "completed", "done":
 		return theme.RoleSuccess
@@ -207,6 +378,11 @@ func statusBadgeRole(status string) theme.Role {
 	default:
 		return theme.RoleInfo
 	}
+}
+
+// statusBadgeRole is retained as an alias for statusIndicatorRole for backward compatibility.
+func statusBadgeRole(status string) theme.Role {
+	return statusIndicatorRole(status)
 }
 
 // formatElapsed renders a duration as the sidebar's compact elapsed label
@@ -246,76 +422,123 @@ func elapsedFor(a subagentRow, now time.Time) time.Duration {
 	return now.Sub(a.StartedAt)
 }
 
-// panelAgentRow renders one subagent as two lines: the name/status badge
+// subagentMark renders the visual status indicator for a subagent status,
+// matching the visual language used across session listings (sessionMark in sessionpicker.go)
+// and cockpit status marks. For animated states (running, thinking, stalled),
+// it synchronizes with the statusline spinner frame so the glyph animates live.
+func (s Screen) subagentMark(status string) string {
+	frame := s.statusline.Frame()
+	switch status {
+	case "running":
+		m := mark.New(s.Theme, s.Tier, mark.Running)
+		m.SetFrame(frame)
+		return render.Role(s.Theme, s.Tier, statusIndicatorRole(status)).Render(string(m.Glyph()))
+	case "thinking":
+		m := mark.New(s.Theme, s.Tier, mark.Thinking)
+		m.SetFrame(frame)
+		return render.Role(s.Theme, s.Tier, statusIndicatorRole(status)).Render(string(m.Glyph()))
+	case statusStalled:
+		m := mark.New(s.Theme, s.Tier, mark.Thinking)
+		m.SetFrame(frame)
+		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render(string(m.Glyph()))
+	case "failed", "error", "interrupted", "timed_out":
+		return mark.New(s.Theme, s.Tier, mark.Failed).View()
+	case "completed", "done":
+		return mark.New(s.Theme, s.Tier, mark.Done).View()
+	case "cancelled", "canceled":
+		return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("○")
+	default:
+		return mark.New(s.Theme, s.Tier, mark.Idle).View()
+	}
+}
+
+// panelAgentRow renders one subagent as two lines: the indicator/name
 // (selectable, matches rowLabel), and an indented metrics line carrying
 // Elapsed/Tools/Step - moved here from the chat transcript (which used to
 // live-rewrite a churning "elapsed=Xs steps=N" line into the middle of the
 // scrollback on every heartbeat) so this sidebar row is the one live-updating
 // surface for subagent progress.
-func (s Screen) panelAgentRow(a subagentRow, selected bool) []string {
-	prefix := "  · "
+func (s Screen) panelAgentRow(a subagentRow, inner int, selected bool) []string {
+	prefix := "  "
+	if selected {
+		prefix = "> "
+	}
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
 	if selected {
-		prefix = "> · "
 		fg = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
-	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
 	// displayStatus derives "stalled" at render time from the row's stall
 	// clock (agent_stall.go); the stored status itself never changes.
 	status := s.panel.displayStatus(a)
-	var statusBadge string
-	if status != "" {
-		statusStyle := render.Role(s.Theme, s.Tier, statusBadgeRole(status))
-		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
-	}
-	nameLine := subtle.Render(prefix) + fg.Render(a.displayName()) + statusBadge
-	metrics := fmt.Sprintf("Elapsed: %s, Tools: %d, Step: %d",
-		formatElapsed(elapsedFor(a, s.now())), a.ToolCalls, a.Step)
-	metricsLine := subtle.Render("      " + metrics)
+	indicator := s.subagentMark(status)
+	nameLine := subtle.Render(prefix) + indicator + " " + fg.Render(a.displayName())
+	// inner, not panelInnerWidth(): that one is the WIDE layout's nav
+	// pane, and the narrow layout draws these rows at full content
+	// width. Fitting to the wrong width dropped "step N" with most of
+	// the terminal still empty.
+	metricsLine := subtle.Render(agentMetrics(a, elapsedFor(a, s.now()), inner))
 	return []string{nameLine, metricsLine}
 }
 
-func (s Screen) panelRows(inner, maxRows int) []string {
-	visible, agents := s.panelFilterEntries("")
+// agentMetricsIndent aligns the metrics line under the name text, past
+// the "  · " prefix the name line draws.
+const agentMetricsIndent = "      "
 
-	// selIdx is the picker's cursor row: the list is built files-then-
-	// agents in this exact order (rowLabels), so position - not the
-	// rendered label - is what identifies the highlighted row. Comparing
-	// by label instead marks every row that happens to render identically
-	// (concurrent same-named agents sharing a status, e.g. four
-	// "reviewer" rows all "running"), painting ">" on all of them.
-	selIdx := s.panel.list.CursorRow()
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	marked := s.panel.focused
-
-	var groups [][]string
-	selGroup := -1
-
-	if marked {
-		groups = append(groups, []string{render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR") + " " + subtle.Render("(focused)")})
-	} else {
-		groups = append(groups, []string{subtle.Render("  SIDEBAR")})
+// agentMetrics is a subagent row's second line, fitted to the sidebar.
+//
+// It DEGRADES rather than clips. The line was one fixed string cut to
+// width by clipRowsToWidth, which on a narrow sidebar produced
+// "Elapsed: 0s, Tools:" - a label with its number sliced off, the one
+// part of the line that carries information. Dropping whole facts from
+// the right instead means every fact still on the line is complete, and
+// the elapsed time - the fact a reader watching a long run actually
+// wants - is the last one to go.
+//
+// The " · " join is the compact meta grammar the transcript's own header
+// meta uses, so the two surfaces read alike.
+func agentMetrics(a subagentRow, elapsed time.Duration, inner int) string {
+	parts := []string{
+		formatElapsed(elapsed),
+		strconv.Itoa(a.ToolCalls) + " tools",
+		"step " + strconv.Itoa(a.Step),
 	}
-
-	groups = append(groups, []string{subtle.Render("files changed (" + strconv.Itoa(len(visible)) + ")")})
-	for i, e := range visible {
-		if i == selIdx {
-			selGroup = len(groups)
+	budget := inner - len(agentMetricsIndent)
+	for n := len(parts); n > 1; n-- {
+		line := strings.Join(parts[:n], " · ")
+		if ansi.StringWidth(line) <= budget {
+			return agentMetricsIndent + line
 		}
-		groups = append(groups, []string{s.panelFileRow(e, marked && i == selIdx)})
 	}
-	groups = append(groups, []string{subtle.Render("subagents (" + strconv.Itoa(len(agents)) + ")")})
-	for i, a := range agents {
-		idx := len(visible) + i
-		if idx == selIdx {
-			selGroup = len(groups)
-		}
-		groups = append(groups, s.panelAgentRow(a, marked && idx == selIdx))
-	}
+	return agentMetricsIndent + parts[0]
+}
 
-	groups = panelWindowGroups(groups, selGroup, maxRows, false)
-	return clipRowsToWidth(flattenGroups(groups), inner)
+// sectionCaption is a section header's text: its name, its count, and -
+// when the section has anything to fold - the fold marker that says so.
+// A header with no marker is a caption, and left/right do nothing on it,
+// which is the same rule the transcript's blocks follow.
+func (s Screen) sectionCaption(name string, count int, foldable, collapsed bool) string {
+	caption := name + " (" + strconv.Itoa(count) + ")"
+	if !foldable {
+		return caption
+	}
+	return sectionMarker(collapsed) + caption
+}
+
+// panelSectionHeader draws a header row, reverse-video when the cursor is
+// on it. Reverse rather than a coloured marker: the header is a full-width
+// label with no leading glyph column of its own to spend, and reverse
+// inherits the theme's contrast so it stays legible under any palette
+// (ux-rules 6.3-6.4).
+func (s Screen) panelSectionHeader(inner int, row string, selected bool) string {
+	if !selected {
+		return row
+	}
+	plain := ansi.Strip(row)
+	if w := ansi.StringWidth(plain); w < inner {
+		plain += strings.Repeat(" ", inner-w)
+	}
+	return render.Role(s.Theme, s.Tier, theme.RoleFG).Reverse(true).Render(plain)
 }
 
 // dialogParts is the content dialog's title, body, and hint. A
@@ -357,6 +580,13 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	return title, strings.Join(rows[start:end], "\n"), "d diff/source  any key closes"
 }
 
+// panelInnerWidth is the sidebar's usable column count in the wide
+// layout: the nav pane minus its gutter. The context bar fills it.
+func (s Screen) panelInnerWidth() int {
+	_, navW := render.SplitWidths(contentWidth(s.width))
+	return max(1, navW-3)
+}
+
 // panelFrameRows draws the wide layout's panes and returns exactly
 // paneH rows: the chat column in the left reading pane (or the content
 // dialog over that pane, with the list still visible beside it) and the
@@ -364,9 +594,9 @@ func (s Screen) dialogParts() (title, body, hint string) {
 func (s Screen) panelFrameRows() []string {
 	w := contentWidth(s.width)
 	paneH := max(1, s.contentHeight())
-	readingW, navW := render.SplitWidths(w)
+	readingW, _ := render.SplitWidths(w)
 
-	innerNavW := max(1, navW-3)
+	innerNavW := s.panelInnerWidth()
 	innerNavH := max(1, paneH-2)
 
 	s.topbar.SetWidth(readingW)
@@ -452,6 +682,9 @@ func (s Screen) centerRows() []string {
 	case s.effortPicker != nil:
 		dw, dh := s.dialogSize()
 		return overlayRows(renderPickerDialog(s.Theme, s.Tier, dw, dh, "select reasoning effort", *s.effortPicker), s.transcriptHeight())
+	case s.login != nil:
+		dw, dh := s.dialogSize()
+		return overlayRows(renderLoginDialog(s.Theme, s.Tier, dw, dh, *s.login), s.transcriptHeight())
 	case s.panel.dialog && s.panelDialogFits():
 		title, body, hint := s.dialogParts()
 		dw, dh := s.dialogSize()

@@ -68,7 +68,7 @@ The tool is registered only when at least one command is configured and its argv
 | `fetch_url` | Fetch and read a public web page; private and internal addresses are blocked |
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
-The built-in tool catalog is `read_file`, `list_dir`, `grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `get_diagnostics`, `search`, `fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, and `read_skill_resource`. When memory is enabled, `memory_save` and `memory_search` are also available. Configured MCP servers add scoped remote tools after discovery. Workflow tools are a separate surface; see the [Workflow guide](workflows-guide.md).
+The built-in tool catalog is `read_file`, `list_dir`, `grep`, `glob`, `inspect_repository`, `write_file`, `search_replace`, `multi_edit`, `delete_file`, `run_command`, `get_diagnostics`, `search`, `fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, `find_symbol_context`, and `read_skill_resource`. When memory is enabled, `memory_save`, `memory_search`, and `memory_delete` are also available. Configured MCP servers add scoped remote tools after discovery. Workflow tools are a separate surface; see the [Workflow guide](workflows-guide.md).
 
 Session tools and run-record tools are separate surfaces. They are not valid agent-file allowlist names.
 
@@ -95,7 +95,7 @@ Named agents are file-backed definitions. They live in two places:
 
 Select an agent with `mivia chat --agent <name>` or `/agent <name>`. If a file-backed `mivia` definition exists, it is selected as the root session when no agent is specified. Otherwise mivia uses a built-in default agent. The built-in default is not a file-backed definition and cannot be selected with `--agent`.
 
-Each filename is `<name>.toml`. The in-file `name` must match the lowercase filename. The parser rejects unknown keys and malformed or unsafe names. Definitions may inherit only from another definition of the same source, user or workspace. Cross-source inheritance is not allowed. The authored fields are:
+Each definition file is `<name>.md` (Markdown with a YAML frontmatter block) or `<name>.toml`. The in-file `name` must match the lowercase filename. The parser rejects unknown keys and malformed or unsafe names. Definitions may inherit only from another definition of the same source, user or workspace. Cross-source inheritance is not allowed. The authored fields are:
 
 | Field | Role |
 |-------|------|
@@ -125,13 +125,13 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 - Skill names are validated against the loaded skill catalog.
 - Workspace agent files always load. The user-owned `load_workspace_config` gate defaults to enabled. It controls only workspace prompt and project-skill surfaces. Set it to `false` to exclude project skills and workspace `[chat]`/`[subagents]` prompts from runtime activation.
 
-Every `dispatch_tasks` task may select a named `agent` and an optional separate `skill`. Omitting `agent` runs the task as a bare one-shot LLM call on the caller's own model, with no tools; setting `skill` without `agent` is rejected. mivia rejects the call if a selected agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Every `dispatch_tasks` task may select a named `agent` and an optional separate `skill`. If `agent` is omitted or blank, mivia uses the built-in `general-purpose` agent when it is available. If that built-in is unavailable, the task uses a bare one-shot LLM call with no tools; a skill then requires an available agent. mivia rejects the call if the effective agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 The task agent setting is separate from direct user-invoked skill slash handlers and prompt turns.
 
 ## Skills
 
-A skill is a reusable task template. It is a `SKILL.md` file with optional YAML frontmatter. Skills live in `~/.mivia/skills/` (user) or `.mivia/skills/` (workspace).
+A skill is a reusable task template. It is a `SKILL.md` file with optional YAML frontmatter. Skills live in `~/.mivia/skills/` (user) or `.agents/skills/` (workspace).
 
 Pre-built skills include:
 
@@ -302,13 +302,13 @@ Hooks are safety scripts that a project can set. They run at fixed moments durin
 
 ## Safety and limits
 
-- Paths must stay under `--workspace` (default: current directory), unless `--full-disk` is passed by the operator.
+- Paths must stay under `--workspace` (default: current directory), unless `--full-disk` is passed by the operator, or the operator's own user config enables `[workspace_access] full_disk`.
 - File-tool secret filtering is controlled by `[tools].secret_path_patterns` and `[tools].secret_path_exceptions`. With no patterns, secret-like paths are not filtered.
 - `run_command` receives an argv array, not a shell command string, and needs a configured program allowlist.
 - Redaction is also configuration-controlled. Do not put secrets in prompts. Do not rely on tool filtering as a security boundary.
 - Run results are stored by content reference and exposed to the model through bounded references. Stored content is raw at rest, even when a privacy policy redacts displayed content. Protect the store and keep secrets out of prompts.
 
-`--full-disk` lifts the workspace confinement: file tools (`read_file`, `write_file`, `edit`, `list_dir`, `grep`, `glob`, etc.) may operate anywhere on the filesystem. This is an **operator-invocation flag only** — it cannot be set from workspace config (`.mivia/mivia.toml`), so a cloned repository cannot grant itself full disk access. The program allowlist, env allowlists, and the write-path denylist (`.git`, `.mivia/mivia.toml`) still apply to in-workspace paths even when `--full-disk` is active.
+`--full-disk` lifts the workspace confinement: file tools (`read_file`, `write_file`, `edit`, `list_dir`, `grep`, `glob`, etc.) may operate anywhere on the filesystem. The grant has two operator-owned sources: the `--full-disk` invocation flag, or `[workspace_access] full_disk = true` in the operator's own USER config (`~/.mivia/mivia.toml`) — settable from the TUI's Settings → General ("full disk access"), which persists AND applies live to the running session. It cannot come from workspace config (`.mivia/mivia.toml`): the key is read only from the fixed user config path, never from the workspace-overlay-merged config, so a cloned repository cannot grant itself full disk access. The loud `FULL DISK ACCESS` disclosure fires for every source — the startup notice at launch, a permanent transcript notice on a live toggle (suppressed only by `--quiet` at launch). The program allowlist, env allowlists, and the write-path denylist (`.git`, `.mivia/mivia.toml`) still apply to in-workspace paths even when full disk is active.
 
 By default, one interactive turn has no step ceiling. Set `[chat] max_steps` to a positive number to cap turns, or use `/steps`. Ctrl-C cancels a reply in progress.
 

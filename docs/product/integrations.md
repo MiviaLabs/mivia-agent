@@ -12,9 +12,9 @@ providers are built in today:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
-| DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
+| OpenRouter (default) | `openai/gpt-5.6-luna` | `https://openrouter.ai/api/v1` |
 | Anthropic | `claude-sonnet-5` | `https://api.anthropic.com/v1` |
-| OpenRouter | `openai/gpt-5.6-luna` | `https://openrouter.ai/api/v1` |
+| DeepSeek | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
 | ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
 | Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
 | LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
@@ -23,7 +23,7 @@ providers are built in today:
 
 Every provider ships with the default model shown above. Selecting a
 provider under `[providers.<name>]` in `mivia.toml` is what activates it;
-until then, DeepSeek is the active default. mivia does not accept an
+until then, OpenRouter is the active default. mivia does not accept an
 arbitrary OpenAI-compatible provider name. See
 [Configuration](config.md#provider-support) for the full provider list, key
 setup, and the model catalog rule.

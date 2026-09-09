@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
@@ -120,6 +121,24 @@ type lockAttemptResult struct {
 	err     error
 }
 
+// abandonedLockAttempts tracks abandon-cleanup goroutines spawned when a
+// caller's context wins the race against an in-flight, uncancellable
+// AcquireWorkflowExecutionLock attempt (below). Those goroutines still touch
+// the lock store's directory after acquireWorkflowExecutionLockBounded has
+// already returned to its caller, so a caller that owns the directory's
+// lifetime (a test's t.TempDir(), or any other cleanup that removes the
+// store) must be able to wait for them before it tears the directory down -
+// drainAbandonedLockAttempts is that wait. Package-level because the
+// abandoned goroutine outlives the call stack that spawned it.
+var abandonedLockAttempts sync.WaitGroup
+
+// drainAbandonedLockAttempts blocks until every abandon-cleanup goroutine
+// spawned so far by acquireWorkflowExecutionLockBounded has finished. Safe to
+// call with none outstanding.
+func drainAbandonedLockAttempts() {
+	abandonedLockAttempts.Wait()
+}
+
 func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID string, maxWait time.Duration) (func(), error) {
 	deadline := time.Now().Add(maxWait)
 	backoff := lockPollBackoffBase
@@ -146,7 +165,9 @@ func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID s
 		case res := <-attempt:
 			release, err = res.release, res.err
 		case <-ctx.Done():
+			abandonedLockAttempts.Add(1)
 			go func() {
+				defer abandonedLockAttempts.Done()
 				if res := <-attempt; res.err == nil {
 					res.release()
 				}

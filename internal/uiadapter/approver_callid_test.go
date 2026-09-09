@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
-	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -30,8 +30,8 @@ func TestApprover_ResolveByToolCallIDFromContext(t *testing.T) {
 
 	const callID = "call-write-42"
 	// The SDK approval wrapper invokes the gate with the call's ctx,
-	// which carries toolcallctx.
-	gateCtx := toolcallctx.WithToolCall(context.Background(), sdkshape.ToolCall{
+	// which carries sdkagentloop.
+	gateCtx := sdkagentloop.WithToolCall(context.Background(), sdkshape.ToolCall{
 		ID: callID, Name: "write_file", Index: 0, Arguments: []byte(`{}`),
 	})
 

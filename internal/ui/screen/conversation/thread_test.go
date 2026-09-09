@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,13 @@ func (t stubThreads) Thread(callID string) (ports.Conversation, bool) {
 	return c, ok
 }
 
+// CancelSubagentTask is not exercised by these tests (they cover thread
+// rendering, not cancellation); it reports a clean miss.
+func (t stubThreads) CancelSubagentTask(string) (bool, error) { return false, nil }
+
+// CancelSubagentToolCall mirrors CancelSubagentTask's clean-miss stub.
+func (t stubThreads) CancelSubagentToolCall(string, string) (bool, error) { return false, nil }
+
 // agentEvent is one subagent progress observation.
 func agentEvent(id, status string, step, total int, log ...string) uievent.EventMsg {
 	return uievent.EventMsg{Event: uievent.Event{
@@ -79,6 +87,13 @@ func threadScreen(t *testing.T, threads ports.SubagentThreads, withFile bool) Sc
 	scr = n.(Screen)
 	scr.SetSubagentThreads(threads)
 	scr = openPanel(t, scr)
+	// openPanel lands on the model row; these tests act on sa-1, which
+	// sits after the model row and any file row.
+	if withFile {
+		scr.panel.selectNavKind(navAgent, 1)
+	} else {
+		scr.panel.selectNavKind(navAgent, 0)
+	}
 	return scr
 }
 
@@ -218,14 +233,21 @@ func TestSubagentThreadEscClosesWithoutLeaking(t *testing.T) {
 // TestArrowsWalkSubagentsToo: the list's cursor covers every section -
 // past the files onto the subagent rows, with the marker following.
 func TestArrowsWalkSubagentsToo(t *testing.T) {
-	s := threadScreen(t, nil, true)                         // one file, one subagent
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // file -> agent
-	s = next.(Screen)
+	s := threadScreen(t, nil, true) // one file, one subagent
+	// Walk with the arrow key rather than jumping: the point of the test
+	// is that the cursor CROSSES from the file section into the subagent
+	// section, so every stop on the way is part of the contract.
+	s.panel.selectNavKind(navFile, 0)
+	for i := 0; i < 2; i++ { // the file, then the subagents header
+		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
 	if a, ok := s.panel.selectedAgent(); !ok || a.ID != "sa-1" {
 		t.Fatalf("down did not walk onto the subagent row (selected %+v)", a)
 	}
 	view := s.View()
-	if !strings.Contains(ansi.Strip(view), "> · sa-1") {
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, ">") || !strings.Contains(plain, "sa-1") {
 		t.Errorf("the subagent row does not carry the cursor marker:\n%s", view)
 	}
 }
@@ -633,6 +655,7 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	// Open sidebar panel
 	scr = openPanel(t, scr)
 
+	scr.panel.selectNavKind(navAgent, 0)
 	// Focus is on the subagent row in the panel
 	a, isAgent := scr.panel.selectedAgent()
 	if !isAgent || a.ID != "call_disp_99:task-leak-check" {
@@ -750,7 +773,7 @@ func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 
 	// 2. Open sidebar and select sa-done (history)
 	scr = openPanel(t, scr)
-	scr.panel.list.MoveTo(0) // sa-done is first row
+	scr.panel.selectNavKind(navAgent, 0) // sa-done
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -772,7 +795,7 @@ func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 	// 3. Select sa-live (running subagent) - the composer stays hidden
 	// even though the subagent has not reached a terminal status: the
 	// operator has no real channel to it either way (see openThread).
-	scr.panel.list.MoveTo(1) // sa-live is second row
+	scr.panel.selectNavKind(navAgent, 1) // sa-live
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -808,6 +831,8 @@ func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
 
 	// Open subagent dialog while running: still read-only.
 	scr = openPanel(t, scr)
+	// Select by what the row IS: the header rows above it move.
+	scr.panel.selectNavKind(navAgent, 0) // sa-task
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
@@ -831,5 +856,114 @@ func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
 	ok, _ := scr.openThread("sa-task")
 	if !ok || !scr.thread.hideComposer {
 		t.Errorf("expected reopening cached completed thread to keep hideComposer=true, got ok=%v, hideComposer=%v", ok, scr.thread.hideComposer)
+	}
+}
+
+// TestLoadHistory_DispatchTasksMalformedArgumentsFallsBackToRawCallID pins
+// LoadHistory's own fallback when a dispatch_tasks tool call's Arguments
+// don't parse into the {"tasks":[...]} shape at all (or parse with zero
+// tasks): the whole call is recorded as one agent row keyed by its raw
+// provider call id, distinct from the per-task fallback
+// TestLoadHistory_DispatchTasksMissingIDFallbackIsFriendly covers.
+func TestLoadHistory_DispatchTasksMalformedArgumentsFallsBackToRawCallID(t *testing.T) {
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_disp_bad",
+					Name:      "dispatch_tasks",
+					Arguments: `not json`,
+					Output:    `{}`,
+				},
+			},
+		},
+	}
+	scr.LoadHistory(msgs)
+
+	found := false
+	for _, a := range scr.panel.agents {
+		if a.ID == "call_disp_bad" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a row keyed by the raw call id when Arguments don't parse, got %+v", scr.panel.agents)
+	}
+}
+
+// TestHistoricalTaskAgents_UnparsableOutputReturnsNil pins the case where
+// output matches neither the flat-array nor the {"task_results":[...]}
+// envelope shape.
+func TestHistoricalTaskAgents_UnparsableOutputReturnsNil(t *testing.T) {
+	if got := historicalTaskAgents(`not json at all`, "call_1"); got != nil {
+		t.Fatalf("historicalTaskAgents() = %+v, want nil for unparsable output", got)
+	}
+}
+
+// TestHistoricalTaskAgents_NamespacesABareTaskID pins the
+// namespacedTaskID call for a row whose task_id was persisted without the
+// namespace prefix a live dispatch always mints it with.
+func TestHistoricalTaskAgents_NamespacesABareTaskID(t *testing.T) {
+	got := historicalTaskAgents(`[{"task_id":"leak-check","agent":"researcher"}]`, "call_disp_99")
+	want := namespacedTaskID("call_disp_99", "leak-check")
+	if got[want] != "researcher" {
+		t.Fatalf("historicalTaskAgents() = %+v, want %q -> \"researcher\"", got, want)
+	}
+}
+
+// TestThreadDialogScrollKey_TabFocusesNextInHiddenComposerDialog pins the
+// tab-focuses-next branch: a subagent thread dialog always hides its
+// composer (openThread's own SetHideComposer(true) at both of its call
+// sites, never reset to false while the dialog is open), so tab always
+// reaches this scroll-key table rather than any composer-focus handling.
+func TestThreadDialogScrollKey_TabFocusesNextInHiddenComposerDialog(t *testing.T) {
+	thread := &scriptedThread{
+		events:  make(chan uievent.Event, 4),
+		history: []ports.Message{{Role: "user", Text: "scout"}, {Role: "assistant", Text: "scouted"}},
+	}
+	scr := threadScreen(t, stubThreads{"sa-1": thread}, false)
+	next, _ := scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+	if scr.thread == nil {
+		t.Fatal("expected the subagent thread dialog to open")
+	}
+	// Enter focus mode first (shift+tab, from the resting composer state)
+	// so plain tab has something to move FROM.
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	scr = next.(Screen)
+	before := scr.thread.transcript
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	scr = next.(Screen)
+	after := scr.thread.transcript
+	if reflect.DeepEqual(before, after) {
+		t.Fatal("tab in a hidden-composer thread dialog did not change transcript focus")
+	}
+}
+
+// TestThreadDialogScrollKey_ShiftTabFocusesPrevInHiddenComposerDialog
+// mirrors the tab test above for shift+tab's FocusPrev branch.
+func TestThreadDialogScrollKey_ShiftTabFocusesPrevInHiddenComposerDialog(t *testing.T) {
+	thread := &scriptedThread{
+		events:  make(chan uievent.Event, 4),
+		history: []ports.Message{{Role: "user", Text: "scout"}, {Role: "assistant", Text: "scouted"}},
+	}
+	scr := threadScreen(t, stubThreads{"sa-1": thread}, false)
+	next, _ := scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+	if scr.thread == nil {
+		t.Fatal("expected the subagent thread dialog to open")
+	}
+	before := scr.thread.transcript
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	scr = next.(Screen)
+	after := scr.thread.transcript
+	if reflect.DeepEqual(before, after) {
+		t.Fatal("shift+tab in a hidden-composer thread dialog did not change transcript focus")
 	}
 }

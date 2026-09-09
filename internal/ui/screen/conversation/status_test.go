@@ -26,7 +26,7 @@ func TestStatusRowShowsStatusTimerAndRightAlignedCancelHintDuringTurn(t *testing
 		ports.Usage{InputTokens: 40_000, OutputTokens: 22_000})
 
 	status := s.statusText()
-	if !strings.Contains(status, "thinking") {
+	if !strings.Contains(status, "THINKING") {
 		t.Errorf("got %q, want thinking status", status)
 	}
 	if strings.Contains(status, "ctx") {
@@ -69,7 +69,7 @@ func TestStatusRowRightAlignmentLayout(t *testing.T) {
 	s.active = fakeHandle{id: "t1"}
 	s.statusline.Start("thinking", fixedNow())
 	activeRow := ansi.Strip(s.statusRow())
-	if !strings.Contains(activeRow, "thinking") || strings.HasPrefix(activeRow, " ") {
+	if !strings.Contains(activeRow, "THINKING") || strings.HasPrefix(activeRow, " ") {
 		t.Errorf("expected active status row to start with status on the left, got %q", activeRow)
 	}
 	if !strings.HasSuffix(activeRow, "ctrl+c:quit") {

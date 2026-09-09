@@ -9,14 +9,14 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// countingChildDispatchCoordinator wraps a coordinator.Coordinator and counts
+// countingChildDispatchCoordinator wraps a *coordinator.Coordinator and counts
 // EnsureSingleTaskRun calls per child run ID, so a test can prove a resume
 // joins the persisted synthesis child without ever re-dispatching a member.
 // Access is single-threaded: a resume drives every child dispatch on the
 // Advance goroutine, and this type is only installed after setup's member
 // dispatch has already completed.
 type countingChildDispatchCoordinator struct {
-	coordinator.Coordinator
+	stepCoordinator
 	memberRunIDs        map[string]struct{}
 	synthesisRunID      string
 	memberDispatches    int
@@ -30,7 +30,7 @@ func (c *countingChildDispatchCoordinator) EnsureSingleTaskRun(ctx context.Conte
 	if req.RunID == c.synthesisRunID {
 		c.synthesisDispatches++
 	}
-	return c.Coordinator.EnsureSingleTaskRun(ctx, req)
+	return c.stepCoordinator.EnsureSingleTaskRun(ctx, req)
 }
 
 // missingSynthesisInputRepo wraps a Repository and returns ErrContentNotFound
@@ -76,9 +76,9 @@ func TestAdvancePanelStep_ResumeAfterSynthesisAdmittedJoinsSynthesisNotMembers(t
 	// synthesis child must be (that is the join).
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	counting := &countingChildDispatchCoordinator{
-		Coordinator:    runner.Coordinator,
-		memberRunIDs:   map[string]struct{}{},
-		synthesisRunID: attempt.PanelExecution.SynthesisRunID,
+		stepCoordinator: runner.Coordinator,
+		memberRunIDs:    map[string]struct{}{},
+		synthesisRunID:  attempt.PanelExecution.SynthesisRunID,
 	}
 	for _, m := range attempt.PanelExecution.Members {
 		counting.memberRunIDs[m.CoordinatorRunID] = struct{}{}
@@ -134,9 +134,9 @@ func TestAdvancePanelStep_ResumeSynthesisAdmittedFailsClosedOnMissingPersistedEn
 
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	counting := &countingChildDispatchCoordinator{
-		Coordinator:    runner.Coordinator,
-		memberRunIDs:   map[string]struct{}{},
-		synthesisRunID: attempt.PanelExecution.SynthesisRunID,
+		stepCoordinator: runner.Coordinator,
+		memberRunIDs:    map[string]struct{}{},
+		synthesisRunID:  attempt.PanelExecution.SynthesisRunID,
 	}
 	for _, m := range attempt.PanelExecution.Members {
 		counting.memberRunIDs[m.CoordinatorRunID] = struct{}{}

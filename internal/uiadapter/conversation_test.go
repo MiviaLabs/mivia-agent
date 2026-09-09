@@ -866,6 +866,9 @@ func TestHistory_CarriesDiffsFromPriorToolCalls(t *testing.T) {
 	if assistantMsg.ToolCalls[0].Output != msgs[2].Content {
 		t.Errorf("got tool call output %q, want %q", assistantMsg.ToolCalls[0].Output, msgs[2].Content)
 	}
+	if assistantMsg.ToolCalls[0].Diff == nil || assistantMsg.ToolCalls[0].Diff.Path != "foo/bar.go" {
+		t.Errorf("tool call diff = %+v, want diff for foo/bar.go", assistantMsg.ToolCalls[0].Diff)
+	}
 }
 
 func TestHistory_IncludesToolCallsAndReasoning(t *testing.T) {

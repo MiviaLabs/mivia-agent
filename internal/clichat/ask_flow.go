@@ -10,7 +10,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
@@ -29,7 +28,7 @@ func routingPolicyFromConfig(cfg config.MessagingRoutingConfig) agentmsg.Routing
 // handleAsk runs parent-routed Ask (plan 53.04). Returns tool JSON result.
 func (t *postMessageTool) handleAsk(
 	ctx context.Context,
-	c coordinator.Coordinator,
+	c chatCoordinator,
 	id runtime.TaskIdentity,
 	body string,
 	refs []string,
@@ -118,7 +117,7 @@ func (t *postMessageTool) mintAskMessage(
 }
 
 func parkBlockingAsk(
-	c coordinator.Coordinator, id runtime.TaskIdentity, msgID string,
+	c chatCoordinator, id runtime.TaskIdentity, msgID string,
 	blocking bool, waitSec int, dec agentmsg.RouteDecision,
 ) (<-chan string, func(), bool, error) {
 	if !blocking || dec.Action == agentmsg.RouteDecline {
@@ -148,7 +147,7 @@ func (e *askRouteErr) Error() string {
 
 func (t *postMessageTool) decideAskRoute(
 	ctx context.Context,
-	c coordinator.Coordinator,
+	c chatCoordinator,
 	id runtime.TaskIdentity,
 	fromRole, toRole string,
 	blocking bool,
@@ -174,7 +173,7 @@ func (t *postMessageTool) decideAskRoute(
 
 func (t *postMessageTool) applyAskRoute(
 	ctx context.Context,
-	c coordinator.Coordinator,
+	c chatCoordinator,
 	id runtime.TaskIdentity,
 	toRole, liveID string,
 	msg agentmsg.Message,
@@ -225,7 +224,7 @@ func declineAfterPersist(messageID, reason string) string {
 // handlePeerAnswer routes a child answer to an open ask (one-shot).
 func (t *postMessageTool) handlePeerAnswer(
 	ctx context.Context,
-	c coordinator.Coordinator,
+	c chatCoordinator,
 	id runtime.TaskIdentity,
 	body string,
 	inReplyTo string,
@@ -337,7 +336,7 @@ func buildAnsweredResult(messageID, inReplyTo string, delivered bool) string {
 // waitOnParkedAnswer waits for DeliverAnswer / timeout / cancel.
 func (t *postMessageTool) waitOnParkedAnswer(
 	ctx context.Context,
-	c coordinator.Coordinator,
+	c chatCoordinator,
 	id runtime.TaskIdentity,
 	msg agentmsg.Message,
 	waitSec int,

@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,18 @@ type fakeRunner struct {
 	calls         []string
 	selectCalls   []string
 	activeIDs     map[string]bool
+
+	// loginOutcome and loginCalls back CompleteLogin: a slash-command
+	// test wants to assert the email/password reaching the runner
+	// without a real miviaauth round trip.
+	loginOutcome ports.CommandOutcome
+	loginCalls   []string
+
+	activeSessionID string
+}
+
+func (f *fakeRunner) SetActiveSessionID(id string) {
+	f.activeSessionID = id
 }
 
 func (f *fakeRunner) Run(_ context.Context, name, args string) ports.CommandOutcome {
@@ -82,6 +95,21 @@ func (f *fakeRunner) SelectSession(_ context.Context, id string) ports.CommandOu
 	return f.selectOutcome
 }
 
+func (f *fakeRunner) StartInWorktree(_ context.Context, summary ports.SessionSummary) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "start-worktree:"+summary.Worktree)
+	return f.outcome
+}
+
+func (f *fakeRunner) StartInNewWorktree(_ context.Context, name string) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "start-new-worktree:"+name)
+	return ports.CommandOutcome{}
+}
+
+func (f *fakeRunner) ResumeInWorktree(_ context.Context, summary ports.SessionSummary) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "resume-worktree:"+summary.ID)
+	return f.outcome
+}
+
 func (f *fakeRunner) SelectEffort(_ context.Context, level string) ports.CommandOutcome {
 	f.selectCalls = append(f.selectCalls, "effort:"+level)
 	return f.selectOutcome
@@ -89,6 +117,14 @@ func (f *fakeRunner) SelectEffort(_ context.Context, level string) ports.Command
 
 func (f *fakeRunner) SessionActive(id string) bool {
 	return f.activeIDs[id]
+}
+
+// CompleteLogin records the email and the password's length (never the
+// password itself: a test asserting "no password in a call log" would
+// be pointless if the log carried it) and returns the preset outcome.
+func (f *fakeRunner) CompleteLogin(_ context.Context, email string, password []byte) ports.CommandOutcome {
+	f.loginCalls = append(f.loginCalls, fmt.Sprintf("%s|%d", email, len(password)))
+	return f.loginOutcome
 }
 
 // sendLine types text into the composer and presses Enter once. Every
@@ -1127,3 +1163,13 @@ func TestRunSlashCommandEffortOpensPickerAndSelects(t *testing.T) {
 		t.Errorf("view missing effort notice:\n%s", view)
 	}
 }
+
+// TestSessionPickerWorktreeRowsDispatchThroughTheRunner pins the dispatch
+// split in handleSessionPickerKey: enter on a route row calls
+// StartInWorktree, enter on a bound (non-route) worktree row calls
+// ResumeInWorktree. A regression that swaps or drops either arm would
+// otherwise compile and pass everything.
+
+// TestSessionPickerWorktreeEnterWithoutRunner pins the nil-runner guard on
+// the resumePickMsg arm so a miswired screen degrades to an error notice,
+// never a panic, when enter lands on a worktree row.

@@ -21,8 +21,12 @@ type ResumeConfirmationInfo = cliorchestrate.ResumeConfirmationInfo
 // Invariant: both values are the same pointer; errors.Is works across the alias.
 var ErrOrchestrationSwitchActive = cliorchestrate.ErrOrchestrationSwitchActive
 
+// ResumeCoordinator re-exports the cliorchestrate narrow resume coordinator
+// interface so callers that import cli can name it.
+type ResumeCoordinator = cliorchestrate.ResumeCoordinator
+
 // FindCoordinator delegates to cliorchestrate.FindCoordinator.
-func FindCoordinator() coordinator.Coordinator {
+func FindCoordinator() ResumeCoordinator {
 	return cliorchestrate.FindCoordinator()
 }
 
@@ -32,7 +36,7 @@ func FindDispatcher() *runtime.Dispatcher {
 }
 
 // ListInterruptedRuns delegates to cliorchestrate.ListInterruptedRuns.
-func ListInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coordinator.RecoveredRun, error) {
+func ListInterruptedRuns(ctx context.Context, c ResumeCoordinator) ([]coordinator.RecoveredRun, error) {
 	return cliorchestrate.ListInterruptedRuns(ctx, c)
 }
 
@@ -47,7 +51,7 @@ func FormatResumeConfirmation(info ResumeConfirmationInfo) string {
 }
 
 // ResumeRun delegates to cliorchestrate.ResumeRun.
-func ResumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*cliorchestrate.OrchestrationHandleForTest, error) {
+func ResumeRun(ctx context.Context, c OrchestrationCoordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*cliorchestrate.OrchestrationHandleForTest, error) {
 	return cliorchestrate.ResumeRun(ctx, c, d, runID, repo)
 }
 

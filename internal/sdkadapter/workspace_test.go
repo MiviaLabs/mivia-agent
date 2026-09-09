@@ -65,7 +65,7 @@ func TestWorkspaceSentinelsExported(t *testing.T) {
 		want error
 	}{
 		{"ErrEscape", sdkadapter.ErrEscape, sdkws.ErrEscape},
-		{"ErrInvalidLimit", sdkadapter.ErrInvalidLimit, sdkws.ErrInvalidLimit},
+		{"ErrInvalidLimit", sdkadapter.ErrInvalidLimit, sdkws.ErrInvalidOptions},
 		{"ErrSecretPath", sdkadapter.ErrSecretPath, sdkws.ErrSecretPath},
 		{"ErrTooLarge", sdkadapter.ErrTooLarge, sdkws.ErrTooLarge},
 	}

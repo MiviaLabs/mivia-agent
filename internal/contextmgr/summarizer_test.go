@@ -92,7 +92,8 @@ func TestSummarizerRejectsStaleBinding(t *testing.T) {
 	}
 }
 
-// TestSummaryRunsWithoutAConfiguredRedactionPolicy pins the opt-out default's
+// TestSummaryRunsWithoutAConfiguredRedactionPolicy pins the always-enabled
+// summarizer's
 // second half. Compaction drops messages permanently, so the summary is the
 // only record of what was removed - it must not be silently disabled by a
 // workspace that never wrote a [privacy] section. The summary is derived from

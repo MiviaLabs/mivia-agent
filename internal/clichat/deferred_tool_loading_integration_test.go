@@ -13,10 +13,41 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// bindDeferredFixtureContext binds an already-built fixture's session to a
+// fresh, isolated context store, so Save/Load exercise the durable catalog -
+// the only persistence path since the legacy file-backed session store was
+// removed.
+func bindDeferredFixtureContext(t *testing.T, sess *chat.Session) {
+	t.Helper()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // scriptedCompleter records the tool list of every request and replays a
 // scripted sequence of turns, so a test can assert what the model was
@@ -32,7 +63,11 @@ type scriptedCompleter struct {
 	toolSpecs [][]provider.ToolSpec
 	// systemPrompts is the system message of each request.
 	systemPrompts []string
-	calls         int
+	// messages is the full message list of each request, so a test can read
+	// the tool-role results the model was handed - which is where each
+	// execution path's answer about a call actually lands.
+	messages [][]provider.Message
+	calls    int
 }
 
 func (c *scriptedCompleter) Name() string { return "scripted" }
@@ -57,6 +92,7 @@ func (c *scriptedCompleter) ChatTurn(_ context.Context, req provider.Request) (*
 	c.advertised = append(c.advertised, toolSpecNames(req.Tools))
 	c.toolSpecs = append(c.toolSpecs, req.Tools)
 	c.systemPrompts = append(c.systemPrompts, systemPromptOf(req.Messages))
+	c.messages = append(c.messages, req.Messages)
 	index := c.calls
 	c.calls++
 	if index >= len(c.turns) {
@@ -130,23 +166,28 @@ type deferredFixture struct {
 	cleanup func()
 }
 
-func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string, probes ...tools.Tool) *deferredFixture {
 	t.Helper()
-	return newDeferredFixtureIn(t, t.TempDir(), completer, core, effective)
+	return newDeferredFixtureIn(t, t.TempDir(), completer, core, effective, probes...)
 }
 
 // newDeferredFixtureIn is newDeferredFixture over a caller-owned workspace, so
 // a test can seed skills or files the attach path must see.
-func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string, probes ...tools.Tool) *deferredFixture {
 	t.Helper()
 	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
-	return newDeferredFixtureWith(t, dir, res, completer, core, effective)
+	return newDeferredFixtureWith(t, dir, res, completer, core, effective, probes...)
 }
 
 // newDeferredFixtureWith is newDeferredFixtureIn over a caller-owned config, so
 // a test that drives the real /model path can supply a provider the completer
 // factory is actually able to construct.
-func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+// probes are extra tools registered into the full set before scope and the
+// tier split run, so a test can drive a tool whose behaviour it controls
+// through the REAL attach path. The tool-execution conformance suite needs
+// this: it must observe what each execution path does to an ordinary tool,
+// and the default registry has none whose timing or failure it can dictate.
+func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, completer *scriptedCompleter, core []string, effective []string, probes ...tools.Tool) *deferredFixture {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ws, err := workspace.Open(dir)
@@ -154,6 +195,9 @@ func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, comp
 		t.Fatal(err)
 	}
 	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	for _, probe := range probes {
+		full.Register(probe)
+	}
 	coreCopy := slices.Clone(core)
 	selected := &agents.ResolvedAgent{
 		Name:           "reader",
@@ -487,11 +531,14 @@ func TestNoOpLoadToolsIsCorrectivelyBounded(t *testing.T) {
 	}
 }
 
-// TestReRequestingAStagedToolIsNotCalledCallableNow is R3: staging takes effect
-// at the NEXT turn (D6), so a name staged earlier in this same turn is not
-// callable. Reporting it under "callable now" tells the model to call a tool
-// that will fail with unknown-tool, and a pure re-request emits no other line.
-func TestReRequestingAStagedToolIsNotCalledCallableNow(t *testing.T) {
+// TestReRequestingAStagedToolRunsNowEvenWhenUnpublished was R3: staging took
+// effect at the NEXT turn (D6), so a name staged earlier in this same turn was
+// reported as not callable. Hot-serve inverted the promise: calling a staged
+// tool runs immediately (the synchronous serve), while native publication -
+// what puts it in sess.Tools - still waits for the boundary. The re-request
+// must keep the two states apart: staged means "runs now, not yet in the
+// registry", never "already loaded".
+func TestReRequestingAStagedToolRunsNowEvenWhenUnpublished(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
 	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
@@ -502,17 +549,17 @@ func TestReRequestingAStagedToolIsNotCalledCallableNow(t *testing.T) {
 		t.Fatalf("first load: %v", err)
 	}
 	if _, callable := fixture.sess.Tools.Get("grep"); callable {
-		t.Fatal("a staged tool became callable inside the staging turn")
+		t.Fatal("a staged tool was natively admitted inside the staging turn")
 	}
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
 	if err != nil {
 		t.Fatalf("re-request: %v", err)
 	}
 	if strings.Contains(out, "callable now") {
-		t.Fatalf("a staged-but-unpublished tool was reported as callable now: %q", out)
+		t.Fatalf("a staged-but-unpublished tool was listed under the already-loaded promise: %q", out)
 	}
-	if !strings.Contains(out, "next turn") {
-		t.Fatalf("re-requesting a staged tool gave no next-turn signal: %q", out)
+	if !strings.Contains(out, "run immediately") {
+		t.Fatalf("re-requesting a staged tool gave no hot-serve signal: %q", out)
 	}
 }
 
@@ -539,7 +586,7 @@ func TestMixedLoadToolsResultSeparatesLoadedFromStaged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mixed re-request: %v", err)
 	}
-	if !strings.Contains(out, "callable now") || !strings.Contains(out, "next turn") {
+	if !strings.Contains(out, "callable now") || !strings.Contains(out, "run immediately") {
 		t.Fatalf("mixed result does not distinguish the two states at all: %q", out)
 	}
 	loaded := lineWithPrefix(out, "already loaded: ")
@@ -598,190 +645,7 @@ func TestLoadToolsQueryMatchesDeferredDescriptions(t *testing.T) {
 	if !strings.Contains(out, "grep") {
 		t.Fatalf("query result = %q, want grep staged", out)
 	}
-	if !strings.Contains(out, "next turn") {
-		t.Fatalf("result must state the next-turn availability honestly: %q", out)
-	}
-}
-
-// --- D4/R2-5: stage and admission lifecycle -----------------------------
-
-func TestAgentSwitchResetsAdmissions(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{
-		loadToolsCall("c1", `{"names":["grep"]}`),
-		{Content: "done"},
-	}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
-		t.Fatalf("precondition: admitted = %v", got)
-	}
-	writer := agents.ResolvedAgent{Name: "writer", SystemPrompt: "W", EffectiveTools: []string{"read_file", "grep"}}
-	if err := fixture.state.Registry.Publish(writer); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
-		t.Fatalf("switch: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
-		t.Fatalf("admitted = %v, want empty after an /agent switch", got)
-	}
-}
-
-func TestStagedAdmissionDiesWhenTheBindingIsReplaced(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
-	stage, ok := fixture.sess.PendingAdmission()
-	if !ok {
-		t.Fatal("no pending stage")
-	}
-	writer := agents.ResolvedAgent{Name: "writer", SystemPrompt: "W", EffectiveTools: []string{"read_file", "grep"}}
-	if err := fixture.state.Registry.Publish(writer); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
-		t.Fatalf("switch: %v", err)
-	}
-	fixture.sess.PublishPendingAdmission()
-	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
-		t.Fatalf("a stage from generation %d published into a replaced binding: %v", stage.SurfaceGeneration, got)
-	}
-}
-
-// TestBackgroundWorkDefersTheAdmission is R2-2: while an owner-registered
-// switch guard refuses, publishing would close a dispatcher background
-// orchestration still holds. The stage waits instead, and says so.
-func TestBackgroundWorkDefersTheAdmission(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{
-		loadToolsCall("c1", `{"names":["grep"]}`),
-		{Content: "done"},
-	}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.sess.SetSwitchGuard(func() error { return fmt.Errorf("background run active") })
-
-	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
-		t.Fatalf("admitted = %v while background work held the dispatcher", got)
-	}
-	if _, ok := fixture.sess.PendingAdmission(); !ok {
-		t.Fatal("the stage must stay pending for the next qualifying boundary")
-	}
-	notes := fixture.sess.TakeAdmissionNotes()
-	if len(notes) == 0 || !strings.Contains(notes[0], "grep") {
-		t.Fatalf("notes = %v, want a bounded deferral note naming grep", notes)
-	}
-
-	// Once the guard clears, the next turn boundary publishes it.
-	fixture.sess.SetSwitchGuard(nil)
-	completer.mu.Lock()
-	completer.turns = []provider.Response{{Content: "done"}}
-	completer.calls = 0
-	completer.mu.Unlock()
-	if _, err := fixture.sess.SendUser(context.Background(), "again", io.Discard); err != nil {
-		t.Fatalf("second turn: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
-		t.Fatalf("admitted = %v, want [grep] at the next allowed boundary", got)
-	}
-}
-
-func TestDeferralNotesAreBounded(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.sess.SetSwitchGuard(func() error { return fmt.Errorf("busy") })
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
-	for i := 0; i < 10; i++ {
-		fixture.sess.PublishPendingAdmission()
-	}
-	if notes := fixture.sess.TakeAdmissionNotes(); len(notes) > 3 {
-		t.Fatalf("%d deferral notes queued; the note must be bounded", len(notes))
-	}
-}
-
-// --- D3: persistence and resume replay ----------------------------------
-
-func TestAdmittedToolsSurviveSaveAndLoad(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{
-		loadToolsCall("c1", `{"names":["grep"]}`),
-		{Content: "done"},
-	}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.sess.SessionDir = t.TempDir()
-	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if err := fixture.sess.Save("snap"); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	// Drop the live surface back to core, then resume.
-	fixture.sess.ResetAdmissions()
-	if err := fixture.sess.Load("snap"); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
-		t.Fatalf("admitted after resume = %v, want [grep]", got)
-	}
-	if !slices.Contains(registryToolNames(fixture.sess.Tools), "grep") {
-		t.Fatalf("resumed surface does not advertise grep: %v", registryToolNames(fixture.sess.Tools))
-	}
-}
-
-// TestResumeDropsAStaleAdmittedSetWithANote is F6: when the tier split has
-// changed under a saved session, the admitted names are dropped fail-closed
-// and the user is told which ones.
-func TestResumeDropsAStaleAdmittedSetWithANote(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{
-		loadToolsCall("c1", `{"names":["grep"]}`),
-		{Content: "done"},
-	}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
-	fixture.sess.SessionDir = t.TempDir()
-	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if err := fixture.sess.Save("snap"); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	_ = fixture.sess.TakeAdmissionNotes()
-	// The operator re-tiers the agent: the digest no longer matches.
-	fixture.sess.SetAdmissionBinding("reader", "a-different-digest")
-	fixture.sess.ResetAdmissions()
-	if err := fixture.sess.Load("snap"); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
-		t.Fatalf("admitted = %v, want the stale set dropped fail-closed", got)
-	}
-	notes := fixture.sess.TakeAdmissionNotes()
-	if len(notes) == 0 || !strings.Contains(notes[0], "grep") {
-		t.Fatalf("notes = %v, want a note naming the dropped tools", notes)
-	}
-}
-
-// --- telemetry (D5) -----------------------------------------------------
-
-func TestSchemaMassReportsWhatTheDeferredTierWithholds(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
-	mass := fixture.state.SchemaMassSnapshot()
-	if mass.Locked != 2 {
-		t.Fatalf("locked count = %d, want 2", mass.Locked)
-	}
-	if mass.LockedTokens <= 0 {
-		t.Fatalf("locked tokens = %d, want the locked schema mass to be measured", mass.LockedTokens)
-	}
-	if mass.Tokens <= 0 {
-		t.Fatalf("advertised tokens = %d, want a positive measurement", mass.Tokens)
-	}
-	if !strings.Contains(mass.String(), "locked") {
-		t.Fatalf("operator line omits the locked tier: %q", mass.String())
+	if !strings.Contains(out, "run immediately") {
+		t.Fatalf("result must state the hot-serve promise honestly: %q", out)
 	}
 }

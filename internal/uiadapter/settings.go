@@ -18,6 +18,10 @@ type SettingsStore struct {
 	conv       *Conversation
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
+	// pool fans operator-wide runtime settings out to every live session.
+	// Nil for a settings store built without one (tests, one-shot commands),
+	// which then falls back to the active session alone.
+	pool *SessionPool
 
 	mu sync.Mutex
 
@@ -35,6 +39,20 @@ type SettingsStore struct {
 	// "mouse capture" change so the running program can flip its mouse
 	// mode without a restart. Called outside the store lock.
 	mouseNotifier func(on bool)
+
+	// fullDiskNotifier, when set by the launcher, receives the disclosure
+	// text for every LIVE full-disk re-arm (lift or re-impose) so the
+	// conversation transcript can carry the never-silent notice. Called
+	// outside the store lock; only fires when a re-arm was actually wired.
+	fullDiskNotifier func(text string)
+
+	// syncOptsNotifier, when set by the launcher, receives the three
+	// [sync] opt-out flags (include_thinking, include_tool_io,
+	// stream_assistant) after a successful SetSync* persist, so the
+	// live chatsync.Client can be re-armed without a session restart.
+	// Mirrors mouseNotifier/fullDiskNotifier in shape and call site
+	// (applyGeneral fires it after persist, off the store lock).
+	syncOptsNotifier func(includeThinking, includeToolIO, streamAssistant bool)
 
 	saveSeq uint64
 }
@@ -75,32 +93,51 @@ func (s *SettingsStore) SetConversation(conv *Conversation) {
 // SetMouseNotifier registers the callback that receives every live
 // "mouse capture" change. The launcher wires it to the running program;
 // nil clears it. Safe to call before or after construction.
+// SetMouseNotifier wires the launcher-side bridge for live mouse-capture
+// flips (see wireMouseNotifier). Mirrored by SetFullDiskNotifier.
 func (s *SettingsStore) SetMouseNotifier(fn func(on bool)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mouseNotifier = fn
 }
 
+// SetFullDiskNotifier wires the launcher-side bridge that carries the
+// never-silent full-disk disclosure into the conversation transcript when
+// the operator's Settings -> General toggle re-arms the live root (see
+// wireFullDiskNotifier). Mirrors SetMouseNotifier; nil clears it.
+func (s *SettingsStore) SetFullDiskNotifier(fn func(text string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fullDiskNotifier = fn
+}
+
+// SetSyncOptsNotifier wires the launcher-side bridge that re-arms the
+// live chat-sync projector flags when the operator toggles a [sync]
+// opt-out in Settings -> General. The launcher (newtui/run.go) wires
+// this to SessionPool.ApplySyncOpts; nil clears it.
+//
+// Unlike SetMouseNotifier and SetFullDiskNotifier, this notifier is
+// NOT a UI affordance - it has no on-screen effect. It exists so the
+// live chatsync.Client picks up the new flags without a session
+// restart. Without it, the operator would have to /new or restart to
+// see their toggle take effect, which the plan flagged as the
+// "next-session only" limitation that this seam removes.
+func (s *SettingsStore) SetSyncOptsNotifier(fn func(includeThinking, includeToolIO, streamAssistant bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncOptsNotifier = fn
+}
+
+// initFromConfig seeds every settings section from the resolved config.
+// The General section's own seeding lives in buildGeneralView
+// (settings_general.go) since it has enough field-by-field fallback
+// logic to be its own unit.
 func (s *SettingsStore) initFromConfig() {
-	showIter := false
-	showCache := false
-	approvalDefault := "always"
-	if s.res != nil {
-		showIter = s.res.ShowIterationNotices
-		showCache = s.res.ShowPromptCacheNotices
-		approvalDefault = approvalModeToView(s.res.Approvals.ApprovalPolicy())
+	workspaceRoot := ""
+	if s.agentState != nil {
+		workspaceRoot = s.agentState.WorkspaceRoot
 	}
-	s.general = ports.GeneralView{
-		Theme:                  "mivia-dark",
-		Mouse:                  true,
-		ShowReasoning:          true,
-		ShowIterationNotices:   showIter,
-		ShowPromptCacheNotices: showCache,
-		ScrollLines:            3,
-		ApprovalDefault:        approvalDefault,
-		ScreenReader:           false,
-		ReducedMotion:          false,
-	}
+	s.general = s.buildGeneralView(workspaceRoot)
 	s.initProjectsFromConfig()
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
@@ -415,32 +452,9 @@ func (s *SettingsStore) newSaveHandle(apply func() error) ports.SaveHandle {
 	return &saveHandle{id: id, events: ch, cancel: func() { close(done) }}
 }
 
-// settingsGeneral
-type settingsGeneral struct{ *SettingsStore }
-
-func (g settingsGeneral) General() ports.GeneralView {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.general
-}
-
-func (g settingsGeneral) Apply(_ context.Context, _ ports.Scope, e ports.GeneralEdit) (ports.SaveHandle, error) {
-	return g.newSaveHandle(func() error { return g.applyGeneral(e) }), nil
-}
-
-func generalViewToSettings(v ports.GeneralView) config.GeneralSettings {
-	return config.GeneralSettings{
-		Theme:                  v.Theme,
-		Mouse:                  v.Mouse,
-		ShowReasoning:          v.ShowReasoning,
-		ShowIterationNotices:   v.ShowIterationNotices,
-		ShowPromptCacheNotices: v.ShowPromptCacheNotices,
-		ScrollLines:            v.ScrollLines,
-		ApprovalDefault:        v.ApprovalDefault,
-		ScreenReader:           v.ScreenReader,
-		ReducedMotion:          v.ReducedMotion,
-	}
-}
+// settingsGeneral, buildGeneralView, generalViewToSettings,
+// applySetFullDiskAccess, applyApprovalDefault, applyGeneral, and
+// persistGeneral all live in settings_general.go.
 
 func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 	return config.MCPServerSettings{
@@ -451,81 +465,6 @@ func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 		Endpoint:  v.Endpoint,
 		EnvNames:  v.EnvNames,
 	}
-}
-
-func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
-	var mouseNotifier func(bool)
-	switch v := e.(type) {
-	case ports.SetTheme:
-		s.general.Theme = v.Name
-	case ports.SetMouse:
-		s.general.Mouse = v.On
-		mouseNotifier = s.mouseNotifier // fired below, after the persist, outside any lock
-	case ports.SetShowReasoning:
-		s.general.ShowReasoning = v.On
-		if s.conv != nil {
-			s.conv.SetShowReasoning(v.On)
-		}
-	case ports.SetShowIterationNotices:
-		s.general.ShowIterationNotices = v.On
-		if s.res != nil {
-			s.res.ShowIterationNotices = v.On
-		}
-		if s.conv != nil {
-			s.conv.SetNoticeOptions(TranslateOptions{
-				ShowIterationNotices:   s.general.ShowIterationNotices,
-				ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
-			})
-		}
-	case ports.SetShowPromptCacheNotices:
-		s.general.ShowPromptCacheNotices = v.On
-		if s.res != nil {
-			s.res.ShowPromptCacheNotices = v.On
-		}
-		if s.conv != nil {
-			s.conv.SetNoticeOptions(TranslateOptions{
-				ShowIterationNotices:   s.general.ShowIterationNotices,
-				ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
-			})
-		}
-	case ports.SetScrollLines:
-		if v.N <= 0 {
-			return fmt.Errorf("scroll lines must be positive")
-		}
-		s.general.ScrollLines = v.N
-		if s.conv != nil {
-			s.conv.SetScrollLines(v.N)
-		}
-	case ports.SetApprovalDefault:
-		s.general.ApprovalDefault = v.Mode
-		if s.res != nil {
-			s.res.Approvals.DefaultMode = v.Mode
-		}
-		// Apply immediately to the live session so "accept always" (and
-		// "deny") take effect without a restart - this is the runtime half
-		// of the setting; UpdateGeneralConfig below only persists it for
-		// the next launch/resume.
-		if s.sess != nil {
-			s.sess.SetApprovalPolicy(config.NormalizeDefaultMode(v.Mode))
-		}
-	case ports.SetScreenReader:
-		s.general.ScreenReader = v.On
-	case ports.SetReducedMotion:
-		s.general.ReducedMotion = v.On
-	default:
-		return fmt.Errorf("unknown general edit %T", e)
-	}
-
-	if cfgPath := s.configPath(); cfgPath != "" {
-		if err := config.UpdateGeneralConfig(cfgPath, generalViewToSettings(s.general)); err != nil {
-			return fmt.Errorf("persist general settings: %w", err)
-		}
-	}
-	if mouseNotifier != nil {
-		on := s.general.Mouse
-		go mouseNotifier(on)
-	}
-	return nil
 }
 
 func (s *SettingsStore) initMCPFromConfig() {

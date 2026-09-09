@@ -25,14 +25,8 @@ type ChatBlockEvent = clichat.ChatBlockEvent
 // ChatBlockID re-exports the clichat.ChatBlockID function.
 var ChatBlockID = clichat.ChatBlockID
 
-// ChatBlockRender re-exports the clichat.ChatBlockRender type.
-type ChatBlockRender = clichat.ChatBlockRender
-
 // ChatRenderer re-exports the clichat.ChatRenderer type.
 type ChatRenderer = clichat.ChatRenderer
-
-// ClampWorkGroupScroll re-exports the clichat.ClampWorkGroupScroll function.
-var ClampWorkGroupScroll = clichat.ClampWorkGroupScroll
 
 // CollapseConversations re-exports the clichat.CollapseConversations function.
 var CollapseConversations = clichat.CollapseConversations
@@ -67,9 +61,6 @@ var FormatLiveToolWaveSummary = clichat.FormatLiveToolWaveSummary
 // FormatSessionAge re-exports the clichat.FormatSessionAge function.
 var FormatSessionAge = clichat.FormatSessionAge
 
-// FormatUserBubbleTime re-exports the clichat.FormatUserBubbleTime function.
-var FormatUserBubbleTime = clichat.FormatUserBubbleTime
-
 // FormatUserMessageCard re-exports the clichat.FormatUserMessageCard function.
 var FormatUserMessageCard = clichat.FormatUserMessageCard
 
@@ -82,26 +73,11 @@ var LifecycleStatusFailed = clichat.LifecycleStatusFailed
 // NewToolRenderItem re-exports the clichat.NewToolRenderItem function.
 var NewToolRenderItem = clichat.NewToolRenderItem
 
-// ReadAutosaveStatus re-exports the clichat.ReadAutosaveStatus function.
-var ReadAutosaveStatus = clichat.ReadAutosaveStatus
-
-// RenderChatBlocksWithWorkGroupsWindow re-exports the clichat.RenderChatBlocksWithWorkGroupsWindow function.
-var RenderChatBlocksWithWorkGroupsWindow = clichat.RenderChatBlocksWithWorkGroupsWindow
-
-// RenderDialogFrame re-exports the clichat.RenderDialogFrame function.
-var RenderDialogFrame = clichat.RenderDialogFrame
-
-// RenderOneChatBlock re-exports the clichat.RenderOneChatBlock function.
-var RenderOneChatBlock = clichat.RenderOneChatBlock
-
 // RenderReplHelpInline re-exports the clichat.RenderReplHelpInline function.
 var RenderReplHelpInline = clichat.RenderReplHelpInline
 
 // RenderSkillSlashPrompt re-exports the clichat.RenderSkillSlashPrompt function.
 var RenderSkillSlashPrompt = clichat.RenderSkillSlashPrompt
-
-// RenderThinkingBlock re-exports the clichat.RenderThinkingBlock function.
-var RenderThinkingBlock = clichat.RenderThinkingBlock
 
 // ResultLooksLikeDiff re-exports the clichat.ResultLooksLikeDiff function.
 var ResultLooksLikeDiff = clichat.ResultLooksLikeDiff
@@ -124,29 +100,8 @@ const ThemeColorDiffDel = clichat.ThemeColorDiffDel
 // ToolRenderItem re-exports the clichat.ToolRenderItem type.
 type ToolRenderItem = clichat.ToolRenderItem
 
-// WorkGroup re-exports the clichat.WorkGroup type.
-type WorkGroup = clichat.WorkGroup
-
-// WorkGroupCollapsedDefault re-exports the clichat.WorkGroupCollapsedDefault function.
-var WorkGroupCollapsedDefault = clichat.WorkGroupCollapsedDefault
-
-// WorkGroupWindowRows re-exports the clichat.WorkGroupWindowRows constant.
-const WorkGroupWindowRows = clichat.WorkGroupWindowRows
-
-// WrapDisplayRows re-exports the clichat.WrapDisplayRows function.
-var WrapDisplayRows = clichat.WrapDisplayRows
-
-// WrapDisplayRowsWithSources re-exports the clichat.WrapDisplayRowsWithSources function.
-var WrapDisplayRowsWithSources = clichat.WrapDisplayRowsWithSources
-
-// WriteAutosaveStatus re-exports the clichat.WriteAutosaveStatus function.
-var WriteAutosaveStatus = clichat.WriteAutosaveStatus
-
 // BrandWorkFrames re-exports the clichat.BrandWorkFrames variable.
 var BrandWorkFrames = clichat.BrandWorkFrames
-
-// UserRailStyle re-exports the clichat.UserRailStyle variable.
-var UserRailStyle = clichat.UserRailStyle
 
 // ChatBlockSystem re-exports the clichat.ChatBlockSystem constant.
 const ChatBlockSystem = clichat.ChatBlockSystem
@@ -157,32 +112,17 @@ const ChatBlockThinking = clichat.ChatBlockThinking
 // ChatBlockTool re-exports the clichat.ChatBlockTool constant.
 const ChatBlockTool = clichat.ChatBlockTool
 
-// FindWorkGroups re-exports the clichat.FindWorkGroups function.
-var FindWorkGroups = clichat.FindWorkGroups
-
-// RailView re-exports the clichat.RailView type.
-type RailView = clichat.RailView
-
 // ChatBlockDivider re-exports the clichat.ChatBlockDivider constant.
 const ChatBlockDivider = clichat.ChatBlockDivider
 
 // ChatBlockUser re-exports the clichat.ChatBlockUser constant.
 const ChatBlockUser = clichat.ChatBlockUser
 
-// IsWorkStatusBlock re-exports the clichat.IsWorkStatusBlock function.
-var IsWorkStatusBlock = clichat.IsWorkStatusBlock
-
 // RenderDiffBody re-exports the clichat.RenderDiffBody function.
 var RenderDiffBody = clichat.RenderDiffBody
 
 // ChatBlockAssistant re-exports the clichat.ChatBlockAssistant constant.
 const ChatBlockAssistant = clichat.ChatBlockAssistant
-
-// HydrateChatBlocksForView re-exports the clichat.HydrateChatBlocksForView function.
-var HydrateChatBlocksForView = clichat.HydrateChatBlocksForView
-
-// RenderChatBlocksWithWorkGroups re-exports the clichat.RenderChatBlocksWithWorkGroups function.
-var RenderChatBlocksWithWorkGroups = clichat.RenderChatBlocksWithWorkGroups
 
 // FormatModelUnavailable re-exports the clichat.FormatModelUnavailable function.
 var FormatModelUnavailable = clichat.FormatModelUnavailable
@@ -219,15 +159,6 @@ type ChatBlock = clichat.ChatBlock
 
 // ChatBlockKind re-exports the clichat.ChatBlockKind type.
 type ChatBlockKind = clichat.ChatBlockKind
-
-// RenderChatBlocks re-exports the clichat.RenderChatBlocks function.
-var RenderChatBlocks = clichat.RenderChatBlocks
-
-// AssistantBubble re-exports the clichat.AssistantBubble variable.
-var AssistantBubble = clichat.AssistantBubble
-
-// UserBubble re-exports the clichat.UserBubble variable.
-var UserBubble = clichat.UserBubble
 
 // HydrateChatBlocks re-exports the clichat.HydrateChatBlocks function.
 var HydrateChatBlocks = clichat.HydrateChatBlocks

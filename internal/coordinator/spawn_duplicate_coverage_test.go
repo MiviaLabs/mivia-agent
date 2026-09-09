@@ -32,7 +32,7 @@ func (duplicateKeyedCreateRepo) CreateRun(context.Context, string, ledger.RunSna
 // can be deduped onto instead of surfacing a raw duplicate error.
 func TestCreateAndStartRunConsultsRecoveryOnDuplicateKey(t *testing.T) {
 	repo := &duplicateKeyedCreateRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	c := newIdempotencyCoordinator(repo).(*coordinator)
+	c := newIdempotencyCoordinator(repo)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{idempotencyTask()}, "K")
 	if err == nil {

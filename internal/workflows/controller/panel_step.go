@@ -108,6 +108,12 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	if !ok || runner.Coordinator == nil {
 		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel step runner has no coordinator"))
 	}
+	// Say the panel attempt started. The whole panel path used to emit only
+	// two events, both failure-shaped, while agent steps emit a start - so a
+	// review_panel whose members ran for hours showed as Running with no
+	// start and no heartbeat, and a stuck panel was indistinguishable from a
+	// fast one on every observability surface.
+	c.emitStepStarted(step, attempt)
 	panel := workflowledger.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
 	// The durable panel phase is the authority on which children may still
 	// run. members_admitted means the members still need dispatch (and
@@ -175,6 +181,11 @@ func (c *LinearController) advancePanelMembersAdmitted(ctx context.Context, run 
 			})
 		}
 	}
+	// The PERSISTED report records the degradation; settlePanelSynthesis
+	// derives it from the admitted member list and the synthesis envelope.
+	// allow_partial silently reduced the shipped three-lens review_panel to
+	// whichever members survived - the host verdict was computed from those
+	// alone, and the only trace was a transient progress event.
 	return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
 }
 

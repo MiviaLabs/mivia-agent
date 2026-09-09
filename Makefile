@@ -24,8 +24,8 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
-	prose-check
+	validate-invariants subprocess-stdin-check invariants mutation diff-coverage verifier-integration smoke release release-test \
+	prose-check wire-vocabulary-check live-auth-smoke live-chat-smoke live-smoke
 
 help:
 	@printf '%s\n' \
@@ -35,6 +35,8 @@ help:
 		'  make verify-agent      Validate agent adapter surface' \
 		'  make test-quality      Inspect Go test quality and anti-fake-work gates' \
 		'  make validate-invariants  Verify all test refs in .mivia/invariants.md exist' \
+		'  make subprocess-stdin-check  Refuse a subprocess search that reads stdin' \
+		'  make wire-vocabulary-check  Hold every copy of the chat event vocabulary equal' \
 		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
 		'  make pre-push          Run the committed pre-push hook' \
@@ -79,7 +81,8 @@ install-hooks hooks:
 # still runs on main and macOS in CI, and standalone via `make
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
-	import-layers-check timeout-saturation-check request-deadline-check \
+	import-layers-check subprocess-stdin-check timeout-saturation-check request-deadline-check \
+	wire-vocabulary-check \
 	semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality validate-invariants semgrep verify-go
 	@python3 scripts/check_mutation.py --probe
@@ -87,6 +90,9 @@ verify: verify-agent docs-check release-test secret-scan structure-check \
 
 verify-agent: agents-check
 	@python3 scripts/verify_agent_config.py
+	@python3 scripts/test_agent_skill_contract.py
+	@python3 scripts/check_memories.py
+	@python3 scripts/check_gate_scripts.py
 
 test-quality:
 	@echo "Checking test quality and fake-test prevention..."
@@ -97,6 +103,11 @@ validate-invariants:
 	@echo "Validating invariant test references in .mivia/invariants.md..."
 	@python3 scripts/test_validate_invariants.py
 	@python3 scripts/validate_invariants.py
+
+wire-vocabulary-check:
+	@echo "Checking the mivia.chat.v1 event vocabulary against api/contracts..."
+	@python3 scripts/test_check_wire_vocabulary.py
+	@python3 scripts/check_wire_vocabulary.py
 
 docs-check:
 	@scripts/docs-check
@@ -110,6 +121,10 @@ structure-check:
 
 import-layers-check:
 	@python3 scripts/check_import_layers.py
+
+subprocess-stdin-check:
+	@python3 scripts/test_check_subprocess_stdin.py
+	@python3 scripts/check_subprocess_stdin.py
 
 timeout-saturation-check:
 	@python3 scripts/check_timeout_saturation.py --probe
@@ -175,6 +190,10 @@ agent-hook-test:
 	@python3 scripts/test_check_names.py
 	@python3 scripts/test_check_prose.py
 	@python3 scripts/test_import_layers.py
+	@python3 scripts/test_verify_skill_tree.py
+	@python3 scripts/test_check_memories.py
+	@python3 scripts/test_check_agents.py
+	@python3 scripts/test_check_gate_scripts.py
 
 pre-commit:
 	@.githooks/pre-commit
@@ -202,6 +221,7 @@ fmt-check:
 go-check: fmt-check
 	@go test ./...
 	@go vet ./...
+	@go vet -tags=livechat ./internal/chatsync
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
 
 # verify-fast is the Go-only subset of verify: gofmt + vet + tests + build +
@@ -217,29 +237,6 @@ verify-fast: verify-go
 # script is stdlib-only and exits non-zero with the exact failure list.
 agents-check:
 	@python3 scripts/check_agents.py
-
-# skills-move is a one-time migration target: when the canonical skill
-# home moves (today from .mivia/skills/ to .agents/skills/), this target
-# performs the copy, verifies the destination, and removes the source.
-# It is idempotent: running it twice when the source is already gone is
-# a clean no-op. After the migration lands, this target stays as the
-# documented procedure if the home ever has to move again.
-skills-move:
-	@src=.mivia/skills; dst=.agents/skills; claude_dst=.claude/skills; \
-	if [ ! -d "$$src" ]; then \
-		echo "skills-move: $$src already absent, nothing to do"; \
-	else \
-		mkdir -p "$$dst" "$$claude_dst"; \
-		for d in "$$src"/*/; do \
-			[ -d "$$d" ] || continue; \
-			name=$$(basename "$$d"); \
-			rm -rf "$$dst/$$name" "$$claude_dst/$$name"; \
-			cp -r "$$d" "$$dst/$$name"; \
-			cp -r "$$d" "$$claude_dst/$$name"; \
-		done; \
-		rm -rf "$$src"; \
-		echo "skills-move: copied $$(ls $$dst | wc -l) skill(s) to $$dst and $$claude_dst"; \
-	fi
 
 # verify-go is go-check plus the diff-coverage gate over ONE instrumented run
 # of the suite. The two used to be separate full runs of the same tests: an
@@ -258,6 +255,7 @@ verify-go: fmt-check
 	trap 'rm -f "$$profile"' EXIT; \
 	go test ./... -count=1 -coverpkg=./... -coverprofile="$$profile"; \
 	go vet ./...; \
+	go vet -tags=livechat ./internal/chatsync; \
 	go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG); \
 	$(MAKE) --no-print-directory diff-coverage DIFF_COVERAGE_PROFILE="$$profile"
 
@@ -269,6 +267,34 @@ smoke:
 
 verifier-integration:
 	@go test -tags=integration ./internal/workflows/definition
+
+# live-auth-smoke talks to a REAL deployment with REAL credentials and mutates
+# real sessions (it revokes the ones it creates, and deliberately trips the
+# server's refresh-token theft detection once). It is never a prerequisite of
+# verify, test, or CI - per AGENTS.md a live e2e runs only when someone asks
+# for it by name, which is what typing this target is.
+#
+# Point it at a throwaway account, never a real user's:
+#
+#   MIVIA_LIVE_API_BASE_URL=https://... \
+#   MIVIA_LIVE_EMAIL=... MIVIA_LIVE_PASSWORD=... make live-auth-smoke
+#
+# Each run spends 2 logins against the API's login rate limit.
+live-auth-smoke:
+	@go test -tags=liveauth -count=1 -v ./internal/miviaauth -run 'TestLive'
+
+# live-chat-smoke probes the deployed /v1/chat-sessions surface: register a
+# session, push events, read them by cursor, stream them over SSE, and drive
+# the remote-input long poll. Same never-run-without-an-explicit-ask rule as
+# live-auth-smoke, and the same env vars.
+#
+# It leaves ended session rows in the target database (the API has no delete
+# endpoint). Every row it creates is titled "mivia live probe: ...".
+live-chat-smoke:
+	@go test -tags=livechat -count=1 -v -timeout 300s ./internal/chatsync -run 'TestLive'
+
+# Everything that talks to a real deployment.
+live-smoke: live-auth-smoke live-chat-smoke
 
 invariants:
 	@echo "Running all invariant tests dynamically from .mivia/invariants.md..."
@@ -329,6 +355,7 @@ race:
 
 vet:
 	@go vet ./...
+	@go vet -tags=livechat ./internal/chatsync
 
 build:
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)

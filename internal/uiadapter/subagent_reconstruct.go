@@ -192,6 +192,13 @@ func rawErrorEnvelopeText(raw string) string {
 	return raw
 }
 
+// toolCallsRecordedNotice is the placeholder assistant text resultText
+// renders for a result whose only content is a recorded tool-call trace
+// reference. Named so subagent_resolve.go's resolveToolCallsPending can
+// recognize and clear it once the reference actually resolves into real
+// rows, without the two call sites drifting on the exact string.
+const toolCallsRecordedNotice = "(tool calls recorded)"
+
 // resultText renders one task's display text: the real inline Output when
 // present, else the synopsis dispatch_tasks reports for an above-threshold
 // result that went by-reference (setOutputFields in
@@ -210,9 +217,36 @@ func resultText(r encodedTaskResult) string {
 		return r.Error
 	}
 	if r.ToolCallsRef != "" {
-		return "(tool calls recorded)"
+		return toolCallsRecordedNotice
 	}
 	return ""
+}
+
+// toolCallSummariesToPortsToolCalls converts merged tool-call summaries
+// into the ports.ToolCall rows a conversation message carries, computing
+// each row's Diff exactly as a live tool_end event would (see
+// SubagentTranscriptConversation.applyEvent's KindToolEnd case) - shared by
+// registerDispatchedTask (the legacy inline toolCallSummary wire shape)
+// and subagent_resolve.go's resolveToolCallsPending (the ref-resolved
+// path), so the two never render a tool call differently depending on
+// which wire shape produced it.
+func toolCallSummariesToPortsToolCalls(toolCalls []toolCallSummary) []ports.ToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	out := make([]ports.ToolCall, len(toolCalls))
+	for i, s := range toolCalls {
+		out[i] = ports.ToolCall{
+			ID:        s.ToolCallID,
+			Name:      s.Name,
+			Arguments: s.Input,
+			Output:    s.Output,
+		}
+		if ports.ToolCallOK(ports.ToolCall{Name: s.Name, Output: s.Output}) {
+			out[i].Diff = parseToolDiff(s.Name, s.Input, s.Output)
+		}
+	}
+	return out
 }
 
 // matchTaskOutputs pairs each dispatched task with its result text, by
@@ -255,6 +289,24 @@ func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, r
 	return out
 }
 
+func matchTaskAgents(results []encodedTaskResult, tasks []parsedDispatchTask) []string {
+	byID := make(map[string]string, len(results))
+	for _, r := range results {
+		if r.TaskID != "" {
+			byID[r.TaskID] = r.Agent
+		}
+	}
+	out := make([]string, len(tasks))
+	for i, task := range tasks {
+		name, ok := byID[task.ID]
+		if !ok && len(results) == len(tasks) {
+			name = results[i].Agent
+		}
+		out[i] = name
+	}
+	return out
+}
+
 // matchTaskToolCalls pairs each dispatched task with its already-merged
 // tool-call summaries (see toolCallSummary), by task ID first and falling
 // back to positional matching when IDs are absent but the counts agree -
@@ -274,6 +326,31 @@ func matchTaskToolCalls(results []encodedTaskResult, tasks []parsedDispatchTask)
 			calls = results[i].ToolCalls
 		}
 		out[i] = calls
+	}
+	return out
+}
+
+// matchTaskToolCallsRefs pairs each dispatched task with its result's
+// ToolCallsRef, by task ID first and falling back to positional matching
+// when IDs are absent but the counts agree - mirroring matchTaskToolCalls'
+// own pairing rules. Unlike matchTaskOutputs, there is deliberately no
+// rawErrorEnvelopeText-style fallback: a run-level failure envelope
+// ({"error":...,"status":...}) never carries a tool_calls_ref, so zero
+// results yields an empty string per task, not any parsed error text.
+func matchTaskToolCallsRefs(results []encodedTaskResult, tasks []parsedDispatchTask) []string {
+	byID := make(map[string]string, len(results))
+	for _, r := range results {
+		if r.TaskID != "" {
+			byID[r.TaskID] = r.ToolCallsRef
+		}
+	}
+	out := make([]string, len(tasks))
+	for i, task := range tasks {
+		ref, ok := byID[task.ID]
+		if !ok && len(results) == len(tasks) {
+			ref = results[i].ToolCallsRef
+		}
+		out[i] = ref
 	}
 	return out
 }
@@ -304,7 +381,9 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	}
 
 	outputs := matchTaskOutputs(results, args.Tasks, tc.Output)
+	agents := matchTaskAgents(results, args.Tasks)
 	toolCalls := matchTaskToolCalls(results, args.Tasks)
+	toolCallsRefs := matchTaskToolCallsRefs(results, args.Tasks)
 	for i, task := range args.Tasks {
 		// The THREAD KEY - unlike the byID match above - must be
 		// namespaced: it has to land on the same id a live observer would
@@ -315,10 +394,13 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 		// session's sidebar row (built by thread.go's LoadHistory, which
 		// namespaces the same way) resolves to this reconstruction.
 		keyed := task
+		if agents[i] != "" {
+			keyed.Agent = agents[i]
+		}
 		if namespaceIDs && keyed.ID != "" {
 			keyed.ID = namespacedTaskID(tc.ID, keyed.ID)
 		}
-		registerDispatchedTask(threads, tc.ID, i, keyed, outputs[i], toolCalls[i], at)
+		registerDispatchedTask(threads, tc.ID, i, keyed, outputs[i], toolCalls[i], toolCallsRefs[i], at)
 	}
 
 	if len(args.Tasks) == 0 {
@@ -326,7 +408,7 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	}
 }
 
-func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, task parsedDispatchTask, outputText string, toolCalls []toolCallSummary, at time.Time) {
+func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, task parsedDispatchTask, outputText string, toolCalls []toolCallSummary, toolCallsRef string, at time.Time) {
 	taskID := task.ID
 	if taskID == "" {
 		// Must match dispatchTaskIDs' fallback in
@@ -352,17 +434,7 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 	}
 	if outputText != "" || len(toolCalls) > 0 {
 		msg := ports.Message{Role: "assistant", Text: outputText, At: at}
-		if len(toolCalls) > 0 {
-			msg.ToolCalls = make([]ports.ToolCall, len(toolCalls))
-			for i, s := range toolCalls {
-				msg.ToolCalls[i] = ports.ToolCall{
-					ID:        s.ToolCallID,
-					Name:      s.Name,
-					Arguments: s.Input,
-					Output:    s.Output,
-				}
-			}
-		}
+		msg.ToolCalls = toolCallSummariesToPortsToolCalls(toolCalls)
 		history = append(history, msg)
 	}
 
@@ -378,6 +450,9 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 	// TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread for
 	// the live-path version of this bug).
 	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
+	if toolCallsRef != "" {
+		conv.setPendingToolCalls(toolCallsRef, threads.resolver())
+	}
 	threads.registerReconstructed(taskID, conv)
 	threads.registerReconstructed(callID, conv)
 }
@@ -464,6 +539,7 @@ func extractToolOutput(outputJSON string) string {
 // orchestration package (INV-TUI-29), so the two copies are kept in sync
 // by contract, not by the compiler.
 func namespacedTaskID(namespace, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
 	if namespace == "" || rawID == "" {
 		return rawID
 	}

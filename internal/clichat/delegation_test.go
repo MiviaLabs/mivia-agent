@@ -143,7 +143,8 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 	start := time.Now()
 	body, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"timeout_seconds": 1,
-		"tasks": [{"id":"t1","agent":"oneshot","prompt":"block","timeout_seconds":1}]
+		"tasks": [{"id":"t1","agent":"oneshot","prompt":"block","timeout_seconds":1}],
+		"wait": "run"
 	}`))
 	if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
 		t.Fatalf("dispatch hang: %s", elapsed)
@@ -174,7 +175,8 @@ func TestDispatchTasksToolValid(t *testing.T) {
 		"tasks": [
 			{"id": "t1", "agent":"oneshot", "prompt": "analyze auth"},
 			{"id": "t2", "agent":"oneshot", "prompt": "analyze db"}
-		]
+		],
+		"wait": "run"
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -206,12 +208,9 @@ func TestDispatchTasksToolEmpty(t *testing.T) {
 	})
 	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result != `{"tasks":[]}` {
-		t.Fatalf("expected empty result, got %s", result)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[]}`))
+	if err == nil || !strings.Contains(err.Error(), "non-empty") {
+		t.Fatalf("empty tasks error = %v, want non-empty validation error", err)
 	}
 }
 
@@ -226,7 +225,8 @@ func TestDispatchTasksToolWithDependencies(t *testing.T) {
 		"tasks": [
 			{"id": "research", "agent":"oneshot", "prompt": "find patterns"},
 			{"id": "summary", "agent":"oneshot", "prompt": "summarize findings", "depends_on": ["research"]}
-		]
+		],
+		"wait": "run"
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +255,8 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	body, err := tool.Execute(ctx, json.RawMessage(`{
-		"tasks": [{"id": "t1", "agent":"oneshot", "prompt": "test"}]
+		"tasks": [{"id": "t1", "agent":"oneshot", "prompt": "test"}],
+		"wait": "run"
 	}`))
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
@@ -267,7 +268,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 
 func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
 	tool := cliorchestrate.NewDispatchTasksToolConfigured(runtime.New(runtime.Policy{}), config.DefaultSubagentConfig, nil, testAgentRegistry(t, "worker"))
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"x","depends_on":["missing"]}]}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"x","depends_on":["missing"]}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
 	}
@@ -387,7 +388,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	if !ok {
 		t.Fatal("dispatch_tasks is not registered")
 	}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"check"}]}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"check"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("permissioned skill dispatch failed: %v (%s)", err, out)
 	}
@@ -428,7 +429,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 	if !ok {
 		t.Fatal("dispatch_tasks is not registered")
 	}
-	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"inspect"}]}`))
+	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"inspect"}],"wait":"run"}`))
 	if err != nil || !strings.Contains(out, "output_ref") {
 		t.Fatalf("out=%s err=%v", out, err)
 	}

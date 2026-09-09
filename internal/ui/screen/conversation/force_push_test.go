@@ -21,6 +21,12 @@ import (
 type recordingHandle struct {
 	id          string
 	cancelCount int
+	// cancelToolCallIDs records every callID CancelToolCall was invoked
+	// with, and cancelToolCallResult is returned for each such call -
+	// tests asserting the transcript's cancel-tool-call keybinding
+	// forwards to the active TurnHandle set this before exercising it.
+	cancelToolCallIDs    []string
+	cancelToolCallResult bool
 }
 
 func (h *recordingHandle) ID() string { return h.id }
@@ -30,6 +36,11 @@ func (h *recordingHandle) Events() <-chan uievent.Event {
 	return ch
 }
 func (h *recordingHandle) Cancel() { h.cancelCount++ }
+
+func (h *recordingHandle) CancelToolCall(callID string) bool {
+	h.cancelToolCallIDs = append(h.cancelToolCallIDs, callID)
+	return h.cancelToolCallResult
+}
 
 func TestForcePush_ParksAndCancels(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)

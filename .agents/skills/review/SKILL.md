@@ -75,3 +75,14 @@ Routing decision for <diff summary>:
 - **The diff mixes a feature change with a refactor.** Surface this to
   the orchestrator and ask whether to split the commit. Do not review
   a mixed-shape diff as a single unit.
+
+## Report shape
+
+`.agents/skills/review/report-template.md` holds the long form of the routing
+decision above. It adds an explicit `Verdict` field, which the short shape does
+not carry, plus a rationale per route, the skipped lenses, and the attachments
+an escalation carries. Read it with `read_file`
+when the run needs that detail; the short shape above stays the default.
+
+This skill routes. It does not merge findings: `review-synthesis` combines the
+lens reports into one result.

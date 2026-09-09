@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -46,7 +47,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps, onToolCancelReady func(context.Context, agent.ToolCanceler)) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -73,6 +74,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// terminal deadline, not a transport fault.
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
 	h := &subagents.MultiStepHandler{
+		Approval:  approval,
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		Reasoning: dial.static, ReasoningFunc: dial.live,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
@@ -90,7 +92,8 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		ContextPreparationInput:   preparationInput,
 		// Forward nested tool/heartbeat events to the session TUI sink
 		// registered by startAI via SetSubagentProgress.
-		OnEvent: OnEventForMultiStep(emitSubagentProgress),
+		OnEvent:           OnEventForMultiStep(emitSubagentProgress),
+		OnToolCancelReady: onToolCancelReady,
 	}
 	if maxTokens != nil && *maxTokens > 0 {
 		h.MaxTokens = *maxTokens
@@ -105,6 +108,9 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 // handler shares. One group keeps newSkillMultiStepHandler's signature
 // short and lets tests build a real handler without a whole session.
 type skillHandlerDeps struct {
+	// approval is the operator's live approval wiring; see
+	// subagents.MultiStepHandler.Approval for why it is a function.
+	approval         func() sdkadapter.ApprovalDeps
 	d                *runtime.Dispatcher
 	reg              *tools.Registry
 	comp             provider.Completer
@@ -145,6 +151,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 	// Tool-bearing surface: full report-budget variant.
 	sysPrompt = withReportBudget(sysPrompt, false)
 	h := &subagents.MultiStepHandler{
+		Approval:       deps.approval,
 		Completer:      deps.comp,
 		FullRegistry:   deps.reg,
 		Dispatcher:     deps.d,
@@ -180,7 +187,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 	return h
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -191,7 +198,8 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// instructions as the system prompt. Disallowed skills are not registered
 	// and gatedSkillHandler re-checks on every invoke (resume/retry).
 	deps := skillHandlerDeps{
-		d: d, reg: reg, comp: comp, model: model, dial: dial, budgets: budgets,
+		approval: approval,
+		d:        d, reg: reg, comp: comp, model: model, dial: dial, budgets: budgets,
 		maxContextTokens: maxContextTokens, maxTokens: maxTokens, budget: budget,
 		preparation: preparation, preparationInput: preparationInput, spool: spool,
 	}
@@ -234,9 +242,18 @@ func (h *gatedSkillHandler) Invoke(ctx context.Context, req runtime.Request) (js
 var _ runtime.Handler = (*gatedSkillHandler)(nil)
 
 // OnEventForMultiStep wraps a parent OnEvent callback for forwarding
-// subagent events. Tool start/end become SubagentStart/End; heartbeats,
-// step progress, and the run-level Done signal are forwarded so long
-// multi_step work is not silent and finished agents can be retired.
+// subagent events. Tool start/end become SubagentStart/End; the run-level
+// Begin and Done signals, heartbeats, and step progress are forwarded so long
+// multi_step work is not silent, a run is visible from its first moment, and
+// finished agents can be retired.
+//
+// This switch has no default case, so a kind with no arm here is DISCARDED.
+// That is deliberate - a subagent's raw tool events must not reach the parent
+// unmapped - but it also means adding a producer is not enough to ship an
+// event: it must be named here as well. EventSubagentBegin was added to the
+// producer, the bus allowlist, the sync kinds, the relay kinds, the projector
+// and the recorded contract, and still reached nothing at all until it was
+// named here.
 func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 	if parentOnEvent == nil {
 		return func(agent.Event) {}
@@ -246,14 +263,34 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 		case agent.EventToolStart:
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentStart, ToolCallID: e.ToolCallID,
-				Name: e.Name, Detail: e.Detail, Input: e.Input,
+				Name: e.Name, Detail: e.Detail, Input: e.Input, InputBody: e.InputBody,
 				Origin: e.Origin,
 			})
 		case agent.EventToolEnd:
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentEnd, ToolCallID: e.ToolCallID,
-				Name: e.Name, Detail: e.Detail, Output: e.Output,
+				Name: e.Name, Detail: e.Detail, Output: e.Output, OutputBody: e.OutputBody,
 				Origin: e.Origin,
+			})
+		case agent.EventSubagentBegin, agent.EventAssistantReset:
+			parentOnEvent(e)
+		case agent.EventToolPending:
+			// A delegated write tool's gate can be answered from exactly one
+			// place: the root approval queue, armed by a tool_pending event on
+			// the root turn stream and resolved by ToolCallID. The subagent
+			// dialog has no prompt surface, so the origin-stamped event this
+			// wrapper receives would be diverted there and dropped - the gate
+			// then blocked until the task deadline and denied "canceled" with
+			// nothing ever on screen. Strip the origin so the root stream
+			// treats it as its own pending call; the id does the matching, and
+			// the tool start/end that follow stay in the subagent's lane.
+			parentOnEvent(agent.Event{
+				Kind:       agent.EventToolPending,
+				ToolCallID: e.ToolCallID,
+				Name:       e.Name,
+				Detail:     e.Detail,
+				Input:      e.Input,
+				InputBody:  e.InputBody,
 			})
 		case agent.EventSubagentHeartbeat:
 			// Feed the workflow join liveness watchdog.

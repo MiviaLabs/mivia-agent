@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestRunConfiguredChatOnceOllamaLoopbackSkipsKeyGate pins that a local
@@ -269,9 +270,12 @@ func TestRunConfiguredChatOnceContextSetupFailureReleasesLedgerStore(t *testing.
 func TestRunConfiguredChatOnceMemoryStoreFailureReleasesLedgerStore(t *testing.T) {
 	ws := hermeticOllamaLoopbackWorkspace(t)
 	res := loadChatTestConfig(t, ws)
-	// The default memory store path is <ws>/.mivia/memory.db; a directory
-	// there makes the store open fail inside ConfigureChatWorkspace.
-	if err := os.MkdirAll(filepath.Join(ws, ".mivia", "memory.db"), 0o700); err != nil {
+	// The memory store must fail hard while opening its derived SQLite
+	// index. A bad memory document no longer qualifies: the index is a
+	// derived cache and the store opens degraded instead. A directory at
+	// the index path keeps this a genuine hard failure.
+	indexPath := workspace.GlobalContextStorePath(ws)
+	if err := os.MkdirAll(indexPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 

@@ -6,10 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -17,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -25,15 +25,26 @@ import (
 // error text (fixed termination vocabulary).
 var ErrSchemaViolation = errors.New("schema_violation")
 
-// softInterruptCooldown is the default minimum spacing between soft interrupts
-// of an in-flight LLM call (plan 54 §4.3). The loop treats 0 as off, which
-// tests use to disable the cap.
-const softInterruptCooldown = 5 * time.Second
-
 // MultiStepHandler implements runtime.Handler by creating a mini agent.Loop
 // with tool access. Sub-agents never receive delegation or orchestration
 // control tools; only the root orchestrator may create or control runs.
 type MultiStepHandler struct {
+	// Approval supplies the operator's live approval wiring for this run's
+	// nested loop: the gate, the policy, and the standing cache.
+	//
+	// It is a FUNCTION, read once per invocation, and both halves of that
+	// matter. The dispatcher is built before the TUI installs a gate, so a
+	// value captured at construction is always nil; and the policy changes
+	// mid-session through /yolo and the settings screen, so a value captured
+	// at the first invocation goes stale.
+	//
+	// Nil means no wiring, which is what every construction site did before
+	// this existed: the nested loop then runs ungated, exactly as it always
+	// has. That is a compatibility floor, not a design - a site that leaves
+	// this nil lets a delegated call skip an approval the same call would
+	// face on the root path.
+	Approval func() sdkadapter.ApprovalDeps
+
 	// Completer is the LLM provider used by the sub-agent loop.
 	Completer provider.Completer
 	// FullRegistry is the parent's complete tool registry.
@@ -133,6 +144,22 @@ type MultiStepHandler struct {
 	// A nested handler never receives a context store or checkpoint publisher.
 	ContextPreparationManager contextmgr.PreparationManager
 	ContextPreparationInput   contextmgr.PrepareInput
+	// OnToolCancelReady, when set, is forwarded as this invocation's nested
+	// agent.Options.OnToolCancelReady: the SDK backend calls it once, as
+	// soon as the run's per-turn cancel registry exists, with a
+	// ToolCanceler the host can retain and invoke later to cancel ONE
+	// in-flight tool call within THIS task without aborting the task, any
+	// sibling task, or the parent run.
+	//
+	// ctx is the same context Invoke/run received - it carries
+	// runtime.TaskIdentity when this invocation was dispatched by a
+	// coordinator-owned subagents.Pool (contextForTask stamps it before
+	// Pool.executeOne calls the dispatcher), which is how a host keys its
+	// own registry without MultiStepHandler needing to know anything
+	// coordinator-specific. A handler that never sets this field (every
+	// construction site before this one) is unaffected: the nested loop's
+	// OnToolCancelReady stays nil, exactly as before.
+	OnToolCancelReady func(ctx context.Context, canceler agent.ToolCanceler)
 }
 
 // Invoke creates a restricted agent loop and runs the assigned task.
@@ -152,6 +179,55 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	return h.run(ctx, taskPrompt, req)
 }
 
+// originForRequest builds the attribution stamped onto every event a subagent
+// loop emits.
+//
+// TaskID is the correlation key: coordinator calls carry the workflow
+// attempt's task id (wft-...) on the context, so bus, ledger, and attempt
+// events share one key; other callers fall back to the request id.
+//
+// SessionID and TurnID serve a different consumer. The subagent publish path
+// reaches the event bus through package-level state that has no session
+// context of its own, so an event that does not carry them is published with
+// an empty SessionID - and internal/hub's receiver drops every event whose
+// SessionID does not match its own, which made every subagent invisible to a
+// second live surface.
+func originForRequest(ctx context.Context, req runtime.Request) agent.EventOrigin {
+	taskID := req.ID
+	if id, ok := runtime.TaskIdentityFrom(ctx); ok && id.TaskID != "" {
+		taskID = id.TaskID
+	}
+	origin := agent.EventOrigin{
+		TaskID:          taskID,
+		Agent:           req.Name,
+		Depth:           req.Depth + 1,
+		TaskDescription: taskDescriptionFromInput(req.Input),
+		SessionID:       req.SessionID,
+		TurnID:          req.TurnID,
+	}
+	// The task that caused this one to start, carried on the request itself.
+	// A context value cannot do this job: the coordinator roots every task's
+	// context in context.Background(), so nothing a caller puts on its own
+	// context is reachable from the task it starts.
+	origin.ParentTaskID = req.ParentTaskID
+	return origin
+}
+
+// announceRunStart emits the run-level opening signal, the mirror of the
+// deferred Done in run. It fires before any work, so a consumer learns that
+// the run exists, and what it was asked to do, without waiting for the run's
+// first nested tool call. A nil sink makes it a no-op.
+func announceRunStart(stamped func(agent.Event), name, taskDescription string) {
+	if stamped == nil {
+		return
+	}
+	stamped(agent.Event{
+		Kind:   agent.EventSubagentBegin,
+		Name:   name,
+		Detail: taskDescription,
+	})
+}
+
 func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (out json.RawMessage, err error) {
 	scoped, err := h.newScopedLoop()
 	if err != nil {
@@ -162,28 +238,13 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	steps, maxTokens, toolTimeout := h.setupAgentLoop()
 	loop.Messages = h.seedMessages()
 
-	// Apply total timeout if specified - but only if it's tighter than parent.
-	// Never extend beyond parent deadline (that's the orchestrator's call).
-	callCtx, cancel := h.timeoutContext(ctx, req)
-	defer cancel()
-
-	// Attribution key: coordinator calls carry the workflow attempt's task id
-	// (wft-...) on the context. Use it so bus, ledger, and attempt events share
-	// one correlation key. Non-coordinator callers fall back to the request id.
-	taskID := req.ID
-	if id, ok := runtime.TaskIdentityFrom(ctx); ok && id.TaskID != "" {
-		taskID = id.TaskID
-	}
-
 	// Every event this loop emits - including heartbeats - is stamped with
 	// the run's identity so the parent UI can attribute it. Without the
 	// stamp, parallel subagents are indistinguishable downstream.
-	stamped := StampEventOrigin(h.OnEvent, agent.EventOrigin{
-		TaskID:          taskID,
-		Agent:           req.Name,
-		Depth:           req.Depth + 1,
-		TaskDescription: taskDescriptionFromInput(req.Input),
-	})
+	origin := originForRequest(ctx, req)
+	stamped := StampEventOrigin(h.OnEvent, origin)
+
+	announceRunStart(stamped, req.Name, origin.TaskDescription)
 
 	// A run that ends must say so, and say HOW it ended. Nested tool events
 	// only ever report tool lifecycle, so without this terminal signal the
@@ -207,6 +268,12 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		}()
 	}
 
+	// Apply total timeout if specified - but only if it's tighter than parent.
+	// Never extend beyond parent deadline (that's the orchestrator's call).
+	// Derived AFTER ctx carries this run's origin so callCtx inherits it.
+	callCtx, cancel := h.timeoutContext(ctx, req)
+	defer cancel()
+
 	compiled, appendix, cerr := h.compileOutputSchema(req)
 	if cerr != nil {
 		return buildResult("", 0, 0, 0, cerr)
@@ -214,6 +281,14 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskPrompt += appendix
 
 	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
+	// See OnToolCancelReady's own doc comment: ctx here (not callCtx, derived
+	// below) is the one runtime.TaskIdentity was stamped onto, and the one
+	// originForRequest already reads it from.
+	if h.OnToolCancelReady != nil {
+		opts.OnToolCancelReady = func(canceler agent.ToolCanceler) {
+			h.OnToolCancelReady(ctx, canceler)
+		}
+	}
 	// Parent→child steers (plan 54): step-boundary drain, soft interrupt of the
 	// in-flight LLM call, pending gate, watchdog, and cooldown. The mailbox
 	// bundle is optional; without one all steer machinery stays off.
@@ -230,6 +305,41 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
 	h.discardPreparation(loop)
 	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
+}
+
+// toolStartDedup remembers which tool calls the loop's tool_start stream has
+// already reported, because that stream carries TWO EventToolStart events per
+// call: "queued" from the PointPreTool hook and "running" from the dispatcher
+// shim (internal/agent/sdk_tool_events.go states the pair;
+// internal/agent/agentloop_maxconcurrent_test.go pins it - 3 calls, 6 events).
+// Both legs carry the same ToolCallID, so anything that counts the raw events
+// reports exactly twice the tools that ran - which is what the sidebar's
+// "Tools: N" and inspect_agents' progress.tool_calls did.
+//
+// A start with an empty ToolCallID is never deduped: it cannot be matched to a
+// sibling leg, and collapsing those would UNDER-count.
+type toolStartDedup struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+// first reports whether id is the first tool_start seen for that call, and
+// records it. Tool calls run concurrently, so this is the synchronization
+// point for the set.
+func (d *toolStartDedup) first(id string) bool {
+	if id == "" {
+		return true
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, dup := d.seen[id]; dup {
+		return false
+	}
+	if d.seen == nil {
+		d.seen = make(map[string]struct{})
+	}
+	d.seen[id] = struct{}{}
+	return true
 }
 
 // stepOnEvent builds the nested loop's OnEvent callback: it counts steps,
@@ -249,8 +359,14 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 // otherwise show a stale or zero Elapsed/Tools/Step reading for most or all
 // of its life. Both paths share heartbeatDetail, so the two update sources
 // can never format the count differently.
+//
+// One tool call is counted and recorded ONCE: the loop emits two
+// EventToolStart events per call and only the first reaches the counter and
+// the sink (see toolStartDedup). The second is still forwarded to stamped -
+// the operator wire shape is a pinned contract - but it is not progress.
 func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agent.Event), stepCount, toolCallCount *atomic.Int64, taskStart time.Time) func(agent.Event) {
 	sink, hasSink := ToolCallSinkFrom(reqCtx)
+	starts := &toolStartDedup{}
 	return func(e agent.Event) {
 		progressed := false
 		if e.Kind == agent.EventStep {
@@ -258,6 +374,12 @@ func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agen
 			progressed = true
 		}
 		if e.Kind == agent.EventToolStart {
+			if !starts.first(e.ToolCallID) {
+				if stamped != nil {
+					stamped(e)
+				}
+				return
+			}
 			toolCallCount.Add(1)
 			progressed = true
 		}
@@ -276,123 +398,6 @@ func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agen
 			}
 		}
 	}
-}
-
-// loopOptions builds the nested loop's options. OnEvent is left to the caller,
-// which owns the step counter and the origin-stamped sink.
-func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
-	opts := agent.Options{
-		// The nested loop wires a BeforeStep mailbox drain
-		// (applyMailboxAccess). It maps onto the SDK path through the
-		// Steer injector installed in RunAgentLoopOnce: the SDK
-		// drains the injector at the top of every iteration and at
-		// every steered-stop downgrade point, growing history with
-		// the framed parent message and downgrading a pending
-		// StopSteered when the drain is non-empty. No Backend override
-		// here: the SDK is the default and the BeforeStep carrier
-		// lives there now.
-		Model:            h.Model,
-		Reasoning:        h.dial(),
-		MaxSteps:         steps,
-		MaxTokens:        maxTokens,
-		MaxContextTokens: h.contextBudget(),
-		// Same operator knob as the interactive loop; 0 = uncapped.
-		MaxToolResultChars:     h.MaxToolResultChars,
-		BatchResultBudgetBytes: h.BatchResultBudgetBytes,
-		RefOnlyTools:           h.RefOnlyTools,
-		RemainderSpool:         h.RemainderSpool,
-		ToolTimeout:            toolTimeout,
-		ToolRunTimeout:         h.ToolRunTimeout,
-		RequestTimeout:         h.RequestTimeout,
-		Dispatcher:             scoped.dispatcher,
-		ParentID:               req.ID,
-		TurnID:                 req.TurnID,
-		SessionID:              req.SessionID,
-		Role:                   req.Role,
-		Depth:                  req.Depth + 1,
-		Budget:                 req.Budget,
-		WorkLimits:             runtime.LowestPositiveWorkLimits(h.WorkLimits, req.WorkLimits),
-		DisableProviderReplay:  h.DisableProviderReplay || req.DisableProviderReplay,
-		WireStreamTransport:    h.WireStreamTransport,
-	}
-	if h.ContextPreparationManager != nil {
-		input := h.ContextPreparationInput
-		if budget := h.contextBudget(); budget > 0 {
-			input.Budget = budget
-		}
-		input.CurrentObjective = taskPrompt
-		opts.PreparationManager = h.ContextPreparationManager
-		opts.PreparationInput = input
-	}
-	return opts
-}
-
-// applyMailboxAccess wires the parent→child mailbox bundle (plan 54) into the
-// nested loop options when the coordinator stamped one on ctx: the step-boundary
-// drain, the soft-interrupt channel, the pending gate, the watchdog interval,
-// and the interrupt cooldown. A context without a bundle leaves opts untouched
-// (all steer machinery off).
-func (h *MultiStepHandler) applyMailboxAccess(ctx context.Context, opts *agent.Options) {
-	access, ok := runtime.MailboxAccessFrom(ctx)
-	if !ok {
-		return
-	}
-	opts.BeforeStep = parentMessageBeforeStep(access.Drain)
-	opts.InterruptCh = access.Interrupt
-	opts.MailboxPending = access.Pending
-	opts.MailboxPendingInterrupt = access.PendingInterrupt
-	opts.WatchdogInterval = h.SteerWatchdog
-	opts.SoftInterruptCooldown = softInterruptCooldown
-}
-
-func (h *MultiStepHandler) discardPreparation(loop *agent.Loop) {
-	if loop == nil || !loop.HasPreparation || h.ContextPreparationManager == nil {
-		return
-	}
-	h.ContextPreparationManager.Discard(loop.LastPreparation)
-	loop.HasPreparation = false
-}
-
-// dial is the reasoning setting this invocation's loop sends.
-func (h *MultiStepHandler) dial() reasoning.Setting {
-	if h.ReasoningFunc != nil {
-		return h.ReasoningFunc()
-	}
-	return h.Reasoning
-}
-
-func (h *MultiStepHandler) contextBudget() int {
-	if h.MaxContextTokensFunc != nil {
-		return h.MaxContextTokensFunc()
-	}
-	return h.MaxContextTokens
-}
-
-// budgetContext derives a context bounded by the tightest of total (the
-// whole-run budget), reqTimeout (the per-task timeout, which wins when
-// tighter), and the parent deadline. A value <= 0 adds no bound. The parent
-// deadline is never extended - the caller above owns the outer bound.
-// Returns the derived context and a cleanup func (caller must defer it).
-// Shared by MultiStepHandler.timeoutContext and OneShotHandler.Invoke so both
-// handler families apply one identical clamp.
-func budgetContext(ctx context.Context, total, reqTimeout time.Duration) (context.Context, func()) {
-	if reqTimeout > 0 && (total <= 0 || reqTimeout < total) {
-		total = reqTimeout
-	}
-	if total > 0 {
-		if parentDeadline, ok := ctx.Deadline(); !ok || total < time.Until(parentDeadline) {
-			return context.WithTimeout(ctx, total)
-		}
-	}
-	return ctx, func() {}
-}
-
-// timeoutContext derives a context with timeout, but only if the requested
-// timeout is tighter than the parent's remaining deadline. Never extends
-// beyond parent - the orchestrator controls the outer bound.
-// Returns the derived context and a cleanup func (caller must defer it).
-func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Request) (context.Context, func()) {
-	return budgetContext(ctx, h.TotalTimeout, req.Timeout)
 }
 
 // emitHeartbeat runs in a goroutine, emitting periodic heartbeat events
@@ -427,74 +432,5 @@ func heartbeatDetail(elapsed time.Duration, steps, toolCalls int64) string {
 	return fmt.Sprintf("elapsed=%s steps=%d toolcalls=%d", elapsed.Round(time.Second), steps, toolCalls)
 }
 
-// scopedLoop pairs an agent loop with the dispatcher built from the same
-// restricted registry. The pairing is the nested-agent authorization boundary.
-type scopedLoop struct {
-	loop       *agent.Loop
-	dispatcher *runtime.Dispatcher
-}
-
-func (h *MultiStepHandler) newScopedLoop() (*scopedLoop, error) {
-	reg := h.restrictedRegistry()
-	dispatcher, err := runtime.NewToolDispatcher(reg, h.parentPolicy())
-	if err != nil {
-		return nil, fmt.Errorf("scoped tool dispatcher: %w", err)
-	}
-	return &scopedLoop{
-		loop:       &agent.Loop{Completer: h.Completer, Tools: reg},
-		dispatcher: dispatcher,
-	}, nil
-}
-
-func (h *MultiStepHandler) parentPolicy() runtime.Policy {
-	if h.Dispatcher == nil {
-		return runtime.Policy{}
-	}
-	return h.Dispatcher.Policy()
-}
-
-// setupAgentLoop returns the defaults for a scoped agent loop.
-// MaxSteps=0 means unlimited (no step cap).
-// maxTokens is nil when unset (MaxTokens<=0), letting the provider use its
-// model default. A hardcoded 4096 cap truncated comprehensive subagent
-// reports mid-sentence at the LLM API level.
-func (h *MultiStepHandler) setupAgentLoop() (int, *int, time.Duration) {
-	steps := h.MaxSteps
-	var maxTokens *int
-	if h.MaxTokens > 0 {
-		mt := h.MaxTokens
-		maxTokens = &mt
-	}
-	toolTimeout := h.ToolTimeout
-	if toolTimeout <= 0 {
-		toolTimeout = 900 * time.Second
-	}
-	return steps, maxTokens, toolTimeout
-}
-
-// restrictedRegistry returns a fresh spawned-scope registry from FullRegistry.
-// Filtering is delegated to tools.ScopedRegistry so object markers and the
-// mandatory denylist stay consistent with agent-definition policy.
-func (h *MultiStepHandler) restrictedRegistry() *tools.Registry {
-	return tools.ScopedRegistry(h.FullRegistry, tools.ScopeOptions{Mode: tools.ScopeSpawned})
-}
-
 // Ensure MultiStepHandler implements runtime.Handler at compile time.
 var _ runtime.Handler = (*MultiStepHandler)(nil)
-
-// seedMessages builds the loop's starting history: the system prompt at
-// index 0 and, when present, the core-memory frame at index 1, before the
-// task prompt the loop appends. The frame is background context and must
-// precede the real objective; RoleSystem is only valid at index 0, so the
-// frame is a sentinel-named user-role message.
-func (h *MultiStepHandler) seedMessages() []provider.Message {
-	subPrompt := h.SystemPrompt
-	if subPrompt == "" {
-		subPrompt = "You are a focused sub-agent with access to tools. Complete the assigned task."
-	}
-	messages := []provider.Message{{Role: provider.RoleSystem, Content: subPrompt}}
-	if h.MemoryContext != "" {
-		messages = append(messages, provider.Message{Role: provider.RoleUser, Name: chat.MemoryContextMessageName, Content: h.MemoryContext})
-	}
-	return messages
-}

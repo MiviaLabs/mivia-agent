@@ -166,10 +166,10 @@ func TestRegisterMessagingToolsIdempotentPaths(t *testing.T) {
 	reg := tools.NewRegistry()
 	cfg := config.DefaultSubagentConfig
 	repo := ledger.NewMemoryLedgerRepository()
-	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	post, ok := reg.Get(toolPostMessage)
@@ -282,7 +282,7 @@ func TestHandleAskErrorPaths(t *testing.T) {
 
 // findLiveErrCoord wraps a real coordinator and injects FindLiveTaskByRole errors.
 type findLiveErrCoord struct {
-	coordinator.Coordinator
+	chatCoordinator
 	err error
 }
 
@@ -290,11 +290,11 @@ func (f findLiveErrCoord) FindLiveTaskByRole(ctx context.Context, runID, role st
 	if f.err != nil {
 		return "", false, f.err
 	}
-	return f.Coordinator.FindLiveTaskByRole(ctx, runID, role)
+	return f.chatCoordinator.FindLiveTaskByRole(ctx, runID, role)
 }
 
 type transitionErrCoord struct {
-	coordinator.Coordinator
+	chatCoordinator
 	err error
 }
 
@@ -302,20 +302,20 @@ func (t transitionErrCoord) TransitionToAwaitingInput(ctx context.Context, runID
 	if t.err != nil {
 		return t.err
 	}
-	return t.Coordinator.TransitionToAwaitingInput(ctx, runID, taskID)
+	return t.chatCoordinator.TransitionToAwaitingInput(ctx, runID, taskID)
 }
 
 func TestHandleAskFindLiveError(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
 	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
-	if _, err := tool.handleAsk(ctx, findLiveErrCoord{Coordinator: c, err: fmt.Errorf("list boom")}, id, "q", nil, "peer", 0, ""); err == nil {
+	if _, err := tool.handleAsk(ctx, findLiveErrCoord{chatCoordinator: c, err: fmt.Errorf("list boom")}, id, "q", nil, "peer", 0, ""); err == nil {
 		t.Fatal("want find live err")
 	}
 }
 
 // livePeerRun starts a hanging peer task and returns run handle + dispatcher/repo/coord.
-func livePeerRun(t *testing.T) (*runtime.Dispatcher, coordinator.Coordinator, ledger.LedgerRepository, *coordinator.RunHandle) {
+func livePeerRun(t *testing.T) (*runtime.Dispatcher, *coordinator.Coordinator, ledger.LedgerRepository, *coordinator.RunHandle) {
 	t.Helper()
 	d := runtime.New(runtime.Policy{})
 	repo := ledger.NewMemoryLedgerRepository()
@@ -423,7 +423,7 @@ func TestHandleAskTransitionFail(t *testing.T) {
 	seedAskerTask(t, repo, h.RunID(), "w2")
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
 	id := runtime.TaskIdentity{RunID: h.RunID(), TaskID: "w2", Agent: "worker"}
-	wrap := transitionErrCoord{Coordinator: c, err: fmt.Errorf("cas fail")}
+	wrap := transitionErrCoord{chatCoordinator: c, err: fmt.Errorf("cas fail")}
 	out, err := tool.handleAsk(context.Background(), wrap, id, "q", nil, "peer", 2, "")
 	if err == nil || !strings.Contains(err.Error(), "park ask") {
 		t.Fatalf("want park ask transition err, got %v out=%s", err, out)
@@ -508,7 +508,7 @@ func TestAllowPairKeyAndRouteInvalidMode(t *testing.T) {
 
 // tryRegFailCoord forces TryRegisterAsk to fail after RouteAsk allowed.
 type tryRegFailCoord struct {
-	coordinator.Coordinator
+	chatCoordinator
 }
 
 func (t tryRegFailCoord) TryRegisterAsk(string, string, string, string, []string, int) bool {
@@ -523,7 +523,7 @@ func TestHandleAskTryRegisterFail(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
 	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
-	wrap := tryRegFailCoord{Coordinator: c}
+	wrap := tryRegFailCoord{chatCoordinator: c}
 	out, err := tool.handleAsk(ctx, wrap, id, "q", nil, "peer", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -535,7 +535,7 @@ func TestHandleAskTryRegisterFail(t *testing.T) {
 
 // claimFailCoord peeks open but claim always fails.
 type claimFailCoord struct {
-	coordinator.Coordinator
+	chatCoordinator
 }
 
 func (c claimFailCoord) AskLookup(string) (string, bool) { return "asker", true }
@@ -548,7 +548,7 @@ func TestHandlePeerAnswerClaimFail(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
 	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
-	wrap := claimFailCoord{Coordinator: c}
+	wrap := claimFailCoord{chatCoordinator: c}
 	if _, err := tool.handlePeerAnswer(ctx, wrap, id, "ok", "any"); err == nil {
 		t.Fatal("want claim fail")
 	}
@@ -561,7 +561,7 @@ func TestRegisterMessagingToolsWithAgentReg(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	// Registry with a published agent so resolveTaskRoute succeeds and sets digest.
 	ar := testAgentRegistry(t, "auditor")
-	if err := registerMessagingTools(d, reg, cfg, repo, ar); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, ar, nil); err != nil {
 		t.Fatal(err)
 	}
 	post, ok := reg.Get(toolPostMessage)

@@ -1,0 +1,10 @@
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": [
+    "email must be an email",
+    "password must be longer than or equal to 8 characters"
+  ],
+  "timestamp": "2026-08-30T10:00:00.000Z",
+  "path": "/v1/auth/login"
+}

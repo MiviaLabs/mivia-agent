@@ -78,7 +78,7 @@ func newSDKContinueOnStop(l *Loop, sdkOpts sdkagentloop.Options, opts Options, t
 		// exhausted branch, carried over verbatim: an exhausted budget
 		// returns the turn it already has instead of failing it, and a
 		// non-positive bound is the unbounded contract and passes through.
-		if sdkOpts.MaxIterations > 0 && turn.currentStep() >= sdkOpts.MaxIterations {
+		if sdkOpts.Bounds.MaxIterations > 0 && turn.currentStep() >= sdkOpts.Bounds.MaxIterations {
 			return nil
 		}
 		switch d.Stop {
@@ -93,6 +93,11 @@ func newSDKContinueOnStop(l *Loop, sdkOpts sdkagentloop.Options, opts Options, t
 				Kind:   EventEmptyResponseRetry,
 				Detail: fmt.Sprintf("empty response on attempt %d/%d, retrying...", emptyRetries, maxEmptyResponseRetries+1),
 			})
+			// The turn restarts from the same messages, so anything already
+			// streamed belongs to an attempt that no longer exists. Without
+			// this a consumer appends the replay onto the first attempt and
+			// shows the answer twice.
+			emit(opts, Event{Kind: EventAssistantReset})
 			return continueWith(opts, sdkshape.Message{Role: sdkshape.RoleUser, Content: emptyResponseContinuationNotice})
 		case sdkagentloop.StopNoToolCalls:
 			if opts.MaxUnactedContinuations <= 0 ||

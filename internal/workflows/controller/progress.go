@@ -12,6 +12,11 @@ import (
 type ProgressKind string
 
 const (
+	// ProgressRunStarted reports a run beginning execution, before its first
+	// step attempt. It is the only signal that separates "admitted and
+	// starting" from "admitted and wedged before step one": every other kind
+	// requires a step to have started already.
+	ProgressRunStarted ProgressKind = "run_started"
 	// ProgressStepStarted reports a step attempt beginning.
 	ProgressStepStarted ProgressKind = "step_started"
 	// ProgressStepCompleted reports a step attempt reaching a terminal status.

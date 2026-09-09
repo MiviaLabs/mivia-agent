@@ -36,6 +36,12 @@ type Model struct {
 	width       int
 	filesCount  int
 	agentsCount int
+	tabs        []SessionTab
+	// sessionHidden drops the model capsule and the context badge from
+	// the right side. The activity sidebar shows both in its own
+	// sections while it is open, so the bar does not say them twice
+	// (SetSessionHidden).
+	sessionHidden bool
 }
 
 // New returns a top bar showing the given session values. width is the
@@ -74,6 +80,15 @@ func (m *Model) SetUsage(usage ports.Usage) {
 func (m Model) Usage() ports.Usage {
 	return m.usage
 }
+
+// Info returns the session's model identity (provider and name).
+func (m Model) Info() ports.ModelInfo { return m.info }
+
+// SetSessionHidden hides or shows the model capsule and the context
+// badge together. While hidden ModelBounds reports ok = false, so a
+// double-click on the bar can no longer open the model picker from
+// here - the sidebar's model row owns that while it is open.
+func (m *Model) SetSessionHidden(hidden bool) { m.sessionHidden = hidden }
 
 // SetBreadcrumb records the ordered breadcrumb segments (e.g. [sessionTitle]
 // or [sessionTitle, agentName, taskDesc]).
@@ -144,9 +159,7 @@ func (m Model) contextBadge(pct int, withBar bool) string {
 		return border.Render("[ ") + style.Render(fmt.Sprintf("%d%%", pct)) + border.Render(" ]")
 	}
 
-	totalBlocks := 4
-	filled := min(totalBlocks, max(0, (pct*totalBlocks+50)/100))
-	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", totalBlocks-filled)
+	bar := render.ContextBar(pct, 4, m.Tier)
 
 	return border.Render("[ ") + style.Render(fmt.Sprintf("%d%% ", pct)+bar) + border.Render(" ]")
 }
@@ -197,44 +210,111 @@ func (m Model) activityBadge() string {
 
 // View renders the top bar. The first row states the mark/wordmark on the
 // left, and model/provider/context share on the right. When breadcrumbs
+func (m Model) buildRight(prov, bar bool, pct int, hasPct bool) string {
+	if m.sessionHidden {
+		return ""
+	}
+	r := m.modelCapsule(prov)
+	if hasPct {
+		r += " " + m.contextBadge(pct, bar)
+	}
+	return r
+}
+
+type layoutPlan struct {
+	withActivity bool
+	withBar      bool
+	withProvider bool
+	withWordmark bool
+	right        string
+	left         string
+	startCol     int
+	availTabs    int
+}
+
+func (m Model) planLayout() layoutPlan {
+	pct, hasPct := m.ContextPercent()
+	p := layoutPlan{
+		withActivity: m.width >= 90,
+		withBar:      m.width >= 80,
+		withProvider: true,
+		withWordmark: true,
+	}
+
+	calc := func() int {
+		p.right = m.buildRight(p.withProvider, p.withBar, pct, hasPct)
+		rightW := ansi.StringWidth(p.right)
+		avail := m.width - rightW - 1
+		p.left, p.startCol = m.buildLeft(p.withActivity, p.withWordmark, avail)
+		p.availTabs = avail - p.startCol
+		return ansi.StringWidth(p.left) + 1 + rightW
+	}
+
+	totalW := calc()
+	if m.width > 0 {
+		if totalW > m.width && p.withActivity {
+			p.withActivity = false
+			totalW = calc()
+		}
+		if totalW > m.width && p.withBar {
+			p.withBar = false
+			totalW = calc()
+		}
+		if totalW > m.width && p.withProvider {
+			p.withProvider = false
+			totalW = calc()
+		}
+		if totalW > m.width && p.withWordmark && len(m.tabs) > 0 {
+			p.withWordmark = false
+			_ = calc()
+		}
+	}
+	return p
+}
+
+func (m Model) buildLeft(act, wordmark bool, avail int) (string, int) {
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
+
+	if len(m.tabs) == 0 {
+		l := m.mark.View() + subtle.Render("  ") + m.titleView()
+		if act {
+			if a := m.activityBadge(); a != "" {
+				l += " " + a
+			}
+		}
+		return l, 0
+	}
+
+	var brand string
+	if wordmark {
+		brand = m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+	} else {
+		brand = m.mark.View()
+	}
+	if act {
+		if a := m.activityBadge(); a != "" {
+			brand += " " + a
+		}
+	}
+	startCol := ansi.StringWidth(brand) + 1
+	availTabs := avail - startCol
+	tabsStr := m.renderTabStrip(availTabs, startCol)
+	if tabsStr == "" {
+		return brand, startCol
+	}
+	return brand + " " + tabsStr, startCol
+}
+
+// View renders the top bar. The first row states the mark/wordmark on the
+// left, and model/provider/context share on the right. When breadcrumbs
 // are present, a second row renders the trail.
 func (m Model) View() string {
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-
-	pct, hasPct := m.ContextPercent()
-	withProvider := true
-	withBar := m.width >= 80
-	withActivity := m.width >= 90
-
-	left := m.mark.View() + subtle.Render("  ") + m.titleView()
-	if withActivity {
-		if act := m.activityBadge(); act != "" {
-			left += " " + act
-		}
-	}
-
-	buildRight := func(prov, bar bool) string {
-		r := m.modelCapsule(prov)
-		if hasPct {
-			r += " " + m.contextBadge(pct, bar)
-		}
-		return r
-	}
-
-	right := buildRight(withProvider, withBar)
+	plan := m.planLayout()
+	left := plan.left
+	right := plan.right
 
 	if m.width > 0 {
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			left = m.mark.View() + subtle.Render("  ") + m.titleView()
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			withBar = false
-			right = buildRight(withProvider, withBar)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			withProvider = false
-			right = buildRight(withProvider, withBar)
-		}
 		availLeft := m.width - ansi.StringWidth(right) - 1
 		if availLeft < ansi.StringWidth(left) {
 			if availLeft > 0 {
@@ -266,50 +346,13 @@ func (m Model) View() string {
 // model capsule in the first row of the top bar within the content width.
 // Returns ok = false if no model info is displayed.
 func (m Model) ModelBounds() (startCol, endCol int, ok bool) {
-	if m.info.Name == "" {
+	if m.info.Name == "" || m.sessionHidden {
 		return 0, 0, false
 	}
-	pct, hasPct := m.ContextPercent()
-	withProvider := true
-	withBar := m.width >= 80
-	withActivity := m.width >= 90
-
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-	if withActivity {
-		if act := m.activityBadge(); act != "" {
-			left += " " + act
-		}
-	}
-
-	buildRight := func(prov, bar bool) string {
-		r := m.modelCapsule(prov)
-		if hasPct {
-			r += " " + m.contextBadge(pct, bar)
-		}
-		return r
-	}
-
-	right := buildRight(withProvider, withBar)
-
-	if m.width > 0 {
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			left = m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			withBar = false
-			right = buildRight(withProvider, withBar)
-		}
-		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			withProvider = false
-			right = buildRight(withProvider, withBar)
-		}
-	}
-
-	capsule := m.modelCapsule(withProvider)
+	plan := m.planLayout()
+	capsule := m.modelCapsule(plan.withProvider)
 	capsuleWidth := ansi.StringWidth(capsule)
-	rightWidth := ansi.StringWidth(right)
+	rightWidth := ansi.StringWidth(plan.right)
 
 	startCol = m.width - rightWidth
 	if startCol < 0 {
@@ -332,8 +375,8 @@ func (m Model) HitsModel(clickCol int) bool {
 // activity badge (files/agents) in the top bar within the content width.
 // Returns ok = false if no activity badge is displayed.
 func (m Model) ActivityBounds() (startCol, endCol int, ok bool) {
-	withActivity := m.width >= 90
-	if !withActivity {
+	plan := m.planLayout()
+	if !plan.withActivity {
 		return 0, 0, false
 	}
 	act := m.activityBadge()

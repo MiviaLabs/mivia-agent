@@ -5,6 +5,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // cliPanelCancelCoordinator returns the coordinator that can inspect and
@@ -23,7 +24,7 @@ import (
 // onto an operator who only wants to cancel a stuck or misconfigured run,
 // contradicting D15's stated intent that terminal admission needs no
 // provider credentials or tool execution authority.
-func cliPanelCancelCoordinator(live *controller.CoordinatorRunner, store *storage.SQLite) coordinator.Coordinator {
+func cliPanelCancelCoordinator(live *controller.CoordinatorRunner, store *storage.SQLite) workflowledger.PanelChildCoordinator {
 	if live != nil {
 		return live.Coordinator
 	}

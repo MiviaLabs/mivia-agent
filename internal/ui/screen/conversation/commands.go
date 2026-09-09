@@ -2,7 +2,7 @@ package conversation
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -51,11 +51,51 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	if name == "blackboard" || name == "messages" {
 		return s.openBlackboard(), nil
 	}
+	if name == "tab" {
+		if args == "" || args == "next" {
+			return s.switchTabRelative(1)
+		}
+		if args == "prev" || args == "back" {
+			return s.switchTabRelative(-1)
+		}
+		for _, id := range s.sessionOrder {
+			if strings.EqualFold(id, args) {
+				return s.switchToSessionID(id)
+			}
+		}
+		if idx, err := strconv.Atoi(args); err == nil {
+			if idx >= 1 && idx <= len(s.sessionOrder) {
+				return s.switchToSessionIndex(idx - 1)
+			}
+			return s.withError("tab index out of range: " + args), nil
+		}
+		for _, id := range s.sessionOrder {
+			var title string
+			if id == s.convID() && s.conv != nil {
+				title = s.conv.Title()
+			} else if st, ok := s.sessions[id]; ok && st.conv != nil {
+				title = st.conv.Title()
+			}
+			if title != "" && strings.Contains(strings.ToLower(title), strings.ToLower(args)) {
+				return s.switchToSessionID(id)
+			}
+		}
+		return s.withError("no session matching /tab " + args), nil
+	}
 	if s.runner == nil {
 		if name == "queue" {
 			return s.openQueue(), nil
 		}
 		return s.withError("no command runner configured for /" + name), nil
+	}
+	if name == "compact" {
+		if async, ok := s.runner.(ports.AsyncCompactionRunner); ok {
+			h, err := async.StartCompaction(context.Background(), args)
+			if err != nil {
+				return s.withError("compact failed: " + err.Error()), nil
+			}
+			return s.startCompaction(h)
+		}
 	}
 	outcome := s.runner.Run(context.Background(), name, args)
 	if s.conv != nil {
@@ -82,25 +122,10 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s.openHelp(), tea.ClearScreen
 	case o.OpenQueue:
 		return s.openQueue(), nil
+	case o.LoginPrompt:
+		return s.openLogin(o.LoginEmail)
 	case o.ClearTranscript:
-		if o.Conversation != nil {
-			s.switchConversation(o.Conversation)
-		} else {
-			s.transcript = s.transcript.Clear()
-			if s.conv != nil {
-				s.LoadHistory(s.conv.History())
-				s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
-				if title := s.conv.Title(); title != "" {
-					s.topbar.SetBreadcrumb([]string{title})
-				} else {
-					s.topbar.SetBreadcrumb(nil)
-				}
-			}
-		}
-		if o.Notice != "" {
-			return s.withNotice(o.Notice), nil
-		}
-		return s, nil
+		return s.clearTranscriptOutcome(o)
 	case len(o.ModelChoiceGroups) > 0:
 		var groups []picker.Group
 		for _, g := range o.ModelChoiceGroups {
@@ -141,12 +166,40 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 			if s.queueOverlay.Active() {
 				s.queueOverlay.SetItems(s.queue)
 			}
-			s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
+			s.statusline.SetQueued(len(s.queue))
 			return s, nil
 		}
 		return s.sendTextWithPersisted(o.SubmitPrompt, o.SubmitPersistedText)
 	}
 	return s, nil
+}
+
+// clearTranscriptOutcome empties the transcript view, switching to the
+// replacement conversation when the outcome carries one. A notice riding
+// the same outcome is appended after the reset.
+func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd) {
+	if o.Conversation != nil {
+		s.switchConversation(o.Conversation)
+	} else {
+		s.transcript = s.transcript.Clear()
+		if s.conv != nil {
+			s.LoadHistory(s.conv.History())
+			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			if title := s.conv.Title(); title != "" {
+				s.topbar.SetBreadcrumb([]string{title})
+			} else {
+				s.topbar.SetBreadcrumb(nil)
+			}
+		}
+	}
+	var cmd tea.Cmd
+	if s.hasActiveSession() {
+		cmd = s.armTick()
+	}
+	if o.Notice != "" {
+		return s.withNotice(o.Notice), cmd
+	}
+	return s, cmd
 }
 
 // withNotice and withError append a transcript block. Both take a value
@@ -310,6 +363,12 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 		next, cmd, _ := s.quit()
 		return next, tea.Batch(cmd, tea.ClearScreen)
 	}
+	if msg.String() == "ctrl+w" && s.runner != nil && s.sessionPicker != nil && s.sessionPicker.filter == "" {
+		s.sessionPicker = nil
+		out := s.runner.StartInNewWorktree(context.Background(), "")
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	}
 	next, cmd := s.sessionPicker.Update(msg)
 	s.sessionPicker = &next
 	if cmd == nil {
@@ -322,6 +381,19 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 			return s.withError("no command runner configured for /resume"), tea.ClearScreen
 		}
 		out := s.runner.SelectSession(context.Background(), m.Item)
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	case resumePickMsg:
+		s.sessionPicker = nil
+		if s.runner == nil {
+			return s.withError("no command runner configured for /resume"), tea.ClearScreen
+		}
+		var out ports.CommandOutcome
+		if m.summary.WorktreeRoute {
+			out = s.runner.StartInWorktree(context.Background(), m.summary)
+		} else {
+			out = s.runner.ResumeInWorktree(context.Background(), m.summary)
+		}
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:
@@ -345,7 +417,9 @@ func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
 				"/compact - compact current conversation context",
 				"/cost - view session spending and token stats",
 				"/context - check context capacity usage",
+				"/tab - switch session tab (next, prev, or number)",
 				"/help - show full keymap",
+				"/login - sign in to your mivia account",
 			},
 		},
 		{

@@ -324,7 +324,6 @@ func listSessions(sess *chat.Session, term *Terminal) (bool, bool, error) {
 func showSession(sess *chat.Session, term *Terminal) (bool, bool, error) {
 	usage := sess.ContextUsage()
 	term.WriteString(fmt.Sprintf("\ncurrent: %d messages, %d turns, ~%d tokens (%d%% context)", len(sess.Messages), sess.UserTurns(), usage.UsedTokens, usage.Percent))
-	term.WriteString(fmt.Sprintf("\nsessions dir: %s", sess.SessionDir))
 	sessions, err := sess.ListSessions()
 	if err != nil {
 		term.WriteString(fmt.Sprintf("\nsaved: (list error: %v)", err))
@@ -363,7 +362,12 @@ func handleSlashResume(cmd string, fields []string, term *Terminal) (bool, bool,
 		return true, false, nil
 	}
 	d := cliorchestrate.FindDispatcher()
-	_, err := cliorchestrate.ResumeRun(context.Background(), c, d, runID, nil)
+	oc, ok := c.(cliorchestrate.OrchestrationCoordinator)
+	if !ok {
+		term.WriteString("\nno active orchestration runs")
+		return true, false, nil
+	}
+	_, err := cliorchestrate.ResumeRun(context.Background(), oc, d, runID, nil)
 	if err != nil {
 		term.WriteString(fmt.Sprintf("\n%v", cliorchestrate.FormatResumeError(err, runID)))
 		return true, false, nil
