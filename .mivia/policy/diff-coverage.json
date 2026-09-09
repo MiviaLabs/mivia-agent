@@ -1,23 +1,6 @@
 {
   "description": "Per-line accepted residue for the diff-coverage gate (scripts/diff_coverage.py). Each entry names exact line numbers that are provably unreachable or not unit-testable, with the reason a test cannot execute them. The gate subtracts these from the failing set and prints every accepted line, so the residue stays explicit and reviewable. Entries whose lines become covered are reported as stale and should be pruned. Never use this to silence a line a test COULD cover - add the test instead. The list is expected to shrink toward zero or be deleted with the code it describes. Residue provenance: the SDK-convergence cli split (slices 1-6) moved and lightly edited ~6300 changed-statement lines; every line a test could reach was covered across the slices - what remains below is the audited tail.",
   "knownUncovered": {
-    "internal/cliorchestrate/task_routing.go": {
-      "lines": [
-        67,
-        68,
-        101,
-        102,
-        103,
-        104,
-        138,
-        139,
-        140,
-        141,
-        210,
-        211
-      ],
-      "reason": "Four unreachable branches. (0) 67: digest-marshal error unreachable - agents.Select sanitizes schema maps through a JSON round-trip, so DefinitionDigest cannot fail on a selected agent. (1) 101-104: decodeDispatchTaskJSON's own multiple-JSON-values check, unreachable given its own precondition - it calls rejectDuplicateJSONKeys(args) first (line 91) and returns early on its error, and rejectDuplicateJSONKeys walks the SAME byte slice with the identical trailing-decode check (lines 115-119) before decodeDispatchTaskJSON's own decoder ever runs. JSON parsing is deterministic over one input, so any args that reaches decodeDispatchTaskJSON's own check already passed the identical check on the identical bytes and cannot fail it differently the second time. TestDecodeDispatchTaskJSON_MultipleValuesRejected and TestDecodeDispatchTaskJSON_TrailingGarbageSurfacesTheScanError both exercise this class of rejection at the public entry point; they are satisfied by rejectDuplicateJSONKeys's copy, confirming this one never runs. (2) 138-140: scanJSONValue's key,ok := key.(string) type-assertion failure inside the object-key branch. encoding/json's Decoder.Token() enforces string-ness for an object key position itself: JSON grammar requires a key to be a quoted string, and the decoder's own tokenizer returns a *json.SyntaxError from Token() (caught by the err != nil branch two lines above, which TestScanJSONValue_TruncatedKeyReadSurfacesTheTokenError covers) rather than successfully returning a non-string token for a malformed key. No input makes Token() return a non-string, non-error value at a key position, so the type assertion here cannot fail. (3) 210: the agent/skill-specific null check inside the per-field loop starting at line 203. The generic per-field null check earlier in the same task iteration (line 190, `for field, value := range fields`) already covers every field name including \"agent\" and \"skill\" and returns immediately on any null value, so by the time the agent/skill-specific loop runs, no field in `fields` can be null. TestValidateDispatchTaskSelectors's \"agent null\" case confirms the generic check fires first (asserts \"agent must not be null\", not \"agent must be a string when present\")."
-    },
     "internal/memory/markdown_source.go": {
       "lines": [
         93,
@@ -492,6 +475,12 @@
         177
       ],
       "reason": "json.Marshal of the doc map fails only when the doc contains a non-encodable value (chan/func/cyclic pointer); no CLI tool's Parameters() returns such a value today and the registry converter rejects ill-formed parameters upstream; the marshal-failure fallback at lines 174-176 is defensive depth (see relaxer tests in this commit for the coverable paths)"
+    },
+    "internal/cliorchestrate/task_routing.go": {
+      "lines": [
+        87
+      ],
+      "reason": "One unreachable branch, in ResolveTaskRoute: line 87 returns the error DefinitionDigest cannot produce on a selected agent, because agents.Select sanitizes schema maps through a JSON round-trip before returning one. (Line 86 is the call itself and IS covered - the gate's any-covered-block rule counts it under the statement block, not the branch it opens. Line numbers moved when the dispatch_tasks decode and its name guards left this file for task_request_decode.go; those entries went with the code, and the guards' own bail-outs are covered by a test rather than excused here.)"
     }
   }
 }
