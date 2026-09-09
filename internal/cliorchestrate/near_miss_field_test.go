@@ -97,7 +97,7 @@ func TestDecorationsSurviveTheNearMissCheck(t *testing.T) {
 }
 
 // TestFieldGuardsAgreeWithTheSchema is the rot gate for the two hand-kept
-// lists in task_routing.go. Both are name-matched against fields the schema
+// lists in task_request_decode.go. Both are name-matched against fields the schema
 // declares, so a future property named "model" (reserved) or one added to the
 // schema but not to declaredTaskFields (near-miss check goes blind) would be
 // advertised and then refused, or read and then silently droppable. Neither
@@ -187,17 +187,25 @@ func TestWhitespacePaddedFieldsAreRejected(t *testing.T) {
 	}
 }
 
-// TestMisspelledFieldBeatsTheNullCheck orders the two failure messages. A
-// misspelled field set to null is first of all misspelled: reporting "must not
-// be null" sends the model to fix the value of a field the tool never read.
+// TestMisspelledFieldBeatsTheNullCheck orders the two failure messages: EVERY
+// key is name-checked before ANY key is null-checked. A task carrying both a
+// misspelling and a null tells the model about the misspelling, because that
+// is the fault it cannot see - the null is honest about itself.
+//
+// Two DIFFERENT keys, deliberately. A single misspelled key set to null cannot
+// prove the ordering: the null check reads declared names only, so it never
+// fires on "dependsOn" whichever loop runs first. The ordering is observable
+// only when one key would fail each check, and "budget" sorts before
+// "dependsOn" so a per-key walk would report the null first.
 func TestMisspelledFieldBeatsTheNullCheck(t *testing.T) {
-	args := `{"tasks":[{"id":"x","prompt":"work","dependsOn":null}]}`
+	args := `{"tasks":[{"id":"x","prompt":"work","budget":null,"dependsOn":["a"]}]}`
 	_, err := routingTools(t).Execute(context.Background(), json.RawMessage(args))
 	if err == nil {
-		t.Fatal("a misspelled null field was accepted")
+		t.Fatal("neither the misspelling nor the null was reported")
 	}
 	if !strings.Contains(err.Error(), "depends_on") {
-		t.Fatalf("error = %v, want the spelling hint rather than a null complaint", err)
+		t.Fatalf("error = %v, want the spelling hint; a null complaint sends the model "+
+			"to fix a value while the misspelled field stays invisible", err)
 	}
 }
 
@@ -255,14 +263,21 @@ func TestNullDecorationsAreIgnored(t *testing.T) {
 // null on a field the tool DOES read stays an error, because the model meant
 // to set it and the tool would silently use the zero value.
 func TestNullOnADeclaredFieldIsStillRefused(t *testing.T) {
-	for _, field := range []string{"agent", "depends_on", "timeout_seconds"} {
+	// "Agent" and "DEPENDS_ON" included: encoding/json resolves those onto the
+	// declared field and nils it, so the null check has to resolve them too.
+	for _, field := range []string{"agent", "depends_on", "timeout_seconds", "Agent", "DEPENDS_ON"} {
 		t.Run(field, func(t *testing.T) {
 			args := `{"tasks":[{"id":"x","prompt":"work","` + field + `":null}]}`
 			_, err := routingTools(t).Execute(context.Background(), json.RawMessage(args))
 			if err == nil {
 				t.Fatalf("a null %s was accepted", field)
 			}
-			if !strings.Contains(err.Error(), field) {
+			// "must not be null" as well as the field: the near-miss guard also
+			// names the field, so the field alone cannot say which one fired.
+			if !strings.Contains(err.Error(), "must not be null") {
+				t.Fatalf("error = %v, want the null refusal", err)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(field)) {
 				t.Fatalf("error = %v, want %q named", err, field)
 			}
 		})
@@ -321,9 +336,8 @@ func TestExoticSeparatorsAreRejected(t *testing.T) {
 // exact-first, so it walked the FIRST array: the reserved-selector check, the
 // near-miss check and the null check all ran over objects that were never
 // dispatched, while the array that did run carried whatever the model liked.
-// rejectDuplicateJSONKeys did not catch it because it compares raw key bytes,
-// and "tasks" != "TASKS" as bytes even though they are one field to the
-// decoder.
+// A byte-comparing scan could not catch it: "tasks" and "TASKS" are two keys
+// as bytes and one field to the decoder.
 //
 // The same shape inside a task object nils a slice: "DEPENDS_ON":["t1"] with a
 // later "Depends_On":null decodes to an empty DependsOn while the null check
@@ -348,6 +362,42 @@ func TestCaseVariantDuplicateKeysAreRefused(t *testing.T) {
 	}
 }
 
+// TestNestedSchemaKeepsItsOwnDuplicates is the exact-duplicate half of the
+// same scoping rule. A recursive duplicate-key scan refused the WHOLE batch
+// over two identical keys inside an output_schema - JSON the tool passes
+// through and never reads - which is the decoration-refuses-the-batch failure
+// this design exists to remove, at a depth the fold check deliberately
+// excludes. Duplicates that matter are the ones at the levels that decode into
+// structs, and duplicateFoldedKey owns those.
+func TestNestedSchemaKeepsItsOwnDuplicates(t *testing.T) {
+	args := `{"tasks":[{"id":"x","prompt":"work","output_schema":` +
+		`{"type":"object","type":"object"}}],"wait":"run"}`
+	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatalf("Execute error = %v; a duplicate key inside pass-through JSON is not "+
+			"a duplicate struct field", err)
+	}
+}
+
+// TestStructLevelDuplicatesStillRefused holds the other side: an exact
+// duplicate at a level that DOES decode into a struct stays refused, now by
+// the fold check rather than by a recursive scan.
+func TestStructLevelDuplicatesStillRefused(t *testing.T) {
+	for name, args := range map[string]string{
+		"request level": `{"tasks":[{"id":"a","prompt":"p"}],"wait":"run","wait":"none"}`,
+		"task level":    `{"tasks":[{"id":"a","id":"b","prompt":"p"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := routingTools(t).Execute(context.Background(), json.RawMessage(args))
+			if err == nil {
+				t.Fatal("a duplicate key on a decoded object was accepted")
+			}
+			if !strings.Contains(err.Error(), "resolve to one field") {
+				t.Fatalf("error = %v, want the duplicate refusal", err)
+			}
+		})
+	}
+}
+
 // TestNestedSchemaKeepsItsOwnCaseVariants scopes the fold check. An
 // output_schema is arbitrary caller JSON that the tool passes through without
 // decoding into a struct, so "Type" and "type" inside it are two honest
@@ -360,5 +410,142 @@ func TestNestedSchemaKeepsItsOwnCaseVariants(t *testing.T) {
 	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
 		t.Fatalf("Execute error = %v; case variants inside a pass-through schema are "+
 			"not duplicate struct fields", err)
+	}
+}
+
+// TestUnicodeFoldDuplicatesAreRefused pins the duplicate check against
+// encoding/json's ACTUAL fold, which is not strings.ToLower.
+//
+// json folds U+017F (ſ) onto "s" and U+212A (K) onto "k", so "taskſ" and
+// "tasks" are one field to the decoder and the last one wins. ToLower leaves ſ
+// alone, so the check saw two unrelated keys, the decoy array was dispatched,
+// and every guard - reserved selectors, near-miss spellings, nulls, duplicate
+// ids - ran over the array that never left the building. That is the bypass
+// duplicateFoldedKey exists to close, reopened by one rune.
+func TestUnicodeFoldDuplicatesAreRefused(t *testing.T) {
+	for name, tc := range map[string]struct{ args, first, second string }{
+		"decoy tasks array": {`{"tasks":[{"id":"a","prompt":"p"}],` +
+			`"taskſ":[{"id":"b","prompt":"p","handler":"x","dependsOn":["a"]}]}`, "tasks", "taskſ"},
+		"decoy task field": {`{"tasks":[{"id":"a","prompt":"p","skill":"good","ſkill":"decoy"}]}`, "skill", "ſkill"},
+		"kelvin sign":      {`{"tasks":[{"id":"a","prompt":"p","skill":"good","sKill":"decoy"}]}`, "skill", "sKill"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := routingTools(t).Execute(context.Background(), json.RawMessage(tc.args))
+			if err == nil {
+				t.Fatal("two spellings json folds together were accepted; the guards ran " +
+					"over a value the decoder discarded")
+			}
+			for _, want := range []string{"resolve to one field", tc.first, tc.second} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %v, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestFoldedSpellingsStillDecode is the other side of the same rule: a single
+// folded spelling with no rival is a field encoding/json really does decode,
+// so it must be accepted, not reported as a misspelling.
+func TestFoldedSpellingsStillDecode(t *testing.T) {
+	args := `{"tasks":[{"id":"x","prompt":"work","ſkill":""}],"wait":"run"}`
+	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatalf("Execute error = %v; json decodes this key onto skill, so the guards "+
+			"must resolve it the same way", err)
+	}
+}
+
+// TestHomoglyphMisspellingIsCaught covers the lookalike that does NOT fold. A
+// Cyrillic "е" is a different letter to encoding/json - the key decodes into
+// nothing - while being indistinguishable on screen. The squash filter dropped
+// the rune instead of accounting for it, so "depеnds_on" squashed one letter
+// short of "depends_on" and read as a decoration.
+//
+// depends_on, not prompt: a homoglyph prompt is caught anyway by the
+// prompt-required guard, so testing that would pass without the rule under
+// test. Nothing else catches a dropped dependency - the task just runs early.
+func TestHomoglyphMisspellingIsCaught(t *testing.T) {
+	args := "{\"tasks\":[{\"id\":\"a\",\"prompt\":\"p\"},{\"id\":\"b\",\"prompt\":\"q\",\"depеnds_on\":[\"a\"]}]}"
+	_, err := routingTools(t).Execute(context.Background(), json.RawMessage(args))
+	if err == nil {
+		t.Fatal("a homoglyph spelling of depends_on was ignored; the dependency was " +
+			"dropped and task b would run alongside task a")
+	}
+	if !strings.Contains(err.Error(), "depends_on") {
+		t.Fatalf("error = %v, want the correct spelling named", err)
+	}
+}
+
+// TestNonASCIIDecorationsSurvive keeps the homoglyph rule from eating honest
+// decorations: a field named in another script resembles no declared name and
+// must be ignored like any other unread field.
+func TestNonASCIIDecorationsSurvive(t *testing.T) {
+	args := "{\"tasks\":[{\"id\":\"x\",\"prompt\":\"work\",\"描述\":\"a note\",\"описан\":1,\"notes描\":2}],\"wait\":\"run\"}"
+	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatalf("Execute error = %v, want non-ASCII decorations ignored", err)
+	}
+}
+
+// TestHomoglyphRuleLeavesASCIINamesAlone and TestShortForeignNamesAreNotMisses
+// pin the two bounds of the lookalike rule, both of which are false-positive
+// guards: it applies only to keys that actually carry a non-ASCII rune, and
+// only when the ASCII remainder is one character short of a declared name.
+//
+// Without the first, a plain-ASCII decoration one letter short of a declared
+// name ("budge") would be refused as a misspelling. Without the second, a
+// two-character foreign decoration would squash to a single letter and match
+// any declared name containing it.
+func TestHomoglyphRuleLeavesASCIINamesAlone(t *testing.T) {
+	args := `{"tasks":[{"id":"x","prompt":"work","budge":1,"promp":"note"}],"wait":"run"}`
+	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatalf("Execute error = %v; these are ASCII decorations, and the lookalike "+
+			"rule is for keys carrying a rune json cannot decode", err)
+	}
+}
+
+func TestShortForeignNamesAreNotMisses(t *testing.T) {
+	args := "{\"tasks\":[{\"id\":\"x\",\"prompt\":\"work\",\"aх\":1,\"tу\":2}],\"wait\":\"run\"}"
+	if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatalf("Execute error = %v; a two-character foreign name squashes to one "+
+			"letter and must not match every declared name containing it", err)
+	}
+}
+
+// TestMultipleLookalikesAreCaught pins where the line sits. What marks a
+// lookalike is the ASCII that remains, not how many non-ASCII runes were used:
+// "budgeмт" reads as "budget", decodes into nothing, and is no more deliberate
+// with two substituted runes than with one.
+func TestMultipleLookalikesAreCaught(t *testing.T) {
+	args := "{\"tasks\":[{\"id\":\"x\",\"prompt\":\"work\",\"budgeмт\":5}]}"
+	_, err := routingTools(t).Execute(context.Background(), json.RawMessage(args))
+	if err == nil {
+		t.Fatal("a two-rune lookalike of budget was ignored")
+	}
+	if !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("error = %v, want budget named", err)
+	}
+}
+
+// TestFoldDuplicateDecorationsAreIgnored bounds the duplicate check to the
+// fields it exists for.
+//
+// Two spellings matter because encoding/json keeps the LAST one while a
+// validator re-parsing the raw arguments can resolve a different one - the
+// decoder and the guards then act on different values. That divergence only
+// exists for a field something READS. Two spellings of a decoration are two
+// keys nothing reads, so refusing the batch over them is the
+// decoration-refuses-the-batch failure this design exists to remove, and the
+// message ("resolve to one field") is not even true of them.
+func TestFoldDuplicateDecorationsAreIgnored(t *testing.T) {
+	for name, args := range map[string]string{
+		"task level":    `{"tasks":[{"id":"a","prompt":"p","note":"x","Note":"y"}],"wait":"run"}`,
+		"request level": `{"tasks":[{"id":"a","prompt":"p"}],"wait":"run","reason":"x","REASON":"y"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := routingTools(t).Execute(context.Background(), json.RawMessage(args)); err != nil {
+				t.Fatalf("Execute error = %v; both spellings name a field the tool never "+
+					"reads, so neither can change what runs", err)
+			}
+		})
 	}
 }

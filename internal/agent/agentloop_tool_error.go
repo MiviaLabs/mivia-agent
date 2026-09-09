@@ -77,10 +77,13 @@ func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnS
 		// before, or without, the ID delta. Recording only under call.ID
 		// silently drops the outcome for every such call, and
 		// bridgeToolCallEnd (agentloop_events.go) then finds nothing under
-		// the name key and reports the failure as a served duplicate.
-		callKey := toolCallKey(call)
-		if turn != nil && callKey != "" {
-			turn.recordToolOutcome(callKey, call.Name, body, true)
+		// the name key, so the row carries no body and no reason.
+		// No callKey != "" here either: recordToolOutcome delegates to
+		// recordToolOutcomeWithPreview, which drops an outcome with an empty
+		// id. Guarding it again in one caller and not the other only made the
+		// two look like they had different contracts.
+		if turn != nil {
+			turn.recordToolOutcome(toolCallKey(call), call.Name, body, true)
 		}
 	}
 	return sdkshape.Message{

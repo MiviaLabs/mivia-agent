@@ -36,18 +36,19 @@ import (
 )
 
 // TestArgumentValidationFailureIsRecordedAsFailed covers the error class that
-// killed a real session: dispatch_tasks publishes the strictest schema in the
-// binary (additionalProperties:false at both levels plus an agent enum built
-// from the live roster), so one stray field rejects the call inside the SDK
-// in microseconds. The reporter hook consulted only the two unknown-tool
-// sentinels and returned early for everything else, recording nothing.
+// killed a real session: a strict tool schema rejects a call inside the SDK in
+// microseconds, before the dispatcher shim can record anything. The reporter
+// hook consulted only the two unknown-tool sentinels and returned early for
+// everything else, recording nothing. (dispatch_tasks was the tool that hit
+// it; its schema has since been relaxed, but any tool publishing
+// additionalProperties:false or an enum still takes this path.)
 func TestArgumentValidationFailureIsRecordedAsFailed(t *testing.T) {
 	turn := newSDKTurnState()
 	reporter := sdkToolCallErrorReporter(Options{}, turn)
 
-	// A REAL schema rejection, produced the way decodeAndRun produces one:
-	// dispatch_tasks publishes additionalProperties:false, so a stray field
-	// fails compiled validation before the tool is ever invoked.
+	// A REAL schema rejection, produced the way decodeAndRun produces one: a
+	// schema with additionalProperties:false fails a stray field in compiled
+	// validation, before the tool is ever invoked.
 	compiled, err := sdkschema.Compile([]byte(`{"type":"object","properties":{"tasks":{"type":"array"}},"required":["tasks"],"additionalProperties":false}`))
 	if err != nil {
 		t.Fatal(err)

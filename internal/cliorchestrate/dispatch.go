@@ -345,7 +345,7 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 		if _, exists := seenIDs[canonicalID]; exists {
 			return nil, fmt.Errorf("dispatch_tasks: duplicate task id %q", canonicalID)
 		}
-		// The safety net for the permissive decode (task_routing.go): an
+		// The safety net for the permissive decode (task_request_decode.go): an
 		// unknown field is ignored now, so a "promt" typo no longer fails the
 		// decode - it arrives here as a task with an empty prompt. Spawning it
 		// would burn the batch's budget on a subagent with nothing to do and

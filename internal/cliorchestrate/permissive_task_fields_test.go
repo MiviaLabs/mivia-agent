@@ -69,8 +69,11 @@ func TestBlankPromptIsRejected(t *testing.T) {
 		if err == nil {
 			t.Fatalf("args %s: a task with no prompt was dispatched", args)
 		}
-		if !strings.Contains(err.Error(), "prompt") {
-			t.Fatalf("args %s: error = %v, want the missing prompt named", args, err)
+		// The prompt-required refusal specifically: the near-miss guard also
+		// produces a message containing "prompt", so the substring alone
+		// cannot say which guard refused the call.
+		if !strings.Contains(err.Error(), "prompt is required") {
+			t.Fatalf("args %s: error = %v, want the prompt-required refusal", args, err)
 		}
 	}
 }

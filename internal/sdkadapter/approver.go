@@ -11,16 +11,50 @@ import (
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
-// callIDFromContext returns the in-flight call's id from
-// toolcallctx, or "" when the ctx did not carry one (an SDK call
-// outside the loop, or a hand-built test fixture). The pending event
-// must carry the id so the UI's approval resolver can match a
-// decision back to the gate that is blocked on it.
+// callIDFromContext returns the in-flight call's id from toolcallctx, or ""
+// when the ctx did not carry one (an SDK call outside the loop, or a
+// hand-built test fixture). The pending event must carry the id so the UI's
+// approval resolver can match a decision back to the gate blocked on it, and
+// uiadapter.approvalKey derives the waiting map's key the same way - the two
+// have to agree or the prompt can never be answered.
+//
+// No name fallback here, deliberately: the name is not a per-call identity,
+// and uiadapter cannot key its waiting map on it without cross-wiring two
+// overlapping calls to the same tool. See uiadapter.approvalKey.
 func callIDFromContext(ctx context.Context) string {
 	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		return tc.ID
 	}
 	return ""
+}
+
+// recordKeyFromContext returns the key an OUTCOME is recorded under: the
+// call's id, else its name. This is the rule internal/agent's toolCallKey
+// applies when it later looks the outcome up, so a denial recorded under a
+// blank id is one bridgeToolCallEnd cannot find - the refusal then reaches the
+// operator as a bare "failed" with no reason.
+//
+// Unlike the prompt key above, this one has no uniqueness requirement to
+// violate: it is a report about a call that is already over, and the agent
+// loop keys its own outcome map the same way, so agreeing with it is the whole
+// job.
+//
+// It is a copy of internal/agent's toolCallKey, kept in step by contract. Not
+// because an import is impossible - internal/agent imports this package, so a
+// shared helper could live here - but because the two answer different
+// questions that happen to share a rule today: this one must match whatever
+// the loop's recorder looks up, and it should follow that recorder if it ever
+// changes, not constrain it. If a third caller needs the same rule, export it
+// from here rather than writing a fourth copy.
+func recordKeyFromContext(ctx context.Context) string {
+	tc, ok := sdkagentloop.ToolCallFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	if tc.ID != "" {
+		return tc.ID
+	}
+	return tc.Name
 }
 
 // approvalGatedToolAdapter wraps one already-converted sdktools.Tool
@@ -192,15 +226,17 @@ func approvalClassName(c tools.ExecutionClass) string {
 // The two halves used to disagree. The model was told the call was denied,
 // while every viewer was told it completed: a denial returns here without
 // entering the dispatcher shim, so no outcome is recorded for the call, and
-// the loop's no-outcome fallback emits a tool_end reading "completed
+// the loop's no-outcome fallback emitted a tool_end reading "completed
 // (duplicate)" - which both the NDJSON status mapping and the TUI's own OK
-// computation read as success.
+// computation read as success. An operator refused a command and the
+// transcript, local and remote, said it ran.
 //
-// That is the worst direction for this particular error to point. An operator
-// refuses a command and the transcript, local and remote, says it ran.
+// That fallback now reads "failed", so the worst direction is closed even
+// when this recorder is skipped - but it can only say THAT a call failed,
+// never why, so recording the denial here is still what carries the reason.
 func (a *approvalGatedToolAdapter) denied(ctx context.Context, reason string) (sdktools.Out, error) {
 	if a.recordDenied != nil {
-		a.recordDenied(callIDFromContext(ctx), a.cliName, reason)
+		a.recordDenied(recordKeyFromContext(ctx), a.cliName, reason)
 	}
 	return sdktools.Out{Value: fmt.Sprintf("tool call denied by user: %s", reason)}, nil
 }

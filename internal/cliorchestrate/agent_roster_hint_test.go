@@ -74,3 +74,35 @@ func TestUnlistedAgentErrorNamesTheRoster(t *testing.T) {
 		}
 	}
 }
+
+// TestRosterProseHandlesAgentsWithoutDescriptions covers the roster's other
+// branch: an agent published with no description is listed by bare name. The
+// roster is the only place the model learns which agents exist now that the
+// schema publishes no enum, so an agent that a missing description could drop
+// from the prose would be invisible and unroutable.
+func TestRosterProseHandlesAgentsWithoutDescriptions(t *testing.T) {
+	reg := agents.NewRegistry()
+	for _, agent := range []agents.ResolvedAgent{
+		{Name: "described", Description: "Has a description"},
+		{Name: "bare"},
+	} {
+		if err := reg.Publish(agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items := (&dispatchTasksTool{agentReg: reg}).Parameters()["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
+	description := items["properties"].(map[string]any)["agent"].(map[string]any)["description"].(string)
+	for _, want := range []string{"described: Has a description", "bare"} {
+		if !strings.Contains(description, want) {
+			t.Errorf("agent description = %q, want it to carry %q", description, want)
+		}
+	}
+	// The bare NAME, not a name with an empty description hung off it:
+	// "bare" alone is a substring of "bare: ", so without this the test
+	// passes even when the description-less branch is deleted.
+	if strings.Contains(description, "bare: ") {
+		t.Errorf("agent description = %q, want the nameless-description agent listed "+
+			"by name alone, not with a dangling separator", description)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -392,7 +393,7 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 	if strings.ToLower(name) != "dispatch_tasks" {
 		return nil, nil
 	}
-	rawTasks, ok := args["tasks"].([]any)
+	rawTasks, ok := foldedArg(args, "tasks").([]any)
 	if !ok || len(rawTasks) == 0 {
 		return nil, nil
 	}
@@ -402,7 +403,7 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 		id := ""
 		taskName := ""
 		if m, ok := rt.(map[string]any); ok {
-			if s, ok := m["id"].(string); ok {
+			if s, ok := foldedArg(m, "id").(string); ok {
 				id = strings.TrimSpace(s)
 			}
 			taskName = extractAgentDisplayName("", m)
@@ -418,6 +419,38 @@ func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string
 		}
 	}
 	return ids, names
+}
+
+// foldedArg reads key from model-authored JSON the way encoding/json resolves
+// a struct tag: exact match first, else a case-insensitive one.
+//
+// The row ids built here have to equal the task ids the tool mints from the
+// SAME arguments - the row id is what later progress events match on, and what
+// an operator's cancel routes on (remote_cancel_target.go). The tool decodes
+// through encoding/json, which is case-insensitive, so a task written with
+// "ID" reaches it as a perfectly good id. Read exact-cased here, that task got
+// a positional "task-N" placeholder no event could ever match: the row sat at
+// Step 0, rendered "stalled", and a cancel aimed at it named an id nothing had
+// registered while the subagent kept spending the batch's budget.
+func foldedArg(m map[string]any, key string) any {
+	if v, ok := m[key]; ok {
+		return v
+	}
+	// Sorted, not map order: if a batch ever carried two folded spellings the
+	// row ids would otherwise differ run to run. The tool refuses that batch,
+	// so this is belt and braces - but an id that changes between renders is
+	// exactly the kind of thing that is impossible to reproduce from a report.
+	folded := make([]string, 0, len(m))
+	for k := range m {
+		if strings.EqualFold(k, key) {
+			folded = append(folded, k)
+		}
+	}
+	if len(folded) == 0 {
+		return nil
+	}
+	sort.Strings(folded)
+	return m[folded[0]]
 }
 
 // namespacedTaskID mirrors internal/cliorchestrate's function of the same
@@ -554,7 +587,11 @@ func getStringVal(m map[string]any, key string) string {
 	if m == nil {
 		return ""
 	}
-	if v, ok := m[key]; ok {
+	// Through foldedArg, so every read of a model-authored object in this file
+	// resolves names the way encoding/json does. A task written with "Agent"
+	// routes perfectly well for the tool and used to render a row with no
+	// agent label at all.
+	if v := foldedArg(m, key); v != nil {
 		if str, ok := v.(string); ok {
 			return str
 		}

@@ -268,9 +268,9 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 		// Record an OUTCOME rather than emitting a tool_end directly. The
 		// loop's emitter already owns that emission, and emitting here as
 		// well would give a refused call two tool_end events. Recording is
-		// also what stops the no-outcome fallback from claiming the call
-		// "completed (duplicate)" - the reason a denial used to reach every
-		// viewer as a success.
+		// also what carries the REASON: the no-outcome fallback can only
+		// report that the call failed, not why, and a denial with no cause
+		// is most of the way back to a denial nobody saw.
 		turn.recordToolOutcome(toolCallID, name, "tool call denied by user: "+reason, true)
 	}
 	if err := sdkadapter.WrapRegistryWithAdmission(sdkReg, cliReg, sdkadapter.AdmissionPredicates{

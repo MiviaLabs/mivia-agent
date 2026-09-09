@@ -16,6 +16,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 type approverTestTool struct {
@@ -295,5 +297,61 @@ func TestApproverAutoModeReturnsImmediately(t *testing.T) {
 	res := sess.ApprovalGate(context.Background(), "some_tool", json.RawMessage(`{}`))
 	if !res.Approved {
 		t.Fatalf("expected Approved=true in auto mode, got %+v", res)
+	}
+}
+
+// TestConcurrentIDLessCallsDoNotShareAnApprovalKey is the guarantee that
+// decided the shape of this fix.
+//
+// An ID-less call (a provider stream sending the tool-call NAME delta before,
+// or without, the ID delta) cannot raise an answerable prompt: the published
+// key would have to be one this side can register, and the only thing left in
+// the ctx is the tool NAME. A name is not a per-call identity. Parallel
+// subagents all share one Approver, so two overlapping calls to one tool would
+// collide on it: the second registration overwrites the first's channel, the
+// operator is shown one prompt, and the single decision they make authorizes
+// the OTHER call - a command they were never shown.
+//
+// So each such call gets its own generated id and blocks until its context
+// dies. That is a worse outcome for one call and a much better one for the
+// operator, and this test exists so the trade is not quietly undone.
+func TestConcurrentIDLessCallsDoNotShareAnApprovalKey(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	appr := uiadapter.NewApprover(sess)
+
+	// Cancellable, and cancelled on the way out: neither gate is ever
+	// resolved here (that is the point - an ID-less call cannot be answered),
+	// so on context.Background() both goroutines would block for the life of
+	// the test binary.
+	// Defer order matters: wg.Wait registered FIRST so it runs LAST. The
+	// gates only return once the context is cancelled, so waiting before
+	// cancelling deadlocks the test.
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := sdkagentloop.WithToolCall(base, sdkshape.ToolCall{
+		Name: "run_command", Arguments: []byte(`{}`),
+	})
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = sess.ApprovalGate(ctx, "run_command", json.RawMessage(`{}`))
+		}()
+	}
+
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case req := <-appr.Pending():
+			if seen[req.ID] {
+				t.Fatalf("two in-flight calls were both keyed %q; one operator decision "+
+					"would authorize the call they were not shown", req.ID)
+			}
+			seen[req.ID] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for both prompts")
+		}
 	}
 }
