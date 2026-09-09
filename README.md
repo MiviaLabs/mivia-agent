@@ -2,7 +2,7 @@
   <img src="docs/mivia-logo.png" alt="Mivia" width="120">
 </p>
 
-<h1 align="center">Mivia</h1>
+<h1 align="center">Mivia 🤖</h1>
 
 <p align="center">An AI coding agent for your terminal. Chat, tools, workflows, and multi-agent orchestration, while you keep your editor, your git, and your workflow.</p>
 
@@ -24,9 +24,9 @@ mivia is built on [mivia-ai-sdk](https://github.com/MiviaLabs/mivia-ai-sdk), our
   <img src="docs/mivia-agent-showcase.gif" alt="mivia TUI showcase" width="100%">
 </p>
 
-## Quick start
+## 🚀 Quick start
 
-Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider. See [Supported providers](#supported-providers) below.
+Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider. See [Supported providers](#-supported-providers) below.
 
 ### Install
 
@@ -35,9 +35,9 @@ Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) prov
 Piping a script into `bash` runs it with your shell's privileges. Inspect it first, or pin an exact tag, with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.2/scripts/install.sh -o /tmp/mivia-install.sh
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.2.0/scripts/install.sh -o /tmp/mivia-install.sh
 sed -n '1,240p' /tmp/mivia-install.sh
-sh /tmp/mivia-install.sh v0.1.2
+sh /tmp/mivia-install.sh v0.2.0
 ```
 
 Install the latest stable release on Linux or macOS:
@@ -106,7 +106,7 @@ One-shot mode:
 
 Shell completions: `mivia completion bash|zsh|fish` prints a completion script for your shell.
 
-## Supported providers
+## 🔌 Supported providers
 
 Mivia is a local-first agent: prompts and selected context go to exactly one
 configured AI provider. Eight providers are built in:
@@ -134,20 +134,23 @@ Default provider: OpenRouter, model `openai/gpt-5.6-luna`; switch with
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
 Successful workflow runs stop at `delivery_pending` until you pass the explicit `--allow-publish` flag. See the [Workflow guide](docs/product/workflows-guide.md).
 
-## What it does
+## 🧩 What it does
 
-- Chat with tool access: read, search, edit files; run allowed commands.
-- Streaming responses, with mouse text selection and copy (OSC 52, with a local
+- 💬 Chat with tool access: read, search, edit files; run allowed commands.
+- ⚡ Streaming responses, with mouse text selection and copy (OSC 52, with a local
   clipboard fallback) and force-send for queued messages.
-- Web search.
-- Durable project and organization memory, with an optional SQLite file that you can commit with the project.
-- Configurable MCP servers over stdio and Streamable HTTP, scoped per agent.
-- Workflows: durable, multi-step processes with retries and evidence gates.
-- Worktrees: isolated checkouts for a workflow run, so your working tree stays clean.
-- Worktree sessions in the terminal UI: start a chat in any registered worktree,
+- 🔍 Web search.
+- 🧠 Durable project and organization memory: committable Markdown files
+  (`.agents/memories/*.md`) as the source of truth, indexed by a shared
+  local SQLite cache for fast search.
+- 🔗 Configurable MCP servers over stdio and Streamable HTTP, scoped per agent.
+- 🔁 Workflows: durable, multi-step processes with retries and evidence gates.
+- 🌳 Worktrees: isolated checkouts for a workflow run, so your working tree stays clean.
+- 🖥️ Worktree sessions in the terminal UI: start a chat in any registered worktree,
   or resume one that already runs there (see below).
-- Agents and skills: named specialists you can route work to.
-- Lifecycle hooks: your own scripts run on `PreToolUse`, `PostToolUse`, and
+- 🧑‍🤝‍🧑 Agents and skills: named specialists you can route work to, and concurrent
+  sub-agent task fan-out (`dispatch_tasks` / `inspect_agents` / `join_run` / `cancel_run`).
+- 🪝 Lifecycle hooks: your own scripts run on `PreToolUse`, `PostToolUse`, and
   `Stop` - gate, format, or log every tool call, deterministically.
 
 ### Worktree sessions
@@ -178,23 +181,26 @@ worktree without opening /resume. Type to filter as usual; route rows match
 by worktree name via their title. The preview
 pane (`←`/`→`) shows the selected row's worktree directory.
 
-## Architecture
+## 🏗️ Architecture
 
 ```mermaid
 flowchart LR
-    You["you"] --> Chat["mivia chat"]
-    Chat --> Files["project files"]
-    Chat --> Config["config"]
-    Chat --> Agents["agents & skills"]
-    Chat --> Workflows["workflows"]
-    Workflows --> Worktree["worktree"]
-    Workflows --> Ledger["run record"]
-    Chat --> Provider["AI provider"]
+    You["🧑 you"] --> Chat["mivia chat"]
+    Chat --> Files["📁 project files"]
+    Chat --> Config["⚙️ config"]
+    Chat --> Agents["🧑‍🤝‍🧑 agents & skills"]
+    Chat --> MCP["🔗 MCP servers"]
+    Chat --> Coordinator["🧵 sub-agent coordinator"]
+    Coordinator --> Ledger["🗄️ run ledger"]
+    Chat --> Workflows["🔁 workflows"]
+    Workflows --> Worktree["🌳 worktree"]
+    Workflows --> Ledger
+    Chat --> Provider["☁️ AI provider"]
 ```
 
-Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks, and delivery paths above are the exceptions.
+Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks, and delivery paths above are the exceptions. See [Architecture overview](docs/architecture/overview.md) for the coordinator, ledger, and provider-retry design in full.
 
-## Docs
+## 📚 Docs
 
 | Guide | Covers |
 |-------|--------|
@@ -211,6 +217,6 @@ Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks,
 | [Architecture](docs/architecture/overview.md) | System design |
 | [Contributing](docs/contributing.md) | Build, test, and PR process |
 
-## License
+## 📄 License
 
 [GNU AGPL-3.0](LICENSE)
