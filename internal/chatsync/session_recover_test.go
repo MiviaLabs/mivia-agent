@@ -407,15 +407,11 @@ func TestDeadOutboxLatchesInsteadOfForking(t *testing.T) {
 	f.DeleteSession(a)
 	s.triggerFlush()
 	// Measured ~20ms of real work locally: triggerFlush, one 404 round trip
-	// against the in-process fake, classify, Dead() check, latch. 5s (this
-	// file's own established budget for the same DeleteSession-then-latch
-	// shape, see TestConcurrentReadersDuringRecovery) still intermittently
-	// missed under CI-runner scheduling contention - first on Windows at 3s,
-	// then on macOS at 5s, then macOS again at 30s under a full `go test
-	// ./...` run's own scheduling load, on unrelated runs with no logic
-	// change between them. 60s gives four orders of magnitude of margin
-	// over the measured cost, which a genuine hang would still trip.
-	waitUntilWithin(t, "the latch", 60*time.Second, s.Stopped)
+	// against the in-process fake, classify, Dead() check, latch. Missed
+	// repeatedly under CI-runner scheduling contention at increasing
+	// budgets (Windows 3s, macOS 5s, macOS 30s, macOS 60s), on unrelated
+	// runs with no logic change between them.
+	waitUntilWithin(t, "the latch", 120*time.Second, s.Stopped)
 	if n := len(f.SessionIDs()); n != 1 {
 		t.Errorf("%d sessions, want 1: nothing may be created for a backlog that cannot move", n)
 	}

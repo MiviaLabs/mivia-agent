@@ -8,17 +8,39 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// rejectionRecorder collects onRejected reasons safely across the poller's
+// own callback goroutine and the test goroutine reading them - a plain
+// slice written under the callback and read under the test raced under
+// -race, since nothing serialized the two.
+type rejectionRecorder struct {
+	mu      sync.Mutex
+	reasons []string
+}
+
+func (r *rejectionRecorder) add(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reasons = append(r.reasons, reason)
+}
+
+func (r *rejectionRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reasons...)
+}
 
 // newRejectionPoller builds a poller against a server that unconditionally
 // offers the given SessionInput and consumes it successfully, wired to a
 // fixed author id and an onRejected recorder. Tests use it to drive
 // validateRemoteInput's refusal paths end to end through pollOnce.
-func newRejectionPoller(t *testing.T, sessionID string, input SessionInput, expectedAuthor string) (*InputPoller, *[]string) {
+func newRejectionPoller(t *testing.T, sessionID string, input SessionInput, expectedAuthor string) (*InputPoller, *rejectionRecorder) {
 	t.Helper()
-	var rejections []string
+	rejections := &rejectionRecorder{}
 	mux := http.NewServeMux()
 	served := false
 	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
@@ -44,9 +66,9 @@ func newRejectionPoller(t *testing.T, sessionID string, input SessionInput, expe
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, sessionID, 1, fixedAuthorUserIDProvider(expectedAuthor), t.TempDir())
 	poller.SetOnRejected(func(id, sessID, reason string) {
-		rejections = append(rejections, reason)
+		rejections.add(reason)
 	})
-	return poller, &rejections
+	return poller, rejections
 }
 
 func TestInputPoller_RejectsSessionIDMismatch(t *testing.T) {
@@ -235,7 +257,7 @@ func TestInputPoller_RejectsAuthorMismatch(t *testing.T) {
 // default: a nil AuthorUserIDProvider (no verified identity available at
 // all) must refuse every input rather than silently trust it.
 func TestInputPoller_RejectsWhenNoAuthorProviderConfigured(t *testing.T) {
-	var rejections []string
+	rejections := &rejectionRecorder{}
 	mux := http.NewServeMux()
 	served := false
 	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
@@ -261,27 +283,45 @@ func TestInputPoller_RejectsWhenNoAuthorProviderConfigured(t *testing.T) {
 
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, "sess-1", 1, nil, t.TempDir())
-	poller.SetOnRejected(func(id, sessID, reason string) { rejections = append(rejections, reason) })
+	poller.SetOnRejected(func(id, sessID, reason string) { rejections.add(reason) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	poller.Start(ctx)
 	defer poller.Stop(context.Background())
-	assertNeverDelivered(t, poller, &rejections, "unverifiable")
+	assertNeverDelivered(t, poller, rejections, "unverifiable")
 }
 
-func assertNeverDelivered(t *testing.T, poller *InputPoller, rejections *[]string, wantReasonSubstr string) {
+func assertNeverDelivered(t *testing.T, poller *InputPoller, rejections *rejectionRecorder, wantReasonSubstr string) {
 	t.Helper()
-	select {
-	case ri := <-poller.Inputs():
-		t.Fatalf("unexpected delivery of an input that should have been rejected: %+v", ri)
-	case <-time.After(300 * time.Millisecond):
-	}
-	if len(*rejections) == 0 {
-		t.Fatal("onRejected was never called")
-	}
-	if !strings.Contains((*rejections)[0], wantReasonSubstr) {
-		t.Errorf("rejection reason = %q, want substring %q", (*rejections)[0], wantReasonSubstr)
+	// A single fixed sleep raced onRejected's async callback under -race's
+	// much heavier per-goroutine overhead (observed on CI: the callback
+	// fired just after the 300ms window closed). Poll instead, so a slow
+	// but eventually-correct rejection is not mistaken for a missing one -
+	// this still fails fast on an actual delivery, which is the case this
+	// function exists to catch.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ri := <-poller.Inputs():
+			t.Fatalf("unexpected delivery of an input that should have been rejected: %+v", ri)
+		case <-deadline:
+			got := rejections.snapshot()
+			if len(got) == 0 {
+				t.Fatal("onRejected was never called")
+			}
+			if !strings.Contains(got[0], wantReasonSubstr) {
+				t.Errorf("rejection reason = %q, want substring %q", got[0], wantReasonSubstr)
+			}
+			return
+		case <-time.After(10 * time.Millisecond):
+			if got := rejections.snapshot(); len(got) > 0 {
+				if !strings.Contains(got[0], wantReasonSubstr) {
+					t.Errorf("rejection reason = %q, want substring %q", got[0], wantReasonSubstr)
+				}
+				return
+			}
+		}
 	}
 }
 

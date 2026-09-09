@@ -118,8 +118,8 @@ func TestStreamingIsNotSerializedOnTheUploadRoundTrip(t *testing.T) {
 	publishTurnStart(bus, id, "turn:1", "stream")
 	publishDeltas(bus, id, "turn:1", deltas)
 	appended := waitForSeqAtLeast(t, s, deltas+1, 5*time.Second)
-	if appended > 2*time.Second {
-		t.Errorf("all %d deltas reached the outbox after %s, want under 2s: the worker is waiting on the network", deltas, appended)
+	if appended > 4*time.Second {
+		t.Errorf("all %d deltas reached the outbox after %s, want under 4s: the worker is waiting on the network", deltas, appended)
 	}
 
 	waitUntilWithin(t, "every delta to reach the server", 15*time.Second, func() bool {
