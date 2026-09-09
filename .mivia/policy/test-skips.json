@@ -425,6 +425,12 @@
         "line": 387,
         "reason": "unreliable off Linux: repeatedly missed an escalating latch budget on Windows/macOS CI runners"
       }
+    ],
+    "internal/config/load_error_paths_test.go": [
+      {
+        "line": 91,
+        "reason": "platform still reads a 0000 file"
+      }
     ]
   },
   "allowedDeletions": [
