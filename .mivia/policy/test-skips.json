@@ -334,15 +334,15 @@
         "reason": "platform still creates files in a read-only directory"
       },
       {
-        "line": 106,
+        "line": 107,
         "reason": "platform still allows traversal into a 0000 directory"
       },
       {
-        "line": 207,
+        "line": 208,
         "reason": "platform still creates files in a read-only directory"
       },
       {
-        "line": 238,
+        "line": 239,
         "reason": "platform still creates files in a read-only directory"
       }
     ],
@@ -354,7 +354,7 @@
     ],
     "internal/chatsync/outbox_recover_test.go": [
       {
-        "line": 266,
+        "line": 267,
         "reason": "platform still allows traversal into a 0000 directory"
       }
     ],
