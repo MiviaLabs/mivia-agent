@@ -248,6 +248,14 @@
       {
         "line": 581,
         "reason": "platform still creates files in a read-only directory; atomicWrite cannot fail here"
+      },
+      {
+        "line": 622,
+        "reason": "platform will not remove its own working directory"
+      },
+      {
+        "line": 625,
+        "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ],
     "internal/provider/stream_received_test.go": [
@@ -292,6 +300,120 @@
       {
         "line": 34,
         "reason": "windows Stat reports no execute bit, so the x-bit check is GOOS-gated"
+      }
+    ],
+    "internal/chatsync/attach_error_paths_test.go": [
+      {
+        "line": 301,
+        "reason": "platform still creates files in a read-only directory"
+      },
+      {
+        "line": 366,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/chatsync/identity_error_paths_test.go": [
+      {
+        "line": 64,
+        "reason": "platform still creates files in a read-only directory"
+      },
+      {
+        "line": 128,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/chatsync/outbox_close_error_unix_test.go": [
+      {
+        "line": 22,
+        "reason": "platform would not let the test close the fd directly"
+      }
+    ],
+    "internal/chatsync/outbox_disk_errors_test.go": [
+      {
+        "line": 64,
+        "reason": "platform still creates files in a read-only directory"
+      },
+      {
+        "line": 106,
+        "reason": "platform still allows traversal into a 0000 directory"
+      },
+      {
+        "line": 207,
+        "reason": "platform still creates files in a read-only directory"
+      },
+      {
+        "line": 238,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/chatsync/outbox_open_errors_test.go": [
+      {
+        "line": 40,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/chatsync/outbox_recover_test.go": [
+      {
+        "line": 266,
+        "reason": "platform still allows traversal into a 0000 directory"
+      }
+    ],
+    "internal/chatsync/session_badrequest_test.go": [
+      {
+        "line": 267,
+        "reason": "platform still creates files in a read-only directory"
+      },
+      {
+        "line": 312,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/cliworkflow/workflow_run_prepare_errors_test.go": [
+      {
+        "line": 208,
+        "reason": "platform does not support symlinks"
+      }
+    ],
+    "internal/cliworkflow/workflows_command_test.go": [
+      {
+        "line": 757,
+        "reason": "platform does not support symlinks"
+      },
+      {
+        "line": 783,
+        "reason": "platform does not support symlinks"
+      }
+    ],
+    "internal/miviaauth/session_lock_test.go": [
+      {
+        "line": 397,
+        "reason": "real 20s lock-contention wait; skipped in -short"
+      }
+    ],
+    "internal/uiadapter/settings_theme_error_test.go": [
+      {
+        "line": 37,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/uiadapter/worktree_create_test.go": [
+      {
+        "line": 413,
+        "reason": "platform will not remove its own working directory"
+      },
+      {
+        "line": 416,
+        "reason": "platform still resolves an absolute path from a removed working directory"
+      }
+    ],
+    "internal/uiadapter/worktree_sessions_internal_test.go": [
+      {
+        "line": 53,
+        "reason": "platform will not remove its own working directory"
+      },
+      {
+        "line": 56,
+        "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ]
   },
@@ -2068,15 +2190,22 @@
     "TestAbandonFenceConcurrentMapAccess",
     "TestAllBodyTypesSatisfyBody",
     "TestAnalyzerDoesNotReachNetwork",
+    "TestAnnounceRunStartIsANoOpWithoutASink",
+    "TestApprover_DecisionMappings",
+    "TestApprover_ResolveUnknownIDIsNoOp",
     "TestBuildWorkflowControllerDependencyFailures",
     "TestBusDropsCountsOverflow",
     "TestBusFlushEmptyBus",
     "TestClassifyUseRoleReturns",
     "TestClearAllCoordinatorsIsNoop",
     "TestClearDeliveryAbandonOnNilFence",
+    "TestClearPendingInput_NoStateDirIsANoOp",
     "TestClickToColumn",
     "TestConcurrentQueriesShareOneAnalyzer",
+    "TestContextHeartbeat_SurvivesPrincipalRotation",
     "TestConversationCancelIsIdempotent",
+    "TestCoordinatorRegisterSubagentToolCanceler_NilReceiverIsNoop",
+    "TestCoordinatorRegisterSubagentToolCanceler_UnknownRunIDIsNoop",
     "TestCoverageAgentGateSkillReferences",
     "TestCoverageAttachWorkflowProgressBusNilControllerSafe",
     "TestCoverageAttachWorkflowProgressBusNilSinkNoop",
@@ -2087,70 +2216,51 @@
     "TestCoverageValidateAgentReferencesTable",
     "TestCoverageValidateCyclesTable",
     "TestDeliveryCloseDoesNotWaitOnSubThatStartsDelivering",
-    "TestApprover_DecisionMappings",
-    "TestApprover_ResolveUnknownIDIsNoOp",
     "TestDemoHarnessApprovalApproved",
     "TestDemoHarnessMultiTurnScenario",
+    "TestDiffCov2ChunkSettleSucceededNotNoDiff",
+    "TestDiffCov2PrintReplBannerToolsOn",
+    "TestEmitAssistantReset_NilOnEventIsANoop",
+    "TestEmitSubagentProgressNoPanic",
     "TestExecuteWorkflowResumeInjectedFailures",
     "TestForgetWorktreeUnknownRunIsNoop",
+    "TestFormatAgentHelpers",
+    "TestGeneralEditVariantsSatisfyTheClosedUnion",
+    "TestHighlightInlineCodeNotHighlighted",
+    "TestInheritApprovalLocked_NilSessionIsANoop",
+    "TestInputPoller_StartIsIdempotent",
     "TestInterruptFencesBeforeMarkingAttempts",
     "TestLineDemandsEdit",
     "TestLineDemandsEditFixtureWorkspace",
     "TestLineDemandsEditTokenBoundaries",
     "TestListEventsPagesDecodableStream",
+    "TestLoadAgentDefinitionsLocal",
     "TestMCPStdioHelper",
     "TestMCPStdioStubHelper",
+    "TestMailboxAccessorsLocked",
+    "TestMarkAtANarrowWidthDoesNotPanic",
     "TestMarkdownNoPanicOnHostileInput",
     "TestMarkdownWidthFloor",
+    "TestMemoryReconcilerLoopExitsWhenErrsChannelCloses",
+    "TestMoreLegacytuiTestExports",
+    "TestNestedSyncDispatchCompletes",
     "TestNewSatisfiesAppScreen",
+    "TestNewSessionDispatcherMinimalWithNilProvider",
+    "TestNewTerminalRequiresTTY",
+    "TestOnTaskStart_NilCoordinatorAndUnstampedContextAreNoOps",
+    "TestOnTaskStart_UnknownRunIDIsANoop",
+    "TestPRMetadataRepairPersistsThroughFullChain",
     "TestPayloadRoundTripAttemptEvents",
     "TestPayloadRoundTripAttemptHeartbeat",
     "TestPayloadRoundTripAttemptPrompt",
     "TestPayloadRoundTripDelivery",
     "TestPayloadRoundTripLoopAndApproval",
     "TestPayloadRoundTripRunEvents",
-    "TestPRMetadataRepairPersistsThroughFullChain",
-    "TestPublishCanceledAttemptsCLINilStderr",
-    "TestPublishCanceledAttemptsNilSinkNoop",
-    "TestResolveWithNoRegisteredWaitIsANoOp",
-    "TestRouteFocusKeyFullMatrix",
-    "TestSessionApprovalPolicy_ConcurrentSafety",
-    "TestTranslateEvent_Assistant",
-    "TestTranslateEvent_Dropped",
-    "TestTranslateEvent_Hook",
-    "TestTranslateEvent_Notice",
-    "TestTranslateEvent_NoticeMetrics",
-    "TestTranslateEvent_Reasoning",
-    "TestTranslateEvent_Subagent",
-    "TestTranslateEvent_Tool",
-    "TestSessionActiveRunCloseGuardedNilSafe",
-    "TestStorageReleaseHolderPassesDurableFenceChecks",
-    "TestSweepStaleSandboxRootsUnreadableDir",
-    "TestWaitForSessionEngineIdleImmediateReturn",
-    "TestWireWorkflowToolOptionsNilOptionsNoop",
-    "TestWorkflowBusProgressSinkNilBusSafe",
-    "TestWorktreeLifecycleLockSurvivesRemovingParentExit",
-    "TestMCPStdioHelper",
-    "TestAnnounceRunStartIsANoOpWithoutASink",
-    "TestContextHeartbeat_SurvivesPrincipalRotation",
-    "TestCoordinatorRegisterSubagentToolCanceler_NilReceiverIsNoop",
-    "TestDiffCov2ChunkSettleSucceededNotNoDiff",
-    "TestDiffCov2PrintReplBannerToolsOn",
-    "TestEmitSubagentProgressNoPanic",
-    "TestFormatAgentHelpers",
-    "TestGeneralEditVariantsSatisfyTheClosedUnion",
-    "TestHighlightInlineCodeNotHighlighted",
-    "TestLoadAgentDefinitionsLocal",
-    "TestMailboxAccessorsLocked",
-    "TestMarkAtANarrowWidthDoesNotPanic",
-    "TestMemoryReconcilerLoopExitsWhenErrsChannelCloses",
-    "TestMoreLegacytuiTestExports",
-    "TestNestedSyncDispatchCompletes",
-    "TestNewSessionDispatcherMinimalWithNilProvider",
-    "TestNewTerminalRequiresTTY",
     "TestPoolApplySyncOptsIsNoopForEmptyPool",
     "TestPostMessageQuestionTransitionFail",
     "TestPrepareWorkflowRunReleasesStoreOnAdmissionFailure",
+    "TestPublishCanceledAttemptsCLINilStderr",
+    "TestPublishCanceledAttemptsNilSinkNoop",
     "TestPureReExports",
     "TestPushNoticeEventNoopsWithoutAChannel",
     "TestPushWorkflowStatusNoopsWithoutAChannel",
@@ -2159,6 +2269,10 @@
     "TestReferralTrackerNilSafe",
     "TestRegisterSubagentTaskRoutes_NoSinkInstalledIsNoop",
     "TestRegisterSubagentToolCanceler_NilHandleReceiverIsNoop",
+    "TestResolveWithNoRegisteredWaitIsANoOp",
+    "TestRouteFocusKeyFullMatrix",
+    "TestSessionActiveRunCloseGuardedNilSafe",
+    "TestSessionApprovalPolicy_ConcurrentSafety",
     "TestSessionBusRegistry_UnknownSessionIDNeverPublishes",
     "TestSessionMessagesConcurrentLoadMore",
     "TestSessionMessagesConcurrentReadWrite",
@@ -2167,19 +2281,35 @@
     "TestSessionReleaseContextLeaseIsANoOpWhenNeverArmed",
     "TestSessionStopContextLeaseHeartbeatIsANoOpWhenNeverArmed",
     "TestSkillScopeHelpers",
+    "TestStorageReleaseHolderPassesDurableFenceChecks",
     "TestSubagentThreads_ContentResolverConcurrencySafe",
+    "TestSweepStaleSandboxRootsUnreadableDir",
     "TestSyncGeneralEditVariantsSatisfyTheClosedUnion",
+    "TestSyncHealth_RecordWithNoWriterIsANoOp",
+    "TestSyncSession_FlushNowAfterRemoteEndIsANoOp",
     "TestSyncTelemetryRecordNoopsWithoutALogger",
     "TestToolCancelReadyHook_NoCoordinatorRegisteredIsNoop",
     "TestToolCancelReadyHook_WrongTypeInMapIsNoop",
+    "TestTranslateEvent_Assistant",
+    "TestTranslateEvent_Dropped",
+    "TestTranslateEvent_Hook",
+    "TestTranslateEvent_Notice",
+    "TestTranslateEvent_NoticeMetrics",
+    "TestTranslateEvent_Reasoning",
+    "TestTranslateEvent_Subagent",
     "TestTranslateEvent_SubagentDone",
     "TestTranslateEvent_SubagentDoneStatusVocabulary",
     "TestTranslateEvent_SubagentHeartbeat",
     "TestTranslateEvent_SubagentHeartbeatBadCounts",
     "TestTranslateEvent_SubagentLifecycle",
+    "TestTranslateEvent_Tool",
     "TestTurnTapSendRacesTurnEndClose",
     "TestUnclaimWhenAlreadyOpen",
+    "TestWaitForSessionEngineIdleImmediateReturn",
+    "TestWireWorkflowToolOptionsNilOptionsNoop",
+    "TestWorkflowBusProgressSinkNilBusSafe",
     "TestWorktreeAndWorkflowExports",
+    "TestWorktreeLifecycleLockSurvivesRemovingParentExit",
     "TestWorktreeListAndAgentExports"
   ]
 }
