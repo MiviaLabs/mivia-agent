@@ -415,8 +415,8 @@ func mcpProjectPath(root string) string {
 	return filepath.Clean(workspace.NamespacePath(root, "mivia.toml"))
 }
 
-// refuseUntrustedMCPTable fails a load whose selected config file declares
-// [mcp] from a path the MCP resolver does not read.
+// refuseUntrustedMCPTable fails a load whose selected BASE config file
+// declares [mcp] from a path the MCP resolver does not read.
 //
 // MCP configuration is deliberately resolved from exactly two TRUSTED paths -
 // the user config and the workspace's own .mivia/mivia.toml - and never from
@@ -432,8 +432,17 @@ func mcpProjectPath(root string) string {
 // did not name. Refusing is the honest answer: it cannot silently widen or
 // narrow the MCP authority set, and it tells the operator exactly which two
 // paths do carry [mcp].
-func refuseUntrustedMCPTable(file File, configPath, workspaceRoot string, found bool) error {
-	if !found || (!file.MCP.Enabled && len(file.MCP.Servers) == 0) {
+//
+// baseMCP must be the [mcp] table decoded from the BASE file alone (loadFile
+// captures it before merging any workspace overlay), not the merged result.
+// loadFile legitimately layers the workspace's own .mivia/mivia.toml - one of
+// the two trusted paths - on top of an untrusted base file (see loadFile's
+// doc comment for the mivia-agent-desktop scenario this supports). Judging
+// trust on the merged table would refuse that overlay's own [mcp] just
+// because the untrusted base happened to be selected as configPath, even
+// though the table did not come from the base file at all.
+func refuseUntrustedMCPTable(baseMCP MCPConfig, configPath, workspaceRoot string, found bool) error {
+	if !found || (!baseMCP.Enabled && len(baseMCP.Servers) == 0) {
 		return nil
 	}
 	if sameFilePath(configPath, UserConfigPath()) || sameFilePathAsWorkspaceConfig(configPath, workspaceRoot) {

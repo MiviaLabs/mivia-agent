@@ -50,10 +50,11 @@ type LoadOptions struct {
 
 // Load resolves config + env credentials.
 func Load(opts LoadOptions) (*Resolved, error) {
-	file, configPath, found, err := loadFile(opts)
+	loaded, err := loadFile(opts)
 	if err != nil {
 		return nil, err
 	}
+	file, configPath, found := loaded.File, loaded.ConfigPath, loaded.Found
 	worktreeCfg, err := loadSelectedWorktreeConfig(configPath, found)
 	if err != nil {
 		return nil, err
@@ -90,7 +91,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := refuseUntrustedMCPTable(file, configPath, root, found); err != nil {
+	if err := refuseUntrustedMCPTable(loaded.BaseMCP, configPath, root, found); err != nil {
 		return nil, err
 	}
 	projectConfigFound := ProjectConfigExists(root)
@@ -568,7 +569,19 @@ func firstProviderCandidate(allowBootstrap bool) string {
 // tooling needs; the base file supplies whatever the workspace file doesn't
 // set (typically the provider/model catalog and API key wiring, which a
 // per-project file rarely if ever redefines).
-func loadFile(opts LoadOptions) (File, string, bool, error) {
+// loadedFile is loadFile's result. BaseMCP is the [mcp] table decoded from
+// the BASE file alone, captured before any workspace overlay is merged into
+// File - see refuseUntrustedMCPTable, which judges trust on BaseMCP rather
+// than the merged File.MCP so that an overlay-declared table (one of the two
+// TRUSTED paths) is never mistaken for one the untrusted base file declared.
+type loadedFile struct {
+	File       File
+	ConfigPath string
+	Found      bool
+	BaseMCP    MCPConfig
+}
+
+func loadFile(opts LoadOptions) (loadedFile, error) {
 	path := ExpandPath(opts.ConfigPath)
 	if path == "" {
 		path = firstProviderCandidate(opts.AutoBootstrapUserConfig)
@@ -584,33 +597,40 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 			// nor the remedy every other command prints.
 			path = UserConfigPath()
 		case err != nil:
-			return File{}, "", false, err
+			return loadedFile{}, err
 		default:
 			path = bootstrapped
 		}
 	}
 	if path == "" {
 		if !opts.AllowMissingConfig {
-			return File{}, "", false, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create .mivia/mivia.toml", strings.Join(DefaultConfigCandidates(), ", "))
+			return loadedFile{}, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create .mivia/mivia.toml", strings.Join(DefaultConfigCandidates(), ", "))
 		}
-		return File{}, "", false, nil
+		return loadedFile{}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return File{}, path, false, fmt.Errorf("read config %s: %w", path, err)
+		return loadedFile{ConfigPath: path}, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var file File
 	if err := decodeConfigInto(data, path, &file); err != nil {
-		return File{}, path, false, err
+		return loadedFile{ConfigPath: path}, err
 	}
+
+	// baseMCP is the [mcp] table as decoded from the base file alone, before
+	// any workspace overlay below can add or change it. refuseUntrustedMCPTable
+	// judges trust against this snapshot, not the merged file.MCP, so that an
+	// overlay declared at a TRUSTED path (the workspace's own .mivia/mivia.toml)
+	// is never mistaken for a table the untrusted base file declared itself.
+	baseMCP := file.MCP
 
 	if overlayPath, ok := workspaceOverlayConfigPath(opts.WorkspaceRoot, path); ok {
 		overlayData, err := os.ReadFile(overlayPath)
 		if err != nil {
-			return File{}, path, false, fmt.Errorf("read workspace config %s: %w", overlayPath, err)
+			return loadedFile{ConfigPath: path}, fmt.Errorf("read workspace config %s: %w", overlayPath, err)
 		}
 		if err := decodeConfigInto(overlayData, overlayPath, &file); err != nil {
-			return File{}, path, false, err
+			return loadedFile{ConfigPath: path}, err
 		}
 	}
 
@@ -620,7 +640,7 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	// available even when an explicit --config/$MIVIA_CONFIG or a provider-
 	// less workspace file was selected as the base. See its own doc comment.
 	if err := mergeProviderFallback(&file, path); err != nil {
-		return File{}, path, false, err
+		return loadedFile{ConfigPath: path}, err
 	}
 
 	// [verifiers] deliberately does NOT layer: evidence-gate profiles are the
@@ -631,11 +651,11 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	// the commands that judge a project's gates.
 	verifiers, err := LoadWorkspaceVerifiers(opts.WorkspaceRoot)
 	if err != nil {
-		return File{}, path, false, err
+		return loadedFile{ConfigPath: path}, err
 	}
 	file.Verifiers = verifiers
 
-	return file, path, true, nil
+	return loadedFile{File: file, ConfigPath: path, Found: true, BaseMCP: baseMCP}, nil
 }
 
 // workspaceOverlayConfigPath returns workspaceRoot's own .mivia/mivia.toml
