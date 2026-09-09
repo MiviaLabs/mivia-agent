@@ -70,8 +70,19 @@ func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnS
 		// error here (unmarshalable arguments, a tool whose parameters will
 		// not marshal) would otherwise abort the turn over one bad call.
 		body = "error: " + err.Error()
-		if turn != nil && call.ID != "" {
-			turn.recordToolOutcome(call.ID, call.Name, body, true)
+		// callKey mirrors the fallback sdkToolCallErrorReporter and
+		// servedUnadmittedToolMessage already use in this file: call.ID is
+		// empty when a provider stream sends the tool-call NAME delta
+		// before, or without, the ID delta. Recording only under call.ID
+		// silently drops the outcome for every such call, and
+		// bridgeToolCallEnd (agentloop_events.go) then finds nothing under
+		// the name key and reports the failure as a served duplicate.
+		callKey := call.ID
+		if callKey == "" {
+			callKey = call.Name
+		}
+		if turn != nil && callKey != "" {
+			turn.recordToolOutcome(callKey, call.Name, body, true)
 		}
 	}
 	return sdkshape.Message{
