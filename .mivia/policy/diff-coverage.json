@@ -472,6 +472,35 @@
         87
       ],
       "reason": "One unreachable branch, in ResolveTaskRoute: line 87 returns the error DefinitionDigest cannot produce on a selected agent, because agents.Select sanitizes schema maps through a JSON round-trip before returning one. (Line 86 is the call itself and IS covered - the gate's any-covered-block rule counts it under the statement block, not the branch it opens. Line numbers moved when the dispatch_tasks decode and its name guards left this file for task_request_decode.go; those entries went with the code, and the guards' own bail-outs are covered by a test rather than excused here.)"
+    },
+    "internal/automation/store.go": {
+      "lines": [
+        140,
+        141,
+        160,
+        161,
+        162,
+        163,
+        165,
+        166,
+        167,
+        168,
+        170,
+        171,
+        172,
+        173,
+        175,
+        176,
+        177
+      ],
+      "reason": "Two clusters. (1) 140-141: SaveSpecs' toml.Marshal(shape) error wrap. SaveSpecs validates every spec via ValidateSpec BEFORE this call (store.go:121-125), and ValidateSpec's own step-kind check (validStepKind) accepts exactly the same range StepKind.MarshalText's guard accepts - so no spec that reaches this line can carry a StepKind MarshalText itself would refuse. Every other field in Spec/Step/TriggerSpec/ScheduleSpec is a plain string, bool, int64, or []string/map[string]string - go-toml/v2's Marshal has no failure mode for those types (no channel, func, complex, or cyclic pointer graph can appear in this struct tree), so a validated Spec cannot make Marshal fail. (2) 160-177: writeFileAtomic's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it - the identical class already accepted in this file for internal/memory/markdown_source.go's atomicWrite (93-94/399-412), internal/chatsync/identity.go's SaveIdentity (277-286), and internal/chatsync/delivered_ledger.go's writeFileDurably (67-76): triggering a live fd's Write/Sync/Close failure deterministically and portably, without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default), is not achievable from this test package. TestWriteFileAtomicRejectsUnwritableDir and TestWriteFileAtomicRejectsRenameOverADirectory (store_error_paths_test.go) already cover the two writeFileAtomic error paths that ARE reachable (CreateTemp against a nonexistent directory, and os.Rename onto a real, non-empty directory)."
+    },
+    "internal/storage/sqlite.go": {
+      "lines": [
+        130,
+        131
+      ],
+      "reason": "migrateBaseSchema's SECOND ALTER TABLE error branch (fence_generation). The first ALTER TABLE's error branch (fence, lines 127-128) is independently reachable and covered by TestMigrateBaseSchemaFailsOnRunClaimsFenceAlter (automation_schema_closed_db_test.go), which substitutes run_claims with a VIEW so the preceding CREATE TABLE IF NOT EXISTS no-ops and the first ALTER TABLE fails for real - but that same substitution makes BOTH alters fail at the FIRST one, so the test can only prove the first branch is reachable, never isolate the second in the same run. There is no SQLite failure mode that fails the fence_generation ADD COLUMN specifically while the immediately preceding, textually identical fence ADD COLUMN against the SAME table succeeds moments earlier: both are plain ADD COLUMN statements on one table, sharing every failure precondition (missing table, view instead of table, column limit) except the already-tolerated duplicate-column case this function explicitly excludes with its own `!strings.Contains(err.Error(), \"duplicate column\")` guard. TestMigrateBaseSchemaFailsOnClosedDB and TestMigrateBaseSchemaFailsOnRunClaimsFenceAlter cover the two ALTER TABLE failure classes (closed connection; view substitution) that ARE independently reachable."
     }
   }
 }
