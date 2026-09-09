@@ -2203,7 +2203,10 @@
     "TestDispatchTasksDefaultWaitIsRunBareArray",
     "TestDecodeDispatchTaskJSON_TrailingGarbageSurfacesTheScanError",
     "TestRejectDuplicateJSONKeys",
-    "TestScanJSONValue_TruncatedKeyReadSurfacesTheTokenError"
+    "TestScanJSONValue_TruncatedKeyReadSurfacesTheTokenError",
+    "TestHandlerAndNameSelectorsRejected",
+    "TestAgentEnumInParameters",
+    "TestAgentEnumOmittedWhenRegistryEmpty"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",
