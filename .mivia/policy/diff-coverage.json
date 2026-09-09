@@ -185,21 +185,12 @@
     },
     "internal/agent/sdk_dispatcher_shim.go": {
       "lines": [
-        104,
-        105,
-        106,
-        107,
-        108,
-        109,
-        110,
-        111,
-        112,
-        368,
-        369,
-        422,
-        423
+        377,
+        378,
+        431,
+        432
       ],
-      "reason": "Three unreachable/gap branches. (0) 104-112: recordBridgeError body (commit 76fb29e2) - the function only executes when a mid-run surface rotation's buildSDKToolRegistry fails, and every turn then fails through the partial-Result bridge-error carry in agentloop_adapter.go; the known preparation-error-shape gap from the session unpin, no test injects a failing registry conversion during rotation. (1) 368-369: sdkReg.Add(wrapped) error branch, same class as the accepted internal/agent/refonly_shim.go:204 and sdk_shaping.go:348 entries - sdkReg.Remove(name) runs on the identical name one statement earlier in the same loop iteration (line 363), so the name cannot already be present when Add runs. (2) 422-423: RunUnadmittedTool's runner.Run error wrap. runner is wrapTurnShaping(wrapRefOnly(shim, ...)); wrapTurnShaping returns its inner unchanged whenever opts.BatchResultBudgetBytes is zero (the default RunUnadmittedTool's own Options{} always has, since batchShapingBudget's default case returns active=false), and wrapRefOnly likewise returns inner unchanged outside its own narrow spool-floor guard - so the call this test can drive always resolves to dispatcherShim.Run itself. dispatcherShim.Run's ONLY non-nil-error return is its own json.Marshal(in.Value) (line ~150), and in.Value is a json.RawMessage that DecodeArguments (sdkadapter/tool_registry.go) only ever populates after checking json.Valid(raw) - a validated, non-empty json.RawMessage's MarshalJSON always succeeds. Every other outcome dispatcherShim.Run can produce (a tool execution error, a closed dispatcher) is folded into the returned body by composeRunOutput, whose only return statement is `return sdktools.Out{Value: body}, nil`. TestRunUnadmittedTool_ConvertToolErrorSurfaces already covers the one real error RunUnadmittedTool can surface (an earlier, unrelated guard)."
+      "reason": "Two unreachable branches. (1) 377-378: sdkReg.Add(wrapped) error branch, same class as the accepted internal/agent/refonly_shim.go:204 and sdk_shaping.go:348 entries - sdkReg.Remove(name) runs on the identical name one statement earlier in the same loop iteration (line 372), so the name cannot already be present when Add runs. (2) 431-432: RunUnadmittedTool's runner.Run error wrap. runner is wrapTurnShaping(wrapRefOnly(shim, ...)); wrapTurnShaping returns its inner unchanged whenever opts.BatchResultBudgetBytes is zero (the default RunUnadmittedTool's own Options{} always has, since batchShapingBudget's default case returns active=false), and wrapRefOnly likewise returns inner unchanged outside its own narrow spool-floor guard - so the call this test can drive always resolves to dispatcherShim.Run itself. dispatcherShim.Run's ONLY non-nil-error return is its own json.Marshal(in.Value), and in.Value is a json.RawMessage that DecodeArguments (sdkadapter/tool_registry.go) only ever populates after checking json.Valid(raw) - a validated, non-empty json.RawMessage's MarshalJSON always succeeds. Every other outcome dispatcherShim.Run can produce (a tool execution error, a closed dispatcher) is folded into the returned body by composeRunOutput, whose only return statement is `return sdktools.Out{Value: body}, nil`. TestRunUnadmittedTool_ConvertToolErrorSurfaces already covers the one real error RunUnadmittedTool can surface (an earlier, unrelated guard). The former 104-112 cluster (recordBridgeError) is dropped: that function moved to internal/agent/sdk_turn_state.go and is now covered by sdk_turn_state_edges_test.go."
     },
     "internal/agent/sdk_shaping.go": {
       "lines": [
