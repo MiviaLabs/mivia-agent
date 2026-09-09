@@ -391,7 +391,7 @@
       },
       {
         "line": 386,
-        "reason": "platform allows flock on a directory, voiding the failure precondition this test needs"
+        "reason": "platform allows flock on a directory, so this precondition does not hold"
       }
     ],
     "internal/uiadapter/settings_theme_error_test.go": [
