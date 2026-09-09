@@ -140,10 +140,10 @@
     },
     "internal/chatsync/reconcile.go": {
       "lines": [
-        307,
-        308
+        313,
+        314
       ],
-      "reason": "reconcileDangling's len(closingEvents)==0 guard is unreachable given the earlier len(tools)==0 && len(subs)==0 && len(subTools)==0 guard at line 300: buildClosingEvents (via buildSubagentClosingEvents/buildToolClosingEvents) appends exactly one WireEvent per item in tools/subs/subTools unconditionally, so once line 300 lets execution through at least one of those slices is non-empty and closingEvents is guaranteed non-empty. Defensive double-check, not a reachable branch."
+      "reason": "reconcileDangling's len(closingEvents)==0 guard is unreachable given the guard above it: once `openTurn == \"\" && len(tools)==0 && len(subs)==0 && len(subTools)==0` lets execution through, at least one of those is non-empty, and buildClosingEvents emits at least one WireEvent for any of them (one per tool/sub/subTool, plus TypeTurnFailed for a non-empty openTurn). So closingEvents cannot be empty here. Defensive double-check, not a reachable branch."
     },
     "internal/chatsync/received_ledger.go": {
       "lines": [
