@@ -130,6 +130,45 @@ func TestMeasureAndSplitAgreeOnRenames(t *testing.T) {
 	}
 }
 
+// TestSplitDefersRenamePlusOneMoreFile is the "keep at least one file" guard
+// regression. That guard must count deferred FILE RECORDS, never deferred
+// PATHS: a detected rename contributes two paths (old and new) for one
+// record, so counting paths makes the guard fire one record early whenever a
+// rename is among the deferred files.
+//
+// The fixture reproduces the exact trace that broke it: four files sized
+// 50, 30, 15, 5 (total 100) with hard=15. The largest file is a detected
+// rename (2 paths). Deferring it plus the second-largest file is not enough
+// to fit under hard (100-50-30=20 > 15), so a correct split must also defer
+// the third file (100-50-30-15=5 <= 15), leaving the smallest file kept.
+// The path-counting guard instead stops after only two records are
+// deferred, because by then len(deferred) (3 paths: 2 from the rename, 1
+// from the second file) already equals len(files)-1 (3) - one record short
+// of what the trace needs, so it returns kept=20 > hard and the caller sees
+// no split at all.
+func TestSplitDefersRenamePlusOneMoreFile(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, _, _, _, _ := newDeliveryFixture(t)
+
+	const hard = 15
+	base := seedDetectedRename(t, ctx, worktreeRoot, gc, "renamed.txt", "renamed_moved.txt", 200, 25, map[string]string{
+		"file30.txt": bigBody("thirty", 30),
+		"file15.txt": bigBody("fifteen", 15),
+		"file5.txt":  bigBody("five", 5),
+	})
+
+	deferred, kept, err := computeDeterministicSplit(ctx, RealGit{}, gc, base, hard)
+	if err != nil {
+		t.Fatalf("computeDeterministicSplit: %v", err)
+	}
+	if len(deferred) == 0 || len(kept) == 0 {
+		t.Fatalf("computeDeterministicSplit returned no split (deferred=%v kept=%v); a valid split exists that keeps file5.txt under hard=%d", deferred, kept, hard)
+	}
+	if len(kept) != 1 || kept[0] != "file5.txt" {
+		t.Fatalf("kept = %v, want exactly [\"file5.txt\"]: the smallest file is the only one that fits under hard=%d once the rename and file30.txt are deferred", kept, hard)
+	}
+}
+
 // TestExcludePathspecActuallyExcludes proves the deferral exclusion is real
 // for a renamed file. A pathspec git ignores is worse than one that errors:
 // the verify step still counts the deferred file, so verified > hard and the

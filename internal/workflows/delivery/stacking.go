@@ -340,11 +340,19 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].lines > files[j].lines })
 	keptTotal := total
+	deferredRecords := 0
 	for i, f := range files {
 		if keptTotal <= hard {
 			break
 		}
-		if len(deferred) == len(files)-1 {
+		// Count deferred FILE RECORDS (numstat rows), never deferred PATHS.
+		// A detected rename's record contributes TWO paths (old and new, see
+		// fileDiffSize's doc comment), so comparing len(deferred) against
+		// len(files)-1 lets one deferred rename count for two records and
+		// trips this guard a record early - the kept diff was still over
+		// hard, a later file could have closed the gap, but the loop broke
+		// before reaching it and the caller saw no split at all.
+		if deferredRecords == len(files)-1 {
 			break // always keep at least the smallest remaining file
 		}
 		if f.lines == 0 && i < len(files)-1 {
@@ -352,6 +360,7 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 		}
 		deferred = append(deferred, f.paths...)
 		keptTotal -= f.lines
+		deferredRecords++
 	}
 	if keptTotal > hard {
 		return nil, nil, nil
