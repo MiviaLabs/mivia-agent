@@ -262,7 +262,8 @@ func TestRepairEventsFile_OpenErrorSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	if _, probeErr := os.Open(filepath.Join(dir, eventsFileName)); probeErr == nil {
+	if probe, probeErr := os.Open(filepath.Join(dir, eventsFileName)); probeErr == nil {
+		_ = probe.Close()
 		t.Skip("platform still allows traversal into a 0000 directory")
 	}
 	if err := repairEventsFile(dir); err == nil {

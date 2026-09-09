@@ -388,6 +388,10 @@
       {
         "line": 397,
         "reason": "real 20s lock-contention wait; skipped in -short"
+      },
+      {
+        "line": 386,
+        "reason": "platform allows flock on a directory, voiding the failure precondition this test needs"
       }
     ],
     "internal/uiadapter/settings_theme_error_test.go": [

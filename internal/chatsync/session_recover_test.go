@@ -411,10 +411,11 @@ func TestDeadOutboxLatchesInsteadOfForking(t *testing.T) {
 	// file's own established budget for the same DeleteSession-then-latch
 	// shape, see TestConcurrentReadersDuringRecovery) still intermittently
 	// missed under CI-runner scheduling contention - first on Windows at 3s,
-	// then on macOS at 5s, on unrelated runs with no logic change between
-	// them. 30s gives three orders of magnitude of margin over the measured
-	// cost, which a genuine hang would still trip.
-	waitUntilWithin(t, "the latch", 30*time.Second, s.Stopped)
+	// then on macOS at 5s, then macOS again at 30s under a full `go test
+	// ./...` run's own scheduling load, on unrelated runs with no logic
+	// change between them. 60s gives four orders of magnitude of margin
+	// over the measured cost, which a genuine hang would still trip.
+	waitUntilWithin(t, "the latch", 60*time.Second, s.Stopped)
 	if n := len(f.SessionIDs()); n != 1 {
 		t.Errorf("%d sessions, want 1: nothing may be created for a backlog that cannot move", n)
 	}

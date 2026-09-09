@@ -102,7 +102,8 @@ func TestOutboxUnflushedEvents_NonNotExistOpenErrorSurfaces(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 	eventsPath := filepath.Join(dir, eventsFileName)
-	if _, probeErr := os.Open(eventsPath); probeErr == nil {
+	if probe, probeErr := os.Open(eventsPath); probeErr == nil {
+		_ = probe.Close()
 		t.Skip("platform still allows traversal into a 0000 directory")
 	}
 	if _, err := ob.UnflushedEvents(); err == nil {
@@ -296,6 +297,12 @@ func TestOutboxAppend_WriteErrorSurfaces(t *testing.T) {
 	ob, dir := openTestOutbox(t)
 	roFile, err := os.OpenFile(filepath.Join(dir, eventsFileName), os.O_RDONLY, 0o600)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Close OpenOutbox's own handle before replacing it - Windows locks an
+	// open file exclusively, so leaving it open here (overwritten and
+	// unreachable) blocks the temp dir's RemoveAll at cleanup.
+	if err := ob.eventsFile.Close(); err != nil {
 		t.Fatal(err)
 	}
 	ob.eventsFile = roFile

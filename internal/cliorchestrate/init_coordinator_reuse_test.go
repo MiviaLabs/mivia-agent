@@ -1,6 +1,7 @@
 package cliorchestrate
 
 import (
+	goruntime "runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,8 +35,8 @@ import (
 // caller never arrives to release it. Retrying the whole attempt against a
 // fresh dispatcher needs no synchronization and cannot deadlock.
 func TestInitCoordinator_ConcurrentFirstCallersReuseOneSubscription(t *testing.T) {
-	const goroutinesPerAttempt = 64
-	const maxAttempts = 200
+	const goroutinesPerAttempt = 256
+	const maxAttempts = 2000
 
 	prevLoadedHook := testOnRoutedCoordinatorsLoaded
 	t.Cleanup(func() { testOnRoutedCoordinatorsLoaded = prevLoadedHook })
@@ -55,6 +56,17 @@ func TestInitCoordinator_ConcurrentFirstCallersReuseOneSubscription(t *testing.T
 			go func(i int) {
 				defer wg.Done()
 				<-start
+				// A handful of scheduler yields widens the interleaving
+				// window on a CPU-starved runner (observed: some CI
+				// environments effectively serialize goroutines that
+				// finish faster than the scheduler's own preemption tick,
+				// so every attempt's second-and-later goroutine sees
+				// coordinators.Load(d) already populated and never races
+				// at all). Gosched costs nothing when real parallelism is
+				// already available.
+				for y := 0; y < 8; y++ {
+					goruntime.Gosched()
+				}
 				results[i] = InitCoordinator(d, config.DefaultSubagentConfig, repo)
 			}(i)
 		}

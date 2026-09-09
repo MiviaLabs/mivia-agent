@@ -372,6 +372,19 @@ func TestWithRefreshLock_ImmediateOpenErrorSurfacesLockUnavailable(t *testing.T)
 	if err := os.Mkdir(lockPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// This test's precondition is that flock-ing a DIRECTORY fails outright,
+	// forcing withRefreshLock's own open/lock error path. That holds on
+	// Linux (and is what CI's own file wins there), but not universally:
+	// some platforms (observed on macOS CI runners) let flock succeed on a
+	// directory descriptor. Probe it directly rather than assume.
+	probe := flock.New(lockPath)
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), time.Second)
+	probeLocked, probeErr := probe.TryLockContext(probeCtx, 10*time.Millisecond)
+	probeCancel()
+	if probeErr == nil && probeLocked {
+		_ = probe.Unlock()
+		t.Skip("platform allows flock on a directory, so this precondition does not hold")
+	}
 	ran := false
 	result, err := withRefreshLock(lockPath, func() error { ran = true; return nil })
 	if err != nil {
