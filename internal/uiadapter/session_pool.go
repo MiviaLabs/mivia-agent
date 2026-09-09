@@ -395,15 +395,6 @@ func inheritApprovalLocked(sess, existing *chat.Session, res *config.Resolved) {
 	}
 }
 
-// inheritRuntimeStateLocked copies tools, event bus, context store/manager,
-// and redaction policy from the pool's preferred inheritance sibling (see
-// preferredInheritanceSessionLocked) onto sess, a session CreateFresh or
-// GetOrCreate just constructed. Returns that sibling (nil if the pool has
-// none yet) for inheritApprovalLocked. Callers hold p.mu.
-func (p *SessionPool) inheritRuntimeStateLocked(sess *chat.Session) *chat.Session {
-	return p.inheritEntryStateLocked(sess, true)
-}
-
 // inheritEntryStateLocked is the ONE inheritance path every pooled entry
 // takes - plain or worktree-bound, fresh or resumed. The source is always
 // preferredInheritanceSessionLocked (the launch member when one is known),

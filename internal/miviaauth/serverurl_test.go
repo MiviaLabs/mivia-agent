@@ -120,3 +120,30 @@ func TestServerURLFromEnvMalformedUserEnvFileFallsBackToDefault(t *testing.T) {
 		t.Errorf("ServerURLFromEnv() = %q, want %q (fallback on parse error)", got, DefaultServerURL)
 	}
 }
+
+// TestServerURLFromEnvUserEnvFileWithoutTheKeyFallsBackToDefault pins
+// ResolveServerURL's last fallback, distinct from both the no-file case
+// (FirstExisting misses) and the parse-failure case: a readable, valid
+// ~/.mivia/.env that simply does not set MIVIA_API_BASE_URL must resolve
+// to the default rather than to an empty URL.
+func TestServerURLFromEnvUserEnvFileWithoutTheKeyFallsBackToDefault(t *testing.T) {
+	sandboxServerURLEnv(t)
+	t.Setenv("MIVIA_API_BASE_URL", "")
+
+	miviaDir := filepath.Join(os.Getenv("HOME"), ".mivia")
+	if err := os.MkdirAll(miviaDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", miviaDir, err)
+	}
+	envFile := filepath.Join(miviaDir, ".env")
+	if err := os.WriteFile(envFile, []byte("SOME_OTHER_KEY=value\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", envFile, err)
+	}
+
+	got, source := ResolveServerURL()
+	if got != DefaultServerURL {
+		t.Errorf("ResolveServerURL() url = %q, want %q", got, DefaultServerURL)
+	}
+	if source != ServerURLSourceDefault {
+		t.Errorf("ResolveServerURL() source = %q, want %q", source, ServerURLSourceDefault)
+	}
+}

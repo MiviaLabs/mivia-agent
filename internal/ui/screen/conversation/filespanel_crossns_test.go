@@ -44,3 +44,15 @@ func TestCrossNamespaceSuffixIndex_ColonlessRowIsNeverMatched(t *testing.T) {
 		t.Fatalf("crossNamespaceSuffixIndex = %d, want -1: a colonless row has no namespace to look past", got)
 	}
 }
+
+// TestCrossNamespaceSuffixIndex_AmbiguousSuffixRefusesToGuess pins the
+// collision guard: two dispatch groups can legitimately reuse the same raw
+// task id ("call-a:task-1" and "call-b:task-1"), and a progress update
+// naming only the suffix cannot tell them apart. Picking either row would
+// attribute one subagent's progress to another, so the match is refused.
+func TestCrossNamespaceSuffixIndex_AmbiguousSuffixRefusesToGuess(t *testing.T) {
+	rows := []subagentRow{{ID: "call-a:task-1"}, {ID: "call-b:task-1"}}
+	if got := crossNamespaceSuffixIndex(rows, "call-c:task-1"); got != -1 {
+		t.Fatalf("crossNamespaceSuffixIndex = %d, want -1: two rows share the suffix, so the match is ambiguous", got)
+	}
+}
