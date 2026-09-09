@@ -10,7 +10,28 @@ import (
 // settingsAutomations
 type settingsAutomations struct{ *SettingsStore }
 
+// SetAutomationBackend installs the automation backend the Automations
+// settings section delegates to. It is an INTERFACE on purpose:
+// internal/automation imports cliworkflow/clichat/cliworktree, and
+// INV-TUI-29 (AGENTS.md:135-139) requires this package stay isolated from
+// CLI entrypoints. The composition root (internal/newtui) constructs the
+// concrete *automation.Service and injects it here; this package never
+// names that concrete type. nil restores the in-memory behaviour every
+// existing test in this package relies on. Mirrors SetConversation/
+// SetSyncOptsNotifier (settings.go:81,125) in mutex style.
+func (s *SettingsStore) SetAutomationBackend(b ports.AutomationSettings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.automationBackend = b
+}
+
 func (a settingsAutomations) Automations() []ports.Automation {
+	a.mu.Lock()
+	backend := a.automationBackend
+	a.mu.Unlock()
+	if backend != nil {
+		return backend.Automations()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	out := make([]ports.Automation, len(a.automations))
@@ -19,6 +40,12 @@ func (a settingsAutomations) Automations() []ports.Automation {
 }
 
 func (a settingsAutomations) Runs(automationID string, limit int) []ports.Run {
+	a.mu.Lock()
+	backend := a.automationBackend
+	a.mu.Unlock()
+	if backend != nil {
+		return backend.Runs(automationID, limit)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	runs := a.runs[automationID]
@@ -32,6 +59,12 @@ func (a settingsAutomations) Runs(automationID string, limit int) []ports.Run {
 
 func (a settingsAutomations) Run(runID string) (ports.Run, bool) {
 	a.mu.Lock()
+	backend := a.automationBackend
+	a.mu.Unlock()
+	if backend != nil {
+		return backend.Run(runID)
+	}
+	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, runs := range a.runs {
 		for _, r := range runs {
@@ -43,7 +76,13 @@ func (a settingsAutomations) Run(runID string) (ports.Run, bool) {
 	return ports.Run{}, false
 }
 
-func (a settingsAutomations) Apply(_ context.Context, _ ports.Scope, e ports.AutomationEdit) (ports.SaveHandle, error) {
+func (a settingsAutomations) Apply(ctx context.Context, scope ports.Scope, e ports.AutomationEdit) (ports.SaveHandle, error) {
+	a.mu.Lock()
+	backend := a.automationBackend
+	a.mu.Unlock()
+	if backend != nil {
+		return backend.Apply(ctx, scope, e)
+	}
 	if trig, ok := e.(ports.TriggerAutomation); ok {
 		return a.newSaveHandle(func() error { return a.startRun(trig.ID) }), nil
 	}
@@ -129,7 +168,13 @@ type runWatch struct {
 func (w *runWatch) Events() <-chan ports.Run { return w.ch }
 func (w *runWatch) Cancel()                  { w.cancel() }
 
-func (a settingsAutomations) Watch(_ context.Context, automationID string) (ports.RunHandle, error) {
+func (a settingsAutomations) Watch(ctx context.Context, automationID string) (ports.RunHandle, error) {
+	a.mu.Lock()
+	backend := a.automationBackend
+	a.mu.Unlock()
+	if backend != nil {
+		return backend.Watch(ctx, automationID)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.findAutomation(automationID) < 0 {

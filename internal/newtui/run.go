@@ -9,14 +9,17 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/termprobe"
 )
 
@@ -207,6 +210,49 @@ func persistTheme(store *uiadapter.SettingsStore, name string) tea.Cmd {
 // non-TTY input/output and quit the program themselves.
 var newTeaProgram = func(root tea.Model) *tea.Program { return tea.NewProgram(root) }
 
+// automationSpawnerFunc adapts a plain closure to automation.SessionSpawner,
+// the standard Go http.HandlerFunc-style adapter: the composition root
+// (this package) is the only place that names both uiadapter.BindFunc (a
+// named type) and automation.SessionSpawner's plain-func parameter
+// signature, converting between them (see docs/design/automations.md D4's
+// compile-hazard note).
+type automationSpawnerFunc func(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error)
+
+func (f automationSpawnerFunc) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
+	return f(bind, dir)
+}
+
+// newAutomationSpawner builds the spawn closure wireAutomationBackend
+// installs on automation.Service: it adapts pool's BindFunc-typed
+// CreateFreshInDir to automation.SessionSpawner's plain-func signature
+// (see automationSpawnerFunc's own doc comment and
+// docs/design/automations.md D4). Extracted to its own named function,
+// not an inline closure inside wireAutomationBackend, so it is directly
+// callable from a test without needing a live executor (chunk 6) to
+// invoke it first.
+func newAutomationSpawner(pool *uiadapter.SessionPool) automation.SessionSpawner {
+	return automationSpawnerFunc(func(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
+		return pool.CreateFreshInDir(uiadapter.BindFunc(bind), dir)
+	})
+}
+
+// wireAutomationBackend constructs the concrete automation.Service and
+// installs it on store via SetAutomationBackend, adapting pool's
+// BindFunc-typed CreateFreshInDir to automation.SessionSpawner's plain-
+// func signature (see automationSpawnerFunc's own doc comment and
+// docs/design/automations.md D4). Failure is non-fatal: the Automations
+// settings section simply stays unbacked and the TUI starts normally.
+func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool, sess *chat.Session, agentState *cli.AgentSessionState) {
+	db, _ := sess.ContextStore().(*storage.SQLite)
+	spawn := newAutomationSpawner(pool)
+	autoSvc, err := automation.New(agentState.WorkspaceRoot, db, spawn, automation.Config{})
+	if err != nil {
+		log.Printf("automations disabled: %v", err) // non-fatal; TUI starts normally
+		return
+	}
+	store.SetAutomationBackend(autoSvc)
+}
+
 func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, *uiadapter.CommandRunner, error) {
 	registerSubagentProgress()
 	approver := uiadapter.NewApprover(sess)
@@ -241,6 +287,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
+	wireAutomationBackend(settingsStore, pool, sess, agentState)
 	wireSyncOptsNotifier(settingsStore, pool)
 	runner.SetSettingsStore(settingsStore)
 	env := os.Environ()

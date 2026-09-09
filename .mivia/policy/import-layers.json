@@ -1,6 +1,6 @@
 {
   "allowedDeletions": [],
-  "edgeCap": 452,
+  "edgeCap": 460,
   "allow": {
     "cmd/mivia": [
       "internal/cli",
@@ -24,7 +24,11 @@
       "internal/sdkadapter"
     ],
     "internal/automation": [
+      "internal/chat",
+      "internal/storage",
+      "internal/uikit/intent",
       "internal/uikit/ports",
+      "internal/uikit/uievent",
       "internal/workspace"
     ],
     "internal/agents": [
@@ -274,14 +278,17 @@
     ],
     "internal/newtui": [
       "internal/agent",
+      "internal/automation",
       "internal/chat",
       "internal/chatsync",
       "internal/cli",
       "internal/config",
+      "internal/storage",
       "internal/ui/app",
       "internal/ui/screen/conversation",
       "internal/ui/theme",
       "internal/uiadapter",
+      "internal/uikit/ports",
       "internal/uikit/termprobe"
     ],
     "internal/provider": [

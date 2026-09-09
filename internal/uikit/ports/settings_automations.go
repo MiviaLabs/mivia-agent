@@ -53,12 +53,46 @@ type TriggerSpec struct {
 	Schedule *ScheduleSpec
 }
 
-// ActionRef names what an automation runs. A workflow is the only
-// action kind mivia-agent has today (internal/workflows/definition);
-// this is a struct rather than a bare string so a second action kind
-// can be added as a field, not a breaking type change.
+// ActionRef names what an automation runs. Workflow is the original,
+// single-workflow-only shape (kept as a compat alias: setting it alone
+// is still a legal ActionRef, equivalent to a single StepWorkflow step).
+// Steps is the ordered multi-kind action list internal/automation's Spec
+// carries; ActionStepKind mirrors automation.StepKind's five values
+// without this leaf package importing that package (internal/automation
+// imports ports, never the reverse).
 type ActionRef struct {
 	Workflow string
+	Steps    []ActionStep
+}
+
+// ActionStepKind names what one ActionStep runs. Mirrors
+// automation.StepKind's five values exactly; kept as its own type here
+// so ports stays a leaf (no import of internal/automation).
+type ActionStepKind int
+
+const (
+	ActionStepPrompt ActionStepKind = iota
+	ActionStepSkill
+	ActionStepAgent
+	ActionStepSlash
+	ActionStepWorkflow
+)
+
+// ActionStep is one unit of a multi-kind automation action, mirroring
+// automation.Step's shape.
+type ActionStep struct {
+	Kind   ActionStepKind
+	Ref    string
+	Prompt string
+	Inputs map[string]string // ActionStepWorkflow only
+}
+
+// WorktreeSpec selects where an automation's run executes. Mode mirrors
+// automation.WorktreeMode's two values (0 = run in place, 1 = create a
+// managed worktree off BaseRef) without importing that package.
+type WorktreeSpec struct {
+	Mode    int
+	BaseRef string
 }
 
 // RunState is where one automation run has reached. RunCancelled is
@@ -120,6 +154,7 @@ type Automation struct {
 	Enabled     bool
 	Trigger     TriggerSpec
 	Action      ActionRef
+	Worktree    WorktreeSpec
 	LastRun     *RunSummary
 	NextFire    *time.Time
 	Scope       Scope
@@ -136,10 +171,19 @@ type SetAutomationEnabled struct {
 }
 type TriggerAutomation struct{ ID string }
 
+// ResumeAutomationRun resumes a run left interrupted (D13): it restarts
+// at step_index+1 of a saved session. Actual resume execution is a
+// later chunk (chunk 8); the Apply implementation in this chunk returns
+// a named "not yet implemented" error rather than silently dropping the
+// edit, so a caller wiring this variant learns the gap immediately
+// instead of watching a no-op succeed.
+type ResumeAutomationRun struct{ RunID string }
+
 func (UpsertAutomation) isAutomationEdit()     {}
 func (RemoveAutomation) isAutomationEdit()     {}
 func (SetAutomationEnabled) isAutomationEdit() {}
 func (TriggerAutomation) isAutomationEdit()    {}
+func (ResumeAutomationRun) isAutomationEdit()  {}
 
 // RunHandle streams one automation's runs as they happen - live-run
 // state, the same channel convention as TurnHandle and SaveHandle, so
