@@ -485,7 +485,8 @@ with `~`. Below 40 columns the renderer prints the plain stream format.
 | `Ctrl-P` | global | model and effort dialog |
 | `Ctrl-L` | global | session dialog |
 | `n` / `N` | pager | next / previous hunk |
-| `s` | pager | side-by-side, 120 columns or wider |
+| `s` | focused diff block | toggle unified/split diff view, 120 columns or wider (C8) |
+| `t` | approval | toggle unified/split diff preview, 120 columns or wider (C8) |
 | `/` | dialog | filter |
 | `?` | empty composer | print the keymap inline |
 | `Tab` | composer | accept completion prefix |

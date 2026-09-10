@@ -79,6 +79,28 @@ type Block struct {
 	Diff *uievent.Diff
 	Plan *uievent.PlanBody
 
+	// DiffSplit is C8's per-block toggle: false (the default) renders
+	// Diff unified, true renders it side-by-side. It survives restyle
+	// (theme/width changes) the same way Diff itself does - restyle
+	// reads it back rather than resetting to unified, or every resize
+	// would silently discard the reader's choice.
+	DiffSplit bool
+
+	// DiffBodyPrefixLen is how many lines of Body come BEFORE the
+	// diff's own rendered lines - tool output printed above an edit
+	// (handleToolEnd's live-merge path), or 0 when the diff IS the
+	// whole body (the common case, and values.go's direct-push path,
+	// which overwrites Body with the diff entirely). restyle needs
+	// this to reslice Body correctly when rebuilding the diff portion:
+	// inferring the split point from the length of the OLD render (as
+	// replaceDiffTail used to) silently corrupted the body - kept one
+	// stale line of the old diff render, or duplicated the hunk header
+	// - the moment DiffSplit changed a render's OWN line count between
+	// the before and after render (unified and split do not render a
+	// balanced hunk to the same number of rows). Found by bug-audit's
+	// own regression test surfacing it as a side effect.
+	DiffBodyPrefixLen int
+
 	// Usage preserves the raw token-and-cost payload behind the usage
 	// footer line for the same reason: the footer is styled at push time,
 	// and restyle rebuilds it from this copy when the theme changes.

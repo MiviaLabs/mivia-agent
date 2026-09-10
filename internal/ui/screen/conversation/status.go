@@ -87,6 +87,68 @@ func (s Screen) statusRow() string {
 	return line
 }
 
+// hintDivider is the separator BETWEEN hint entries (C9), not inside
+// one - "esc:cancel" keeps its colon; consecutive entries join with
+// this instead of the plain two spaces they used to. ASCII/NoTTY tier
+// falls back the same way statusline.go's own divider does.
+func (s Screen) hintDivider() string {
+	if s.Tier == theme.TierASCII || s.Tier == theme.TierNoTTY {
+		return " - "
+	}
+	return " · "
+}
+
+// styledHint renders one key:label hint part with the key dimmer than
+// the label (C9) - RoleFGSubtle on the key, RoleFGMuted on the label,
+// so a row of hints reads as "label label label" with the keys as
+// quiet punctuation rather than every character fighting for the same
+// weight.
+func (s Screen) styledHint(p keymap.HintPart) string {
+	key := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(p.Key)
+	label := render.Role(s.Theme, s.Tier, theme.RoleFGMuted).Render(p.Label)
+	return key + render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(":") + label
+}
+
+// joinHintParts styles and joins hint parts with hintDivider, dropping
+// straight to "" for an empty list rather than an empty-but-styled
+// string - callers already treat "" as "nothing to show" for width
+// fitting.
+func (s Screen) joinHintParts(parts []keymap.HintPart) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	rendered := make([]string, len(parts))
+	for i, p := range parts {
+		rendered[i] = s.styledHint(p)
+	}
+	return strings.Join(rendered, s.hintDivider())
+}
+
+// escHint is the status row's OWN esc entry, built from live state
+// rather than the keymap table - there is no single "what esc does"
+// binding to source it from, because the answer changes with what else
+// is going on (ux-rules 1.4: a hint must state the truth for the CURRENT
+// state, not a fixed label). Three states, one for each thing esc can
+// mean here:
+//
+//   - a turn is running: esc cancels it (cancelTurn's s.active != nil
+//     branch);
+//   - idle with a queued message: esc clears the queue (cancelTurn's
+//     new idle branch, added alongside this hint so the two cannot
+//     drift - a hint promising a key does something the key does not
+//     do is worse than no hint);
+//   - idle with nothing queued: esc does nothing here, so no hint.
+func (s Screen) escHint() (keymap.HintPart, bool) {
+	switch {
+	case s.active != nil:
+		return keymap.HintPart{Key: "esc", Label: "cancel"}, true
+	case len(s.queue) > 0:
+		return keymap.HintPart{Key: "esc", Label: "clear queue"}, true
+	default:
+		return keymap.HintPart{}, false
+	}
+}
+
 func (s Screen) statusRight(avail int) string {
 	if avail <= 0 {
 		return ""
@@ -125,28 +187,32 @@ func (s Screen) statusRight(avail int) string {
 // the complete truth. The fold keys were reachable with no hint at all;
 // the glyph was their only advertisement.
 func (s Screen) panelFocusedHints(avail int) string {
-	accent := render.Role(s.Theme, s.Tier, theme.RoleAccent)
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	tab := accent.Render("tab:composer")
-	candidates := []string{
-		"↑/↓:select  enter:view  esc:back",
-		"enter:view  esc:back",
-		"esc:back",
-		"",
+	// tab:composer is the row's own primary affordance (leaving the
+	// panel), kept in accent rather than the quieter subtle/muted pair
+	// every other hint uses here - it is the one action this row exists
+	// to advertise, not a peer of the navigation hints beside it.
+	tab := render.Role(s.Theme, s.Tier, theme.RoleAccent).Render("tab") +
+		render.Role(s.Theme, s.Tier, theme.RoleAccent).Render(":") +
+		render.Role(s.Theme, s.Tier, theme.RoleAccent).Render("composer")
+	if ansi.StringWidth(tab) > avail {
+		return ""
 	}
+
+	up, view, back := keymap.HintPart{Key: "↑/↓", Label: "select"}, keymap.HintPart{Key: "enter", Label: "view"}, keymap.HintPart{Key: "esc", Label: "back"}
+	tiers := [][]keymap.HintPart{{up, view, back}, {view, back}, {back}, {}}
 	if s.panel.sectionHeaderSelected() {
-		candidates = []string{
-			"↑/↓:select  ←/→:fold  enter:toggle  esc:back",
-			"←/→:fold  enter:toggle  esc:back",
-			"←/→:fold  esc:back",
-			"esc:back",
-			"",
-		}
+		fold, toggle := keymap.HintPart{Key: "←/→", Label: "fold"}, keymap.HintPart{Key: "enter", Label: "toggle"}
+		// Drop order matches the row's own priority, not left-to-right
+		// position: ↑/↓:select goes first (fold/toggle/back keep the
+		// row usable without it), then enter:toggle, keeping ←/→:fold
+		// paired with esc:back the longest - a header only folds or
+		// leaves, so those two are the row's floor.
+		tiers = [][]keymap.HintPart{{up, fold, toggle, back}, {fold, toggle, back}, {fold, back}, {back}, {}}
 	}
-	for _, rest := range candidates {
+	for _, rest := range tiers {
 		full := tab
-		if rest != "" {
-			full = tab + "  " + subtle.Render(rest)
+		if len(rest) > 0 {
+			full = tab + s.hintDivider() + s.joinHintParts(rest)
 		}
 		if ansi.StringWidth(full) <= avail {
 			return full
@@ -156,7 +222,6 @@ func (s Screen) panelFocusedHints(avail int) string {
 }
 
 func (s Screen) quitArmedHints(avail int) string {
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
 	if ansi.StringWidth(warn) > avail {
 		return ansi.Truncate(warn, avail, uikitconfig.ClipMarker)
@@ -167,8 +232,8 @@ func (s Screen) quitArmedHints(avail int) string {
 		{keymap.IDHelp},
 	}
 	for _, ids := range prefixCandidates {
-		if prefix := s.keys.Hint(ids...); prefix != "" {
-			full := subtle.Render(prefix) + "  " + warn
+		if prefix := s.joinHintParts(s.keys.HintParts(ids...)); prefix != "" {
+			full := prefix + s.hintDivider() + warn
 			if ansi.StringWidth(full) <= avail {
 				return full
 			}
@@ -178,15 +243,20 @@ func (s Screen) quitArmedHints(avail int) string {
 }
 
 func (s Screen) activeTurnHints(avail int, candidateList [][]keymap.ID) string {
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	cancel := subtle.Render("esc:cancel")
+	// s.active != nil on every path that reaches this function
+	// (statusRight's own caller check), so escHint always returns the
+	// cancel part here - read through the one function anyway rather
+	// than hand-writing "esc:cancel" a second time, so the two can never
+	// say different things.
+	escPart, _ := s.escHint()
+	cancel := s.joinHintParts([]keymap.HintPart{escPart})
 	if ansi.StringWidth(cancel) > avail {
 		return ""
 	}
 	for _, ids := range candidateList {
-		base := s.keys.Hint(ids...)
+		base := s.joinHintParts(s.keys.HintParts(ids...))
 		if base != "" {
-			full := cancel + "  " + subtle.Render(base)
+			full := cancel + s.hintDivider() + base
 			if ansi.StringWidth(full) <= avail {
 				return full
 			}
@@ -196,17 +266,31 @@ func (s Screen) activeTurnHints(avail int, candidateList [][]keymap.ID) string {
 }
 
 func (s Screen) idleHints(avail int, candidateList [][]keymap.ID) string {
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	for _, ids := range candidateList {
-		base := s.keys.Hint(ids...)
-		if base != "" {
-			rendered := subtle.Render(base)
-			if ansi.StringWidth(rendered) <= avail {
-				return rendered
-			}
+	// idle still has an esc hint when a message is queued (C9): esc
+	// clears it, and cancelTurn's idle branch is what actually does
+	// that, so this can never claim a key that does nothing. With an
+	// empty queue escHint reports ok=false and lead stays "", exactly
+	// today's idle behaviour (no esc mention at all).
+	var lead string
+	if escPart, ok := s.escHint(); ok {
+		lead = s.joinHintParts([]keymap.HintPart{escPart})
+		if ansi.StringWidth(lead) > avail {
+			return "" // not even the highest-priority hint fits
 		}
 	}
-	return ""
+	for _, ids := range candidateList {
+		base := s.joinHintParts(s.keys.HintParts(ids...))
+		full := base
+		if lead != "" && base != "" {
+			full = lead + s.hintDivider() + base
+		} else if lead != "" {
+			full = lead
+		}
+		if full != "" && ansi.StringWidth(full) <= avail {
+			return full
+		}
+	}
+	return lead
 }
 
 // toolDetail is the status line's "<detail>" field for a pending or

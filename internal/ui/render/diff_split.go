@@ -11,20 +11,29 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// MinSplitDiffWidth is the minimum terminal width required to render a
-// side-by-side split diff. Below this width, FormatDiffLines falls back
-// to a clean unified diff to preserve legibility.
-const MinSplitDiffWidth = 60
+// MinSplitDiffWidth is the minimum terminal width a side-by-side split
+// diff needs to stay legible: two code columns plus line-number gutters
+// and a divider. FormatDiffLines refuses split below this width even
+// when the caller asks for it (transcript-polish.md R10 / C8:
+// wireframes-panes.md sections 11/14 specify unified below 120 columns,
+// split only above it via the "s"/"t" toggle).
+const MinSplitDiffWidth = 120
 
 // SplitDiff renders the hunks of a diff in side-by-side (split) column format.
 func SplitDiff(t theme.Theme, tier theme.Tier, width int, d uievent.Diff) string {
 	return strings.Join(SplitDiffLines(t, tier, width, d), "\n")
 }
 
-// FormatDiffLines renders diffs using side-by-side columns when width >= MinSplitDiffWidth,
-// and falls back to unified DiffLines when narrower.
-func FormatDiffLines(t theme.Theme, tier theme.Tier, width int, d uievent.Diff) []string {
-	if width < MinSplitDiffWidth {
+// FormatDiffLines renders a diff unified by default (C8: unified is the
+// default at every width, matching wireframes-panes.md). Side-by-side
+// columns render only when the caller opts in with split=true AND width
+// is at least MinSplitDiffWidth - the width floor is enforced here too,
+// not only at the toggle that sets split, because a terminal can shrink
+// after a block already asked for split (a resize while a diff is
+// focused, or an approval prompt narrowing) and a stale request must
+// not render illegibly.
+func FormatDiffLines(t theme.Theme, tier theme.Tier, width int, d uievent.Diff, split bool) []string {
+	if !split || width < MinSplitDiffWidth {
 		return DiffLines(t, tier, d)
 	}
 	return SplitDiffLines(t, tier, width, d)

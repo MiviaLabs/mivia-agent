@@ -207,7 +207,12 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		blk.Header.DiffAdd = b.Diff.Added
 		blk.Header.DiffDel = b.Diff.Removed
 		blk.Header.Meta = duration
-		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff)
+		// false: a freshly constructed block has no prior toggle to
+		// preserve - unified is the default (C8).
+		// DiffBodyPrefixLen stays its zero value: this OVERWRITES Body
+		// entirely, so the diff IS the whole body, with nothing before
+		// it for restyle to preserve.
+		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff, false)
 	}
 	// A finished call collapses by default whatever its body size, so
 	// consecutive calls coalesce into one summary row; failures keep the

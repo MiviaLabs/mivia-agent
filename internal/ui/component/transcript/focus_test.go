@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -508,5 +511,250 @@ func TestFocusedText_DiffBlockHeaderPlain(t *testing.T) {
 	}
 	if !strings.Contains(text, "search_replace") || !strings.Contains(text, "foo.go") {
 		t.Errorf("expected tool label and detail in FocusedText(), got %q", text)
+	}
+}
+
+// diffSample is a two-line hunk wide enough that unified and split
+// renders visibly differ - used by every ToggleFocusedDiffSplit test.
+func diffSample() *uievent.Diff {
+	return &uievent.Diff{Path: "file.go", Hunks: []uievent.DiffHunk{{
+		Header: "@@ -1,1 +1,1 @@",
+		Lines: []uievent.DiffLine{
+			{Kind: uievent.DiffLineDel, Text: "old line"},
+			{Kind: uievent.DiffLineAdd, Text: "new line"},
+		},
+	}}}
+}
+
+// modelWithFocusedDiff builds a measured model holding one focused
+// tool.end block that carries diffSample(), at the given width.
+func modelWithFocusedDiff(t *testing.T, width int) Model {
+	t.Helper()
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(width, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit", OK: true, Diff: diffSample()}})
+	m.blocks[0].Collapsed = false
+	m.focus = 0
+	return m
+}
+
+// TestToggleFocusedDiffSplitRoundTrip pins C8's toggle: pressing "s"
+// twice on a wide-enough focused diff block returns to unified, and the
+// FIRST press actually rendered split - not just flipped a flag no one
+// reads.
+func TestToggleFocusedDiffSplitRoundTrip(t *testing.T) {
+	m := modelWithFocusedDiff(t, 160)
+	unified := strings.Join(m.blocks[0].Body, "\n")
+	if strings.Contains(unified, "│") {
+		t.Fatalf("a freshly pushed diff block must start unified, got a column divider: %q", unified)
+	}
+
+	m, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	if !m.blocks[0].DiffSplit {
+		t.Error("DiffSplit did not flip to true")
+	}
+	split := strings.Join(m.blocks[0].Body, "\n")
+	if !strings.Contains(split, "│") {
+		t.Errorf("split render carries no column divider: %q", split)
+	}
+	if split == unified {
+		t.Error("toggling split did not change the rendered body at all")
+	}
+
+	m, ok = m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the second toggle to succeed")
+	}
+	if m.blocks[0].DiffSplit {
+		t.Error("DiffSplit did not flip back to false")
+	}
+	backToUnified := strings.Join(m.blocks[0].Body, "\n")
+	if backToUnified != unified {
+		t.Errorf("round trip did not restore the original unified render\n got  %q\n want %q", backToUnified, unified)
+	}
+}
+
+// TestToggleFocusedDiffSplitRefusedBelowMinWidth pins the refusal: the
+// toggle is a documented no-op - false, no state change - under
+// render.MinSplitDiffWidth, not a silent split at an illegible width.
+func TestToggleFocusedDiffSplitRefusedBelowMinWidth(t *testing.T) {
+	m := modelWithFocusedDiff(t, render.MinSplitDiffWidth-1)
+	before := m.blocks[0].DiffSplit
+	beforeBody := strings.Join(m.blocks[0].Body, "\n")
+
+	next, ok := m.ToggleFocusedDiffSplit()
+	if ok {
+		t.Fatal("expected the toggle to be refused below MinSplitDiffWidth")
+	}
+	if next.blocks[0].DiffSplit != before {
+		t.Error("a refused toggle must not change DiffSplit")
+	}
+	if strings.Join(next.blocks[0].Body, "\n") != beforeBody {
+		t.Error("a refused toggle must not change the rendered body")
+	}
+}
+
+// TestToggleFocusedDiffSplitRefusedWithoutFocusOrDiff pins the other two
+// refusal conditions: nothing focused, and a focused block with no diff.
+func TestToggleFocusedDiffSplitRefusedWithoutFocusOrDiff(t *testing.T) {
+	t.Run("nothing focused", func(t *testing.T) {
+		m := focused(t, 2)
+		m.SetSize(160, 40)
+		if _, ok := m.ToggleFocusedDiffSplit(); ok {
+			t.Error("expected refusal with no block focused")
+		}
+	})
+	t.Run("focused block has no diff", func(t *testing.T) {
+		m := focused(t, 2)
+		m.SetSize(160, 40)
+		m = m.FocusPrev()
+		if _, ok := m.ToggleFocusedDiffSplit(); ok {
+			t.Error("expected refusal on a focused block with no diff")
+		}
+	})
+}
+
+// TestToggleFocusedDiffSplitRefusedInTheContentWidthDeadZone pins a real
+// bug found by bug-audit: ToggleFocusedDiffSplit checked the raw
+// viewport width against render.MinSplitDiffWidth, but restyle (the
+// path this toggle calls) renders the diff at
+// m.width-groupIndent-uikitconfig.BodyIndent (6 columns narrower). A
+// viewport width in [120,125] passed the raw check while the actual
+// render width [114,119] was still below MinSplitDiffWidth -
+// DiffSplit flipped true and the toggle reported success, but the
+// rendered Body stayed unified: state and render disagreed, and a
+// LATER unrelated resize could silently flip the render to split with
+// no further key press.
+func TestToggleFocusedDiffSplitRefusedInTheContentWidthDeadZone(t *testing.T) {
+	for width := render.MinSplitDiffWidth; width < render.MinSplitDiffWidth+groupIndent+uikitconfig.BodyIndent; width++ {
+		m := modelWithFocusedDiff(t, width)
+		beforeBody := strings.Join(m.blocks[0].Body, "\n")
+
+		next, ok := m.ToggleFocusedDiffSplit()
+		if ok {
+			t.Errorf("width %d: expected refusal (render width %d < MinSplitDiffWidth %d), but the toggle succeeded",
+				width, width-groupIndent-uikitconfig.BodyIndent, render.MinSplitDiffWidth)
+		}
+		if next.blocks[0].DiffSplit {
+			t.Errorf("width %d: DiffSplit flipped true even though the toggle was refused", width)
+		}
+		if strings.Join(next.blocks[0].Body, "\n") != beforeBody {
+			t.Errorf("width %d: Body changed even though the toggle was refused", width)
+		}
+	}
+}
+
+// TestToggleFocusedDiffSplitReanchorsTheViewport pins a real bug found
+// by bug-audit: every OTHER height-changing mutator in this file
+// (ToggleFocused, toggleReasoningFocused, SetAllCollapsed) ends by
+// calling ScrollToFocus/clampOffset, because changing a block's height
+// shifts every row below it - without re-anchoring, a transcript
+// following the tail stops following, or a fixed offset now points
+// into the wrong content. ToggleFocusedDiffSplit changes a block's
+// rendered row count (split and unified pack a hunk into a different
+// number of lines) but returned with neither call.
+func TestToggleFocusedDiffSplitReanchorsTheViewport(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	// Small height and several prior blocks: the transcript is already
+	// scrolled, following the tail, so a height change that is not
+	// re-anchored is observable as "stopped following".
+	m.SetSize(160, 6)
+	for i := 0; i < 5; i++ {
+		m, _ = m.HandleEvent(noticeEvent("n" + string(rune('a'+i))))
+	}
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit", OK: true, Diff: diffSample()}})
+	m.blocks[len(m.blocks)-1].Collapsed = false
+
+	if !m.Following() {
+		t.Fatal("precondition: expected the transcript to be following the tail")
+	}
+	m.focus = len(m.blocks) - 1
+
+	next, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	// Following() alone does not prove this: it is a FLAG that only
+	// clampOffset/ScrollToFocus consult to decide whether to advance
+	// m.offset, not something Rows() re-derives at render time. The
+	// real invariant every sibling mutator keeps is offset==maxOffset
+	// while following - checked directly, in-package, since neither is
+	// exported.
+	if !next.follow {
+		t.Errorf("toggling the focused diff block's split view cleared the follow flag")
+	}
+	if next.offset != next.maxOffset() {
+		t.Errorf("offset (%d) does not track the tail (maxOffset %d) after the toggle changed the block's height - the viewport was not re-anchored",
+			next.offset, next.maxOffset())
+	}
+}
+
+// TestToggleFocusedDiffSplitDoesNotCorruptTheBody pins a real bug found
+// alongside the viewport re-anchor issue: restyle's diff branch used to
+// infer where the diff's own rendered lines began in Body by comparing
+// the OLD and NEW render lengths (replaceDiffTail). Unified and split
+// do not render a balanced hunk to the same row count, so toggling
+// DiffSplit exposed the inference as wrong - it kept a stale line of
+// the OLD render, or duplicated the hunk header, depending on which
+// direction the length changed. block.go's DiffBodyPrefixLen field
+// fixes this by tracking the true split point instead of inferring it.
+func TestToggleFocusedDiffSplitDoesNotCorruptTheBody(t *testing.T) {
+	m := modelWithFocusedDiff(t, 160)
+	next, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	body := next.blocks[0].Body
+	headers := 0
+	for _, line := range body {
+		if strings.Contains(ansi.Strip(line), "@@") {
+			headers++
+		}
+	}
+	if headers != 1 {
+		t.Errorf("got %d hunk headers after toggling to split, want exactly 1 - the render is corrupted: %q", headers, body)
+	}
+	// The one-shot render of the same diff, at the same split state, is
+	// the ground truth for what a correct rebuild must equal.
+	want := render.FormatDiffLines(next.Theme, next.Tier, next.diffContentWidth(), *diffSample(), true)
+	if strings.Join(body, "\n") != strings.Join(want, "\n") {
+		t.Errorf("toggled body does not match a one-shot split render\n got  %q\n want %q", body, want)
+	}
+}
+
+// TestToggleFocusedDiffSplitPreservesOutputAboveTheDiff pins the other
+// half of the DiffBodyPrefixLen contract: a tool call that printed
+// output before its diff (handleToolEnd's live-merge path) must keep
+// that output when the diff portion below it is rebuilt for a toggle,
+// the same guarantee TestSetThemeKeepsToolOutputAboveTheDiff already
+// pins for a theme change.
+func TestToggleFocusedDiffSplitPreservesOutputAboveTheDiff(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(160, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit_file"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "c1", Chunk: "scanning up.go\n"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit_file", OK: true, Diff: diffSample()}})
+	m.blocks[0].Collapsed = false
+	m.focus = 0
+
+	next, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	joined := strings.Join(next.blocks[0].Body, "\n")
+	if !strings.Contains(joined, "scanning up.go") {
+		t.Errorf("toggling split lost the tool output that preceded the diff: %q", joined)
 	}
 }

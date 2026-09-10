@@ -364,10 +364,7 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
-	w := m.width - groupIndent - uikitconfig.BodyIndent
-	if w <= 0 {
-		w = 80
-	}
+	w := m.diffContentWidth()
 	var existingArgs map[string]any
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].CallID == b.ToolCallID && len(m.blocks[i].Args) > 0 {
@@ -407,7 +404,18 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 			blk.Header.Meta = render.FormatElapsed(blk.ElapsedMS)
 		}
 		if b.Diff != nil {
-			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)
+			// DiffBodyPrefixLen, captured BEFORE the append: restyle
+			// needs to know exactly how many of these lines precede the
+			// diff, because it cannot re-derive that by comparing
+			// lengths once DiffSplit can change the diff's OWN rendered
+			// line count (see the field's doc comment).
+			blk.DiffBodyPrefixLen = len(blk.Body)
+			// blk.DiffSplit, not false: this is a live block merging its
+			// first diff in, and DiffSplit's zero value is already
+			// unified - but reading it here (rather than hardcoding
+			// false) keeps this site correct if a future event ever
+			// lets a running block carry an earlier toggle.
+			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff, blk.DiffSplit)...)
 		} else if len(end.Body) > 0 {
 			blk.Body = append(slices.Clone(blk.Body), end.Body...)
 		}
@@ -473,27 +481,30 @@ func (m Model) restyle(b Block) Block {
 		next := usageBlockValue(m.Theme, m.Tier, *b.Usage, b.UsageModel, float64(b.UsageElapsedMS)/1000)
 		b.Body = next.Body
 	case b.Diff != nil:
-		w := m.width - groupIndent - uikitconfig.BodyIndent
-		if w <= 0 {
-			w = 80
+		w := m.diffContentWidth()
+		// b.DiffSplit, not false: restyle is the toggle's own re-render
+		// path (ToggleFocusedDiffSplit flips DiffSplit then calls this),
+		// as well as the theme/width-change path - either way the
+		// EXISTING split state must survive the rebuild, not reset to
+		// unified.
+		//
+		// Reslice by b.DiffBodyPrefixLen, not by matching the OLD and
+		// NEW diff renders' lengths (replaceDiffTail's approach, until
+		// bug-audit found it corrupting the body): unified and split do
+		// not render a balanced hunk to the same row count, so the
+		// moment DiffSplit toggles, "keep body[:len(body)-len(newDiff)]"
+		// keeps the wrong number of lines - stale old-diff content, or a
+		// duplicated hunk header, depending on which direction the
+		// count changed. The prefix length is captured once, when the
+		// diff first joins the body (handleToolEnd), and never needs
+		// inferring again.
+		prefix := b.DiffBodyPrefixLen
+		if prefix > len(b.Body) {
+			prefix = 0 // defensive: a corrupted prefix must not panic the slice below
 		}
-		b.Body = replaceDiffTail(b.Body, render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff))
+		b.Body = append(slices.Clone(b.Body[:prefix]), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff, b.DiffSplit)...)
 	}
 	return b
-}
-
-// replaceDiffTail swaps the rendered diff at the END of a body for a
-// freshly rendered one. A tool call that produced output before its diff
-// keeps that output above it (handleToolEnd appends the diff), and the
-// rendered line count is theme-independent, so the tail is exactly the
-// diff.
-func replaceDiffTail(body, diff []string) []string {
-	if len(body) < len(diff) {
-		return diff
-	}
-	out := make([]string, 0, len(body))
-	out = append(out, body[:len(body)-len(diff)]...)
-	return append(out, diff...)
 }
 
 // proseRenderWidth is the wrap width the Glamour-backed markdown
@@ -511,4 +522,23 @@ func (m Model) proseRenderWidth() int {
 		return 20
 	}
 	return m.width - 2
+}
+
+// diffContentWidth is the width a diff block actually renders at - the
+// SAME arithmetic handleToolEnd and restyle already use
+// (m.width-groupIndent-uikitconfig.BodyIndent), centralized here so a
+// width check has exactly one place to read (matching
+// approval.Model.diffContentWidth's own rationale). Checking m.width
+// directly instead of this let ToggleFocusedDiffSplit report success at
+// a viewport width in [120,125] while restyle's actual render width
+// ([114,119]) was still below render.MinSplitDiffWidth - the toggle
+// flipped DiffSplit and returned true, but the rendered Body stayed
+// unified, and a LATER unrelated resize could then silently flip the
+// render to split with no further key press. Found by bug-audit.
+func (m Model) diffContentWidth() int {
+	w := m.width - groupIndent - uikitconfig.BodyIndent
+	if w <= 0 {
+		return 80
+	}
+	return w
 }

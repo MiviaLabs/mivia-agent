@@ -14,7 +14,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
-	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -87,8 +86,12 @@ func TestRenderGolden(t *testing.T) {
 }
 
 func TestLiveSplitDiffDoesNotInsertBlankRows(t *testing.T) {
+	// Split is opt-in and needs render.MinSplitDiffWidth (C8): 80
+	// columns used to cross the OLD auto-split threshold (60) on its
+	// own, but no longer does anything at any width without the
+	// explicit toggle below.
 	m := New(loadTheme(t), theme.TierTrueColor)
-	m.SetSize(80, 30)
+	m.SetSize(160, 30)
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
 		Body: uievent.ToolStartBody{ToolCallID: "diff-1", Name: "edit"}})
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
@@ -107,6 +110,12 @@ func TestLiveSplitDiffDoesNotInsertBlankRows(t *testing.T) {
 		}})
 
 	m.blocks[0].Collapsed = false
+	m.focus = 0
+	var ok bool
+	m, ok = m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the diff-split toggle to succeed at width 160")
+	}
 	rows := m.Rows()
 	for i := 1; i < len(rows); i++ {
 		if ansi.Strip(rows[i-1]) == "" || ansi.Strip(rows[i]) == "" {
@@ -470,7 +479,9 @@ func TestSetThemeReRendersADiffMergedIntoALiveBlock(t *testing.T) {
 	m.SetTheme(light, theme.TierTrueColor)
 	after := strings.Join(m.Blocks()[0].Body, "\n")
 
-	want := render.SplitDiff(light, theme.TierTrueColor, 80-groupIndent-uikitconfig.BodyIndent, *sampleDiff())
+	// render.Diff (unified), not SplitDiff: unified is the default at
+	// every width now (C8), and this block never toggled DiffSplit.
+	want := render.Diff(light, theme.TierTrueColor, *sampleDiff())
 	if !strings.Contains(after, want) {
 		t.Errorf("the diff was not re-rendered in the new theme:\ngot  %q\nwant %q", after, want)
 	}

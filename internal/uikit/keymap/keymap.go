@@ -64,6 +64,10 @@ const (
 	IDExpandAll   ID = "expand-all"
 	IDCollapseAll ID = "collapse-all"
 	IDCopyBlock   ID = "copy-block"
+	// IDToggleDiffSplit toggles unified/split rendering on the focused
+	// diff block (C8). Refused - a no-op, like IDCancelToolCall below -
+	// when the viewport is narrower than render.MinSplitDiffWidth.
+	IDToggleDiffSplit ID = "toggle-diff-split"
 	// IDCancelToolCall is distinct from IDCancel: IDCancel already means
 	// "return to the composer" inside ContextTranscript. This cancels ONE
 	// in-flight tool call - the block currently focused, if it is still
@@ -87,15 +91,19 @@ const (
 	IDApproveAlways      ID = "approve-always"
 	IDDenyOnce           ID = "deny-once"
 	IDDenyAlways         ID = "deny-always"
-	IDAcceptPrefix       ID = "accept-prefix"
-	IDMenuNext           ID = "menu-next"
-	IDMenuPrev           ID = "menu-prev"
-	IDMenuAccept         ID = "menu-accept"
-	IDMenuDismiss        ID = "menu-dismiss"
-	IDDialogUp           ID = "dialog-up"
-	IDDialogDown         ID = "dialog-down"
-	IDDialogAccept       ID = "dialog-accept"
-	IDDialogCancel       ID = "dialog-cancel"
+	// IDApprovalToggleSplit toggles unified/split rendering of the
+	// approval prompt's diff preview (C8). Refused - a no-op - when the
+	// viewport is narrower than render.MinSplitDiffWidth.
+	IDApprovalToggleSplit ID = "approval-toggle-split"
+	IDAcceptPrefix        ID = "accept-prefix"
+	IDMenuNext            ID = "menu-next"
+	IDMenuPrev            ID = "menu-prev"
+	IDMenuAccept          ID = "menu-accept"
+	IDMenuDismiss         ID = "menu-dismiss"
+	IDDialogUp            ID = "dialog-up"
+	IDDialogDown          ID = "dialog-down"
+	IDDialogAccept        ID = "dialog-accept"
+	IDDialogCancel        ID = "dialog-cancel"
 
 	// Transcript mode (the pager). One ID per less-compatible action, so
 	// the help screen names every key the pager answers to
@@ -269,9 +277,22 @@ func Default() []Binding {
 		{ID: IDMenuPrev, Context: ContextCompletion, Keys: []string{"up"}, Help: "previous"},
 		{ID: IDMenuDismiss, Context: ContextCompletion, Keys: []string{"esc"}, Help: "dismiss"},
 
-		// Approval. wireframes-panes.md section 7. up/down (and the less
-		// spellings k/j) scroll the inline diff preview; the decision keys
-		// are letters the arrows never collide with.
+		// Dialogs.
+		{ID: IDDialogUp, Context: ContextDialog, Keys: []string{"up"}, Help: "previous"},
+		{ID: IDDialogDown, Context: ContextDialog, Keys: []string{"down"}, Help: "next"},
+		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
+		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
+		{ID: IDForceSend, Context: ContextDialog, Keys: []string{"f", "F"}, Help: "force send the selected queued message", Short: "force"},
+	}, append(approvalBindings(), append(transcriptBindings(), pagerBindings()...)...)...), append(filesBindings(), settingsBindings()...)...)
+}
+
+// approvalBindings is the approval prompt's section, split out of
+// Default to keep that function under the per-function line budget.
+// wireframes-panes.md section 7. up/down (and the less spellings k/j)
+// scroll the inline diff preview; the decision keys are letters the
+// arrows never collide with.
+func approvalBindings() []Binding {
+	return []Binding{
 		{ID: IDApproveOnce, Context: ContextApproval, Keys: []string{"o", "enter"}, Help: "once"},
 		{ID: IDApproveAlways, Context: ContextApproval, Keys: []string{"a"}, Help: "always"},
 		{ID: IDDenyOnce, Context: ContextApproval, Keys: []string{"d", "esc"}, Help: "deny"},
@@ -279,14 +300,8 @@ func Default() []Binding {
 		{ID: IDDenyAlways, Context: ContextApproval, Keys: []string{"shift+d"}, Hidden: true},
 		{ID: IDScrollUp, Context: ContextApproval, Keys: []string{"up", "k"}, Help: "scroll the diff preview one line up"},
 		{ID: IDScrollDown, Context: ContextApproval, Keys: []string{"down", "j"}, Help: "scroll the diff preview one line down"},
-
-		// Dialogs.
-		{ID: IDDialogUp, Context: ContextDialog, Keys: []string{"up"}, Help: "previous"},
-		{ID: IDDialogDown, Context: ContextDialog, Keys: []string{"down"}, Help: "next"},
-		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
-		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
-		{ID: IDForceSend, Context: ContextDialog, Keys: []string{"f", "F"}, Help: "force send the selected queued message", Short: "force"},
-	}, append(transcriptBindings(), pagerBindings()...)...), append(filesBindings(), settingsBindings()...)...)
+		{ID: IDApprovalToggleSplit, Context: ContextApproval, Keys: []string{"t"}, Help: "toggle unified/split diff view, if the terminal is wide enough"},
+	}
 }
 
 // transcriptBindings is the transcript's live-window section, split out of
@@ -301,6 +316,10 @@ func transcriptBindings() []Binding {
 		{ID: IDExpandAll, Context: ContextTranscript, Keys: []string{"ctrl+e"}, Help: "expand all"},
 		{ID: IDCollapseAll, Context: ContextTranscript, Keys: []string{"ctrl+g"}, Help: "collapse all"},
 		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
+		// A no-op below render.MinSplitDiffWidth, or on a focused block
+		// that carries no diff - same shape as IDCancelToolCall's own
+		// conditional Help text just below.
+		{ID: IDToggleDiffSplit, Context: ContextTranscript, Keys: []string{"s"}, Help: "toggle unified/split diff view, if the focused block is a wide enough diff"},
 		// "x": unbound elsewhere in ContextTranscript (tab, shift+tab,
 		// space, enter, ctrl+e, ctrl+g, y, esc are all already claimed).
 		// A no-op unless the focused block is a still-running tool call.
@@ -481,6 +500,34 @@ func (m *Map) Hint(ids ...ID) string {
 		}
 	}
 	return strings.Join(parts, "  ")
+}
+
+// HintPart is one key/label pair from a Short-labelled binding - the
+// same data Hint joins into a string, kept apart so a caller that wants
+// to style the key and the label differently (C9: RoleFGSubtle key,
+// RoleFGMuted label) has something to style. Key is the literal key
+// string the binding fires on (b.Keys[0]); Label is its Short text.
+type HintPart struct {
+	Key   string
+	Label string
+}
+
+// HintParts is Hint's structured form: the same lookup (first
+// non-hidden, Short-labelled binding per requested ID, in request
+// order), returned unjoined so the view layer can style and join it
+// itself instead of consuming a pre-joined, pre-styled string.
+func (m *Map) HintParts(ids ...ID) []HintPart {
+	var parts []HintPart
+	for _, want := range ids {
+		for _, b := range m.bindings {
+			if b.ID != want || b.Hidden || b.Short == "" {
+				continue
+			}
+			parts = append(parts, HintPart{Key: b.Keys[0], Label: b.Short})
+			break
+		}
+	}
+	return parts
 }
 
 func joinKeys(keys []string) string {

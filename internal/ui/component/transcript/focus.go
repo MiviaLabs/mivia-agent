@@ -3,6 +3,7 @@ package transcript
 import (
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -124,6 +125,45 @@ func (m Model) ToggleFocused() (Model, bool) {
 	copy(blocks, m.blocks)
 	blocks[m.focus].Collapsed = !blocks[m.focus].Collapsed
 	m.blocks = blocks
+	return m.ScrollToFocus(), true
+}
+
+// ToggleFocusedDiffSplit toggles unified/split rendering on the focused
+// diff block (C8, "s" in ContextTranscript). It reports false - no
+// state change - when nothing is focused, the focused block carries no
+// diff, or the viewport is narrower than render.MinSplitDiffWidth: a
+// split diff below that width is illegible (wireframes-panes.md
+// sections 11/14), and refusing silently rather than rendering
+// something unreadable is the same contract render.FormatDiffLines
+// itself enforces one layer down.
+//
+// Unlike ToggleFocused's Collapsed flip, this rebuilds the block's Body
+// through restyle - the same path a theme or width change already
+// uses - because DiffSplit changes the RENDERED lines, not just which
+// of them are shown.
+func (m Model) ToggleFocusedDiffSplit() (Model, bool) {
+	if !m.Focused() {
+		return m, false
+	}
+	if m.blocks[m.focus].Diff == nil {
+		return m, false
+	}
+	if m.diffContentWidth() < render.MinSplitDiffWidth {
+		return m, false
+	}
+	blocks := slicesCloneBlocks(m.blocks)
+	blocks[m.focus].DiffSplit = !blocks[m.focus].DiffSplit
+	blocks[m.focus] = m.restyle(blocks[m.focus])
+	m.blocks = blocks
+	// ScrollToFocus, not a bare return: unified and split do not render
+	// a balanced hunk to the same row count, so this toggle - like
+	// EVERY other height-changing mutator in this file (ToggleFocused,
+	// toggleReasoningFocused, SetAllCollapsed) - must re-anchor the
+	// viewport on the block whose height it just changed. Omitting
+	// this left m.offset stale: a transcript already following the
+	// tail stopped following (offset no longer equal to the new,
+	// shrunk-or-grown maxOffset) the moment the toggle changed the
+	// block's row count. Found by bug-audit.
 	return m.ScrollToFocus(), true
 }
 

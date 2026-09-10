@@ -92,7 +92,7 @@ func TestCardBodyTintNeverOverflowsAMaxWidthDiffLine(t *testing.T) {
 		Kind:   uievent.KindToolEnd,
 		Header: Header{Label: "edit", Detail: "file.go", Role: theme.RoleSuccess},
 		Diff:   diff,
-		Body:   render.FormatDiffLines(th, theme.TierTrueColor, width-groupIndent-uikitconfig.BodyIndent, *diff),
+		Body:   render.FormatDiffLines(th, theme.TierTrueColor, width-groupIndent-uikitconfig.BodyIndent, *diff, false),
 	}
 	for _, row := range strings.Split(b.Render(th, theme.TierTrueColor, width-groupIndent), "\n") {
 		if w := ansi.StringWidth(row); w > width-groupIndent {
