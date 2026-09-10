@@ -475,22 +475,61 @@
     },
     "internal/automation/store.go": {
       "lines": [
+        170,
+        171,
+        172,
+        190,
+        191,
         192,
         193,
         194,
+        195,
         196,
         197,
         198,
         199,
+        200,
         201,
         202,
         203,
         204,
+        205,
         206,
         207,
         208
       ],
-      "reason": "writeFileAtomic's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it - the identical class already accepted in this file for internal/memory/markdown_source.go's atomicWrite (93-94/399-412), internal/chatsync/identity.go's SaveIdentity (277-286), and internal/chatsync/delivered_ledger.go's writeFileDurably (67-76): triggering a live fd's Write/Sync/Close failure deterministically and portably, without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default), is not achievable from this test package. TestWriteFileAtomicRejectsUnwritableDir and TestWriteFileAtomicRejectsRenameOverADirectory (store_error_paths_test.go) already cover the two writeFileAtomic error paths that ARE reachable (CreateTemp against a nonexistent directory, and os.Rename onto a real, non-empty directory). Line numbers shifted from the previously-accepted 160-177 by chunk 6's firstRegistry insertion earlier in the file; the SaveSpecs toml.Marshal error wrap previously accepted at 140-141 is now covered directly by TestFirstRegistryReturnsExplicitRegistry's round trip and no longer needs an exception."
+      "reason": "Two clusters. (1) 170-172: SaveSpecs' toml.Marshal(shape) error wrap - SaveSpecs validates every spec via ValidateSpec BEFORE this call, and ValidateSpec's own step-kind check accepts exactly the same range StepKind.MarshalText's guard accepts, so no spec that reaches this line can carry a StepKind MarshalText itself would refuse; every other field is a plain string/bool/int64/[]string/map[string]string with no go-toml/v2 Marshal failure mode. (2) 190-208: writeFileAtomic's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it - the identical class already accepted in this file for internal/memory/markdown_source.go's atomicWrite (93-94/399-412), internal/chatsync/identity.go's SaveIdentity (277-286), and internal/chatsync/delivered_ledger.go's writeFileDurably (67-76): triggering a live fd's Write/Sync/Close failure deterministically and portably, without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default), is not achievable from this test package. TestWriteFileAtomicRejectsUnwritableDir and TestWriteFileAtomicRejectsRenameOverADirectory (store_error_paths_test.go) already cover the two writeFileAtomic error paths that ARE reachable (CreateTemp against a nonexistent directory, and os.Rename onto a real, non-empty directory). Line numbers shifted again from the prior accepted set (192-208, no 170) by later test additions earlier in the file (TestFirstRegistryReturnsExplicitRegistry); the SaveSpecs toml.Marshal error wrap is genuinely unreachable given ValidateSpec's precondition and needed re-adding to the accepted set."
+    },
+    "internal/automation/executor.go": {
+      "lines": [
+        160,
+        161,
+        162,
+        219,
+        220,
+        221,
+        222,
+        223,
+        224,
+        225,
+        229,
+        230,
+        231,
+        293,
+        338,
+        339
+      ],
+      "reason": "Three clusters, all requiring a fully live git worktree + a real session/agent-registry stack this package's unit tests deliberately do not construct (see executor_test.go's own documented StepAgent/StepWorkflow scope-exclusion comment on TestRunOnceMixedActionOneSessionInOrder). (1) 160-162, 293: createRunWorktree's and RunOnce's own worktree-creation SUCCESS paths - cliworktree.CreateManagedWorktree needs a real git repository with OpenRepositoryContextStoreFunc wired (internal/cli's init(), never triggered by this package's direct-import unit tests); TestRunOnceWorktreeCreationFailureNoSessionNoOrphan already covers the reachable FAILURE path deterministically (the same unwired seam makes creation fail, which is what that test exploits). (2) 219-225, 229-231: spawnRunSession's sess.ContextEnabled()/sess.Save() best-effort branch and CreateFreshInDir's own real spawn-error path - fakeExecSpawner's bind(nil) call means boundSess is always nil in every test in this file (a deliberate simplification matching the StepAgent scope exclusion), so sess.ContextEnabled() is never reached with a non-nil session; a real CreateFreshInDir failure needs the same live worktree/session stack as (1). (3) 338-339: StepAgent's own sendTurnHeadless SUCCESS call, reachable only if ApplySessionAgent itself succeeds, which needs a real *chat.Session with a populated AgentSessionState.Registry - TestRunStepAgentPropagatesApplySessionAgentError already covers the reachable ApplySessionAgent FAILURE branch (nil session)."
+    },
+    "internal/automation/slashallow.go": {
+      "lines": [
+        102,
+        103,
+        139,
+        140,
+        141
+      ],
+      "reason": "Two clusters, both dead-by-construction given this file's own invariants. (1) 102-103: classLabel's default branch - every value ever passed to classLabel is a slashClass constant already handled by the four explicit cases above it (slashRejectedInteractiveSurface/SessionLifecycle/OutboundUnattended/InformationalNoOp); classLabel is only ever called from validateStepSlash's own switch default arm, which is itself only reached for a class value already known to be one of those four. (2) 139-141: validateStepSlash's own \"no known classification\" guard - TestSlashAllowlistExhaustive (slashallow_test.go) asserts every entry of clichat.BuiltInSlashCommands() has an entry in builtinSlashClass, so this branch is unreachable by construction as long as that exhaustiveness test passes; it exists as a defensive guard against a future builtin being added without updating the table, not as a branch any current input can reach."
     },
     "internal/storage/sqlite.go": {
       "lines": [

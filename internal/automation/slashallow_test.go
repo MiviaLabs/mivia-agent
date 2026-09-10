@@ -118,6 +118,20 @@ func TestSlashAllowlistUnresolvedRejected(t *testing.T) {
 	}
 }
 
+// TestSlashAllowlistEmptyRefRejected proves validateStepSlash's own
+// empty-ref guard: a StepSlash step whose Ref is blank (or all
+// whitespace) is rejected by name rather than falling through to
+// FindSlashCommand with an empty token.
+func TestSlashAllowlistEmptyRefRejected(t *testing.T) {
+	_, err := slashSpec("   ", nil)
+	if err == nil {
+		t.Fatal("slashSpec(blank ref): got nil error, want rejection")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("error = %q, want it naming the empty ref", err.Error())
+	}
+}
+
 // TestSlashAllowlistAliasInheritsCanonicalClass proves alias resolution
 // (D15: "Resolution is by FindSlashCommand..., not raw-name table
 // match"): /h is /help's alias, so it inherits /help's rejected

@@ -2,6 +2,9 @@ package automation
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -19,6 +22,118 @@ func newTestDB(t *testing.T) *storage.SQLite {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// dropRunClaimsTable opens a second, independent connection to db's
+// underlying SQLite file and drops the run_claims table through it -
+// storage.SQLite exposes no raw-SQL escape hatch (its *sql.DB field is
+// unexported), so this is the only way a caller outside package storage
+// can force TakeoverExpiredClaimFenced to fail with a real, non-sentinel
+// error while automation_runs (a separate table) stays intact and
+// queryable. The "sqlite" driver is registered process-wide by
+// modernc.org/sqlite's blank import inside package storage (already
+// linked transitively via storage.OpenSQLite), so no separate import is
+// needed here.
+func dropRunClaimsTable(t *testing.T, db *storage.SQLite) error {
+	t.Helper()
+	raw, err := sql.Open("sqlite", db.Path())
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	_, err = raw.Exec(`DROP TABLE run_claims`)
+	return err
+}
+
+// dropAutomationRunsTable opens a second, independent connection to db's
+// underlying SQLite file and drops the automation_runs table through it
+// - keeps run_claims intact so admitFire's own claim win still succeeds,
+// forcing a caller further downstream (createRun) to be the one that
+// hits a real store error. Same rationale/technique as
+// dropRunClaimsTable, inverted.
+func dropAutomationRunsTable(t *testing.T, db *storage.SQLite) error {
+	t.Helper()
+	raw, err := sql.Open("sqlite", db.Path())
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	_, err = raw.Exec(`DROP TABLE automation_runs`)
+	return err
+}
+
+// deleteAutomationRunRow opens a second, independent connection to db's
+// underlying SQLite file and deletes one automation_runs row through it
+// - surgical variant of dropAutomationRunsTable: it removes exactly one
+// row rather than the whole table, so a caller further downstream that
+// reads/updates the row by id hits a real "not found" failure instead
+// of a table-missing failure.
+func deleteAutomationRunRow(t *testing.T, db *storage.SQLite, runID string) error {
+	t.Helper()
+	raw, err := sql.Open("sqlite", db.Path())
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	_, err = raw.Exec(`DELETE FROM automation_runs WHERE id = ?`, runID)
+	return err
+}
+
+// forceAutomationRunsUpdateFailures installs a SQLite trigger that fails
+// every UPDATE on automation_runs (but never an INSERT), through a
+// second independent connection to db's underlying file. This lets a
+// test reach a code path where the FIRST store write (createRun's own
+// INSERT) succeeds but the SECOND, immediately-following write (an
+// UpdateAutomationRunState call) fails - a sequence with no other
+// interleaving point available to a single-threaded caller, since both
+// calls are synchronous Go calls inside one production function
+// (startRun, RunOnce's own "mark succeeded" call) with no seam between
+// them.
+func forceAutomationRunsUpdateFailures(t *testing.T, db *storage.SQLite) error {
+	t.Helper()
+	raw, err := sql.Open("sqlite", db.Path())
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	_, err = raw.Exec(`CREATE TRIGGER force_automation_runs_update_fail BEFORE UPDATE ON automation_runs BEGIN SELECT RAISE(FAIL, 'test-induced update failure'); END`)
+	return err
+}
+
+// forceAutomationRunsUpdateFailuresAfter installs a SQLite trigger that
+// allows the first `allow` UPDATE statements on automation_runs to
+// succeed, then fails every one after that - through a second
+// independent connection to db's underlying file. Lets a test reach a
+// code path where several earlier writes (e.g. startRun's own
+// pending->running transition, then a step's own checkpoint) must
+// succeed for real before a LATER write (e.g. RunOnce's own final "mark
+// succeeded" call) is the one that fails - unlike
+// forceAutomationRunsUpdateFailures, which fails immediately and so can
+// only isolate the very next UPDATE after it is installed.
+func forceAutomationRunsUpdateFailuresAfter(t *testing.T, db *storage.SQLite, allow int) error {
+	t.Helper()
+	raw, err := sql.Open("sqlite", db.Path())
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	stmts := []string{
+		`CREATE TABLE test_update_counter (n INTEGER NOT NULL)`,
+		`INSERT INTO test_update_counter(n) VALUES (0)`,
+		fmt.Sprintf(`CREATE TRIGGER force_automation_runs_update_fail_after BEFORE UPDATE ON automation_runs
+			BEGIN
+				UPDATE test_update_counter SET n = n + 1;
+				SELECT CASE WHEN (SELECT n FROM test_update_counter) > %d
+					THEN RAISE(FAIL, 'test-induced update failure')
+				END;
+			END`, allow),
+	}
+	for _, stmt := range stmts {
+		if _, err := raw.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newTestService(t *testing.T, db *storage.SQLite) *Service {
@@ -145,6 +260,71 @@ func TestCreateRunInvalidIDRejected(t *testing.T) {
 	}
 }
 
+// TestCreateRunDefaultsEmptyStateToPending proves createRun's own
+// zero-value normalization: a Run passed with State == "" is persisted
+// (and read back) as RunPending, not an empty string.
+func TestCreateRunDefaultsEmptyStateToPending(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	ctx := context.Background()
+
+	if err := svc.createRun(ctx, Run{ID: "run-default-state", AutomationID: "auto-default-state", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("createRun with empty State: %v", err)
+	}
+	got, ok, err := svc.getRun(ctx, "run-default-state")
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if got.State != RunPending {
+		t.Fatalf("State after createRun with empty input State = %v, want RunPending", got.State)
+	}
+}
+
+// TestCreateRunDefaultsEmptyStartedAtToNow proves toStorageRun's own
+// zero-value normalization: a Run passed with a zero-value StartedAt is
+// persisted with the current time, not a zero/empty timestamp -
+// TestCreateRunDefaultsEmptyStateToPending above always sets StartedAt
+// explicitly, so this branch had no coverage.
+func TestCreateRunDefaultsEmptyStartedAtToNow(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	ctx := context.Background()
+
+	before := time.Now().UTC().Add(-time.Second) // RFC3339 storage truncates sub-second precision
+	if err := svc.createRun(ctx, Run{ID: "run-zero-started", AutomationID: "auto-zero-started"}); err != nil {
+		t.Fatalf("createRun with zero StartedAt: %v", err)
+	}
+	got, ok, err := svc.getRun(ctx, "run-zero-started")
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if got.StartedAt.IsZero() {
+		t.Fatal("StartedAt after createRun with a zero input StartedAt is still zero, want it defaulted to now")
+	}
+	if got.StartedAt.Before(before) {
+		t.Fatalf("StartedAt = %v, want it no earlier than the call itself (%v)", got.StartedAt, before)
+	}
+}
+
+// TestCreateRunPropagatesStoreError closes the store's underlying
+// connection before calling createRun, so InsertAutomationRun fails with
+// a real error - exercising createRun's own error-wrap branch, distinct
+// from the earlier ValidateID rejections above (which never reach the
+// store at all).
+func TestCreateRunPropagatesStoreError(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	svc, err := New(t.TempDir(), db, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.createRun(context.Background(), Run{ID: "run-closed", AutomationID: "auto-closed", StartedAt: time.Now().UTC()}); err == nil {
+		t.Fatal("createRun against a closed store returned nil error, want a real error")
+	}
+}
+
 // TestUpdateRunStateTransitions proves updateRunState moves a run through
 // pending->running->succeeded and that each transition is reflected in
 // getRun/listRuns.
@@ -209,6 +389,25 @@ func TestUpdateRunStateNotFound(t *testing.T) {
 	}
 }
 
+// TestUpdateRunStatePropagatesStoreError closes the store's underlying
+// connection before calling updateRunState, so UpdateAutomationRunState
+// fails with a real error - exercising updateRunState's own error-wrap
+// branch, distinct from the not-found case above (which reaches the
+// store successfully and gets zero rows affected, not a real failure).
+func TestUpdateRunStatePropagatesStoreError(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	svc, err := New(t.TempDir(), db, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.updateRunState(context.Background(), "run-x", RunRunning, 0, nil, RunFailNone, ""); err == nil {
+		t.Fatal("updateRunState against a closed store returned nil error, want a real error")
+	}
+}
+
 // TestGetRunNotFound proves getRun reports (Run{}, false, nil) for an
 // unknown ID rather than an error.
 func TestGetRunNotFound(t *testing.T) {
@@ -220,6 +419,23 @@ func TestGetRunNotFound(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("getRun on missing run: found %+v, want not found", got)
+	}
+}
+
+// TestListRunsPropagatesStoreError closes the store's underlying
+// connection before calling listRuns, so ListAutomationRuns fails with a
+// real error - exercising listRuns' own error-wrap branch.
+func TestListRunsPropagatesStoreError(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	svc, err := New(t.TempDir(), db, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.listRuns(context.Background(), "auto-1", 10); err == nil {
+		t.Fatal("listRuns against a closed store returned nil error, want a real error")
 	}
 }
 
@@ -596,5 +812,124 @@ func TestSweepInterruptedNoRunningRuns(t *testing.T) {
 	n, err := svc.sweepInterrupted(context.Background(), time.Hour)
 	if err != nil || n != 0 {
 		t.Fatalf("sweepInterrupted on empty store = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+// TestAdmitFirePropagatesRealClaimError closes the store's underlying
+// connection before calling admitFire, so ClaimRunFenced fails with a
+// real, non-ErrClaimHeld error ("sql: database is closed") - exercising
+// admitFire's own error-wrap branch (claim.go's "any other error is real
+// and reported"), distinct from the documented ErrClaimHeld no-op branch
+// TestAdmitFireDedupConcurrent/TestAdmitFireSecondCallAfterReleaseWins
+// already cover.
+func TestAdmitFirePropagatesRealClaimError(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	svc, err := New(t.TempDir(), db, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, ok, err := svc.admitFire(context.Background(), "closed-db-automation")
+	if ok {
+		t.Fatal("admitFire against a closed store returned ok=true, want false")
+	}
+	if err == nil {
+		t.Fatal("admitFire against a closed store returned nil error, want a real (non-ErrClaimHeld) error")
+	}
+}
+
+// TestSweepInterruptedPropagatesRealTakeoverError seeds one RunRunning
+// row, then drops the run_claims table before sweeping, so
+// ListRunningAutomationRuns (which only touches automation_runs) still
+// succeeds and finds the row, but TakeoverExpiredClaimFenced fails with a
+// real, non-ErrClaimHeld/ErrClaimNotHeld error ("no such table:
+// run_claims") once inside the per-row loop - exercising
+// sweepInterrupted's default branch (claim.go's "any other error is
+// returned, not silently treated as interrupted or in-flight"), distinct
+// from a whole-store closed-DB failure (which would fail at
+// ListRunningAutomationRuns itself, before the loop is ever reached).
+func TestSweepInterruptedPropagatesRealTakeoverError(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	ctx := context.Background()
+	run := Run{ID: "run-sweep-err", AutomationID: "auto-sweep-err", State: RunRunning, StartedAt: time.Now().UTC()}
+	if err := svc.createRun(ctx, run); err != nil {
+		t.Fatalf("createRun: %v", err)
+	}
+	if _, err := db.GetClaim(ctx, "unrelated-probe"); err != nil && !errors.Is(err, storage.ErrClaimNotHeld) {
+		t.Fatalf("sanity GetClaim before drop: %v", err)
+	}
+	if err := dropRunClaimsTable(t, db); err != nil {
+		t.Fatalf("drop run_claims table: %v", err)
+	}
+	_, err := svc.sweepInterrupted(ctx, time.Minute)
+	if err == nil {
+		t.Fatal("sweepInterrupted with run_claims dropped returned nil error, want a real (default-branch) error")
+	}
+	if errors.Is(err, storage.ErrClaimHeld) || errors.Is(err, storage.ErrClaimNotHeld) {
+		t.Fatalf("sweepInterrupted error = %v, want a raw wrapped error, not one of the two handled sentinels", err)
+	}
+}
+
+// TestSweepInterruptedPropagatesMarkInterruptedError covers
+// sweepInterrupted's own "mark interrupted" updateRunState error-wrap
+// branch: a running row with no claim at all (the ErrClaimNotHeld
+// branch, which does NOT skip like ErrClaimHeld) reaches the mark-
+// interrupted call for real, which then fails against a trigger that
+// makes every automation_runs UPDATE fail.
+func TestSweepInterruptedPropagatesMarkInterruptedError(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	ctx := context.Background()
+	if err := svc.createRun(ctx, Run{
+		ID: "run-sweep-mark-err", AutomationID: "auto-sweep-mark-err",
+		State: RunRunning, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("createRun: %v", err)
+	}
+	// No admitFire call: no claim row exists, so TakeoverExpiredClaimFenced
+	// hits ErrClaimNotHeld and the loop falls through to the mark-
+	// interrupted call rather than skipping.
+	if err := forceAutomationRunsUpdateFailures(t, db); err != nil {
+		t.Fatalf("install update-failing trigger: %v", err)
+	}
+	if _, err := svc.sweepInterrupted(ctx, time.Hour); err == nil {
+		t.Fatal("sweepInterrupted with automation_runs UPDATEs forced to fail: got nil error, want the mark-interrupted error wrapped")
+	}
+}
+
+// TestSweepInterruptedPropagatesListRunningError covers sweepInterrupted's
+// own ListRunningAutomationRuns error-wrap branch directly: dropping
+// automation_runs (keeping run_claims intact) makes the very first store
+// call inside sweepInterrupted fail, before the per-row loop is ever
+// entered - distinct from TestSweepInterruptedPropagatesRealTakeoverError
+// above, which drops run_claims instead and so fails one call later,
+// inside the loop.
+func TestSweepInterruptedPropagatesListRunningError(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	if err := dropAutomationRunsTable(t, db); err != nil {
+		t.Fatalf("drop automation_runs table: %v", err)
+	}
+	if _, err := svc.sweepInterrupted(context.Background(), time.Minute); err == nil {
+		t.Fatal("sweepInterrupted with automation_runs dropped: got nil error, want ListRunningAutomationRuns' own error")
+	}
+}
+
+// TestGetRunPropagatesRealStoreError covers getRun's own
+// GetAutomationRun error-wrap branch (distinct from TestGetRunNotFound,
+// which reaches the store successfully and finds nothing): dropping
+// automation_runs makes the underlying query itself fail with a real
+// error rather than sql.ErrNoRows.
+func TestGetRunPropagatesRealStoreError(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	if err := dropAutomationRunsTable(t, db); err != nil {
+		t.Fatalf("drop automation_runs table: %v", err)
+	}
+	if _, _, err := svc.getRun(context.Background(), "any-id"); err == nil {
+		t.Fatal("getRun with automation_runs dropped: got nil error, want a real store error")
 	}
 }

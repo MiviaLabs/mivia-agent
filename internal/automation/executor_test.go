@@ -4,17 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -31,6 +45,13 @@ type recordingConversation struct {
 	sent     []string
 	failAt   int // 1-based Send call count to fail at; 0 means never fail
 	failWith error
+	// onSend, when non-nil, is invoked synchronously on every successful
+	// Send call, AFTER recording the text but BEFORE returning - a test
+	// hook letting a caller mutate shared state (e.g. drop a table)
+	// precisely between one step's own completion and runSteps' own
+	// immediately-following checkpoint call, which has no other
+	// interleaving point to target deterministically.
+	onSend func()
 }
 
 func newRecordingConversation() *recordingConversation {
@@ -41,12 +62,16 @@ func (c *recordingConversation) Send(ctx context.Context, in intent.Send) (ports
 	c.mu.Lock()
 	c.sent = append(c.sent, in.Text)
 	n := len(c.sent)
+	onSend := c.onSend
 	c.mu.Unlock()
 	if c.failAt > 0 && n == c.failAt {
 		if c.failWith != nil {
 			return nil, c.failWith
 		}
 		return nil, fmt.Errorf("recordingConversation: forced failure at call %d", n)
+	}
+	if onSend != nil {
+		onSend()
 	}
 	ch := make(chan uievent.Event)
 	close(ch)
@@ -83,11 +108,12 @@ type approvalOverride struct {
 // without ever calling bind - proving the executor's own worktree
 // failure path never reaches session spawning.
 type fakeExecSpawner struct {
-	mu          sync.Mutex
-	conv        *recordingConversation
-	createCalls int
-	createErr   error
-	overrides   []approvalOverride
+	mu             sync.Mutex
+	conv           *recordingConversation
+	createCalls    int
+	createErr      error
+	setApprovalErr error
+	overrides      []approvalOverride
 }
 
 func (f *fakeExecSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
@@ -108,6 +134,9 @@ func (f *fakeExecSpawner) CreateFreshInDir(bind func(*chat.Session) (string, err
 func (f *fakeExecSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.setApprovalErr != nil {
+		return f.setApprovalErr
+	}
 	f.overrides = append(f.overrides, approvalOverride{sessionID: sessionID, gate: gate, policy: policy})
 	return nil
 }
@@ -498,4 +527,574 @@ func TestAutomationSessionNameUsesReservedScheme(t *testing.T) {
 	}
 }
 
+// TestOriginForTriggerScheduled pins originForTrigger's TriggerScheduled
+// branch directly - every other test in this file only ever passes
+// ports.TriggerManual through RunOnce, so the "scheduled" string branch
+// had no direct coverage.
+func TestOriginForTriggerScheduled(t *testing.T) {
+	if got := originForTrigger(ports.TriggerScheduled); got != "scheduled" {
+		t.Fatalf("originForTrigger(TriggerScheduled) = %q, want %q", got, "scheduled")
+	}
+	if got := originForTrigger(ports.TriggerManual); got != "manual" {
+		t.Fatalf("originForTrigger(TriggerManual) = %q, want %q", got, "manual")
+	}
+}
+
+// TestTurnTimeoutUsesConfiguredValue pins turnTimeout's configured
+// (non-default) branch: every other test in this file builds its Service
+// with Config{} (zero-value TurnTimeout), so only the defaultTurnTimeout
+// fallback branch had coverage.
+func TestTurnTimeoutUsesConfiguredValue(t *testing.T) {
+	svc, err := New(t.TempDir(), nil, nil, Config{TurnTimeout: 42 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := svc.turnTimeout(); got != 42*time.Second {
+		t.Fatalf("turnTimeout() with configured value = %v, want 42s", got)
+	}
+}
+
+// TestFindSpecPropagatesLoadError covers findSpec's own error-wrap
+// branch: LoadSpecs fails when automations.toml exists but is malformed
+// TOML, distinct from the "automation not found" 404 case every other
+// findSpec-exercising test (via RunOnce) hits.
+func TestFindSpecPropagatesLoadError(t *testing.T) {
+	root := t.TempDir()
+	path, err := automationsFilePath(ports.ScopeProject, root)
+	if err != nil {
+		t.Fatalf("automationsFilePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not [valid toml"), 0o644); err != nil {
+		t.Fatalf("write malformed automations.toml: %v", err)
+	}
+	svc, err := New(root, nil, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.findSpec("anything"); err == nil {
+		t.Fatal("findSpec against malformed automations.toml: got nil error, want a load-wrap error")
+	}
+}
+
+// TestRecordSkippedRunPropagatesStoreError drops the automation_runs
+// table (keeping run_claims intact) before a lost-claim fire, so
+// admitFire's own claim win still succeeds but recordSkippedRun's
+// createRun call fails - distinct from every real dedup test, which
+// always has a fully live, writable store for both tables.
+func TestRecordSkippedRunPropagatesStoreError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, nil)
+	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	if _, ok, err := svc.admitFire(ctx, automationID); err != nil || !ok {
+		t.Fatalf("pre-acquire admitFire: ok=%v err=%v", ok, err)
+	}
+	if err := dropAutomationRunsTable(t, db); err != nil {
+		t.Fatalf("drop automation_runs table: %v", err)
+	}
+	if _, err := svc.RunOnce(ctx, automationID, ports.TriggerManual); err == nil {
+		t.Fatal("RunOnce with a lost claim and automation_runs dropped: got nil error, want recordSkippedRun's own store error")
+	}
+}
+
+// TestRunOnceStartRunPropagatesCreateRunError covers startRun's own
+// createRun error-wrap branch by dropping automation_runs (keeping
+// run_claims intact) AFTER a real admitFire win, so RunOnce proceeds
+// past admitFire and reaches startRun's createRun call, which then
+// fails against the missing table.
+func TestRunOnceStartRunPropagatesCreateRunError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, nil)
+	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	if err := dropAutomationRunsTable(t, db); err != nil {
+		t.Fatalf("drop automation_runs table: %v", err)
+	}
+	if _, err := svc.RunOnce(ctx, automationID, ports.TriggerManual); err == nil {
+		t.Fatal("RunOnce with automation_runs dropped: got nil error, want startRun's own createRun error")
+	}
+	if spawn.createCallCount() != 0 {
+		t.Fatalf("CreateFreshInDir called %d times, want 0 (startRun must fail before any session spawns)", spawn.createCallCount())
+	}
+}
+
+// TestCreateRunWorktreePropagatesConfigLoadError covers
+// createRunWorktree's own config-load error-wrap branch (distinct from
+// TestRunOnceWorktreeCreationFailureNoSessionNoOrphan, which reaches
+// cliworktree.CreateManagedWorktree's own failure, past a successful
+// config load): a malformed mivia.toml under root makes
+// config.LoadWorktreeConfig itself fail before CreateManagedWorktree is
+// ever called.
+func TestCreateRunWorktreePropagatesConfigLoadError(t *testing.T) {
+	root := t.TempDir()
+	miviaPath := filepath.Join(root, ".mivia", "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(miviaPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(miviaPath, []byte("not [valid toml"), 0o644); err != nil {
+		t.Fatalf("write malformed mivia.toml: %v", err)
+	}
+	svc, err := New(root, nil, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, _, err := svc.createRunWorktree(Spec{ID: "auto-x", BaseRef: "HEAD"}, "run-x"); err == nil {
+		t.Fatal("createRunWorktree with a malformed mivia.toml: got nil error, want a config-load-wrap error")
+	}
+}
+
+// TestRunStepUnknownKindRejected covers runStep's own default branch: a
+// Step whose Kind is outside the five declared values is rejected by
+// name rather than silently dispatched as StepPrompt (the zero value).
+func TestRunStepUnknownKindRejected(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conv := newRecordingConversation()
+	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, Step{Kind: StepKind(99)}, time.Second)
+	if err == nil {
+		t.Fatal("runStep with an unknown Kind: got nil error, want rejection")
+	}
+}
+
+// TestRunStepWorkflowPropagatesEngineStartError covers runStep's
+// StepWorkflow case and runWorkflowStep's own Start-error-wrap branch:
+// dispatching a workflow name that has no on-disk definition fails
+// deterministically through the real cliworkflow engine, without needing
+// a fully wired workflow fixture.
+//
+// cliworkflow.PrepareWorkflowRun calls two package-level seams
+// (ApplyPrivacyPolicyFunc, OpenContextStoreFunc) that
+// internal/cli/cliworkflow_wiring.go's init() assigns in the real binary
+// (cmd/mivia imports internal/cli directly, so that init() always runs
+// before internal/newtui's wireAutomationBackend ever constructs a live
+// automation.Service - see docs/design/automations.md D12/D4). This test
+// package imports internal/automation directly, bypassing that init()
+// chain entirely, so both seams are nil here and must be wired locally
+// exactly as internal/cliworkflow's own testmain_test.go does, or the
+// call panics on a nil func value rather than exercising the intended
+// error path.
+func TestRunStepWorkflowPropagatesEngineStartError(t *testing.T) {
+	prevApplyPrivacy := cliworkflow.ApplyPrivacyPolicyFunc
+	prevOpenStore := cliworkflow.OpenContextStoreFunc
+	cliworkflow.ApplyPrivacyPolicyFunc = func(*config.Resolved) {}
+	cliworkflow.OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+		return storage.OpenSQLite(filepath.Join(t.TempDir(), "workflow-step.db"))
+	}
+	t.Cleanup(func() {
+		cliworkflow.ApplyPrivacyPolicyFunc = prevApplyPrivacy
+		cliworkflow.OpenContextStoreFunc = prevOpenStore
+	})
+
+	root := t.TempDir()
+	db := newTestDB(t)
+	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conv := newRecordingConversation()
+	step := Step{Kind: StepWorkflow, Ref: "no-such-workflow-definition"}
+	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
+	if err == nil {
+		t.Fatal("runStep(StepWorkflow) against an undefined workflow: got nil error, want the engine's Start error")
+	}
+	if !strings.Contains(err.Error(), "no-such-workflow-definition") {
+		t.Fatalf("runStep(StepWorkflow) error = %q, want it naming the workflow ref", err.Error())
+	}
+}
+
+type fakeWorkflowRunHandler struct {
+	completer provider.Completer
+	model     string
+}
+
+func (h fakeWorkflowRunHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	if h.completer == nil {
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+	if _, err := h.completer.Chat(ctx, provider.Request{Model: h.model, Messages: []provider.Message{{Role: "user", Content: string(req.Input)}}}); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(`{"ok":true}`), nil
+}
+
+// wireWorkflowStepSuccessSeams wires every cliworkflow package-level seam
+// TestRunStepWorkflowSucceedsOnEngineStart needs to drive a StepWorkflow
+// dispatch through the real engine to a successful Start, and registers
+// their restore via t.Cleanup. Factored out of the test itself to keep
+// that function under the project's per-function LOC limit; see the
+// test's own doc comment for why each seam is needed.
+func wireWorkflowStepSuccessSeams(t *testing.T) {
+	t.Helper()
+	prevApplyPrivacy := cliworkflow.ApplyPrivacyPolicyFunc
+	prevOpenStore := cliworkflow.OpenContextStoreFunc
+	prevContextStorePath := cliworkflow.ContextStorePath
+	prevHooks := cliworkflow.WorkflowExecutionHooks
+	prevInstallHooks := cliworkflow.InstallHookSessionFunc
+	prevLoadSkills := cliworkflow.WorkflowBuildLoadSkills
+	prevDispatcher := cliworkflow.WorkflowBuildDispatcher
+	prevSliceErrors := cliworkflow.SliceErrorsFunc
+	prevInitCoordinator := cliworkflow.InitCoordinatorFunc
+	prevAutoDeliveryLoop := cliworkflow.SessionAutoDeliveryRepairLoopFunc
+
+	cliworkflow.ApplyPrivacyPolicyFunc = func(*config.Resolved) {}
+	cliworkflow.InitCoordinatorFunc = func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
+		return coordinator.New(repos[0], subagents.New(d, subagents.Policy{Workers: 4}))
+	}
+	// LaunchStartedWorkflow launches the actual run/repair loop on a
+	// background goroutine after Start returns; this test only asserts
+	// runStep's own Start-succeeded return, so the loop is stubbed to a
+	// no-op exactly like TestSessionLaunchResumeReadFailure
+	// (workflow_coverage_pass3_test.go) does - running the real loop here
+	// would race this test's own t.Cleanup/TempDir teardown.
+	cliworkflow.SessionAutoDeliveryRepairLoopFunc = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
+	}
+	cliworkflow.SliceErrorsFunc = func(context string, errs []string) error {
+		if len(errs) == 0 {
+			return nil
+		}
+		return fmt.Errorf("%s: %s", context, strings.Join(errs, "; "))
+	}
+	cliworkflow.ContextStorePath = func(root string, cfg config.SubagentConfig) string {
+		return filepath.Join(root, "workflow-step.db")
+	}
+	cliworkflow.OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+		return storage.OpenSQLite(filepath.Join(root, "workflow-step.db"))
+	}
+	cliworkflow.InstallHookSessionFunc = func(string, bool, bool) (func(), error) { return func() {}, nil }
+	cliworkflow.WorkflowExecutionHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
+	cliworkflow.WorkflowBuildLoadSkills = func(string) (*skills.Registry, error) {
+		return skills.NewRegistry(), nil
+	}
+	cliworkflow.WorkflowBuildDispatcher = func(opts cliagents.SessionDispatcherOpts) (*runtime.Dispatcher, error) {
+		d := runtime.New(runtime.Policy{})
+		if opts.AgentRegistry != nil {
+			for _, agent := range opts.AgentRegistry.List() {
+				_ = d.Register(runtime.Subagent, agent.Name, fakeWorkflowRunHandler{completer: opts.Completer, model: opts.Model})
+			}
+		}
+		return d, nil
+	}
+	cliworkflow.InitCLIDefaults()
+
+	t.Cleanup(func() {
+		cliworkflow.ApplyPrivacyPolicyFunc = prevApplyPrivacy
+		cliworkflow.OpenContextStoreFunc = prevOpenStore
+		cliworkflow.ContextStorePath = prevContextStorePath
+		cliworkflow.WorkflowExecutionHooks = prevHooks
+		cliworkflow.InstallHookSessionFunc = prevInstallHooks
+		cliworkflow.WorkflowBuildLoadSkills = prevLoadSkills
+		cliworkflow.WorkflowBuildDispatcher = prevDispatcher
+		cliworkflow.SliceErrorsFunc = prevSliceErrors
+		cliworkflow.InitCoordinatorFunc = prevInitCoordinator
+		cliworkflow.SessionAutoDeliveryRepairLoopFunc = prevAutoDeliveryLoop
+	})
+}
+
+// writeWorkflowStepSuccessFixture writes a minimal, valid single-step
+// agent workflow (named "solo") plus its config, agent definition,
+// template, and output schema under a fresh t.TempDir(), pointed at
+// serverURL as the provider base_url. Returns the workspace root.
+// Factored out of TestRunStepWorkflowSucceedsOnEngineStart to keep that
+// function under the project's per-function LOC limit.
+func writeWorkflowStepSuccessFixture(t *testing.T, serverURL string) string {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	t.Setenv("WORKFLOW_TEST_KEY", "test-key")
+
+	workflowRoot := filepath.Join(root, ".mivia", "workflows")
+	for _, dir := range []string{
+		filepath.Join(workflowRoot, "templates"),
+		filepath.Join(workflowRoot, "schemas"),
+		filepath.Join(root, ".agents", "agents"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfgContent := `[provider]
+name = "openrouter"
+
+[providers.openrouter]
+base_url = "` + serverURL + `"
+api_key_env = "WORKFLOW_TEST_KEY"
+models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+max_workers = 1
+default_timeout_seconds = 30
+`
+	writeFile(filepath.Join(root, ".mivia", "mivia.toml"), cfgContent)
+	writeFile(filepath.Join(root, ".agents", "agents", "one.md"), "---\nname: one\ndescription: test\ntools: [read_file]\nmax_turns: 1\n---\n")
+	writeFile(filepath.Join(workflowRoot, "templates", "one.md"), "Return the result for {{ inputs.task }}.")
+	writeFile(filepath.Join(workflowRoot, "schemas", "out.json"), `{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}},"additionalProperties":false}`)
+	writeFile(filepath.Join(workflowRoot, "solo.toml"), `version = 1
+name = "solo"
+initial_step = "one"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+
+[[steps]]
+id = "one"
+kind = "agent"
+agent = "one"
+template = "templates/one.md"
+output_schema = "schemas/out.json"
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+
+[[transitions]]
+from = "one"
+to = "success"
+[transitions.match]
+status = "succeeded"
+`)
+	return root
+}
+
+// TestRunStepWorkflowSucceedsOnEngineStart covers runStep's StepWorkflow
+// case and runWorkflowStep's own SUCCESS return (executor.go's line
+// immediately after eng.Start succeeds): dispatching a real, valid
+// single-step workflow through the real cliworkflow engine, with every
+// package-level seam it needs wired locally (see
+// wireWorkflowStepSuccessSeams), completes runStep with a nil error.
+func TestRunStepWorkflowSucceedsOnEngineStart(t *testing.T) {
+	wireWorkflowStepSuccessSeams(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	root := writeWorkflowStepSuccessFixture(t, server.URL)
+
+	db := newTestDB(t)
+	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conv := newRecordingConversation()
+	step := Step{
+		Kind:   StepWorkflow,
+		Ref:    "solo",
+		Inputs: map[string]string{"task": "test-task"},
+	}
+	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
+	if err != nil {
+		t.Fatalf("runStep(StepWorkflow) unexpected error: %v", err)
+	}
+}
+
 var _ = filepath.Join // silence unused import if filepath's only other use is removed later
+
+// TestSpawnRunSessionPropagatesApprovalOverrideError covers
+// spawnRunSession's own SetApprovalOverride-failure branch: the spawned
+// session's D8 override cannot be installed, so RunOnce must abort the
+// run RunFailed BEFORE any step is dispatched - a failure to establish
+// the unattended posture must never fall through to running steps under
+// an unknown/inherited posture.
+func TestSpawnRunSessionPropagatesApprovalOverrideError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, nil)
+	spawn := &fakeExecSpawner{conv: newRecordingConversation(), setApprovalErr: fmt.Errorf("override install failed")}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	run, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual)
+	if err != nil {
+		t.Fatalf("RunOnce: got error %v, want nil (failure is recorded on the run)", err)
+	}
+	if run.State != ports.RunFailed {
+		t.Fatalf("RunOnce State = %v, want RunFailed", run.State)
+	}
+	if !strings.Contains(run.Message, "override install failed") {
+		t.Fatalf("run.Message = %q, want it to name the override install failure", run.Message)
+	}
+	if len(spawn.conv.sentTexts()) != 0 {
+		t.Fatalf("sent texts = %v, want none (a failed approval override must precede any step dispatch)", spawn.conv.sentTexts())
+	}
+}
+
+// TestRunOnceAdmitFirePropagatesRealError covers RunOnce's own
+// admitFire-error-wrap-and-return branch: dropping run_claims before
+// calling RunOnce makes admitFire fail with a real, non-ErrClaimHeld
+// error, distinct from the documented lost-claim no-op every dedup test
+// exercises.
+func TestRunOnceAdmitFirePropagatesRealError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, nil)
+	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := dropRunClaimsTable(t, db); err != nil {
+		t.Fatalf("drop run_claims table: %v", err)
+	}
+	if _, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual); err == nil {
+		t.Fatal("RunOnce with run_claims dropped: got nil error, want admitFire's own real error")
+	}
+	if spawn.createCallCount() != 0 {
+		t.Fatalf("CreateFreshInDir called %d times, want 0", spawn.createCallCount())
+	}
+}
+
+// TestStartRunPropagatesUpdateRunStateError covers startRun's own
+// second error-wrap branch directly (the pending->running
+// updateRunState call): a SQLite trigger makes every UPDATE on
+// automation_runs fail while INSERTs still succeed, so startRun's own
+// createRun call succeeds but its immediately-following updateRunState
+// call fails - the two calls are synchronous with no seam between them
+// to interleave an out-of-band row mutation, so the trigger is the only
+// way to fail the second write specifically.
+func TestStartRunPropagatesUpdateRunStateError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := forceAutomationRunsUpdateFailures(t, db); err != nil {
+		t.Fatalf("install update-failing trigger: %v", err)
+	}
+	spec := Spec{ID: "auto-startrun-err", Steps: []Step{{Kind: StepPrompt, Prompt: "x"}}}
+	if _, err := svc.startRun(context.Background(), spec, "auto-startrun-err", ports.TriggerManual, "holder-x"); err == nil {
+		t.Fatal("startRun with automation_runs UPDATEs forced to fail: got nil error, want the second updateRunState error wrapped")
+	}
+}
+
+// TestRunStepsPropagatesCheckpointError covers runSteps' own checkpoint
+// updateRunState-error-wrap branch: the fake conversation drops the
+// automation_runs table as a side effect of successfully completing its
+// one step's Send call, so runStep returns nil (the step itself
+// "succeeded") but the immediately following checkpoint updateRunState
+// call - still inside runSteps, before it ever returns to RunOnce -
+// fails against the now-missing table.
+func TestRunStepsPropagatesCheckpointError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, func(s *Spec) {
+		s.Steps = []Step{{Kind: StepPrompt, Prompt: "only step"}}
+	})
+	conv := newRecordingConversation()
+	conv.onSend = func() { _ = dropAutomationRunsTable(t, db) }
+	spawn := &fakeExecSpawner{conv: conv}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	run, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual)
+	if err != nil {
+		t.Fatalf("RunOnce: got error %v, want nil (checkpoint failure is recorded via failRun, not returned)", err)
+	}
+	if run.State != ports.RunFailed {
+		t.Fatalf("RunOnce State = %v, want RunFailed (checkpoint failure after a successful step)", run.State)
+	}
+	if !strings.Contains(run.Message, "checkpoint") {
+		t.Fatalf("run.Message = %q, want it to name the checkpoint failure", run.Message)
+	}
+}
+
+// TestRunOnceMarkSucceededPropagatesStoreError covers RunOnce's own
+// final "mark run succeeded" error-wrap branch: a SQLite trigger allows
+// the first two automation_runs UPDATEs (startRun's own pending->running
+// transition, then the one step's own checkpoint) to succeed for real,
+// then fails every UPDATE after that - so the run reaches a genuinely
+// completed steps loop before RunOnce's own separate, final "mark
+// succeeded" call is the one that hits the trigger.
+func TestRunOnceMarkSucceededPropagatesStoreError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, func(s *Spec) {
+		s.Steps = []Step{{Kind: StepPrompt, Prompt: "only step"}}
+	})
+	if err := forceAutomationRunsUpdateFailuresAfter(t, db, 2); err != nil {
+		t.Fatalf("install update-failing trigger: %v", err)
+	}
+	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual); err == nil {
+		t.Fatal("RunOnce whose final mark-succeeded UPDATE is forced to fail: got nil error, want the wrapped store error")
+	}
+}
+
+// TestRunStepSlashRejectedByExecutionTimeValidation covers runStep's
+// StepSlash case's own validateStepSlash rejection branch, directly:
+// re-validation at execution time (defense in depth) refuses a
+// D15-rejected command before ever calling sendTurnHeadless.
+func TestRunStepSlashRejectedByExecutionTimeValidation(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conv := newRecordingConversation()
+	step := Step{Kind: StepSlash, Ref: "/delete"} // session-lifecycle mutation, D15-rejected
+	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
+	if err == nil {
+		t.Fatal("runStep(StepSlash) with a D15-rejected command: got nil error, want rejection")
+	}
+	if len(conv.sentTexts()) != 0 {
+		t.Fatalf("sent texts = %v, want none (a rejected slash command must never reach sendTurnHeadless)", conv.sentTexts())
+	}
+}
+
+// TestRunStepAgentPropagatesApplySessionAgentError covers runStep's
+// StepAgent case's own ApplySessionAgent error-wrap branch: a nil
+// *chat.Session (what this test's dispatch always has, since this
+// package's Service carries no real session-construction path in a unit
+// test - see this file's own documented gap on StepAgent) makes
+// ApplySessionAgent fail immediately and deterministically, before ever
+// calling sendTurnHeadless.
+func TestRunStepAgentPropagatesApplySessionAgentError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conv := newRecordingConversation()
+	step := Step{Kind: StepAgent, Ref: "some-agent", Prompt: "do the thing"}
+	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
+	if err == nil {
+		t.Fatal("runStep(StepAgent) with a nil session: got nil error, want ApplySessionAgent's own rejection")
+	}
+	if len(conv.sentTexts()) != 0 {
+		t.Fatalf("sent texts = %v, want none (a failed agent selection must never reach sendTurnHeadless)", conv.sentTexts())
+	}
+}

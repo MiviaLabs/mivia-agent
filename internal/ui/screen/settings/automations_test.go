@@ -196,3 +196,27 @@ func TestAutomationsRowsAlignColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomationsDetailRendersSkippedRun(t *testing.T) {
+	h := newMockSettings()
+	now := timeNow()
+	h.runs["nightly-audit"] = []ports.Run{
+		{
+			ID:           "run-skipped",
+			AutomationID: "nightly-audit",
+			Trigger:      ports.TriggerScheduled,
+			State:        ports.RunSkipped,
+			StartedAt:    now,
+		},
+	}
+	h.automations[0].LastRun = &ports.RunSummary{
+		ID:        "run-skipped",
+		State:     ports.RunSkipped,
+		StartedAt: now,
+	}
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	plain := ansi.Strip(sec.View())
+	if !strings.Contains(plain, "skipped") {
+		t.Fatalf("expected view to contain \"skipped\", got:\n%s", plain)
+	}
+}
