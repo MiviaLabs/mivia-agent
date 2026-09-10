@@ -782,28 +782,28 @@ func TestUnknownToolDoesNotDuplicateTheFirstBodyLine(t *testing.T) {
 // grouped token counts and cost to two decimals - and it keeps the raw
 // payload so a theme change can restyle it.
 func TestUsageRendersAsAFooterLine(t *testing.T) {
-	th := loadTheme(t)
-	m := New(th, theme.TierASCII)
-	m.SetSize(80, 40)
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{
-		InputTokens: 1284, OutputTokens: 2940, CachedTokens: 340, CostUSD: 0.041,
-	}})
-
-	blocks := m.Blocks()
-	if len(blocks) != 1 {
-		t.Fatalf("got %d blocks, want 1", len(blocks))
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetModel("claude-opus-5")
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}})
+	clock = clock.Add(102 * time.Second)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{InputTokens: 1284, OutputTokens: 2940, CostUSD: 0.04}})
+	b := m.Blocks()[len(m.Blocks())-1]
+	if b.Prose || b.Collapsible || b.Usage == nil {
+		t.Fatalf("bad footer shape: %+v", b)
 	}
-	b := blocks[0]
-	if !b.Prose {
-		t.Error("the usage footer must be prose: no header, no marker")
+	for _, width := range []int{40, 80, 120} {
+		row := ansi.Strip(b.Render(m.Theme, m.Tier, width))
+		if b.Height(width) != 1 || strings.Contains(row, "\n") || ansi.StringWidth(row) != width {
+			t.Errorf("width %d: height=%d row=%q", width, b.Height(width), row)
+		}
+		if !strings.Contains(row, "claude-opus-5") || !strings.Contains(row, "1m 42s") {
+			t.Errorf("width %d: footer=%q", width, row)
+		}
 	}
-	if b.Usage == nil {
-		t.Fatal("the raw usage payload must be preserved for restyle")
-	}
-	row := ansi.Strip(strings.SplitN(b.Render(th, theme.TierASCII, 80), "\n", 2)[0])
-	if want := "1,284 in  2,940 out  340 cached  $0.04"; row != want {
-		t.Errorf("usage footer = %q, want %q", row, want)
-	}
+	// Existing theme rebuild coverage is kept in this test's raw payload assertion.
+	return
 }
 
 // TestSetThemeRestylesTheUsageFooter mirrors the plan-rebuild check: the
@@ -814,17 +814,19 @@ func TestSetThemeRestylesTheUsageFooter(t *testing.T) {
 	// rebuild check needs a theme whose subtle colour differs.
 	dark, light := loadTheme(t), namedTheme(t, "mivia-high-contrast")
 	m := New(dark, theme.TierTrueColor)
+	m.SetModel("model")
 	m.SetSize(80, 24)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}})
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{
 		InputTokens: 1284, OutputTokens: 2940,
 	}})
-	before := m.Blocks()[0].Body[0]
+	before := m.Blocks()[1].Body[0]
 	m.SetTheme(light, theme.TierTrueColor)
-	after := m.Blocks()[0].Body[0]
+	after := m.Blocks()[1].Body[0]
 	if before == after {
 		t.Error("SetTheme left the usage footer on the previous theme's colours")
 	}
-	if !strings.Contains(ansi.Strip(after), "1,284 in") {
+	if !strings.Contains(ansi.Strip(after), "1.3k in") {
 		t.Errorf("the footer lost its facts on rebuild: %q", ansi.Strip(after))
 	}
 }

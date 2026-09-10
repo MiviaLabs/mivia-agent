@@ -336,26 +336,25 @@ func hookBlockValue(b uievent.HookBody) Block {
 	}
 }
 
-// usageBlockValue renders the turn's token and cost accounting as one
-// dim, header-less prose footer line (transcript-polish.md R6): the
-// per-turn facts belong to the record - and to Dump(), so `[` and
-// grep still reach them - while the live cost and context surfaces stay
-// on the statusline pill and the topbar gauge. The footer keeps the
-// header meta grammar: grouped token counts (render.GroupThousands)
-// joined by the fixed two-column gap, cost to two decimals.
-func usageBlockValue(t theme.Theme, tier theme.Tier, b uievent.UsageBody) Block {
+// usageBlockValue renders the turn's token, cost, and transcript-measured
+// elapsed time as one compact footer row. The row's final padding is applied
+// by Block.Render because only that method has the current terminal width.
+func usageBlockValue(t theme.Theme, tier theme.Tier, b uievent.UsageBody, model string, elapsed float64) Block {
 	usage := b
 	line := render.Role(t, tier, theme.RoleFGSubtle).Render(fmt.Sprintf(
-		"%s in  %s out  %s cached  $%.2f",
-		render.GroupThousands(int(b.InputTokens)),
-		render.GroupThousands(int(b.OutputTokens)),
-		render.GroupThousands(int(b.CachedTokens)),
+		"+ %s  %s  %s in  %s out  $%.2f",
+		model,
+		render.FormatElapsed(int(elapsed*1000)),
+		render.CompactTokens(b.InputTokens),
+		render.CompactTokens(b.OutputTokens),
 		b.CostUSD))
 	return Block{
-		Kind:  uievent.KindUsage,
-		Prose: true,
-		Usage: &usage,
-		Body:  []string{line},
+		Kind:           uievent.KindUsage,
+		Usage:          &usage,
+		UsageModel:     model,
+		UsageElapsedMS: int(elapsed * 1000),
+		Collapsible:    false,
+		Body:           []string{line},
 	}
 }
 

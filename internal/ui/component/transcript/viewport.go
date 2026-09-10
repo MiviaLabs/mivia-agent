@@ -106,7 +106,7 @@ func (m *Model) push(b Block) {
 	// header-only blocks with nothing under it. Blocks that arrive from
 	// values.go already marked Collapsible keep that marking; prose
 	// never takes a marker.
-	if !b.Prose && len(b.Body) > 0 {
+	if !b.Prose && b.Kind != uievent.KindUsage && len(b.Body) > 0 {
 		b.Collapsible = true
 	}
 	if b.Collapsible && !b.Collapsed {

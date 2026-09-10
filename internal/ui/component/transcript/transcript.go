@@ -104,6 +104,11 @@ type Model struct {
 	// the end event, which is the interval the person watching the screen
 	// actually waited. A DurationMS the producer does supply still wins.
 	Now func() time.Time
+
+	// turnStartedAt is stamped when the transcript sees turn.start and is
+	// used to supply the wall-time portion of the usage footer.
+	turnStartedAt time.Time
+	modelName     string
 }
 
 // now reads the transcript's clock.
@@ -122,6 +127,9 @@ func New(t theme.Theme, tier theme.Tier) Model {
 // Empty reports whether the transcript has no conversation blocks and no active streaming tail.
 func (m Model) Empty() bool { return len(m.blocks) == 0 && m.pending == "" }
 
+// SetModel updates the model name shown on subsequently pushed usage footers.
+func (m *Model) SetModel(name string) { m.modelName = name }
+
 // HandleEvent applies one uievent.Event to the model and returns the
 // updated Model plus a Cmd exactly when a new streaming span needs its
 // repaint clock started. Same value-receiver, return-new-Model shape as
@@ -135,32 +143,12 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	case uievent.ReasoningDeltaBody:
 		return m.handleReasoningDelta(b)
 	case uievent.TextEndBody:
-		// A pending REASONING span must be flushed, not discarded. text.end
-		// carries the answer, which says nothing about the reasoning that
-		// preceded it, so discarding here wiped the whole reasoning block of
-		// any agent that reasoned and then answered with no tool call in
-		// between - the exact shape of a subagent run.
-		//
-		// Only reasoning is flushed. A pending TEXT span is already contained
-		// in this event's own Text (the loop sends the full accumulated
-		// answer), so flushing that would render the answer twice.
-		if m.pendingKind == uievent.KindReasoning {
-			m = m.flushPending()
-		}
-		m.clearPending()
-		if b.Text == "" {
-			return m, nil
-		}
-		return m.pushBlock(Block{
-			Kind:  uievent.KindTextEnd,
-			Prose: true,
-			Input: b.Text,
-			Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
-		})
+		return m.handleTextEnd(b)
 	case uievent.AssistantResetBody:
 		return m.handleAssistantReset(b)
 	case uievent.TurnStartBody:
 		m = m.flushPending()
+		m.turnStartedAt = m.now()
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTurnStart,
 			Prose: true,
@@ -186,23 +174,60 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(errorBlockValue(b))
 	case uievent.UsageBody:
-		// A dim footer line, not a header block (transcript-polish.md
-		// R6): the per-turn facts belong to the record, the live cost
-		// and context chrome belongs to the statusline and the topbar.
-		return m.pushBlock(usageBlockValue(m.Theme, m.Tier, b))
-	case uievent.TurnEndBody:
-		// A completed turn commits nothing: turn-state belongs to the
-		// statusline. A turn that did NOT complete must say so, and must
-		// keep whatever partial text had streamed. Dropping the partial
-		// text with no explanation is the transcript lying about why it
-		// stopped, which section 13 forbids.
-		if b.Reason == "" || b.Reason == turnReasonCompleted {
-			m.clearPending()
-			return m, nil
+		elapsed := b.ElapsedSeconds
+		if !m.turnStartedAt.IsZero() {
+			elapsed = m.now().Sub(m.turnStartedAt).Seconds()
+			if elapsed < 0 {
+				elapsed = 0
+			}
 		}
-		return m.endTurnUnfinished(b.Reason)
+		return m.pushBlock(usageBlockValue(m.Theme, m.Tier, b, m.modelName, elapsed))
+	case uievent.TurnEndBody:
+		return m.handleTurnEndEvent(b)
 	}
 	return m, nil
+}
+
+// handleTextEnd is HandleEvent's TextEndBody arm, split out to keep
+// HandleEvent itself under the file's per-function LOC cap.
+func (m Model) handleTextEnd(b uievent.TextEndBody) (Model, tea.Cmd) {
+	// A pending REASONING span must be flushed, not discarded. text.end
+	// carries the answer, which says nothing about the reasoning that
+	// preceded it, so discarding here wiped the whole reasoning block of
+	// any agent that reasoned and then answered with no tool call in
+	// between - the exact shape of a subagent run.
+	//
+	// Only reasoning is flushed. A pending TEXT span is already contained
+	// in this event's own Text (the loop sends the full accumulated
+	// answer), so flushing that would render the answer twice.
+	if m.pendingKind == uievent.KindReasoning {
+		m = m.flushPending()
+	}
+	m.clearPending()
+	if b.Text == "" {
+		return m, nil
+	}
+	return m.pushBlock(Block{
+		Kind:  uievent.KindTextEnd,
+		Prose: true,
+		Input: b.Text,
+		Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
+	})
+}
+
+// handleTurnEndEvent is HandleEvent's TurnEndBody arm, split out to keep
+// HandleEvent itself under the file's per-function LOC cap.
+func (m Model) handleTurnEndEvent(b uievent.TurnEndBody) (Model, tea.Cmd) {
+	// A completed turn commits nothing: turn-state belongs to the
+	// statusline. A turn that did NOT complete must say so, and must
+	// keep whatever partial text had streamed. Dropping the partial
+	// text with no explanation is the transcript lying about why it
+	// stopped, which section 13 forbids.
+	if b.Reason == "" || b.Reason == turnReasonCompleted {
+		m.clearPending()
+		return m, nil
+	}
+	return m.endTurnUnfinished(b.Reason)
 }
 
 // Clear empties the transcript: every block, the drop count, the
@@ -423,7 +448,8 @@ func (m Model) restyle(b Block) Block {
 	case b.Usage != nil:
 		// Same payload-preserving rebuild as the plan: the footer line is
 		// styled at push time, so the theme change must restyle it.
-		b.Body = usageBlockValue(m.Theme, m.Tier, *b.Usage).Body
+		next := usageBlockValue(m.Theme, m.Tier, *b.Usage, b.UsageModel, float64(b.UsageElapsedMS)/1000)
+		b.Body = next.Body
 	case b.Diff != nil:
 		w := m.width - groupIndent - uikitconfig.BodyIndent
 		if w <= 0 {

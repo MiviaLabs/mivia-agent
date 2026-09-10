@@ -253,6 +253,9 @@ type Session struct {
 	// internal/chat/context_heartbeat.go.
 	contextHeartbeat     *contextHeartbeat
 	contextHeartbeatOnce sync.Once
+	// turnJournalOnce guards the one-time subscription that durably records
+	// turn steps as they happen; see internal/chat/turn_journal.go.
+	turnJournalOnce sync.Once
 	// contextPublishMu serializes context publication with clear and turn
 	// snapshot capture. Provider calls remain lock-free; only the durable
 	// compare-and-swap and its in-memory adoption are serialized.
@@ -422,6 +425,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	if beginErr != nil {
 		return "", beginErr
 	}
+	s.ensureTurnJournalSubscribed()
 	s.publishTurnStart(snapshot.sessionID, snapshot.myTurn, persistedText)
 	defer func() {
 		done()
@@ -458,11 +462,28 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	commitToken := s.commitTurnToken(uint64(snapshot.myTurn), snapshot.token)
 	// loop.Tools is the post-run registry: after a step-boundary publication it
 	// carries the newly admitted tools, so the ephemeral-tool scrub sees them.
-	if persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err); persistErr != nil {
-		if !errors.Is(persistErr, ErrStaleOperation) {
-			return reply, persistErr
-		}
+	persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err)
+	if persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
+		// The commit genuinely failed (not a routine supersession): leave the
+		// turn's journal in place as evidence rather than clearing it.
+		return reply, persistErr
+	}
+	if persistErr != nil {
 		logStaleOperation("agent turn commit", persistErr)
+	}
+	// A genuine, non-cancelled turn error routes finishAgentTurn through
+	// finishErroredContextTurn, which can return nil having durably captured
+	// NOTHING: its no-preparation branch's adoptFailedTurnSnapshot silently
+	// no-ops on an invalid message shape or a stale fence, and its own
+	// commit-failure branch swallows the error by contract (turn_finish.go's
+	// documented return contract - sendAgent must not try to distinguish
+	// further from finishAgentTurn's return value alone). A clean success or
+	// a context-cancelled turn both commit through commitContextTurn's real
+	// attempt instead, so only THOSE outcomes clear the journal; a genuine
+	// error leaves it in place as evidence rather than risk deleting the only
+	// surviving record of work finishErroredContextTurn silently dropped.
+	if CancellationCanReplaceTurnError(err) {
+		s.clearTurnJournal(snapshot.sessionID, uint64(snapshot.myTurn))
 	}
 	return reply, err
 }

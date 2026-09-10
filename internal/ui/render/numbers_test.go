@@ -5,7 +5,18 @@ import (
 	"testing"
 )
 
-// TestGroupThousands pins the comma grouping used by the usage footer
+func TestCompactTokens(t *testing.T) {
+	for _, tc := range []struct {
+		n    int64
+		want string
+	}{{999, "999"}, {1000, "1.0k"}, {1284, "1.3k"}, {2940, "2.9k"}} {
+		if got := CompactTokens(tc.n); got != tc.want {
+			t.Errorf("CompactTokens(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
+// TestGroupThousands pins the comma grouping used by other render surfaces
 // (transcript-polish.md R6, wireframes-panes.md section 4 grammar).
 func TestGroupThousands(t *testing.T) {
 	cases := []struct {

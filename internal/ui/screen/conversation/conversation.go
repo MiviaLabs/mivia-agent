@@ -233,6 +233,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 			s.transcript = s.transcript.SetHideReasoning(!rp.ShowReasoning())
 		}
 		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
+		s.transcript.SetModel(conv.Model().Name)
 		if title := conv.Title(); title != "" {
 			s.topbar.SetBreadcrumb([]string{title})
 		}
@@ -437,6 +438,7 @@ func (s *Screen) refreshTopbar() {
 			u = s.topbar.Usage()
 		}
 		s.topbar.SetSession(s.conv.Model(), u)
+		s.transcript.SetModel(s.conv.Model().Name)
 		if title := s.conv.Title(); title != "" {
 			s.topbar.SetBreadcrumb([]string{title})
 		} else {

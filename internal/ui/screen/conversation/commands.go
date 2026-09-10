@@ -100,6 +100,7 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	outcome := s.runner.Run(context.Background(), name, args)
 	if s.conv != nil {
 		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+		s.transcript.SetModel(s.conv.Model().Name)
 	}
 	return s.applyCommandOutcome(outcome)
 }
@@ -185,6 +186,7 @@ func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.
 		if s.conv != nil {
 			s.LoadHistory(s.conv.History())
 			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			s.transcript.SetModel(s.conv.Model().Name)
 			if title := s.conv.Title(); title != "" {
 				s.topbar.SetBreadcrumb([]string{title})
 			} else {
@@ -327,6 +329,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 		out := apply(m.Item)
 		if s.conv != nil {
 			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			s.transcript.SetModel(s.conv.Model().Name)
 		}
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)

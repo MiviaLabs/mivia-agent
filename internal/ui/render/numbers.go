@@ -1,22 +1,24 @@
 package render
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+)
 
-// GroupThousands renders an integer with a comma every three digits,
-// the grouping style docs/design/wireframes-panes.md section 4 already
-// uses for token counts ("1,284 in"). The sign of a negative value is
-// kept: "-1,284".
-//
-// It deliberately does not compact to "1.3k": a transcript number a
-// user may cite or grep must equal the fact, not an approximation of
-// it (see transcript-polish.md R6 for the same decision).
-//
-// Pure: input in, string out, no I/O and no package state.
+// CompactTokens renders token counts below 1000 exactly and larger counts
+// with one decimal in thousands (for example, 1284 becomes 1.3k).
+func CompactTokens(n int64) string {
+	if n < 1000 && n > -1000 {
+		return strconv.FormatInt(n, 10)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}
+
+// GroupThousands renders an integer with a comma every three digits.
 func GroupThousands(n int) string {
 	var u uint64
 	neg := n < 0
 	if neg {
-		// -(n+1)+1 never overflows; -n would on MinInt.
 		u = uint64(-(n + 1)) + 1
 	} else {
 		u = uint64(n)

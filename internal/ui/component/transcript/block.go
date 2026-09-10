@@ -83,6 +83,10 @@ type Block struct {
 	// footer line for the same reason: the footer is styled at push time,
 	// and restyle rebuilds it from this copy when the theme changes.
 	Usage *uievent.UsageBody
+	// UsageModel and UsageElapsedMS are transcript-side presentation facts.
+	// The raw Usage remains authoritative for token and cost values.
+	UsageModel     string
+	UsageElapsedMS int
 
 	// ElapsedMS is the call's own duration, kept as a number rather than
 	// only as the formatted Meta string, so a coalesced work run can add
@@ -128,6 +132,9 @@ func (b Block) isEmpty() bool {
 // neighbours (one per turn section, none inside an activity run -
 // transcript-polish.md R1), not on the block alone.
 func (b Block) Height(width int) int {
+	if b.Kind == uievent.KindUsage {
+		return 1
+	}
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		wrapped := render.Wrap(b.Input, render.ProseMeasure(width)-2)
 		return len(wrapped)
@@ -180,7 +187,7 @@ func (b Block) reasoningRows(width int) []string {
 // activity group at a 2-column indent, with no blank row between
 // consecutive group members (transcript-polish.md R1). Prose - the user
 // turn, assistant text, the usage footer - is the conversation voice.
-func (b Block) Activity() bool { return !b.Prose }
+func (b Block) Activity() bool { return !b.Prose && b.Kind != uievent.KindUsage }
 
 // bodyRows is the body as terminal rows at width, already wrapped.
 //
@@ -190,6 +197,9 @@ func (b Block) Activity() bool { return !b.Prose }
 // Already-styled prose hard-wraps too, because the escape sequences in
 // it belong to code that should not reflow.
 func (b Block) bodyRows(width int) []string {
+	if b.Kind == uievent.KindUsage {
+		return b.Body
+	}
 	if width <= 0 || b.Kind == uievent.KindTurnStart {
 		return b.Body
 	}
@@ -230,6 +240,9 @@ func defaultCollapsed(body []string) bool {
 // as amended).
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	renderCalls++
+	if b.Kind == uievent.KindUsage {
+		return b.renderUsage(t, tier, width)
+	}
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		return strings.Join(userLines(t, tier, width, b.Input), "\n")
 	}
@@ -261,42 +274,7 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	}
 
 	if b.isToolBlock() {
-		c := b.card(width)
-		if len(c.body) == 0 {
-			return sb.String()
-		}
-		// One column of the indent is handed to the tint as a left
-		// margin, and one more plain column follows the fill as a right
-		// margin, so the card reads as padded on both sides rather than
-		// text glued to the tint's own edges. bodyIndent is always three
-		// plain columns (the rail case ends in two literal ASCII spaces
-		// appended after the styled glyph, so trimming the last byte
-		// trims one space, never an escape sequence). fillWidth stays
-		// width-BodyIndent, the same budget bodyRows already wrapped
-		// every line to, so the row's total width - bodyIndent(3) +
-		// fillWidth + the trailing margin(1) - is unchanged.
-		//
-		// render.FillBG colours only the cells it is given ("Callers pad
-		// rows to the width they want covered first" - background.go);
-		// bodyRows already hard-wraps every line to at most this many
-		// columns, so padding here only ever adds trailing space, never
-		// truncates.
-		bodyIndent := indent[:len(indent)-1]
-		fillWidth := width - uikitconfig.BodyIndent
-		sb.WriteByte('\n') // the blank row a card opens with (C4)
-		style := b.bodyStyle(t, tier)
-		for _, line := range c.body {
-			sb.WriteByte('\n')
-			sb.WriteString(bodyIndent)
-			sb.WriteString(render.FillBG(t, tier, theme.RoleBGSubtle, padToWidth(" "+style(line), fillWidth)))
-			sb.WriteByte(' ') // right margin: plain, matching the left
-		}
-		if c.hidden > 0 {
-			sb.WriteByte('\n')
-			sb.WriteString(indent)
-			sb.WriteString(render.Role(t, tier, theme.RoleFGSubtle).Render(cardHint(c.hidden, b.Focused)))
-		}
-		return sb.String()
+		return b.renderToolCard(t, tier, width, &sb, indent)
 	}
 
 	if b.Collapsed {
@@ -310,6 +288,49 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
 		sb.WriteString(body(line))
+	}
+	return sb.String()
+}
+
+// renderToolCard is Render's isToolBlock branch, split out to keep Render
+// itself under the file's per-function LOC cap. sb already carries the
+// rendered header; this appends the card body (or nothing, if the card is
+// empty) and returns the finished string.
+func (b Block) renderToolCard(t theme.Theme, tier theme.Tier, width int, sb *strings.Builder, indent string) string {
+	c := b.card(width)
+	if len(c.body) == 0 {
+		return sb.String()
+	}
+	// One column of the indent is handed to the tint as a left
+	// margin, and one more plain column follows the fill as a right
+	// margin, so the card reads as padded on both sides rather than
+	// text glued to the tint's own edges. bodyIndent is always three
+	// plain columns (the rail case ends in two literal ASCII spaces
+	// appended after the styled glyph, so trimming the last byte
+	// trims one space, never an escape sequence). fillWidth stays
+	// width-BodyIndent, the same budget bodyRows already wrapped
+	// every line to, so the row's total width - bodyIndent(3) +
+	// fillWidth + the trailing margin(1) - is unchanged.
+	//
+	// render.FillBG colours only the cells it is given ("Callers pad
+	// rows to the width they want covered first" - background.go);
+	// bodyRows already hard-wraps every line to at most this many
+	// columns, so padding here only ever adds trailing space, never
+	// truncates.
+	bodyIndent := indent[:len(indent)-1]
+	fillWidth := width - uikitconfig.BodyIndent
+	sb.WriteByte('\n') // the blank row a card opens with (C4)
+	style := b.bodyStyle(t, tier)
+	for _, line := range c.body {
+		sb.WriteByte('\n')
+		sb.WriteString(bodyIndent)
+		sb.WriteString(render.FillBG(t, tier, theme.RoleBGSubtle, padToWidth(" "+style(line), fillWidth)))
+		sb.WriteByte(' ') // right margin: plain, matching the left
+	}
+	if c.hidden > 0 {
+		sb.WriteByte('\n')
+		sb.WriteString(indent)
+		sb.WriteString(render.Role(t, tier, theme.RoleFGSubtle).Render(cardHint(c.hidden, b.Focused)))
 	}
 	return sb.String()
 }

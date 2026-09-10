@@ -72,7 +72,7 @@ func TestReplayDrivesTranscript(t *testing.T) {
 					"plan",              // plan block
 					"context 62%",       // notice
 					"transport refused", // error
-					"1,284 in",          // usage footer (R6: grouped, not raw)
+					"1.3k in",           // compact usage footer (C2)
 				} {
 					if !strings.Contains(plain, want) {
 						t.Errorf("replayed transcript is missing %q:\n%s", want, plain)

@@ -167,6 +167,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 
 	s.conv = newConv
 	newID := s.convID()
+	s.transcript.SetModel(newConv.Model().Name)
 	s.registerSession(newID)
 
 	s.syncRunnerActiveSession(newID)
@@ -201,6 +202,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.panel = newPanel(s.Theme, s.Tier)
 		s.LoadHistory(newConv.History())
 	}
+	s.transcript.SetModel(newConv.Model().Name)
 
 	// The top bar keeps the last usage reading it was handed, and
 	// refreshTopbar deliberately falls back to it when the incoming session

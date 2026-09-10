@@ -144,11 +144,15 @@ v error       transport refused after 3 attempts                      fatal
 
   notice      context 62% (78k of 125k). /compact frees about 30k.
 
-1,284 in  2,940 out  340 cached  $0.04
++ claude-opus-5  1m 42s  1.3k in  2.9k out  $0.04 ----------------------
 
 >
 ```
 
+A **usage footer** closes each completed turn as one non-collapsible, non-prose
+row. Its compact grammar is `+ <model>  <elapsed>  <in> in  <out> out  <cost>`;
+counts below 1000 remain exact and larger counts use one decimal thousands
+(`1,284` becomes `1.3k`). The row is padded with `-` to the available width.
 A header-only block with nothing to open - a one-line `notice`, a `plan`, a `hook` -
 carries a blank marker column, `v` open or `>` closed, and simply disappears when
 collapsed: nothing states its size.
