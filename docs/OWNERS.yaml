@@ -156,3 +156,8 @@ topics:
     path: docs/product/chat-sync-wire.md
     owner: product
     description: Remote chat session synchronization wire protocol, privacy gates, truncation, and configuration
+
+  automations-design:
+    path: docs/design/automations.md
+    owner: architecture
+    description: Automations scheduling design - TOML specs, fenced single-fire claims, headless run execution, resume, and the CLI surface

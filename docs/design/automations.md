@@ -1,6 +1,6 @@
 # Automations: centralized scheduling for workflows, agents, skills, slash commands, and prompts
 
-Status: approved plan, not yet implemented. All open questions resolved.
+Status: implemented (chunks 1-9 landed; docs/OWNERS.yaml registration is chunk 10, this edit).
 Reviewed: planner -> plan-reviewer (5 passes; 6 blocking findings raised and resolved).
 
 ## Goal
@@ -126,7 +126,7 @@ func (s *Service) Watch(ctx context.Context, automationID string) (ports.RunHand
 
 func (s *Service) Serve(ctx context.Context) error                                  // cron loop; missed fires SKIPPED
 func (s *Service) RunOnce(ctx context.Context, automationID string, trigger ports.TriggerKind) (ports.Run, error)
-func (s *Service) ResumeRun(ctx context.Context, runID string) error                 // restart at step_index+1
+func (s *Service) ResumeRun(ctx context.Context, runID string) (ports.Run, error) // restart at StepIndex (already the next-step-to-run index; no +1 adjustment)
 func (s *Service) SweepInterrupted(ctx context.Context) (int, error)
 ```
 
@@ -423,18 +423,34 @@ absence is the positive proof the cycle is gone. (Note: `uiadapter`'s list alrea
 contains `internal/cliagents`, a pre-existing cli* edge this plan neither uses nor widens.)
 
 **D13. Crash recovery (R6).** v1 is **manual resume** from the TUI and
-`mivia automations resume <run-id>`. At service start, any run in `running` whose fenced
+`mivia automations resume <run-id>`. At service start (`serve`'s own startup sweep, not
+`Serve`'s own loop body - see serve.go's doc comment), any run in `running` whose fenced
 claim has expired is marked `interrupted` (via `TakeoverExpiredClaimFenced`) and shown
-with a Resume affordance. Resume reopens the saved session and restarts at
-`step_index + 1` (a half-finished step re-runs whole). The automatic
-`ReconcileParkedRuns`-style loop is explicitly deferred to v2; the schema needs no change
-to add it.
+with a Resume affordance. Resume reopens the saved session (via `chat.Session.Load`,
+called strictly AFTER `SessionSpawner.CreateFreshInDir` returns, never inside its bind
+closure - the two `SessionSpawner` implementations wire a session's context store at
+different points relative to bind, and only the after-return position is correct for
+both) and restarts at `startIndex = run.StepIndex`, with **no arithmetic adjustment**:
+`StepIndex` already holds the index of the next step to execute in both of `runSteps`'
+own checkpoint cases (`i+1` on a completed step's success, `i` - the failing step's own
+index, unadjusted - on failure), so a half-finished/failed step re-runs whole. Resume
+re-acquires the SAME fenced claim key (`claimKey(automationID)`) a fresh `RunOnce` fire
+would use, but unlike a scheduled fire's silent `RunSkipped` no-op on a lost claim,
+resume surfaces a NAMED refusal (`ErrRunAlreadyActive`) - a resume is user-initiated, so
+a claim conflict must be visible, not swallowed. The automatic `ReconcileParkedRuns`-
+style loop is explicitly deferred to v2; the schema needs no change to add it.
 
 **D14. CLI surface.** `internal/cli/root.go` gains
 `case "automations": return cliautomations.RunAutomations(args[1:])` plus `usageText()`
 lines for `automations list | show <name> | run <name> [--wait] | runs [--automation n]
 [--limit n] | resume <run-id> | serve`. `serve` is what a user wires into OS
-cron/launchd/systemd if they want firing while the TUI is closed.
+cron/launchd/systemd if they want firing while the TUI is closed. `--wait` is
+**verbosity-only**: `RunOnce` is already fully synchronous end-to-end (chunk 6), so the
+flag does not change blocking behavior at all - it selects `run`'s full-detail output
+(`printRunDetail`: id, automation, state, timestamps, message) instead of the default
+one-line summary (`printRunResult`). This is a deliberate, named deviation from a
+literal "wait for completion" reading of the flag name; a genuine async/backgrounded
+run mode remains out of scope.
 
 ## Chunks
 
@@ -482,10 +498,22 @@ Sequenced so the wiring shape is proven before anything expensive is built on it
    dispatch. `Serve` does not call `sweepInterrupted` (D13's startup sweep
    stays chunk 8's concern). A per-automation `RunOnce` error is logged, not
    fatal — one broken automation must not wedge every other one's schedule.
-8. **Resume.** Reopen saved session, restart at `step_index + 1`.
-9. **CLI** (D14). `internal/cliautomations` (sibling of `internal/cli`,
+8. **Resume (landed).** `Service.ResumeRun`/`SweepInterrupted` (`internal/automation/
+   resume.go`): reopens the saved session via `chat.Session.Load` called strictly after
+   `SessionSpawner.CreateFreshInDir` returns (never inside its bind closure - see D13),
+   and restarts at `startIndex = run.StepIndex` with no `+1` adjustment. Also fixed a
+   pre-existing chunk-6 bug found during this work: `spawnRunSession`'s bind closure
+   called `sess.Save(...)` INSIDE the closure `CreateFreshInDir` invokes, but the pooled
+   TUI spawner (`uiadapter.SessionPool`) wires a session's context store in
+   `wireEntryLocked`, which runs AFTER bind returns - so `ContextEnabled()` was always
+   false there and every TUI-triggered run's session was silently never saved. Fixed by
+   moving the Save call (and its `savedName` return value, durably persisted via
+   `updateRunSession`) to after `CreateFreshInDir` returns, mirroring the approval-
+   override ordering rule already established for `SetApprovalOverride`.
+9. **CLI (landed).** `internal/cliautomations` (sibling of `internal/cli`,
    matching `cliworkflow`/`cliworktree`/`clichat`'s shape) implements
-   `mivia automations list|show <id>|run <id>|serve`. `run`/`serve` are
+   `mivia automations list|show <id>|run <id> [--wait]|runs [--automation id] [--limit n]|
+   resume <run-id>|serve`. `run`/`resume`/`serve` are
    backed by `HeadlessSpawner`, a second, independent
    `automation.SessionSpawner` implementation alongside `internal/newtui`'s
    TUI-bound one (D4): it builds a bare `*chat.Session` directly via
@@ -509,7 +537,13 @@ Sequenced so the wiring shape is proven before anything expensive is built on it
    a *dead* prior session; it would actively corrupt a still-*live* one, so
    `HeadlessSpawner` is explicitly not safe under any future
    concurrent-automation-dispatch design without a real redesign.
-10. **Docs + `docs/OWNERS.yaml` registration** for this file.
+10. **Docs + `docs/OWNERS.yaml` registration (landed, this edit).** `docs/design/
+    automations.md` is already covered by the `ui-design-phase0` topic's `docs/design/`
+    directory-prefix path (`scripts/check_docs_ownership.py`'s `owned_by()` resolves any
+    file under that prefix) — this is not closing a gate-failing gap. A dedicated
+    `automations-design` topic is added below anyway, for specificity: a future reader
+    of `docs/OWNERS.yaml` finds this file's owner without having to know the directory-
+    prefix topic exists.
 
 ## Tests
 
