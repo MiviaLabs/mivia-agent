@@ -161,6 +161,14 @@ func (m *Model) clearPending() {
 	m.pending = ""
 	m.pendingKind = ""
 	m.pendingStartedAt = time.Time{}
+	if m.stream != nil {
+		// The span that owned this cache just ended. Reset rather than
+		// drop the pointer: the NEXT span reuses the same
+		// StreamRenderer value (avoiding an allocation per span), and
+		// Reset clears its cached prefix so the new span cannot inherit
+		// bytes that do not belong to it.
+		m.stream.Reset()
+	}
 }
 
 func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
@@ -177,6 +185,13 @@ func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
 	// KindReasoning on every subsequent chunk of the SAME span.
 	if kind == uievent.KindReasoning && m.pendingKind != uievent.KindReasoning {
 		m.pendingStartedAt = m.now()
+	}
+	if kind == uievent.KindTextDelta && m.stream == nil {
+		// Allocated HERE, not in tailRows: this call runs inside
+		// HandleEvent, on the Model that actually gets returned and
+		// persisted (see tailRows' own comment on why lazy-init there
+		// would not survive past one repaint).
+		m.stream = &render.StreamRenderer{}
 	}
 	m.pending += text
 	m.pendingKind = kind
@@ -198,7 +213,7 @@ func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
 // "Thinking  Xs", refreshed by the same flush clock that already redraws
 // this tail (transcript.go's doc comment; Update, above) - no new clock
 // is armed for it (.agents/memories/tui-spinner-clock-*.md).
-func (m Model) tailRows() []string {
+func (m *Model) tailRows() []string {
 	if m.pending == "" {
 		return nil
 	}
@@ -210,13 +225,22 @@ func (m Model) tailRows() []string {
 		}
 		return []string{style.Render("Thinking  " + render.FormatElapsed(elapsed))}
 	}
-	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	measure := render.ProseMeasure(m.width)
-	var out []string
-	for _, line := range strings.Split(m.pending, "\n") {
-		for _, row := range render.Wrap(line, measure) {
-			out = append(out, style.Render(row))
-		}
+	// C6: the tail renders through the SAME markdown path as the
+	// committed block (flushPending's own doc comment states why:
+	// mismatched rendering between the live tail and the settled block
+	// used to visibly pop at commit). StreamRenderer keeps this from
+	// being an O(n^2) cost as the span grows - see its own doc comment
+	// for the full correctness argument.
+	//
+	// m.stream is allocated in appendPending, not here: tailRows is
+	// called from Rows()/View(), whose receiver is a value-receiver
+	// Model discarded at the end of the call, so a nil check here alone
+	// would silently allocate (and lose) a fresh renderer on every
+	// single repaint instead of the one that appendPending set up on the
+	// Model this call chain actually persists.
+	if m.stream == nil {
+		return proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), m.pending))
 	}
-	return out
+	rendered := m.stream.Render(m.Theme, m.Tier, m.proseRenderWidth(), m.pending)
+	return proseLines(rendered)
 }

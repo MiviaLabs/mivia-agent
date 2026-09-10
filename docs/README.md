@@ -71,6 +71,7 @@ The new terminal UI. Owner: `architecture`.
 | [Research, variant D](design/research-panes.md) | Colour, contrast and colour-vision evidence behind the shipped themes |
 | [Wireframes, variants A-C](design/wireframes.md) | Record of the three rejected directions |
 | [Research, iteration 1](design/research.md) | Record of the first research pass |
+| [Chat TUI, Crush comparison](design/chat-tui-crush-comparison.md) | Improvement plan for the main chat: thinking as duration, outcome glyphs, output cards, streamed markdown, turn footer, render memo |
 
 [UX rules](design/ux-rules.md) wins on interaction and mechanics.
 [Wireframes, variant D](design/wireframes-panes.md) wins on layout and visual

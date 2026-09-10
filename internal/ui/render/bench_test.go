@@ -146,3 +146,52 @@ func BenchmarkMarkdown(b *testing.B) {
 		Markdown(th, theme.TierTrueColor, 80, benchMarkdownDoc)
 	}
 }
+
+// streamChunk is how many bytes of a delta arrive per flush tick in the
+// streaming benchmarks. Twenty bytes at 15 Hz is roughly a fast
+// provider's token rate.
+const streamChunk = 20
+
+// BenchmarkStream is BenchmarkMarkdown's streaming counterpart: the same
+// 40-line document, delivered 20 bytes at a time the way a provider
+// streams it, rendered on every flush tick. It measures the WHOLE
+// stream, so it is directly comparable to BenchmarkStreamNaive below -
+// which is what the transcript did before StreamRenderer existed.
+func BenchmarkStream(b *testing.B) {
+	th := benchTheme(b)
+	b.ReportAllocs()
+	for b.Loop() {
+		var r StreamRenderer
+		for i := 0; i < len(benchMarkdownDoc); {
+			j := i + streamChunk
+			if j > len(benchMarkdownDoc) {
+				j = len(benchMarkdownDoc)
+			}
+			for j < len(benchMarkdownDoc) && benchMarkdownDoc[j]&0xC0 == 0x80 {
+				j++
+			}
+			r.Render(th, theme.TierTrueColor, 80, benchMarkdownDoc[:j])
+			i = j
+		}
+	}
+}
+
+// BenchmarkStreamNaive is the same stream through Markdown on every
+// tick: the cost StreamRenderer removes.
+func BenchmarkStreamNaive(b *testing.B) {
+	th := benchTheme(b)
+	b.ReportAllocs()
+	for b.Loop() {
+		for i := 0; i < len(benchMarkdownDoc); {
+			j := i + streamChunk
+			if j > len(benchMarkdownDoc) {
+				j = len(benchMarkdownDoc)
+			}
+			for j < len(benchMarkdownDoc) && benchMarkdownDoc[j]&0xC0 == 0x80 {
+				j++
+			}
+			Markdown(th, theme.TierTrueColor, 80, benchMarkdownDoc[:j])
+			i = j
+		}
+	}
+}

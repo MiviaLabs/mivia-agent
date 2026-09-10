@@ -242,14 +242,18 @@ copy need the identity.
 
 ### P1 — streaming and diffs
 
-R9. **Kill the streaming pop, within the repaint budget.** Render the
-pending tail through the same markdown path as the committed block,
-throttled to the 10-20 Hz ceiling of `ux-rules.md` rule 2.5 — the
-current 40 ms `FlushMsg` tick (`uikit/config/defaults.go:9-10`, 25 Hz)
-already sits above that line; fix both together. Commit rule: an open
-code fence or incomplete table stays in the tail buffer and commits
-atomically on close or on an idle tick (Codex tail-cell pattern). The
-tail keeps its fixed indent so commit changes styles, not layout.
+R9. **Kill the streaming pop, within the repaint budget.** Done. The
+pending tail renders through the same markdown path as the committed
+block via `render.StreamRenderer`, a stable-prefix cache
+(`internal/ui/render/stream_markdown.go`; C6,
+[chat-tui-crush-comparison.md](chat-tui-crush-comparison.md)), and
+`FlushMsg` now ticks at 66 ms (15 Hz, inside rule 2.5's 10-20 Hz
+ceiling; `uikit/config/defaults.go`), down from the prior 40 ms (25 Hz),
+which sat above that line. Commit rule: an open code fence, blockquote,
+or heading stays in the tail buffer and commits atomically once its
+boundary is safe to cut — see the type's own doc comment for the exact
+predicate. The tail keeps its fixed indent so commit changes styles, not
+layout.
 
 R10. **Follow the spec for narrow diffs.** Unified form below 120
 columns: per-file header `path (+a −d)`, number gutter, `+`/`−`

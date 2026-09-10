@@ -109,6 +109,17 @@ type Model struct {
 	// used to supply the wall-time portion of the usage footer.
 	turnStartedAt time.Time
 	modelName     string
+
+	// stream caches the rendered prefix of the in-flight text-delta
+	// span (C6). It is a POINTER on purpose: Model is copied by value on
+	// every HandleEvent (see the pending field's own comment), and the
+	// whole point of the cache is to survive across that copy chain so
+	// the same growing buffer is not rendered from scratch on every
+	// flush tick - a copy of the pointer still refers to the one
+	// renderer for this span. clearPending resets it whenever a span
+	// ends, so the NEXT span starts from a clean cache rather than
+	// inheriting one built for different text.
+	stream *render.StreamRenderer
 }
 
 // now reads the transcript's clock.
@@ -241,10 +252,21 @@ func (m Model) Clear() Model {
 	m.offset = 0
 	m.follow = true
 	m.missed = 0
-	m.pending = ""
-	m.pendingKind = ""
-	m.pendingStartedAt = time.Time{}
-	m.flushWait = false
+	// clearPending, not an inlined field reset: it also resets m.stream
+	// (the streaming-markdown cache), which every OTHER span-ending path
+	// already goes through. Inlining the reset here once let it drift
+	// out of sync with that invariant - Clear() zeroed pending/
+	// pendingKind/pendingStartedAt/flushWait but left m.stream's cached
+	// prefix (and a poisoned flag, if the span had one) pointing at the
+	// wiped conversation, silently reintroducing the O(n^2) render cost
+	// StreamRenderer exists to remove for the rest of whatever streams
+	// next. /clear is accepted mid-turn (uiadapter's handleClear does
+	// not check s.active) and the turn keeps emitting deltas afterward
+	// (chat.Session.resetSystem invalidates the history writeback, not
+	// the running turn), so this path is reachable in practice, not
+	// just in theory. Found by bug-audit; regression:
+	// TestClearResetsStreamCache.
+	m.clearPending()
 	return m
 }
 

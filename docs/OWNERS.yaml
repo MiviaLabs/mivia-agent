@@ -152,6 +152,11 @@ topics:
     owner: quality
     description: New terminal UI theme package - role reference, contrast/CVD gates, degradation ladder, how to add a theme
 
+  stream-markdown-boundary-rules:
+    path: docs/development/stream-markdown-boundary-rules.md
+    owner: quality
+    description: StreamRenderer's stable-prefix cache - why splicing rendered markdown is legal, every boundary it refuses and why, found via fuzzing
+
   chat-sync-wire:
     path: docs/product/chat-sync-wire.md
     owner: product
