@@ -626,7 +626,7 @@ func TestOpenEditorPrefillsIntervalSchedule(t *testing.T) {
 	sec.cursor = idx
 	sec.openEditor(sec.rows[idx], false)
 
-	_, _, _, _, triggerIdx, everyIdx, _, _ := sec.automationFormIndices()
+	_, _, _, _, triggerIdx, everyIdx, _, _, _ := sec.automationFormIndices()
 	if got := sec.formFields[triggerIdx].Value(); got != "every" {
 		t.Fatalf("Trigger field = %q, want %q", got, "every")
 	}
@@ -659,7 +659,7 @@ func TestOpenEditorPrefillsSkillAction(t *testing.T) {
 	}
 	sec.openEditor(sec.rows[idx], false)
 
-	_, _, _, _, _, _, actionIdx, promptIdx := sec.automationFormIndices()
+	_, _, _, _, _, _, actionIdx, promptIdx, _ := sec.automationFormIndices()
 	if got := sec.formFields[actionIdx].Value(); got != "skill" {
 		t.Fatalf("Action field = %q, want %q", got, "skill")
 	}
@@ -698,7 +698,7 @@ func TestChoiceFieldCyclesBackwardWithLeftKey(t *testing.T) {
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	sec = pressKey(sec, "n")
 
-	_, _, _, enabledIdx, _, _, _, _ := sec.automationFormIndices()
+	_, _, _, enabledIdx, _, _, _, _, _ := sec.automationFormIndices()
 	for sec.formFocus != enabledIdx {
 		sec = pressKey(sec, "tab")
 	}
@@ -869,5 +869,237 @@ func TestRenderEditorShowsNoticeInDangerRole(t *testing.T) {
 	plain := ansi.Strip(sec.View())
 	if !strings.Contains(plain, "a distinctive editor-only notice") {
 		t.Fatalf("expected the editor's own notice line to render, got:\n%s", plain)
+	}
+}
+
+// TestAutomationFormIndicesHasNineFields is an index-count guard: the
+// Unattended field is field #9 (index 8 for new, 7 for edit), appended
+// LAST after Prompt/Skill. A regression that drops or reorders it would
+// otherwise only surface as a subtle off-by-one in some other field's
+// index.
+func TestAutomationFormIndicesHasNineFields(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+
+	idIdx, nameIdx, descIdx, enabledIdx, triggerIdx, everyIdx, actionIdx, promptIdx, unattendedIdx := sec.automationFormIndices()
+	if got, want := len(sec.formFields), 9; got != want {
+		t.Fatalf("len(sec.formFields) = %d, want %d", got, want)
+	}
+	if unattendedIdx != 8 {
+		t.Fatalf("unattendedIdx = %d, want 8 (last field on a new-automation form)", unattendedIdx)
+	}
+	// Sanity: every earlier index is still where it always was.
+	if idIdx != 0 || nameIdx != 1 || descIdx != 2 || enabledIdx != 3 || triggerIdx != 4 || everyIdx != 5 || actionIdx != 6 || promptIdx != 7 {
+		t.Fatalf("earlier indices shifted: id=%d name=%d desc=%d enabled=%d trigger=%d every=%d action=%d prompt=%d",
+			idIdx, nameIdx, descIdx, enabledIdx, triggerIdx, everyIdx, actionIdx, promptIdx)
+	}
+}
+
+// TestNewAutomationDefaultsUnattendedToDeny covers openEditor's isNew=true
+// path: a fresh automation with no editOriginal to prefill from must
+// default the Unattended field to "deny", not leave it ambiguous.
+func TestNewAutomationDefaultsUnattendedToDeny(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+
+	_, _, _, _, _, _, _, _, unattendedIdx := sec.automationFormIndices()
+	if got := sec.formFields[unattendedIdx].Value(); got != "deny" {
+		t.Fatalf("Unattended field on a new automation = %q, want %q", got, "deny")
+	}
+}
+
+// TestSettingUnattendedToAutoAndSavingPersistsIt covers automationFromForm's
+// explicit "auto" mapping: cycling the Unattended field to "auto" and
+// saving must persist ports.UnattendedPolicyAuto on the stored automation.
+func TestSettingUnattendedToAutoAndSavingPersistsIt(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+
+	sec = pressKey(sec, "n")
+	sec = typeAutomationText(sec, "auto-policy-automation")
+	sec = pressKey(sec, "tab") // Name
+	sec = typeAutomationText(sec, "Auto Policy Automation")
+	sec = pressKey(sec, "tab") // Description
+	sec = pressKey(sec, "tab") // Enabled
+	sec = pressKey(sec, "tab") // Trigger
+	sec = pressKey(sec, "tab") // Every
+	sec = pressKey(sec, "tab") // Action
+	sec = pressKey(sec, "tab") // Prompt/Skill
+	sec = typeAutomationText(sec, "do it")
+	sec = pressKey(sec, "tab") // Unattended
+	sec = pressKey(sec, "space")
+	if sec.formFields[sec.formFocus].Value() != "auto" {
+		t.Fatalf("expected Unattended cycled to 'auto', got %q", sec.formFields[sec.formFocus].Value())
+	}
+
+	sec, cmd := pressKeyCmd(sec, "ctrl+s")
+	sec = awaitAutomationsSaveTest(t, sec, cmd)
+
+	var created *ports.Automation
+	for _, a := range h.SettingsAdapters().Automations.Automations() {
+		if a.ID == "auto-policy-automation" {
+			aCopy := a
+			created = &aCopy
+		}
+	}
+	if created == nil {
+		t.Fatal("expected new automation 'auto-policy-automation' in store, but not found")
+	}
+	if created.Unattended != ports.UnattendedPolicyAuto {
+		t.Fatalf("saved Unattended = %v, want %v", created.Unattended, ports.UnattendedPolicyAuto)
+	}
+}
+
+// TestOpenEditorPrefillsAutoUnattendedPolicy covers openEditor's
+// edit-form prefill for an existing automation whose Unattended policy
+// is already "auto": the field must reflect that, not reset to "deny".
+func TestOpenEditorPrefillsAutoUnattendedPolicy(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "prefill-auto-automation", Name: "Prefill Auto",
+		Enabled:    true,
+		Trigger:    ports.TriggerSpec{Kind: ports.TriggerManual},
+		Action:     ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "hi"}}},
+		Unattended: ports.UnattendedPolicyAuto,
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "prefill-auto-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.openEditor(sec.rows[idx], false)
+
+	_, _, _, _, _, _, _, _, unattendedIdx := sec.automationFormIndices()
+	if got := sec.formFields[unattendedIdx].Value(); got != "auto" {
+		t.Fatalf("Unattended field = %q, want %q (prefilled from the existing automation)", got, "auto")
+	}
+}
+
+// TestSettingUnattendedBackToDenyAndSavingPersistsIt covers the reverse
+// direction: an existing "auto" automation, edited and cycled back to
+// "deny", must save as ports.UnattendedPolicyDeny.
+func TestSettingUnattendedBackToDenyAndSavingPersistsIt(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "revert-to-deny-automation", Name: "Revert To Deny",
+		Enabled:    true,
+		Trigger:    ports.TriggerSpec{Kind: ports.TriggerManual},
+		Action:     ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "hi"}}},
+		Unattended: ports.UnattendedPolicyAuto,
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "revert-to-deny-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.cursor = idx
+	sec = pressKey(sec, "enter")
+	if !sec.editing {
+		t.Fatal("expected enter to open the prefilled editor")
+	}
+
+	_, _, _, _, _, _, _, _, unattendedIdx := sec.automationFormIndices()
+	for sec.formFocus != unattendedIdx {
+		sec = pressKey(sec, "tab")
+	}
+	if sec.formFields[unattendedIdx].Value() != "auto" {
+		t.Fatalf("expected the field to prefill 'auto' before cycling, got %q", sec.formFields[unattendedIdx].Value())
+	}
+	sec = pressKey(sec, "space")
+	if sec.formFields[unattendedIdx].Value() != "deny" {
+		t.Fatalf("expected the field cycled to 'deny', got %q", sec.formFields[unattendedIdx].Value())
+	}
+
+	sec, cmd := pressKeyCmd(sec, "ctrl+s")
+	sec = awaitAutomationsSaveTest(t, sec, cmd)
+
+	var updated *ports.Automation
+	for _, a := range h.SettingsAdapters().Automations.Automations() {
+		if a.ID == "revert-to-deny-automation" {
+			aCopy := a
+			updated = &aCopy
+		}
+	}
+	if updated == nil {
+		t.Fatal("automation missing from store after edit")
+	}
+	if updated.Unattended != ports.UnattendedPolicyDeny {
+		t.Fatalf("saved Unattended = %v, want %v", updated.Unattended, ports.UnattendedPolicyDeny)
+	}
+}
+
+// TestUnattendedFieldCyclesWithBothChoiceKeys is the negative guard the
+// plan calls for: the Unattended field must not merely RENDER as a
+// choice field, it must actually be CYCLABLE via the same choice-cycle
+// keys every other Choice field responds to (handleEditorKey's isChoice
+// disjunction must include unattendedIdx). Exercises both "space"
+// (forward) and "left" (backward).
+func TestUnattendedFieldCyclesWithBothChoiceKeys(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+
+	_, _, _, _, _, _, _, _, unattendedIdx := sec.automationFormIndices()
+	for sec.formFocus != unattendedIdx {
+		sec = pressKey(sec, "tab")
+	}
+	if got := sec.formFields[unattendedIdx].Value(); got != "deny" {
+		t.Fatalf("expected initial value 'deny', got %q", got)
+	}
+	sec = pressKey(sec, "space")
+	if got := sec.formFields[unattendedIdx].Value(); got != "auto" {
+		t.Fatalf("expected 'space' to cycle the Unattended field to 'auto', got %q", got)
+	}
+	sec = pressKey(sec, "left")
+	if got := sec.formFields[unattendedIdx].Value(); got != "deny" {
+		t.Fatalf("expected 'left' to cycle the Unattended field back to 'deny', got %q", got)
+	}
+}
+
+// TestAutoWarningOnlyShownWhenUnattendedIsAuto covers renderEditor's
+// caution line: it must appear when the field currently reads "auto"
+// and must NOT appear at any other time (default "deny" state, or after
+// cycling back to "deny").
+func TestAutoWarningOnlyShownWhenUnattendedIsAuto(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+
+	const warning = "unattended tool calls will be auto-approved"
+
+	if plain := ansi.Strip(sec.View()); strings.Contains(plain, warning) {
+		t.Fatalf("expected no auto-approval warning while Unattended=deny, got:\n%s", plain)
+	}
+
+	_, _, _, _, _, _, _, _, unattendedIdx := sec.automationFormIndices()
+	for sec.formFocus != unattendedIdx {
+		sec = pressKey(sec, "tab")
+	}
+	sec = pressKey(sec, "space")
+	if sec.formFields[unattendedIdx].Value() != "auto" {
+		t.Fatalf("expected Unattended cycled to 'auto', got %q", sec.formFields[unattendedIdx].Value())
+	}
+	if plain := ansi.Strip(sec.View()); !strings.Contains(plain, warning) {
+		t.Fatalf("expected the auto-approval warning while Unattended=auto, got:\n%s", plain)
+	}
+
+	sec = pressKey(sec, "left")
+	if sec.formFields[unattendedIdx].Value() != "deny" {
+		t.Fatalf("expected Unattended cycled back to 'deny', got %q", sec.formFields[unattendedIdx].Value())
+	}
+	if plain := ansi.Strip(sec.View()); strings.Contains(plain, warning) {
+		t.Fatalf("expected no auto-approval warning after cycling back to 'deny', got:\n%s", plain)
 	}
 }

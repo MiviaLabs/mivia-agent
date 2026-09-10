@@ -28,9 +28,12 @@ func (s *automationsSection) automationFormBase() int {
 
 // automationFormIndices names every field's slot in s.formFields, given
 // the current isNew/edit form shape. idIdx is meaningful only when isNew.
-func (s *automationsSection) automationFormIndices() (idIdx, nameIdx, descIdx, enabledIdx, triggerIdx, everyIdx, actionIdx, promptIdx int) {
+// unattendedIdx is always the LAST field, appended after Prompt/Skill, so
+// its index is always the highest and every existing index above stays
+// unchanged.
+func (s *automationsSection) automationFormIndices() (idIdx, nameIdx, descIdx, enabledIdx, triggerIdx, everyIdx, actionIdx, promptIdx, unattendedIdx int) {
 	base := s.automationFormBase()
-	return 0, 1 + base, 2 + base, 3 + base, 4 + base, 5 + base, 6 + base, 7 + base
+	return 0, 1 + base, 2 + base, 3 + base, 4 + base, 5 + base, 6 + base, 7 + base, 8 + base
 }
 
 // openEditor opens the create/edit form over a, the automation as it
@@ -85,6 +88,18 @@ func (s *automationsSection) openEditor(a ports.Automation, isNew bool) {
 		}
 	}
 
+	// unattendedChoice defaults to "deny" for a new automation (isNew=true
+	// has no editOriginal.Unattended to prefill from - a.Unattended on the
+	// blank Automation{} passed to openEditor is already the ports zero
+	// value, UnattendedPolicyDeny, so this branch is really just naming
+	// that default explicitly rather than relying on the zero value by
+	// accident). Editing an existing automation prefills from its real
+	// current value.
+	unattendedChoice := "deny"
+	if a.Unattended == ports.UnattendedPolicyAuto {
+		unattendedChoice = "auto"
+	}
+
 	var fields []field.Model
 	if isNew {
 		fields = append(fields, mkText("ID:           ", a.ID))
@@ -97,6 +112,7 @@ func (s *automationsSection) openEditor(a ports.Automation, isNew bool) {
 		mkText("Every:        ", everyVal),
 		mkChoice("Action:       ", []string{"prompt", "skill"}, actionChoice),
 		mkText("Prompt/Skill: ", promptVal),
+		mkChoice("Unattended:   ", []string{"deny", "auto"}, unattendedChoice),
 	)
 	s.formFields = fields
 	s.formFocus = 0
@@ -137,8 +153,8 @@ func (s *automationsSection) handleEditorKey(msg tea.KeyPressMsg) (section, tea.
 		return s, nil
 	}
 
-	_, _, _, enabledIdx, triggerIdx, _, actionIdx, _ := s.automationFormIndices()
-	isChoice := s.formFocus == enabledIdx || s.formFocus == triggerIdx || s.formFocus == actionIdx
+	_, _, _, enabledIdx, triggerIdx, _, actionIdx, _, unattendedIdx := s.automationFormIndices()
+	isChoice := s.formFocus == enabledIdx || s.formFocus == triggerIdx || s.formFocus == actionIdx || s.formFocus == unattendedIdx
 	if isChoice {
 		switch msg.String() {
 		case " ", "space", "enter", "right", "l":
@@ -191,7 +207,7 @@ func (s *automationsSection) editorRepresentable(a ports.Automation) bool {
 // survives untouched. A non-empty second return means the form is
 // invalid; the caller must not call Apply.
 func (s *automationsSection) automationFromForm() (ports.Automation, string) {
-	idIdx, nameIdx, descIdx, enabledIdx, triggerIdx, everyIdx, actionIdx, promptIdx := s.automationFormIndices()
+	idIdx, nameIdx, descIdx, enabledIdx, triggerIdx, everyIdx, actionIdx, promptIdx, unattendedIdx := s.automationFormIndices()
 
 	result := s.editOriginal
 
@@ -245,6 +261,13 @@ func (s *automationsSection) automationFromForm() (ports.Automation, string) {
 		result.Action = ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: promptVal}}}
 	}
 
+	switch s.formFields[unattendedIdx].Value() {
+	case "auto":
+		result.Unattended = ports.UnattendedPolicyAuto
+	default:
+		result.Unattended = ports.UnattendedPolicyDeny
+	}
+
 	return result, ""
 }
 
@@ -278,6 +301,11 @@ func (s *automationsSection) renderEditor() string {
 
 	for _, f := range s.formFields {
 		lines = append(lines, "  "+f.View())
+	}
+
+	_, _, _, _, _, _, _, _, unattendedIdx := s.automationFormIndices()
+	if unattendedIdx >= 0 && unattendedIdx < len(s.formFields) && s.formFields[unattendedIdx].Value() == "auto" {
+		lines = append(lines, "  "+subtle.Render("caution: unattended tool calls will be auto-approved for this automation"))
 	}
 
 	lines = append(lines, "")
