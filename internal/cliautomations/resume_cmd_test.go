@@ -2,6 +2,7 @@ package cliautomations
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
 // TestResumeCommandRequiresExactlyOneRunID proves `automations resume`
@@ -117,5 +119,77 @@ func TestResumeCommandSucceedsPrintsRunResult(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "state=succeeded") {
 		t.Fatalf("runResumeCommand stdout = %q, want state=succeeded", stdout)
+	}
+}
+
+// TestResumeCommandReturnsErrorOnRealResumeFailure covers
+// resume_cmd.go's own runFailed(run.State) branch: a resume that
+// genuinely fails (not a not-found/not-resumable refusal) must still
+// print the run result AND return a non-nil error naming the failure.
+//
+// Built by driving a REAL RunOnce to a genuine RunFailed state first
+// (against a failing stub provider - this durably saves the run's
+// session before the step fails, per spawnRunSession's own Save-before-
+// steps ordering), then resuming that exact run id against the SAME
+// still-failing provider, so ResumeRun's own step dispatch fails again
+// for real.
+func TestResumeCommandReturnsErrorOnRealResumeFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
+		t.Fatalf("mkdir .mivia: %v", err)
+	}
+	stubURL := failingStubProviderServer(t)
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	t.Setenv("CLIAUTOMATIONS_RESUME_FAIL_TEST_KEY", "test-key")
+	cfg := `[provider]
+name = "openrouter"
+
+[providers.openrouter]
+default_model = "test/model"
+base_url = "` + stubURL + `"
+api_key_env = "CLIAUTOMATIONS_RESUME_FAIL_TEST_KEY"
+models = [{ name = "test/model", context_window_tokens = 128000 }]
+`
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write mivia.toml: %v", err)
+	}
+	spec := automation.Spec{
+		ID:      "resume-will-fail",
+		Name:    "resume-will-fail",
+		Enabled: true,
+		Steps:   []automation.Step{{Kind: automation.StepPrompt, Prompt: "hi"}},
+	}
+	if err := automation.SaveSpecs(ports.ScopeProject, root, []automation.Spec{spec}); err != nil {
+		t.Fatalf("SaveSpecs: %v", err)
+	}
+
+	// First fire: RunOnce against the failing provider, producing a real
+	// RunFailed row with a durably-saved session.
+	if err := runRunCommand([]string{"--workspace", root, "resume-will-fail"}); err == nil {
+		t.Fatal("runRunCommand against a genuinely failing provider: got nil error, want the run's failure surfaced")
+	}
+
+	svc, _, cleanup, err := buildService(root, "")
+	if err != nil {
+		t.Fatalf("buildService: %v", err)
+	}
+	runs := svc.Runs("resume-will-fail", 1)
+	cleanup()
+	if len(runs) != 1 {
+		t.Fatalf("Runs after the first failed fire = %d, want exactly 1", len(runs))
+	}
+	runID := runs[0].ID
+
+	// Resume the same run against the SAME still-failing provider: the
+	// step fails again for real, exercising resume_cmd.go's own
+	// runFailed(run.State) branch.
+	stdout, _ := captureOutput(t, func() {
+		err := runResumeCommand([]string{"--workspace", root, runID})
+		if err == nil {
+			t.Fatal("runResumeCommand against a genuinely failing provider: got nil error, want the resumed run's failure surfaced")
+		}
+	})
+	if !strings.Contains(stdout, "state=failed") {
+		t.Fatalf("runResumeCommand stdout = %q, want it to have printed the failed run result before returning the error", stdout)
 	}
 }

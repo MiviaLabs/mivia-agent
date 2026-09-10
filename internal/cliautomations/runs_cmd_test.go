@@ -172,3 +172,50 @@ func TestRunsCommandMalformedLimitErrors(t *testing.T) {
 		t.Fatalf("runRunsCommand malformed --limit error = %q, want it naming --limit", err.Error())
 	}
 }
+
+// TestRunsCommandAutomationFlagMissingValueErrors covers
+// flagValueSeam's own "requires a value" error branch for --automation:
+// the flag given with nothing (or another flag) after it, rather than
+// a malformed value.
+func TestRunsCommandAutomationFlagMissingValueErrors(t *testing.T) {
+	if err := runRunsCommand([]string{"--automation"}); err == nil {
+		t.Fatal("runRunsCommand with --automation missing its value: got nil error, want rejection")
+	}
+}
+
+// TestRunsCommandLimitFlagMissingValueErrors covers flagValueSeam's own
+// "requires a value" error branch for --limit specifically (distinct
+// from TestRunsCommandMalformedLimitErrors, which covers strconv.Atoi's
+// error on a present-but-non-integer value).
+func TestRunsCommandLimitFlagMissingValueErrors(t *testing.T) {
+	if err := runRunsCommand([]string{"--limit"}); err == nil {
+		t.Fatal("runRunsCommand with --limit missing its value: got nil error, want rejection")
+	}
+}
+
+// TestRunsCommandAcrossAllAutomationsTruncatesToLimit proves the
+// no---automation cross-automation aggregation path's own truncation
+// branch (`if len(runs) > limit { runs = runs[:limit] }`): more runs
+// exist across automations than --limit allows, and the printed output
+// must still be exactly `limit` rows, the most recent ones.
+func TestRunsCommandAcrossAllAutomationsTruncatesToLimit(t *testing.T) {
+	root := seedTwoAutomations(t, "trunc-a", "trunc-b")
+	base := time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)
+	insertAutomationRun(t, root, storage.AutomationRun{ID: "trunc-a-1", AutomationID: "trunc-a", State: "succeeded", StartedAt: base.Add(1 * time.Hour).Format(time.RFC3339)})
+	insertAutomationRun(t, root, storage.AutomationRun{ID: "trunc-a-2", AutomationID: "trunc-a", State: "succeeded", StartedAt: base.Add(3 * time.Hour).Format(time.RFC3339)})
+	insertAutomationRun(t, root, storage.AutomationRun{ID: "trunc-b-1", AutomationID: "trunc-b", State: "succeeded", StartedAt: base.Add(2 * time.Hour).Format(time.RFC3339)})
+	insertAutomationRun(t, root, storage.AutomationRun{ID: "trunc-b-2", AutomationID: "trunc-b", State: "succeeded", StartedAt: base.Add(4 * time.Hour).Format(time.RFC3339)})
+
+	stdout, _ := captureOutput(t, func() {
+		if err := runRunsCommand([]string{"--workspace", root, "--limit", "2"}); err != nil {
+			t.Fatalf("runRunsCommand: %v", err)
+		}
+	})
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("runs (all automations) --limit 2 output = %q, want exactly 2 lines (4 runs exist, truncation must apply)", stdout)
+	}
+	if !strings.HasPrefix(lines[0], "trunc-b-2\t") || !strings.HasPrefix(lines[1], "trunc-a-2\t") {
+		t.Fatalf("runs (all automations) --limit 2 output = %q, want the two most recent runs (trunc-b-2, trunc-a-2)", stdout)
+	}
+}

@@ -495,16 +495,21 @@
       ],
       "reason": "runRunCommand's own spawn.CloseLastRun()-error log branch: CloseLastRun's only failure is store.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class already accepted for internal/memory/markdown_source.go's atomicWrite, internal/chatsync/identity.go's SaveIdentity, and this repo's other writeFileAtomic/writeFileDurably entries. TestRunCommandCallsCloseLastRunAfterRunOnce and TestRunCommandCallsCloseLastRunOnRunOnceError already cover CloseLastRun's own SUCCESS call on both the RunOnce-succeeded and RunOnce-failed paths. Line numbers shifted from the prior accepted set (35-37) by +5: this chunk's --wait flag additions (parseWaitFlag and its call site, both earlier in this same function) pushed this block down; the branch itself is unchanged and still genuinely unreachable."
     },
+    "internal/cliautomations/resume_cmd.go": {
+      "lines": [
+        36,
+        37
+      ],
+      "reason": "runResumeCommand's own spawn.CloseLastRun()-error log branch: the exact same unforceable live-fd-Close class as run_cmd.go's own CloseLastRun log branch (see that entry above) - runResumeCommand mirrors runRunCommand's shape precisely per its own doc comment. TestResumeCommandClosesSessionStoreOnErrorPath already covers CloseLastRun's own call on the ResumeRun-failed path (proving it runs, not that it can be made to error)."
+    },
     "internal/cliautomations/serve_cmd.go": {
       "lines": [
         18,
         19,
         20,
-        45,
-        46,
-        47
+        21
       ],
-      "reason": "Two clusters. (1) 18-20: serveSignalContext's own default func literal body (signal.NotifyContext against real OS signals) - every test in this package substitutes serveSignalContext with a test-controlled context (TestServeCommandExitsCleanlyOnSignal, TestRunAutomationsServeDispatchesThroughTheSwitch) rather than invoking the real default, deliberately: sending the test process a real SIGINT/SIGTERM is unsafe before signal.NotifyContext's handler installs (see the var's own doc comment) and could terminate the whole shared test binary. (2) 45-47: runServeCommand's own svc.Serve non-context.Canceled error-propagation branch - every test's substituted context is cancelled (the clean-shutdown case, context.Canceled, which explicitly does NOT hit this branch per the guard's own condition), and forcing Service.Serve to return a DIFFERENT real error needs the same live scheduler-loop failure surface internal/automation's own serve_test.go exercises directly at the Service level, not through this thin CLI wrapper."
+      "reason": "serveSignalContext's own default func literal body (signal.NotifyContext against real OS signals, lines 18-21). Every test in this package substitutes serveSignalContext with a test-controlled context (TestServeCommandExitsCleanlyOnSignal, TestServeCommandPropagatesNonCancelServeError, TestServeCommandSweepsInterruptedAtStartup) rather than invoking the real default, deliberately: sending the test process a real SIGINT/SIGTERM is unsafe before signal.NotifyContext's handler installs (see the var's own doc comment) and could terminate the whole shared test binary. The former second cluster (runServeCommand's own svc.Serve non-context.Canceled error-propagation branch) is now covered for real by TestServeCommandPropagatesNonCancelServeError, which substitutes a context.WithTimeout context that expires on its own (context.DeadlineExceeded, not context.Canceled) rather than being explicitly Cancel()-ed, so Service.Serve's own ctx.Err() return genuinely exercises this branch without needing a live scheduler-loop failure."
     },
     "internal/cliautomations/spawner.go": {
       "lines": [

@@ -299,6 +299,54 @@ func TestRunCommandWaitPrintsFullDetail(t *testing.T) {
 	}
 }
 
+// TestRunCommandWaitPrintsMessageForFailedRun proves printRunDetail's
+// own r.Message != "" branch: a --wait run against a genuinely failing
+// provider must render a "message: " line naming the failure, not just
+// the state.
+func TestRunCommandWaitPrintsMessageForFailedRun(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
+		t.Fatalf("mkdir .mivia: %v", err)
+	}
+	stubURL := failingStubProviderServer(t)
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	t.Setenv("CLIAUTOMATIONS_WAIT_FAIL_TEST_KEY", "test-key")
+	cfg := `[provider]
+name = "openrouter"
+
+[providers.openrouter]
+default_model = "test/model"
+base_url = "` + stubURL + `"
+api_key_env = "CLIAUTOMATIONS_WAIT_FAIL_TEST_KEY"
+models = [{ name = "test/model", context_window_tokens = 128000 }]
+`
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write mivia.toml: %v", err)
+	}
+	spec := automation.Spec{
+		ID:      "wait-will-fail",
+		Name:    "wait-will-fail",
+		Enabled: true,
+		Steps:   []automation.Step{{Kind: automation.StepPrompt, Prompt: "hi"}},
+	}
+	if err := automation.SaveSpecs(ports.ScopeProject, root, []automation.Spec{spec}); err != nil {
+		t.Fatalf("SaveSpecs: %v", err)
+	}
+
+	stdout, _ := captureOutput(t, func() {
+		err := runRunCommand([]string{"--workspace", root, "--wait", "wait-will-fail"})
+		if err == nil {
+			t.Fatal("runRunCommand --wait against a genuinely failing provider: got nil error, want the run's failure surfaced")
+		}
+	})
+	if !strings.Contains(stdout, "state: failed") {
+		t.Fatalf("runRunCommand --wait stdout = %q, want state: failed", stdout)
+	}
+	if !strings.Contains(stdout, "message: ") {
+		t.Fatalf("runRunCommand --wait stdout = %q, want a message: line naming the failure (printRunDetail's r.Message != \"\" branch)", stdout)
+	}
+}
+
 // TestRunCommandWithoutWaitPrintsOneLineSummary proves the default (no
 // --wait) path is unchanged: still printRunResult's one-line
 // "run_id=... state=..." form, never the full detail view.
