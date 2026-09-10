@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -163,6 +164,32 @@ func TestUnavailableAutomationsSectionSaysSo(t *testing.T) {
 	sec := newTestAutomationsSection(t, nil)
 	if got := ansi.Strip(sec.View()); !strings.Contains(got, "unavailable") {
 		t.Errorf("expected the nil-store Automations section to say unavailable, got %q", got)
+	}
+}
+
+// TestAutomationsHintsAdvertiseTriggerAndNew pins a real gap found
+// after the create/edit editor landed: "t" (trigger a manual run) and
+// "n" (open the new-automation form) both already worked as key
+// bindings, but Hints() never listed them, so the on-screen hint bar
+// never told a user either affordance existed - the exact "how do I
+// even run this" question a user would hit with no visible CTA.
+func TestAutomationsHintsAdvertiseTriggerAndNew(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	hints := sec.Hints()
+	has := func(id keymap.ID) bool {
+		for _, h := range hints {
+			if h == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(keymap.IDSettingsTrigger) {
+		t.Error("expected Hints() to advertise IDSettingsTrigger (t: trigger a manual run)")
+	}
+	if !has(keymap.IDSettingsNew) {
+		t.Error("expected Hints() to advertise IDSettingsNew (n: add a new automation)")
 	}
 }
 

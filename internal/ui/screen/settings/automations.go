@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/field"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -42,6 +43,15 @@ type automationsSection struct {
 	watch   ports.RunHandle
 	watchID string
 	liveRun *ports.Run
+
+	// Editing / Add Form State. There is no confirm-delete step for
+	// automations (unlike mcp/agents), so this is simpler than those
+	// sections' equivalent fields.
+	editing      bool
+	isNew        bool
+	formFields   []field.Model
+	formFocus    int
+	editOriginal ports.Automation
 }
 
 func newAutomationsSection(store ports.AutomationSettings) *automationsSection {
@@ -49,6 +59,14 @@ func newAutomationsSection(store ports.AutomationSettings) *automationsSection {
 }
 
 func (s *automationsSection) Title() string { return "Automations" }
+
+// CapturingInput reports true while the create/edit form is open, so
+// settings.go's handleKey routes every key straight to this section's
+// own Update instead of letting ContextSettings bindings (which would
+// steal letters like "n" or "e" the form needs as literal text) match
+// first - the same gate mcpSection.CapturingInput and
+// agentsSection.CapturingInput already provide.
+func (s *automationsSection) CapturingInput() bool { return s.editing }
 
 func (s *automationsSection) SetSize(w, h int) { s.width, s.height = w, h }
 
@@ -150,7 +168,18 @@ func (s *automationsSection) handleRunUpdate(run ports.Run) (section, tea.Cmd) {
 }
 
 func (s *automationsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
+	// The editor's own key handling must run BEFORE the empty-list guard
+	// below: that guard used to swallow every key including "n" once the
+	// list was empty, which meant a fresh workspace's Automations card
+	// (no automations defined yet) could never open the "new automation"
+	// form at all - the reported bug this change fixes.
+	if s.editing {
+		return s.handleEditorKey(msg)
+	}
 	if s.store == nil || len(s.rows) == 0 {
+		if msg.String() == "n" {
+			s.openEditor(ports.Automation{Enabled: true, Trigger: ports.TriggerSpec{Kind: ports.TriggerManual}}, true)
+		}
 		return s, nil
 	}
 	switch msg.String() {
@@ -175,7 +204,13 @@ func (s *automationsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 	case "x":
 		return s.remove()
 	case "n":
-		s.notice = "adding an automation is not available in this build yet"
+		s.openEditor(ports.Automation{Enabled: true, Trigger: ports.TriggerSpec{Kind: ports.TriggerManual}}, true)
+	case "enter", "e":
+		if s.editorRepresentable(s.rows[s.cursor]) {
+			s.openEditor(s.rows[s.cursor], false)
+		} else {
+			s.notice = "editing this automation is not available in this build yet (multi-step action or cron/at-times schedule)"
+		}
 	}
 	return s, nil
 }
@@ -228,6 +263,9 @@ func (s *automationsSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("Automations is unavailable.")
 	}
+	if s.editing {
+		return s.renderEditor()
+	}
 	cells := make([][]string, len(s.rows))
 	for i, row := range s.rows {
 		cells[i] = s.renderCells(row)
@@ -262,5 +300,13 @@ func (s *automationsSection) View() string {
 }
 
 func (s *automationsSection) Hints() []keymap.ID {
-	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle, keymap.IDSettingsDelete}
+	if s.editing {
+		return []keymap.ID{
+			keymap.IDSettingsUp,
+			keymap.IDSettingsDown,
+			keymap.IDSettingsToggle,
+			keymap.IDSettingsBack,
+		}
+	}
+	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle, keymap.IDSettingsTrigger, keymap.IDSettingsNew, keymap.IDSettingsDelete}
 }
