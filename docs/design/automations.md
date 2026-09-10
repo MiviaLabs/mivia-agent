@@ -125,7 +125,7 @@ func (s *Service) Apply(ctx context.Context, scope ports.Scope, e ports.Automati
 func (s *Service) Watch(ctx context.Context, automationID string) (ports.RunHandle, error)
 
 func (s *Service) Serve(ctx context.Context) error                                  // cron loop; missed fires SKIPPED
-func (s *Service) RunOnce(ctx context.Context, automationID string) (ports.Run, error)
+func (s *Service) RunOnce(ctx context.Context, automationID string, trigger ports.TriggerKind) (ports.Run, error)
 func (s *Service) ResumeRun(ctx context.Context, runID string) error                 // restart at step_index+1
 func (s *Service) SweepInterrupted(ctx context.Context) (int, error)
 ```
@@ -459,9 +459,56 @@ Sequenced so the wiring shape is proven before anything expensive is built on it
    transitions, `RunFailKind` classification (D7, D13).
 6. **Executor.** Worktree creation (D3), `SessionSpawner.CreateFreshInDir`, headless turn
    from chunk 2, per-step dispatch (D2), step-index checkpointing, unattended policy (D8).
-7. **Serve loop.** Cron ticker over enabled automations.
+7. **Serve loop.** Cron ticker over enabled automations. Implemented as
+   `Service.Serve(ctx)` (`internal/automation/serve.go`): a package-private
+   `deadlineMap` tracks each enabled scheduled automation's next-fire instant
+   independently, keyed by automation ID (not one global "next tick" scalar).
+   **DL-1 invariant:** no map entry ever holds the zero `time.Time{}` value,
+   since `due()`'s comparison (`!deadline.After(now)`) would treat a stored
+   zero as "always due" and fire that automation every tick forever (a
+   fire-storm). The map has exactly two guarded write sites — `refresh`'s
+   never-seen branch and `advance` — both gated by an explicit `IsZero()`
+   check on `NextFire`'s three-outcome contract (real time / exhausted-zero /
+   error) before ever assigning. `refresh` never recomputes an
+   already-armed deadline (recomputing on every tick is what caused an
+   earlier draft's starvation bug — an interval automation's deadline was
+   pushed forward every tick and never actually elapsed); only `advance`,
+   called right after a real fire, may move a deadline forward, using
+   `max(firedDeadline, now)` so a daemon that oversleeps several intervals
+   still yields exactly one future fire (D6), never a backlog replay. Each
+   tick fires every due automation **sequentially, never concurrently** —
+   load-bearing for `cliautomations.HeadlessSpawner` (chunk 9), which tracks
+   only one in-flight session at a time and is unsafe under concurrent
+   dispatch. `Serve` does not call `sweepInterrupted` (D13's startup sweep
+   stays chunk 8's concern). A per-automation `RunOnce` error is logged, not
+   fatal — one broken automation must not wedge every other one's schedule.
 8. **Resume.** Reopen saved session, restart at `step_index + 1`.
-9. **CLI** (D14).
+9. **CLI** (D14). `internal/cliautomations` (sibling of `internal/cli`,
+   matching `cliworkflow`/`cliworktree`/`clichat`'s shape) implements
+   `mivia automations list|show <id>|run <id>|serve`. `run`/`serve` are
+   backed by `HeadlessSpawner`, a second, independent
+   `automation.SessionSpawner` implementation alongside `internal/newtui`'s
+   TUI-bound one (D4): it builds a bare `*chat.Session` directly via
+   `composition.BuildSession` and wraps it with `uiadapter.NewConversation`
+   — never `uiadapter.SessionPool`, `BindFunc`, or `NewSessionPool` (a TUI
+   session pool cannot back a headless daemon: its constructor needs a live
+   interactive session/agent-state that a `serve` process never has).
+   Because `automation.SessionSpawner`'s two methods give no end-of-run
+   signal, and the session ID minted inside `spawnRunSession` never escapes
+   `RunOnce` (`ports.Run` carries no session field, and widening it was
+   deliberately out of scope), `HeadlessSpawner` tracks a single
+   in-flight session's checkpoint store (not an ID-keyed map) and exposes an
+   ID-less `CloseLastRun() error` — correct only because `Serve`'s own
+   sequential dispatch guarantees at most one session is ever open at a
+   time. `Serve`'s loop discovers this capability via an optional type
+   assertion (`spawn.(interface{ CloseLastRun() error })`) rather than
+   widening `SessionSpawner` itself, so the TUI's spawner (which does not
+   implement it) is unaffected. `CreateFreshInDir` defensively closes any
+   leftover `current` store before overwriting it (logged, not silent) as a
+   safety net against a skipped cleanup — but this net only protects against
+   a *dead* prior session; it would actively corrupt a still-*live* one, so
+   `HeadlessSpawner` is explicitly not safe under any future
+   concurrent-automation-dispatch design without a real redesign.
 10. **Docs + `docs/OWNERS.yaml` registration** for this file.
 
 ## Tests

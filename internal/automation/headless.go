@@ -52,10 +52,37 @@ func sendTurnHeadless(parent context.Context, conv ports.Conversation, prompt st
 		return nil, fmt.Errorf("automation: send turn: %w", err)
 	}
 	var events []uievent.Event
+	var turnErr error
+	var lastNotice string
 	for ev := range h.Events() { // drain to CLOSE - see doc comment above
 		events = append(events, ev)
+		switch ev.Kind {
+		case uievent.KindError:
+			if body, ok := ev.Body.(uievent.ErrorBody); ok {
+				turnErr = fmt.Errorf("automation: turn failed: %s", body.Text)
+			} else {
+				turnErr = fmt.Errorf("automation: turn failed")
+			}
+		case uievent.KindNotice:
+			// emitTurnEndIfWinner (internal/uiadapter/conversation.go)
+			// sends the turn's error text as a KindNotice immediately
+			// before the terminal KindTurnEnd{Reason:"error"} - captured
+			// here so the TurnEnd branch below can report it verbatim
+			// instead of a bare "turn ended in error".
+			if body, ok := ev.Body.(uievent.NoticeBody); ok {
+				lastNotice = body.Text
+			}
+		case uievent.KindTurnEnd:
+			if body, ok := ev.Body.(uievent.TurnEndBody); ok && body.Reason == "error" && turnErr == nil {
+				if lastNotice != "" {
+					turnErr = fmt.Errorf("automation: turn failed: %s", lastNotice)
+				} else {
+					turnErr = fmt.Errorf("automation: turn ended in error")
+				}
+			}
+		}
 	}
-	return events, nil
+	return events, turnErr
 }
 
 // runTurnHeadless spawns a fresh conversation in worktreeDir, sends

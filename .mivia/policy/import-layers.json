@@ -1,6 +1,6 @@
 {
   "allowedDeletions": [],
-  "edgeCap": 464,
+  "edgeCap": 476,
   "allow": {
     "cmd/mivia": [
       "internal/cli",
@@ -75,6 +75,7 @@
       "internal/chat",
       "internal/cliagents",
       "internal/clichat",
+      "internal/cliautomations",
       "internal/cliorchestrate",
       "internal/cliworkflow",
       "internal/cliworktree",
@@ -116,6 +117,19 @@
       "internal/tools",
       "internal/workflows/definition",
       "internal/workflows/ledger",
+      "internal/workspace"
+    ],
+    "internal/cliautomations": [
+      "internal/automation",
+      "internal/chat",
+      "internal/clichat",
+      "internal/composition",
+      "internal/config",
+      "internal/provider",
+      "internal/sdkadapter",
+      "internal/storage",
+      "internal/uiadapter",
+      "internal/uikit/ports",
       "internal/workspace"
     ],
     "internal/clichat": [
