@@ -162,13 +162,29 @@ func (s *Service) RunOnce(ctx context.Context, automationID string, trigger port
 		run.WorktreeBranch = wtBranch
 	}
 
-	conv, boundSess, err := s.spawnRunSession(spec, automationID, run.ID, workDir)
+	conv, boundSess, savedName, err := s.spawnRunSession(spec, automationID, run.ID, workDir)
 	if err != nil {
 		return s.failRun(ctx, run, 0, err), nil
 	}
-	run.SessionName = automationSessionName(automationID, run.ID)
+	// Write the session name back onto the durable row now that it is
+	// known (startRun's earlier INSERT could not include it, since the
+	// session did not exist yet). A run that spawned successfully but
+	// whose session name cannot be recorded is not safely resumable -
+	// chunk 8's ResumeRun refuses a run with no SessionName before it
+	// ever attempts to spawn - so this failure is treated the same as
+	// any other spawn failure: failed loudly, not left with a
+	// stale/empty session_name column that only surfaces as a confusing
+	// resume refusal much later. savedName == "" itself is NOT an
+	// error: it is the documented "no context store configured" state
+	// (many test fixtures), and updateRunSession happily persists an
+	// empty string for that case - the run still succeeds, it is just
+	// not resumable.
+	if err := s.updateRunSession(ctx, run.ID, savedName); err != nil {
+		return s.failRun(ctx, run, 0, fmt.Errorf("record run session: %w", err)), nil
+	}
+	run.SessionName = savedName
 
-	if err := s.runSteps(ctx, spec, automationID, workDir, conv, boundSess, &run); err != nil {
+	if err := s.runSteps(ctx, spec, automationID, workDir, conv, boundSess, &run, 0); err != nil {
 		return s.failRun(ctx, run, run.StepIndex, err), nil
 	}
 
@@ -205,46 +221,65 @@ func (s *Service) startRun(ctx context.Context, spec Spec, automationID string, 
 }
 
 // spawnRunSession spawns the ONE session RunOnce drives for the whole
-// run (D2) and installs its D8 unattended approval override
-// immediately after - never inside the bind closure, which
-// CreateFreshInDir invokes BEFORE wireEntryLocked's inheritApprovalLocked
-// call and would therefore be clobbered (see approval.go's doc
-// comments). Returns the spawned conversation and the underlying
-// *chat.Session the bind closure captured, so StepAgent can select an
-// agent on it directly.
-func (s *Service) spawnRunSession(spec Spec, automationID, runID, workDir string) (ports.Conversation, *chat.Session, error) {
-	var boundSess *chat.Session
+// run (D2), installs its D8 unattended approval override, and - only
+// after BOTH of those have returned successfully - saves the session
+// under its reserved automation name (D11) so the run is resumable
+// (chunk 8).
+//
+// The bind closure itself does nothing but capture boundSess: it must
+// never call Save (or any other durable side effect) because
+// CreateFreshInDir invokes it BEFORE wireEntryLocked's
+// inheritApprovalLocked call, so anything it does there runs before the
+// session's approval posture is even installed (see
+// uiadapter.SetApprovalOverride's own doc comment on this ordering).
+// SetApprovalOverride itself must also run strictly after
+// CreateFreshInDir returns for the same reason.
+//
+// A Save failure here is a HARD error, not swallowed - a deliberate
+// behavior change from this package's earlier "best-effort" Save: a run
+// that cannot be persisted must fail loudly right now, at spawn time,
+// not silently produce a run that looks like it ran (or even
+// succeeded/failed six hours later) but was never actually resumable
+// because its session was never written to disk. savedName is "" when
+// boundSess carries no context store (many test fixtures) - that is a
+// valid, expected "not resumable" state, not itself an error; it is
+// returned to the caller so the durable run row can record it.
+func (s *Service) spawnRunSession(spec Spec, automationID, runID, workDir string) (conv ports.Conversation, boundSess *chat.Session, savedName string, err error) {
 	bindFn := func(sess *chat.Session) (string, error) {
 		boundSess = sess
-		if sess != nil && sess.ContextEnabled() {
-			// Best-effort: a spawner with no context store configured
-			// (many test fixtures) leaves this a no-op rather than a
-			// failed bind - the run's SessionName field is the durable
-			// record of the intended name regardless.
-			_ = sess.Save(automationSessionName(automationID, runID))
-		}
 		return "", nil
 	}
-	conv, err := s.spawn.CreateFreshInDir(bindFn, workDir)
+	conv, err = s.spawn.CreateFreshInDir(bindFn, workDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("spawn session: %w", err)
+		return nil, nil, "", fmt.Errorf("spawn session: %w", err)
 	}
 	gate, policy := unattendedGateFor(automationID, spec.Unattended)
 	if err := s.spawn.SetApprovalOverride(conv.ID(), gate, policy); err != nil {
-		return nil, nil, fmt.Errorf("install approval override: %w", err)
+		return nil, nil, "", fmt.Errorf("install approval override: %w", err)
 	}
-	return conv, boundSess, nil
+	if boundSess != nil && boundSess.ContextEnabled() {
+		name := automationSessionName(automationID, runID)
+		if err := boundSess.Save(name); err != nil {
+			return nil, nil, "", fmt.Errorf("save run session: %w", err)
+		}
+		savedName = name
+	}
+	return conv, boundSess, savedName, nil
 }
 
-// runSteps dispatches every step of spec.Steps in order (D2) on the one
+// runSteps dispatches spec.Steps[startIndex:] in order (D2) on the one
 // already-spawned conversation, checkpointing run.StepIndex after each
-// completed step so a later Resume (chunk 8) restarts at index+1. On a
-// step failure, run.StepIndex is left at the failing index (not
-// advanced) so the caller's failRun call records exactly where
-// execution stopped.
-func (s *Service) runSteps(ctx context.Context, spec Spec, automationID, workDir string, conv ports.Conversation, boundSess *chat.Session, run *Run) error {
+// completed step so a later Resume (chunk 8) restarts at index+1.
+// startIndex is 0 for a fresh RunOnce run and run.StepIndex for a
+// resumed one (ResumeRun) - runSteps itself applies no +1 adjustment;
+// the caller is responsible for passing the correct starting point,
+// per this function's own checkpointing contract below. On a step
+// failure, run.StepIndex is left at the failing index (not advanced)
+// so the caller's failRun call records exactly where execution stopped.
+func (s *Service) runSteps(ctx context.Context, spec Spec, automationID, workDir string, conv ports.Conversation, boundSess *chat.Session, run *Run, startIndex int) error {
 	timeout := s.turnTimeout()
-	for i, step := range spec.Steps {
+	for i := startIndex; i < len(spec.Steps); i++ {
+		step := spec.Steps[i]
 		if stepErr := s.runStep(ctx, automationID, run.ID, i, workDir, conv, boundSess, step, timeout); stepErr != nil {
 			run.StepIndex = i
 			return stepErr

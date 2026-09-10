@@ -2,6 +2,7 @@ package automation
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,17 +116,28 @@ func TestApplyTriggerAutomationRunsAndFailsForUnknownID(t *testing.T) {
 	}
 }
 
-// TestApplyResumeAutomationRunNotYetImplemented mirrors the Trigger
-// case for ResumeAutomationRun (chunk 8).
-func TestApplyResumeAutomationRunNotYetImplemented(t *testing.T) {
+// TestApplyResumeAutomationRunDelegatesToResumeRun proves
+// ResumeAutomationRun is wired to ResumeRun (chunk 8): resuming an
+// unknown run id surfaces ResumeRun's own ErrRunNotFound through the
+// SaveHandle's SaveFailed event, rather than the old "not yet
+// implemented" stub error.
+func TestApplyResumeAutomationRunDelegatesToResumeRun(t *testing.T) {
 	root := t.TempDir()
-	svc, err := New(root, nil, nil, Config{})
+	db := newTestDB(t)
+	svc, err := New(root, db, nil, Config{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = svc.Apply(context.Background(), ports.ScopeProject, ports.ResumeAutomationRun{RunID: "run-1"})
-	if err == nil {
-		t.Fatal("Apply(ResumeAutomationRun): got nil error, want not-yet-implemented")
+	h, err := svc.Apply(context.Background(), ports.ScopeProject, ports.ResumeAutomationRun{RunID: "run-1"})
+	if err != nil {
+		t.Fatalf("Apply(ResumeAutomationRun) call: %v", err)
+	}
+	last := drainSave(t, h)
+	if last.State != ports.SaveFailed {
+		t.Fatalf("Apply(ResumeAutomationRun) for an unknown run id final event = %+v, want SaveFailed", last)
+	}
+	if !strings.Contains(last.Message, ErrRunNotFound.Error()) {
+		t.Fatalf("Apply(ResumeAutomationRun) message = %q, want it to contain %q", last.Message, ErrRunNotFound.Error())
 	}
 }
 

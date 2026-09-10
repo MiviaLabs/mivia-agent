@@ -473,6 +473,53 @@
       ],
       "reason": "One unreachable branch, in ResolveTaskRoute: line 87 returns the error DefinitionDigest cannot produce on a selected agent, because agents.Select sanitizes schema maps through a JSON round-trip before returning one. (Line 86 is the call itself and IS covered - the gate's any-covered-block rule counts it under the statement block, not the branch it opens. Line numbers moved when the dispatch_tasks decode and its name guards left this file for task_request_decode.go; those entries went with the code, and the guards' own bail-outs are covered by a test rather than excused here.)"
     },
+    "internal/cliautomations/automations.go": {
+      "lines": [
+        156,
+        183,
+        184,
+        185,
+        186,
+        188,
+        189,
+        190,
+        191
+      ],
+      "reason": "Three clusters. (1) 156: applyPrivacyPolicyFunc's own no-op func LITERAL body - a var declaration's default value, never invoked by any code path in this file (grep confirms no call site anywhere in the package); it exists as a seam for a future wiring that has not landed, matching cliworkflow's ApplyPrivacyPolicyFunc pattern. (2) 183-186: buildService's own NewHeadlessSpawner-error branch - NewHeadlessSpawner only fails on an empty workspaceRoot or nil config, and buildService's own call site supplies root/res from a JUST-SUCCEEDED resolveWorkspaceAndConfig, whose own contract (workspace.Open + config.Load, both already checked for error) never yields an empty root or nil *config.Resolved on success. TestNewHeadlessSpawnerRejectsEmptyWorkspaceRoot and TestNewHeadlessSpawnerRejectsNilConfig (spawner_test.go) cover NewHeadlessSpawner's own two guards directly. (3) 188-191: buildService's own automation.New-error branch - automation.New's only error is an empty root (service.go), which the same resolveWorkspaceAndConfig postcondition rules out here."
+    },
+    "internal/cliautomations/run_cmd.go": {
+      "lines": [
+        35,
+        36,
+        37
+      ],
+      "reason": "runRunCommand's own spawn.CloseLastRun()-error log branch: CloseLastRun's only failure is store.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class already accepted for internal/memory/markdown_source.go's atomicWrite, internal/chatsync/identity.go's SaveIdentity, and this repo's other writeFileAtomic/writeFileDurably entries. TestRunCommandCallsCloseLastRunAfterRunOnce and TestRunCommandCallsCloseLastRunOnRunOnceError already cover CloseLastRun's own SUCCESS call on both the RunOnce-succeeded and RunOnce-failed paths."
+    },
+    "internal/cliautomations/serve_cmd.go": {
+      "lines": [
+        18,
+        19,
+        20,
+        45,
+        46,
+        47
+      ],
+      "reason": "Two clusters. (1) 18-20: serveSignalContext's own default func literal body (signal.NotifyContext against real OS signals) - every test in this package substitutes serveSignalContext with a test-controlled context (TestServeCommandExitsCleanlyOnSignal, TestRunAutomationsServeDispatchesThroughTheSwitch) rather than invoking the real default, deliberately: sending the test process a real SIGINT/SIGTERM is unsafe before signal.NotifyContext's handler installs (see the var's own doc comment) and could terminate the whole shared test binary. (2) 45-47: runServeCommand's own svc.Serve non-context.Canceled error-propagation branch - every test's substituted context is cancelled (the clean-shutdown case, context.Canceled, which explicitly does NOT hit this branch per the guard's own condition), and forcing Service.Serve to return a DIFFERENT real error needs the same live scheduler-loop failure surface internal/automation's own serve_test.go exercises directly at the Service level, not through this thin CLI wrapper."
+    },
+    "internal/cliautomations/spawner.go": {
+      "lines": [
+        159,
+        160,
+        161
+      ],
+      "reason": "CreateFreshInDir's own stale-store-Close-error log branch: staleStore.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class as the accepted run_cmd.go CloseLastRun entry above and this repo's other writeFileAtomic/writeFileDurably entries. TestCreateFreshInDirClosesStaleLeftoverDefensively and TestCreateFreshInDirLogsStaleStoreCloseError already cover this branch's SUCCESS path (the stale store closes cleanly) as thoroughly as a live-fd failure can be approximated without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default)."
+    },
+    "internal/automation/serve.go": {
+      "lines": [
+        260
+      ],
+      "reason": "serveTick's own defensive `if !ok { continue }` guard for an id in m.due(now) missing from the freshly-built specByID map. Unreachable given refresh's own invariant: refresh(specs, now, logf), called immediately above with the SAME specs slice specByID is subsequently built from, deletes every m.deadlines entry whose id is not in specs' seen set (refresh's own \"for id := range m.deadlines { if !seen[id] { delete... } }\" loop) before m.due(now) is ever consulted a few lines later in this same function - so no id returned by m.due(now) can be absent from specByID, which is keyed by the identical specs slice. TestServeTickSkipsIDMissingFromSpecByID pins the guard's intent by seeding m.deadlines directly (bypassing refresh, which a live caller never does), proving the guard is safe defensive depth rather than a reachable branch through serveTick's own real call sequence."
+    },
     "internal/automation/store.go": {
       "lines": [
         170,
@@ -505,21 +552,9 @@
         160,
         161,
         162,
-        219,
-        220,
-        221,
-        222,
-        223,
-        224,
-        225,
-        229,
-        230,
-        231,
-        293,
-        338,
-        339
+        328
       ],
-      "reason": "Three clusters, all requiring a fully live git worktree + a real session/agent-registry stack this package's unit tests deliberately do not construct (see executor_test.go's own documented StepAgent/StepWorkflow scope-exclusion comment on TestRunOnceMixedActionOneSessionInOrder). (1) 160-162, 293: createRunWorktree's and RunOnce's own worktree-creation SUCCESS paths - cliworktree.CreateManagedWorktree needs a real git repository with OpenRepositoryContextStoreFunc wired (internal/cli's init(), never triggered by this package's direct-import unit tests); TestRunOnceWorktreeCreationFailureNoSessionNoOrphan already covers the reachable FAILURE path deterministically (the same unwired seam makes creation fail, which is what that test exploits). (2) 219-225, 229-231: spawnRunSession's sess.ContextEnabled()/sess.Save() best-effort branch and CreateFreshInDir's own real spawn-error path - fakeExecSpawner's bind(nil) call means boundSess is always nil in every test in this file (a deliberate simplification matching the StepAgent scope exclusion), so sess.ContextEnabled() is never reached with a non-nil session; a real CreateFreshInDir failure needs the same live worktree/session stack as (1). (3) 338-339: StepAgent's own sendTurnHeadless SUCCESS call, reachable only if ApplySessionAgent itself succeeds, which needs a real *chat.Session with a populated AgentSessionState.Registry - TestRunStepAgentPropagatesApplySessionAgentError already covers the reachable ApplySessionAgent FAILURE branch (nil session)."
+      "reason": "One cluster: createRunWorktree's own SUCCESS return (328, `return wt.Path, wt.Branch, nil`) and RunOnce's own worktree-creation SUCCESS assignment (160-162, workDir/run.WorktreePath/run.WorktreeBranch after a successful createRunWorktree call) both require cliworktree.CreateManagedWorktree to actually create a live git worktree, which needs cliworktree.OpenRepositoryContextStoreFunc wired (internal/cli's init(), never triggered by this package's direct-import unit tests) plus a real git repository - this package's unit tests deliberately do not construct that stack (see executor_test.go's own documented StepAgent/StepWorkflow scope-exclusion comment on TestRunOnceMixedActionOneSessionInOrder). TestRunOnceWorktreeCreationFailureNoSessionNoOrphan and TestCreateRunWorktreePropagatesCreateManagedWorktreeError already cover the reachable FAILURE path deterministically (the same unwired seam makes creation fail, which both tests exploit); TestCreateRunWorktreePropagatesConfigLoadError covers createRunWorktree's other, independently reachable error-wrap branch. The remaining two clusters from the prior accepted set are now GONE, fixed with real tests during the resume-chunk work: spawnRunSession's own CreateFreshInDir-error and sess.ContextEnabled()/sess.Save() branches are covered by TestSpawnRunSessionPropagatesCreateFreshInDirError (fakeExecSpawner.createErr) and resume_test.go's sessionSpawner-based tests (TestSpawnRunSessionSaveOrderingHappensAfterCreateFreshInDir, TestSpawnRunSessionSaveErrorFailsRun), which hand CreateFreshInDir's bind closure a REAL *chat.Session instead of fakeExecSpawner's bind(nil); RunOnce's own updateRunSession error-wrap branch (formerly 293 by old line numbers, now RunOnce's 'record run session' fmt.Errorf call) is covered by TestRunOnceUpdateRunSessionPropagatesStoreError; and StepAgent's own sendTurnHeadless SUCCESS call (formerly 338-339) is covered by TestRunStepAgentSucceedsWithRootAgentName, which drives a real *chat.Session through ApplySessionAgent with config.RootAgentName (the only resolvable name per runStep's own StepAgent comment) to a genuine success."
     },
     "internal/automation/slashallow.go": {
       "lines": [

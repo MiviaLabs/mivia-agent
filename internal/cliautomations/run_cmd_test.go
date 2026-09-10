@@ -91,15 +91,19 @@ func TestRunCommandCallsCloseLastRunAfterRunOnce(t *testing.T) {
 
 // TestRunCommandCallsCloseLastRunOnRunOnceError proves CloseLastRun still
 // runs (and the store closes cleanly) even when RunOnce itself errors -
-// here, an unknown automation id.
+// here, an unknown automation id. Uses writeAutomationsFixture (a real,
+// loadable config) rather than a bare .mivia dir so buildService itself
+// succeeds and RunOnce is the one call that fails - a bare .mivia dir
+// makes config.Load itself fail first (no [providers.openrouter]
+// section), never reaching RunOnce/CloseLastRun at all.
 func TestRunCommandCallsCloseLastRunOnRunOnceError(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	root := writeAutomationsFixture(t, "exists-but-not-the-one-requested")
 	err := runRunCommand([]string{"--workspace", root, "no-such-automation"})
 	if err == nil {
 		t.Fatal("runRunCommand(unknown id): got nil error, want ErrAutomationNotFound")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("runRunCommand(unknown id) error = %q, want it naming automation-not-found", err.Error())
 	}
 }
 

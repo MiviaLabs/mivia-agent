@@ -134,15 +134,55 @@ func TestAutomationConfigPathNoWorkspaceFileReturnsEmpty(t *testing.T) {
 	}
 }
 
+// TestResolveWorkspaceAndConfigDefaultsEmptyWorkspaceRootToCwd covers
+// resolveWorkspaceAndConfig's own empty-workspaceRoot fallback
+// (workspaceRoot = "."): calling it with "" must resolve the SAME root
+// workspace.Open(".") would from the process's current working
+// directory, not fail or silently use some other default. Chdirs into a
+// fresh fixture directory (restored via t.Cleanup) so the process cwd
+// has a real, loadable config - this repo's own cwd during `go test`
+// has no [providers.openrouter] section, so the empty-root path would
+// otherwise fail at config.Load for an unrelated reason before ever
+// reaching the assertion this test targets.
+func TestResolveWorkspaceAndConfigDefaultsEmptyWorkspaceRootToCwd(t *testing.T) {
+	root := writeAutomationsFixture(t, "cwd-default-fixture")
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("os.Chdir(%q): %v", root, err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	gotRoot, _, err := resolveWorkspaceAndConfig("", "")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceAndConfig(\"\", \"\"): %v", err)
+	}
+	wantRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		wantRoot = root
+	}
+	if gotRoot != wantRoot {
+		t.Fatalf("resolveWorkspaceAndConfig(\"\", \"\") root = %q, want %q (workspace.Open(\".\") from cwd)", gotRoot, wantRoot)
+	}
+}
+
 // --- buildService error branches ---
 
 func TestBuildServiceOpenAutomationStoreError(t *testing.T) {
-	root := t.TempDir()
-	// Make the .mivia directory unwritable so openAutomationStore's
-	// storage.OpenSQLite call fails to create automations.db under it.
+	root := writeAutomationsFixture(t, "store-error-fixture")
+	// Make the .mivia directory unwritable AFTER a real, loadable config
+	// already exists under it, so resolveWorkspaceAndConfig succeeds for
+	// real and buildService reaches its own openAutomationStore call -
+	// which then fails to create automations.db under the now-read-only
+	// directory. Making .mivia read-only BEFORE writing a config (the
+	// prior version of this test) instead made config.Load itself fail
+	// first (no [providers.openrouter] section ever got written), never
+	// reaching openAutomationStore at all.
 	miviaDir := filepath.Join(root, ".mivia")
-	if err := os.MkdirAll(miviaDir, 0o500); err != nil {
-		t.Fatalf("mkdir read-only .mivia: %v", err)
+	if err := os.Chmod(miviaDir, 0o500); err != nil {
+		t.Fatalf("chmod read-only .mivia: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(miviaDir, 0o755) })
 

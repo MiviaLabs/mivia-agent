@@ -377,7 +377,7 @@ func (s *Service) Apply(ctx context.Context, scope ports.Scope, e ports.Automati
 	case ports.TriggerAutomation:
 		return s.runSaveHandle(func() error { _, err := s.RunOnce(ctx, v.ID, ports.TriggerManual); return err }), nil
 	case ports.ResumeAutomationRun:
-		return nil, fmt.Errorf("automation: resume not yet implemented until chunk 8")
+		return s.runSaveHandle(func() error { _, err := s.ResumeRun(ctx, v.RunID); return err }), nil
 	default:
 		return nil, fmt.Errorf("automation: unknown edit %T", e)
 	}

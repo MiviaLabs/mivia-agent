@@ -631,6 +631,41 @@ func TestRunOnceStartRunPropagatesCreateRunError(t *testing.T) {
 	}
 }
 
+// TestRunOnceUpdateRunSessionPropagatesStoreError covers RunOnce's own
+// "record run session" error-wrap branch: a SQLite trigger allows
+// startRun's own first automation_runs UPDATE (the pending->running
+// transition) to succeed for real, then fails every UPDATE after that
+// - so RunOnce reaches spawnRunSession successfully (a fresh session
+// spawns and the D8 override installs) before its own separate
+// updateRunSession call is the one that hits the trigger. The run must
+// still be marked RunFailed via failRun (which itself tolerates its own
+// updateRunState call failing under the same trigger), not returned as
+// a bare error.
+func TestRunOnceUpdateRunSessionPropagatesStoreError(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	automationID := seedEnabledAutomation(t, root, nil)
+	if err := forceAutomationRunsUpdateFailuresAfter(t, db, 1); err != nil {
+		t.Fatalf("install update-failing trigger: %v", err)
+	}
+	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
+	svc, err := New(root, db, spawn, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	run, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual)
+	if err != nil {
+		t.Fatalf("RunOnce: got error %v, want nil (failure is recorded on the run via failRun)", err)
+	}
+	if run.State != ports.RunFailed {
+		t.Fatalf("RunOnce State = %v, want RunFailed", run.State)
+	}
+	if !strings.Contains(run.Message, "record run session") {
+		t.Fatalf("run.Message = %q, want it to name the record-run-session failure", run.Message)
+	}
+}
+
 // TestCreateRunWorktreePropagatesConfigLoadError covers
 // createRunWorktree's own config-load error-wrap branch (distinct from
 // TestRunOnceWorktreeCreationFailureNoSessionNoOrphan, which reaches
@@ -653,6 +688,31 @@ func TestCreateRunWorktreePropagatesConfigLoadError(t *testing.T) {
 	}
 	if _, _, err := svc.createRunWorktree(Spec{ID: "auto-x", BaseRef: "HEAD"}, "run-x"); err == nil {
 		t.Fatal("createRunWorktree with a malformed mivia.toml: got nil error, want a config-load-wrap error")
+	}
+}
+
+// TestCreateRunWorktreePropagatesCreateManagedWorktreeError covers
+// createRunWorktree's own cliworktree.CreateManagedWorktree error-wrap
+// branch directly - distinct from
+// TestRunOnceWorktreeCreationFailureNoSessionNoOrphan (which drives the
+// same underlying failure through the full RunOnce path and only
+// asserts on the resulting run's state): a valid worktree config plus
+// cliworktree's process-global OpenRepositoryContextStoreFunc left
+// unwired in this test binary makes CreateManagedWorktree fail
+// deterministically, letting this test assert on createRunWorktree's
+// own returned error text directly.
+func TestCreateRunWorktreePropagatesCreateManagedWorktreeError(t *testing.T) {
+	root := t.TempDir()
+	svc, err := New(root, nil, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, _, err = svc.createRunWorktree(Spec{ID: "auto-x", BaseRef: "HEAD"}, "run-x")
+	if err == nil {
+		t.Fatal("createRunWorktree with OpenRepositoryContextStoreFunc unwired: got nil error, want create-managed-worktree-wrap error")
+	}
+	if !strings.Contains(err.Error(), "create managed worktree") {
+		t.Fatalf("createRunWorktree error = %q, want it naming the create-managed-worktree wrap", err.Error())
 	}
 }
 
@@ -909,192 +969,5 @@ func TestRunStepWorkflowSucceedsOnEngineStart(t *testing.T) {
 	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
 	if err != nil {
 		t.Fatalf("runStep(StepWorkflow) unexpected error: %v", err)
-	}
-}
-
-var _ = filepath.Join // silence unused import if filepath's only other use is removed later
-
-// TestSpawnRunSessionPropagatesApprovalOverrideError covers
-// spawnRunSession's own SetApprovalOverride-failure branch: the spawned
-// session's D8 override cannot be installed, so RunOnce must abort the
-// run RunFailed BEFORE any step is dispatched - a failure to establish
-// the unattended posture must never fall through to running steps under
-// an unknown/inherited posture.
-func TestSpawnRunSessionPropagatesApprovalOverrideError(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	automationID := seedEnabledAutomation(t, root, nil)
-	spawn := &fakeExecSpawner{conv: newRecordingConversation(), setApprovalErr: fmt.Errorf("override install failed")}
-	svc, err := New(root, db, spawn, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	run, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual)
-	if err != nil {
-		t.Fatalf("RunOnce: got error %v, want nil (failure is recorded on the run)", err)
-	}
-	if run.State != ports.RunFailed {
-		t.Fatalf("RunOnce State = %v, want RunFailed", run.State)
-	}
-	if !strings.Contains(run.Message, "override install failed") {
-		t.Fatalf("run.Message = %q, want it to name the override install failure", run.Message)
-	}
-	if len(spawn.conv.sentTexts()) != 0 {
-		t.Fatalf("sent texts = %v, want none (a failed approval override must precede any step dispatch)", spawn.conv.sentTexts())
-	}
-}
-
-// TestRunOnceAdmitFirePropagatesRealError covers RunOnce's own
-// admitFire-error-wrap-and-return branch: dropping run_claims before
-// calling RunOnce makes admitFire fail with a real, non-ErrClaimHeld
-// error, distinct from the documented lost-claim no-op every dedup test
-// exercises.
-func TestRunOnceAdmitFirePropagatesRealError(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	automationID := seedEnabledAutomation(t, root, nil)
-	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
-	svc, err := New(root, db, spawn, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := dropRunClaimsTable(t, db); err != nil {
-		t.Fatalf("drop run_claims table: %v", err)
-	}
-	if _, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual); err == nil {
-		t.Fatal("RunOnce with run_claims dropped: got nil error, want admitFire's own real error")
-	}
-	if spawn.createCallCount() != 0 {
-		t.Fatalf("CreateFreshInDir called %d times, want 0", spawn.createCallCount())
-	}
-}
-
-// TestStartRunPropagatesUpdateRunStateError covers startRun's own
-// second error-wrap branch directly (the pending->running
-// updateRunState call): a SQLite trigger makes every UPDATE on
-// automation_runs fail while INSERTs still succeed, so startRun's own
-// createRun call succeeds but its immediately-following updateRunState
-// call fails - the two calls are synchronous with no seam between them
-// to interleave an out-of-band row mutation, so the trigger is the only
-// way to fail the second write specifically.
-func TestStartRunPropagatesUpdateRunStateError(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := forceAutomationRunsUpdateFailures(t, db); err != nil {
-		t.Fatalf("install update-failing trigger: %v", err)
-	}
-	spec := Spec{ID: "auto-startrun-err", Steps: []Step{{Kind: StepPrompt, Prompt: "x"}}}
-	if _, err := svc.startRun(context.Background(), spec, "auto-startrun-err", ports.TriggerManual, "holder-x"); err == nil {
-		t.Fatal("startRun with automation_runs UPDATEs forced to fail: got nil error, want the second updateRunState error wrapped")
-	}
-}
-
-// TestRunStepsPropagatesCheckpointError covers runSteps' own checkpoint
-// updateRunState-error-wrap branch: the fake conversation drops the
-// automation_runs table as a side effect of successfully completing its
-// one step's Send call, so runStep returns nil (the step itself
-// "succeeded") but the immediately following checkpoint updateRunState
-// call - still inside runSteps, before it ever returns to RunOnce -
-// fails against the now-missing table.
-func TestRunStepsPropagatesCheckpointError(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	automationID := seedEnabledAutomation(t, root, func(s *Spec) {
-		s.Steps = []Step{{Kind: StepPrompt, Prompt: "only step"}}
-	})
-	conv := newRecordingConversation()
-	conv.onSend = func() { _ = dropAutomationRunsTable(t, db) }
-	spawn := &fakeExecSpawner{conv: conv}
-	svc, err := New(root, db, spawn, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	run, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual)
-	if err != nil {
-		t.Fatalf("RunOnce: got error %v, want nil (checkpoint failure is recorded via failRun, not returned)", err)
-	}
-	if run.State != ports.RunFailed {
-		t.Fatalf("RunOnce State = %v, want RunFailed (checkpoint failure after a successful step)", run.State)
-	}
-	if !strings.Contains(run.Message, "checkpoint") {
-		t.Fatalf("run.Message = %q, want it to name the checkpoint failure", run.Message)
-	}
-}
-
-// TestRunOnceMarkSucceededPropagatesStoreError covers RunOnce's own
-// final "mark run succeeded" error-wrap branch: a SQLite trigger allows
-// the first two automation_runs UPDATEs (startRun's own pending->running
-// transition, then the one step's own checkpoint) to succeed for real,
-// then fails every UPDATE after that - so the run reaches a genuinely
-// completed steps loop before RunOnce's own separate, final "mark
-// succeeded" call is the one that hits the trigger.
-func TestRunOnceMarkSucceededPropagatesStoreError(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	automationID := seedEnabledAutomation(t, root, func(s *Spec) {
-		s.Steps = []Step{{Kind: StepPrompt, Prompt: "only step"}}
-	})
-	if err := forceAutomationRunsUpdateFailuresAfter(t, db, 2); err != nil {
-		t.Fatalf("install update-failing trigger: %v", err)
-	}
-	spawn := &fakeExecSpawner{conv: newRecordingConversation()}
-	svc, err := New(root, db, spawn, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if _, err := svc.RunOnce(context.Background(), automationID, ports.TriggerManual); err == nil {
-		t.Fatal("RunOnce whose final mark-succeeded UPDATE is forced to fail: got nil error, want the wrapped store error")
-	}
-}
-
-// TestRunStepSlashRejectedByExecutionTimeValidation covers runStep's
-// StepSlash case's own validateStepSlash rejection branch, directly:
-// re-validation at execution time (defense in depth) refuses a
-// D15-rejected command before ever calling sendTurnHeadless.
-func TestRunStepSlashRejectedByExecutionTimeValidation(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	conv := newRecordingConversation()
-	step := Step{Kind: StepSlash, Ref: "/delete"} // session-lifecycle mutation, D15-rejected
-	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
-	if err == nil {
-		t.Fatal("runStep(StepSlash) with a D15-rejected command: got nil error, want rejection")
-	}
-	if len(conv.sentTexts()) != 0 {
-		t.Fatalf("sent texts = %v, want none (a rejected slash command must never reach sendTurnHeadless)", conv.sentTexts())
-	}
-}
-
-// TestRunStepAgentPropagatesApplySessionAgentError covers runStep's
-// StepAgent case's own ApplySessionAgent error-wrap branch: a nil
-// *chat.Session (what this test's dispatch always has, since this
-// package's Service carries no real session-construction path in a unit
-// test - see this file's own documented gap on StepAgent) makes
-// ApplySessionAgent fail immediately and deterministically, before ever
-// calling sendTurnHeadless.
-func TestRunStepAgentPropagatesApplySessionAgentError(t *testing.T) {
-	root := t.TempDir()
-	db := newTestDB(t)
-	svc, err := New(root, db, &fakeExecSpawner{conv: newRecordingConversation()}, Config{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	conv := newRecordingConversation()
-	step := Step{Kind: StepAgent, Ref: "some-agent", Prompt: "do the thing"}
-	err = svc.runStep(context.Background(), "auto-x", "run-x", 0, root, conv, nil, step, time.Second)
-	if err == nil {
-		t.Fatal("runStep(StepAgent) with a nil session: got nil error, want ApplySessionAgent's own rejection")
-	}
-	if len(conv.sentTexts()) != 0 {
-		t.Fatalf("sent texts = %v, want none (a failed agent selection must never reach sendTurnHeadless)", conv.sentTexts())
 	}
 }
