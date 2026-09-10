@@ -114,6 +114,28 @@ func stepKindFromPorts(k ports.ActionStepKind) StepKind {
 	}
 }
 
+// unattendedToPorts maps automation.UnattendedPolicy to
+// ports.UnattendedPolicy.
+func unattendedToPorts(u UnattendedPolicy) ports.UnattendedPolicy {
+	if u == UnattendedAuto {
+		return ports.UnattendedPolicyAuto
+	}
+	return ports.UnattendedPolicyDeny
+}
+
+// unattendedFromPorts maps ports.UnattendedPolicy back to
+// automation.UnattendedPolicy. Deliberately asymmetric with
+// unattendedToPorts: any out-of-range/unknown ports.UnattendedPolicy
+// value (not just the zero value) collapses to UnattendedDeny, the
+// fail-safe default direction - an unrecognized policy must never be
+// interpreted as the more permissive UnattendedAuto.
+func unattendedFromPorts(p ports.UnattendedPolicy) UnattendedPolicy {
+	if p == ports.UnattendedPolicyAuto {
+		return UnattendedAuto
+	}
+	return UnattendedDeny
+}
+
 // triggerKindToPorts maps automation.TriggerKind to ports.TriggerKind.
 func triggerKindToPorts(k TriggerKind) ports.TriggerKind {
 	if k == TriggerScheduled {
@@ -273,14 +295,19 @@ func specToAutomation(spec Spec) ports.Automation {
 		Trigger:     specToPortsTrigger(spec.Trigger),
 		Action:      ports.ActionRef{Steps: steps},
 		Worktree:    ports.WorktreeSpec{Mode: worktreeMode, BaseRef: spec.BaseRef},
+		Unattended:  unattendedToPorts(spec.Unattended),
 	}
 }
 
 // automationToSpec maps a ports.Automation edit value back to
-// automation.Spec, preserving Unattended default-deny (D8): a ports
-// value carries no unattended field, so an upsert through this path
-// always lands UnattendedDeny. Widening ports.Automation to carry it
-// is out of this chunk's scope.
+// automation.Spec. Unattended maps through unattendedFromPorts, which
+// collapses any unrecognized ports.UnattendedPolicy value to
+// UnattendedDeny (see that function's doc comment) - callers that
+// deliberately omit the field (leaving it at its ports zero value) get
+// the safe default, but the UI always sends the real current value end
+// to end (see automations_editor.go), so upsert of an existing
+// automation through the normal editor path correctly carries the true
+// policy rather than silently defaulting it.
 func automationToSpec(a ports.Automation) Spec {
 	steps := make([]Step, 0, len(a.Action.Steps))
 	for _, st := range a.Action.Steps {
@@ -309,7 +336,7 @@ func automationToSpec(a ports.Automation) Spec {
 		Steps:       steps,
 		Worktree:    worktreeMode,
 		BaseRef:     a.Worktree.BaseRef,
-		Unattended:  UnattendedDeny,
+		Unattended:  unattendedFromPorts(a.Unattended),
 	}
 }
 
@@ -395,16 +422,6 @@ func (s *Service) upsert(a ports.Automation) error {
 			found = i
 			break
 		}
-	}
-	if found >= 0 {
-		// ports.Automation carries no Unattended field (the UI layer has no
-		// need to see or edit this policy today - see automationToSpec's own
-		// doc comment), so automationToSpec always defaults a fresh Spec to
-		// UnattendedDeny. Upserting an EXISTING automation through this path
-		// must not silently downgrade a hand-authored `unattended = "auto"`
-		// policy to "deny" just because the editor round-tripped a struct
-		// that cannot represent it - preserve the on-disk value instead.
-		spec.Unattended = specs[found].Unattended
 	}
 	if err := ValidateSpec(spec, nil); err != nil {
 		return err

@@ -124,17 +124,17 @@ func TestUpsertReplacesExistingAutomation(t *testing.T) {
 	}
 }
 
-// TestUpsertPreservesUnattendedPolicyOnExistingAutomation covers the
-// bug found during the Automations TUI editor's design review:
-// ports.Automation carries no Unattended field (the UI layer has no
-// need to see or edit that policy), so automationToSpec always
-// defaults a freshly-mapped Spec to UnattendedDeny. Upserting an
-// EXISTING automation must not silently downgrade a hand-authored
-// `unattended = "auto"` policy to "deny" just because the caller
-// (e.g. a future TUI edit form) round-tripped a struct that cannot
-// represent it - upsert must read the on-disk value back and carry it
-// through untouched when replacing an existing row.
-func TestUpsertPreservesUnattendedPolicyOnExistingAutomation(t *testing.T) {
+// TestUpsertDowngradesUnattendedPolicyWhenFieldOmitted covers the
+// updated (post-editor-widening) upsert contract: ports.Automation now
+// carries a real Unattended field that the UI always sends end-to-end
+// (automations_editor.go), so upsert no longer preserves the on-disk
+// value behind the caller's back. A bare ports.Automation left at its
+// ports zero value (UnattendedPolicyDeny) correctly downgrades an
+// existing "auto" automation to "deny" - this is now correct behavior,
+// not the bug the old preserve-on-edit test guarded against, because
+// only a caller that deliberately omits the field (as this test does)
+// gets deny.
+func TestUpsertDowngradesUnattendedPolicyWhenFieldOmitted(t *testing.T) {
 	root := t.TempDir()
 	svc, err := New(root, nil, nil, Config{})
 	if err != nil {
@@ -153,6 +153,7 @@ func TestUpsertPreservesUnattendedPolicyOnExistingAutomation(t *testing.T) {
 	edited := ports.Automation{
 		ID: "auto-policy", Name: "renamed",
 		Action: ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "two"}}},
+		// Unattended deliberately left at its zero value (UnattendedPolicyDeny).
 	}
 	h, err := svc.Apply(context.Background(), ports.ScopeProject, ports.UpsertAutomation{Automation: edited})
 	if err != nil {
@@ -169,11 +170,106 @@ func TestUpsertPreservesUnattendedPolicyOnExistingAutomation(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("LoadSpecs after upsert = %d entries, want 1", len(specs))
 	}
-	if specs[0].Unattended != UnattendedAuto {
-		t.Fatalf("upsert of an existing automation changed Unattended = %q, want it preserved as %q", specs[0].Unattended, UnattendedAuto)
+	if specs[0].Unattended != UnattendedDeny {
+		t.Fatalf("upsert with Unattended omitted = %q, want %q (downgraded)", specs[0].Unattended, UnattendedDeny)
 	}
 	if specs[0].Name != "renamed" {
 		t.Fatalf("upsert did not apply the edited Name: got %q", specs[0].Name)
+	}
+}
+
+// TestUpsertChangesUnattendedPolicyBothDirections proves upsert CAN
+// change an existing automation's policy from deny to auto and back,
+// driven entirely by ports.Automation.Unattended - the new editor-driven
+// path this chunk enables.
+func TestUpsertChangesUnattendedPolicyBothDirections(t *testing.T) {
+	root := t.TempDir()
+	svc, err := New(root, nil, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	denySpec := Spec{
+		ID:         "toggle-policy",
+		Name:       "first",
+		Steps:      []Step{{Kind: StepPrompt, Prompt: "one"}},
+		Unattended: UnattendedDeny,
+	}
+	if err := SaveSpecs(ports.ScopeProject, root, []Spec{denySpec}); err != nil {
+		t.Fatalf("SaveSpecs (seed): %v", err)
+	}
+
+	toAuto := ports.Automation{
+		ID: "toggle-policy", Name: "first",
+		Action:     ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "one"}}},
+		Unattended: ports.UnattendedPolicyAuto,
+	}
+	h, err := svc.Apply(context.Background(), ports.ScopeProject, ports.UpsertAutomation{Automation: toAuto})
+	if err != nil {
+		t.Fatalf("Apply(Upsert) to auto: %v", err)
+	}
+	if last := drainSave(t, h); last.State != ports.SaveSaved {
+		t.Fatalf("Apply(Upsert) to auto final event = %+v, want SaveSaved", last)
+	}
+	specs, err := LoadSpecs(ports.ScopeProject, root)
+	if err != nil {
+		t.Fatalf("LoadSpecs after upsert to auto: %v", err)
+	}
+	if len(specs) != 1 || specs[0].Unattended != UnattendedAuto {
+		t.Fatalf("after upsert to auto, specs = %+v, want single spec with Unattended = %q", specs, UnattendedAuto)
+	}
+
+	toDeny := ports.Automation{
+		ID: "toggle-policy", Name: "first",
+		Action:     ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "one"}}},
+		Unattended: ports.UnattendedPolicyDeny,
+	}
+	h, err = svc.Apply(context.Background(), ports.ScopeProject, ports.UpsertAutomation{Automation: toDeny})
+	if err != nil {
+		t.Fatalf("Apply(Upsert) back to deny: %v", err)
+	}
+	if last := drainSave(t, h); last.State != ports.SaveSaved {
+		t.Fatalf("Apply(Upsert) back to deny final event = %+v, want SaveSaved", last)
+	}
+	specs, err = LoadSpecs(ports.ScopeProject, root)
+	if err != nil {
+		t.Fatalf("LoadSpecs after upsert back to deny: %v", err)
+	}
+	if len(specs) != 1 || specs[0].Unattended != UnattendedDeny {
+		t.Fatalf("after upsert back to deny, specs = %+v, want single spec with Unattended = %q", specs, UnattendedDeny)
+	}
+}
+
+// TestUnattendedFromPortsDefaultsUnknownToDeny covers
+// unattendedFromPorts' fail-safe default branch: an out-of-range
+// ports.UnattendedPolicy value (neither UnattendedPolicyDeny nor
+// UnattendedPolicyAuto) must collapse to UnattendedDeny, never to the
+// more permissive UnattendedAuto.
+func TestUnattendedFromPortsDefaultsUnknownToDeny(t *testing.T) {
+	unknown := ports.UnattendedPolicy(99)
+	if got := unattendedFromPorts(unknown); got != UnattendedDeny {
+		t.Fatalf("unattendedFromPorts(%v) = %q, want %q", unknown, got, UnattendedDeny)
+	}
+}
+
+// TestUnattendedPortsMappingRoundTrips covers
+// unattendedToPorts/unattendedFromPorts in both directions for both
+// named values (deny<->auto), mirroring
+// TestStepKindPortsMappingCoversEveryNamedCase's pattern.
+func TestUnattendedPortsMappingRoundTrips(t *testing.T) {
+	cases := []struct {
+		spec  UnattendedPolicy
+		ports ports.UnattendedPolicy
+	}{
+		{UnattendedDeny, ports.UnattendedPolicyDeny},
+		{UnattendedAuto, ports.UnattendedPolicyAuto},
+	}
+	for _, tc := range cases {
+		if got := unattendedToPorts(tc.spec); got != tc.ports {
+			t.Errorf("unattendedToPorts(%v) = %v, want %v", tc.spec, got, tc.ports)
+		}
+		if got := unattendedFromPorts(tc.ports); got != tc.spec {
+			t.Errorf("unattendedFromPorts(%v) = %v, want %v", tc.ports, got, tc.spec)
+		}
 	}
 }
 

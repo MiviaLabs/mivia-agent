@@ -87,6 +87,18 @@ type ActionStep struct {
 	Inputs map[string]string // ActionStepWorkflow only
 }
 
+// UnattendedPolicy names an automation's approval posture for
+// unattended (scheduled or manual-with-no-attached-approver) runs.
+// Mirrors automation.UnattendedPolicy's two values exactly; kept as its
+// own type here so ports stays a leaf (no import of
+// internal/automation), matching ActionStepKind's precedent above.
+type UnattendedPolicy int
+
+const (
+	UnattendedPolicyDeny UnattendedPolicy = iota // zero value = safe default
+	UnattendedPolicyAuto
+)
+
 // WorktreeSpec selects where an automation's run executes. Mode mirrors
 // automation.WorktreeMode's two values (0 = run in place, 1 = create a
 // managed worktree off BaseRef) without importing that package.
@@ -167,6 +179,7 @@ type Automation struct {
 	Trigger     TriggerSpec
 	Action      ActionRef
 	Worktree    WorktreeSpec
+	Unattended  UnattendedPolicy
 	LastRun     *RunSummary
 	NextFire    *time.Time
 	Scope       Scope
