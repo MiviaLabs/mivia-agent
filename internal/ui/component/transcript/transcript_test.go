@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -51,6 +52,13 @@ func TestRenderGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(loadTheme(t), theme.TierTrueColor)
+	// A fixed, non-advancing clock (C1): the fixture's reasoning block
+	// carries no producer-supplied duration, so its "Thought for Xs"
+	// line is measured wall-clock, same as tool StartedAt/ElapsedMS.
+	// Pinning Now keeps that measured value ("0ms") deterministic instead
+	// of depending on how fast this test happens to run.
+	clock := time.Unix(1700000000, 0)
+	m.Now = func() time.Time { return clock }
 	m.SetSize(width, height)
 	for _, ev := range events {
 		m, _ = m.HandleEvent(ev)
@@ -158,7 +166,7 @@ func TestHandleEventEveryKind(t *testing.T) {
 	m.SetSize(80, 200)
 	m = drain(t, m, events)
 	got := ansi.Strip(m.Dump())
-	for _, want := range []string{"hi", "full reply", "3 words", "hidden", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "fmt.sh", "failed", "10 in"} {
+	for _, want := range []string{"hi", "full reply", "Thought for", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "fmt.sh", "failed", "10 in"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the transcript is missing %q:\n%s", want, got)
 		}
@@ -181,20 +189,86 @@ func TestToolOutputEmptyChunkCommitsNothing(t *testing.T) {
 	}
 }
 
-func TestReasoningLiveTailUsesSubtleStyle(t *testing.T) {
+// TestReasoningLiveTailShowsAThinkingDuration pins C1's streaming tail:
+// while a reasoning span is still open, the tail row states how long the
+// model has been thinking ("Thinking  Xs"), not a preview of the raw
+// text - the same "duration, not content" contract the settled block's
+// "Thought for Xs" line carries. It is refreshed by the existing
+// pending-flush clock (transcript.go's FlushMsg), so no new clock is
+// armed for it.
+func TestReasoningLiveTailShowsAThinkingDuration(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
 	m := New(loadTheme(t), theme.TierTrueColor)
+	m.Now = func() time.Time { return clock }
 	m.SetSize(80, 24)
 	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{Text: "thinking..."}})
 	if cmd == nil {
 		t.Fatal("expected the first reasoning delta to schedule a flush Cmd")
 	}
+
+	clock = clock.Add(4 * time.Second)
 	got := m.View()
-	if !strings.Contains(got, "thinking...") {
-		t.Fatalf("got %q, want the live reasoning tail present before the final word-count chunk", got)
+	if strings.Contains(got, "thinking...") {
+		t.Errorf("got %q, want the raw reasoning text NOT previewed, only the duration", got)
 	}
-	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true).Render("thinking...")
+	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true).Render("Thinking  4.0s")
 	if !strings.Contains(got, wantStyle) {
-		t.Errorf("got %q, want the reasoning tail styled with RoleFGSubtle italic: %q", got, wantStyle)
+		t.Errorf("got %q, want the reasoning tail to read \"Thinking  4.0s\" styled with RoleFGSubtle italic", got)
+	}
+}
+
+// TestReasoningElapsedIsMeasuredFromTheFirstDelta pins C1: a reasoning
+// span's duration is the wall time between this transcript seeing its
+// first delta (appendPending stamping pendingStartedAt) and whatever
+// event settles the block - here a text delta, which switches pending
+// out of KindReasoning and flushes it - the same StartedAt/ElapsedMS
+// contract handleToolEnd already applies to tool calls (see
+// TestAToolStartAfterAPendingBlockKeepsTheOriginalStartTime).
+func TestReasoningElapsedIsMeasuredFromTheFirstDelta(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "step 1: analyze"}})
+
+	clock = clock.Add(8 * time.Second)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "the answer"}})
+
+	blocks := m.Blocks()
+	if len(blocks) != 1 || blocks[0].Kind != uievent.KindReasoning {
+		t.Fatalf("expected 1 committed reasoning block, got %+v", blocks)
+	}
+	if got := blocks[0].ElapsedMS; got != 8000 {
+		t.Errorf("ElapsedMS = %d, want 8000 (8s between the reasoning delta and the text delta that flushed it)", got)
+	}
+}
+
+// TestReasoningWholeTextStampsNowWithZeroElapsed pins C1's other timing
+// path: a single reasoning.delta that arrives with both text and a final
+// WordCount, with no prior delta buffered, has no separate start event to
+// measure from - it stamps StartedAt from Now() directly, and its
+// ElapsedMS is 0 rather than measured against a fabricated earlier time.
+func TestReasoningWholeTextStampsNowWithZeroElapsed(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "one-shot reasoning", WordCount: 3}})
+
+	blocks := m.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if !blocks[0].StartedAt.Equal(clock) {
+		t.Errorf("StartedAt = %v, want the Now() at commit time (%v)", blocks[0].StartedAt, clock)
+	}
+	if got := blocks[0].ElapsedMS; got != 0 {
+		t.Errorf("ElapsedMS = %d, want 0 (start and settle are the same instant for a single event)", got)
 	}
 }
 

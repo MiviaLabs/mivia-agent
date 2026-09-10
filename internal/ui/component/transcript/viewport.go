@@ -419,6 +419,15 @@ func (m Model) ExpandedRows(width int) (rows []string, blockTops []int) {
 	for i := range dm.blocks {
 		dm.blocks[i].Collapsed = false
 		dm.blocks[i].Focused = false
+		// A reasoning block's Collapsed=false alone only reaches the
+		// windowed second state (C1) - Expanded is the field that shows
+		// the full text, and a dump must not hide what the live view's
+		// window happened to leave out (same "no hiding" contract
+		// TestDumpExpandsCollapsedBlocks pins for a windowed tool card,
+		// whose own card() layout already reveals everything once
+		// Collapsed is false). Harmless on every other kind: Expanded is
+		// meaningless outside KindReasoning.
+		dm.blocks[i].Expanded = true
 	}
 	spans := dm.layout()
 	rows = make([]string, 0, len(dm.blocks))

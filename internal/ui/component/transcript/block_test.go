@@ -36,6 +36,61 @@ func TestBlockHeightCountsHeaderAndBody(t *testing.T) {
 	}
 }
 
+// TestReasoningThreeStatesHeightRenderAgreement pins C1's collapsed /
+// windowed / full-text states: Height and Render must count the same
+// number of rows at every state (the invariant every other block kind
+// already keeps - see TestToolCardHintRow), the collapsed row is exactly
+// the "Thought for Xs" summary and nothing else, the windowed state
+// shows only the last CollapseThresholdLines lines, and the expanded
+// state shows the whole body.
+func TestReasoningThreeStatesHeightRenderAgreement(t *testing.T) {
+	th := loadTheme(t)
+	n := uikitconfig.CollapseThresholdLines + 5
+	body := make([]string, n)
+	for i := range body {
+		body[i] = fmt.Sprintf("line %d", i+1)
+	}
+	base := Block{Kind: uievent.KindReasoning, Collapsible: true, Body: body, ElapsedMS: 4100}
+
+	collapsed := base
+	collapsed.Collapsed = true
+	windowed := base
+	windowed.Collapsed, windowed.Expanded = false, false
+	expanded := base
+	expanded.Collapsed, expanded.Expanded = false, true
+
+	for name, b := range map[string]Block{"collapsed": collapsed, "windowed": windowed, "expanded": expanded} {
+		rows := strings.Split(ansi.Strip(b.Render(th, theme.TierASCII, 80)), "\n")
+		if got, want := len(rows), b.Height(80); got != want {
+			t.Errorf("%s: Height=%d, Render produced %d rows:\n%s", name, want, got, strings.Join(rows, "\n"))
+		}
+	}
+
+	collapsedRows := strings.Split(ansi.Strip(collapsed.Render(th, theme.TierASCII, 80)), "\n")
+	if len(collapsedRows) != 1 || collapsedRows[0] != "Thought for 4.1s" {
+		t.Errorf("collapsed reasoning rows = %q, want exactly one row \"Thought for 4.1s\"", collapsedRows)
+	}
+
+	hasTrimmedLine := func(rendered, line string) bool {
+		for _, row := range strings.Split(ansi.Strip(rendered), "\n") {
+			if strings.TrimSpace(row) == line {
+				return true
+			}
+		}
+		return false
+	}
+
+	windowedText := windowed.Render(th, theme.TierASCII, 80)
+	if hasTrimmedLine(windowedText, "line 1") || !hasTrimmedLine(windowedText, fmt.Sprintf("line %d", n)) {
+		t.Errorf("windowed reasoning must show only the last %d lines, got:\n%s", uikitconfig.CollapseThresholdLines, ansi.Strip(windowedText))
+	}
+
+	expandedText := expanded.Render(th, theme.TierASCII, 80)
+	if !hasTrimmedLine(expandedText, "line 1") || !hasTrimmedLine(expandedText, fmt.Sprintf("line %d", n)) {
+		t.Errorf("expanded reasoning must show the full body, got:\n%s", ansi.Strip(expandedText))
+	}
+}
+
 func TestCollapseMarker(t *testing.T) {
 	cases := []struct {
 		name string

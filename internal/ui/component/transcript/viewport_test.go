@@ -315,6 +315,31 @@ func TestDumpExpandsCollapsedBlocks(t *testing.T) {
 	}
 }
 
+// TestDumpExpandsAReasoningBlockToItsFullText pins the same "the dump
+// must not hide what the screen hides" invariant TestDumpExpandsCollapsedBlocks
+// pins for tool cards, for a settled reasoning block (C1): a reasoning
+// body longer than CollapseThresholdLines renders WINDOWED in the live
+// view (state 2, Collapsed=false && Expanded=false) unless the reader
+// pressed the third toggle, but the scrollback dump must show every
+// line regardless of that live toggle state - it is a re-read of the
+// record, not a live view a reader has necessarily opened all the way.
+func TestDumpExpandsAReasoningBlockToItsFullText(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	body := make([]string, uikitconfig.CollapseThresholdLines+1)
+	for i := range body {
+		body[i] = fmt.Sprintf("line-%d", i)
+	}
+	m.blocks = []Block{{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true, Body: body}}
+
+	if strings.Contains(ansi.Strip(m.View()), "line-0") {
+		t.Fatal("precondition: a collapsed reasoning block must show no body on screen")
+	}
+	if !strings.Contains(ansi.Strip(m.Dump()), "line-0") {
+		t.Error("the dump windows a reasoning body instead of showing the full text; it must expand everything")
+	}
+}
+
 func TestDumpIncludesTheStreamingTail(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 20)
@@ -821,6 +846,39 @@ func TestToggleBlockAtScreenRow(t *testing.T) {
 	}
 	if _, ok := next.ToggleBlockAtScreenRow(groupIndent, -1); ok {
 		t.Error("a negative row must be refused")
+	}
+}
+
+// TestClickToggleDoesNotLeakReasoningExpandedAcrossACollapseRoundTrip
+// pins a C1 boundary the mouse path shares with the keyboard path
+// (focus.go, toggleReasoningFocused): ToggleBlockAtScreenRow only ever
+// flips Collapsed, so reaching the third state (Expanded=true) via
+// keyboard, then closing and reopening the SAME block with the mouse,
+// must not silently skip the windowed second state - a stale Expanded
+// flag surviving the round trip would jump straight back to the full
+// text with no click having asked for it.
+func TestClickToggleDoesNotLeakReasoningExpandedAcrossACollapseRoundTrip(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{
+		Kind: uievent.KindReasoning, Collapsible: true,
+		Collapsed: false, Expanded: true, Body: []string{"the full reasoning text"},
+	}}
+	m.SetSize(80, 40)
+
+	// Close it with a click (row 0 is the block's own header/summary row).
+	m, ok := m.ToggleBlockAtScreenRow(groupIndent, 0)
+	if !ok || !m.blocks[0].Collapsed {
+		t.Fatalf("click did not collapse the block: ok=%v Collapsed=%v", ok, m.blocks[0].Collapsed)
+	}
+
+	// Reopen it with a second click on the same row.
+	m, ok = m.ToggleBlockAtScreenRow(groupIndent, 0)
+	if !ok || m.blocks[0].Collapsed {
+		t.Fatalf("click did not reopen the block: ok=%v Collapsed=%v", ok, m.blocks[0].Collapsed)
+	}
+	if m.blocks[0].Expanded {
+		t.Error("reopening via mouse must land in the windowed state, not leak a stale Expanded=true from before the collapse")
 	}
 }
 

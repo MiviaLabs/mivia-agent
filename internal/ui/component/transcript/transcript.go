@@ -66,6 +66,15 @@ type Model struct {
 	pendingKind uievent.Kind // uievent.KindTextDelta or KindReasoning while streaming; "" when idle
 	flushWait   bool
 
+	// pendingStartedAt is when THIS transcript first saw the current
+	// reasoning span begin (appendPending, on the switch into
+	// KindReasoning), the same StartedAt/ElapsedMS timing contract
+	// handleToolEnd already applies to tool calls (C1): no producer sends
+	// a reasoning duration, so the wall time between the first delta and
+	// whatever event settles the block is what the reader actually
+	// waited. Zero while nothing is pending.
+	pendingStartedAt time.Time
+
 	// hideReasoning collapses every live reasoning block. It is a view
 	// state, not a filter: the blocks stay in the window and in the ring.
 	hideReasoning bool
@@ -209,6 +218,7 @@ func (m Model) Clear() Model {
 	m.missed = 0
 	m.pending = ""
 	m.pendingKind = ""
+	m.pendingStartedAt = time.Time{}
 	m.flushWait = false
 	return m
 }

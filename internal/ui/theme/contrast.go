@@ -25,6 +25,8 @@ func AllContrastChecks() []ContrastCheck {
 		{RoleFGSubtle, RoleBG, large, "subtle text (large/UI use only)"},
 		{RoleFG, RoleBGInset, body, "body text on inset fill (inline code, prose panels)"},
 		{RoleFGSubtle, RoleBGInset, large, "subtle text on inset fill"},
+		{RoleFG, RoleBGSubtle, body, "body text on subtle fill (tool-card body)"},
+		{RoleFGSubtle, RoleBGSubtle, large, "subtle text on subtle fill"},
 		{RoleBorderFocus, RoleBG, large, "focus ring"},
 		{RoleAccent, RoleBG, large, "accent chrome"},
 		{RoleAccentFG, RoleAccent, body, "text on accent fill"},

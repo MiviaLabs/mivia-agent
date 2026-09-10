@@ -248,6 +248,41 @@ func TestFocusedText(t *testing.T) {
 	}
 }
 
+// TestFocusedTextCopiesTheReasoningDurationNotTheWordCount pins C1's
+// clipboard parity: a reasoning block's copied text must state the same
+// duration the screen shows ("Thought for Xs"), not the pre-C1
+// "reasoning  N words  hidden" header headerPlain still builds from
+// Header.Meta/State - and it must carry the block's full body regardless
+// of whether the live view happens to be windowed (state 2) or collapsed
+// (state 1) at the moment of the copy.
+func TestFocusedTextCopiesTheReasoningDurationNotTheWordCount(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{
+		Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true,
+		ElapsedMS: 4100,
+		Header:    Header{Label: "reasoning", Meta: "9 words", State: "hidden"},
+		Body:      []string{"step 1: analyze", "step 2: plan"},
+	}}
+	m = m.FocusPrev()
+
+	got, ok := m.FocusedText()
+	if !ok {
+		t.Fatal("expected the focused block's text")
+	}
+	if !strings.Contains(got, "Thought for 4.1s") {
+		t.Errorf("copied text = %q, want it to state the duration \"Thought for 4.1s\"", got)
+	}
+	if strings.Contains(got, "words") || strings.Contains(got, "hidden") {
+		t.Errorf("copied text = %q, still carries the pre-C1 word-count header", got)
+	}
+	for _, want := range []string{"step 1: analyze", "step 2: plan"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("copied text is missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestFocusedTextIgnoresCollapseState: the user asked for the block's
 // content, and collapse is a view state, not part of what they meant.
 func TestFocusedTextIgnoresCollapseState(t *testing.T) {
@@ -328,6 +363,106 @@ func TestToggleReasoning(t *testing.T) {
 	m = m.ToggleReasoning()
 	if m.ReasoningHidden() {
 		t.Error("the second press did not show reasoning again")
+	}
+}
+
+// TestSetAllCollapsedNormalizesReasoningToAConsistentState pins that the
+// global expand-all/collapse-all keys (IDExpandAll/IDCollapseAll) leave
+// every reasoning block in the SAME state, not a mix that depends on
+// which blocks a reader had individually cycled to the third (full-text)
+// state (C1) before pressing the global key: a blanket "expand all" must
+// not silently reveal one block's full text while every sibling opens to
+// the windowed state, and a blanket "collapse all" must not leave a
+// stale Expanded=true sitting behind a Collapsed block for a later
+// expand-all to surface.
+func TestSetAllCollapsedNormalizesReasoningToAConsistentState(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{
+		{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: false, Expanded: true, Body: []string{"a"}},
+		{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true, Expanded: false, Body: []string{"b"}},
+	}
+
+	expanded := m.SetAllCollapsed(false)
+	for i, b := range expanded.Blocks() {
+		if b.Collapsed {
+			t.Errorf("block %d: want Collapsed=false after expand-all", i)
+		}
+		if b.Expanded {
+			t.Errorf("block %d: want Expanded=false after expand-all (windowed, not a leaked full-text state)", i)
+		}
+	}
+
+	collapsed := expanded.SetAllCollapsed(true)
+	for i, b := range collapsed.Blocks() {
+		if !b.Collapsed {
+			t.Errorf("block %d: want Collapsed=true after collapse-all", i)
+		}
+		if b.Expanded {
+			t.Errorf("block %d: want Expanded=false after collapse-all, not left stale for the next expand-all", i)
+		}
+	}
+}
+
+// TestReasoningToggleFocusedCyclesThreeStates pins C1's three-state
+// toggle path (space/enter on the focused block, ToggleFocused):
+// collapsed (only the "Thought for Xs" summary) -> windowed (the last
+// CollapseThresholdLines lines) -> full text -> back to collapsed.
+func TestReasoningToggleFocusedCyclesThreeStates(t *testing.T) {
+	body := make([]string, uikitconfig.CollapseThresholdLines+5)
+	for i := range body {
+		body[i] = fmt.Sprintf("line %d", i+1)
+	}
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true, Body: body}}
+	m = m.FocusPrev()
+
+	if !m.blocks[0].Collapsed || m.blocks[0].Expanded {
+		t.Fatalf("reasoning must start collapsed with Expanded=false, got Collapsed=%v Expanded=%v",
+			m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+
+	m, ok := m.ToggleFocused()
+	if !ok || m.blocks[0].Collapsed || m.blocks[0].Expanded {
+		t.Fatalf("first toggle: want the windowed state (Collapsed=false, Expanded=false), got ok=%v Collapsed=%v Expanded=%v",
+			ok, m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+
+	m, ok = m.ToggleFocused()
+	if !ok || m.blocks[0].Collapsed || !m.blocks[0].Expanded {
+		t.Fatalf("second toggle: want the full-text state (Collapsed=false, Expanded=true), got ok=%v Collapsed=%v Expanded=%v",
+			ok, m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+
+	m, ok = m.ToggleFocused()
+	if !ok || !m.blocks[0].Collapsed || m.blocks[0].Expanded {
+		t.Fatalf("third toggle: want back to collapsed (Collapsed=true, Expanded=false), got ok=%v Collapsed=%v Expanded=%v",
+			ok, m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+}
+
+// TestToggleReasoningHidesEveryReasoningBlockRegardlessOfExpanded pins
+// that ctrl+r's global hide (ToggleReasoning) still collapses a
+// reasoning block down to its one-line summary even when a reader had
+// fully expanded it (C1's third state) - Collapsed always wins over
+// Expanded when both are consulted at render time.
+func TestToggleReasoningHidesEveryReasoningBlockRegardlessOfExpanded(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{
+		Kind: uievent.KindReasoning, Collapsible: true,
+		Collapsed: false, Expanded: true, Body: []string{"the full reasoning text"},
+	}}
+
+	m = m.ToggleReasoning()
+
+	if !m.blocks[0].Collapsed {
+		t.Error("ctrl+r must collapse a reasoning block even when it was fully expanded")
+	}
+	rendered := m.blocks[0].Render(loadTheme(t), theme.TierASCII, 80)
+	if strings.Contains(rendered, "the full reasoning text") {
+		t.Errorf("a collapsed reasoning block must show only its summary line, got:\n%s", rendered)
 	}
 }
 

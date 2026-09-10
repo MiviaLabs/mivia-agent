@@ -193,3 +193,22 @@ func TestSubagentProgressDoesNotMultiplySpinnerClocks(t *testing.T) {
 		live = total
 	}
 }
+
+// TestReasoningStreamingDoesNotArmASpinnerClock pins C1's "Thinking  Xs"
+// live tail: it refreshes off the transcript's own pending-flush clock
+// (transcript.FlushMsg), a Msg type countTicks does not even count, not
+// off the shared statusline.TickMsg clock armTick guards. A reasoning
+// delta must therefore arm zero spinner clocks, the same way a plain
+// text delta always has.
+func TestReasoningStreamingDoesNotArmASpinnerClock(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+
+	_, cmd := s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "weighing the options"},
+	}})
+
+	if n := countTicks(cmd); n != 0 {
+		t.Fatalf("a reasoning delta armed %d spinner clocks, want 0 (it rides the transcript's own flush clock)", n)
+	}
+}

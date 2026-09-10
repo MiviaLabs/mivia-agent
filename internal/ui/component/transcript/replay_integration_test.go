@@ -65,7 +65,7 @@ func TestReplayDrivesTranscript(t *testing.T) {
 				plain := ansi.Strip(got)
 				for _, want := range []string{
 					"Add retry with exponential backoff", // turn.start, the user input
-					"reasoning",                          // reasoning summary
+					"Thought for",                        // reasoning summary (C1)
 					"read_file",                          // tool lifecycle
 					"edit",
 					"s3_uploader",       // a tool detail

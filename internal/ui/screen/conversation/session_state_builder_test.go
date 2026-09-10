@@ -129,9 +129,9 @@ func TestNewSessionState_ReplaysHistoryIntoTranscriptAndComposer(t *testing.T) {
 	// The reasoning and trailing text turns render collapsed/folded
 	// summaries rather than their literal body, so assert on what the
 	// transcript actually surfaces: the user prompt, the reasoning
-	// marker, both replayed tool calls, and the end_turn reason emitted
-	// for every non-last message.
-	for _, want := range []string{"what is the plan?", "reasoning", "run_command", "read_file", "end_turn"} {
+	// duration line (C1), both replayed tool calls, and the end_turn
+	// reason emitted for every non-last message.
+	for _, want := range []string{"what is the plan?", "Thought for", "run_command", "read_file", "end_turn"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("transcript view missing %q; view=%q", want, view)
 		}

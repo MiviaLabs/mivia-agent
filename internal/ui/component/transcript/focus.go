@@ -110,6 +110,9 @@ func (m Model) ToggleFocused() (Model, bool) {
 	if !m.blocks[m.focus].Collapsible {
 		return m, false
 	}
+	if m.blocks[m.focus].Kind == uievent.KindReasoning {
+		return m.toggleReasoningFocused()
+	}
 	if m.blocks[m.focus].Collapsed {
 		if head, ok := m.leaderHeadOf(m.focus); ok {
 			next := m
@@ -121,6 +124,40 @@ func (m Model) ToggleFocused() (Model, bool) {
 	copy(blocks, m.blocks)
 	blocks[m.focus].Collapsed = !blocks[m.focus].Collapsed
 	m.blocks = blocks
+	return m.ScrollToFocus(), true
+}
+
+// toggleReasoningFocused is ToggleFocused's branch for a reasoning
+// block (C1): its third state (Block.Expanded) means one press cannot
+// be a plain Collapsed flip. The cycle is collapsed (only "Thought for
+// Xs") -> windowed (the last CollapseThresholdLines lines) -> full text
+// -> back to collapsed. A collapsed block heading a coalesced work run
+// (layout.go workRunLen) still dissolves the whole run on the first
+// press, the same promise ToggleFocused makes for every other
+// collapsible kind.
+func (m Model) toggleReasoningFocused() (Model, bool) {
+	blk := m.blocks[m.focus]
+	switch {
+	case blk.Collapsed:
+		if head, ok := m.leaderHeadOf(m.focus); ok {
+			next := m
+			next.expandRun(head)
+			return next.ScrollToFocus(), true
+		}
+		blocks := slicesCloneBlocks(m.blocks)
+		blocks[m.focus].Collapsed = false
+		blocks[m.focus].Expanded = false
+		m.blocks = blocks
+	case !blk.Expanded:
+		blocks := slicesCloneBlocks(m.blocks)
+		blocks[m.focus].Expanded = true
+		m.blocks = blocks
+	default:
+		blocks := slicesCloneBlocks(m.blocks)
+		blocks[m.focus].Collapsed = true
+		blocks[m.focus].Expanded = false
+		m.blocks = blocks
+	}
 	return m.ScrollToFocus(), true
 }
 
@@ -136,6 +173,13 @@ func (m Model) SetAllCollapsed(collapsed bool) Model {
 	for i := range blocks {
 		if blocks[i].Collapsible {
 			blocks[i].Collapsed = collapsed
+			// The global expand-all/collapse-all keys are blanket
+			// operations: every reasoning block must land in the SAME
+			// state, not a mix that depends on which ones a reader had
+			// separately cycled to the third full-text state (C1) before
+			// pressing the key. Resetting Expanded here is a no-op on
+			// every other kind.
+			blocks[i].Expanded = false
 		}
 	}
 	m.blocks = blocks
@@ -223,16 +267,24 @@ func (m Model) FocusedText() (string, bool) {
 	}
 	rows := make([]string, 0, len(b.Body)+1)
 	if !b.Prose {
-		// A tool block's column 1 is the call's outcome (C3), a fact of
-		// the record, so it is kept verbatim. Every other kind still
-		// carries the plain v/>/blank collapse marker there, which IS
-		// view state - dropped exactly as before, or a focused block's
-		// copied text would flip between a "v " and a "> " prefix
-		// depending on whether the reader happened to have it open when
-		// they pressed y.
-		header := b.headerPlain()
-		if !b.isToolBlock() {
-			header = strings.TrimPrefix(header, b.collapseMarker())
+		var header string
+		switch {
+		case b.Kind == uievent.KindReasoning:
+			// The live view shows a duration, not the word-count/hidden
+			// header headerPlain still builds from Header.Meta/State (C1) -
+			// the clipboard copy must say the same thing the screen does.
+			header = b.reasoningSummaryText()
+		case b.isToolBlock():
+			// A tool block's column 1 is the call's outcome (C3), a fact of
+			// the record, so it is kept verbatim.
+			header = b.headerPlain()
+		default:
+			// Every other kind still carries the plain v/>/blank collapse
+			// marker there, which IS view state - dropped exactly as
+			// before, or a focused block's copied text would flip between
+			// a "v " and a "> " prefix depending on whether the reader
+			// happened to have it open when they pressed y.
+			header = strings.TrimPrefix(b.headerPlain(), b.collapseMarker())
 		}
 		rows = append(rows, strings.TrimSpace(header))
 	}

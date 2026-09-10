@@ -71,21 +71,11 @@ func (m Model) flushPending() Model {
 		return m
 	}
 	kind := m.pendingKind
+	started := m.pendingStartedAt
 	m.clearPending()
 	if kind == uievent.KindReasoning {
-		body := strings.Split(strings.TrimRight(partial, "\n"), "\n")
 		words := len(strings.Fields(partial))
-		m, _ = m.pushBlock(Block{
-			Kind:        uievent.KindReasoning,
-			Collapsible: true,
-			Collapsed:   true,
-			Header: Header{
-				Label: "reasoning",
-				Meta:  fmt.Sprintf("%d words", words),
-				State: "hidden",
-			},
-			Body: body,
-		})
+		m, _ = m.pushBlock(m.reasoningBlockFrom(partial, words, started))
 		return m
 	}
 	m, _ = m.pushBlock(Block{
@@ -109,19 +99,29 @@ func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cm
 		if words == 0 {
 			words = len(strings.Fields(b.Text))
 		}
-		return m.pushBlock(reasoningBlock(b.Text, words))
+		// Whole-text path (C1): no reasoning was pending, so there is no
+		// start time to inherit - this instant IS the start.
+		return m.pushBlock(m.reasoningBlockFrom(b.Text, words, m.now()))
 	}
 	if b.WordCount == 0 {
 		return m, m.appendPending(uievent.KindReasoning, b.Text)
 	}
 	raw := m.pending
+	started := m.pendingStartedAt
 	if raw == "" && b.Text != "" {
+		// Whole-text path (C1): a single atomic reasoning event with no
+		// prior delta buffered - same "this instant is the start" rule.
 		raw = b.Text
+		started = m.now()
 	}
 	m.clearPending()
-	return m.pushBlock(reasoningBlock(raw, b.WordCount))
+	return m.pushBlock(m.reasoningBlockFrom(raw, b.WordCount, started))
 }
 
+// reasoningBlock builds a settled reasoning Block from its accumulated
+// text and word count, with no timing: reasoningBlockFrom is what stamps
+// StartedAt/ElapsedMS, because that needs the model's clock and this
+// does not.
 func reasoningBlock(text string, words int) Block {
 	var body []string
 	if text != "" {
@@ -140,9 +140,27 @@ func reasoningBlock(text string, words int) Block {
 	}
 }
 
+// reasoningBlockFrom builds a settled reasoning Block and stamps its
+// StartedAt/ElapsedMS from started (C1), using this model's clock for
+// "now" the same way handleToolEnd's measured-duration fallback does.
+// started is the zero time only when the caller has genuinely observed
+// no start (never true on any live path); ElapsedMS stays 0 then rather
+// than measuring against the zero time, which would report a duration of
+// decades.
+func (m Model) reasoningBlockFrom(text string, words int, started time.Time) Block {
+	blk := reasoningBlock(text, words)
+	if started.IsZero() {
+		return blk
+	}
+	blk.StartedAt = started
+	blk.ElapsedMS = int(m.now().Sub(started) / time.Millisecond)
+	return blk
+}
+
 func (m *Model) clearPending() {
 	m.pending = ""
 	m.pendingKind = ""
+	m.pendingStartedAt = time.Time{}
 }
 
 func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
@@ -152,6 +170,13 @@ func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
 	if m.pendingKind != "" && m.pendingKind != kind && m.pending != "" {
 		flushed := m.flushPending()
 		*m = flushed
+	}
+	// Stamp the start of a fresh reasoning span (C1), not a continuation
+	// of one already streaming: pendingKind is "" the first time a
+	// reasoning delta arrives (idle, or just flushed above), and stays
+	// KindReasoning on every subsequent chunk of the SAME span.
+	if kind == uievent.KindReasoning && m.pendingKind != uievent.KindReasoning {
+		m.pendingStartedAt = m.now()
 	}
 	m.pending += text
 	m.pendingKind = kind
@@ -166,14 +191,26 @@ func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
 // block. It is separate from the blocks because it is not addressable:
 // it has no header, cannot take focus, and is replaced wholesale when
 // the span ends.
+//
+// A streaming REASONING span (C1) does not preview its raw text: like
+// the settled block, the reader wants to know how long the model has
+// been thinking, not read a half-formed chain of thought. The row reads
+// "Thinking  Xs", refreshed by the same flush clock that already redraws
+// this tail (transcript.go's doc comment; Update, above) - no new clock
+// is armed for it (.agents/memories/tui-spinner-clock-*.md).
 func (m Model) tailRows() []string {
 	if m.pending == "" {
 		return nil
 	}
-	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
 	if m.pendingKind == uievent.KindReasoning {
-		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true)
+		style := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true)
+		elapsed := 0
+		if !m.pendingStartedAt.IsZero() {
+			elapsed = int(m.now().Sub(m.pendingStartedAt) / time.Millisecond)
+		}
+		return []string{style.Render("Thinking  " + render.FormatElapsed(elapsed))}
 	}
+	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
 	measure := render.ProseMeasure(m.width)
 	var out []string
 	for _, line := range strings.Split(m.pending, "\n") {

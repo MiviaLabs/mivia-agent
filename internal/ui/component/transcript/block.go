@@ -52,6 +52,16 @@ type Block struct {
 	Collapsed   bool
 	Focused     bool
 
+	// Expanded is a settled reasoning block's third toggle state (C1):
+	// false shows the last uikitconfig.CollapseThresholdLines rendered
+	// lines, true shows the full text. Meaningless outside KindReasoning.
+	// Collapsed still wins over this - ToggleReasoning (focus.go), the
+	// global ctrl+r hide, must collapse the block down to its one-line
+	// "Thought for Xs" summary regardless of how far a reader had opened
+	// it, so rendering always checks Collapsed before ever consulting
+	// this field.
+	Expanded bool
+
 	// Prose renders with no header and no indent, at column 1. It is the
 	// only content that reads as conversation rather than as tooling
 	// (wireframes-panes.md section 2, last paragraph).
@@ -125,6 +135,9 @@ func (b Block) Height(width int) int {
 	if b.Prose {
 		return len(b.bodyRows(width))
 	}
+	if b.Kind == uievent.KindReasoning {
+		return b.reasoningHeight(width)
+	}
 	if b.isToolBlock() {
 		return 1 + b.card(width).rows()
 	}
@@ -133,6 +146,33 @@ func (b Block) Height(width int) int {
 	}
 	// render.Header guarantees exactly one row at a known width.
 	return 1 + len(b.bodyRows(width))
+}
+
+// reasoningHeight is Height's KindReasoning branch (C1): a collapsed
+// block is ALWAYS its one summary row, unlike a windowed tool card
+// (card.go), which still shows a small body under the threshold even
+// while "collapsed" - reasoning's third toggle is the only way back to
+// the text, so Collapsed must hide everything or that promise breaks.
+func (b Block) reasoningHeight(width int) int {
+	if b.Collapsed {
+		return 1
+	}
+	rows := b.reasoningRows(width)
+	if len(rows) == 0 {
+		return 1
+	}
+	return 2 + len(rows) // summary row + blank separator + shown rows
+}
+
+// reasoningRows is a settled reasoning block's body at width, windowed to
+// the last uikitconfig.CollapseThresholdLines rows unless Expanded shows
+// the full text (C1's third toggle state).
+func (b Block) reasoningRows(width int) []string {
+	rows := b.bodyRows(width)
+	if b.Expanded || len(rows) <= uikitconfig.CollapseThresholdLines {
+		return rows
+	}
+	return rows[len(rows)-uikitconfig.CollapseThresholdLines:]
 }
 
 // Activity reports whether the block is tool activity rather than
@@ -169,9 +209,6 @@ func (b Block) bodyRows(width int) []string {
 	out := make([]string, 0, len(b.Body))
 	for _, line := range b.Body {
 		out = append(out, render.HardWrap(line, inner)...)
-	}
-	if b.Kind == uievent.KindReasoning && len(out) > 3 {
-		out = out[len(out)-3:]
 	}
 	return out
 }
@@ -216,6 +253,13 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
 	}
 
+	if b.Kind == uievent.KindReasoning {
+		if b.Collapsed {
+			return sb.String()
+		}
+		return sb.String() + b.reasoningBody(t, tier, width, indent)
+	}
+
 	if b.isToolBlock() {
 		c := b.card(width)
 		if len(c.body) == 0 {
@@ -244,7 +288,7 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		for _, line := range c.body {
 			sb.WriteByte('\n')
 			sb.WriteString(bodyIndent)
-			sb.WriteString(render.FillBG(t, tier, theme.RoleBGInset, padToWidth(" "+style(line), fillWidth)))
+			sb.WriteString(render.FillBG(t, tier, theme.RoleBGSubtle, padToWidth(" "+style(line), fillWidth)))
 			sb.WriteByte(' ') // right margin: plain, matching the left
 		}
 		if c.hidden > 0 {
@@ -266,6 +310,27 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
 		sb.WriteString(body(line))
+	}
+	return sb.String()
+}
+
+// reasoningBody is Render's KindReasoning branch below its "Thought for
+// Xs" header row: the blank separator plus the windowed or full-text
+// body on RoleBGInset, the same card treatment isToolBlock's branch
+// gives a tool body (C4) - split out to keep Render itself short.
+func (b Block) reasoningBody(t theme.Theme, tier theme.Tier, width int, indent string) string {
+	rows := b.reasoningRows(width)
+	if len(rows) == 0 {
+		return ""
+	}
+	fillWidth := width - uikitconfig.BodyIndent
+	var sb strings.Builder
+	sb.WriteByte('\n') // the blank row a card opens with (C4)
+	style := b.bodyStyle(t, tier)
+	for _, line := range rows {
+		sb.WriteByte('\n')
+		sb.WriteString(indent)
+		sb.WriteString(render.FillBG(t, tier, theme.RoleBGInset, padToWidth(style(line), fillWidth)))
 	}
 	return sb.String()
 }
@@ -303,6 +368,10 @@ func (b Block) bodyStyle(t theme.Theme, tier theme.Tier) func(string) string {
 }
 
 func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
+	if b.Kind == uievent.KindReasoning {
+		return b.renderReasoningSummary(t, tier)
+	}
+
 	headerW := width
 	if headerW > uikitconfig.ProseMeasureWide+16 {
 		// Cap the width render.Header clips against on ultrawide screens, so a
@@ -338,19 +407,38 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
 	}
 
-	// A reasoning header is drawn as one italic dim run, for the reason
-	// bodyStyle gives: collapsed - which is its default - the header is
-	// ALL the reader sees of it, and "> reasoning  9 words  hidden" was
-	// otherwise shaped and coloured exactly like "> edit  31ms  ok".
-	// Italic is a decoration, not a colour, so it survives NO_COLOR
-	// (ux-rules 9.5) and degrades to plain where the terminal has no
-	// italic - and there the word "reasoning" still carries it.
-	if b.Kind == uievent.KindReasoning {
-		plain := ansi.Strip(render.Header(t, tier, headerW, spec))
-		return render.Role(t, tier, theme.RoleFGSubtle).Italic(true).Render(plain)
-	}
-
 	return render.Header(t, tier, headerW, spec)
+}
+
+// reasoningSummaryText is a settled reasoning block's duration line with
+// no styling: "Thought for 8s" via render.FormatElapsed. Shared by
+// renderReasoningSummary, which styles it for the live view, and
+// FocusedText (focus.go), which copies this same plain text to the
+// clipboard - so a reasoning block's copy states the duration the screen
+// shows, not the pre-C1 word count headerPlain still builds from
+// Header.Meta.
+func (b Block) reasoningSummaryText() string {
+	return "Thought for " + render.FormatElapsed(b.ElapsedMS)
+}
+
+// renderReasoningSummary is a settled reasoning block's whole header
+// (C1): one dim line, "Thought for 8s" via render.FormatElapsed, in
+// place of the old "reasoning  84 words  hidden" row this used to share
+// with every other collapsible kind's render.Header layout. The reader
+// wants to know how long the model took, not how much it said, and it is
+// ALL they see of the block by default - which is why it carries no
+// marker column: unlike the generic v/>/blank collapse marker, there is
+// nothing here for a reader to read as a state glyph.
+//
+// Italic is a decoration, not a colour, so it survives NO_COLOR
+// (ux-rules 9.5) and degrades to plain where the terminal has no italic -
+// and there the word "Thought" still carries it.
+func (b Block) renderReasoningSummary(t theme.Theme, tier theme.Tier) string {
+	text := b.reasoningSummaryText()
+	if b.Focused {
+		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(text)
+	}
+	return render.Role(t, tier, theme.RoleFGSubtle).Italic(true).Render(text)
 }
 
 // headerMeta is the meta column as rendered. It used to append a

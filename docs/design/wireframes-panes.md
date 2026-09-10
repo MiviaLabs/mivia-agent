@@ -105,7 +105,7 @@ jitter, and a cap of 5s.
             func() error { return u.raw.Put(ctx, k, b) })
     }
 
-> reasoning                                     84 words  … +2 lines  hidden
+  Thought for 8.4s
 
 + read_file   internal/storage/s3_uploader.go        48 lines   12ms
 
@@ -153,14 +153,26 @@ A header-only block with nothing to open - a one-line `notice`, a `plan`, a `hoo
 carries a blank marker column, `v` open or `>` closed, and simply disappears when
 collapsed: nothing states its size.
 
+A **reasoning** block (`Thought for 8.4s` above) is neither: it carries no marker
+column and no label, only a dim duration line via `render.FormatElapsed` - the reader
+wants to know how long the model thought, not how much it said. It has three states,
+cycled by `Space`/`Enter` on the focused block: collapsed shows only that line (the
+default); a second press shows the last `CollapseThresholdLines` (10) rendered lines on
+the inset fill, the same treatment a tool card's body gets; a third press shows the full
+text. A fourth press returns to collapsed. The global `ctrl+r` hide (`ToggleReasoning`)
+collapses every live reasoning block regardless of which of the three states it was in.
+While reasoning is still streaming, the tail row reads `Thinking  4s`, the same duration
+grammar, refreshed by the existing repaint clock - no block exists yet to toggle.
+
 A **tool call** (`read_file`, `edit`, `subagent`, `run_command` above) is different:
 column 1 states the call's own outcome instead of a collapse marker - `+` ok, `x`
 failed, `?` pending, and the section 3 spinner while running - because a reader scanning
 a run of finished calls needs the verdict more than a fold state. The word for it stays
 inline only when it says something the glyph does not: `failed`, `pending` and `running`
 keep their word, `ok` does not. A tool body opens with one blank row, then its lines on
-the inset fill, and - once the block is collapsed with more lines than the window holds
-- a trailing hint row stating what the window left out: `… N more lines` unfocused,
+the `bg-subtle` fill (not `bg-inset`, which a dialog's own wash already owns and would
+otherwise render identically). Once the block is collapsed with more lines than the
+window holds, a trailing hint row states what the window left out: `… N more lines` unfocused,
 `… N more lines  space to expand` once the block holds focus. That hint row is also
 the click target for opening the card back up; there is no marker in column 1 to click.
 A body sits at plain 4-column indent by default; the `│` rail marks only the two moments

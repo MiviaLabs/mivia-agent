@@ -1,6 +1,10 @@
 package transcript
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+)
 
 // This file is the mouse click-to-toggle router, split out of
 // viewport.go: ToggleBlockAtScreenRow and its collapse-marker hit test.
@@ -72,6 +76,16 @@ func (m Model) ToggleBlockAtScreenRow(x, y int) (Model, bool) {
 		m.invalidateSelection()
 		m.blocks = slices.Clone(m.blocks)
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
+		// A reasoning block's third state (Expanded, C1) is a keyboard-only
+		// affordance - the mouse toggle only ever flips Collapsed, so it
+		// must not leave a stale Expanded=true behind for the next open to
+		// pick up. Without this, closing a fully-expanded reasoning block
+		// and reopening it with the mouse skips the windowed second state
+		// entirely, dumping the full text back with no click having asked
+		// for that much.
+		if blk.Kind == uievent.KindReasoning {
+			m.blocks[i].Expanded = false
+		}
 		m.clampOffset()
 		return m, true
 	}
