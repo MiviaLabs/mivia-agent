@@ -95,6 +95,38 @@ func TestHeaderClipsDetailNotState(t *testing.T) {
 	}
 }
 
+// TestHeaderClipsDetailNotOutcomeGlyphOrState pins the same clip
+// priority TestHeaderClipsDetailNotState pins, for a tool block's own
+// Marker content: C3 puts the call's outcome glyph ("x" for failed) in
+// the Marker column instead of the generic collapse arrow, and this
+// contract must not care which one it is. A failed row must stay
+// exactly one row, the detail gives way first, and neither the glyph
+// nor the "failed" word may be dropped.
+func TestHeaderClipsDetailNotOutcomeGlyphOrState(t *testing.T) {
+	th := loadTheme(t)
+	const width = 40
+	long := strings.Repeat("verylongpath/", 12)
+	got := Header(th, theme.TierASCII, width, HeaderSpec{
+		Marker: "x", Label: "run_command", Detail: long, Meta: "4.1s", State: "failed", StateRole: theme.RoleDanger,
+	})
+	p := plain(got)
+	if strings.Count(p, "\n") != 0 {
+		t.Fatalf("got %q, want exactly one row", p)
+	}
+	if w := lipgloss.Width(got); w > width {
+		t.Errorf("got width %d, want at most %d:\n%q", w, width, got)
+	}
+	if !strings.HasPrefix(p, "x run_command") {
+		t.Errorf("got %q, want the outcome glyph and label preserved", p)
+	}
+	if !strings.Contains(p, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the clip marker: the detail must give way first", p)
+	}
+	if !strings.HasSuffix(p, "failed") {
+		t.Errorf("got %q, want the state preserved as the last thing on the row", p)
+	}
+}
+
 // TestHeaderUnclippableStillRenders covers a width so small that even
 // clipping the detail cannot help. It must degrade, never panic or
 // produce a negative-width pad.

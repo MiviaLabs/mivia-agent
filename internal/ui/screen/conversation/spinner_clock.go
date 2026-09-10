@@ -59,11 +59,13 @@ func (s Screen) handleStatuslineTick(msg statusline.TickMsg) (app.Screen, tea.Cm
 		// own frame.
 		next, _ := s.statusline.Update(msg)
 		s.statusline = next
+		s.transcript.SetSpinnerFrame(s.statusline.Frame())
 		return s, nil
 	}
 	s.disarmTick()
 	next, cmd := s.statusline.Update(msg)
 	s.statusline = next
+	s.transcript.SetSpinnerFrame(s.statusline.Frame())
 	if cmd != nil {
 		// statusline.Update re-armed on its own; that Cmd IS the one
 		// clock, so record it rather than adding a second.

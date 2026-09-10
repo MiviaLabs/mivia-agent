@@ -33,9 +33,12 @@ const MaxToolOutputBytes = 64 * 1024
 const BodyIndent = 4
 
 // CollapseThresholdLines is the body height at or above which a block
-// first renders collapsed. wireframes-panes.md section 5: "open under 12
-// body lines, closed at or above".
-const CollapseThresholdLines = 12
+// first renders collapsed, AND (C4) the window a collapsed tool card
+// shows before it hands the rest to the trailing "… N more lines" hint
+// row. One constant, because the two are the same fact: what a collapsed
+// block hides is exactly what its hint states. wireframes-panes.md
+// section 5: "Default: open under 10 body lines, closed at or above."
+const CollapseThresholdLines = 10
 
 // Prose is wrapped to a measure, not to the terminal width, so long
 // lines stay readable on a wide terminal. wireframes-panes.md section 14.

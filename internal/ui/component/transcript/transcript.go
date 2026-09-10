@@ -70,6 +70,12 @@ type Model struct {
 	// state, not a filter: the blocks stay in the window and in the ring.
 	hideReasoning bool
 
+	// spinnerFrame mirrors the statusline's own tick (SetSpinnerFrame),
+	// the frame a RUNNING tool block's column-1 spinner draws
+	// (C3). The transcript arms no clock of
+	// its own for it - see .agents/memories/tui-spinner-clock-*.md.
+	spinnerFrame int
+
 	// Mouse selection (selection.go): the absolute rect the owning
 	// screen injects at layout, and the anchor/focus pair the router
 	// drives during a drag. Plain structs, safe under this model's
@@ -366,6 +372,14 @@ func (m Model) pushBlock(b Block) (Model, tea.Cmd) {
 	b.ID = strconv.Itoa(m.nextID)
 	m.push(b)
 	return m, nil
+}
+
+// SetSpinnerFrame records the statusline's current spinner tick. The
+// caller already owns the one shared clock (armTick/disarmTick in
+// internal/ui/screen/conversation); this only lets a running tool
+// block's column-1 glyph catch up to it on the next render.
+func (m *Model) SetSpinnerFrame(frame int) {
+	m.spinnerFrame = frame
 }
 
 // SetTheme records a theme change and rebuilds every block body that was

@@ -107,12 +107,14 @@ jitter, and a cap of 5s.
 
 > reasoning                                     84 words  … +2 lines  hidden
 
-v read_file   internal/storage/s3_uploader.go        48 lines   12ms   ok
++ read_file   internal/storage/s3_uploader.go        48 lines   12ms
+
     package storage
     import ("context"; "time")
     ...
 
-v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
++ edit        internal/storage/s3_uploader.go           +4 -1   31ms
+
     @@ -14,7 +14,11 @@ func (u *Uploader) put(
     -   return u.raw.Put(ctx, k, b)
     +   return retry.Do(ctx, retry.Policy{
@@ -120,13 +122,15 @@ v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
     +       Cap: 5 * time.Second,
     +   }, func() error { return u.raw.Put(ctx, k, b) })
 
-v subagent    test-writer                             2 of 3  18.0s    running
+- subagent    test-writer                             2 of 3  18.0s    running
+
     [######################........]  67%
     + read existing table tests
     + draft TestPutRetriesOnTransient
     - run the package test
 
-v run_command go test ./internal/storage/...        1 failure   4.1s   failed
+x run_command go test ./internal/storage/...        1 failure   4.1s   failed
+
 │   x s3_uploader_test.go:88: want 3 attempts, got 1
 
 v plan                                                 2 of 4          open
@@ -145,14 +149,25 @@ v error       transport refused after 3 attempts                      fatal
 >
 ```
 
-A header-only block - a one-line `notice`, a pending tool call - carries a blank marker
-column: there is no body to open. A collapsed block whose body is hidden states the
-magnitude in the meta column: `… +N lines`. A body sits at plain 4-column indent by
-default; the `│` rail marks only the two moments that must stand out, the focused block
-and the failed block. `usage` is not a block: it is one dim footer line per turn, in
-the meta grammar above. Durations follow one ladder at every surface
-(`render.FormatElapsed`): under 1s prints `250ms`, under 60s prints `4.1s`, 60s and up
-print `1m 05s`.
+A header-only block with nothing to open - a one-line `notice`, a `plan`, a `hook` -
+carries a blank marker column, `v` open or `>` closed, and simply disappears when
+collapsed: nothing states its size.
+
+A **tool call** (`read_file`, `edit`, `subagent`, `run_command` above) is different:
+column 1 states the call's own outcome instead of a collapse marker - `+` ok, `x`
+failed, `?` pending, and the section 3 spinner while running - because a reader scanning
+a run of finished calls needs the verdict more than a fold state. The word for it stays
+inline only when it says something the glyph does not: `failed`, `pending` and `running`
+keep their word, `ok` does not. A tool body opens with one blank row, then its lines on
+the inset fill, and - once the block is collapsed with more lines than the window holds
+- a trailing hint row stating what the window left out: `… N more lines` unfocused,
+`… N more lines  space to expand` once the block holds focus. That hint row is also
+the click target for opening the card back up; there is no marker in column 1 to click.
+A body sits at plain 4-column indent by default; the `│` rail marks only the two moments
+that must stand out, the focused block and the failed block. `usage` is not a block: it
+is one dim footer line per turn, in the meta grammar above. Durations follow one ladder
+at every surface (`render.FormatElapsed`): under 1s prints `250ms`, under 60s prints
+`4.1s`, 60s and up print `1m 05s`.
 
 The transcript groups by turn (transcript-polish.md R1): the user line and the
 assistant prose sit at column 1, and the turn's tool activity hangs under them as one
@@ -180,39 +195,44 @@ quits. `?` on an empty composer prints the keymap.
 
 ## 5. Collapsed against expanded
 
-The same two blocks, closed and open. Collapsing must not move any other row, so the
-header row changes only in its marker cell. A closed block with a body also states its
-magnitude in the meta column - `… +N lines` - so the reader sees what expanding reveals.
-The state word never moves to the end of the row, and the detail clips before it.
+For a **non-tool** collapsible block (`plan`, `hook`, `notice` with a body) collapsing
+must not move any other row: the header row changes only in its marker cell, `v` open,
+`>` closed, and the body disappears entirely - nothing states its size (section 4).
+
+For a **tool block** collapsing changes the body instead of the header (section 4): its
+column-1 outcome glyph never moves, and the card's body windows down to the section 3
+threshold with a trailing `… N more lines` hint row once the body holds more lines than
+that. A short body - `read_file`'s four-line preview in section 4, say - never grows a
+hint at all: there is nothing past the window to state.
 
 ```
-> read_file   internal/storage/s3_uploader.go   48 lines  12ms  … +3 lines   ok
-> edit        internal/storage/s3_uploader.go      +4 -1  31ms  … +3 lines   ok
++ run_command  go test ./internal/storage/...                          6.8s
+
+    PASS: TestA (10ms)
+    PASS: TestB (12ms)
+    PASS: TestC (8ms)
+    PASS: TestD (9ms)
+    PASS: TestE (11ms)
+    PASS: TestF (7ms)
+    PASS: TestG (10ms)
+    PASS: TestH (9ms)
+    PASS: TestI (8ms)
+    PASS: TestJ (10ms)
+    … 3 more lines
 ```
 
-```
-v read_file   internal/storage/s3_uploader.go        48 lines   12ms   ok
-    package storage
-    import ("context"; "time")
-    ...
-v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
-    @@ -14,7 +14,11 @@
-    -   return u.raw.Put(ctx, k, b)
-    +   return retry.Do(ctx, retry.Policy{Max: 3})
-```
-
-**Default collapse, amended 2026-09-04.** The 12-line threshold below still governs
-prose-shaped bodies, but a tool call that has ENDED SUCCESSFULLY now collapses
-whatever its size: its header already carries the target, the duration and the
-outcome, and consecutive collapsed calls are what fold into the work row above. A
-failed call stays open at any size.
+**Default collapse, amended 2026-09-04.** The section 3 threshold below still governs
+prose-shaped bodies, but a tool call that has ENDED SUCCESSFULLY now collapses whatever
+its size: its header already carries the target, the duration and the outcome, and
+consecutive collapsed calls are what fold into the work row above. A failed call stays
+open at any size.
 
 **Live-window constraint.** A block stays interactive while it is in the live window.
 The window holds the blocks that fit in the terminal height minus the reserved chrome.
 The renderer sets the default state when the block finalizes, from a size threshold.
 Eviction prints the block to scrollback once and freezes it. Finalization does not
 freeze a block, because a finalized block is usually still on screen.
-Default: open under 12 body lines, closed at or above.
+Default: open under 10 body lines, closed at or above.
 
 ---
 
@@ -326,7 +346,8 @@ dismisses, `Ctrl-U` clears the line. At most 6 rows, scrolling.
 ## 11. Unified diff
 
 ```
-v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
++ edit        internal/storage/s3_uploader.go           +4 -1   31ms
+
     @@ -14,7 +14,11 @@ func (u *Uploader) put(ctx, k, b) error {
       14      ctx, cancel := context.WithTimeout(ctx, u.timeout)
       15      defer cancel()

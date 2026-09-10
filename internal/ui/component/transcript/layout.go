@@ -65,7 +65,7 @@ func (m Model) layout() []span {
 		if act {
 			ind = groupIndent
 		}
-		sp := span{indent: ind, sepBefore: i > 0 && !(prevActivity && act)}
+		sp := span{indent: ind, sepBefore: i > 0 && (!(prevActivity && act) || m.cardNeedsGapAfter(i, ind, spans))}
 		if sp.sepBefore {
 			row++ // the separator belongs above the span, not inside it
 		}
@@ -88,6 +88,24 @@ func (m Model) layout() []span {
 		i++
 	}
 	return spans
+}
+
+// cardNeedsGapAfter reports whether the block immediately before i (already
+// laid out in spans) painted a visible tool card - a tinted body, not just
+// a header - that must not touch whatever draws next. R1's "no blank row
+// inside a run of activity blocks" is for a dense BURST of short calls
+// reading as one line each; it was never meant to glue a multi-line tinted
+// card directly to the next block's header, which reads as one merged
+// block instead of two. A block folded into a coalesced run (spans[i-1]
+// with runSize > 0 - always a hidden, height-0 tail member here, since the
+// loop only reaches index i after skipping the whole run) or a card with
+// nothing to show yet (pending/running, no body) still packs tight.
+func (m Model) cardNeedsGapAfter(i, ind int, spans []span) bool {
+	if i <= 0 || spans[i-1].runSize != 0 {
+		return false
+	}
+	prev := m.blocks[i-1]
+	return prev.isToolBlock() && len(prev.card(m.width-ind).body) > 0
 }
 
 // totalLayoutRows is the height of the whole conversation: every block
@@ -376,6 +394,9 @@ func leaderTarget(detail string) string {
 // indent prefixes every row, and the block renders at the correspondingly
 // narrower width so its internal wrap math still fits the terminal.
 func (m Model) renderSpanRows(b Block, s span) []string {
+	if b.Header.State == "running" {
+		b.SpinnerFrame = m.spinnerFrame
+	}
 	lines := strings.Split(b.Render(m.Theme, m.Tier, m.width-s.indent), "\n")
 	if s.indent == 0 {
 		return lines

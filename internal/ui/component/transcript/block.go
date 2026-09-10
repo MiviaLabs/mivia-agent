@@ -84,6 +84,13 @@ type Block struct {
 	// derive ElapsedMS when the event carries no duration of its own.
 	// Zero for anything that is not a live tool call.
 	StartedAt time.Time
+
+	// SpinnerFrame is the statusline's own tick, copied onto a RUNNING
+	// tool block just before it renders (C3). It is meaningless on any
+	// other block: nothing arms a clock here, this is only where the
+	// block catches up to the one the statusline already owns
+	// (.agents/memories/tui-spinner-clock-*.md).
+	SpinnerFrame int
 }
 
 // renderCalls counts Block.Render invocations. It exists so tests can
@@ -117,6 +124,9 @@ func (b Block) Height(width int) int {
 	}
 	if b.Prose {
 		return len(b.bodyRows(width))
+	}
+	if b.isToolBlock() {
+		return 1 + b.card(width).rows()
 	}
 	if b.Collapsed {
 		return 1
@@ -192,23 +202,65 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 
 	var sb strings.Builder
 	sb.WriteString(b.renderHeader(t, tier, width))
-	if b.Collapsed {
-		return sb.String()
-	}
-	// The resting body indents with plain spaces: wireframes-panes.md
-	// section 2 - "the body is indented 4 columns. Nothing is drawn in
-	// columns 1 to 4 of a body line." The "│" rail is reserved for the
-	// two moments where the block needs to stand out from the record:
-	// the focused block, and the failed block, where rail plus
-	// RoleDanger earns its weight (transcript-polish.md R4). The column
-	// count is identical either way, so a body never shifts when focus
-	// or state changes. render.Role still degrades the rail's colour to
-	// nothing at TierASCII/TierNoTTY with no code branch here.
+
+	// The "│" rail is reserved for the two moments where the block needs
+	// to stand out from the record: the focused block, and the failed
+	// block, where rail plus RoleDanger earns its weight
+	// (transcript-polish.md R4). The column count is identical either
+	// way, so a body never shifts when focus or state changes. render.Role
+	// still degrades the rail's colour to nothing at TierASCII/TierNoTTY
+	// with no code branch here.
 	showRail := b.Focused || b.Header.Role == theme.RoleDanger
 	indent := "    "
 	if showRail {
 		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
 	}
+
+	if b.isToolBlock() {
+		c := b.card(width)
+		if len(c.body) == 0 {
+			return sb.String()
+		}
+		// One column of the indent is handed to the tint as a left
+		// margin, and one more plain column follows the fill as a right
+		// margin, so the card reads as padded on both sides rather than
+		// text glued to the tint's own edges. bodyIndent is always three
+		// plain columns (the rail case ends in two literal ASCII spaces
+		// appended after the styled glyph, so trimming the last byte
+		// trims one space, never an escape sequence). fillWidth stays
+		// width-BodyIndent, the same budget bodyRows already wrapped
+		// every line to, so the row's total width - bodyIndent(3) +
+		// fillWidth + the trailing margin(1) - is unchanged.
+		//
+		// render.FillBG colours only the cells it is given ("Callers pad
+		// rows to the width they want covered first" - background.go);
+		// bodyRows already hard-wraps every line to at most this many
+		// columns, so padding here only ever adds trailing space, never
+		// truncates.
+		bodyIndent := indent[:len(indent)-1]
+		fillWidth := width - uikitconfig.BodyIndent
+		sb.WriteByte('\n') // the blank row a card opens with (C4)
+		style := b.bodyStyle(t, tier)
+		for _, line := range c.body {
+			sb.WriteByte('\n')
+			sb.WriteString(bodyIndent)
+			sb.WriteString(render.FillBG(t, tier, theme.RoleBGInset, padToWidth(" "+style(line), fillWidth)))
+			sb.WriteByte(' ') // right margin: plain, matching the left
+		}
+		if c.hidden > 0 {
+			sb.WriteByte('\n')
+			sb.WriteString(indent)
+			sb.WriteString(render.Role(t, tier, theme.RoleFGSubtle).Render(cardHint(c.hidden, b.Focused)))
+		}
+		return sb.String()
+	}
+
+	if b.Collapsed {
+		return sb.String()
+	}
+	// The resting body indents with plain spaces: wireframes-panes.md
+	// section 2 - "the body is indented 4 columns. Nothing is drawn in
+	// columns 1 to 4 of a body line."
 	body := b.bodyStyle(t, tier)
 	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
@@ -263,13 +315,13 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	// one column set: focus changes only the reverse-video treatment and
 	// never moves a column (wireframes-panes.md section 5).
 	spec := render.HeaderSpec{
-		Marker:    b.collapseMarker(),
+		Marker:    b.columnOneGlyph(),
 		Label:     b.Header.Label,
 		Detail:    b.Header.Detail,
 		DiffAdd:   b.Header.DiffAdd,
 		DiffDel:   b.Header.DiffDel,
 		Meta:      b.headerMeta(),
-		State:     b.Header.State,
+		State:     b.displayState(),
 		StateRole: b.Header.Role,
 	}
 
@@ -301,38 +353,26 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	return render.Header(t, tier, headerW, spec)
 }
 
-// headerMeta is the meta column as rendered. A collapsed block states
-// its magnitude there - "… +N lines" for the N logical body lines it
-// is hiding - because a collapsed body that says only "hidden" gives
-// the reader nothing to weigh before expanding (transcript-polish.md
-// R3). The ellipsis matches the truncation grammar values.go already
-// uses (truncationBadge); it is one codepoint at every tier, so no tier
-// branch is needed. render.Header keeps the whole row to one line: when
-// the extended meta squeezes the row, the detail clips first and the
-// meta and state survive.
+// headerMeta is the meta column as rendered. It used to append a
+// "… +N lines" magnitude hint for a collapsed block; that hint now lives
+// on the body's own hint row instead (C4),
+// which states the same count where the reader is already looking to
+// expand it, so the header needs nothing extra here.
 func (b Block) headerMeta() string {
-	meta := b.Header.Meta
-	if !b.Collapsible || !b.Collapsed || len(b.Body) == 0 {
-		return meta
-	}
-	hint := fmt.Sprintf("… +%d lines", len(b.Body))
-	if meta == "" {
-		return hint
-	}
-	return meta + "  " + hint
+	return b.Header.Meta
 }
 
 // headerPlain is the header with no styling, used for the focused run
 // and for width measurement.
 func (b Block) headerPlain() string {
 	spec := render.SanitizeSpec(render.HeaderSpec{
-		Marker:  b.collapseMarker(),
+		Marker:  b.columnOneGlyph(),
 		Label:   b.Header.Label,
 		Detail:  b.Header.Detail,
 		DiffAdd: b.Header.DiffAdd,
 		DiffDel: b.Header.DiffDel,
 		Meta:    b.Header.Meta,
-		State:   b.Header.State,
+		State:   b.displayState(),
 	})
 	out := spec.Marker + " " + spec.Label
 	if spec.Detail != "" {

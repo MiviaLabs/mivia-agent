@@ -1,10 +1,12 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -168,6 +170,16 @@ func TestExpandingCanEvict(t *testing.T) {
 	// Built at a roomy size so every block keeps its body, then shrunk
 	// while collapsed so the three header rows still fit. Expanding is
 	// then the only thing that can overflow the budget.
+	//
+	// Each body is longer than CollapseThresholdLines: a collapsed tool
+	// card windows to that many lines plus a hint row (C4), so a body AT
+	// or under the window would render identically collapsed or
+	// expanded and prove nothing about growth.
+	long := make([]string, uikitconfig.CollapseThresholdLines+5)
+	for i := range long {
+		long[i] = fmt.Sprintf("line %d", i)
+	}
+	chunk := strings.Join(long, "\n")
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 40)
 	for i := 0; i < 3; i++ {
@@ -178,7 +190,7 @@ func TestExpandingCanEvict(t *testing.T) {
 		})
 		m, _ = m.HandleEvent(uievent.Event{
 			Kind: uievent.KindToolOutput,
-			Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: "one\ntwo\nthree"},
+			Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: chunk},
 		})
 	}
 	m = m.SetAllCollapsed(true)
@@ -251,6 +263,31 @@ func TestFocusedTextIgnoresCollapseState(t *testing.T) {
 	shut, _ := closed.FocusedText()
 	if open != shut {
 		t.Errorf("copied text changed with the collapse state:\nopen:   %q\nclosed: %q", open, shut)
+	}
+}
+
+// TestFocusedTextIgnoresCollapseStateForNonToolBlock covers the OTHER
+// side of the C3 change TestFocusedTextIgnoresCollapseState above pins
+// for a tool block: a NON-tool collapsible kind (a hook here) still
+// carries the plain v/>/blank collapse marker in column 1, and that
+// marker IS view state, so the copy must not flip between "v " and "> "
+// depending on whether the block happened to be open when copied.
+func TestFocusedTextIgnoresCollapseStateForNonToolBlock(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindHook,
+		Body: uievent.HookBody{Event: "PreToolUse", Program: "p", Tool: "run_command", Input: "line-1"},
+	})
+	m = m.FocusPrev()
+	open, _ := m.FocusedText()
+	closed, _ := m.ToggleFocused()
+	shut, _ := closed.FocusedText()
+	if open != shut {
+		t.Errorf("copied text changed with the collapse state:\nopen:   %q\nclosed: %q", open, shut)
+	}
+	if strings.HasPrefix(open, "v ") || strings.HasPrefix(open, "> ") {
+		t.Errorf("copied text leaked the collapse marker: %q", open)
 	}
 }
 

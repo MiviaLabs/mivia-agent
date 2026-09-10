@@ -218,13 +218,23 @@ func (m Model) FocusedText() (string, bool) {
 		return "", false
 	}
 	b := m.blocks[m.focus]
+	if b.Header.State == "running" {
+		b.SpinnerFrame = m.spinnerFrame
+	}
 	rows := make([]string, 0, len(b.Body)+1)
 	if !b.Prose {
-		// The collapse marker is dropped, not just trimmed. It is view
-		// state, so keeping it would make the copied text differ
-		// depending on whether the block happened to be open.
-		header := strings.TrimSpace(strings.TrimPrefix(b.headerPlain(), b.collapseMarker()))
-		rows = append(rows, header)
+		// A tool block's column 1 is the call's outcome (C3), a fact of
+		// the record, so it is kept verbatim. Every other kind still
+		// carries the plain v/>/blank collapse marker there, which IS
+		// view state - dropped exactly as before, or a focused block's
+		// copied text would flip between a "v " and a "> " prefix
+		// depending on whether the reader happened to have it open when
+		// they pressed y.
+		header := b.headerPlain()
+		if !b.isToolBlock() {
+			header = strings.TrimPrefix(header, b.collapseMarker())
+		}
+		rows = append(rows, strings.TrimSpace(header))
 	}
 	rows = append(rows, b.Body...)
 	return strings.Join(rows, "\n"), true
