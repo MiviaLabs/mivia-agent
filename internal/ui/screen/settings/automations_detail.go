@@ -119,6 +119,8 @@ func runStateLabel(st ports.RunState) string {
 		return "failed"
 	case ports.RunCancelled:
 		return "cancelled"
+	case ports.RunSkipped:
+		return "skipped"
 	default:
 		return "unknown"
 	}
@@ -132,6 +134,8 @@ func runStateRole(st ports.RunState) theme.Role {
 		return theme.RoleDanger
 	case ports.RunRunning, ports.RunPending:
 		return theme.RoleInfo
+	case ports.RunSkipped:
+		return theme.RoleFGSubtle
 	default:
 		return theme.RoleFGSubtle
 	}

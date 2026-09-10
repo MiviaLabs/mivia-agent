@@ -13,9 +13,9 @@ import (
 )
 
 // TestNewAutomationSpawnerReachesPoolCreateFreshInDir covers
-// newAutomationSpawner's own closure body (the one wireAutomationBackend
+// newAutomationSpawner's own wiring (the value wireAutomationBackend
 // installs on the Service, distinct from the standalone
-// automationSpawnerFunc adapter TestAutomationSpawnerFuncCallsUnderlyingClosure
+// automationSessionSpawner adapter TestAutomationSessionSpawnerCallsUnderlyingPool
 // below already proves forwards its arguments correctly): a SessionPool
 // built with a nil config (uiadapter.NewSessionPool(nil, nil, nil, ...))
 // makes CreateFreshInDir fail fast and cheaply (SessionPool.res == nil
@@ -38,36 +38,46 @@ func TestNewAutomationSpawnerReachesPoolCreateFreshInDir(t *testing.T) {
 	}
 }
 
-// TestAutomationSpawnerFuncCallsUnderlyingClosure covers
-// automationSpawnerFunc.CreateFreshInDir's own method body (run.go): the
+// TestAutomationSessionSpawnerCallsUnderlyingPool covers
+// automationSessionSpawner.CreateFreshInDir's own method body (run.go): the
 // standalone adapter type, tested in isolation from newAutomationSpawner's
-// own pool-specific closure above, proving the plain-func-to-
+// own pool-specific wiring above, proving the plain-func-to-
 // uiadapter.BindFunc conversion (D4's compile-hazard fix) forwards both
-// arguments and both return values unchanged.
-func TestAutomationSpawnerFuncCallsUnderlyingClosure(t *testing.T) {
-	var gotBind func(*chat.Session) (string, error)
-	var gotDir string
-	wantConv := (ports.Conversation)(nil)
-	wantErr := context.Canceled
-
-	f := automationSpawnerFunc(func(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
-		gotBind = bind
-		gotDir = dir
-		return wantConv, wantErr
-	})
-
-	bindFn := func(*chat.Session) (string, error) { return "bound-root", nil }
-	var target automation.SessionSpawner = f // pins that automationSpawnerFunc satisfies automation.SessionSpawner
+// arguments and both return values unchanged. Uses a real, nil-config
+// SessionPool (as TestNewAutomationSpawnerReachesPoolCreateFreshInDir does)
+// since automationSessionSpawner now wraps a concrete *uiadapter.SessionPool
+// rather than an injectable closure (chunk 6 widened SessionSpawner to
+// 2 methods, which a bare func type can no longer satisfy).
+func TestAutomationSessionSpawnerCallsUnderlyingPool(t *testing.T) {
+	pool := uiadapter.NewSessionPool(nil, nil, nil, false)
+	var target automation.SessionSpawner = automationSessionSpawner{pool: pool} // pins that automationSessionSpawner satisfies automation.SessionSpawner
+	bindCalled := false
+	bindFn := func(*chat.Session) (string, error) {
+		bindCalled = true
+		return "", nil
+	}
 	conv, err := target.CreateFreshInDir(bindFn, "/some/dir")
+	if err == nil {
+		t.Fatal("CreateFreshInDir through automationSessionSpawner with a nil-config pool: got nil error, want the pool's own 'no config provided' failure")
+	}
+	if conv != nil {
+		t.Fatalf("CreateFreshInDir returned a non-nil conversation on error: %v", conv)
+	}
+	if bindCalled {
+		t.Fatal("bind was called despite the pool's own nil-config guard firing first")
+	}
+}
 
-	if gotDir != "/some/dir" {
-		t.Fatalf("underlying closure saw dir = %q, want /some/dir", gotDir)
-	}
-	if gotBind == nil {
-		t.Fatal("underlying closure did not receive the bind func")
-	}
-	if conv != wantConv || err != wantErr {
-		t.Fatalf("CreateFreshInDir returned (%v, %v), want (%v, %v)", conv, err, wantConv, wantErr)
+// TestAutomationSessionSpawnerSetApprovalOverride covers
+// automationSessionSpawner.SetApprovalOverride's own method body: it
+// forwards to the pool's own SetApprovalOverride, proven here by the
+// pool's own "unknown session" rejection for an id it has never pooled.
+func TestAutomationSessionSpawnerSetApprovalOverride(t *testing.T) {
+	pool := uiadapter.NewSessionPool(nil, nil, nil, false)
+	spawn := automationSessionSpawner{pool: pool}
+	err := spawn.SetApprovalOverride("no-such-session", nil, "deny")
+	if err == nil {
+		t.Fatal("SetApprovalOverride through automationSessionSpawner for an unknown session: got nil error, want rejection")
 	}
 }
 

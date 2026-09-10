@@ -2,12 +2,14 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -138,6 +140,34 @@ func TestRunTurnHeadlessRejectsNilSpawner(t *testing.T) {
 	}
 }
 
+// TestSendTurnHeadlessRejectsNilConversation pins sendTurnHeadless's own
+// nil-conversation guard directly - runTurnHeadless never reaches it
+// (its own spawn call always hands sendTurnHeadless a non-nil
+// conversation or returns first), but the executor's step dispatch
+// (executor.go's runStep) calls sendTurnHeadless directly against an
+// already-spawned conversation, so a nil there must be caught here
+// rather than only indirectly.
+func TestSendTurnHeadlessRejectsNilConversation(t *testing.T) {
+	_, err := sendTurnHeadless(context.Background(), nil, "prompt", time.Second)
+	if err == nil {
+		t.Fatal("sendTurnHeadless with nil conversation: got nil error, want rejection")
+	}
+}
+
+// TestSendTurnHeadlessRejectsNonPositiveTimeout pins sendTurnHeadless's
+// own timeout guard directly, for the same reason as the nil-conversation
+// test above: the executor calls this function directly, not only
+// through runTurnHeadless's wrapper.
+func TestSendTurnHeadlessRejectsNonPositiveTimeout(t *testing.T) {
+	conv := newFakeConversation()
+	if _, err := sendTurnHeadless(context.Background(), conv, "prompt", 0); err == nil {
+		t.Fatal("sendTurnHeadless with zero timeout: got nil error, want rejection")
+	}
+	if _, err := sendTurnHeadless(context.Background(), conv, "prompt", -time.Second); err == nil {
+		t.Fatal("sendTurnHeadless with negative timeout: got nil error, want rejection")
+	}
+}
+
 // TestRunTurnHeadlessRejectsNonPositiveTimeout pins the zero/negative
 // timeout guard: D5 requires ctx to ALWAYS carry a deadline, so a caller
 // that forgets to set one must be rejected rather than silently given
@@ -158,6 +188,12 @@ type erroringSpawner struct{ err error }
 
 func (e *erroringSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
 	return nil, e.err
+}
+
+// SetApprovalOverride is a no-op: erroringSpawner exists only to
+// exercise runTurnHeadless's spawn-error path.
+func (e *erroringSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {
+	return nil
 }
 
 // TestRunTurnHeadlessWrapsSpawnError pins runTurnHeadless's own

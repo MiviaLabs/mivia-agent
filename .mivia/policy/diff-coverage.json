@@ -475,25 +475,22 @@
     },
     "internal/automation/store.go": {
       "lines": [
-        140,
-        141,
-        160,
-        161,
-        162,
-        163,
-        165,
-        166,
-        167,
-        168,
-        170,
-        171,
-        172,
-        173,
-        175,
-        176,
-        177
+        192,
+        193,
+        194,
+        196,
+        197,
+        198,
+        199,
+        201,
+        202,
+        203,
+        204,
+        206,
+        207,
+        208
       ],
-      "reason": "Two clusters. (1) 140-141: SaveSpecs' toml.Marshal(shape) error wrap. SaveSpecs validates every spec via ValidateSpec BEFORE this call (store.go:121-125), and ValidateSpec's own step-kind check (validStepKind) accepts exactly the same range StepKind.MarshalText's guard accepts - so no spec that reaches this line can carry a StepKind MarshalText itself would refuse. Every other field in Spec/Step/TriggerSpec/ScheduleSpec is a plain string, bool, int64, or []string/map[string]string - go-toml/v2's Marshal has no failure mode for those types (no channel, func, complex, or cyclic pointer graph can appear in this struct tree), so a validated Spec cannot make Marshal fail. (2) 160-177: writeFileAtomic's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it - the identical class already accepted in this file for internal/memory/markdown_source.go's atomicWrite (93-94/399-412), internal/chatsync/identity.go's SaveIdentity (277-286), and internal/chatsync/delivered_ledger.go's writeFileDurably (67-76): triggering a live fd's Write/Sync/Close failure deterministically and portably, without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default), is not achievable from this test package. TestWriteFileAtomicRejectsUnwritableDir and TestWriteFileAtomicRejectsRenameOverADirectory (store_error_paths_test.go) already cover the two writeFileAtomic error paths that ARE reachable (CreateTemp against a nonexistent directory, and os.Rename onto a real, non-empty directory)."
+      "reason": "writeFileAtomic's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it - the identical class already accepted in this file for internal/memory/markdown_source.go's atomicWrite (93-94/399-412), internal/chatsync/identity.go's SaveIdentity (277-286), and internal/chatsync/delivered_ledger.go's writeFileDurably (67-76): triggering a live fd's Write/Sync/Close failure deterministically and portably, without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default), is not achievable from this test package. TestWriteFileAtomicRejectsUnwritableDir and TestWriteFileAtomicRejectsRenameOverADirectory (store_error_paths_test.go) already cover the two writeFileAtomic error paths that ARE reachable (CreateTemp against a nonexistent directory, and os.Rename onto a real, non-empty directory). Line numbers shifted from the previously-accepted 160-177 by chunk 6's firstRegistry insertion earlier in the file; the SaveSpecs toml.Marshal error wrap previously accepted at 140-141 is now covered directly by TestFirstRegistryReturnsExplicitRegistry's round trip and no longer needs an exception."
     },
     "internal/storage/sqlite.go": {
       "lines": [

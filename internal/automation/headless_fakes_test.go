@@ -2,10 +2,12 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -95,4 +97,11 @@ type fakeSpawner struct {
 
 func (f *fakeSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
 	return f.conv, nil
+}
+
+// SetApprovalOverride is a no-op for headless.go's wedge tests: none of
+// them exercise D8's unattended approval override, only the drain-to-
+// close/spawn/send plumbing.
+func (f *fakeSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {
+	return nil
 }

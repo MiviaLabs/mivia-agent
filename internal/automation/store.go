@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
@@ -27,6 +28,13 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // require: any automationID/runID failing idPattern is rejected with
 // this error (wrapped with the offending value).
 var ErrInvalidID = errors.New("automation: invalid id")
+
+// ErrInvalidUnattendedPolicy is returned when spec.Unattended is a
+// non-empty value other than UnattendedDeny/UnattendedAuto (D8): an
+// automation's unattended posture is a closed two-value choice, so an
+// unrecognized value (e.g. "yolo") must be refused at validation time
+// rather than silently treated as one of the two known policies.
+var ErrInvalidUnattendedPolicy = errors.New("automation: invalid unattended policy")
 
 // ValidateID reports whether id matches D11's charset/length rule
 // (^[a-z0-9][a-z0-9_-]{0,63}$), returning a wrapped ErrInvalidID when it
@@ -81,7 +89,16 @@ type fileShape struct {
 // stated reason for atomic writes (a partially-written file must not
 // silently disable every automation, and a per-entry error must not
 // either - the operator learns about it, not the empty list).
-func LoadSpecs(scope ports.Scope, workspaceRoot string) ([]Spec, error) {
+//
+// registry is variadic (0 or 1 value) so every pre-D15 call site
+// (store_test.go, service.go, and every other package that already
+// calls LoadSpecs with two arguments) keeps compiling unchanged; a
+// caller that HAS a live *skills.Registry (chunk 6's executor, or a
+// future Service wired with one via Config.Registry) passes it so a
+// StepSlash referencing a project/user skill command resolves and
+// validates correctly on load, not just at Apply time.
+func LoadSpecs(scope ports.Scope, workspaceRoot string, registry ...*skills.Registry) ([]Spec, error) {
+	reg := firstRegistry(registry)
 	path, err := automationsFilePath(scope, workspaceRoot)
 	if err != nil {
 		return nil, err
@@ -102,12 +119,22 @@ func LoadSpecs(scope ports.Scope, workspaceRoot string) ([]Spec, error) {
 		if spec.ID == "" {
 			spec.ID = id
 		}
-		if err := ValidateSpec(spec); err != nil {
+		if err := ValidateSpec(spec, reg); err != nil {
 			return nil, fmt.Errorf("automation: %s: %w", path, err)
 		}
 		specs = append(specs, spec)
 	}
 	return specs, nil
+}
+
+// firstRegistry returns the first value of a variadic *skills.Registry
+// slice, or nil when none was supplied. See LoadSpecs/SaveSpecs's doc
+// comments for why the parameter is variadic rather than required.
+func firstRegistry(registry []*skills.Registry) *skills.Registry {
+	if len(registry) == 0 {
+		return nil
+	}
+	return registry[0]
 }
 
 // SaveSpecs atomically writes specs as automations.toml at scope under
@@ -117,9 +144,13 @@ func LoadSpecs(scope ports.Scope, workspaceRoot string) ([]Spec, error) {
 // close/rename, not internal/cliworktree/worktree_marker.go:81's
 // (which omits the fsync): os.CreateTemp in the target directory,
 // Chmod(0600), write, Sync, Close, then os.Rename over the destination.
-func SaveSpecs(scope ports.Scope, workspaceRoot string, specs []Spec) error {
+//
+// registry is variadic for the same reason as LoadSpecs's - see its doc
+// comment.
+func SaveSpecs(scope ports.Scope, workspaceRoot string, specs []Spec, registry ...*skills.Registry) error {
+	reg := firstRegistry(registry)
 	for _, spec := range specs {
-		if err := ValidateSpec(spec); err != nil {
+		if err := ValidateSpec(spec, reg); err != nil {
 			return err
 		}
 	}
@@ -185,13 +216,26 @@ func writeFileAtomic(dir, name string, data []byte) error {
 // ValidateSpec runs the load-time validation the plan's Scope section
 // requires: reject an unknown Step.Kind, reject BaseRef set when
 // Worktree=WorktreeNone, reject empty Steps, reject a malformed
-// automation ID. Cron string validation itself is explicitly deferred
-// to chunk 4 (internal/cronschedule does not exist yet): a
-// cron/recurring trigger's raw Cron/TZ strings are stored as-is here,
-// unparsed.
-func ValidateSpec(spec Spec) error {
+// automation ID, reject an unrecognized Unattended value (D8), and
+// reject a StepSlash step whose Ref falls outside D15's headless-safe
+// allowlist. Cron string validation itself is explicitly deferred to
+// chunk 4 (internal/cronschedule does not exist yet): a cron/recurring
+// trigger's raw Cron/TZ strings are stored as-is here, unparsed.
+//
+// registry may be nil: a caller with no live *skills.Registry (most of
+// this package's own tests) still gets every OTHER validation, but a
+// StepSlash whose Ref would only resolve through a registry entry
+// (a SlashKindSkill command) is then unresolvable and rejected -
+// validateStepSlash's own "not recognized" branch, not a special case
+// here.
+func ValidateSpec(spec Spec, registry *skills.Registry) error {
 	if err := ValidateID(spec.ID); err != nil {
 		return err
+	}
+	switch spec.Unattended {
+	case "", UnattendedDeny, UnattendedAuto:
+	default:
+		return fmt.Errorf("automation %q: %w: %q", spec.ID, ErrInvalidUnattendedPolicy, spec.Unattended)
 	}
 	if len(spec.Steps) == 0 {
 		return fmt.Errorf("automation %q: steps must be non-empty", spec.ID)
@@ -199,6 +243,11 @@ func ValidateSpec(spec Spec) error {
 	for i, step := range spec.Steps {
 		if !validStepKind(step.Kind) {
 			return fmt.Errorf("automation %q: step %d: unknown step kind %d", spec.ID, i, int(step.Kind))
+		}
+		if step.Kind == StepSlash {
+			if err := validateStepSlash(spec.ID, i, step.Ref, registry); err != nil {
+				return err
+			}
 		}
 	}
 	if spec.Worktree == WorktreeNone && spec.BaseRef != "" {

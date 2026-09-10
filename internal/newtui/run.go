@@ -2,6 +2,7 @@ package newtui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
@@ -210,30 +212,38 @@ func persistTheme(store *uiadapter.SettingsStore, name string) tea.Cmd {
 // non-TTY input/output and quit the program themselves.
 var newTeaProgram = func(root tea.Model) *tea.Program { return tea.NewProgram(root) }
 
-// automationSpawnerFunc adapts a plain closure to automation.SessionSpawner,
-// the standard Go http.HandlerFunc-style adapter: the composition root
-// (this package) is the only place that names both uiadapter.BindFunc (a
-// named type) and automation.SessionSpawner's plain-func parameter
-// signature, converting between them (see docs/design/automations.md D4's
-// compile-hazard note).
-type automationSpawnerFunc func(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error)
-
-func (f automationSpawnerFunc) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
-	return f(bind, dir)
+// automationSessionSpawner adapts *uiadapter.SessionPool to
+// automation.SessionSpawner, the standard Go composition-root adapter:
+// this package (internal/newtui) is the only place that names both
+// uiadapter.BindFunc (a named type) and automation.SessionSpawner's
+// plain-func parameter signatures, converting between them (see
+// docs/design/automations.md D4's compile-hazard note). Widened from a
+// bare func type to a struct wrapping *uiadapter.SessionPool so it can
+// also implement SetApprovalOverride, which chunk 6 added to
+// SessionSpawner - a bare func type can only ever satisfy a
+// single-method interface.
+type automationSessionSpawner struct {
+	pool *uiadapter.SessionPool
 }
 
-// newAutomationSpawner builds the spawn closure wireAutomationBackend
+func (a automationSessionSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
+	return a.pool.CreateFreshInDir(uiadapter.BindFunc(bind), dir)
+}
+
+func (a automationSessionSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {
+	return a.pool.SetApprovalOverride(sessionID, gate, policy)
+}
+
+// newAutomationSpawner builds the spawn value wireAutomationBackend
 // installs on automation.Service: it adapts pool's BindFunc-typed
-// CreateFreshInDir to automation.SessionSpawner's plain-func signature
-// (see automationSpawnerFunc's own doc comment and
-// docs/design/automations.md D4). Extracted to its own named function,
-// not an inline closure inside wireAutomationBackend, so it is directly
-// callable from a test without needing a live executor (chunk 6) to
-// invoke it first.
+// CreateFreshInDir (and its SetApprovalOverride) to
+// automation.SessionSpawner's plain-func signatures (see
+// automationSessionSpawner's own doc comment and
+// docs/design/automations.md D4). A struct value, not a func literal,
+// so it is directly callable from a test without needing a live
+// executor (chunk 6) to invoke it first.
 func newAutomationSpawner(pool *uiadapter.SessionPool) automation.SessionSpawner {
-	return automationSpawnerFunc(func(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
-		return pool.CreateFreshInDir(uiadapter.BindFunc(bind), dir)
-	})
+	return automationSessionSpawner{pool: pool}
 }
 
 // wireAutomationBackend constructs the concrete automation.Service and

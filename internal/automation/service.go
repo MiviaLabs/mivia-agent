@@ -13,21 +13,31 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// SessionSpawner is the one capability the executor needs from the
-// session pool. The parameter type is a PLAIN func, never
+// SessionSpawner is the capability set the executor needs from the
+// session pool. The parameter types are PLAIN funcs, never
 // uiadapter.BindFunc: a composition-root adapter in internal/newtui
 // converts (see docs/design/automations.md D4's compile-hazard note).
 // This package must never import internal/uiadapter.
+//
+// SetApprovalOverride is chunk 6's addition: after CreateFreshInDir
+// returns (never inside the bind closure - see D8 and
+// uiadapter.SetApprovalOverride's own doc comment on the clobber
+// ordering), the executor installs the automation's unattended
+// approval posture (DenyGate/AutoApproveGate) directly on the spawned
+// session, keyed by its conversation id.
 type SessionSpawner interface {
 	CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error)
+	SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error
 }
 
 // Config holds the executor's tunables. TurnTimeout bounds every
@@ -141,6 +151,65 @@ func scheduleKindFromPorts(k ports.ScheduleKind) ScheduleKind {
 		return ScheduleRecurring
 	default:
 		return ScheduleInterval
+	}
+}
+
+// runStateToPorts maps automation.RunState to ports.RunState.
+func runStateToPorts(st RunState) ports.RunState {
+	switch st {
+	case RunRunning:
+		return ports.RunRunning
+	case RunSucceeded:
+		return ports.RunSucceeded
+	case RunFailed:
+		return ports.RunFailed
+	case RunCancelled:
+		return ports.RunCancelled
+	case RunInterrupted:
+		return ports.RunInterrupted
+	case RunSkipped:
+		return ports.RunSkipped
+	default:
+		return ports.RunPending
+	}
+}
+
+// runFailKindToPorts maps automation.RunFailKind to ports.RunFailKind.
+func runFailKindToPorts(k RunFailKind) ports.RunFailKind {
+	switch k {
+	case RunFailJobError:
+		return ports.RunFailJobError
+	case RunFailConditionNotMet:
+		return ports.RunFailConditionNotMet
+	case RunFailTimeout:
+		return ports.RunFailTimeout
+	default:
+		return ports.RunFailNone
+	}
+}
+
+// runOriginToTrigger maps a run's stored Origin string ("manual" or
+// "scheduled") to ports.TriggerKind. Any other/unset value maps to
+// TriggerManual, the zero value - matching triggerKindToPorts's own
+// default-branch convention for an out-of-range/unknown input.
+func runOriginToTrigger(origin string) ports.TriggerKind {
+	if origin == "scheduled" {
+		return ports.TriggerScheduled
+	}
+	return ports.TriggerManual
+}
+
+// runToPorts maps one runstore Run to its ports.Run view.
+func runToPorts(r Run) ports.Run {
+	return ports.Run{
+		ID:           r.ID,
+		AutomationID: r.AutomationID,
+		Trigger:      runOriginToTrigger(r.Origin),
+		State:        runStateToPorts(r.State),
+		StartedAt:    r.StartedAt,
+		EndedAt:      r.EndedAt,
+		FailKind:     runFailKindToPorts(r.FailKind),
+		Message:      r.Message,
 	}
 }
 
@@ -265,16 +334,31 @@ func (s *Service) Automations() []ports.Automation {
 	return out
 }
 
-// Runs returns no run records: run execution/persistence is a later
-// chunk (5/6), and the plan explicitly forbids fabricating run history
-// before an executor exists.
+// Runs returns automationID's run history via the runstore, most
+// recently started first, mapped to ports.Run. A store error (including
+// "no run store configured" on a nil db) is treated as empty rather than
+// propagated: ports.AutomationSettings.Runs has no error return, matching
+// this method's pre-chunk-5 unconditional-empty contract for an
+// unconfigured/misbehaving store.
 func (s *Service) Runs(automationID string, limit int) []ports.Run {
-	return nil
+	runs, err := s.listRuns(context.Background(), automationID, limit)
+	if err != nil || len(runs) == 0 {
+		return nil
+	}
+	out := make([]ports.Run, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, runToPorts(r))
+	}
+	return out
 }
 
-// Run always reports not-found: no run records exist yet.
+// Run looks up one run by id via the runstore, mapped to ports.Run.
 func (s *Service) Run(runID string) (ports.Run, bool) {
-	return ports.Run{}, false
+	r, ok, err := s.getRun(context.Background(), runID)
+	if err != nil || !ok {
+		return ports.Run{}, false
+	}
+	return runToPorts(r), true
 }
 
 // Apply handles the automation-definition edits this chunk can honor
@@ -291,7 +375,7 @@ func (s *Service) Apply(ctx context.Context, scope ports.Scope, e ports.Automati
 	case ports.SetAutomationEnabled:
 		return s.runSaveHandle(func() error { return s.setEnabled(v.ID, v.On) }), nil
 	case ports.TriggerAutomation:
-		return nil, fmt.Errorf("automation: trigger not yet implemented until chunk 6")
+		return s.runSaveHandle(func() error { _, err := s.RunOnce(ctx, v.ID, ports.TriggerManual); return err }), nil
 	case ports.ResumeAutomationRun:
 		return nil, fmt.Errorf("automation: resume not yet implemented until chunk 8")
 	default:
@@ -305,7 +389,7 @@ func (s *Service) upsert(a ports.Automation) error {
 		return err
 	}
 	spec := automationToSpec(a)
-	if err := ValidateSpec(spec); err != nil {
+	if err := ValidateSpec(spec, nil); err != nil {
 		return err
 	}
 	found := false

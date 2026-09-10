@@ -108,6 +108,18 @@ const (
 	RunSucceeded
 	RunFailed
 	RunCancelled
+	// RunInterrupted marks a run left in RunRunning when its fenced
+	// claim (D7) is found expired at service start or sweep time (D13):
+	// the process holding it died or was killed without ending the run.
+	// Distinct from RunFailed - an interrupted run is resumable via
+	// ResumeAutomationRun (chunk 8), not a terminal failure requiring a
+	// fresh run.
+	RunInterrupted
+	// RunSkipped marks a fire that lost the fenced single-fire claim
+	// (D7): another fire already owns the automation's in-flight run,
+	// so this fire is a documented no-op, recorded as its own run row
+	// rather than silently vanishing.
+	RunSkipped
 )
 
 // RunFailKind classifies a failed run without echoing the SDK's raw

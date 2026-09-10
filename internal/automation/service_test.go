@@ -94,18 +94,24 @@ func TestApplyAutomationsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestApplyTriggerAutomationNotYetImplemented proves TriggerAutomation
-// returns a named error rather than fabricating a run (D's "not yet
-// implemented until chunk 6").
-func TestApplyTriggerAutomationNotYetImplemented(t *testing.T) {
+// TestApplyTriggerAutomationRunsAndFailsForUnknownID proves
+// TriggerAutomation is wired to RunOnce (chunk 6): triggering an
+// automation ID the store has never seen surfaces RunOnce's own
+// ErrAutomationNotFound through the SaveHandle's SaveFailed event,
+// rather than the old "not yet implemented" stub error.
+func TestApplyTriggerAutomationRunsAndFailsForUnknownID(t *testing.T) {
 	root := t.TempDir()
 	svc, err := New(root, nil, nil, Config{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = svc.Apply(context.Background(), ports.ScopeProject, ports.TriggerAutomation{ID: "x"})
-	if err == nil {
-		t.Fatal("Apply(TriggerAutomation): got nil error, want not-yet-implemented")
+	h, err := svc.Apply(context.Background(), ports.ScopeProject, ports.TriggerAutomation{ID: "x"})
+	if err != nil {
+		t.Fatalf("Apply(TriggerAutomation) call: %v", err)
+	}
+	last := drainSave(t, h)
+	if last.State != ports.SaveFailed {
+		t.Fatalf("Apply(TriggerAutomation) for an unknown id final event = %+v, want SaveFailed", last)
 	}
 }
 

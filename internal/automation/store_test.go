@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -74,6 +75,29 @@ func TestRoundTripTOML(t *testing.T) {
 	}
 }
 
+// TestFirstRegistryReturnsExplicitRegistry closes firstRegistry's own
+// non-empty branch: LoadSpecs/SaveSpecs's variadic registry parameter is
+// otherwise only ever exercised with zero arguments across this
+// package's tests, leaving firstRegistry's `return registry[0]` line
+// unreached. Round-tripping a plain (non-slash) spec through both
+// functions with an explicit, non-nil *skills.Registry argument proves
+// the value actually flows through rather than merely compiling.
+func TestFirstRegistryReturnsExplicitRegistry(t *testing.T) {
+	root := t.TempDir()
+	reg := skills.NewRegistry()
+	spec := sampleSpec("with-registry")
+	if err := SaveSpecs(ports.ScopeProject, root, []Spec{spec}, reg); err != nil {
+		t.Fatalf("SaveSpecs with explicit registry: %v", err)
+	}
+	got, err := LoadSpecs(ports.ScopeProject, root, reg)
+	if err != nil {
+		t.Fatalf("LoadSpecs with explicit registry: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != spec.ID {
+		t.Fatalf("LoadSpecs with explicit registry returned %#v, want one spec %q", got, spec.ID)
+	}
+}
+
 // TestLoadSpecsMissingFileIsEmpty confirms an absent automations.toml is
 // not an error (mirrors config.Load's found=false-is-fine precedent for
 // an optional file).
@@ -129,7 +153,7 @@ func TestValidateSpecNegative(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := tc.mutate(base)
-			err := ValidateSpec(spec)
+			err := ValidateSpec(spec, nil)
 			if err == nil {
 				t.Fatalf("ValidateSpec: got nil error, want one containing %q", tc.wantErr)
 			}
@@ -197,7 +221,7 @@ func TestValidateID(t *testing.T) {
 // standalone ValidateID call.
 func TestValidateSpecRejectsMalformedID(t *testing.T) {
 	spec := sampleSpec("__last__")
-	err := ValidateSpec(spec)
+	err := ValidateSpec(spec, nil)
 	if err == nil || !errors.Is(err, ErrInvalidID) {
 		t.Fatalf("ValidateSpec with malformed id: got %v, want ErrInvalidID", err)
 	}
