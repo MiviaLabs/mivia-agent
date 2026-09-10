@@ -231,9 +231,22 @@
     }
   },
   {
-    "kind": "plan",
+    "kind": "tool.start",
     "turn_id": "t1",
     "seq": 18,
+    "at": "2026-08-19T12:00:28.25Z",
+    "body": {
+      "tool_call_id": "c5",
+      "name": "run_command",
+      "args": {
+        "command": "go vet ./internal/storage/..."
+      }
+    }
+  },
+  {
+    "kind": "plan",
+    "turn_id": "t1",
+    "seq": 19,
     "at": "2026-08-19T12:00:28.3Z",
     "body": {
       "items": [
@@ -261,7 +274,7 @@
   {
     "kind": "error",
     "turn_id": "t1",
-    "seq": 19,
+    "seq": 20,
     "at": "2026-08-19T12:00:28.4Z",
     "body": {
       "text": "transport refused after 3 attempts\ndial tcp 10.0.0.4:443: i/o timeout",
@@ -271,7 +284,7 @@
   {
     "kind": "notice",
     "turn_id": "t1",
-    "seq": 20,
+    "seq": 21,
     "at": "2026-08-19T12:00:28.5Z",
     "body": {
       "text": "context 62% (78k of 125k). /compact frees about 30k."
@@ -280,7 +293,7 @@
   {
     "kind": "usage",
     "turn_id": "t1",
-    "seq": 21,
+    "seq": 22,
     "at": "2026-08-19T12:00:28.6Z",
     "body": {
       "input_tokens": 1284,
@@ -293,7 +306,7 @@
   {
     "kind": "turn.end",
     "turn_id": "t1",
-    "seq": 22,
+    "seq": 23,
     "at": "2026-08-19T12:00:28.7Z",
     "body": {
       "reason": "completed"

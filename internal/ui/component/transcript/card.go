@@ -93,6 +93,31 @@ func (b Block) displayState() string {
 	return b.Header.State
 }
 
+// detailSuffix is a live tool row's own reason it has nothing to show
+// yet (C5): the detail column's RoleFGSubtle suffix, distinct from the
+// State column's bare "pending"/"running" word (C3). "waiting to run"
+// while the call sits admitted but not yet dispatched, "waiting for
+// result" once dispatch started. It disappears the moment the call
+// settles, because Header.State is then "ok" or "failed", neither of
+// which this switch recognizes.
+//
+// "requesting approval" is never used here: a policy-auto-approved
+// pending call never enters the approval queue (events.go), so that
+// phrase would misdescribe it.
+func (b Block) detailSuffix() string {
+	if !b.isToolBlock() {
+		return ""
+	}
+	switch b.Header.State {
+	case "pending":
+		return "waiting to run"
+	case "running":
+		return "waiting for result"
+	default:
+		return ""
+	}
+}
+
 // cardLayout is a tool block's body as shown, after C4's window: the
 // rows actually drawn, and how many more the window left out (0 when
 // nothing is hidden - the body fit, or there is no body at all).

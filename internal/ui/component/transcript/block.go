@@ -405,14 +405,15 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	// one column set: focus changes only the reverse-video treatment and
 	// never moves a column (wireframes-panes.md section 5).
 	spec := render.HeaderSpec{
-		Marker:    b.columnOneGlyph(),
-		Label:     b.Header.Label,
-		Detail:    b.Header.Detail,
-		DiffAdd:   b.Header.DiffAdd,
-		DiffDel:   b.Header.DiffDel,
-		Meta:      b.headerMeta(),
-		State:     b.displayState(),
-		StateRole: b.Header.Role,
+		Marker:       b.columnOneGlyph(),
+		Label:        b.Header.Label,
+		Detail:       b.Header.Detail,
+		DetailSuffix: b.detailSuffix(),
+		DiffAdd:      b.Header.DiffAdd,
+		DiffDel:      b.Header.DiffDel,
+		Meta:         b.headerMeta(),
+		State:        b.displayState(),
+		StateRole:    b.Header.Role,
 	}
 
 	// A focused header is drawn as one reverse-video run rather than as
@@ -475,17 +476,26 @@ func (b Block) headerMeta() string {
 // and for width measurement.
 func (b Block) headerPlain() string {
 	spec := render.SanitizeSpec(render.HeaderSpec{
-		Marker:  b.columnOneGlyph(),
-		Label:   b.Header.Label,
-		Detail:  b.Header.Detail,
-		DiffAdd: b.Header.DiffAdd,
-		DiffDel: b.Header.DiffDel,
-		Meta:    b.Header.Meta,
-		State:   b.displayState(),
+		Marker:       b.columnOneGlyph(),
+		Label:        b.Header.Label,
+		Detail:       b.Header.Detail,
+		DetailSuffix: b.detailSuffix(),
+		DiffAdd:      b.Header.DiffAdd,
+		DiffDel:      b.Header.DiffDel,
+		Meta:         b.Header.Meta,
+		State:        b.displayState(),
 	})
 	out := spec.Marker + " " + spec.Label
 	if spec.Detail != "" {
 		out += " " + spec.Detail
+	}
+	if spec.DetailSuffix != "" {
+		if spec.Detail != "" {
+			out += "  "
+		} else {
+			out += " "
+		}
+		out += spec.DetailSuffix
 	}
 	var diffParts []string
 	if spec.DiffAdd > 0 {

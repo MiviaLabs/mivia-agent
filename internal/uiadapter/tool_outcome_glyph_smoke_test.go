@@ -65,3 +65,45 @@ func TestRenderSmoke_ToolOutcomeGlyphs(t *testing.T) {
 		t.Errorf("a settled failure must keep its state word:\n%s", full)
 	}
 }
+
+// TestRenderSmoke_LiveToolRowWaitPhrases is the offline smoke test for
+// C5: it drives ONE tool call through pending -> start -> end via
+// uiadapter.TranslateEvent and the real transcript renderer, rendering
+// after every step, and counts each C5 phrase across the whole
+// sequence. "waiting to run" must appear exactly once (the pending
+// step, before the call started) and "waiting for result" exactly once
+// (the start step, before it settled) - not zero (the wording never
+// rendered), not more than once (it kept rendering after the state that
+// earned it had passed).
+func TestRenderSmoke_LiveToolRowWaitPhrases(t *testing.T) {
+	seq := []agent.Event{
+		{Kind: agent.EventToolPending, ToolCallID: "c1", Name: "run_command"},
+		{Kind: agent.EventToolStart, ToolCallID: "c1", Name: "run_command"},
+		{Kind: agent.EventToolEnd, ToolCallID: "c1", Name: "run_command", Detail: "completed"},
+	}
+
+	m := transcript.New(loadTestTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+
+	var waitingToRun, waitingForResult int
+	for _, ev := range seq {
+		for _, out := range uiadapter.TranslateEvent(ev) {
+			m, _ = m.HandleEvent(out)
+		}
+		rows, _ := m.ExpandedRows(80)
+		full := ansi.Strip(strings.Join(rows, "\n"))
+		waitingToRun += strings.Count(full, "waiting to run")
+		waitingForResult += strings.Count(full, "waiting for result")
+	}
+	if waitingToRun != 1 {
+		t.Errorf("\"waiting to run\" appeared %d times across the sequence, want exactly 1", waitingToRun)
+	}
+	if waitingForResult != 1 {
+		t.Errorf("\"waiting for result\" appeared %d times across the sequence, want exactly 1", waitingForResult)
+	}
+
+	rows, _ := m.ExpandedRows(80)
+	if full := ansi.Strip(strings.Join(rows, "\n")); strings.Contains(full, "requesting approval") {
+		t.Errorf("settled transcript must never say \"requesting approval\":\n%s", full)
+	}
+}

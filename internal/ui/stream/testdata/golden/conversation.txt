@@ -9,10 +9,10 @@ jitter, and a cap of 5s.
         return retry.Do(ctx, retry.Policy{Max: 3, Cap: 5 * time.Second},
             func() error { return u.raw.Put(ctx, k, b) })
     }
-v read_file    path=internal/storage/s3_uploader.go
+v read_file    path=internal/storage/s3_uploader.go  waiting for result
     package storage
   read_file   48 lines                                     12ms  ok
-v edit         path=internal/storage/s3_uploader.go
+v edit         path=internal/storage/s3_uploader.go  waiting for result
   edit                                                     31ms  ok
     internal/storage/s3_uploader.go  +4 -1
     @@ -14,7 +14,11 @@ func (u *Uploader) put(
@@ -21,15 +21,16 @@ v edit         path=internal/storage/s3_uploader.go
     +Max: 3,
     +Cap: 5 * time.Second,
     +}, func() error { return u.raw.Put(ctx, k, b) })
-v subagent     agent=test-writer
+v subagent     agent=test-writer  waiting for result
     [2 of 3] running 18s
     + read existing table tests
     + draft TestPutRetriesOnTransient
     - run the package test
   subagent    3 of 3 steps complete                     23500ms  ok
-v run_command  command=go test ./internal/storage/...
+v run_command  command=go test ./internal/storage/...  waiting for result
     --- FAIL: TestPutRetriesOnTransient
   run_command s3_uploader_test.go:88: want 3 attempts, got 1   4100ms  failed
+v run_command  command=go vet ./internal/storage/...  waiting for result
   plan    2 of 4
     [x] add retry policy to the transport
     [x] wire the uploader through it
