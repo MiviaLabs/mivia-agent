@@ -73,6 +73,48 @@ func (s *SQLite) UpdateAutomationRunState(ctx context.Context, id, state string,
 	return nil
 }
 
+// UpdateAutomationRunSession persists sessionName onto an existing run
+// row - a follow-up write to a row already created by InsertAutomationRun,
+// needed because the session name is only known after the run's session
+// is created, not at insert time. Returns ErrAutomationRunNotFound when
+// id has no row.
+func (s *SQLite) UpdateAutomationRunSession(ctx context.Context, id, sessionName string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE automation_runs SET session_name=? WHERE id=?`,
+		sessionName, id)
+	if err != nil {
+		return fmt.Errorf("update automation run %q: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update automation run %q: %w", id, err)
+	}
+	if n == 0 {
+		return ErrAutomationRunNotFound
+	}
+	return nil
+}
+
+// UpdateAutomationRunClaimToken persists claimToken onto an existing run
+// row - a follow-up write to a row already created by InsertAutomationRun,
+// needed because the claim token is only known after the run's claim is
+// acquired, not at insert time. Returns ErrAutomationRunNotFound when id
+// has no row.
+func (s *SQLite) UpdateAutomationRunClaimToken(ctx context.Context, id, claimToken string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE automation_runs SET claim_token=? WHERE id=?`,
+		claimToken, id)
+	if err != nil {
+		return fmt.Errorf("update automation run %q: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update automation run %q: %w", id, err)
+	}
+	if n == 0 {
+		return ErrAutomationRunNotFound
+	}
+	return nil
+}
+
 // GetAutomationRun reads one run by id. A missing row is reported as
 // (AutomationRun{}, false, nil), not an error.
 func (s *SQLite) GetAutomationRun(ctx context.Context, id string) (AutomationRun, bool, error) {

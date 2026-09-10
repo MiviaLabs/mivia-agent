@@ -78,6 +78,22 @@ func (c *automationRunsErrorConn) ExecContext(_ context.Context, query string, _
 			return nil, errors.New("insert exec failed")
 		}
 		return driver.RowsAffected(1), nil
+	case strings.Contains(query, "UPDATE automation_runs SET session_name"):
+		if c.mode == "update_session_exec_err" {
+			return nil, errors.New("update session exec failed")
+		}
+		if c.mode == "update_session_rows_affected_err" {
+			return automationRunsErrorResult{}, nil
+		}
+		return driver.RowsAffected(1), nil
+	case strings.Contains(query, "UPDATE automation_runs SET claim_token"):
+		if c.mode == "update_claim_token_exec_err" {
+			return nil, errors.New("update claim token exec failed")
+		}
+		if c.mode == "update_claim_token_rows_affected_err" {
+			return automationRunsErrorResult{}, nil
+		}
+		return driver.RowsAffected(1), nil
 	case strings.Contains(query, "UPDATE automation_runs"):
 		if c.mode == "update_exec_err" {
 			return nil, errors.New("update exec failed")
@@ -205,6 +221,49 @@ func TestUpdateAutomationRunStatePropagatesRowsAffectedError(t *testing.T) {
 	err := store.UpdateAutomationRunState(context.Background(), "x", "failed", 0, nil, "", "")
 	if err == nil || errors.Is(err, ErrAutomationRunNotFound) {
 		t.Fatalf("UpdateAutomationRunState with a RowsAffected error = %v, want the raw wrapped error, not ErrAutomationRunNotFound", err)
+	}
+}
+
+// TestUpdateAutomationRunSessionPropagatesExecError covers
+// UpdateAutomationRunSession's exec-error branch - a real SQLite database
+// cannot reach this deterministically (its only ExecContext failure mode
+// is a constraint violation, which this UPDATE has none of), so it uses
+// the same fault-injected driver as UpdateAutomationRunState's own exec-
+// error test above.
+func TestUpdateAutomationRunSessionPropagatesExecError(t *testing.T) {
+	store := newAutomationRunsErrorStore(t, "update_session_exec_err")
+	if err := store.UpdateAutomationRunSession(context.Background(), "x", "sess"); err == nil {
+		t.Fatal("UpdateAutomationRunSession hid an exec error")
+	}
+}
+
+// TestUpdateAutomationRunSessionPropagatesRowsAffectedError covers
+// UpdateAutomationRunSession's "n, err := res.RowsAffected()" branch.
+func TestUpdateAutomationRunSessionPropagatesRowsAffectedError(t *testing.T) {
+	store := newAutomationRunsErrorStore(t, "update_session_rows_affected_err")
+	err := store.UpdateAutomationRunSession(context.Background(), "x", "sess")
+	if err == nil || errors.Is(err, ErrAutomationRunNotFound) {
+		t.Fatalf("UpdateAutomationRunSession with a RowsAffected error = %v, want the raw wrapped error, not ErrAutomationRunNotFound", err)
+	}
+}
+
+// TestUpdateAutomationRunClaimTokenPropagatesExecError covers
+// UpdateAutomationRunClaimToken's exec-error branch, same rationale as
+// TestUpdateAutomationRunSessionPropagatesExecError above.
+func TestUpdateAutomationRunClaimTokenPropagatesExecError(t *testing.T) {
+	store := newAutomationRunsErrorStore(t, "update_claim_token_exec_err")
+	if err := store.UpdateAutomationRunClaimToken(context.Background(), "x", "tok"); err == nil {
+		t.Fatal("UpdateAutomationRunClaimToken hid an exec error")
+	}
+}
+
+// TestUpdateAutomationRunClaimTokenPropagatesRowsAffectedError covers
+// UpdateAutomationRunClaimToken's "n, err := res.RowsAffected()" branch.
+func TestUpdateAutomationRunClaimTokenPropagatesRowsAffectedError(t *testing.T) {
+	store := newAutomationRunsErrorStore(t, "update_claim_token_rows_affected_err")
+	err := store.UpdateAutomationRunClaimToken(context.Background(), "x", "tok")
+	if err == nil || errors.Is(err, ErrAutomationRunNotFound) {
+		t.Fatalf("UpdateAutomationRunClaimToken with a RowsAffected error = %v, want the raw wrapped error, not ErrAutomationRunNotFound", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -75,5 +76,109 @@ func TestAutomationRunsTableMigration(t *testing.T) {
 	}
 	if message != "all steps ok" {
 		t.Fatalf("message = %q, want %q", message, "all steps ok")
+	}
+}
+
+// insertBareAutomationRun inserts a minimal automation_runs row for the
+// UpdateAutomationRunSession/UpdateAutomationRunClaimToken tests below,
+// factored out since those tests only care about one column changing.
+func insertBareAutomationRun(t *testing.T, s *SQLite, id string) {
+	t.Helper()
+	ctx := context.Background()
+	started := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	err := s.InsertAutomationRun(ctx, AutomationRun{
+		ID:           id,
+		AutomationID: "auto-1",
+		Origin:       "manual",
+		State:        "pending",
+		StartedAt:    started,
+	})
+	if err != nil {
+		t.Fatalf("insert automation run: %v", err)
+	}
+}
+
+// TestUpdateAutomationRunSessionPersists proves
+// UpdateAutomationRunSession writes session_name for an existing row and
+// leaves every other column untouched.
+func TestUpdateAutomationRunSessionPersists(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-session")
+
+	if err := s.UpdateAutomationRunSession(ctx, "run-session", "__auto__auto-1__run-session"); err != nil {
+		t.Fatalf("UpdateAutomationRunSession: %v", err)
+	}
+
+	got, ok, err := s.GetAutomationRun(ctx, "run-session")
+	if err != nil || !ok {
+		t.Fatalf("GetAutomationRun: ok=%v err=%v", ok, err)
+	}
+	if got.SessionName != "__auto__auto-1__run-session" {
+		t.Fatalf("SessionName = %q, want __auto__auto-1__run-session", got.SessionName)
+	}
+}
+
+// TestUpdateAutomationRunSessionUnknownRunReturnsNotFound proves
+// UpdateAutomationRunSession returns ErrAutomationRunNotFound when id has
+// no row, mirroring UpdateAutomationRunState's own not-found contract.
+func TestUpdateAutomationRunSessionUnknownRunReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.UpdateAutomationRunSession(ctx, "no-such-run", "some-session")
+	if !errors.Is(err, ErrAutomationRunNotFound) {
+		t.Fatalf("UpdateAutomationRunSession on missing run = %v, want ErrAutomationRunNotFound", err)
+	}
+}
+
+// TestUpdateAutomationRunClaimTokenPersists proves
+// UpdateAutomationRunClaimToken writes claim_token for an existing row.
+func TestUpdateAutomationRunClaimTokenPersists(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-claim")
+
+	if err := s.UpdateAutomationRunClaimToken(ctx, "run-claim", "claim-token-xyz"); err != nil {
+		t.Fatalf("UpdateAutomationRunClaimToken: %v", err)
+	}
+
+	got, ok, err := s.GetAutomationRun(ctx, "run-claim")
+	if err != nil || !ok {
+		t.Fatalf("GetAutomationRun: ok=%v err=%v", ok, err)
+	}
+	if got.ClaimToken != "claim-token-xyz" {
+		t.Fatalf("ClaimToken = %q, want claim-token-xyz", got.ClaimToken)
+	}
+}
+
+// TestUpdateAutomationRunClaimTokenUnknownRunReturnsNotFound proves
+// UpdateAutomationRunClaimToken returns ErrAutomationRunNotFound when id
+// has no row.
+func TestUpdateAutomationRunClaimTokenUnknownRunReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.UpdateAutomationRunClaimToken(ctx, "no-such-run", "some-token")
+	if !errors.Is(err, ErrAutomationRunNotFound) {
+		t.Fatalf("UpdateAutomationRunClaimToken on missing run = %v, want ErrAutomationRunNotFound", err)
 	}
 }

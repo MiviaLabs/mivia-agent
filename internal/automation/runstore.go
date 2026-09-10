@@ -222,3 +222,29 @@ func (s *Service) listRuns(ctx context.Context, automationID string, limit int) 
 	}
 	return out, nil
 }
+
+// updateRunSession persists sessionName onto an existing run row - a
+// follow-up write to a row createRun already inserted, needed because
+// the session name is only known after the run's session is created.
+func (s *Service) updateRunSession(ctx context.Context, runID, sessionName string) error {
+	if s.db == nil {
+		return errNoRunStore
+	}
+	if err := s.db.UpdateAutomationRunSession(ctx, runID, sessionName); err != nil {
+		return fmt.Errorf("automation: update run session %q: %w", runID, err)
+	}
+	return nil
+}
+
+// updateRunClaimToken persists claimToken onto an existing run row - a
+// follow-up write to a row createRun already inserted, needed because
+// the claim token is only known after the run's claim is acquired.
+func (s *Service) updateRunClaimToken(ctx context.Context, runID, claimToken string) error {
+	if s.db == nil {
+		return errNoRunStore
+	}
+	if err := s.db.UpdateAutomationRunClaimToken(ctx, runID, claimToken); err != nil {
+		return fmt.Errorf("automation: update run claim token %q: %w", runID, err)
+	}
+	return nil
+}

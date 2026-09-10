@@ -933,3 +933,124 @@ func TestGetRunPropagatesRealStoreError(t *testing.T) {
 		t.Fatal("getRun with automation_runs dropped: got nil error, want a real store error")
 	}
 }
+
+// TestUpdateRunSessionRoundTrip proves updateRunSession writes
+// session_name for an existing run and getRun reflects it back.
+func TestUpdateRunSessionRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	ctx := context.Background()
+
+	if err := svc.createRun(ctx, Run{ID: "run-sess", AutomationID: "auto-sess", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("createRun: %v", err)
+	}
+	if err := svc.updateRunSession(ctx, "run-sess", "__auto__auto-sess__run-sess"); err != nil {
+		t.Fatalf("updateRunSession: %v", err)
+	}
+	got, ok, err := svc.getRun(ctx, "run-sess")
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if got.SessionName != "__auto__auto-sess__run-sess" {
+		t.Fatalf("SessionName = %q, want __auto__auto-sess__run-sess", got.SessionName)
+	}
+}
+
+// TestUpdateRunSessionNilDBReturnsErrNoRunStore proves updateRunSession
+// on a Service with db=nil returns errNoRunStore, matching every other
+// runstore method's nil-db handling.
+func TestUpdateRunSessionNilDBReturnsErrNoRunStore(t *testing.T) {
+	svc := newTestService(t, nil)
+	if err := svc.updateRunSession(context.Background(), "run-1", "some-session"); !errors.Is(err, errNoRunStore) {
+		t.Fatalf("updateRunSession with nil db = %v, want errNoRunStore", err)
+	}
+}
+
+// TestUpdateRunSessionUnknownRunReturnsError proves updateRunSession on
+// an unknown run ID returns a wrapped error, not a silent success.
+func TestUpdateRunSessionUnknownRunReturnsError(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	if err := svc.updateRunSession(context.Background(), "no-such-run", "some-session"); err == nil {
+		t.Fatal("updateRunSession on missing run: got nil error, want rejection")
+	}
+}
+
+// TestUpdateRunClaimTokenRoundTrip proves updateRunClaimToken writes
+// claim_token for an existing run and getRun reflects it back.
+func TestUpdateRunClaimTokenRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	ctx := context.Background()
+
+	if err := svc.createRun(ctx, Run{ID: "run-tok", AutomationID: "auto-tok", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("createRun: %v", err)
+	}
+	if err := svc.updateRunClaimToken(ctx, "run-tok", "claim-token-abc"); err != nil {
+		t.Fatalf("updateRunClaimToken: %v", err)
+	}
+	got, ok, err := svc.getRun(ctx, "run-tok")
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if got.ClaimToken != "claim-token-abc" {
+		t.Fatalf("ClaimToken = %q, want claim-token-abc", got.ClaimToken)
+	}
+}
+
+// TestUpdateRunClaimTokenNilDBReturnsErrNoRunStore proves
+// updateRunClaimToken on a Service with db=nil returns errNoRunStore.
+func TestUpdateRunClaimTokenNilDBReturnsErrNoRunStore(t *testing.T) {
+	svc := newTestService(t, nil)
+	if err := svc.updateRunClaimToken(context.Background(), "run-1", "some-token"); !errors.Is(err, errNoRunStore) {
+		t.Fatalf("updateRunClaimToken with nil db = %v, want errNoRunStore", err)
+	}
+}
+
+// TestUpdateRunClaimTokenUnknownRunReturnsError proves updateRunClaimToken
+// on an unknown run ID returns a wrapped error, not a silent success.
+func TestUpdateRunClaimTokenUnknownRunReturnsError(t *testing.T) {
+	db := newTestDB(t)
+	svc := newTestService(t, db)
+	if err := svc.updateRunClaimToken(context.Background(), "no-such-run", "some-token"); err == nil {
+		t.Fatal("updateRunClaimToken on missing run: got nil error, want rejection")
+	}
+}
+
+// TestUpdateRunSessionPropagatesStoreError closes the store's underlying
+// connection before calling updateRunSession, so
+// UpdateAutomationRunSession fails with a real error - exercising
+// updateRunSession's own error-wrap branch, distinct from the not-found
+// case above (which reaches the store successfully and gets zero rows
+// affected, not a real failure).
+func TestUpdateRunSessionPropagatesStoreError(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	svc, err := New(t.TempDir(), db, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.updateRunSession(context.Background(), "run-1", "some-session"); err == nil {
+		t.Fatal("updateRunSession against a closed store returned nil error, want a real error")
+	}
+}
+
+// TestUpdateRunClaimTokenPropagatesStoreError closes the store's
+// underlying connection before calling updateRunClaimToken, so
+// UpdateAutomationRunClaimToken fails with a real error - exercising
+// updateRunClaimToken's own error-wrap branch.
+func TestUpdateRunClaimTokenPropagatesStoreError(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	svc, err := New(t.TempDir(), db, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.updateRunClaimToken(context.Background(), "run-1", "some-token"); err == nil {
+		t.Fatal("updateRunClaimToken against a closed store returned nil error, want a real error")
+	}
+}
