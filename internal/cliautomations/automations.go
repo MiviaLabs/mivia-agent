@@ -16,7 +16,7 @@ import (
 func RunAutomations(args []string) error {
 	if len(args) == 0 {
 		printAutomationsUsage()
-		return fmt.Errorf("automations: expected a subcommand (list, show, run, serve)")
+		return fmt.Errorf("automations: expected a subcommand (list, show, run, runs, resume, serve)")
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -27,6 +27,10 @@ func RunAutomations(args []string) error {
 		return runShowCommand(rest)
 	case "run":
 		return runRunCommand(rest)
+	case "runs":
+		return runRunsCommand(rest)
+	case "resume":
+		return runResumeCommand(rest)
 	case "serve":
 		return runServeCommand(rest)
 	default:
@@ -43,7 +47,9 @@ func automationsUsageText() string {
 	return strings.TrimRight(`Usage:
   mivia automations list [--workspace dir] [--config path]
   mivia automations show <id> [--workspace dir] [--config path]
-  mivia automations run <id> [--workspace dir] [--config path]
+  mivia automations run <id> [--wait] [--workspace dir] [--config path]
+  mivia automations runs [--automation <id>] [--limit <n>] [--workspace dir] [--config path]
+  mivia automations resume <run-id> [--workspace dir] [--config path]
   mivia automations serve [--workspace dir] [--config path]
 `, "\n")
 }

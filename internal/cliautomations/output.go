@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -81,5 +82,45 @@ func printRunResult(r ports.Run) {
 	fmt.Fprintf(w, "run_id=%s state=%s\n", r.ID, runStateString(r.State))
 	if r.Message != "" {
 		fmt.Fprintf(w, "message: %s\n", r.Message)
+	}
+}
+
+// printRunDetail prints the full detail view of one run: id, automation,
+// state, started/ended timestamps, and message. Used by `automations
+// run --wait` and `automations resume` in place of printRunResult's
+// one-line summary.
+//
+// No step-index line: ports.Run (the only shape this package's Service
+// methods return) carries no StepIndex field - only the internal
+// automation.Run row does, and service.go's runToPorts mapper does not
+// surface it. Widening ports.Run to add one is outside this chunk's
+// scope (ports is a leaf package multiple UI/CLI callers depend on), so
+// the detail view is limited to the fields ports.Run actually exposes.
+func printRunDetail(r ports.Run) {
+	w := stdoutWriter()
+	fmt.Fprintf(w, "run_id: %s\n", r.ID)
+	fmt.Fprintf(w, "automation_id: %s\n", r.AutomationID)
+	fmt.Fprintf(w, "state: %s\n", runStateString(r.State))
+	fmt.Fprintf(w, "started_at: %s\n", r.StartedAt.Format(time.RFC3339))
+	if r.EndedAt != nil {
+		fmt.Fprintf(w, "ended_at: %s\n", r.EndedAt.Format(time.RFC3339))
+	}
+	if r.Message != "" {
+		fmt.Fprintf(w, "message: %s\n", r.Message)
+	}
+}
+
+// printRunList prints one line per run (`run_id\tautomation_id\tstate\t
+// started_at`, RFC3339), or "no runs recorded" when empty - the
+// `automations runs` list-view counterpart of printAutomationList's
+// tab-separated style above.
+func printRunList(runs []ports.Run) {
+	w := stdoutWriter()
+	if len(runs) == 0 {
+		fmt.Fprintln(w, "no runs recorded")
+		return
+	}
+	for _, r := range runs {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID, r.AutomationID, runStateString(r.State), r.StartedAt.Format(time.RFC3339))
 	}
 }

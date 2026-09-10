@@ -25,10 +25,8 @@
 package transcript
 
 import (
-	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -108,31 +106,6 @@ func New(t theme.Theme, tier theme.Tier) Model {
 
 // Empty reports whether the transcript has no conversation blocks and no active streaming tail.
 func (m Model) Empty() bool { return len(m.blocks) == 0 && m.pending == "" }
-
-// FlushMsg ticks the repaint clock while a text/reasoning span streams.
-type FlushMsg struct{}
-
-func flushCmd() tea.Cmd {
-	return tea.Tick(uikitconfig.TextDeltaFlushInterval, func(time.Time) tea.Msg { return FlushMsg{} })
-}
-
-// Update handles FlushMsg only; every other Msg is ignored, so this
-// Model can sit inside a larger Update without a type-switch guard at
-// the call site.
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	if _, ok := msg.(FlushMsg); !ok {
-		return m, nil
-	}
-	m.flushWait = false
-	if m.pending != "" {
-		// Still streaming (or awaiting the terminal chunk): keep the
-		// repaint clock alive. One extra harmless tick lands right after
-		// the span ends, since flushWait was already true when it did.
-		m.flushWait = true
-		return m, flushCmd()
-	}
-	return m, nil
-}
 
 // HandleEvent applies one uievent.Event to the model and returns the
 // updated Model plus a Cmd exactly when a new streaming span needs its
@@ -239,56 +212,6 @@ const turnReasonCompleted = "completed"
 
 // endTurnUnfinished flushes any partial stream as prose, then records
 // why the turn stopped.
-// flushPending commits any in-flight text or reasoning span as a
-// finished prose block. Every event that starts a new top-level block
-// must call this first unless it already carries its own final text
-// (text.end, and the terminal reasoning.delta both replace pending
-// rather than continue it - see their own case bodies). Skipping the
-// flush silently drops the partial span, and the next block's own first
-// row can then visually collide with the abandoned streaming tail.
-//
-// flushPending renders through render.Markdown (not the raw partial
-// bytes) for streaming-parity with text.end: the live streaming tail
-// is plain text styled via render.Wrap, the committed text.end block
-// is markdown, and a partial stream that gets bumped by a tool.start /
-// turn.start / plan / error / unfinished-turn.end event used to land as
-// raw text. The two rendering paths disagreed on heading chrome, list
-// markers, and code fences - a partial stream that contained "# "
-// would render as '# heading' in the streaming tail and as styled bold
-// in the committed block. Routing flushPending through the same
-// renderer as text.end makes a bump-mid-stream indistinguishable from
-// a clean text.end, which is the contract the user picked.
-func (m Model) flushPending() Model {
-	partial := m.pending
-	if partial == "" {
-		return m
-	}
-	kind := m.pendingKind
-	m.clearPending()
-	if kind == uievent.KindReasoning {
-		body := strings.Split(strings.TrimRight(partial, "\n"), "\n")
-		words := len(strings.Fields(partial))
-		m, _ = m.pushBlock(Block{
-			Kind:        uievent.KindReasoning,
-			Collapsible: true,
-			Collapsed:   true,
-			Header: Header{
-				Label: "reasoning",
-				Meta:  fmt.Sprintf("%d words", words),
-				State: "hidden",
-			},
-			Body: body,
-		})
-		return m
-	}
-	m, _ = m.pushBlock(Block{
-		Kind:  uievent.KindTextEnd,
-		Prose: true,
-		Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), partial)),
-	})
-	return m
-}
-
 func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 	m = m.flushPending()
 
@@ -299,50 +222,6 @@ func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 		Kind:   uievent.KindTurnEnd,
 		Header: Header{Label: reason, Role: theme.RoleWarning},
 	})
-}
-
-func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cmd) {
-	// Providers may return reasoning only after they streamed answer text.
-	// That text is still pending and text.end will commit it. Do not switch
-	// the shared pending span to reasoning: appendPending would flush the
-	// answer early, then text.end would commit the same answer again.
-	if m.pendingKind == uievent.KindTextDelta {
-		if b.Text == "" {
-			return m, nil
-		}
-		words := b.WordCount
-		if words == 0 {
-			words = len(strings.Fields(b.Text))
-		}
-		return m.pushBlock(reasoningBlock(b.Text, words))
-	}
-	if b.WordCount == 0 {
-		return m, m.appendPending(uievent.KindReasoning, b.Text)
-	}
-	raw := m.pending
-	if raw == "" && b.Text != "" {
-		raw = b.Text
-	}
-	m.clearPending()
-	return m.pushBlock(reasoningBlock(raw, b.WordCount))
-}
-
-func reasoningBlock(text string, words int) Block {
-	var body []string
-	if text != "" {
-		body = strings.Split(strings.TrimRight(text, "\n"), "\n")
-	}
-	return Block{
-		Kind:        uievent.KindReasoning,
-		Collapsible: true,
-		Collapsed:   true,
-		Header: Header{
-			Label: "reasoning",
-			Meta:  fmt.Sprintf("%d words", words),
-			State: "hidden",
-		},
-		Body: body,
-	}
 }
 
 func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
@@ -487,50 +366,6 @@ func (m Model) pushBlock(b Block) (Model, tea.Cmd) {
 	b.ID = strconv.Itoa(m.nextID)
 	m.push(b)
 	return m, nil
-}
-
-func (m *Model) clearPending() {
-	m.pending = ""
-	m.pendingKind = ""
-}
-
-func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
-	// A change of kind ends the previous span. Without this, a text delta
-	// arriving after reasoning deltas concatenates into the same buffer and
-	// the reasoning renders as prose, attributed to the model's answer.
-	if m.pendingKind != "" && m.pendingKind != kind && m.pending != "" {
-		flushed := m.flushPending()
-		*m = flushed
-	}
-	m.pending += text
-	m.pendingKind = kind
-	if m.flushWait {
-		return nil
-	}
-	m.flushWait = true
-	return flushCmd()
-}
-
-// tailRows is the still-streaming span, drawn below the last finished
-// block. It is separate from the blocks because it is not addressable:
-// it has no header, cannot take focus, and is replaced wholesale when
-// the span ends.
-func (m Model) tailRows() []string {
-	if m.pending == "" {
-		return nil
-	}
-	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	if m.pendingKind == uievent.KindReasoning {
-		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true)
-	}
-	measure := render.ProseMeasure(m.width)
-	var out []string
-	for _, line := range strings.Split(m.pending, "\n") {
-		for _, row := range render.Wrap(line, measure) {
-			out = append(out, style.Render(row))
-		}
-	}
-	return out
 }
 
 // SetTheme records a theme change and rebuilds every block body that was

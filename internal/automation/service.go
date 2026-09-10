@@ -389,18 +389,29 @@ func (s *Service) upsert(a ports.Automation) error {
 		return err
 	}
 	spec := automationToSpec(a)
-	if err := ValidateSpec(spec, nil); err != nil {
-		return err
-	}
-	found := false
+	found := -1
 	for i := range specs {
 		if specs[i].ID == spec.ID {
-			specs[i] = spec
-			found = true
+			found = i
 			break
 		}
 	}
-	if !found {
+	if found >= 0 {
+		// ports.Automation carries no Unattended field (the UI layer has no
+		// need to see or edit this policy today - see automationToSpec's own
+		// doc comment), so automationToSpec always defaults a fresh Spec to
+		// UnattendedDeny. Upserting an EXISTING automation through this path
+		// must not silently downgrade a hand-authored `unattended = "auto"`
+		// policy to "deny" just because the editor round-tripped a struct
+		// that cannot represent it - preserve the on-disk value instead.
+		spec.Unattended = specs[found].Unattended
+	}
+	if err := ValidateSpec(spec, nil); err != nil {
+		return err
+	}
+	if found >= 0 {
+		specs[found] = spec
+	} else {
 		specs = append(specs, spec)
 	}
 	return SaveSpecs(scopeForLoad, s.root, specs)

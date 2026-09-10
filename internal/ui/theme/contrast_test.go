@@ -81,3 +81,25 @@ func TestContrastRatioKnownValues(t *testing.T) {
 		}
 	}
 }
+
+// TestContrastChecksCoverInsetFill pins the two inset-fill rows: prose
+// and inline code draw RoleFG and RoleFGSubtle on RoleBGInset (chat TUI
+// polish plan, Phase 0), so those pairs must be in the gate table.
+func TestContrastChecksCoverInsetFill(t *testing.T) {
+	want := map[[2]Role]float64{
+		{RoleFG, RoleBGInset}:       4.5,
+		{RoleFGSubtle, RoleBGInset}: 3.0,
+	}
+	for _, chk := range AllContrastChecks() {
+		key := [2]Role{chk.FG, chk.BG}
+		if min, ok := want[key]; ok {
+			if chk.Min < min {
+				t.Errorf("%s/%s threshold %.1f, want >= %.1f", chk.FG, chk.BG, chk.Min, min)
+			}
+			delete(want, key)
+		}
+	}
+	for key := range want {
+		t.Errorf("AllContrastChecks lacks a row for %s on %s", key[0], key[1])
+	}
+}

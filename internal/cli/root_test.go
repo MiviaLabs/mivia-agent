@@ -261,8 +261,17 @@ func TestExecuteRegisterAndVerifyAreUnknownCommands(t *testing.T) {
 // subcommand.
 func TestRootDispatchesAutomations(t *testing.T) {
 	text := usageText()
-	if !strings.Contains(text, "automations list|show <id>|run <id>|serve") {
-		t.Fatalf("usageText() missing the automations usage line:\n%s", text)
+	if !strings.Contains(text, "automations list [--workspace dir] [--config path]") {
+		t.Fatalf("usageText() missing the automations list usage line:\n%s", text)
+	}
+	if !strings.Contains(text, "automations run <id> [--wait]") {
+		t.Fatalf("usageText() missing the automations run usage line:\n%s", text)
+	}
+	if !strings.Contains(text, "automations runs [--automation <id>] [--limit <n>]") {
+		t.Fatalf("usageText() missing the automations runs usage line:\n%s", text)
+	}
+	if !strings.Contains(text, "automations resume <run-id>") {
+		t.Fatalf("usageText() missing the automations resume usage line:\n%s", text)
 	}
 	err := Execute([]string{"automations"})
 	if err == nil {

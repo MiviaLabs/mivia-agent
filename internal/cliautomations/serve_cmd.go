@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,6 +41,18 @@ func runServeCommand(args []string) error {
 
 	ctx, stop := serveSignalContext()
 	defer stop()
+
+	// D13's "at service start" sweep clause: Serve itself deliberately
+	// does not call SweepInterrupted (see serve.go's own doc comment) -
+	// this is the one call site that does, once, before entering the
+	// scheduler loop. A sweep failure must not block the scheduler from
+	// starting, so it is logged and swallowed rather than returned.
+	n, sweepErr := svc.SweepInterrupted(ctx)
+	if sweepErr != nil {
+		log.Printf("automations serve: sweep interrupted runs at startup: %v", sweepErr)
+	} else {
+		log.Printf("automations serve: swept %d interrupted run(s) at startup", n)
+	}
 
 	err = svc.Serve(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {

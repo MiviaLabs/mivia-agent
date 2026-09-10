@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestServeCommandExitsCleanlyOnSignal proves `automations serve` stops
@@ -96,6 +99,65 @@ models = [{ name = "test/model", context_window_tokens = 128000 }]
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runServeCommand after a deadline expiry = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestServeCommandSweepsInterruptedAtStartup proves runServeCommand's
+// D13 startup sweep (serve_cmd.go's svc.SweepInterrupted(ctx) call,
+// placed before svc.Serve(ctx)) actually executes: seed a RunRunning
+// row with NO fenced claim at all for its automation (claim.go's
+// sweepInterrupted treats a running row with no claim the same as an
+// expired one - see runstore_test.go's own
+// TestSweepInterruptedFlagsRunningWithNoClaim - so this is reachable
+// regardless of any staleness threshold, the cheapest fixture
+// available), start runServeCommand under a context this test
+// controls, let it run briefly (long enough for the synchronous
+// startup sweep to complete before Serve's own tick loop begins),
+// cancel to get a clean shutdown, then read the run back via a FRESH
+// *storage.SQLite handle (proving the sweep's write is durable and
+// visible after runServeCommand's own cleanup() has closed its
+// handle) and assert its state moved to "interrupted".
+func TestServeCommandSweepsInterruptedAtStartup(t *testing.T) {
+	root := writeAutomationsFixture(t, "sweep-startup-auto")
+	insertAutomationRun(t, root, storage.AutomationRun{
+		ID:           "sweep-startup-run",
+		AutomationID: "sweep-startup-auto",
+		Origin:       "scheduled",
+		State:        "running",
+		StartedAt:    time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	prev := serveSignalContext
+	serveSignalContext = func() (context.Context, context.CancelFunc) { return ctx, cancel }
+	t.Cleanup(func() { serveSignalContext = prev })
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServeCommand([]string{"--workspace", root}) }()
+
+	time.Sleep(200 * time.Millisecond) // let the synchronous startup sweep run before we cancel
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runServeCommand after cancel = %v, want nil (clean shutdown)", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runServeCommand did not return within 5s of cancellation")
+	}
+
+	db, err := storage.OpenSQLite(workspace.NamespacePath(root, "automations.db"))
+	if err != nil {
+		t.Fatalf("open automations db: %v", err)
+	}
+	defer db.Close()
+	row, ok, err := db.GetAutomationRun(context.Background(), "sweep-startup-run")
+	if err != nil || !ok {
+		t.Fatalf("GetAutomationRun: ok=%v err=%v", ok, err)
+	}
+	if row.State != "interrupted" {
+		t.Fatalf("run state after serve's startup sweep = %q, want %q", row.State, "interrupted")
 	}
 }
 

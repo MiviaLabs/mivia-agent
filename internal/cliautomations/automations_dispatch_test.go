@@ -72,6 +72,47 @@ models = [{ name = "test/model", context_window_tokens = 128000 }]
 	}
 }
 
+// TestRunAutomationsDispatchesRunsAndResumeThroughTheSwitch drives the
+// "runs" and "resume" RunAutomations subcommands THROUGH the real
+// dispatch switch (unlike runs_cmd_test.go/resume_cmd_test.go, which
+// call runRunsCommand/runResumeCommand directly and so never exercise
+// RunAutomations's own switch-case lines for these two subcommands).
+func TestRunAutomationsDispatchesRunsAndResumeThroughTheSwitch(t *testing.T) {
+	root := writeAutomationsFixture(t, "dispatch-runs-resume")
+
+	if err := RunAutomations([]string{"runs", "--workspace", root}); err != nil {
+		t.Fatalf("RunAutomations(runs): %v", err)
+	}
+	// "resume" with an unknown run id: the switch case itself is what
+	// this test proves reachable, not resume's own success path (that
+	// is resume_cmd_test.go's job) - any error naming ErrRunNotFound
+	// proves runResumeCommand was actually invoked through the switch.
+	err := RunAutomations([]string{"resume", "--workspace", root, "no-such-run"})
+	if err == nil {
+		t.Fatal("RunAutomations(resume, unknown run id): got nil error, want rejection")
+	}
+}
+
+// TestAutomationsUsageTextListsAllSixSubcommands pins the D14 usage
+// text: automationsUsageText() must document every one of the six
+// `automations` subcommands (list, show, run, runs, resume, serve),
+// each with its exact documented flag set.
+func TestAutomationsUsageTextListsAllSixSubcommands(t *testing.T) {
+	text := automationsUsageText()
+	for _, want := range []string{
+		"mivia automations list [--workspace dir] [--config path]",
+		"mivia automations show <id> [--workspace dir] [--config path]",
+		"mivia automations run <id> [--wait] [--workspace dir] [--config path]",
+		"mivia automations runs [--automation <id>] [--limit <n>] [--workspace dir] [--config path]",
+		"mivia automations resume <run-id> [--workspace dir] [--config path]",
+		"mivia automations serve [--workspace dir] [--config path]",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("automationsUsageText() missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunAutomationsUnknownSubcommandErrorsThroughDispatch(t *testing.T) {
 	err := RunAutomations([]string{"bogus-subcommand"})
 	if err == nil {

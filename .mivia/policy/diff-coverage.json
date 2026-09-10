@@ -475,25 +475,25 @@
     },
     "internal/cliautomations/automations.go": {
       "lines": [
-        156,
-        183,
-        184,
-        185,
-        186,
-        188,
+        162,
         189,
         190,
-        191
+        191,
+        192,
+        194,
+        195,
+        196,
+        197
       ],
-      "reason": "Three clusters. (1) 156: applyPrivacyPolicyFunc's own no-op func LITERAL body - a var declaration's default value, never invoked by any code path in this file (grep confirms no call site anywhere in the package); it exists as a seam for a future wiring that has not landed, matching cliworkflow's ApplyPrivacyPolicyFunc pattern. (2) 183-186: buildService's own NewHeadlessSpawner-error branch - NewHeadlessSpawner only fails on an empty workspaceRoot or nil config, and buildService's own call site supplies root/res from a JUST-SUCCEEDED resolveWorkspaceAndConfig, whose own contract (workspace.Open + config.Load, both already checked for error) never yields an empty root or nil *config.Resolved on success. TestNewHeadlessSpawnerRejectsEmptyWorkspaceRoot and TestNewHeadlessSpawnerRejectsNilConfig (spawner_test.go) cover NewHeadlessSpawner's own two guards directly. (3) 188-191: buildService's own automation.New-error branch - automation.New's only error is an empty root (service.go), which the same resolveWorkspaceAndConfig postcondition rules out here."
+      "reason": "Three clusters. (1) 162: applyPrivacyPolicyFunc's own no-op func LITERAL body - a var declaration's default value, never invoked by any code path in this file (grep confirms no call site anywhere in the package); it exists as a seam for a future wiring that has not landed, matching cliworkflow's ApplyPrivacyPolicyFunc pattern. (2) 189-192: buildService's own NewHeadlessSpawner-error branch - NewHeadlessSpawner only fails on an empty workspaceRoot or nil config, and buildService's own call site supplies root/res from a JUST-SUCCEEDED resolveWorkspaceAndConfig, whose own contract (workspace.Open + config.Load, both already checked for error) never yields an empty root or nil *config.Resolved on success. TestNewHeadlessSpawnerRejectsEmptyWorkspaceRoot and TestNewHeadlessSpawnerRejectsNilConfig (spawner_test.go) cover NewHeadlessSpawner's own two guards directly. (3) 194-197: buildService's own automation.New-error branch - automation.New's only error is an empty root (service.go), which the same resolveWorkspaceAndConfig postcondition rules out here. Line numbers shifted from the prior accepted set (156, 183-186, 188-191) by +6: this chunk's D14 additions (the `runs`/`resume` switch cases and their usage-text lines, both earlier in this same file) pushed every later line down; the three clusters themselves are unchanged and still genuinely unreachable given the same preconditions."
     },
     "internal/cliautomations/run_cmd.go": {
       "lines": [
-        35,
-        36,
-        37
+        40,
+        41,
+        42
       ],
-      "reason": "runRunCommand's own spawn.CloseLastRun()-error log branch: CloseLastRun's only failure is store.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class already accepted for internal/memory/markdown_source.go's atomicWrite, internal/chatsync/identity.go's SaveIdentity, and this repo's other writeFileAtomic/writeFileDurably entries. TestRunCommandCallsCloseLastRunAfterRunOnce and TestRunCommandCallsCloseLastRunOnRunOnceError already cover CloseLastRun's own SUCCESS call on both the RunOnce-succeeded and RunOnce-failed paths."
+      "reason": "runRunCommand's own spawn.CloseLastRun()-error log branch: CloseLastRun's only failure is store.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class already accepted for internal/memory/markdown_source.go's atomicWrite, internal/chatsync/identity.go's SaveIdentity, and this repo's other writeFileAtomic/writeFileDurably entries. TestRunCommandCallsCloseLastRunAfterRunOnce and TestRunCommandCallsCloseLastRunOnRunOnceError already cover CloseLastRun's own SUCCESS call on both the RunOnce-succeeded and RunOnce-failed paths. Line numbers shifted from the prior accepted set (35-37) by +5: this chunk's --wait flag additions (parseWaitFlag and its call site, both earlier in this same function) pushed this block down; the branch itself is unchanged and still genuinely unreachable."
     },
     "internal/cliautomations/serve_cmd.go": {
       "lines": [

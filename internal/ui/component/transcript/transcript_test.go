@@ -17,7 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-func loadTheme(t *testing.T) theme.Theme {
+func loadTheme(t testing.TB) theme.Theme {
 	t.Helper()
 	themes, err := theme.Embedded()
 	if err != nil {

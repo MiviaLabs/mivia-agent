@@ -124,6 +124,59 @@ func TestUpsertReplacesExistingAutomation(t *testing.T) {
 	}
 }
 
+// TestUpsertPreservesUnattendedPolicyOnExistingAutomation covers the
+// bug found during the Automations TUI editor's design review:
+// ports.Automation carries no Unattended field (the UI layer has no
+// need to see or edit that policy), so automationToSpec always
+// defaults a freshly-mapped Spec to UnattendedDeny. Upserting an
+// EXISTING automation must not silently downgrade a hand-authored
+// `unattended = "auto"` policy to "deny" just because the caller
+// (e.g. a future TUI edit form) round-tripped a struct that cannot
+// represent it - upsert must read the on-disk value back and carry it
+// through untouched when replacing an existing row.
+func TestUpsertPreservesUnattendedPolicyOnExistingAutomation(t *testing.T) {
+	root := t.TempDir()
+	svc, err := New(root, nil, nil, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	autoSpec := Spec{
+		ID:         "auto-policy",
+		Name:       "first",
+		Steps:      []Step{{Kind: StepPrompt, Prompt: "one"}},
+		Unattended: UnattendedAuto,
+	}
+	if err := SaveSpecs(ports.ScopeProject, root, []Spec{autoSpec}); err != nil {
+		t.Fatalf("SaveSpecs (seed): %v", err)
+	}
+
+	edited := ports.Automation{
+		ID: "auto-policy", Name: "renamed",
+		Action: ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "two"}}},
+	}
+	h, err := svc.Apply(context.Background(), ports.ScopeProject, ports.UpsertAutomation{Automation: edited})
+	if err != nil {
+		t.Fatalf("Apply(Upsert): %v", err)
+	}
+	if last := drainSave(t, h); last.State != ports.SaveSaved {
+		t.Fatalf("Apply(Upsert) final event = %+v, want SaveSaved", last)
+	}
+
+	specs, err := LoadSpecs(ports.ScopeProject, root)
+	if err != nil {
+		t.Fatalf("LoadSpecs after upsert: %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("LoadSpecs after upsert = %d entries, want 1", len(specs))
+	}
+	if specs[0].Unattended != UnattendedAuto {
+		t.Fatalf("upsert of an existing automation changed Unattended = %q, want it preserved as %q", specs[0].Unattended, UnattendedAuto)
+	}
+	if specs[0].Name != "renamed" {
+		t.Fatalf("upsert did not apply the edited Name: got %q", specs[0].Name)
+	}
+}
+
 // corruptAutomationsTOML writes an unparseable automations.toml directly
 // at the project-scope path under root, so any subsequent LoadSpecs call
 // against that root fails - the deterministic trigger this test file

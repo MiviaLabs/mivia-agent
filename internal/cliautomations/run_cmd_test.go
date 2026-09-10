@@ -279,6 +279,44 @@ models = [{ name = "test/model", context_window_tokens = 128000 }]
 	}
 }
 
+// TestRunCommandWaitPrintsFullDetail proves `--wait` selects
+// printRunDetail's full-detail rendering (run_id:, automation_id:,
+// state:, started_at:) instead of printRunResult's one-line summary.
+func TestRunCommandWaitPrintsFullDetail(t *testing.T) {
+	root := writeAutomationsFixture(t, "run-wait-detail")
+	stdout, _ := captureOutput(t, func() {
+		if err := runRunCommand([]string{"--workspace", root, "--wait", "run-wait-detail"}); err != nil {
+			t.Fatalf("runRunCommand --wait: %v", err)
+		}
+	})
+	for _, want := range []string{"run_id: ", "automation_id: run-wait-detail", "state: succeeded", "started_at: "} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("runRunCommand --wait stdout = %q, want it to contain %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, "run_id=") {
+		t.Fatalf("runRunCommand --wait stdout = %q, want the detail view (run_id:), not the one-line summary (run_id=)", stdout)
+	}
+}
+
+// TestRunCommandWithoutWaitPrintsOneLineSummary proves the default (no
+// --wait) path is unchanged: still printRunResult's one-line
+// "run_id=... state=..." form, never the full detail view.
+func TestRunCommandWithoutWaitPrintsOneLineSummary(t *testing.T) {
+	root := writeAutomationsFixture(t, "run-no-wait-summary")
+	stdout, _ := captureOutput(t, func() {
+		if err := runRunCommand([]string{"--workspace", root, "run-no-wait-summary"}); err != nil {
+			t.Fatalf("runRunCommand: %v", err)
+		}
+	})
+	if !strings.Contains(stdout, "run_id=") || !strings.Contains(stdout, "state=succeeded") {
+		t.Fatalf("runRunCommand stdout = %q, want the one-line summary form (run_id=..., state=...)", stdout)
+	}
+	if strings.Contains(stdout, "automation_id:") {
+		t.Fatalf("runRunCommand stdout = %q, want the one-line summary, not the full detail view", stdout)
+	}
+}
+
 func TestRunServeCommandParseFlagsErrorPropagates(t *testing.T) {
 	err := runServeCommand([]string{"--workspace"})
 	if err == nil {

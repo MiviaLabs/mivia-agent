@@ -23,6 +23,8 @@ func AllContrastChecks() []ContrastCheck {
 		{RoleFG, RoleBG, body, "body text"},
 		{RoleFGMuted, RoleBG, body, "muted text"},
 		{RoleFGSubtle, RoleBG, large, "subtle text (large/UI use only)"},
+		{RoleFG, RoleBGInset, body, "body text on inset fill (inline code, prose panels)"},
+		{RoleFGSubtle, RoleBGInset, large, "subtle text on inset fill"},
 		{RoleBorderFocus, RoleBG, large, "focus ring"},
 		{RoleAccent, RoleBG, large, "accent chrome"},
 		{RoleAccentFG, RoleAccent, body, "text on accent fill"},

@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/glamour/v2"
@@ -71,7 +72,36 @@ func Markdown(t theme.Theme, tier theme.Tier, width int, in string) (out string)
 	if err != nil {
 		return in
 	}
-	return trimTrailingBlanks(rendered)
+	return dropEmptySpans(trimTrailingBlanks(rendered))
+}
+
+// emptySpan matches one SGR sequence immediately followed by a reset:
+// a styled span with nothing inside it.
+var emptySpan = regexp.MustCompile(`(?:\x1b\[[0-9;]*m)+\x1b\[m`)
+
+// dropEmptySpans collapses styled spans whose content is empty.
+//
+// Glamour styles every padding column separately, and trimTrailingBlanks
+// cuts the columns but ansi.Cut re-emits their styles, so a wrapped
+// prose line came out carrying one "open colour, reset" pair per removed
+// column - fifty-odd escape sequences that draw nothing, paid on every
+// repaint and walked by every width measurement.
+//
+// The pattern matches the whole run of back-to-back SGR codes ending in
+// a reset - not just one open/reset pair - so a run of N empty spans
+// collapses in one pass rather than needing ceil(log2 N) passes to reach
+// a fixed point. Any SGR code immediately followed by another SGR code
+// (open or reset), with no real character between them, styled nothing;
+// only a literal character breaks the run, which is why the match can't
+// walk past real content.
+//
+// The collapse keeps the terminal state exact: "set attributes, then
+// reset" is the same as "reset", so every run of empty spans becomes one
+// bare reset rather than nothing. Dropping the reset too would be
+// correct only if no attribute were active before the run, which this
+// function does not track.
+func dropEmptySpans(out string) string {
+	return emptySpan.ReplaceAllLiteralString(out, "\x1b[m")
 }
 
 // trimTrailingBlanks removes the padding glamour adds to the right of
