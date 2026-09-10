@@ -28,6 +28,14 @@ type mockSettings struct {
 	// return it directly instead of a SaveHandle - the Apply-itself-fails
 	// path, distinct from a SaveHandle resolving to a Failed SaveEvent.
 	generalApplyErr error
+
+	// automationsApplyErr, when set, makes the next mockAutomations.Apply
+	// call return it directly instead of a SaveHandle - mirrors
+	// generalApplyErr, exercising the Automations editor's own
+	// saveEditor "Apply itself failed" branch (as opposed to a
+	// SaveHandle resolving to a Failed SaveEvent, which the async
+	// SaveFailed message path already covers elsewhere).
+	automationsApplyErr error
 }
 
 func newMockSettings() *mockSettings {
@@ -482,6 +490,12 @@ func (a mockAutomations) Run(runID string) (ports.Run, bool) {
 }
 
 func (a mockAutomations) Apply(_ context.Context, _ ports.Scope, e ports.AutomationEdit) (ports.SaveHandle, error) {
+	a.mu.Lock()
+	applyErr := a.automationsApplyErr
+	a.mu.Unlock()
+	if applyErr != nil {
+		return nil, applyErr
+	}
 	if trig, ok := e.(ports.TriggerAutomation); ok {
 		return a.newSaveHandle(func() error { return a.startRun(trig.ID) }), nil
 	}

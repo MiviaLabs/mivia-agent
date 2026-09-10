@@ -1,14 +1,20 @@
 package settings
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
+
+// errApplyBoom is a sentinel error for TestSaveEditorSurfacesAnApplyItselfFailing,
+// mirroring this package's other mock-error sentinels.
+var errApplyBoom = errors.New("boom: apply itself failed")
 
 func pressKey(sec *automationsSection, key string) *automationsSection {
 	var msg tea.KeyPressMsg
@@ -571,5 +577,297 @@ func TestTabCyclesAutomationEditorFocus(t *testing.T) {
 	sec = pressKey(sec, "shift+tab")
 	if sec.formFocus != n-1 {
 		t.Fatalf("expected shift+tab to wrap to %d, got %d", n-1, sec.formFocus)
+	}
+}
+
+// TestOpenEditorFallsBackToMinWidthWhenTooNarrow covers openEditor's
+// fieldWidth<20 defensive fallback (a section that has never been
+// SetSize'd, or was sized very small, must not hand field.New a
+// degenerate or negative width).
+func TestOpenEditorFallsBackToMinWidthWhenTooNarrow(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec.SetSize(10, 20) // width-16 = -6, well under the 20 floor
+
+	sec = pressKey(sec, "n")
+	if !sec.editing {
+		t.Fatal("expected 'n' to open the editor even at a very narrow width")
+	}
+	// Must render without panicking, and produce a non-empty form.
+	if plain := ansi.Strip(sec.View()); !strings.Contains(plain, "Add New Automation") {
+		t.Fatalf("expected the editor to render at a narrow width, got:\n%s", plain)
+	}
+}
+
+// TestOpenEditorPrefillsIntervalSchedule covers openEditor's
+// TriggerScheduled+ScheduleInterval prefill branch: editing an existing
+// interval-scheduled automation must show Trigger=every and the Every
+// field populated from the stored duration, not reset to "manual".
+func TestOpenEditorPrefillsIntervalSchedule(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "interval-automation", Name: "Interval Automation",
+		Enabled: true,
+		Trigger: ports.TriggerSpec{Kind: ports.TriggerScheduled, Schedule: &ports.ScheduleSpec{
+			Kind: ports.ScheduleInterval, Every: 30 * time.Minute,
+		}},
+		Action: ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "hi"}}},
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "interval-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.cursor = idx
+	sec.openEditor(sec.rows[idx], false)
+
+	_, _, _, _, triggerIdx, everyIdx, _, _ := sec.automationFormIndices()
+	if got := sec.formFields[triggerIdx].Value(); got != "every" {
+		t.Fatalf("Trigger field = %q, want %q", got, "every")
+	}
+	if got := sec.formFields[everyIdx].Value(); got != (30 * time.Minute).String() {
+		t.Fatalf("Every field = %q, want %q", got, (30 * time.Minute).String())
+	}
+}
+
+// TestOpenEditorPrefillsSkillAction covers openEditor's ActionStepSkill
+// prefill branch: editing an existing skill-action automation must show
+// Action=skill and the prompt/skill field populated from the step's
+// Ref, not its (empty) Prompt.
+func TestOpenEditorPrefillsSkillAction(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "skill-automation", Name: "Skill Automation",
+		Enabled: true,
+		Trigger: ports.TriggerSpec{Kind: ports.TriggerManual},
+		Action:  ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepSkill, Ref: "review"}}},
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "skill-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.openEditor(sec.rows[idx], false)
+
+	_, _, _, _, _, _, actionIdx, promptIdx := sec.automationFormIndices()
+	if got := sec.formFields[actionIdx].Value(); got != "skill" {
+		t.Fatalf("Action field = %q, want %q", got, "skill")
+	}
+	if got := sec.formFields[promptIdx].Value(); got != "review" {
+		t.Fatalf("Prompt/Skill field = %q, want %q", got, "review")
+	}
+}
+
+// TestHandleEditorKeyIgnoresKeysWhenFocusOutOfRange covers
+// handleEditorKey's defensive `formFocus < 0 || formFocus >=
+// len(formFields)` guard: a focus index the editor never actually
+// produces on its own (pinned here directly, since tab/shift+tab always
+// keep it in range) must still be handled safely rather than panicking
+// on the field-index switch below it.
+func TestHandleEditorKeyIgnoresKeysWhenFocusOutOfRange(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+	sec.formFocus = len(sec.formFields) // one past the end
+
+	next, cmd := pressKeyCmd(sec, "x")
+	if cmd != nil {
+		t.Error("expected nil Cmd when formFocus is out of range")
+	}
+	if !next.editing {
+		t.Error("expected the editor to remain open")
+	}
+}
+
+// TestChoiceFieldCyclesBackwardWithLeftKey covers handleEditorKey's
+// "left"/"h" backward-Cycle branch on a choice field (the forward
+// direction is already exercised by every save/prefill test above via
+// "space").
+func TestChoiceFieldCyclesBackwardWithLeftKey(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+
+	_, _, _, enabledIdx, _, _, _, _ := sec.automationFormIndices()
+	for sec.formFocus != enabledIdx {
+		sec = pressKey(sec, "tab")
+	}
+	before := sec.formFields[enabledIdx].Value()
+	sec = pressKey(sec, "left")
+	after := sec.formFields[enabledIdx].Value()
+	if before == after {
+		t.Fatalf("expected 'left' to cycle the Enabled choice field, stayed at %q", before)
+	}
+}
+
+// TestEditorRefusesAWorkflowCompatAliasAutomation covers
+// editorRepresentable's zero-step-but-Workflow-set branch: an
+// automation using the pre-multi-step ActionRef.Workflow compat alias
+// (no Steps at all) has no form field to hold it and must be refused,
+// not silently opened as a blank prompt step that would drop the
+// workflow reference on save.
+func TestEditorRefusesAWorkflowCompatAliasAutomation(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "workflow-compat-automation", Name: "Workflow Compat",
+		Enabled: true,
+		Trigger: ports.TriggerSpec{Kind: ports.TriggerManual},
+		Action:  ports.ActionRef{Workflow: "nightly-report"},
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "workflow-compat-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.cursor = idx
+
+	sec = pressKey(sec, "enter")
+	if sec.editing {
+		t.Fatal("expected enter on a Workflow-compat-alias automation to refuse, not open the editor")
+	}
+	if !strings.Contains(sec.notice, "not available in this build yet") {
+		t.Fatalf("expected the refusal notice, got %q", sec.notice)
+	}
+}
+
+// TestEditorRefusesAnAgentActionStep covers editorRepresentable's
+// single-step-non-prompt-or-skill branch (StepAgent here; StepSlash and
+// StepWorkflow-as-a-step share the same default arm).
+func TestEditorRefusesAnAgentActionStep(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "agent-step-automation", Name: "Agent Step",
+		Enabled: true,
+		Trigger: ports.TriggerSpec{Kind: ports.TriggerManual},
+		Action:  ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepAgent, Ref: "some-agent"}}},
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "agent-step-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.cursor = idx
+
+	sec = pressKey(sec, "enter")
+	if sec.editing {
+		t.Fatal("expected enter on an ActionStepAgent automation to refuse, not open the editor")
+	}
+}
+
+// TestSaveEditorEditingAnExistingAutomationPreservesTZ covers
+// automationFromForm's TZ-carry-forward branch inside the "every" case:
+// re-saving an interval automation that already had a TZ set (without
+// touching Trigger) must not silently drop it.
+func TestSaveEditorEditingAnExistingAutomationPreservesTZ(t *testing.T) {
+	h := newMockSettings()
+	h.automations = append(h.automations, ports.Automation{
+		ID: "tz-automation", Name: "TZ Automation",
+		Enabled: true,
+		Trigger: ports.TriggerSpec{Kind: ports.TriggerScheduled, Schedule: &ports.ScheduleSpec{
+			Kind: ports.ScheduleInterval, Every: time.Hour, TZ: "America/New_York",
+		}},
+		Action: ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: "hi"}}},
+	})
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	idx := -1
+	for i, r := range sec.rows {
+		if r.ID == "tz-automation" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("fixture row not found")
+	}
+	sec.cursor = idx
+	sec = pressKey(sec, "enter")
+	if !sec.editing {
+		t.Fatal("expected enter to open the prefilled editor")
+	}
+
+	next, cmd := pressKeyCmd(sec, "ctrl+s")
+	if cmd == nil {
+		t.Fatal("expected a non-nil Cmd from a successful save")
+	}
+	next = awaitAutomationsSaveTest(t, next, cmd)
+
+	for _, a := range h.SettingsAdapters().Automations.Automations() {
+		if a.ID != "tz-automation" {
+			continue
+		}
+		if a.Trigger.Schedule == nil || a.Trigger.Schedule.TZ != "America/New_York" {
+			t.Fatalf("expected TZ preserved across an unrelated re-save, got %+v", a.Trigger.Schedule)
+		}
+		return
+	}
+	t.Fatal("tz-automation not found after save")
+}
+
+// TestSaveEditorSurfacesAnApplyItselfFailing covers saveEditor's
+// store.Apply-returns-an-error branch (distinct from a SaveHandle
+// resolving to a Failed SaveEvent, which the async
+// automationsFailedMsg path covers elsewhere): the notice must show the
+// error and the editor must stay open rather than closing on a failed
+// Apply call.
+func TestSaveEditorSurfacesAnApplyItselfFailing(t *testing.T) {
+	h := newMockSettings()
+	h.automationsApplyErr = errApplyBoom
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+
+	sec = pressKey(sec, "n")
+	sec = typeAutomationText(sec, "boom-automation")
+	sec = pressKey(sec, "tab") // Name
+	sec = typeAutomationText(sec, "Boom")
+	sec = pressKey(sec, "tab") // Description
+	sec = pressKey(sec, "tab") // Enabled
+	sec = pressKey(sec, "tab") // Trigger
+	sec = pressKey(sec, "tab") // Every
+	sec = pressKey(sec, "tab") // Action
+	sec = pressKey(sec, "tab") // Prompt/Skill
+	sec = typeAutomationText(sec, "hi")
+
+	next, cmd := pressKeyCmd(sec, "ctrl+s")
+	if cmd != nil {
+		t.Error("expected nil Cmd when store.Apply itself fails")
+	}
+	if !next.editing {
+		t.Error("expected the editor to stay open after a failed Apply call")
+	}
+	if !strings.Contains(next.notice, errApplyBoom.Error()) {
+		t.Errorf("expected the notice to contain the Apply error, got %q", next.notice)
+	}
+}
+
+// TestRenderEditorShowsNoticeInDangerRole covers renderEditor's own
+// notice-rendering tail: a non-empty s.notice while editing must appear
+// in the rendered form, not just in the list view below it.
+func TestRenderEditorShowsNoticeInDangerRole(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+	sec = pressKey(sec, "n")
+	sec.notice = "a distinctive editor-only notice"
+
+	plain := ansi.Strip(sec.View())
+	if !strings.Contains(plain, "a distinctive editor-only notice") {
+		t.Fatalf("expected the editor's own notice line to render, got:\n%s", plain)
 	}
 }
