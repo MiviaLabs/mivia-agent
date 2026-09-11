@@ -92,6 +92,23 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	if err := rejectSymlinkComponents(dir); err != nil {
 		return MarkdownDocument{}, err
 	}
+
+	// Check for a near-duplicate among existing documents in the scope.
+	// If one exists, merge into the existing document rather than writing a duplicate file.
+	if existingDocs, scanErr := s.Scan(ctx, e.Scope); scanErr == nil {
+		for _, existing := range existingDocs {
+			if EntrySimilarity(existing.Entry, e) >= similarityMergeThreshold {
+				merged := MergeEntries(existing.Entry, e)
+				content := []byte(merged.RenderProtocolFile(existing.ID))
+				if err := atomicWrite(ctx, existing.Path, content); err != nil {
+					return MarkdownDocument{}, err
+				}
+				doc := document(existing.Path, merged, content)
+				doc.ID = existing.ID
+				return doc, nil
+			}
+		}
+	}
 	// .agents/memories/README.md derives a file's frontmatter id from its
 	// filename: drop .md, replace every hyphen with an underscore
 	// (scripts/check_memories.py's expected_id). RenderProtocolFile writes

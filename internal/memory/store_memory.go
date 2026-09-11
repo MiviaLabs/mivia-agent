@@ -66,12 +66,14 @@ func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 	if e.Scope == ScopeOrg {
 		rows = &s.org
 	}
-	for _, row := range *rows {
+	for i, row := range *rows {
 		// Defense-in-depth: the id is already org-namespaced, but the
 		// dedup loop also requires the row to belong to the same org so a
 		// stale or cross-org row can never answer another org's save.
-		if row.id == id && row.org == org {
-			return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
+		if row.org == org && (row.id == id || EntrySimilarity(row.e, e) >= similarityMergeThreshold) {
+			merged := MergeEntries(row.e, e)
+			(*rows)[i].e = merged
+			return Result{ID: row.id, Scope: e.Scope, Org: org, Title: merged.Title, Verdict: merged.Verdict, Tags: append([]string(nil), merged.Tags...), Created: merged.Created, Snippet: merged.Summary}, nil
 		}
 	}
 	if len(*rows) >= s.cfg.MaxEntries {
