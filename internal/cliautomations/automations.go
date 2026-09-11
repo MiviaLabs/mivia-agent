@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -201,11 +203,34 @@ func buildService(workspaceRoot, configPath string) (*automation.Service, *Headl
 		_ = db.Close()
 		return nil, nil, nil, err
 	}
-	svc, err := automation.New(root, db, spawn, automation.Config{})
+	svc, err := automation.New(root, db, spawn, automation.Config{
+		SkillRegistry: skillRegistrySource(root),
+	})
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, nil, err
 	}
 	cleanup := func() { _ = db.Close() }
 	return svc, spawn, cleanup, nil
+}
+
+// skillRegistrySource builds automation.Config.SkillRegistry's source:
+// the SAME loader the interactive session's own binding freezes in
+// (cliagents.LoadSessionSkills - the launch attach's skillRegFull path),
+// project skills allowed because an automation's spec lives IN the
+// project and names project skills. The headless session composition
+// builds carries no skill registry of its own (composition.BuildSession
+// wires none), so without this fallback every StepSkill dispatch in
+// `automations run`/`serve` failed with "no skill registry available"
+// while the TUI path - whose pooled sessions carry a binding registry -
+// resolved the same step fine.
+func skillRegistrySource(root string) func() *skills.Registry {
+	return func() *skills.Registry {
+		reg, warnings, err := cliagents.LoadSessionSkills(root, true)
+		if err != nil {
+			return nil
+		}
+		cliagents.WarnSkillLoad(warnings)
+		return reg
+	}
 }
