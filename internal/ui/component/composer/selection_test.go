@@ -44,6 +44,22 @@ func TestComposerSelectedTextSingleRow(t *testing.T) {
 	}
 }
 
+// TestComposerSelectedTextUsesBlurredMarker pins C10's selection/View
+// agreement: while blurred, View draws ": " as the first-row prompt, so
+// a selection covering those two columns must copy ":" too, not the
+// focused "›" arrow it no longer shows.
+func TestComposerSelectedTextUsesBlurredMarker(t *testing.T) {
+	m := testComposer()
+	m.SetValue("hello")
+	m.Blur()
+	m.SetSelection(sel.Selection{Active: true, Anchor: sel.Cell{Row: 0, Col: 0}, Focus: sel.Cell{Row: 0, Col: 6}})
+	got := m.SelectedText()
+	want := ": hello"
+	if got != want {
+		t.Fatalf("got %q, want %q (View shows %q as the blurred prompt)", got, want, blurredMarker())
+	}
+}
+
 func TestComposerSelectedTextAcrossWrappedRows(t *testing.T) {
 	m := testComposer()
 	m.SetValue("hello brave world")

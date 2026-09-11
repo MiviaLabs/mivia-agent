@@ -673,3 +673,153 @@ func TestMentionMenuOpensOnLaterLines(t *testing.T) {
 		t.Fatal("an @ after a multibyte first line must open the picker")
 	}
 }
+
+// TestAcceptMentionRecordsAChip pins C10: accepting a mention records a
+// chip in addition to inserting the path into the text, so the reader
+// sees what the next turn carries without hunting for "@" inside a
+// paragraph.
+func TestAcceptMentionRecordsAChip(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	m.SetMentions([]Mention{{Path: "internal/ui/component/composer/mention.go"}})
+	m.SetValue("check @mention")
+	m = m.AcceptMention()
+
+	joined := strings.Join(m.chips, ",")
+	if !strings.Contains(joined, "mention.go") {
+		t.Errorf("got chips %v, want a chip for the accepted mention", m.chips)
+	}
+}
+
+// TestAcceptMentionChipsAccumulate pins that MULTIPLE accepted mentions
+// each get their own chip, in acceptance order - the row reads "@ a.go
+// @ b.go", not just the most recent pick.
+func TestAcceptMentionChipsAccumulate(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	m.SetMentions([]Mention{{Path: "a.go"}, {Path: "b.go"}})
+	m.SetValue("@a")
+	m = m.AcceptMention()
+	m.SetValue(m.Value() + " and @b")
+	m = m.AcceptMention()
+
+	if len(m.chips) != 2 || m.chips[0] != "a.go" || m.chips[1] != "b.go" {
+		t.Errorf("got chips %v, want [a.go b.go] in acceptance order", m.chips)
+	}
+}
+
+// TestClearResetsChips pins C10's other half of the chip lifecycle: a
+// sent turn's attachments are not the next turn's, so Clear (called
+// after send) drops them the same way it drops the typed text.
+func TestClearResetsChips(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	m.SetMentions([]Mention{{Path: "a.go"}})
+	m.SetValue("@a")
+	m = m.AcceptMention()
+	if len(m.chips) == 0 {
+		t.Fatal("precondition: expected a chip before Clear")
+	}
+
+	m.Clear()
+	if len(m.chips) != 0 {
+		t.Errorf("got chips %v after Clear, want none", m.chips)
+	}
+}
+
+// TestHeightAgreesWithViewRowCountWithChips and its sibling below pin
+// C10's Height/View agreement requirement directly: Height() must equal
+// the actual row count View() draws, both with and without a chip row,
+// the same contract every other component in this UI holds itself to.
+func TestHeightAgreesWithViewRowCountWithChips(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, 80)
+	m.SetMentions([]Mention{{Path: "a.go"}})
+	m.SetValue("@a")
+	m = m.AcceptMention()
+	m.SetValue("hello")
+
+	rows := strings.Split(m.View(), "\n")
+	if got, want := len(rows), m.Height(); got != want {
+		t.Errorf("View drew %d rows, Height() says %d, with a chip present", got, want)
+	}
+}
+
+func TestHeightAgreesWithViewRowCountWithoutChips(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, 80)
+	m.SetValue("hello")
+
+	rows := strings.Split(m.View(), "\n")
+	if got, want := len(rows), m.Height(); got != want {
+		t.Errorf("View drew %d rows, Height() says %d, with no chips", got, want)
+	}
+}
+
+// TestBlurredViewHasNoFill pins C10: a blurred composer draws no
+// coloured fill (the accent/subtle-background bar), so the reader can
+// tell by sight, not by trying to type, which pane currently has
+// focus. It DOES still draw the same number of rows and columns as
+// focused - only the fill colour is the tell, not the geometry -
+// because every mouse-click and selection-region method in this file
+// keys off m.width alone and must not silently disagree with what
+// blurring removes.
+func TestBlurredViewHasNoFill(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, 80)
+	m.SetValue("hello")
+
+	focusedView := m.View()
+	if !strings.Contains(focusedView, "\x1b[48;") {
+		t.Fatalf("precondition: expected a background fill SGR in the focused view: %q", focusedView)
+	}
+
+	m.Blur()
+	blurredView := m.View()
+	if strings.Contains(blurredView, "\x1b[48;") {
+		t.Errorf("blurred view still carries a background fill: %q", blurredView)
+	}
+	if got, want := len(strings.Split(blurredView, "\n")), len(strings.Split(focusedView, "\n")); got != want {
+		t.Errorf("blurred view has %d rows, focused has %d - blurring must not change the row count", got, want)
+	}
+
+	m.Focus()
+	refocusedView := m.View()
+	if !strings.Contains(refocusedView, "\x1b[48;") {
+		t.Errorf("re-focused view lost its background fill: %q", refocusedView)
+	}
+}
+
+// TestFocusedReportsCurrentState pins the getter itself: New leaves the
+// composer focused (its long-standing default), Blur flips it, Focus
+// flips it back.
+func TestFocusedReportsCurrentState(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	if !m.Focused() {
+		t.Fatal("expected a freshly constructed composer to start focused")
+	}
+	m.Blur()
+	if m.Focused() {
+		t.Error("expected Focused() to report false after Blur")
+	}
+	m.Focus()
+	if !m.Focused() {
+		t.Error("expected Focused() to report true after Focus")
+	}
+}
+
+// TestBlurredPromptIsAQuietMarker pins the marker swap itself (C10):
+// focused shows the accent arrow, blurred shows a plain ":" in a
+// quieter role - checked by absence of the arrow glyph and presence of
+// the marker text, since exact colour codes are an implementation
+// detail the reader compares by eye, not by byte.
+func TestBlurredPromptIsAQuietMarker(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	focused := ansi.Strip(m.View())
+	if !strings.Contains(focused, "> ") {
+		t.Fatalf("expected the focused ASCII prompt '> ', got %q", focused)
+	}
+
+	m.Blur()
+	blurred := ansi.Strip(m.View())
+	if strings.Contains(blurred, "> ") {
+		t.Errorf("blurred prompt still shows the focused arrow: %q", blurred)
+	}
+	if !strings.Contains(blurred, ":") {
+		t.Errorf("blurred prompt is missing its ':' marker: %q", blurred)
+	}
+}
