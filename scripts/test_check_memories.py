@@ -383,6 +383,98 @@ def test_rejects_an_unmatched_quote_around_the_stamp() -> None:
     )
 
 
+LINKED_A = GOOD.replace("tags: [probe]", "tags: [probe]\nrelated: [other_memory]")
+LINKED_B = GOOD.replace("id: probe_memory", "id: other_memory").replace(
+    "tags: [probe]", "tags: [probe]\nrelated: [probe_memory]"
+)
+
+
+def test_accepts_reciprocal_related_links() -> None:
+    """`related` is the one optional key; a resolvable pair must pass."""
+    files = {"probe-memory.md": LINKED_A, "other-memory.md": LINKED_B}
+    if (rejection := run_on(files)) is not None:
+        raise AssertionError(rejection)
+
+
+def test_rejects_a_dangling_related_link() -> None:
+    """A link to a nonexistent id is worse than no link.
+
+    The housekeeping orphan check counts inbound `related` entries to decide
+    whether a memory is connected to the store. An id that resolves to
+    nothing still counts as an inbound reference to a grep-based audit, so it
+    silently un-orphans a file nobody actually relates to.
+    """
+    expect_rejection(
+        {
+            "probe-memory.md": GOOD.replace(
+                "tags: [probe]", "tags: [probe]\nrelated: [no_such_memory]"
+            )
+        },
+        "is not the id of any memory",
+    )
+
+
+def test_rejects_a_malformed_related_list() -> None:
+    """A plain scalar must fail, not read as an absent key.
+
+    `related: some_id` is valid YAML but not a list. A resolver that only
+    looked for an opening bracket would skip the key entirely and report the
+    memory as unlinked - the opposite error from a dangling link, and the one
+    an author is most likely to make by copying the tags line.
+    """
+    expect_rejection(
+        {
+            "probe-memory.md": GOOD.replace(
+                "tags: [probe]", "tags: [probe]\nrelated: some_id"
+            )
+        },
+        "related must be a flat list",
+    )
+
+
+def test_rejects_an_empty_related_element() -> None:
+    expect_rejection(
+        {
+            "probe-memory.md": GOOD.replace(
+                "tags: [probe]", "tags: [probe]\nrelated: [other_memory, ]"
+            )
+        },
+        "related holds an empty element",
+    )
+
+
+def test_rejects_a_related_link_into_the_archive() -> None:
+    """`.archive/` is not the active store, so an archived id stops resolving.
+
+    A memory moved to the archive is no longer read at task start. If a link
+    survived the move, the orphan check would keep crediting a relationship
+    with a record.
+    """
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp) / "memories"
+        (directory / ".archive").mkdir(parents=True)
+        (directory / "probe-memory.md").write_text(
+            GOOD.replace(
+                "tags: [probe]", "tags: [probe]\nrelated: [moved_memory]"
+            ),
+            encoding="utf-8",
+        )
+        (directory / ".archive" / "moved-memory.md").write_text(
+            GOOD.replace("id: probe_memory", "id: moved_memory"),
+            encoding="utf-8",
+        )
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_memories(directory)
+        except SystemExit:
+            return
+    raise AssertionError(
+        "gate resolved a related link pointing into .archive/"
+    )
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -414,6 +506,11 @@ def main() -> None:
     test_accepts_a_future_stamp_the_gate_checks_shape_not_recency()
     test_accepts_a_quoted_updated_stamp()
     test_rejects_an_unmatched_quote_around_the_stamp()
+    test_accepts_reciprocal_related_links()
+    test_rejects_a_dangling_related_link()
+    test_rejects_a_malformed_related_list()
+    test_rejects_an_empty_related_element()
+    test_rejects_a_related_link_into_the_archive()
     print("test_check_memories: ok")
 
 

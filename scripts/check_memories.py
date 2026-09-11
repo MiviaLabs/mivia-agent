@@ -45,6 +45,10 @@ SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # empty element, a trailing comma and a nested map.
 TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
 
+# `related` is the one optional frontmatter key (.agents/memories/README.md,
+# "The reference graph"). Same shape as tags: a flat list of memory ids.
+RELATED = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
+
 # The `updated` stamp: an ISO calendar date, the only format the README
 # declares. The shape alone is not enough - "2026-02-30" matches - so the
 # value is also parsed and refused when it is not a real calendar date.
@@ -207,6 +211,10 @@ def check_memories(directory: Path) -> None:
     can exercise this against a fixture."""
     if not directory.is_dir():
         return
+    # Two passes: a link can only be resolved once every id in the store is
+    # known. `seen` collects the ids, `edges` the (file, target) pairs.
+    seen: set[str] = set()
+    edges: list[tuple[str, str]] = []
     for path in sorted(directory.glob("*.md")):
         if path.name == "README.md":
             continue
@@ -373,6 +381,42 @@ def check_memories(directory: Path) -> None:
                     f"scalar, so no YAML parser can read this frontmatter. "
                     f"Wrap the whole value in single quotes: {value!r}."
                 )
+        seen.add(fields["id"])
+        # A present-but-malformed `related` must fail rather than read as
+        # absent: an unquoted single id ("related: some_id") is a plain
+        # scalar, and a check that only looked for "[" would ignore the key
+        # and report the memory as unlinked - the opposite of a dangling link.
+        if fields.get("related"):
+            value = fields["related"]
+            if not RELATED.match(value):
+                fail(
+                    f"{name}: related must be a flat list of memory ids, for "
+                    f"example [some_id, other_id]; got {value!r}. Omit the key "
+                    f"entirely when nothing relates."
+                )
+            inner = value[value.index("[") + 1 : value.rindex("]")]
+            for target in inner.split(","):
+                target = target.strip()
+                if not target:
+                    fail(
+                        f"{name}: related holds an empty element: {value!r}."
+                    )
+                if ":" in target or "{" in target or "}" in target:
+                    fail(
+                        f"{name}: related entry {target!r} is not a plain id."
+                    )
+                edges.append((name, target))
+    for name, target in edges:
+        # Only the active store resolves a link. check_memories globs
+        # directory itself and not .archive/, so an id moved out of the store
+        # stops being a target and a `related` pointing at it must fail here.
+        if target not in seen:
+            fail(
+                f"{name}: related names {target!r}, which is not the id of any "
+                f"memory in this directory. A dangling link un-orphans a memory "
+                f"nobody actually relates to, defeating the housekeeping orphan "
+                f"check. Drop the entry or fix the id."
+            )
 
 
 def main() -> None:
