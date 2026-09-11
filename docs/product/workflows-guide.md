@@ -560,7 +560,7 @@ calling tools, the step's deadline, or the run deadline. A positive value caps
 the loop, and the compiler rejects a negative value. Panel members and the
 panel synthesis child share the step's value; the read-only panel reviews in
 this repo rely on the unlimited default because deep reviews of large packages
-outgrew a fixed turn cap (the old hardcoded `max_steps (16)` failure).
+outgrew a fixed turn cap.
 
 Context bindings pass typed evidence between steps:
 
@@ -807,7 +807,7 @@ split_deferred = true         # default false; host auto-splits an over-limit di
 
 The section is validated at compile time: an enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume recompiles the admitted snapshot definition under the same rule, so a run keeps its compiled shape across interrupts.
 
-`max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack: the driver refuses to admit a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but not yet enforced as a distinct per-call cap — a workflow's declared `max_chunks` is still what each individual decompose call is checked against; `max_wave_chunks` exists to let a workflow state its intended per-call limit for when that distinction lands.
+`max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack: the driver refuses to admit a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but is not enforced as a distinct per-call cap — a workflow's declared `max_chunks` is what each individual decompose call is checked against.
 
 ### Incremental decompose (large changes)
 
@@ -822,7 +822,7 @@ A plan-mode run starts a stacking-enabled workflow without `stack_mode`. It:
 3. Runs the engine-injected `chunk_plan_validate` gate, which deterministically checks the plan (disjoint files, size limits, DAG, tests).
 4. Routes:
    - `no_bug` / no changes → `success` without a plan (driver reports "nothing to stack").
-   - `single` → continues inline to `implement_step` (today's single-PR path).
+   - `single` → continues inline to `implement_step` (the single-PR path).
    - `multi` → `success` with the plan as run output (the driver uses this plan).
 
 The plan run id becomes the stack id. Use `mivia stack plan <workflow>` to start one.
@@ -851,8 +851,8 @@ Only chunk *execution* is concurrent. Merging still happens one PR at a time, in
 
 | Policy | Behavior |
 |--------|----------|
-| `approve` (default, policy A) | Each PR stays at `delivery_pending` until a human grants publish (`mivia workflow deliver <run-id> --allow-publish`). The driver halts at the publish grant and waits. |
-| `auto` (policy B) | The driver auto-delivers green PRs and continues. The publish grant remains the single human checkpoint. |
+| `approve` (default) | Each PR stays at `delivery_pending` until a human grants publish (`mivia workflow deliver <run-id> --allow-publish`). The driver halts at the publish grant and waits. |
+| `auto` | The driver auto-delivers green PRs and continues. The publish grant remains the single human checkpoint. |
 
 ### Halt-on-failure
 
@@ -864,7 +864,7 @@ Every `stack drive` start runs idempotent reconciliation: it loads chunk tasks f
 
 ### Recognizing and recovering a parked stack
 
-Driving a multi-chunk stack normally happens in the background inside whichever process started or resumed the plan run (the CLI foreground path, or the `workflow_run`/`workflow_resume` agent tools — both drive identically). If that process exits, is killed, or restarts before the drive reaches a durable checkpoint, the plan run is left parked at `delivery_pending` with none of its chunks admitted. Nothing re-drives it automatically: there is no separate background scheduler for this today, so a parked stack stays parked until an operator intervenes.
+Driving a multi-chunk stack normally happens in the background inside whichever process started or resumed the plan run (the CLI foreground path, or the `workflow_run`/`workflow_resume` agent tools — both drive identically). If that process exits, is killed, or restarts before the drive reaches a durable checkpoint, the plan run is left parked at `delivery_pending` with none of its chunks admitted. Nothing re-drives it automatically: there is no separate background scheduler for this, so a parked stack stays parked until an operator intervenes.
 
 Signs a plan run is parked, not just normally pending:
 

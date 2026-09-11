@@ -210,7 +210,7 @@ Every other model on `llmproxycli` (and this same model if you omit the
 override) keeps speaking OpenAI-compatible chat/completions unchanged.
 `reasoning_dialect = "anthropic_adaptive"` is rejected at config-load time
 on any provider that cannot actually deliver it (only `anthropic` and
-`llmproxycli` can today).
+`llmproxycli` can).
 
 ### Anthropic
 
@@ -242,7 +242,7 @@ content depending on whether the decline happened before or during output.
 
 ## Provider support
 
-mivia currently supports `anthropic`, `deepseek`, `openrouter`, `zai`, `ollama`, `llmgateway`, `llmproxycli`, and `minimax`. Do not add an
+mivia supports `anthropic`, `deepseek`, `openrouter`, `zai`, `ollama`, `llmgateway`, `llmproxycli`, and `minimax`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 
@@ -389,7 +389,7 @@ Two consequences worth knowing before you enable it:
 
 ## Unacted-turn continuation
 
-`[chat] max_unacted_continuations` bounds how many times one turn is continued after it announced work and then ended without calling a single tool - the "I am going to dispatch four agents", no tool call, turn over shape. `0`, the default, disables the mechanism, so a fresh install behaves exactly as before.
+`[chat] max_unacted_continuations` bounds how many times one turn is continued after it announced work and then ended without calling a single tool - the "I am going to dispatch four agents", no tool call, turn over shape. `0`, the default, disables the mechanism.
 
 Set it to `1` for a model that narrates its plan instead of acting on it. Whether a model needs this is a property of the model, which is why it is an operator switch and not a default. Values above `3` are clamped to `3`: every continuation is a full extra provider call on a turn that already answered.
 
@@ -403,7 +403,7 @@ Text that defers to the user - "let me know if you'd like me to run the tests", 
 
 Root chat turns only. Sub-agent loops never continue themselves, whatever this key says.
 
-The last condition is a best-effort, English-oriented text heuristic. It will miss promises in other languages and in unusual phrasing; a miss costs nothing, because the turn then ends exactly as it does today. A false positive costs one provider call whose notice explicitly allows the model to answer that no further work is needed. A message ending in a question is never continued.
+The last condition is a best-effort, English-oriented text heuristic. It will miss promises in other languages and in unusual phrasing; a miss costs nothing, because the turn then ends without a continuation. A false positive costs one provider call whose notice explicitly allows the model to answer that no further work is needed. A message ending in a question is never continued.
 
 ## Turn request deadline
 
@@ -493,9 +493,10 @@ The compaction summarizer is always enabled. A bounded provider call summarizes 
 
 Two conditions must hold, or the summary stays off: a resolved provider endpoint, and a resolved provider/model binding. A configured `[privacy]` redaction policy is NOT one of them: `[privacy]` governs what the checkpoint may persist, not whether the summary may run. A summary the redaction policy refuses is dropped, never sent or stored.
 
-The retired `[context.summary] enabled` key is refused at load. Remove the line from any config that still sets `enabled = false`.
+Config load refuses `[context.summary] enabled = false`: the compaction
+summarizer is always enabled. Remove the line from any config that sets it.
 
-Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once at the adapter, then fails the turn closed instead of degrading silently. The governed summarizer already retries once inline, so one adapter attempt costs two provider requests and a failed pair costs four; see `plans/sdk-window-compaction-adoption-plan.md`.
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once at the adapter, then fails the turn closed instead of degrading silently. The governed summarizer already retries once inline, so one adapter attempt costs two provider requests and a failed pair costs four.
 
 The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
 
@@ -543,7 +544,7 @@ A dump target that cannot be written is reported once and then latched off for t
 
 `wire_stream` (default `true`) changes the transport of nested subagent LLM calls, not their contract: the request goes to the provider's SSE endpoint with `stream:true`, and the full answer is assembled before the call returns. The change exists because a provider connection can trickle keepalive bytes forever while the model answer never advances; byte-level idle watchdogs cannot tell that apart from model thinking. The content-idle bound closes this gap: a turn that receives no chunk which would advance the answer within the bound (default 90 seconds, `[provider] stream_content_idle_timeout_seconds`) is a stall. A stalled call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request with a JSON error, or stalls a stream attempt without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set `wire_stream = false` to keep every nested call on the plain non-stream endpoint. The content-idle bound is independent of `[provider] stream_idle_timeout_seconds`, which still governs plain byte-idle on live streaming turns. Workflow child runs inherit the behavior through their handlers.
 
-(This default was briefly flipped off, then restored, during investigation of a real incident where dispatch_tasks batches never completed - see `default_budget` above and internal/subagents/subagents.go's `DefaultMaxBudget`: the actual cause was an unrelated admission-control default rejecting realistic task budgets before any provider call was made, confirmed by live reproduction. A dedicated concurrency+stall stress test against wire_stream found no hang: internal/provider/openai_compat_turnstream_concurrency_test.go.)
+Admission control is independent of the transport. With `default_budget` unset, the built-in default (`DefaultMaxBudget` in `internal/subagents/subagents.go`: 1,000,000 total) refuses an over-budget batch before any provider call, on either transport.
 
 For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
 
@@ -579,7 +580,7 @@ member_deadline_default_seconds = 43200
 
 ## Live cross-process relay
 
-Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory - which happens automatically today, since every workspace defaults to the same shared `~/.mivia/context.db`.
+Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory - which happens automatically, since every workspace defaults to the same shared `~/.mivia/context.db`.
 
 If a workspace pins its own `store_path` (see above), its processes relay only with other processes that resolve that same path:
 
@@ -591,7 +592,7 @@ store_path = "~/.mivia/my-project/context.db"
 
 The hub is keyed to the store directory, not the workspace, so anything that moves `store_path` (for example a picked project's own `.mivia/mivia.toml` overriding the shared default) moves the process to a different hub.
 
-Rendering is directional today. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The classic REPL and line mode publish their own turns to the hub but do not yet render turns received from other processes. The TUI publishes nothing: it never joins the hub, and its session is constructed with no event bus. The full event vocabulary is specified in [Wire schema](wire-schema.md).
+Rendering is directional. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The classic REPL and line mode publish their own turns to the hub and do not render turns received from other processes. The TUI publishes nothing: it never joins the hub, and its session is constructed with no event bus. The full event vocabulary is specified in [Wire schema](wire-schema.md).
 
 `default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The HTTP client wall is derived from the configured request budgets: it is the maximum of the 15-minute floor and every configured per-request budget plus a 60-second margin. The wall therefore never cuts a request before its own budget does; a spent budget reports as a terminal deadline, not a transport fault. The stream watchdogs stop a hung provider call long before either bound.
 

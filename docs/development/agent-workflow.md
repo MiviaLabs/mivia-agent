@@ -137,37 +137,35 @@ cursor, stream them over SSE, and drive the remote-input long poll. It is
 behind the `livechat` build tag and follows the same never-run-without-an-
 explicit-ask rule as the auth smoke, with the same environment variables.
 
-It exists because the API half of chat session sync shipped first and both
-clients (the Go CLI and the web viewer) are still unwritten, so nothing else
-exercises the real surface. The probe is not a client: it speaks raw HTTP with
+The probe is not a client: it speaks raw HTTP with
 its own wire structs, so it pins server behavior without freezing any decision
-about how the CLI gets built.
+about how a client gets built.
 
 It leaves ended session rows in the target database - the API has no delete
 endpoint. Every row it creates is titled `mivia live probe: ...`.
 
-**The probe found four API defects on its first run.** All four are now fixed
-in `apps/api` and verified green against the deployment on 2026-08-31, so a red
-run means a regression, not known debt:
+**The probe pins four API behaviors** (`internal/chatsync/live_guards_test.go`);
+a red run means a regression:
 
-| Probe | Was | Now |
-|-------|-----|-----|
-| `PayloadBoundIsAClientError` | 500, body carried the failing SQL and its bound parameters | 400 |
-| `RejectsIntraBatchGap` | `[seq 1, seq 99]` accepted, `lastSeq` hid the hole | 400 |
-| `ConsumeIsExactlyOnce` | second consume returned 200, so the loser of a race could not tell | 409 |
-| `EndIsTerminal` | events still appended to an ended session | 409 |
+| Probe | Required server behavior |
+|-------|--------------------------|
+| `PayloadBoundIsAClientError` | an over-limit payload is a client error (`400`); the body carries no SQL or bind parameters |
+| `RejectsIntraBatchGap` | `[seq 1, seq 99]` is rejected (`400`); `lastSeq` does not hide an intra-batch hole |
+| `ConsumeIsExactlyOnce` | a second consume returns `409`, so the loser of a race can tell |
+| `EndIsTerminal` | appends to an ended session return `409` |
 
-The full run passes: lifecycle, validation and tenancy guards, SSE replay, SSE
+The probe covers the lifecycle, validation and tenancy guards, SSE replay, SSE
 live push, and cursor resume.
 
 **Frame naming is intentional, not a defect.** Every SSE frame is named after
 its client-supplied event type rather than a fixed name, so a browser's
 `EventSource.onmessage` never fires; a web client must call
-`addEventListener` once per entry in `knownTypes`. This is recorded as
+`addEventListener` once per entry in the contract's `knownTypes` list, mirrored
+in Go by `wireEventSpecs` in `internal/chatsync/wire.go`. This is recorded as
 intentional in `api/contracts/chat-sessions.v1.json`'s notes array and echoed
 in Go terms by `internal/chatsync/wire.go`'s `WireEventSpec.Type` doc
 comment; `live_sse_test.go`'s "names the frame after the event type" subtest
-confirms it against the live deployment. The open trade-off is forward
+confirms it against the live deployment. The trade-off is forward
 compatibility: `knownTypes` is a closed, versioned list, so a type added in a
 later deploy is invisible to an already-shipped client's
 `addEventListener` list until that client updates. Changing this behavior -
@@ -181,11 +179,9 @@ how many streams received it. A working fan-out is six; local-only delivery is
 roughly half, because a stream only hears an append served by the replica it
 happens to sit on.
 
-That count is a diagnosis rather than a hang, and it earned its place at once:
-against two replicas it measured 5, then 2, then 2 of 6, which identified the
-original Postgres LISTEN/NOTIFY transport as silently dead through Neon's
-pooled endpoint. `LISTEN` succeeds through PgBouncer and never delivers. The
-transport moved to Redis pub/sub; the probe now reads 6 of 6.
+That count is a diagnosis rather than a hang: a working fan-out reads 6 of 6.
+The deployed transport is Redis pub/sub. Postgres `LISTEN` succeeds through
+PgBouncer and never delivers, so a lower count means local-only delivery.
 
 Run this one against a deployment with more than one replica. On a single
 replica it passes trivially and proves nothing.

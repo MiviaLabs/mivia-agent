@@ -52,29 +52,32 @@ How mivia is built. Owner: `architecture`.
 | [Architecture overview](architecture/overview.md) | System architecture and package boundaries |
 | [Concurrency](architecture/concurrency.md) | Subagent concurrency model and resource caps |
 | [Skills and resources](architecture/skills.md) | Skill discovery, activation, and scoped resource architecture |
-| [Embedded persistence](architecture/embedded-persistence.md) | Embedded persistence recommendation for sessions, events, and context |
+| [Sessions and storage](architecture/embedded-persistence.md) | How sessions, events, and context are stored |
 | [Workflows architecture](architecture/workflows.md) | Workflow contract schemas and templates architecture |
-| [Workflow stack settle](architecture/workflow-stack-settle.md) | Plan for autonomous stack settle: completion sweep, failure propagation, `failed_pr_policy`, lock hygiene |
+| [Stack settle](architecture/workflow-stack-settle.md) | How stacked runs settle: completion sweep, failure propagation, lock hygiene, known limitations |
+| [Token usage ledger](architecture/token-usage-ledger.md) | Per-event token usage recording: write path, schema, calibration |
+| [Session analysis](architecture/session-analysis.md) | Read-only session-analysis skill ledger surface |
 
 Architecture decisions live in these canonical docs, not in separate ADR
 files. ADRs are not used in this repository.
 
 ## Design
 
-The new terminal UI. Owner: `architecture`.
+Terminal UI design references and the automations feature reference.
+Owner: `architecture`.
 
 | Doc | Covers |
 |-----|--------|
 | [UX rules](design/ux-rules.md) | Binding interaction rules: reserved keys, repaint, inline against cockpit, composer, focus, mouse, clipboard, accessibility |
-| [Cockpit research](design/cockpit-research.md) | Evidence for the full-screen renderer: what the alternate screen removes, the mitigation for each, terminal hazards, and the correction to UX rules section 3 |
-| [Wireframes, variant D](design/wireframes-panes.md) | The chosen visual specification: block anatomy, every block type, dialogs, keymap |
-| [Research, variant D](design/research-panes.md) | Colour, contrast and colour-vision evidence behind the shipped themes |
-| [Wireframes, variants A-C](design/wireframes.md) | Record of the three rejected directions |
-| [Research, iteration 1](design/research.md) | Record of the first research pass |
+| [Cockpit rules](design/cockpit-research.md) | Full-screen renderer rules: scrollback handoff, mouse capture, wheel, auto-follow, transcript mode |
+| [Layout specification](design/wireframes-panes.md) | Visual specification of the shipped UI: block anatomy, every block type, dialogs, keymap |
+| [Colour and contrast](design/research-panes.md) | Contrast and colour-vision method and results behind the shipped themes |
+| [Automations](design/automations.md) | Automations: TOML specs, scheduling, headless runs, resume, and the CLI surface |
+| [UI isolation](design/ui-isolation.md) | UI package import-isolation policy |
 
 [UX rules](design/ux-rules.md) wins on interaction and mechanics.
-[Wireframes, variant D](design/wireframes-panes.md) wins on layout and visual
-form. Section 10 of the rules lists the points it overturns.
+[Layout specification](design/wireframes-panes.md) wins on layout and visual
+form.
 
 ## Development
 
@@ -89,6 +92,9 @@ How to work in this repository. Owner: `quality`.
 | [Agent self-prompt](development/agent-self-prompt.md) | Self-contained system prompt reference for agent rebuilds |
 | [Terminal input](development/terminal-input.md) | Per-terminal manual verification for TUI keys, paste, mouse and clipboard |
 | [Release](development/release.md) | Release archives, installers, package-manager status, and verification |
+| [SDK backend field mapping](development/sdk-backend-field-mapping.md) | Which CLI agent.Options fields the SDK backend carries, accepts as semantic gaps, or fail-closes on |
+| [UI theme system](development/ui-theme-system.md) | Terminal UI theme package: role reference, contrast/CVD gates, degradation ladder, how to add a theme |
+| [Stream markdown boundary rules](development/stream-markdown-boundary-rules.md) | StreamRenderer's stable-prefix cache and the markdown splicing boundaries it refuses |
 
 ## Security
 
@@ -109,3 +115,7 @@ Owner: `security`.
 `.mivia/policy/docs-ownership.json` has the full rule set: no parallel trees
 (`docs/guides`, `docs/wiki`, `docs/notes`), no duplicate H1 titles across
 `docs/**`, `README.md`, and `AGENTS.md`, and no ADRs.
+
+Docs are references, not decision records. Write how the product works now,
+in the present tense. Do not add plans, proposals, status lines, research
+logs, or amendment history. Plans live outside `docs/`.

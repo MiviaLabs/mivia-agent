@@ -111,17 +111,16 @@ subagent types and say WHICH RUN produced the line. Two runs of one agent share
 a name but not a task id, so `origin_agent` is a label and `origin_task_id` is
 the key. They never appear on a root type.
 
-An earlier version of this relay put a subagent's output on the ROOT types and
-added the origin fields to them. That was a mistake, and this section used to
-argue for it on the grounds that a local same-machine stream can afford weaker
-rules than the chat-sync wire. It cannot. A consumer keyed on `type` - the only
-thing a consumer can key on before it has heard of a new field - spliced every
-subagent's answer into the root agent's, silently, and no version of adding
-fields fixes a consumer that never reads them.
+Do not expect subagent output on the ROOT types. `type` is the only field a
+consumer can key on before it has heard of a new field: if subagent text rode
+the ROOT types with only the `origin_*` fields to separate it, every consumer
+keyed on `type` would splice every subagent's answer into the root agent's,
+silently, and no version of adding fields fixes a consumer that never reads
+them.
 
 A reader that predates the subagent types drops them with a warning, one per
 line, and shows the root agent's turn correctly. That cost is deliberate and is
-much smaller than the corruption it replaces.
+much smaller than the silent splice it prevents.
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
 

@@ -4,7 +4,6 @@ Owner: quality. Implementation:
 [internal/ui/render/stream_markdown.go](../../internal/ui/render/stream_markdown.go).
 Tests: `stream_markdown_test.go`, fuzz target
 `FuzzStreamedMarkdownMatchesOneShot` in `stream_markdown_fuzz_test.go`.
-Part of C6 in the (removed) chat TUI Crush-comparison plan.
 
 ## Why this exists
 
@@ -115,7 +114,7 @@ against:
 
 Unbroken prose has no blank line and therefore no safe boundary, so the
 cache never advances and the cost falls back to a full render per tick
-— exactly today's cost, never worse. The reference implementation this
+— exactly the non-streamed cost, never worse. The reference implementation this
 design is modelled on (charmbracelet/crush) cuts at a plain newline
 once the unrendered tail passes 2 KiB. That is not adopted here: a
 single newline inside a paragraph is a soft break, the paragraph
@@ -123,12 +122,12 @@ re-wraps as a whole, and cutting there breaks the byte identity above.
 Correct and occasionally slow beats fast and occasionally wrong;
 `TestStreamRendererUnbrokenProseStaysExact` pins the choice.
 
-## How the defects above were found
+## Verification
 
-Every rule past the first two ("legal at all") was found by
-`FuzzStreamedMarkdownMatchesOneShot`, not by reasoning ahead of time.
+The boundary rules above are pinned by
+`FuzzStreamedMarkdownMatchesOneShot`.
 The corpus under `internal/ui/render/testdata/fuzz/
-FuzzStreamedMarkdownMatchesOneShot/` is the record of each one; the
+FuzzStreamedMarkdownMatchesOneShot/` records each case; the
 corresponding `TestStreamRenderer*` case in `stream_markdown_test.go`
 pins the fix without needing the fuzz corpus. Re-run the fuzz target
 after any change to the boundary predicate:

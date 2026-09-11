@@ -1,38 +1,35 @@
-# Mivia terminal UI - wireframes, variant D "Panes"
+# Mivia terminal UI layout specification
 
-Status: shipped. This is the visual specification for the current terminal UI (`internal/ui/*`).
-Supersedes the recommendation in `wireframes.md`. That file stays as the record of
-variants A, B and C. This file specifies the direction that shipped.
-Companions: `research-panes.md` (new evidence), `mivia-ui-mock-panes.html` (colour, disposable).
+This is the visual specification for the terminal UI (`internal/ui/*`).
+`research-panes.md` records the colour and contrast method and results behind
+the themes.
 
 All frames are 80 columns. Section 14 states what changes at 120.
 
 ---
 
-## 1. What variant D is
+## 1. What the layout is
 
-D is the middle ground between A (Ledger) and B (Blocks), decided by review:
+The layout combines collapsible blocks with a plain message body:
 
-- **Take from B**: collapsible blocks, labelled block headers, and real dialogs.
-- **Reject from B**: the vertical gutter line down the message body.
-- **Take from A**: the message body is plain text at a fixed indent, with nothing
-  drawn beside it.
+- Blocks are collapsible, with labelled block headers and real dialogs.
+- No vertical gutter line runs down the message body.
+- The message body is plain text at a fixed indent, with nothing drawn beside it.
 
 The rule that follows: **structure is carried by the header line and by indentation,
 never by a vertical rule.** A block is a header row plus an indented body. The eye
 finds the left edge from the header, not from a drawn line.
 
-This also removes the main mechanical objection to B in `research.md` section 6: a
-gutter costs 2 of 80 columns at every level, and a vertical rule beside text that has
-already scrolled into scrollback cannot be repainted anyway.
+The gutter rule is mechanical: a gutter costs 2 of 80 columns at every level, and a
+vertical rule beside text that has already scrolled into scrollback cannot be
+repainted anyway.
 
 ### 1.1 Nothing draws a border
 
-An earlier revision allowed a frame around modal dialogs. That is withdrawn. Dialogs
-are a **background wash** with a title band, and no box glyph is drawn anywhere in the
-UI chrome. Section 8 gives the reason, which is mechanical: a hand-aligned frame is a
-recurring correctness bug, and four of four framed dialogs in the previous revision
-were ragged.
+Dialogs are a **background wash** with a title band, and no box glyph is drawn
+anywhere in the UI chrome. Section 8 gives the reason, which is mechanical: a
+hand-aligned frame is a recurring correctness bug, because every row must end at
+the same column.
 
 The one place box glyphs remain is **inside rendered content** - a mermaid diagram
 draws boxes because the boxes are the information, not decoration. See section 16.
@@ -58,8 +55,7 @@ label  detail  meta   state
   desktop chat and agent UIs place inline tool metadata. State is always a word,
   never only a colour.
 - the body is indented 4 columns. Nothing is drawn in columns 1 to 4 of a body line.
-  Section 11 and every drawn wireframe use 4. An earlier revision of this section
-  said 2, which was wrong.
+  Section 11 and every drawn wireframe use 4.
 
 Assistant prose is not a block. It has no header and no indent. It is the only content
 at column 1, which is what makes it read as the conversation rather than as tooling.
@@ -85,9 +81,9 @@ at column 1, which is what makes it read as the conversation rather than as tool
 | mark, pending | `U+25C8` | `?` | static |
 | mark, failed | `U+25C6` | `X` | static |
 
-Every glyph in D is already ASCII. The Unicode and ASCII sets are the same set. This is
-deliberate and it is why the ASCII degradation tier in the mock differs from truecolor
-only in colour.
+Every glyph is already ASCII. The Unicode and ASCII sets are the same set. This is
+deliberate and it is why the ASCII degradation tier differs from truecolor only in
+colour.
 
 ---
 
@@ -185,7 +181,7 @@ is one dim footer line per turn, in the meta grammar above. Durations follow one
 at every surface (`render.FormatElapsed`): under 1s prints `250ms`, under 60s prints
 `4.1s`, 60s and up print `1m 05s`.
 
-The transcript groups by turn (transcript-polish.md R1): the user line and the
+The transcript groups by turn: the user line and the
 assistant prose sit at column 1, and the turn's tool activity hangs under them as one
 group at a 2-column indent. A blank row separates sections - before prose, before a
 group, before the usage footer - and never falls inside a group, so a burst of tool
@@ -197,7 +193,7 @@ scrollback dump keep every per-block header and body.
 
 Three or more consecutive FINISHED activity blocks of any kind - reads, edits,
 commands, subagents, reasoning - coalesce the same way into one work row,
-`> work read_file, edit, run_command  5 calls  4.2s` (transcript-polish.md R2a).
+`> work read_file, edit, run_command  5 calls  4.2s`.
 Work still running never joins one, and a failure never joins one: those are the two
 blocks the reader is waiting on. Where both kinds fit the same blocks the read row
 wins, because it names its targets.
@@ -237,11 +233,11 @@ hint at all: there is nothing past the window to state.
     … 3 more lines
 ```
 
-**Default collapse, amended 2026-09-04.** The section 3 threshold below still governs
-prose-shaped bodies, but a tool call that has ENDED SUCCESSFULLY now collapses whatever
-its size: its header already carries the target, the duration and the outcome, and
-consecutive collapsed calls are what fold into the work row above. A failed call stays
-open at any size.
+**Default collapse.** The 10-line threshold below still governs prose-shaped
+bodies, but a tool call that has ended successfully collapses whatever its size:
+its header already carries the target, the duration and the outcome, and
+consecutive collapsed calls are what fold into the work row above. A failed call
+stays open at any size.
 
 **Live-window constraint.** A block stays interactive while it is in the live window.
 The window holds the blocks that fit in the terminal height minus the reserved chrome.
@@ -291,7 +287,7 @@ dialog is a **background wash**: a title band on `accent`, body rows on `bg-subt
 the selected row on `border-focus`, a footer on `bg-inset`. Plain text cannot show a
 wash. Plain text cannot show a background, and trailing spaces carry no information, so
 the panel is drawn below without padding: the wash extends to a fixed **62 columns**,
-inset 8, on every row. `>` marks the selected row. The HTML mock shows the real thing.
+inset 8, on every row. `>` marks the selected row.
 
 ```
           Approve tool call                              run_command
@@ -313,19 +309,18 @@ inset 8, on every row. `>` marks the selected row. The HTML mock shows the real 
 Two reasons, and the first is mechanical rather than aesthetic:
 
 1. **A drawn frame is a correctness problem.** Every row must end at the same column,
-   so every content edit is a chance to break the right edge. An earlier revision of
-   this document drew four framed dialogs by hand and **all four were ragged** - found
-   by a script, not by eye. A wash has no edge to misalign: the renderer pads each row
-   to the panel width and the background does the rest.
+   so every content edit is a chance to break the right edge. A wash has no edge to
+   misalign: the renderer pads each row to the panel width and the background does
+   the rest.
 2. A frame spends four columns and two rows on chrome that carries no information, in
    a design whose premise is that structure comes from type and space.
 
 The renderer must **clip** a row wider than the panel rather than let it push past the
-edge. The mock implements exactly that, with a `~` marking the clip.
+edge, and it marks the cut with `~`.
 
 The default for a dialog approval is **deny**, not `once`. An inline approval defaults
-to `once` because it was judged safe enough to stay inline. Anything promoted to a
-dialog was not.
+to `once` because the call is safe enough to ask inline. Anything promoted to a
+dialog is not.
 
 ---
 
@@ -485,8 +480,8 @@ with `~`. Below 40 columns the renderer prints the plain stream format.
 | `Ctrl-P` | global | model and effort dialog |
 | `Ctrl-L` | global | session dialog |
 | `n` / `N` | pager | next / previous hunk |
-| `s` | focused diff block | toggle unified/split diff view, 120 columns or wider (C8) |
-| `t` | approval | toggle unified/split diff preview, 120 columns or wider (C8) |
+| `s` | focused diff block | toggle unified/split diff view, 120 columns or wider |
+| `t` | approval | toggle unified/split diff preview, 120 columns or wider |
 | `/` | dialog | filter |
 | `?` | empty composer | print the keymap inline |
 | `Tab` | composer | accept completion prefix |
@@ -565,7 +560,10 @@ Decisions this forces:
 
 ### 16.2 Mermaid, through mermaid-ascii
 
-`AlexanderGrooff/mermaid-ascii` lays out mermaid source as terminal art. It covers
+The current renderer keeps diagram layout out of scope: a mermaid fence renders as
+a styled code block, so the source is never lost. When diagram layout renders, it
+goes through `AlexanderGrooff/mermaid-ascii`, which lays out mermaid source as
+terminal art. It covers
 **flowchart, sequence diagram and entity relationship diagram**. It does not cover
 subgraphs, non-rectangular node shapes, diagonal arrows, sequence activation boxes,
 class diagrams or state diagrams.
@@ -641,9 +639,8 @@ U+2B17 right, U+2B18 top, U+2B19 bottom. Cycling U+2B16, U+2B18, U+2B17, U+2B19 
 the diamond, so **the logo and the activity indicator are the same object.** The brand
 mark never turns into a generic spinner.
 
-It sits in the first cell of the status line above the composer - the cell the
-spinner used to occupy - and a static idle instance sits in the top bar next to
-the wordmark. The animated instance is the status line's; the top bar's stays
+It sits in the first cell of the status line above the composer, and a static idle
+instance sits in the top bar next to the wordmark. The animated instance is the status line's; the top bar's stays
 idle, because the bar is session identity, not turn state.
 
 | State | Unicode | ASCII | Motion | Meaning |
@@ -677,24 +674,24 @@ Rules:
 
 ## 18. First-party theme reference
 
-The three original themes, as verified. Every foreground/background pair used by the UI
-meets WCAG AA; `mivia-high-contrast` meets AAA (7:1). Measurement method and the
+The three Mivia themes. Every foreground/background pair used by the UI meets WCAG
+AA; `mivia-high-contrast` meets AAA (7:1). Measurement method and the
 colour-blindness results are in `research-panes.md` sections 3 and 8.
 
 | Role | mivia-dark | mivia-light | mivia-high-contrast |
 |---|---|---|---|
-| `bg` | `#0a0a0b` | `#fcfcfc` | `#000000` |
-| `bg-subtle` | `#17171a` | `#f4f4f5` | `#141414` |
-| `bg-inset` | `#050506` | `#e9e9eb` | `#000000` |
+| `bg` | `#0e1012` | `#fcfcfc` | `#000000` |
+| `bg-subtle` | `#191b1d` | `#f4f4f5` | `#141414` |
+| `bg-inset` | `#121417` | `#e9e9eb` | `#000000` |
 | `fg` | `#fafafa` | `#18181b` | `#ffffff` |
 | `fg-muted` | `#a1a1aa` | `#52525b` | `#d0d0d0` |
 | `fg-subtle` | `#71717a` | `#71717a` | `#a0a0a0` |
 | `border` | `#52525b` | `#a1a1aa` | `#a0a0a0` |
 | `border-focus` | `#fafafa` | `#18181b` | `#ffffff` |
 | `accent` | `#fafafa` | `#18181b` | `#ffffff` |
-| `accent-fg` | `#0a0a0b` | `#fcfcfc` | `#000000` |
+| `accent-fg` | `#0e1012` | `#fcfcfc` | `#000000` |
 | `success` | `#4edc4e` | `#1d6b53` | `#19e6a8` |
-| `warning` | `#f3f34e` | `#7d5a08` | `#e6b319` |
+| `warning` | `#ffb900` | `#7d5a08` | `#e6b319` |
 | `danger` | `#dc4e4e` | `#5e0808` | `#ef6c6c` |
 | `info` | `#5b8cff` | `#142671` | `#8595d6` |
 | `keyword` | `#5b8cff` | `#3f3f46` | `#8595d6` |
@@ -714,11 +711,13 @@ Notes:
 
 - `accent` is achromatic in all three. It is chrome - prompt marker, focus, selection -
   and never encodes a status.
-- The dark status colours are the Linux VGA bright family, with the blue lifted from
-  VGA's `#4e4edc` (which fails contrast at 3.25) to `#5b8cff`.
+- Success and danger are the Linux VGA bright green and red. `warning` is the amber
+  `#ffb900`. The blue is lifted from VGA's `#4e4edc` (which fails contrast at 3.25) to
+  `#5b8cff`.
 - The dark syntax roles are toned down from the VGA primaries: `type` `#74c9cc`,
   `function` `#d3ce85`, `number` `#d18fd1`, each about half the saturation of the
   status colours. Syntax is a background texture; status is a signal.
-- `warning` is deliberately **not** toned. Measured, reducing its saturation drops the
-  worst-case colour-blind separation from 18.5 to 12.2, because its high lightness is
-  what separates it from `success` under deuteranopia.
+- `warning` is deliberately **not** toned. Its high lightness is what separates it from
+  `success` under deuteranopia, and every toned candidate measured strictly worse
+  (see `research-panes.md` section 8.5). The theme carries the accepted trade as its
+  `cvd_budget` (18.5), pinned by the package's CVD gate test.

@@ -125,27 +125,22 @@ topics:
   token-usage-ledger:
     path: docs/architecture/token-usage-ledger.md
     owner: architecture
-    description: Token usage ledger architecture - durable per-event usage recording, calibration feedback, and known gaps
+    description: Token usage ledger architecture - durable per-event usage recording, calibration feedback, and known limitations
 
   session-analysis:
     path: docs/architecture/session-analysis.md
     owner: architecture
-    description: Session-analysis skill ledger surface - read-only metadata-only analysis, query parity, privacy perimeter, validation protocol
+    description: Session-analysis skill ledger surface - read-only metadata-only analysis, query parity, privacy perimeter, and validation
 
   workflow-stack-settle:
     path: docs/architecture/workflow-stack-settle.md
     owner: architecture
-    description: Known gaps in autonomous stack settle - completion sweep, failure propagation, failed_pr_policy knob, lock hygiene
-
-  debug-cut:
-    path: docs/development/debug-cut.md
-    owner: quality
-    description: Fast debug path cut - disabled panel/integration review gates, disabled contract tests registry, restore procedure
+    description: Stacked-run settle behavior and known limitations - completion sweep, failure propagation, failed_pr_policy, lock hygiene
 
   ui-design-phase0:
     path: docs/design/
     owner: architecture
-    description: Phase 0 terminal UI design - UX rules, research, ASCII wireframes, theme roles, and the disposable HTML mock
+    description: Terminal UI design reference - UX rules, cockpit rules, layout specification, and the colour/contrast reference
 
   ui-theme-system:
     path: docs/development/ui-theme-system.md
@@ -165,4 +160,4 @@ topics:
   automations-design:
     path: docs/design/automations.md
     owner: architecture
-    description: Automations scheduling design - TOML specs, fenced single-fire claims, headless run execution, resume, and the CLI surface
+    description: Automations - TOML specs, scheduling, fenced single-fire claims, headless run execution, resume, and the CLI surface

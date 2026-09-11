@@ -1,647 +1,486 @@
-# Automations: centralized scheduling for workflows, agents, skills, slash commands, and prompts
+# Automations
 
-Status: implemented (chunks 1-9 landed; docs/OWNERS.yaml registration is chunk 10, this edit).
-Reviewed: planner -> plan-reviewer (5 passes; 6 blocking findings raised and resolved).
+Automations provide scheduled and manual background execution for workflows, agents, skills, slash commands, and prompts.
 
-## Goal
+## Overview
 
-Ship user-defined automations in a new `internal/automation` package: TOML-defined,
-manually or schedule-triggered (interval / at-times / cron+TZ), each fire running as a
-background session — optionally in a fresh managed worktree off a selectable base ref —
-with durable run records and a fenced single-fire claim. Exposed through a new
-`mivia automations` CLI and injected into the Settings -> Automations section **by
-interface**, never by a `uiadapter -> automation` import.
+An automation executes an ordered list of steps in a background session. The session can run directly in the workspace or in a fresh managed Git worktree.
 
-An automation's action is an ordered list of steps; each step is a prompt, a skill, an
-agent, a slash command, or a workflow. A mixed action is simply a multi-kind step list
-executed in order in one session.
+Automations use two storage backends:
+- Definitions are stored in TOML files on disk.
+- Execution history is stored in a SQLite database.
 
-## Baseline: what exists today
+The feature provides:
+- Multiple schedule types: fixed intervals, explicit timestamps, and standard cron expressions with timezone support.
+- Single-fire fenced claims that prevent duplicate concurrent runs.
+- Headless execution with strict unattended tool approval policies.
+- Step-level checkpointing and manual resume for failed or interrupted runs.
+- CLI subcommands under `mivia automations`.
+- An interactive management interface in the Settings screen.
 
-| Fact | Evidence |
-| --- | --- |
-| The Automations settings section is a **fake**: in-memory only, never seeded from config, never persisted, and `startRun` fabricates a run record with no execution | `internal/uiadapter/settings_automations.go`; `settings.go:33,135` (`initFromConfig` seeds projects/providers/agents/skills/MCP, not automations) |
-| The section is not merely hidden — it is **absent from the nav** | `internal/ui/screen/settings/settings.go:28` (`sectionCount = 6`), `:71` (`sectionNames` has no `"automations"`); `newAutomationsSection` is called only from tests |
-| `ports.AutomationSettings` already defines the exact 5-method surface | `internal/uikit/ports/settings_automations.go:157-163` |
-| `internal/uikit/ports` is a genuine leaf (first-party imports: `uikit/intent`, `uikit/uievent` only) | `internal/uikit/ports/ports.go:22-23` |
-| `internal/cronschedule` is referenced in comments but **does not exist** | `ports/settings_automations.go:21,34,38` |
-| Worktree creation already takes a base ref | `cliworktree.CreateManagedWorktree(root, name, baseRef, branchPrefix)`, `internal/cliworktree/context_setup.go:152` |
-| Crash-recovery precedent (deferred to v2, see D5) | `sessionWorkflowEngine.ReconcileParkedRuns`, `internal/cliworkflow/workflow_tool_engine_reconcile.go:47`, dispatched at `workflow_tool_service.go:131` + 30s ticker |
-| Fenced claims exist and are load-bearing | `internal/storage/sqlite_claims.go` (`run_claims`, `fenced_tokens`, `ClaimRunFenced` / `RefreshClaimFenced` / `TakeoverExpiredClaimFenced`); `internal/ledgercore/claims.go` |
-| Slash commands are a first-class catalog | `internal/clichat/slash_catalog.go:28-113`, `SlashKindBuiltin` / `SlashKindSkill` |
-| No cron library in the module graph yet | `go.mod`, `go.sum` |
-| Atomic-write precedent: open-tmp / write / fsync / close / rename | `internal/chatsync/delivered_ledger.go:30-37` (`worktree_marker.go:81` uses the same shape but omits the fsync) |
-| 30 builtin slash commands, most picker- or lifecycle-bound | `internal/clichat/slash_catalog.go:42-76` |
+## Configuration and Storage
 
-## SDK reuse (R7)
+### File Locations
 
-The repo already wraps the SDK at an established adapter boundary (`internal/sdkadapter`
-wraps `agentloop`/`tools`/`provider`/`mcp`/`workspace`/`skills`). R7 means *reuse rather
-than reinvent* — not *replace working internals*. `internal/workflows` deliberately
-imports zero SDK packages today.
+Automation definitions are stored in `automations.toml` files at two configuration scopes:
 
-| Need | SDK candidate | Decision |
+- **Project scope**: `<workspaceRoot>/.mivia/automations.toml`
+- **User scope**: `~/.mivia/automations.toml`
+
+The TOML document contains a table of automation specifications keyed by automation ID:
+
+```toml
+[automations.<id>]
+# Automation fields
+```
+
+### Atomic Writes
+
+When writing `automations.toml`, the store uses an atomic write sequence:
+1. Create a temporary file with mode `0600` in the target directory.
+2. Encode the TOML document and write the data.
+3. Flush and synchronize bytes to disk with `Sync()`.
+4. Close the temporary file.
+5. Rename the temporary file over the target file path.
+
+This sequence ensures a process crash never leaves a truncated or corrupt configuration file.
+
+### Identification Rules
+
+Automation IDs and run IDs must match the regular expression:
+
+```text
+^[a-z0-9][a-z0-9_-]{0,63}$
+```
+
+An ID must:
+- Start with a lowercase alphanumeric character.
+- Contain only lowercase letters, digits, underscores, and hyphens.
+- Have a total length between 1 and 64 characters.
+
+The store validates IDs at load time and rejects invalid identifiers.
+
+### Run History Schema
+
+Run history is persisted in the `automation_runs` SQLite table:
+
+| Column | Type | Description |
 | --- | --- | --- |
-| Schedule primitives | `scheduler.Every` / `scheduler.At` | **Accept** as conversion targets from `ports.ScheduleSpec`. `Schedule` is an interface, so `cronschedule.Spec` drops in without touching `Add`. |
-| Job scheduling loop | `mivia-ai-sdk/scheduler` | **Reject as source of truth.** `Scheduler.entries` is unexported and unenumerable; a fired one-shot is deleted with no trace (`scheduler/run.go:131`). Durable, listable next-fire state must be ours. |
-| Trigger model | `scheduler.Registry` (`Fire(ctx,name)`) | **Reject.** A second name->action map beside the automation store is two sources of truth for automation names. Manual trigger is one direct `Service.RunOnce(id)` call. |
-| Run ledger | `sdk/ledger` (+`ledger_sqlite` build tag) | **Reject.** The repo's own fenced claim stack already outperforms it for this use and is load-bearing; the SDK store sits behind a build tag this repo does not enable. |
-| Failure text | `scheduler.JobFailedEvent.Data` | **Reject.** Unparsed `fmt.Sprintf` string, tainted. We classify into `ports.RunFailKind`. |
-| Step graph / resume | `sdk/flow` + `flow.Resume`/`Checkpoint` | **Reject for v1; borrow the shape.** `flow.Resume` resumes a flow-machine checkpoint; our resumable unit is a saved `chat.Session` plus a step index. Adopting it means authoring a `flow.Definition` per automation and running steps outside the session holding the transcript. We copy the `Checkpoint{Done,Skipped,Failed}` idea into the run record. Revisit if steps ever need branching/panels. |
-| Model-facing scheduling | `sdk/subagent` `SchedulerTool`/`TriggerTool`/`FlowTool` | **Reject.** `Privileged()` self-scheduling by the model is a footgun and covers no requirement. Nothing under `internal/` imports `sdk/subagent` today. |
-| Workflow execution | `cliworkflow.NewSessionWorkflowEngine` | **Accept** (repo-native). |
-| Worktree creation | `cliworktree.CreateManagedWorktree` | **Accept** (repo-native). |
+| `id` | TEXT PRIMARY KEY | Unique run identifier (for example `run-1a2b3c...`) |
+| `automation_id` | TEXT NOT NULL | Identifier of the parent automation |
+| `origin` | TEXT NOT NULL | Trigger origin: `manual` or `scheduled` |
+| `state` | TEXT NOT NULL | Run state: `pending`, `running`, `succeeded`, `failed`, `interrupted`, or `skipped` |
+| `step_index` | INTEGER NOT NULL | Current or next step index to execute |
+| `step_count` | INTEGER NOT NULL | Total number of steps in the action |
+| `session_name` | TEXT NOT NULL | Saved background chat session name (`__auto__<automation_id>__<run_id>`) |
+| `worktree_path` | TEXT NOT NULL | Filesystem path of the managed worktree |
+| `worktree_branch` | TEXT NOT NULL | Git branch name for the managed worktree |
+| `claim_token` | TEXT NOT NULL | Active fenced claim token |
+| `started_at` | TEXT NOT NULL | RFC3339 start timestamp |
+| `ended_at` | TEXT | RFC3339 completion or failure timestamp |
+| `fail_kind` | TEXT NOT NULL | Failure classification category |
+| `message` | TEXT NOT NULL | Status, error, or cancellation message |
 
-## API
+An index on `automation_id` accelerates history queries.
 
-```go
-// Package automation owns user-defined automations: their TOML definitions,
-// their schedules, and their durable run records. It depends on cli*
-// packages; nothing in internal/ui* may import it.
-package automation
+## Defining an Automation
 
-// StepKind names what one automation step runs. Every kind except
-// StepWorkflow executes as one turn in the automation's background session.
-type StepKind int
+### Specification Fields
 
-const (
-    StepPrompt   StepKind = iota // Prompt sent verbatim
-    StepSkill                    // Ref = skill name, rendered like /<skill>
-    StepAgent                    // Ref = agent name; selects it, then sends Prompt
-    StepSlash                    // Ref = slash command (headless-safe allowlist only)
-    StepWorkflow                 // Ref = workflow name; dispatched to the workflow engine
-)
+An automation definition in `automations.toml` supports the following fields:
 
-// Step is one unit of an automation action. A MIXED action is a Steps slice
-// with several kinds: steps run in order in ONE session, and each completed
-// index is recorded so a resumed run restarts at index+1.
-type Step struct {
-    Kind   StepKind
-    Ref    string
-    Prompt string
-    Inputs map[string]string // StepWorkflow only
-}
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | string | Yes | Unique identifier matching `^[a-z0-9][a-z0-9_-]{0,63}$`. |
+| `name` | string | Yes | Human-readable display name. |
+| `description` | string | No | Description of the automation purpose. |
+| `enabled` | boolean | Yes | Enables or disables scheduled execution. |
+| `worktree` | integer | No | Worktree mode: `0` (workspace root) or `1` (fresh managed worktree). Default is `0`. |
+| `base_ref` | string | Conditional | Git base ref (such as `HEAD` or a branch name). Required when `worktree = 1`. Forbidden when `worktree = 0`. |
+| `unattended` | string | No | Approval policy for tool calls: `"deny"` (default) or `"auto"`. |
+| `trigger` | table | Yes | Trigger definition table. |
+| `steps` | array | Yes | Non-empty ordered list of step tables. |
 
-// WorktreeMode selects where a run executes. BaseRef is first-class (R4):
-// "HEAD" or any ref cliworktree can resolve.
-type WorktreeMode int
+### Trigger Table (`trigger`)
 
-const (
-    WorktreeNone WorktreeMode = iota // run in the workspace root
-    WorktreeNew                      // create a managed worktree off BaseRef
-)
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | integer | Yes | Trigger kind: `0` (manual only) or `1` (scheduled). |
+| `schedule` | table | Conditional | Schedule configuration table. Required when `kind = 1`. |
 
-type Spec struct {
-    ID, Name, Description string
-    Enabled               bool
-    Trigger               TriggerSpec // manual | every | at | cron+tz
-    Steps                 []Step
-    Worktree              WorktreeMode
-    BaseRef               string
-    Unattended            UnattendedPolicy // default deny
-}
+### Schedule Table (`trigger.schedule`)
 
-// Service is the automation backend. It satisfies ports.AutomationSettings,
-// which is how the settings UI reaches it without any UI package importing
-// this one.
-type Service struct{ /* store, spawn, sqlite, clock, cron */ }
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | integer | Yes | Schedule kind: `0` (interval), `1` (specific times), `2` (recurring cron). |
+| `every_seconds` | integer | Conditional | Period in seconds. Required and must be positive when `kind = 0`. |
+| `at_times` | array of strings | Conditional | List of RFC3339 timestamp strings. Used when `kind = 1`. |
+| `cron` | string | Conditional | Standard 5-field cron expression. Required when `kind = 2`. |
+| `tz` | string | No | IANA timezone name (for example `America/New_York`). Defaults to `UTC` when empty. |
 
-func New(root string, db *storage.SQLite, spawn SessionSpawner, cfg Config) (*Service, error)
+### Step Table (`steps`)
 
-// SessionSpawner is the one capability the executor needs from the session
-// pool. The parameter type is a PLAIN func, never uiadapter.BindFunc: a
-// composition-root adapter in internal/newtui converts. See D4.
-type SessionSpawner interface {
-    CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error)
-}
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | Yes | Step kind: `"prompt"`, `"skill"`, `"agent"`, `"slash"`, or `"workflow"`. |
+| `ref` | string | Conditional | Reference target: skill name, agent name, slash command, or workflow name. |
+| `prompt` | string | Conditional | Prompt text sent to the model or agent. |
+| `inputs` | table | No | String key-value input parameters for workflow steps (`kind = "workflow"`). |
 
-// Compile-time proof of the inverted dependency.
-var _ ports.AutomationSettings = (*Service)(nil)
+### Step Kinds
 
-func (s *Service) Automations() []ports.Automation
-func (s *Service) Runs(automationID string, limit int) []ports.Run
-func (s *Service) Run(runID string) (ports.Run, bool)
-func (s *Service) Apply(ctx context.Context, scope ports.Scope, e ports.AutomationEdit) (ports.SaveHandle, error)
-func (s *Service) Watch(ctx context.Context, automationID string) (ports.RunHandle, error)
+The executor processes steps in sequential order within a single session:
 
-func (s *Service) Serve(ctx context.Context) error                                  // cron loop; missed fires SKIPPED
-func (s *Service) RunOnce(ctx context.Context, automationID string, trigger ports.TriggerKind) (ports.Run, error)
-func (s *Service) ResumeRun(ctx context.Context, runID string) (ports.Run, error) // restart at StepIndex (already the next-step-to-run index; no +1 adjustment)
-func (s *Service) SweepInterrupted(ctx context.Context) (int, error)
+- **`prompt`**: Sends `prompt` text directly to the active conversation turn.
+- **`skill`**: Renders `ref` as a skill invocation (equivalent to `/<skill>`) and executes the skill.
+- **`agent`**: Selects the agent named in `ref` on the session state, then sends `prompt`.
+- **`slash`**: Executes the slash command in `ref`. The command must satisfy the headless allowlist.
+- **`workflow`**: Dispatches the workflow named in `ref` to the workflow engine with `inputs`.
+
+### Configuration Examples
+
+#### Scheduled Nightly Summary (Cron + Worktree)
+
+```toml
+[automations.nightly-summary]
+id = "nightly-summary"
+name = "Nightly Summary"
+description = "Summarizes git changes in a fresh worktree"
+enabled = true
+worktree = 1
+base_ref = "HEAD"
+unattended = "deny"
+
+[automations.nightly-summary.trigger]
+kind = 1
+
+[automations.nightly-summary.trigger.schedule]
+kind = 2
+cron = "0 2 * * *"
+tz = "America/New_York"
+every_seconds = 0
+
+[[automations.nightly-summary.steps]]
+kind = "prompt"
+prompt = "Review commits from the last 24 hours and draft release notes."
+
+[[automations.nightly-summary.steps]]
+kind = "workflow"
+ref = "publish-notes"
+[automations.nightly-summary.steps.inputs]
+channel = "internal"
 ```
 
-```go
-// in internal/uiadapter/settings_automations.go (NOT settings.go, which is near the LOC cap)
+#### Interval Health Check (Workspace Root)
 
-// SetAutomationBackend installs the automation backend the Automations
-// settings section delegates to. It is an INTERFACE on purpose:
-// internal/automation imports cliworkflow/clichat/cliworktree, and INV-TUI-29
-// (AGENTS.md:135-139) requires uiadapter stay isolated from CLI entrypoints.
-// The composition root (internal/newtui) constructs the concrete
-// *automation.Service and injects it here. nil restores the in-memory
-// behaviour existing tests rely on.
-func (s *SettingsStore) SetAutomationBackend(b ports.AutomationSettings)
+```toml
+[automations.health-check]
+id = "health-check"
+name = "Hourly Health Check"
+description = "Runs lint and diagnostic checks every hour"
+enabled = true
+worktree = 0
+unattended = "auto"
+
+[automations.health-check.trigger]
+kind = 1
+
+[automations.health-check.trigger.schedule]
+kind = 0
+every_seconds = 3600
+cron = ""
+tz = ""
+
+[[automations.health-check.steps]]
+kind = "slash"
+ref = "/compact"
+
+[[automations.health-check.steps]]
+kind = "prompt"
+prompt = "Check repository diagnostics and report any compilation errors."
 ```
 
-Ports changes (`internal/uikit/ports/settings_automations.go`): `ActionRef` gains
-`Steps []ActionStep`; `Automation` gains `Worktree WorktreeSpec{Mode, BaseRef}`; the
-`AutomationEdit` closed union gains `ResumeAutomationRun{RunID string}`.
-`ActionRef.Workflow` stays a compat alias mapping to a single `StepWorkflow`.
+#### Manual Multi-Step Action
 
-## Decisions
+```toml
+[automations.release-prep]
+id = "release-prep"
+name = "Release Preparation"
+description = "Prepares release artifacts manually"
+enabled = true
+worktree = 1
+base_ref = "main"
+unattended = "deny"
 
-**D1. Definitions in TOML, run records in sqlite.** `automations.toml` under the config
-dir (project `<workspace>/.mivia/`, user `~/.mivia/`, mirroring existing config
-precedence and `ports.Scope`) is the source of truth for definitions — human-editable and
-git-committable like `.mivia/workflows/*`. `automation_runs` (new table in the sqlite DB
-already holding `run_claims`/`fenced_tokens`) is the source of truth for history:
-`(id, automation_id, origin, state, step_index, step_count, session_name, worktree_path,
-worktree_branch, claim_token, started_at, ended_at, fail_kind, message)`.
+[automations.release-prep.trigger]
+kind = 0
 
-`Apply` writes TOML then reloads, using **atomic rename**: `os.CreateTemp` in the target
-directory, `Chmod(0600)`, write, `Sync`, `Close`, then `os.Rename` over the destination.
-This is chosen over in-place truncation because a crash mid-write would otherwise leave a
-truncated definitions file that fails to parse and disables every automation at once. No
-external watcher depends on inode stability: nothing in the repo watches this new path,
-and the only `fsnotify` consumer in the tree (`internal/cliagents/memory_reconciler.go`)
-watches the Markdown memory store's project/org directories, not this path.
+[[automations.release-prep.steps]]
+kind = "agent"
+ref = "code-reviewer"
+prompt = "Audit open pull requests for merge readiness."
 
-The sequence adds `Sync()`, which the cited precedent does **not** have: `WriteWorktreeMarker`
-is `CreateTemp -> Chmod(0600) -> write -> Close -> Rename` with no fsync. The addition is
-deliberate — rename is only atomic with respect to *durable* bytes, so without the fsync a
-power loss can leave the renamed file present but empty. `internal/chatsync`'s own
-ledger writer already uses the stricter open-tmp/write/fsync/close/rename sequence
-(`delivered_ledger.go:30-37`) for exactly this reason, and that is the precedent followed
-here.
-
-**D2. Execution entry point per step kind (closes prior review finding P1).** One
-executor, the background session. `StepPrompt`/`StepSkill`/`StepAgent`/`StepSlash` are
-rendered to text and sent through the run's conversation (skills/slash resolved via
-`clichat.SlashCommands(surface, *skills.Registry)` / `FindSlashCommand`; a slash command
-outside the headless-safe allowlist is rejected at **validation** time, not at 2am; the
-executor passes `SlashSurfaceTUI` — see D15 for why that is required for skill lookup).
-`StepAgent` selects the agent on the session's own forked `cliagents.AgentSessionState`,
-then sends. The headless-safe slash allowlist is D15. `StepWorkflow` is the only step
-leaving the session, and it uses the existing **named** path — no in-memory `CompiledWorkflow` is ever synthesized:
-
-```go
-eng := cliworkflow.NewSessionWorkflowEngine(root, configPath) // exported: workflow_tool_engine.go:66
-req := workflowledger.StartRequest{
-    Workflow:      step.Ref,                                  // NOT .Name: agenttools_types.go:68-84
-    InvocationKey: runID + ":" + strconv.Itoa(stepIndex),
-    Inputs:        inputs,
-}
-h, err := eng.Start(ctx, req) // Start is exported on an unexported type: legal
+[[automations.release-prep.steps]]
+kind = "skill"
+ref = "generate-changelog"
 ```
 
-Inert for non-workflow steps: delivery/publish, sandbox, admission/idempotency ledger,
-panels, verifier, checkpointing — those stages live inside the workflow engine and only a
-`StepWorkflow` reaches it.
+## Scheduling
 
-**D3. Worktree per run (R4).** `WorktreeNew` ->
-`cliworktree.CreateManagedWorktree(root, "auto-"+automationID+"-"+runID, spec.BaseRef,
-config.LoadWorktreeConfig(root).BranchPrefix)`, before the session exists. Creation
-failure fails the run with zero side effects (no session, no orphan worktree). Path and
-branch are recorded on the run. **No auto-cleanup, ever, in v1** — the branch is the
-deliverable; removal stays with `mivia worktree remove` and the TUI worktree picker.
+### Schedule Types
 
-**D4. Dependency direction — the central structural decision.**
+1. **Interval (`kind = 0`)**: Executes periodically based on `every_seconds`. Each new deadline adds `every_seconds` to the current time.
+2. **Specific Times (`kind = 1`)**: Executes at explicit RFC3339 timestamps listed in `at_times`. When all timestamps lie in the past, the schedule is exhausted and produces no further fires.
+3. **Recurring Cron (`kind = 2`)**: Evaluates a 5-field cron expression in the configured timezone.
 
-The naive shape is a hard compile-breaking cycle: `automation -> uiadapter` (for
-`SessionPool.CreateFreshInDir`, `session_pool_worktree.go:36`) **and** `uiadapter ->
-automation` (for `settingsAutomations`, `settings.go:24-59,135`). Resolution:
+### Cron Grammar and Timezones
 
-- **The interface already exists.** `ports.AutomationSettings` is exactly the five-method
-  surface (`ports/settings_automations.go:157-163`). No new interface is invented.
-- **It lives in a verified leaf.** `internal/uikit/ports`'s only first-party imports are
-  `uikit/intent` and `uikit/uievent` (`ports.go:22-23`). So `automation -> ports` drags no
-  CLI family anywhere, and `uiadapter -> ports` already exists (`settings.go:12`).
-  uiadapter's transitive graph is unchanged — this is what satisfies INV-TUI-29.
-- **Direction:** `automation` imports `ports` and *implements* `AutomationSettings`;
-  `uiadapter` holds it *by interface*. There is never a `uiadapter -> automation` import.
-- **Setter:** `SetAutomationBackend(b ports.AutomationSettings)`, a new field guarded by
-  the existing `s.mu`, mirroring `SetConversation`/`SetSyncOptsNotifier`
-  (`settings.go:81,125`). The five `settings_automations.go` methods delegate when the
-  backend is non-nil, else keep current in-memory behaviour so existing test doubles pass.
-  Placed in `settings_automations.go`, not `settings.go` (which is at 623 lines, near the
-  structure cap).
-- **The pool edge is inverted too.** `automation` declares `SessionSpawner` with a
-  **plain func parameter**, not `uiadapter.BindFunc`.
+The cron parser evaluates standard 5-field cron expressions:
 
-  > **Compile hazard, caught in review.** `SessionPool.CreateFreshInDir` takes
-  > `bind BindFunc`, a *named* type (`session_pool_worktree.go:16`). Go interface
-  > satisfaction requires exact parameter-type identity, and a defined type is never
-  > identical to an unnamed func literal with the same underlying type. So
-  > `*uiadapter.SessionPool` does **not** structurally satisfy an interface written with a
-  > plain func — and naming `uiadapter.BindFunc` in `automation`'s own signature would
-  > reintroduce the forbidden edge. The fix is a one-line **adapter closure at the
-  > composition root**, which is a second deliberate "mutual non-importing" seam:
-
-  ```go
-  // in internal/newtui — the only package already importing both.
-  spawn := automationSpawnerFunc(func(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
-      return pool.CreateFreshInDir(uiadapter.BindFunc(bind), dir)
-  })
-  ```
-
-- **Exact wiring**, in `internal/newtui/run.go` immediately after line 243
-  (`settingsStore.SetConversation(conv)`), where `pool` (`:233`) and `settingsStore`
-  (`:242`) are both in scope:
-
-  ```go
-  // Composition root: newtui already imports internal/cli and internal/uiadapter,
-  // so it is the one legal place the concrete automation.Service and the
-  // SessionPool can meet. The store holds it by ports.AutomationSettings;
-  // uiadapter never names this package.
-  if autoSvc, err := automation.New(agentState.WorkspaceRoot, store, spawn, automation.Config{}); err == nil {
-      settingsStore.SetAutomationBackend(autoSvc)
-  } else {
-      log.Printf("automations disabled: %v", err) // non-fatal; TUI starts normally
-  }
-  ```
-
-Net: `automation` and `uiadapter` are mutually non-importing; both point at `ports`.
-
-**D5. Headless turn execution (R5).** A session *can* be driven with no TUI attached, but
-only with a mandatory drain. Verified against `conversation.go` and `turn_stream.go`:
-
-```go
-conv, err := spawn.CreateFreshInDir(bindFn, worktreeDir)
-ctx, cancel := context.WithTimeout(parent, cfg.TurnTimeout) // ALWAYS deadlined
-defer cancel()
-h, err := conv.Send(ctx, intent.Send{Text: prompt})
-for ev := range h.Events() { collect(ev) }                  // drain to CLOSE
+```text
+┌───────────── minute (0 - 59)
+│ ┌───────────── hour (0 - 23)
+│ │ ┌───────────── day of month (1 - 31)
+│ │ │ ┌───────────── month (1 - 12)
+│ │ │ │ ┌───────────── day of week (0 - 6) (Sunday to Saturday)
+│ │ │ │ │
+* * * * *
 ```
 
-Why the drain is load-bearing: the per-turn channel is buffered at 32
-(`conversation.go:40,206`) and `turnStream.Send` **blocks** when full
-(`turn_stream.go:50-62`), deliberately, to avoid dropping transcript content. In the TUI a
-`tea.Cmd` drains it. Headless, if we stop reading, the agent-loop goroutine parks inside
-the tap while `Conversation.Send` still holds `c.turnMu` (`conversation.go:203`) — every
-later `Send` on that conversation blocks forever. Two rules make it safe:
+Timezone evaluation uses IANA timezone identifiers (such as `America/Chicago` or `Europe/London`). An empty `tz` string defaults to `UTC`.
 
-1. **Drain until the channel closes.** `Events()` closes exactly once
-   (`turn_stream.Close`, `turn_stream.go:80-100`; the `closed` bool is guarded by `mu`, so
-   the close is once regardless of which of Cancel/emitTurnEnd wins). Ranging to close is
-   the only correct terminator — breaking on `KindTurnEnd` leaves later tap sends parked.
-2. **Always deadline the ctx.** `turnStream.Send`'s `<-s.done` arm (`turn_stream.go:59`)
-   is the only thing that unparks a blocked sender. When nothing drains, `cancelTurn()` is
-   itself unreachable (it runs downstream of the blocked send), so the parent deadline is
-   genuinely the only escape hatch.
+### Skip-Not-Catch-Up Policy
 
-Each run uses a fresh conversation and never reuses it, so a wedge cannot cross runs. **No
-addition to uiadapter is required.** Recorded assumption: read-verified, not
-runtime-verified — chunk 2's wedge test is the mitigation and must land before chunk 6.
+The scheduler never catches up missed runs. If a machine sleeps or the daemon stops, missed fire intervals are dropped.
 
-**D6. Missed fires are skipped, never caught up.** An interval automation that missed 40
-fires overnight must not stampede 40 sessions. On start, next fire is recomputed strictly
-in the future from the persisted `next_fire_at`.
+When the scheduler wakes, it evaluates the next fire timestamp strictly after the current wall-clock time. This rule prevents fire storms when a system resumes after downtime.
 
-**D7. Single-fire dedup.** Every fire — scheduled or manual — must win
-`ClaimRunFenced("automation:"+automationID)` before any side effect. A lost claim is a
-no-op, not an error. Concurrency cap: one in-flight run per automation; a colliding fire
-records a `skipped` run.
+### Daylight Saving Time Transitions
 
-**D8. Unattended permissions are deny-by-default.** A scheduled run does not inherit a
-live session posture: no interactive approver is attached, so a tool call needing approval
-fails the step fast rather than hanging until morning. `allow_publish` is never set for
-`StepWorkflow` — delivery stays pending for a human. Opt-in `unattended = "auto"` per
-automation, rendered as a warning in the detail view. Manual TUI triggers use the same
-policy: a background session with no attached prompt UI cannot approve either.
+Cron expressions handle Daylight Saving Time (DST) changes as follows:
+- **Spring Forward**: If a scheduled local time falls inside a skipped hour, the scheduler skips that day.
+- **Fall Back**: Standard 5-field cron matches local wall-clock fields. If a schedule falls inside the repeated hour, it fires once at each UTC offset during that transition day.
 
-**D9. The settings section joins the nav unconditionally, rendering "unavailable" when
-unbacked.** Caught in review: `settings.go:28` hardcodes `const sectionCount = 6`, `:71`'s
-`sectionNames` has no `"automations"`, and the `sections: []section{...}` literal at `:108`
-has no Automations entry — `newAutomationsSection` is called only from tests. So the
-section is structurally absent, and wiring alone would leave the feature with no UI entry
-point.
+## Execution Model
 
-The fix follows the package's **existing placeholder pattern, not conditional nav length**.
-A second review pass established why conditional nav is wrong here: `sectionNames` is a
-package-level var read by the free function `SectionIndex(name)` (`settings.go:65-92`),
-which is called from `commands.go` *before* any `Screen` or backend exists. A
-backend-conditional nav gives `SectionIndex` no way to know whether a backend is wired, so
-`/settings automations` with none wired would resolve to an index `New()` then clamps into
-the wrong section — violating this package's documented deep-link contract (an unresolved
-name must become a `Notice`, never a silent wrong section). Projects and Skills already
-sit unconditionally in the nav with no ports-backed section, rendering "unavailable"
-(`settings.go:67-70`; `New()`'s doc: "Every store field may be nil; a nil field's section
-renders 'unavailable' rather than the screen failing to build").
+### Fenced Single-Fire Claims
 
-So chunk 3: bump `sectionCount` to 7, add `"automations"` to `sectionNames` in nav order,
-add the section to the `New()` literal, and let it render "unavailable" when the
-`ports.AutomationSettings` backend is nil. `settings_test.go:188-189` (which pins
-`SectionIndex("automations")` as unresolvable) **changes with the feature**: the name
-becomes resolvable, and a new test asserts the unbacked section renders "unavailable"
-rather than being absent.
+The engine uses fenced claims to ensure exactly one run executes per automation at any time:
+- Each automation uses the claim key `automation:<automation_id>`.
+- The executor attempts to acquire a fenced claim token before starting execution.
+- If a scheduled fire loses the claim race, the fire is skipped. The engine records a `skipped` run row with a nil error.
+- If a manual trigger or resume operation loses the claim race, the operation fails with `ErrRunAlreadyActive`.
+- The claim releases automatically when the run completes, fails, or is cancelled.
 
-**D10. Cron is the timing authority**, not a display estimate: `internal/cronschedule`
-implements `Schedule.Next`, which the scheduler ticks on. `NextFire` is always computed
-from the cron/interval spec, never from `LastRun + period`.
+### Managed Worktrees
 
-`github.com/robfig/cron/v3` is **approved** (operator decision) and is the parser:
-`cronschedule.Parse(expr, tz)` wraps `cron.ParseStandard(expr)` for the 5-field form plus
-`time.LoadLocation(tz)` for the zone, and returns a `*Spec` whose `Next(after)` satisfies
-the SDK `scheduler.Schedule` interface. Rationale for taking the dependency rather than
-hand-rolling: DST transitions, the day-of-month/day-of-week OR rule, and range/list/step
-parsing are a well-known bug farm; robfig/cron is MIT-licensed, widely deployed, and has
-**no transitive dependencies**, so the added surface is one small vendored parser.
-`Parse` remains the single entry point, so the implementation can be swapped later without
-touching any caller.
+When an automation configures `worktree = 1`, the executor isolates execution:
+1. Resolves `base_ref` against the repository.
+2. Calls the worktree manager to create a directory named `auto-<automation_id>-<run_id>`.
+3. Creates a dedicated Git branch with the configured worktree prefix.
+4. Initializes the background session inside the new worktree directory.
+5. Persists the worktree path and branch in the `automation_runs` table.
 
-Gate compliance (`.agents/rules/30-go-standards.md:71`): the addition lands in its own
-`deps`-scoped commit; `make tidy && git diff --exit-code go.mod go.sum` must show exactly
-one added module and no other churn (chunk 4 verification).
+If worktree creation fails, the run terminates immediately with zero side effects.
 
-**D11. ID validation is ours.** `chat.sanitizeSessionName` (`persistence.go:69`) only
-strips `..`, `/`, `\`, `:` and nulls — it does not reject reserved prefixes. The save name
-`__auto__<id>__<runID>` does not collide with `chat.AutoSaveName` `__last__`
-(`persistence.go:16`; `IsAutoSaveName` prefix-checks `__last__` only), so the scheme is
-safe — but safety must not rest on the sanitizer. Store validation rejects any
-`automationID`/`runID` not matching `^[a-z0-9][a-z0-9_-]{0,63}$`, at TOML load and at run
-creation, before the save name is composed.
+Worktrees are not automatically removed after a run finishes. The resulting Git branch remains available for user inspection and manual cleanup.
 
-**D15. Headless-safe slash allowlist (`StepSlash`).** Enforced at TOML **validation**, not
-at fire time, so an unusable automation is refused when it is written rather than failing
-at 2am. The rule is a closed taxonomy over `builtInSlashCommands()`
-(`clichat/slash_catalog.go:42-76`):
+### Headless Session Safety
 
-**Surface: the executor passes `SlashSurfaceTUI`.** This is load-bearing and was a review
-finding: `SlashCommands` returns `SlashKindSkill` entries *only* for that surface
-(`slash_catalog.go:95`: `if registry == nil || surface != SlashSurfaceTUI { return commands }`),
-so passing the plain surface would make every skill-backed `StepSlash` validate as allowed
-and then fail lookup at run time. `SlashSurfaceTUI` is also the only exported surface
-constant (`slashSurfacePlain`/`slashSurfaceBoth` are unexported), so it is the sole legal
-choice from outside the package. The name is about *catalog breadth*, not about a terminal
-being attached — the executor renders no UI. Consequence, stated explicitly: the three
-plain-only builtins (`/exit`, `/provider`, `/workspace`) are not in the TUI catalog at all
-and so are unresolvable rather than classified; all three would be rejected anyway.
+Automations run in headless background sessions without an interactive terminal.
 
-**Resolution is by `FindSlashCommand(Ref, SlashSurfaceTUI, registry)`, not raw-name table
-match**, so aliases (`/h`, `/?`, `/quit`, `/q`) inherit their canonical command's
-classification automatically.
+To prevent goroutine leaks and stalled turns, the headless runner enforces two rules:
+1. **Drain to Close**: The runner reads the conversation turn event channel until the channel closes. It never terminates early on intermediate turn events.
+2. **Context Deadlines**: Every headless turn executes under a strict context timeout. The default timeout is 10 minutes when unset in configuration.
 
-- **Allowed: every `SlashKindSkill` command.** These are the user-extensible surface and
-  the reason `StepSlash` exists as a distinct kind; they are plain skill invocations with
-  no UI dependency.
-- **Allowed builtins (5), argument form only:** `/compact`, `/model`, `/effort`,
-  `/budget`, `/steps`. All are pure session-scoped configuration with no picker rendering
-  and no lifecycle side effect. Because a bare `/model`, `/effort`, `/budget`, or `/steps`
-  opens a picker that cannot render headless, validation **requires a non-empty argument**
-  for those four. `/compact` is `AutoExecute` and safe bare.
-- **Rejected, by named class** (the refusal message states the class):
-  - *needs an interactive surface* — `/worktrees`, `/sessions`, `/workflows`, `/queue`,
-    `/agent`, `/title`, `/new`, `/select`. The first five open a picker; `/new` and
-    `/select` are direct actions but presuppose a session-tab/selection UI the executor
-    does not have. `/agent` is additionally redundant: `StepAgent` is the dedicated,
-    testable path.
-  - *session-lifecycle mutation* — `/clear`, `/save`, `/load`, `/delete`, `/resume`,
-    `/exit`: each would corrupt or abandon the very session the executor is driving.
-    `/resume` is also re-entrant (an automation resuming a run from inside a run).
-  - *outbound side effect, unattended* — `/search`: it takes a required `<query>`, is not
-    `AutoExecute`, and performs a real network action. Rejected not because it is inert
-    but because an unattended web fetch belongs in a prompt or skill step where the intent
-    is explicit and reviewable.
-  - *informational no-op* — `/help`, `/status`, `/list`, `/session`, `/tools`, `/hooks`,
-    `/agents`, `/plain`, `/provider`, `/workspace`: they render output nobody reads at 2am
-    and change no state.
+Each run spawns an independent session. Session wedges cannot propagate across runs.
 
-Exhaustiveness is a test obligation, not a comment: a table test iterates
-`builtInSlashCommands()` and asserts every entry falls in exactly one bucket, so a builtin
-added later fails the build rather than silently defaulting to allowed or rejected.
+### Unattended Approval Policy
 
-The allowlist is a single table in `internal/automation/store.go` so widening it later is
-a one-line change with a test, not a code-path change.
+Automations run unattended and cannot prompt a human operator for tool call approvals:
 
-**D12. Import-policy edges.** `internal/automation` needs its own new allow entry in
-`.mivia/policy/import-layers.json`: `internal/storage`, `internal/chat`,
-`internal/clichat`, `internal/cliworkflow`, `internal/cliworktree`, `internal/config`,
-`internal/skills`, `internal/sdkadapter`, `internal/cronschedule`, `internal/uikit/ports`,
-`internal/workflows/ledger`. Plus **one** edge on `internal/newtui`:
-`internal/automation`. **No change to `internal/uiadapter`'s allow-list at all** — that
-absence is the positive proof the cycle is gone. (Note: `uiadapter`'s list already
-contains `internal/cliagents`, a pre-existing cli* edge this plan neither uses nor widens.)
+- **`unattended = "deny"` (default)**: Any tool call requiring interactive approval fails immediately. The failure records the error message `automation "<id>": unattended run denies all tool approvals`.
+- **`unattended = "auto"`**: The engine automatically approves all tool calls requiring approval. Auto-approval settings apply only to the active run session and do not persist standing operator permissions.
+- **Workflow Steps**: Workflow steps never enable publication delivery. Deliveries remain pending for human review.
 
-**D13. Crash recovery (R6).** v1 is **manual resume** from the TUI and
-`mivia automations resume <run-id>`. At service start (`serve`'s own startup sweep, not
-`Serve`'s own loop body - see serve.go's doc comment), any run in `running` whose fenced
-claim has expired is marked `interrupted` (via `TakeoverExpiredClaimFenced`) and shown
-with a Resume affordance. Resume reopens the saved session (via `chat.Session.Load`,
-called strictly AFTER `SessionSpawner.CreateFreshInDir` returns, never inside its bind
-closure - the two `SessionSpawner` implementations wire a session's context store at
-different points relative to bind, and only the after-return position is correct for
-both) and restarts at `startIndex = run.StepIndex`, with **no arithmetic adjustment**:
-`StepIndex` already holds the index of the next step to execute in both of `runSteps`'
-own checkpoint cases (`i+1` on a completed step's success, `i` - the failing step's own
-index, unadjusted - on failure), so a half-finished/failed step re-runs whole. Resume
-re-acquires the SAME fenced claim key (`claimKey(automationID)`) a fresh `RunOnce` fire
-would use, but unlike a scheduled fire's silent `RunSkipped` no-op on a lost claim,
-resume surfaces a NAMED refusal (`ErrRunAlreadyActive`) - a resume is user-initiated, so
-a claim conflict must be visible, not swallowed. The automatic `ReconcileParkedRuns`-
-style loop is explicitly deferred to v2; the schema needs no change to add it.
+### Slash Command Allowlist
 
-**D14. CLI surface.** `internal/cli/root.go` gains
-`case "automations": return cliautomations.RunAutomations(args[1:])` plus `usageText()`
-lines for `automations list | show <name> | run <name> [--wait] | runs [--automation n]
-[--limit n] | resume <run-id> | serve`. `serve` is what a user wires into OS
-cron/launchd/systemd if they want firing while the TUI is closed. `--wait` is
-**verbosity-only**: `RunOnce` is already fully synchronous end-to-end (chunk 6), so the
-flag does not change blocking behavior at all - it selects `run`'s full-detail output
-(`printRunDetail`: id, automation, state, timestamps, message) instead of the default
-one-line summary (`printRunResult`). This is a deliberate, named deviation from a
-literal "wait for completion" reading of the flag name; a genuine async/backgrounded
-run mode remains out of scope.
+Step definitions with `kind = "slash"` validate against a strict headless allowlist at load time. Unsafe slash commands are rejected when reading the configuration.
 
-## Chunks
+#### Allowed Commands
 
-Sequenced so the wiring shape is proven before anything expensive is built on it.
+- **All Skill Commands**: Any custom skill registered in the workspace or user skill catalog.
+- **`/compact`**: Safe to run bare without arguments.
+- **`/model <value>`**: Allowed with an explicit model argument.
+- **`/effort <value>`**: Allowed with an explicit reasoning effort argument.
+- **`/budget <value>`**: Allowed with an explicit token budget argument.
+- **`/steps <value>`**: Allowed with an explicit max steps argument.
 
-1. **Store + validation.** TOML schema, load/save both scopes, `automation_runs` table +
-   migration in `internal/storage`, ID charset/length validation (D11). No scheduling, no
-   execution.
-2. **Wiring shape.** `SetAutomationBackend` + delegation in
-   `uiadapter/settings_automations.go`; `automation.Service` skeleton with
-   `var _ ports.AutomationSettings = (*Service)(nil)` and `SessionSpawner`; the
-   newtui adapter closure + injection (D4); both policy entries (D12); the headless-drive
-   helper and its wedge test (D5). **Gate: `make import-layers-check` and
-   `make verify-fast` must pass here.**
-3. **Settings nav.** Bump `sectionCount` to 7, add `"automations"` to `sectionNames`, add
-   the section to `New()`'s literal, render "unavailable" when the backend is nil (D9);
-   update `settings_test.go:188-189`; add the unavailable-when-unbacked assertion.
-4. **Schedule evaluation.** New `internal/cronschedule` wrapping `robfig/cron/v3`
-   (`cron.ParseStandard` + `time.LoadLocation`, D10); `ScheduleSpec` -> next-fire;
-   skip-not-catch-up (D6). The dependency addition is its own `deps`-scoped commit.
-5. **Fenced claim + run lifecycle.** `ClaimRunFenced`, `TakeoverExpiredClaimFenced`, state
-   transitions, `RunFailKind` classification (D7, D13).
-6. **Executor.** Worktree creation (D3), `SessionSpawner.CreateFreshInDir`, headless turn
-   from chunk 2, per-step dispatch (D2), step-index checkpointing, unattended policy (D8).
-7. **Serve loop.** Cron ticker over enabled automations. Implemented as
-   `Service.Serve(ctx)` (`internal/automation/serve.go`): a package-private
-   `deadlineMap` tracks each enabled scheduled automation's next-fire instant
-   independently, keyed by automation ID (not one global "next tick" scalar).
-   **DL-1 invariant:** no map entry ever holds the zero `time.Time{}` value,
-   since `due()`'s comparison (`!deadline.After(now)`) would treat a stored
-   zero as "always due" and fire that automation every tick forever (a
-   fire-storm). The map has exactly two guarded write sites — `refresh`'s
-   never-seen branch and `advance` — both gated by an explicit `IsZero()`
-   check on `NextFire`'s three-outcome contract (real time / exhausted-zero /
-   error) before ever assigning. `refresh` never recomputes an
-   already-armed deadline (recomputing on every tick is what caused an
-   earlier draft's starvation bug — an interval automation's deadline was
-   pushed forward every tick and never actually elapsed); only `advance`,
-   called right after a real fire, may move a deadline forward, using
-   `max(firedDeadline, now)` so a daemon that oversleeps several intervals
-   still yields exactly one future fire (D6), never a backlog replay. Each
-   tick fires every due automation **sequentially, never concurrently** —
-   load-bearing for `cliautomations.HeadlessSpawner` (chunk 9), which tracks
-   only one in-flight session at a time and is unsafe under concurrent
-   dispatch. `Serve` does not call `sweepInterrupted` (D13's startup sweep
-   stays chunk 8's concern). A per-automation `RunOnce` error is logged, not
-   fatal — one broken automation must not wedge every other one's schedule.
-8. **Resume (landed).** `Service.ResumeRun`/`SweepInterrupted` (`internal/automation/
-   resume.go`): reopens the saved session via `chat.Session.Load` called strictly after
-   `SessionSpawner.CreateFreshInDir` returns (never inside its bind closure - see D13),
-   and restarts at `startIndex = run.StepIndex` with no `+1` adjustment. Also fixed a
-   pre-existing chunk-6 bug found during this work: `spawnRunSession`'s bind closure
-   called `sess.Save(...)` INSIDE the closure `CreateFreshInDir` invokes, but the pooled
-   TUI spawner (`uiadapter.SessionPool`) wires a session's context store in
-   `wireEntryLocked`, which runs AFTER bind returns - so `ContextEnabled()` was always
-   false there and every TUI-triggered run's session was silently never saved. Fixed by
-   moving the Save call (and its `savedName` return value, durably persisted via
-   `updateRunSession`) to after `CreateFreshInDir` returns, mirroring the approval-
-   override ordering rule already established for `SetApprovalOverride`.
-9. **CLI (landed).** `internal/cliautomations` (sibling of `internal/cli`,
-   matching `cliworkflow`/`cliworktree`/`clichat`'s shape) implements
-   `mivia automations list|show <id>|run <id> [--wait]|runs [--automation id] [--limit n]|
-   resume <run-id>|serve`. `run`/`resume`/`serve` are
-   backed by `HeadlessSpawner`, a second, independent
-   `automation.SessionSpawner` implementation alongside `internal/newtui`'s
-   TUI-bound one (D4): it builds a bare `*chat.Session` directly via
-   `composition.BuildSession` and wraps it with `uiadapter.NewConversation`
-   — never `uiadapter.SessionPool`, `BindFunc`, or `NewSessionPool` (a TUI
-   session pool cannot back a headless daemon: its constructor needs a live
-   interactive session/agent-state that a `serve` process never has).
-   Because `automation.SessionSpawner`'s two methods give no end-of-run
-   signal, and the session ID minted inside `spawnRunSession` never escapes
-   `RunOnce` (`ports.Run` carries no session field, and widening it was
-   deliberately out of scope), `HeadlessSpawner` tracks a single
-   in-flight session's checkpoint store (not an ID-keyed map) and exposes an
-   ID-less `CloseLastRun() error` — correct only because `Serve`'s own
-   sequential dispatch guarantees at most one session is ever open at a
-   time. `Serve`'s loop discovers this capability via an optional type
-   assertion (`spawn.(interface{ CloseLastRun() error })`) rather than
-   widening `SessionSpawner` itself, so the TUI's spawner (which does not
-   implement it) is unaffected. `CreateFreshInDir` defensively closes any
-   leftover `current` store before overwriting it (logged, not silent) as a
-   safety net against a skipped cleanup — but this net only protects against
-   a *dead* prior session; it would actively corrupt a still-*live* one, so
-   `HeadlessSpawner` is explicitly not safe under any future
-   concurrent-automation-dispatch design without a real redesign.
-10. **Docs + `docs/OWNERS.yaml` registration (landed, this edit).** `docs/design/
-    automations.md` is already covered by the `ui-design-phase0` topic's `docs/design/`
-    directory-prefix path (`scripts/check_docs_ownership.py`'s `owned_by()` resolves any
-    file under that prefix) — this is not closing a gate-failing gap. A dedicated
-    `automations-design` topic is added below anyway, for specificity: a future reader
-    of `docs/OWNERS.yaml` finds this file's owner without having to know the directory-
-    prefix topic exists.
+#### Rejected Command Classes
 
-## Tests
+The validator rejects built-in commands that require interactive capabilities:
 
-- **Cycle proof:** `go list -deps ./internal/uiadapter | grep -c internal/automation` -> 0;
-  same for `cliworkflow`, `cliworktree`, `clichat` (guards transitive isolation, not just
-  the direct edge).
-- **Ports leafness regression:** `go list -deps ./internal/uikit/ports` contains no
-  `internal/cli*` and no `internal/uiadapter`.
-- **Interface satisfaction:** compile-time `var _ ports.AutomationSettings = (*Service)(nil)`.
-- **Spawner adapter:** compile-level test that the newtui closure satisfies
-  `automation.SessionSpawner` (pins the `BindFunc` conversion, D4).
-- **Headless wedge (negative, the important one):** drain to close, assert a *second*
-  `Send` on the same conversation returns promptly; then the inverse — stop draining with
-  a 100ms ctx and assert the turn unparks via ctx cancellation rather than hanging.
-- **Drain-to-close (negative):** a consumer breaking on `KindTurnEnd` must be caught by an
-  assertion that the channel is observed closed.
-- **Skip-not-catch-up (negative):** clock jumped 10 periods -> exactly one fire.
-- **Dedup (negative):** two concurrent `RunOnce` -> one run record; loser is a no-op with
-  nil error.
-- **ID validation (negative):** `../../etc`, `__last__`, `__last__x`, 64+ chars,
-  uppercase, empty -> all rejected at store load with a named error.
-- **Slash allowlist (negative, D15):** `/sessions` (interactive surface), `/delete`
-  (lifecycle), `/search` (outbound side effect), `/help` (no-op), and a bare `/model` with
-  no argument -> each rejected at TOML load with the class named in the error; `/compact`
-  bare and `/model gpt-x` accepted; an arbitrary `SlashKindSkill` command accepted.
-- **Slash exhaustiveness (D15):** every entry of `builtInSlashCommands()` falls in exactly
-  one bucket — fails when a builtin is added without classification.
-- **Slash surface (D15):** resolution uses `SlashSurfaceTUI`, proven by a test that a
-  skill-backed `StepSlash` resolves through `FindSlashCommand` and that an alias (`/h`)
-  inherits its canonical command's classification.
-- **Cron (D10):** DST spring-forward (a schedule anchored inside the skipped hour is
-  never returned for the transition day; robfig/cron skips the whole day rather than
-  shifting later the same day — verified empirically, not assumed). DST fall-back:
-  ground truth, verified against the real `robfig/cron/v3` implementation, is the
-  **opposite** of the naive assumption below this bullet's original wording — a
-  schedule anchored inside the repeated hour fires **twice** that day, once at each UTC
-  offset, because `cron.Schedule.Next` matches local wall-clock fields only with no
-  offset awareness and has no "already fired this wall time" state to dedupe against.
-  `internal/cronschedule`'s tests assert this real behavior; day-of-month + day-of-week
-  invalid expression rejected, `Next` strictly after `after`.
-- **Atomic write (D1):** a write interrupted before rename leaves the previous
-  `automations.toml` intact and parseable.
-- **Save-name non-collision:** `chat.IsAutoSaveName("__auto__a__b")` is false.
-- **Mixed action:** `[prompt, skill, agent, workflow]` executes in order in one session;
-  `StepWorkflow` passes `InvocationKey` and never sets `allow_publish`.
-- **`StartRequest` field:** compile-level — constructing `StartRequest{Workflow: "x"}`
-  fails to build if the field regresses to `Name`.
-- **Worktree:** `BaseRef="HEAD"` and a named branch both create a worktree and the session
-  dir equals it; creation failure -> failed run, no session, no orphan worktree.
-- **Resume:** a run at `step_index=1` of 3 restarts at step 2, not step 0; resume of a
-  succeeded run is refused.
-- **Section nav:** `SectionIndex("automations")` resolves (updating the
-  `settings_test.go:188-189` pin); the section renders "unavailable" with a nil backend and
-  renders rows with one injected; nav length is 7 in both cases.
-- **uiadapter:** `Apply(UpsertAutomation)` writes TOML that reloads identically; `Watch`
-  delivers a real run event; no run record is ever fabricated without an execution.
+- **Interactive UI Pickers**: `/worktrees`, `/sessions`, `/workflows`, `/queue`, `/agent`, `/title`, `/new`, `/select`.
+- **Session Lifecycle Mutations**: `/clear`, `/save`, `/load`, `/delete`, `/resume`, `/exit`.
+- **Unattended Outbound Effects**: `/search`.
+- **Informational Output**: `/help`, `/status`, `/list`, `/session`, `/tools`, `/hooks`, `/agents`, `/plain`, `/provider`, `/workspace`.
 
-## Verification
+## Resuming Runs
 
-```
-make verify-fast          # build + unit
-make import-layers-check  # must show NO new internal/uiadapter edge
-make structure-check      # file-LOC caps
-make verify               # full suite, before push
-make tidy                 # chunk 4: exactly one added module (robfig/cron/v3), no other churn
-go list -deps ./internal/uiadapter | grep internal/automation   # expect NO output
+A failed or interrupted run can resume from its last completed step.
+
+### Resumability Rules
+
+- Only runs in `interrupted` or `failed` state can resume.
+- The run record must contain a valid `session_name` (`__auto__<automation_id>__<run_id>`).
+- The automation definition must still exist in configuration.
+
+### Resume Procedure
+
+1. Acquire the fenced single-fire claim for `automation:<automation_id>`.
+2. Locate the worktree path recorded on the run row, or use the workspace root.
+3. Spawn a fresh session and load the saved transcript from the context store.
+4. Set the run state to `running`.
+5. Start step execution at `step_index`. No index arithmetic is applied.
+6. If all steps complete successfully, mark the run `succeeded`.
+
+If the step index already equals or exceeds the total step count, the runner marks the run `succeeded` immediately without spawning a session.
+
+## CLI Commands
+
+The `mivia automations` subcommand group manages and executes automations.
+
+All subcommands accept two common flags:
+- `--workspace <dir>`: Target workspace directory. Defaults to `.`.
+- `--config <path>`: Explicit configuration file path.
+
+### `list`
+
+Lists all defined automations across the active project scope.
+
+```bash
+mivia automations list [--workspace dir] [--config path]
 ```
 
-## Risks
+Output includes:
+- Automation ID
+- Display Name
+- Schedule / Trigger details
+- Enabled status
 
-- The headless drive is read-verified, not runtime-verified. Chunk 2's wedge test is the
-  mitigation and must land before chunk 6.
-- `internal/uiadapter/settings.go` is already 623 lines and `session_pool.go` is at the
-  structure hard cap; the setter and delegation go in `settings_automations.go`.
-- The `ports` union change is breaking for `internal/ui/screen/settings` and its mocks;
-  keeping `ActionRef.Workflow` as a compat alias limits the blast radius.
-- `Start` being an exported method on an unexported type is legal but brittle to refactor;
-  the compile-level test pins it.
-- Skip-not-catch-up is a real behaviour choice a user may read as a bug ("my 2am job did
-  not run because the laptop was closed"). Must be surfaced in the detail view.
-- **DST fall-back double-fire (found during chunk 4's implementation, not anticipated at
-  design time):** a cron schedule anchored inside a repeated local hour (e.g.
-  `America/New_York`'s November fall-back 1:00-1:59am) fires **twice** on that calendar
-  day under `robfig/cron/v3`'s wall-clock-only matching (`internal/cronschedule`'s
-  `TestDSTFallBackFiresTwiceForWallClockOnlySchedule` asserts this against the real
-  library). D7's per-fire `ClaimRunFenced` dedup prevents a *double-admitted run* only if
-  the two fires collide on the same claim key within the claim's lifetime; two fires an
-  hour apart do not collide and will legitimately produce two runs. Chunk 5/6 must decide
-  whether this is accepted (rare, once a year, matches the underlying library's behavior)
-  or worth a narrower mitigation (e.g. a per-automation minimum inter-fire spacing) before
-  `automations serve` ships.
-- Worktree accumulation with no GC is a known, accepted v1 cost.
-- Without `automations serve` wired into an OS scheduler, nothing fires while the app is
-  closed. This is the accepted v1 boundary; a standalone always-on daemon is deferred
-  until a driver OS-cron cannot satisfy (sub-minute intervals, or a containerized
-  always-on target).
+### `show`
 
-## Resolved questions
+Displays full configuration details and recent run history for an automation.
 
-All three prior open questions are closed; see D10 (cron dependency approved), D1 (atomic
-rename), and D15 (slash allowlist). No open questions remain.
+```bash
+mivia automations show <id> [--workspace dir] [--config path]
+```
+
+Output includes:
+- Identification: ID, Name, Description, Scope, Enabled
+- Worktree settings: Mode, Base Ref
+- Approval policy: Unattended mode
+- Trigger specification: Interval, At-times, or Cron expression
+- Step definitions: Kind, Target reference, Prompt text
+- Run history: Last 20 runs with ID, State, Origin, Start time, and Duration
+
+### `run`
+
+Triggers an immediate manual execution of an automation.
+
+```bash
+mivia automations run <id> [--wait] [--workspace dir] [--config path]
+```
+
+Flags:
+- `--wait`: Outputs detailed multiline run progress and results instead of a single-line summary.
+
+Execution runs synchronously. The command returns a non-zero exit code if the run fails.
+
+### `runs`
+
+Displays execution history across automations.
+
+```bash
+mivia automations runs [--automation <id>] [--limit <n>] [--workspace dir] [--config path]
+```
+
+Flags:
+- `--automation <id>`: Filters run history to a specific automation ID.
+- `--limit <n>`: Maximum number of runs to display. Defaults to `20`.
+
+When `--automation` is omitted, the command aggregates runs across all automations, sorts them by start time descending, and applies the limit.
+
+### `resume`
+
+Resumes an interrupted or failed run from its last checkpointed step.
+
+```bash
+mivia automations resume <run-id> [--workspace dir] [--config path]
+```
+
+The command loads the saved session, re-acquires the execution claim, and continues execution.
+
+### `serve`
+
+Runs the background scheduling daemon.
+
+```bash
+mivia automations serve [--workspace dir] [--config path]
+```
+
+Lifecycle behavior:
+1. Runs an initial crash-recovery sweep to mark orphaned running rows as `interrupted`.
+2. Arms independent timers for all enabled scheduled automations.
+3. Evaluates deadlines on a 30-second loop tick (`serveTickInterval`).
+4. Dispatches due automations sequentially.
+5. Shuts down cleanly when receiving `SIGINT` or `SIGTERM`.
+
+## Settings UI
+
+The TUI Settings screen includes an **Automations** section (section 7 in the settings navigation).
+
+### Navigation and Display
+
+- **Unbacked Rendering**: If no automation backend is wired, the section renders an "unavailable" notice rather than failing navigation.
+- **Master List**: Displays a table of configured automations showing enabled state, name, and trigger format.
+- **Detail Area**: Shows selected automation details, full step lists, and the last 5 runs.
+- **Live Run View**: When triggering a run from the UI, the view subscribes to live status events and displays real-time progress.
+
+### Interactive Form Editor
+
+Pressing `a` or `e` opens the full-screen form editor:
+- **New Automation (`a`)**: Displays input fields for ID, Name, Description, Enabled state, Trigger type, Interval duration, Action type, Prompt/Skill reference, and Unattended policy.
+- **Edit Automation (`e`)**: Opens the same editor over an existing automation. The automation ID is immutable during edits.
+
+Form shortcuts:
+- `Tab` / `Shift+Tab`: Move between form fields.
+- `Enter`: Submit and save changes atomically to `automations.toml`.
+- `Esc`: Cancel editing and discard form changes.
+
+## Failure and Retry Behavior
+
+### Step Failures
+
+When a step fails:
+1. Step execution halts immediately. Subsequent steps do not run.
+2. The current step index is saved as `step_index` on the run row.
+3. The run state transitions to `failed`.
+4. The error reason is classified into `fail_kind` and written to `message`.
+5. The fenced claim is released.
+
+### Interrupted Run Sweep
+
+If the daemon crashes or loses power while a run is in progress:
+- The run row remains in state `running`.
+- The active claim expires after its validity timeout.
+- The next startup of `automations serve` (or a call to `SweepInterrupted`) scans all `running` rows.
+- If the claim is expired or missing, the runner updates the state to `interrupted` and sets `ended_at`.
+- Interrupted runs become eligible for manual resume.
+
+## Limitations
+
+- **Concurrency Limit**: Only one run may execute per automation at a time. Colliding scheduled fires are skipped.
+- **Sequential Daemon Dispatch**: The `serve` daemon dispatches due automations sequentially on each tick to maintain headless session stability.
+- **Manual Worktree Cleanup**: Managed worktrees created for runs are not deleted automatically. Operators must clean up old worktree branches manually.
+- **No Interactive Approvals**: Background runs cannot prompt for runtime permissions. Unattended tool calls must be auto-approved or denied fast.
