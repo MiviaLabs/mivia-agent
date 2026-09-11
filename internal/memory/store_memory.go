@@ -71,7 +71,16 @@ func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 		// dedup loop also requires the row to belong to the same org so a
 		// stale or cross-org row can never answer another org's save.
 		if row.org == org && (row.id == id || EntrySimilarity(row.e, e) >= similarityMergeThreshold) {
-			merged := MergeEntries(row.e, e)
+			merged := MergeEntries(row.e, e).Clamp()
+			if merged.Verdict == "" {
+				merged.Verdict = VerdictGood
+			}
+			if merged.Created == "" {
+				merged.Created = time.Now().Format("2006-01-02")
+			}
+			if err := merged.Validate(s.cfg.limits()); err != nil {
+				return Result{}, err
+			}
 			(*rows)[i].e = merged
 			return Result{ID: row.id, Scope: e.Scope, Org: org, Title: merged.Title, Verdict: merged.Verdict, Tags: append([]string(nil), merged.Tags...), Created: merged.Created, Snippet: merged.Summary}, nil
 		}

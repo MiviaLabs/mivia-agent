@@ -95,19 +95,10 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 
 	// Check for a near-duplicate among existing documents in the scope.
 	// If one exists, merge into the existing document rather than writing a duplicate file.
-	if existingDocs, scanErr := s.Scan(ctx, e.Scope); scanErr == nil {
-		for _, existing := range existingDocs {
-			if EntrySimilarity(existing.Entry, e) >= similarityMergeThreshold {
-				merged := MergeEntries(existing.Entry, e)
-				content := []byte(merged.RenderProtocolFile(existing.ID))
-				if err := atomicWrite(ctx, existing.Path, content); err != nil {
-					return MarkdownDocument{}, err
-				}
-				doc := document(existing.Path, merged, content)
-				doc.ID = existing.ID
-				return doc, nil
-			}
-		}
+	if doc, merged, err := s.mergeSimilar(ctx, e); err != nil {
+		return MarkdownDocument{}, err
+	} else if merged {
+		return doc, nil
 	}
 	// .agents/memories/README.md derives a file's frontmatter id from its
 	// filename: drop .md, replace every hyphen with an underscore
@@ -130,6 +121,35 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	// memory_save's own result, for one - still finds it after a Scan.
 	doc.ID = protocolID
 	return doc, nil
+}
+
+func (s MarkdownSource) mergeSimilar(ctx context.Context, e Entry) (MarkdownDocument, bool, error) {
+	existingDocs, err := s.Scan(ctx, e.Scope)
+	if err != nil {
+		return MarkdownDocument{}, false, nil
+	}
+	for _, existing := range existingDocs {
+		if EntrySimilarity(existing.Entry, e) >= similarityMergeThreshold {
+			merged := MergeEntries(existing.Entry, e).Clamp()
+			if merged.Verdict == "" {
+				merged.Verdict = VerdictGood
+			}
+			if merged.Created == "" {
+				merged.Created = time.Now().Format("2006-01-02")
+			}
+			if err := merged.Validate(Limits{}); err != nil {
+				return MarkdownDocument{}, false, err
+			}
+			content := []byte(merged.RenderProtocolFile(existing.ID))
+			if err := atomicWrite(ctx, existing.Path, content); err != nil {
+				return MarkdownDocument{}, false, err
+			}
+			doc := document(existing.Path, merged, content)
+			doc.ID = existing.ID
+			return doc, true, nil
+		}
+	}
+	return MarkdownDocument{}, false, nil
 }
 
 // Scan returns all regular Markdown files in one scope. It does not recurse
@@ -303,7 +323,7 @@ func parseFullyAccountedBody(body string) (Entry, bool) {
 		}
 		if heading, found := strings.CutPrefix(trimmed, "## "); found {
 			switch strings.ToLower(strings.TrimSpace(heading)) {
-			case "summary", "what worked", "what did not work", "why", "references", "history", "archive note":
+			case "summary", "what worked", "what did not work", "why", "references", "history", "archive note", "prior context":
 				inSection = true
 				continue
 			default:

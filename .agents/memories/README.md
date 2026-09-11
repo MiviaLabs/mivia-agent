@@ -20,10 +20,15 @@ updated: <ISO date the memory last changed, YYYY-MM-DD>
 ---
 ```
 
-`related` is the only optional key. It is a flat list of other memories'
-`id` values, and the links are read as symmetric: if A lists B, B is
-considered linked to A whether or not B says so. Keep them reciprocal
-anyway - the housekeeping audit reports an asymmetric pair as a defect.
+### Optional frontmatter keys
+
+- `related`: A flat list of other memories' `id` values. Links must be
+  **reciprocal** (if A lists B, B must list A). `scripts/check_memories.py`
+  enforces that all named targets exist and link back.
+- `x-scope`: Scope of the memory (`project` or `org`). Set by the programmatic
+  store (`RenderProtocolFile`) to preserve scope metadata during scanning.
+- `x-verdict`: Assessment of the learning (`good`, `bad`, `mixed`, or `neutral`).
+  Set by the programmatic store to preserve verdict metadata.
 
 Name a memory in `related` when the two share a mechanism, a gate, or a
 failure mode - not when they merely sit in the same tag bucket. A link you

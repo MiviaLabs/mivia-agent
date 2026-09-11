@@ -94,6 +94,8 @@ const (
 	maxTagLen        = 32
 	maxReferences    = 8
 	maxReferenceLen  = 200
+	maxRelated       = 16
+	maxRelatedIDLen  = 120
 	minEntryBytes    = 256
 	maxEntryBytesCap = 65536
 )
@@ -257,6 +259,20 @@ func (e Entry) validateCollections() error {
 		}
 		if hasLineControl(ref) {
 			return fmt.Errorf("reference must not contain line breaks")
+		}
+	}
+	if len(e.Related) > maxRelated {
+		return fmt.Errorf("related must have at most %d items", maxRelated)
+	}
+	for _, rel := range e.Related {
+		if rel == "" || utf8.RuneCountInString(rel) > maxRelatedIDLen {
+			return fmt.Errorf("each related id must be 1-%d characters", maxRelatedIDLen)
+		}
+		if hasLineControl(rel) {
+			return fmt.Errorf("related id must not contain line breaks")
+		}
+		if strings.ContainsAny(rel, ",:[]{}") || strings.Contains(rel, " #") {
+			return fmt.Errorf("related id must be a plain id without any of , : [ ] { } or \" #\"")
 		}
 	}
 	return nil
@@ -564,12 +580,17 @@ func assignSection(e *Entry, section, content string) {
 	case "what did not work":
 		e.Bad = content
 	case "why":
-		e.Why = content
-	case "history", "archive note":
-		if e.Why != "" {
-			e.Why = e.Why + "\n\n## " + section + "\n" + content
+		if e.Why != "" && !strings.Contains(content, e.Why) {
+			e.Why = content + "\n\n" + e.Why
 		} else {
 			e.Why = content
+		}
+	case "history", "archive note", "prior context":
+		heading := "## " + section + "\n" + content
+		if e.Why != "" {
+			e.Why = e.Why + "\n\n" + heading
+		} else {
+			e.Why = heading
 		}
 	}
 }

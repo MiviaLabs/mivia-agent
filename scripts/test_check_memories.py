@@ -475,6 +475,48 @@ def test_rejects_a_related_link_into_the_archive() -> None:
     )
 
 
+def test_rejects_an_asymmetric_related_link() -> None:
+    """An asymmetric link violates the reciprocal relationship requirement."""
+    # probe-memory links to other_memory, but other_memory does not link back.
+    files = {
+        "probe-memory.md": LINKED_A,
+        "other-memory.md": GOOD.replace("id: probe_memory", "id: other_memory"),
+    }
+    expect_rejection(files, "is asymmetric")
+
+
+def test_rejects_non_utf8_file() -> None:
+    """A file containing invalid UTF-8 bytes must fail with a clean gate error."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp) / "memories"
+        directory.mkdir()
+        (directory / "invalid-utf8.md").write_bytes(b"\xff\xfe\x00\x00")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_memories(directory)
+        except SystemExit:
+            rejection = captured.getvalue().strip()
+            if "invalid-utf8.md" not in rejection or "not valid UTF-8" not in rejection:
+                raise AssertionError(f"unexpected rejection: {rejection}")
+            return
+    raise AssertionError("gate accepted a non-UTF-8 file")
+
+
+def test_skips_directory_matching_glob() -> None:
+    """A directory named foo.md must not crash the gate."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp) / "memories"
+        directory.mkdir()
+        (directory / "sub.md").mkdir()
+        (directory / "probe-memory.md").write_text(GOOD, encoding="utf-8")
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            mod.check_memories(directory)
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -508,9 +550,12 @@ def main() -> None:
     test_rejects_an_unmatched_quote_around_the_stamp()
     test_accepts_reciprocal_related_links()
     test_rejects_a_dangling_related_link()
+    test_rejects_an_asymmetric_related_link()
     test_rejects_a_malformed_related_list()
     test_rejects_an_empty_related_element()
     test_rejects_a_related_link_into_the_archive()
+    test_rejects_non_utf8_file()
+    test_skips_directory_matching_glob()
     print("test_check_memories: ok")
 
 

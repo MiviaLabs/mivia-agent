@@ -212,11 +212,13 @@ def check_memories(directory: Path) -> None:
     if not directory.is_dir():
         return
     # Two passes: a link can only be resolved once every id in the store is
-    # known. `seen` collects the ids, `edges` the (file, target) pairs.
+    # known. `seen` collects the ids, `edges` the (file, source_id, target)
+    # triples, and `related_by_id` the outbound link sets for reciprocal checks.
     seen: set[str] = set()
-    edges: list[tuple[str, str]] = []
+    edges: list[tuple[str, str, str]] = []
+    related_by_id: dict[str, set[str]] = {}
     for path in sorted(directory.glob("*.md")):
-        if path.name == "README.md":
+        if path.name == "README.md" or not path.is_file():
             continue
         name = rel_to_root(path)
         if not SLUG.match(path.stem):
@@ -224,7 +226,13 @@ def check_memories(directory: Path) -> None:
                 f"{name}: filename must be a kebab-case slug of [a-z0-9-], "
                 f"with no leading, trailing or doubled hyphen."
             )
-        front = frontmatter(path.read_text(encoding="utf-8"))
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            fail(f"{name}: file is not valid UTF-8.")
+        except OSError as err:
+            fail(f"{name}: failed to read file: {err}.")
+        front = frontmatter(raw_text)
         if front is None:
             fail(
                 f"{name}: missing a closed YAML frontmatter block. Every memory "
@@ -405,8 +413,9 @@ def check_memories(directory: Path) -> None:
                     fail(
                         f"{name}: related entry {target!r} is not a plain id."
                     )
-                edges.append((name, target))
-    for name, target in edges:
+                edges.append((name, fields["id"], target))
+                related_by_id.setdefault(fields["id"], set()).add(target)
+    for name, source_id, target in edges:
         # Only the active store resolves a link. check_memories globs
         # directory itself and not .archive/, so an id moved out of the store
         # stops being a target and a `related` pointing at it must fail here.
@@ -416,6 +425,12 @@ def check_memories(directory: Path) -> None:
                 f"memory in this directory. A dangling link un-orphans a memory "
                 f"nobody actually relates to, defeating the housekeeping orphan "
                 f"check. Drop the entry or fix the id."
+            )
+        if source_id not in related_by_id.get(target, set()):
+            fail(
+                f"{name}: related link to {target!r} is asymmetric: "
+                f"{target} does not link back to {source_id}. Reciprocal "
+                f"linking is mandatory."
             )
 
 

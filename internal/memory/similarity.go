@@ -23,11 +23,18 @@ func EntrySimilarity(a, b Entry) float64 {
 // and adopts the higher Importance.
 func MergeEntries(existing, incoming Entry) Entry {
 	res := existing
+	if incoming.Created != "" && incoming.Created > res.Created {
+		res.Created = incoming.Created
+	}
 	if incoming.Summary != "" {
 		res.Summary = incoming.Summary
 	}
 	if incoming.Why != "" {
-		res.Why = incoming.Why
+		if existing.Why != "" && existing.Why != incoming.Why && !strings.Contains(incoming.Why, existing.Why) {
+			res.Why = incoming.Why + "\n\n## Prior context\n" + existing.Why
+		} else {
+			res.Why = incoming.Why
+		}
 	}
 	if incoming.Good != "" {
 		res.Good = incoming.Good
@@ -42,52 +49,35 @@ func MergeEntries(existing, incoming Entry) Entry {
 		res.Importance = incoming.Importance
 	}
 
-	// Merge unique tags
-	tagSet := make(map[string]struct{}, len(existing.Tags)+len(incoming.Tags))
-	var mergedTags []string
-	for _, t := range append(existing.Tags, incoming.Tags...) {
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-		if _, seen := tagSet[t]; !seen {
-			tagSet[t] = struct{}{}
-			mergedTags = append(mergedTags, t)
-		}
-	}
-	res.Tags = mergedTags
-
-	// Merge unique related
-	relSet := make(map[string]struct{}, len(existing.Related)+len(incoming.Related))
-	var mergedRels []string
-	for _, r := range append(existing.Related, incoming.Related...) {
-		r = strings.TrimSpace(r)
-		if r == "" {
-			continue
-		}
-		if _, seen := relSet[r]; !seen {
-			relSet[r] = struct{}{}
-			mergedRels = append(mergedRels, r)
-		}
-	}
-	res.Related = mergedRels
-
-	// Merge unique references
-	refSet := make(map[string]struct{}, len(existing.References)+len(incoming.References))
-	var mergedRefs []string
-	for _, r := range append(existing.References, incoming.References...) {
-		r = strings.TrimSpace(r)
-		if r == "" {
-			continue
-		}
-		if _, seen := refSet[r]; !seen {
-			refSet[r] = struct{}{}
-			mergedRefs = append(mergedRefs, r)
-		}
-	}
-	res.References = mergedRefs
-
+	res.Tags = mergeUniqueStrings(existing.Tags, incoming.Tags, maxTags)
+	res.Related = mergeUniqueStrings(existing.Related, incoming.Related, maxRelated)
+	res.References = mergeUniqueStrings(existing.References, incoming.References, maxReferences)
 	return res
+}
+
+func mergeUniqueStrings(a, b []string, limit int) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	var out []string
+	add := func(items []string) {
+		for _, s := range items {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			if _, exists := seen[s]; !exists {
+				seen[s] = struct{}{}
+				out = append(out, s)
+				if limit > 0 && len(out) >= limit {
+					return
+				}
+			}
+		}
+	}
+	add(a)
+	if limit <= 0 || len(out) < limit {
+		add(b)
+	}
+	return out
 }
 
 func importanceRank(imp Importance) int {

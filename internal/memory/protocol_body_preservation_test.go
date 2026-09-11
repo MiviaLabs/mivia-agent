@@ -121,6 +121,40 @@ Because of the seam.
 	}
 }
 
+func TestParseProtocolMemoryHistoryBeforeWhyOrderIndependent(t *testing.T) {
+	const file = `---
+id: history_first
+title: 'History first'
+content: 'Summary line.'
+importance: high
+updated: 2026-01-02
+tags: [memory]
+x-verdict: good
+---
+
+# History first
+
+## Summary
+Summary line.
+
+## History
+- Merged in other-memory on 2026-09-11.
+
+## Why
+Because of the seam.
+`
+	got, _, ok := parseProtocolMemory([]byte(file), ScopeProject)
+	if !ok {
+		t.Fatalf("parseProtocolMemory rejected template file with History before Why")
+	}
+	if !strings.Contains(got.Why, "Because of the seam.") {
+		t.Errorf("Why missing why content: %q", got.Why)
+	}
+	if !strings.Contains(got.Why, "Merged in other-memory") {
+		t.Errorf("Why missing history note: %q", got.Why)
+	}
+}
+
 // protocolFile wraps a body in the minimal protocol frontmatter.
 func protocolFile(body string) string {
 	return "---\nid: partial\ntitle: 'Partial'\ncontent: 'Summary line.'\nimportance: high\nupdated: 2026-01-02\ntags: [ops]\nx-verdict: good\n---\n\n" + body
