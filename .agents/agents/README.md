@@ -19,7 +19,8 @@ compiled engine's shape varies by workflow: `feature-delivery.toml` uses
 `workflow-engineer` plus a `panel-reviewer`/`review-synthesizer` panel;
 `bug-fix.toml`/`bug-fix-fast.toml` instead gate review with an active
 `agent = "reviewer"` triage step (their panel/review layers are currently
-cut, see `docs/development/debug-cut.md`). `planner`/`plan-reviewer` are
+commented out in the checked-in workflow TOMLs as a temporary debug cut).
+`planner`/`plan-reviewer` are
 standalone roles a human can select or dispatch directly for ad-hoc plan
 work outside the automated loop. Treat this table as role-to-step mapping
 by design intent, not as a claim about what currently executes

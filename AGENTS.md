@@ -62,8 +62,8 @@ uses `workflow-engineer` for plan/implement/repair steps and a
 `panel-reviewer`/`review-synthesizer` panel for review, while
 `bug-fix.toml`/`bug-fix-fast.toml` instead gate review with an active
 `agent = "reviewer"` triage step (their panel/review layers are currently
-commented out as a temporary debug cut - see
-`docs/development/debug-cut.md`). Do not assume either automated path
+commented out in the checked-in workflow TOMLs as a temporary debug cut).
+Do not assume either automated path
 routes through `planner.md`/`plan-reviewer.md` - it does not, today.
 
 ## Delivery process

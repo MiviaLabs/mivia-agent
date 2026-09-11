@@ -38,7 +38,8 @@ spawn agents - the orchestrator does that, in order.
   `panel-reviewer`/`review-synthesizer` panel for review; `bug-fix.toml`
   and `bug-fix-fast.toml` instead gate review with an active
   `agent = "reviewer"` triage step (their panel/review layers are
-  currently cut, see `docs/development/debug-cut.md`). None of the three
+  commented out in the checked-in workflow TOMLs as a temporary debug cut).
+  None of the three
   dispatch `planner`/`plan-reviewer`/`builder` by name.
 
 ## The loop (verbatim from ADLC)

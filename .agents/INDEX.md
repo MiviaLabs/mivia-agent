@@ -135,8 +135,8 @@ by workflow: `.mivia/workflows/feature-delivery.toml` uses
 `panel-reviewer`/`review-synthesizer` panel for review; `.mivia/workflows/
 bug-fix.toml` and `bug-fix-fast.toml` instead gate review with an ACTIVE
 `agent = "reviewer"` triage step (their own panel/review/perf-verify
-layers are currently commented out as a temporary debug cut - see
-`docs/development/debug-cut.md`). None of these three workflows dispatch
+layers are currently commented out in the checked-in workflow TOMLs as a
+temporary debug cut). None of these three workflows dispatch
 `plan-reviewer` or `builder` by name.
 
 Frontmatter schema and the loading contract are documented in
