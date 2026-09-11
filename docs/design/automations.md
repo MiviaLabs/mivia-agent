@@ -369,6 +369,12 @@ If the step index already equals or exceeds the total step count, the runner mar
 
 Each step's checkpoint re-saves the run's full session transcript, on both the successful path and an ordinary step failure, so a resumed run has everything the earlier steps produced, not just its starting prompt. A resumed run's own checkpoints continue re-saving the same way, so a second interruption does not lose the progress the resume itself made.
 
+### Live Session View
+
+A run's session is a normal session in the catalog: `/resume` attaches to it, shows the transcript so far, and - while the run keeps going - streams the run's turns into the view live. The screen subscribes to the conversation's event fan-out; the run's own event stream keeps exactly one consumer, so the run cannot stall on a slow viewer. If the viewer falls behind, the screen reloads the transcript from history and resubscribes.
+
+Sending is refused while a run executes on the session - from the composer and from remote steering - so a user turn cannot interleave into the run's transcript. Once the run reaches a terminal state, the session accepts sends like any other. The live view covers runs hosted by the same TUI process; a cross-process resume is refused at the session lease (see Resuming Runs).
+
 ## CLI Commands
 
 The `mivia automations` subcommand group manages and executes automations.

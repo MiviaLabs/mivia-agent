@@ -75,6 +75,19 @@ type Screen struct {
 	// no channel means no out-of-turn advisories are rendered. Set via
 	// SetNotices, the same seam SetRemoteInputs uses. See notices.go.
 	notices <-chan uievent.Event
+
+	// runActivity reports whether an automation run currently executes
+	// on a session id (the automation service's RunActiveForSession,
+	// wired by RunTUI). nil is valid: no send is ever refused for run
+	// activity. See live_view.go for the guard and the live view.
+	runActivity func(sessionID string) bool
+
+	// liveSub/liveEvents are the CURRENT session's live view of a
+	// background automation conversation (see live_view.go). Per-session
+	// state like everything else: snapshotted on switch-away, restored
+	// on revisit. nil is valid - a foreground session has neither.
+	liveSub    ports.LiveSubscription
+	liveEvents <-chan uievent.Event
 	// workflowStatus is the replaceable liveness stream, separate from
 	// notices; workflow is the newest value read from it, drawn on the status
 	// row (status.go). The zero value means nothing is running and the row
@@ -552,6 +565,15 @@ func (s Screen) updateAsyncPortMsg(msg tea.Msg) (app.Screen, tea.Cmd, bool) {
 		return next, cmd, true
 	case threadToolCallCancelResultMsg:
 		next, cmd := s.handleThreadToolCallCancelResult(msg)
+		return next, cmd, true
+	case liveEventMsg:
+		next, cmd := s.handleLiveEvent(msg)
+		return next, cmd, true
+	case liveDoneMsg:
+		next, cmd := s.handleLiveDone(msg)
+		return next, cmd, true
+	case liveStaleMsg:
+		next, cmd := s.handleLiveStale(msg)
 		return next, cmd, true
 	}
 	return s, nil, false

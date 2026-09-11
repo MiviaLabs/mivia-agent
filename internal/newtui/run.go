@@ -256,6 +256,7 @@ func (a automationSessionSpawner) GetOrResumeInDir(id string, dir string) (ports
 	if !ok {
 		return nil, nil, fmt.Errorf("automation spawner: pooled conversation is %T, want *uiadapter.Conversation", conv)
 	}
+	c.SetBackground(true)
 	return conv, c.Session(), nil
 }
 
@@ -272,6 +273,19 @@ func (a automationSessionSpawner) SetApprovalOverride(sessionID string, gate fun
 // a live executor to invoke it first.
 func newAutomationSpawner(pool *uiadapter.SessionPool) automation.SessionSpawner {
 	return automationSessionSpawner{pool: pool}
+}
+
+// wireRunActivityGuard connects the automation service's session-ownership
+// predicate to the screen's live-view send guard (live_view.go). autoSvc
+// is nil when automation wiring failed - the predicate then refuses
+// nothing.
+func wireRunActivityGuard(screen *conversation.Screen, autoSvc *automation.Service) {
+	if screen == nil {
+		return
+	}
+	screen.SetRunActivitySource(func(sessionID string) bool {
+		return autoSvc != nil && autoSvc.RunActiveForSession(sessionID)
+	})
 }
 
 // automationCloseTimeout bounds Service.Close on TUI exit. A run that
@@ -303,7 +317,7 @@ const automationCloseTimeout = 5 * time.Second
 // directly instead, so the Service always has a real backing store
 // when one is resolvable, and own its lifecycle (opened here, closed
 // by the returned closer) since sess itself never held this handle.
-func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool, sess *chat.Session, agentState *cli.AgentSessionState, res *config.Resolved) (closeFn func()) {
+func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool, sess *chat.Session, agentState *cli.AgentSessionState, res *config.Resolved) (closeFn func(), svc *automation.Service) {
 	db, ok := sess.ContextStore().(*storage.SQLite)
 	var ownedDB *storage.SQLite
 	// An empty WorkspaceRoot is a "no workspace" condition automation.New
@@ -313,7 +327,7 @@ func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.Sessi
 		opened, openErr := storage.OpenSQLite(cli.ContextStorePath(agentState.WorkspaceRoot, res.Subagents))
 		if openErr != nil {
 			log.Printf("automations disabled: open context store: %v", openErr) // non-fatal; TUI starts normally
-			return func() {}
+			return func() {}, nil
 		}
 		db, ownedDB = opened, opened
 	}
@@ -324,7 +338,7 @@ func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.Sessi
 		if ownedDB != nil {
 			_ = ownedDB.Close()
 		}
-		return func() {}
+		return func() {}, nil
 	}
 	// Same startup sweep as `mivia automations serve`
 	// (internal/cliautomations/serve_cmd.go): a sweep failure must not
@@ -344,7 +358,7 @@ func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.Sessi
 		if ownedDB != nil {
 			_ = ownedDB.Close()
 		}
-	}
+	}, autoSvc
 }
 
 // buildApp assembles the root model. The returned closer shuts the
@@ -383,7 +397,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
-	closeAutomations := wireAutomationBackend(settingsStore, pool, sess, agentState, res)
+	closeAutomations, autoSvc := wireAutomationBackend(settingsStore, pool, sess, agentState, res)
 	wireSyncOptsNotifier(settingsStore, pool)
 	runner.SetSettingsStore(settingsStore)
 	env := os.Environ()
@@ -411,6 +425,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	// and queuing them as advisories evicts the transitions worth reading.
 	screen.SetWorkflowStatus(pool.WorkflowStatus())
 	screen.SetSessionMounter(runner)
+	wireRunActivityGuard(&screen, autoSvc)
 	pool.StartBackgroundWatch(context.Background())
 
 	report := termprobe.Probe(env, "")

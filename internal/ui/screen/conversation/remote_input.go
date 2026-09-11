@@ -135,6 +135,17 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 		return s, tea.Batch(rearm, ackCmd(ev.AckReceived))
 	}
 
+	// Run-activity guard: a steering message must not interleave into a
+	// run's transcript. Ack still fires - custody was taken (see the
+	// comment above); the refusal is visible on the target session.
+	if s.runOwnsSession(st.conv) {
+		st.handleTurnEvent(uievent.Event{
+			Kind: uievent.KindError,
+			Body: uievent.ErrorBody{Text: "remote send refused: an automation run is in progress on this session", Fatal: false},
+		})
+		return s, tea.Batch(rearm, ackCmd(ev.AckReceived))
+	}
+
 	// See sendOrQueueRemote's non-busy tail and handleSessionMountedMsg's
 	// background direct-Send branch for the other two sites sharing this
 	// "send, then ack unconditionally" shape.

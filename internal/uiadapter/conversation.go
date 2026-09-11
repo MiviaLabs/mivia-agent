@@ -83,39 +83,47 @@ type Conversation struct {
 	subagents *SubagentThreads
 
 	// background marks a conversation driven off-screen (an automation
-	// run), never the foreground TUI. Send checks it to skip the
-	// process-wide SubagentProgressRegistrar swap: two conversations
-	// share that single var, so a background run installing itself
-	// would hijack the foreground session's subagent-dispatch display.
+	// run), never the foreground TUI. Setting it also clears foreground:
+	// an unadopted run must not install the process-wide
+	// SubagentProgressRegistrar any more than it may write the pool's
+	// foreground-owned tool-scope notice.
 	background atomic.Bool
-}
 
-// SetBackground marks c as background (an automation run) or
-// foreground. See the background field doc for why Send consults it.
-func (c *Conversation) SetBackground(on bool) {
-	if c == nil {
-		return
-	}
-	c.background.Store(on)
-}
+	// foreground tracks whether a UI currently owns this conversation as
+	// its active session. Send installs the process-wide
+	// SubagentProgressRegistrar only for foreground conversations: two
+	// conversations share that single registrar, so an off-screen turn
+	// installing itself would hijack the watched session's
+	// subagent-dispatch display. New conversations start foreground (the
+	// startup session never passes through a screen switch);
+	// SetBackground(true) clears it; the screen sets it on every switch.
+	foreground atomic.Bool
 
-// IsBackground reports whether c is marked background.
-func (c *Conversation) IsBackground() bool {
-	if c == nil {
-		return false
-	}
-	return c.background.Load()
+	// viewMu and viewers are the live-viewer registry SubscribeLive
+	// serves from. viewMu is a LEAF lock: broadcast runs under it on the
+	// agent loop's synchronous tap (and under the stream's own RLock, so
+	// the order stream.mu -> viewMu is fixed), and it must never be held
+	// while acquiring turnMu, a stream lock, or any session lock.
+	viewMu  sync.Mutex
+	viewers map[int64]*liveViewer
+	viewSeq int64
 }
 
 // NewConversation wraps an existing chat.Session. The caller owns the
 // session and is responsible for its lifecycle; NewConversation stores
 // the pointer verbatim and does not retain any other reference.
 func NewConversation(sess *chat.Session) *Conversation {
-	return &Conversation{
+	c := &Conversation{
 		sess:          sess,
 		scrollLines:   3,
 		showReasoning: true,
 	}
+	// A new conversation starts screen-owned so the startup session -
+	// which never passes through a screen switch - keeps subagent
+	// progress. Spawns that are not screen-owned are marked background
+	// right after construction, which clears this.
+	c.foreground.Store(true)
+	return c
 }
 
 // SetSubagents connects the SubagentThreads registry for isolating
@@ -248,19 +256,25 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	if in.PersistedText != "" {
 		displayText = in.PersistedText
 	}
-	emitSyntheticTurnStart(events, displayText, &seq)
-
-	// stream is the single owner of every send on, and the single close
-	// of, this turn's channel (turn_stream.go). It is built AFTER the
-	// synthetic turn.start, which goes into a channel nothing else can
-	// touch yet.
+	// The stream is built BEFORE the synthetic turn.start so that first
+	// event flows through the same tee every other event uses - a viewer
+	// subscribed before Send sees turn.start first, in order. SendInitial
+	// has no done arm: a pre-cancelled ctx must not drop the one event
+	// guaranteed deliverable (the buffer is empty).
 	stream := newTurnStream(events, turnCtx.Done(), cancelTurn)
+	stream.fanout = c.broadcast
+	emitSyntheticTurnStart(stream, displayText, &seq)
 
 	handler := newTurnHandler(stream, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
 	previous, tapToken := c.sess.SwapOnAgentEventToken(handler)
 
 	var clearSubagent func()
-	if !c.IsBackground() && SubagentProgressRegistrar != nil {
+	// Only a screen-owned conversation may install the process-wide
+	// registrar: an off-screen turn (an automation run nobody watches)
+	// would hijack the watched session's subagent-dispatch display. A
+	// background conversation the screen HAS adopted counts as watched -
+	// its dispatches belong on the panel while the user looks at it.
+	if c.IsForeground() && SubagentProgressRegistrar != nil {
 		clearSubagent = SubagentProgressRegistrar(handler)
 	}
 
@@ -288,29 +302,6 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	}
 	c.runTurnGoroutine(turnCtx, in, h, closed, turnIDPtr, &seq, cancelTurn, turnOpts)
 	return h, nil
-}
-
-// emitSyntheticTurnStart sends the leading KindTurnStart with Seq=1 and
-// TurnID="" so no agent event can race ahead of it on the per-turn
-// channel. The channel buffer is sized to hold this event without
-// blocking.
-//
-// The empty TurnID is the documented "empty-TurnID window" (see the
-// package doc in event.go): chat.Session only surfaces the real ID
-// after SendUserWithEvent returns, so the tap-installed events stamp
-// the real ID via a shared atomic.Pointer once known. The terminal
-// KindTurnEnd emitted by emitTurnEndIfWinner carries the real ID
-// unconditionally, so renderers that index by TurnID should defer
-// indexing until they see that event.
-func emitSyntheticTurnStart(events chan<- uievent.Event, input string, seq *uint64) {
-	atomic.AddUint64(seq, 1)
-	events <- uievent.Event{
-		Kind:   uievent.KindTurnStart,
-		TurnID: "",
-		Seq:    atomic.LoadUint64(seq),
-		At:     time.Now(),
-		Body:   uievent.TurnStartBody{Input: input},
-	}
 }
 
 // subagentForwardKinds lists the uievent.Kind values a non-zero-Origin

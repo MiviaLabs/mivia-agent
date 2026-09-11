@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -159,7 +162,7 @@ func TestWireAutomationBackendFallbackOpensSharedContextStorePath(t *testing.T) 
 	store := uiadapter.NewSettingsStore(sess, res, agentState)
 	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
 
-	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	closeFn, _ := wireAutomationBackend(store, pool, sess, agentState, res)
 	if closeFn == nil {
 		t.Fatal("wireAutomationBackend returned a nil closer")
 	}
@@ -236,7 +239,7 @@ func TestWireAutomationBackendCloserClosesService(t *testing.T) {
 	store := uiadapter.NewSettingsStore(sess, res, agentState)
 	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
 
-	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	closeFn, _ := wireAutomationBackend(store, pool, sess, agentState, res)
 	if closeFn == nil {
 		t.Fatal("wireAutomationBackend returned a nil closer")
 	}
@@ -277,7 +280,7 @@ func TestWireAutomationBackendSweepsInterruptedAtStart(t *testing.T) {
 	store := uiadapter.NewSettingsStore(sess, res, agentState)
 	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
 
-	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	closeFn, _ := wireAutomationBackend(store, pool, sess, agentState, res)
 	defer closeFn()
 
 	row, ok, err := db.GetAutomationRun(ctx, "run-orphan")
@@ -299,7 +302,7 @@ func TestWireAutomationBackendCloserIsNoOpWhenWiringFails(t *testing.T) {
 	store := uiadapter.NewSettingsStore(sess, res, agentState)
 	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
 
-	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	closeFn, _ := wireAutomationBackend(store, pool, sess, agentState, res)
 	if closeFn == nil {
 		t.Fatal("wireAutomationBackend returned a nil closer on the failure path")
 	}
@@ -414,5 +417,28 @@ func TestAutomationSpawnerGetOrResumeInDirRestoresSessionIdentity(t *testing.T) 
 	}
 	if len(conv.History()) == 0 {
 		t.Fatal("restored conversation has empty history; the pool must restore it on the miss path")
+	}
+	c, ok := conv.(*uiadapter.Conversation)
+	if !ok {
+		t.Fatalf("restored conversation type = %T, want *uiadapter.Conversation", conv)
+	}
+	if !c.IsBackground() {
+		t.Fatal("resumed automation conversation is foreground; automation resume must mark it background")
+	}
+}
+
+// TestWireRunActivityGuardInstallsSource covers the launcher-to-screen seam:
+// the activity predicate must be stored on the same Screen value later passed
+// to app.New, not on a by-value helper copy.
+func TestWireRunActivityGuardInstallsSource(t *testing.T) {
+	autoSvc, err := automation.New(t.TempDir(), nil, nil, automation.Config{})
+	if err != nil {
+		t.Fatalf("automation.New: %v", err)
+	}
+	screen := conversation.New(theme.Theme{}, theme.TierTrueColor, nil, nil, nil, 80, nil)
+	wireRunActivityGuard(&screen, autoSvc)
+	field := reflect.ValueOf(screen).FieldByName("runActivity")
+	if field.IsNil() {
+		t.Fatal("wireRunActivityGuard did not install the predicate on the screen used by the app")
 	}
 }

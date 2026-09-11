@@ -84,13 +84,18 @@ type Service struct {
 	spawn SessionSpawner
 	cfg   Config
 
-	mu        sync.Mutex
-	watchers  map[string][]*runWatcher
-	running   map[string]activeRun
-	closed    bool
-	wg        sync.WaitGroup
-	baseCtx   context.Context
-	cancelAll context.CancelFunc
+	mu       sync.Mutex
+	watchers map[string][]*runWatcher
+	running  map[string]activeRun
+	// runSessions maps a live session id to the run id currently
+	// executing on it (RunActiveForSession). Guarded by mu; an entry
+	// lives from the executing wrapper's register until that wrapper's
+	// deferred clear, so it spans every inter-step gap of the run.
+	runSessions map[string]string
+	closed      bool
+	wg          sync.WaitGroup
+	baseCtx     context.Context
+	cancelAll   context.CancelFunc
 }
 
 // New builds a Service rooted at workspace root, optionally backed by

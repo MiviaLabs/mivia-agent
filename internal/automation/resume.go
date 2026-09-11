@@ -163,6 +163,11 @@ func (s *Service) executeResume(ctx context.Context, adm admitted) (ports.Run, e
 		}
 		run.SessionName = boundSess.SessionID
 	}
+	// Same ownership contract as executeRun: the session is this run's
+	// until the wrapper exits, whatever the terminal write turns out to
+	// be.
+	s.registerRunSession(run.ID, conv.ID())
+	defer s.clearRunSession(run.ID)
 	if err := s.updateRunStateFenced(ctx, run, RunRunning, run.StepIndex, nil, RunFailNone, ""); err != nil {
 		return ports.Run{}, err
 	}

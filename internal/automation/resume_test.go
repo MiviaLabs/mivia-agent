@@ -937,3 +937,50 @@ func TestResumeRunChainedResumeContinuesFromRepointedRow(t *testing.T) {
 		t.Fatalf("terminal row session name = %q, want the re-pointed id %q intact", final.SessionName, fresh.SessionID)
 	}
 }
+
+// TestResumeRunRepointFailureFailsRun covers the re-point's own error
+// branch: the trigger fails the SECOND automation_runs UPDATE (the
+// re-point's updateRunSession, right after the claim-token update), so
+// the resume fails with the "record run session" wrap and the row stays
+// at its stored state and name - a resume that cannot re-point must not
+// proceed to run steps under a name it could not record.
+func TestResumeRunRepointFailureFailsRun(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	sess := newContextEnabledSession(t, db)
+	fresh := newContextEnabledSession(t, db)
+	spawner := &sessionSpawner{conv: newRecordingConversation(), sess: sess, resumeSess: fresh}
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runID, oldName := seedResumableRun(t, svc, root, sess, []string{"one", "two"}, RunInterrupted, 0, true)
+	if fresh.SessionID == oldName {
+		t.Fatal("fixture: the fresh session's id equals the stored name")
+	}
+	if err := forceAutomationRunsUpdateFailuresAfter(t, db, 1); err != nil {
+		t.Fatalf("install update-failing trigger: %v", err)
+	}
+
+	run, err := svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ResumeRun: %v", err)
+	}
+	// The trigger fails every later UPDATE, so the failure itself cannot
+	// be recorded either: the row stays exactly as it was seeded. The
+	// observable contract is that the resume did NOT proceed to run
+	// steps and did NOT re-point.
+	if run.State != ports.RunInterrupted {
+		t.Fatalf("run state %v, want interrupted", run.State)
+	}
+	if spawner.getOrResumeCalls != 1 {
+		t.Fatalf("GetOrResumeInDir called %d times, want 1 (the failure came after the spawn)", spawner.getOrResumeCalls)
+	}
+	stored, ok, err := svc.getRun(context.Background(), runID)
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if stored.SessionName != oldName {
+		t.Fatalf("row session name = %q, want the unchanged %q (the re-point failed)", stored.SessionName, oldName)
+	}
+}

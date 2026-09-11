@@ -179,8 +179,9 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 // replacement conversation when the outcome carries one. A notice riding
 // the same outcome is appended after the reset.
 func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd) {
+	var liveCmd tea.Cmd
 	if o.Conversation != nil {
-		s.switchConversation(o.Conversation)
+		liveCmd = s.switchConversation(o.Conversation)
 	} else {
 		s.transcript = s.transcript.Clear()
 		if s.conv != nil {
@@ -197,6 +198,9 @@ func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.
 	var cmd tea.Cmd
 	if s.hasActiveSession() {
 		cmd = s.armTick()
+	}
+	if liveCmd != nil {
+		cmd = tea.Batch(cmd, liveCmd)
 	}
 	if o.Notice != "" {
 		return s.withNotice(o.Notice), cmd

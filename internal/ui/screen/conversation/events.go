@@ -96,6 +96,12 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 // active turn completes. Empty text returns no-op. The provider error path
 // appends to the transcript (where the user is looking) rather than failing silently.
 func (s Screen) send() (app.Screen, tea.Cmd) {
+	// Guard before SubmitText so a refused submit keeps the composer
+	// text exactly as the user left it.
+	if s.runOwnsSession(s.conv) {
+		s.Notice("an automation run is in progress on this session; sending is disabled until it finishes")
+		return s, nil
+	}
 	text := s.composer.SubmitText()
 	// Trimmed, not just empty: the shape gate the history is validated
 	// against rejects a user message whose content trims to nothing, so a
@@ -136,6 +142,18 @@ func (s Screen) sendText(text string) (app.Screen, tea.Cmd) {
 // intent.Send.PersistedText. An empty persisted keeps sendText's existing
 // behavior: the sent text is what gets persisted too.
 func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.Cmd) {
+	// Same guard as send(): every path that can reach a Send on this
+	// conversation - skill submits, command outcomes - must refuse while
+	// a run owns the session, or a user turn would interleave into the
+	// run's transcript.
+	if s.runOwnsSession(s.conv) {
+		s.Notice("an automation run is in progress on this session; sending is disabled until it finishes")
+		return s, nil
+	}
+	// The conversation's live view pauses for this turn: its events
+	// would otherwise arrive twice (primary stream and tee). The turn's
+	// end re-arms it (handleTurnEndedMsg's foreground tail).
+	s.pauseLive()
 	s.history.Push(text)
 	s.history.Close()
 	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text, PersistedText: persisted})

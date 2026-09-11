@@ -353,3 +353,44 @@ func (s *Service) startClaimRefresh(automationID, holder string) (stop func()) {
 		<-done
 	}
 }
+
+// registerRunSession records that runID executes on the session with
+// sessionID, so RunActiveForSession can answer whether a run owns a
+// session the UI could send on. An empty sessionID (a run whose spawn
+// had no context store still owns a conv with an id, so this is
+// defensive only) registers nothing.
+func (s *Service) registerRunSession(runID, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.runSessions == nil {
+		s.runSessions = make(map[string]string)
+	}
+	s.runSessions[sessionID] = runID
+	s.mu.Unlock()
+}
+
+// clearRunSession drops every session registration for runID. Called
+// from the executing wrappers' defers, so every exit - success, any
+// terminal failure, a fenced-out write, a panic - releases the session.
+func (s *Service) clearRunSession(runID string) {
+	s.mu.Lock()
+	for sessionID, id := range s.runSessions {
+		if id == runID {
+			delete(s.runSessions, sessionID)
+		}
+	}
+	s.mu.Unlock()
+}
+
+// RunActiveForSession reports whether a run of this Service currently
+// executes on the session with the given id. Unlike a turn-in-flight
+// check, the answer is stable across a run's inter-step gaps - it is
+// the predicate a UI gates user sends on when a session is watched.
+func (s *Service) RunActiveForSession(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.runSessions[sessionID]
+	return ok
+}

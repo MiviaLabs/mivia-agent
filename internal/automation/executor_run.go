@@ -135,6 +135,11 @@ func (s *Service) executeRun(ctx context.Context, adm admitted) (ports.Run, erro
 		return s.failRun(ctx, run, 0, fmt.Errorf("record run session: %w", err)), nil
 	}
 	run.SessionName = savedName
+	// The session is now owned by this run until the wrapper exits - the
+	// deferred clear covers every exit, including the success path whose
+	// terminal write bypasses endRun.
+	s.registerRunSession(run.ID, conv.ID())
+	defer s.clearRunSession(run.ID)
 
 	if err := s.runSteps(ctx, spec, automationID, workDir, conv, boundSess, &run, 0); err != nil {
 		return s.endFailedRun(ctx, run, err)
