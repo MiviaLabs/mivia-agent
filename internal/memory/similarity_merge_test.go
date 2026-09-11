@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -253,5 +255,137 @@ func TestConsecutiveNearDuplicateSavesPreservesStructure(t *testing.T) {
 	docs, err = source.Scan(context.Background(), ScopeProject)
 	if err != nil || len(docs) != 1 || docs[0].Entry.Good != e1.Good || docs[0].Entry.Bad != e1.Bad {
 		t.Fatalf("Final Scan lost structure: %+v (err=%v)", docs, err)
+	}
+}
+
+func TestMergeSimilarDerivesIDFromFilenameForGateCompliance(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Legacy or hand-authored file whose name is runner-image-notes.md
+	// with a custom frontmatter ID "custom_id" that doesn't match the filename derivation.
+	legacyContent := `---
+id: custom_id
+title: 'Runner image notes'
+content: 'Runner image notes for pipeline.'
+importance: medium
+tags: [ci]
+updated: 2026-09-01
+---
+
+# Runner image notes
+
+## Summary
+Runner image notes for pipeline.
+
+## Why
+Initial why.
+`
+	filePath := filepath.Join(dir, "runner-image-notes.md")
+	if err := os.WriteFile(filePath, []byte(legacyContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	incoming := Entry{
+		Title:      "Runner image notes updated",
+		Summary:    "Runner image notes for pipeline update.",
+		Why:        "Updated why.",
+		Scope:      ScopeProject,
+		Importance: ImportanceHigh,
+		Verdict:    VerdictGood,
+		Tags:       []string{"ci"},
+	}
+
+	doc, err := source.Save(context.Background(), incoming)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The protocol ID written must match the filename derivation: runner_image_notes
+	if doc.ID != "runner_image_notes" {
+		t.Fatalf("doc.ID = %q, want runner_image_notes", doc.ID)
+	}
+
+	// The on-disk file must also have id: runner_image_notes
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "id: runner_image_notes") {
+		t.Fatalf("file content does not have derived id: %s", string(data))
+	}
+}
+
+func TestClampWithReportNeverEmptiesNonEmptyWhy(t *testing.T) {
+	whyLeadingHeading := "\n## " + strings.Repeat("x", 1500)
+	clamped, truncated := Entry{Title: "t", Summary: "s", Why: whyLeadingHeading}.ClampWithReport()
+	if strings.TrimSpace(clamped.Why) == "" {
+		t.Fatal("ClampWithReport emptied a non-empty Why field")
+	}
+	if len(truncated) == 0 || truncated[0] != "why" {
+		t.Fatalf("truncated = %v, want [why]", truncated)
+	}
+}
+
+func TestMergeSimilarFallsThroughOnValidateFailure(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Legacy file with an invalid tag character that passes unvalidated Scan but fails Validate
+	legacyContent := `---
+id: legacy_bad_tag
+title: 'Deploy pipeline invalid tag'
+content: 'Deploy pipeline invalid tag in CI.'
+importance: medium
+tags: [ci:invalid]
+updated: 2026-09-01
+---
+
+# Deploy pipeline invalid tag
+
+## Summary
+Deploy pipeline invalid tag in CI.
+
+## Why
+Some why.
+`
+	filePath := filepath.Join(dir, "legacy-bad-tag.md")
+	if err := os.WriteFile(filePath, []byte(legacyContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	incoming := Entry{
+		Title:      "Deploy pipeline invalid tag v2",
+		Summary:    "Deploy pipeline invalid tag in CI workflows.",
+		Why:        "Valid why.",
+		Scope:      ScopeProject,
+		Importance: ImportanceHigh,
+		Verdict:    VerdictGood,
+		Tags:       []string{"valid"},
+	}
+
+	// Save must succeed by falling through to write a new valid file, rather than failing
+	doc, err := source.Save(context.Background(), incoming)
+	if err != nil {
+		t.Fatalf("Save failed on near-duplicate with legacy invalid entry: %v", err)
+	}
+	if doc.ID == "legacy_bad_tag" {
+		t.Fatalf("doc.ID = %q, should have written a new file", doc.ID)
 	}
 }

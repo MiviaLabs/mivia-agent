@@ -79,7 +79,8 @@ func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 				merged.Created = time.Now().Format("2006-01-02")
 			}
 			if err := merged.Validate(s.cfg.limits()); err != nil {
-				return Result{}, err
+				// If merged fails validation, skip merging into this entry and fall through to append
+				continue
 			}
 			(*rows)[i].e = merged
 			return Result{ID: row.id, Scope: e.Scope, Org: org, Title: merged.Title, Verdict: merged.Verdict, Tags: append([]string(nil), merged.Tags...), Created: merged.Created, Snippet: merged.Summary}, nil

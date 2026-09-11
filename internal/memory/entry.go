@@ -120,6 +120,17 @@ func (e Entry) ClampWithReport() (Entry, []string) {
 	check := func(name, s string, max int) string {
 		out := truncateRunes(s, max)
 		if len(out) < len(s) {
+			if name == "why" {
+				if lastHeading := strings.LastIndex(out, "\n## "); lastHeading >= 0 {
+					after := out[lastHeading+len("\n## "):]
+					if !strings.Contains(after, "\n") {
+						trimmed := strings.TrimRight(out[:lastHeading], "\n")
+						if strings.TrimSpace(trimmed) != "" {
+							out = trimmed
+						}
+					}
+				}
+			}
 			truncated = append(truncated, name)
 		}
 		return out

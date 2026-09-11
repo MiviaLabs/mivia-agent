@@ -517,6 +517,52 @@ def test_skips_directory_matching_glob() -> None:
             mod.check_memories(directory)
 
 
+def test_skips_readme_file() -> None:
+    """README.md does not carry memory frontmatter and must be skipped."""
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp) / "memories"
+        directory.mkdir()
+        (directory / "README.md").write_text("# Documentation\n\nNo frontmatter.", encoding="utf-8")
+        (directory / "probe-memory.md").write_text(GOOD, encoding="utf-8")
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            mod.check_memories(directory)
+
+
+def test_rejects_unreadable_file_with_clean_error() -> None:
+    """A permission error or unreadable file must fail with clean gate error."""
+    import os
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp) / "memories"
+        directory.mkdir()
+        file_path = directory / "unreadable-file.md"
+        file_path.write_text(GOOD, encoding="utf-8")
+        try:
+            os.chmod(file_path, 0o000)
+        except OSError:
+            return  # platform doesn't support chmod restriction
+        # If running as root (e.g. containers), chmod 000 still allows reading.
+        try:
+            file_path.read_text(encoding="utf-8")
+            return  # read succeeded (root), skip test
+        except OSError:
+            pass  # file is actually unreadable, proceed with test
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_memories(directory)
+        except SystemExit:
+            rejection = captured.getvalue().strip()
+            if "unreadable-file.md" not in rejection or "failed to read file" not in rejection:
+                raise AssertionError(f"unexpected rejection: {rejection}")
+            return
+        finally:
+            os.chmod(file_path, 0o600)
+    raise AssertionError("gate accepted an unreadable file")
+
+
 def main() -> None:
     test_accepts_a_valid_memory()
     test_id_must_derive_from_the_filename()
@@ -556,6 +602,8 @@ def main() -> None:
     test_rejects_a_related_link_into_the_archive()
     test_rejects_non_utf8_file()
     test_skips_directory_matching_glob()
+    test_skips_readme_file()
+    test_rejects_unreadable_file_with_clean_error()
     print("test_check_memories: ok")
 
 

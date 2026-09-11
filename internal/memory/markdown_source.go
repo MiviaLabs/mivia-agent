@@ -124,9 +124,12 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 }
 
 func (s MarkdownSource) mergeSimilar(ctx context.Context, e Entry) (MarkdownDocument, bool, error) {
+	if err := contextErr(ctx); err != nil {
+		return MarkdownDocument{}, false, err
+	}
 	existingDocs, err := s.Scan(ctx, e.Scope)
 	if err != nil {
-		return MarkdownDocument{}, false, nil
+		return MarkdownDocument{}, false, err
 	}
 	for _, existing := range existingDocs {
 		if EntrySimilarity(existing.Entry, e) >= similarityMergeThreshold {
@@ -138,14 +141,19 @@ func (s MarkdownSource) mergeSimilar(ctx context.Context, e Entry) (MarkdownDocu
 				merged.Created = time.Now().Format("2006-01-02")
 			}
 			if err := merged.Validate(Limits{}); err != nil {
-				return MarkdownDocument{}, false, err
+				// If merged fails validation (e.g. existing had an invalid legacy tag/format),
+				// do not fail the save. Skip merging into this entry and fall through to
+				// write a new valid file.
+				continue
 			}
-			content := []byte(merged.RenderProtocolFile(existing.ID))
+			stem := strings.TrimSuffix(filepath.Base(existing.Path), ".md")
+			protocolID := strings.ReplaceAll(stem, "-", "_")
+			content := []byte(merged.RenderProtocolFile(protocolID))
 			if err := atomicWrite(ctx, existing.Path, content); err != nil {
 				return MarkdownDocument{}, false, err
 			}
 			doc := document(existing.Path, merged, content)
-			doc.ID = existing.ID
+			doc.ID = protocolID
 			return doc, true, nil
 		}
 	}
