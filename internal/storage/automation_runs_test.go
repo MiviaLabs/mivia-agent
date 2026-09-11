@@ -182,3 +182,199 @@ func TestUpdateAutomationRunClaimTokenUnknownRunReturnsNotFound(t *testing.T) {
 		t.Fatalf("UpdateAutomationRunClaimToken on missing run = %v, want ErrAutomationRunNotFound", err)
 	}
 }
+
+// TestUpdateAutomationRunStateFencedStaleTokenLeavesRowUnchanged proves
+// a fenced write with a token that no longer matches claim_token
+// reports false and changes no column.
+func TestUpdateAutomationRunStateFencedStaleTokenLeavesRowUnchanged(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-fenced")
+	if err := s.UpdateAutomationRunClaimToken(ctx, "run-fenced", "token-new"); err != nil {
+		t.Fatalf("UpdateAutomationRunClaimToken: %v", err)
+	}
+	ended := time.Date(2026, 9, 10, 12, 5, 0, 0, time.UTC).Format(time.RFC3339)
+	ok, err := s.UpdateAutomationRunStateFenced(ctx, "run-fenced", "token-old", "failed", 3, &ended, "job_error", "stale writer")
+	if err != nil {
+		t.Fatalf("UpdateAutomationRunStateFenced: %v", err)
+	}
+	if ok {
+		t.Fatal("stale token write reported ok=true, want false")
+	}
+	got, found, err := s.GetAutomationRun(ctx, "run-fenced")
+	if err != nil || !found {
+		t.Fatalf("GetAutomationRun: ok=%v err=%v", found, err)
+	}
+	if got.State != "pending" || got.StepIndex != 0 || got.EndedAt != nil || got.FailKind != "" || got.Message != "" {
+		t.Fatalf("row changed by a stale-token write: %+v", got)
+	}
+}
+
+// TestUpdateAutomationRunStateFencedMatchingTokenWrites proves the
+// fenced write moves every lifecycle column when the token matches.
+func TestUpdateAutomationRunStateFencedMatchingTokenWrites(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-fenced-ok")
+	if err := s.UpdateAutomationRunClaimToken(ctx, "run-fenced-ok", "token-live"); err != nil {
+		t.Fatalf("UpdateAutomationRunClaimToken: %v", err)
+	}
+	ended := time.Date(2026, 9, 10, 12, 5, 0, 0, time.UTC).Format(time.RFC3339)
+	ok, err := s.UpdateAutomationRunStateFenced(ctx, "run-fenced-ok", "token-live", "succeeded", 2, &ended, "", "done")
+	if err != nil || !ok {
+		t.Fatalf("UpdateAutomationRunStateFenced = (%v, %v), want (true, nil)", ok, err)
+	}
+	got, _, err := s.GetAutomationRun(ctx, "run-fenced-ok")
+	if err != nil {
+		t.Fatalf("GetAutomationRun: %v", err)
+	}
+	if got.State != "succeeded" || got.StepIndex != 2 || got.EndedAt == nil || *got.EndedAt != ended || got.Message != "done" {
+		t.Fatalf("row after fenced write = %+v", got)
+	}
+}
+
+// TestUpdateAutomationRunStateFencedIfRunningSkipsNonRunningRow proves
+// the checkpoint-only write leaves a row untouched once its state has
+// already moved off running, even when the claim token still matches -
+// the guard the mid-run checkpoint needs so it cannot resurrect a row
+// InterruptRunningAutomationRun (or any other terminal write) already
+// closed out.
+func TestUpdateAutomationRunStateFencedIfRunningSkipsNonRunningRow(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-checkpoint-settled")
+	if err := s.UpdateAutomationRunClaimToken(ctx, "run-checkpoint-settled", "token-live"); err != nil {
+		t.Fatalf("UpdateAutomationRunClaimToken: %v", err)
+	}
+	if err := s.UpdateAutomationRunState(ctx, "run-checkpoint-settled", "running", 0, nil, "", ""); err != nil {
+		t.Fatalf("UpdateAutomationRunState: %v", err)
+	}
+	interruptedAt := time.Date(2026, 9, 10, 12, 4, 0, 0, time.UTC).Format(time.RFC3339)
+	ok, err := s.InterruptRunningAutomationRun(ctx, "run-checkpoint-settled", interruptedAt, "interrupted: shutdown")
+	if err != nil || !ok {
+		t.Fatalf("InterruptRunningAutomationRun = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	checkpointOK, err := s.UpdateAutomationRunStateFencedIfRunning(ctx, "run-checkpoint-settled", "token-live", "running", 1, nil, "", "")
+	if err != nil {
+		t.Fatalf("UpdateAutomationRunStateFencedIfRunning: %v", err)
+	}
+	if checkpointOK {
+		t.Fatal("checkpoint on an already-interrupted row reported ok=true, want false")
+	}
+	got, _, err := s.GetAutomationRun(ctx, "run-checkpoint-settled")
+	if err != nil {
+		t.Fatalf("GetAutomationRun: %v", err)
+	}
+	if got.State != "interrupted" || got.StepIndex != 0 || got.EndedAt == nil || *got.EndedAt != interruptedAt {
+		t.Fatalf("row resurrected by checkpoint write: %+v", got)
+	}
+}
+
+// TestUpdateAutomationRunStateFencedIfRunningWritesWhileRunning proves
+// the checkpoint-only write still lands normally while the row is
+// running and the claim token matches - the common case, unaffected by
+// the added state guard.
+func TestUpdateAutomationRunStateFencedIfRunningWritesWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-checkpoint-live")
+	if err := s.UpdateAutomationRunClaimToken(ctx, "run-checkpoint-live", "token-live"); err != nil {
+		t.Fatalf("UpdateAutomationRunClaimToken: %v", err)
+	}
+	if err := s.UpdateAutomationRunState(ctx, "run-checkpoint-live", "running", 0, nil, "", ""); err != nil {
+		t.Fatalf("UpdateAutomationRunState: %v", err)
+	}
+
+	ok, err := s.UpdateAutomationRunStateFencedIfRunning(ctx, "run-checkpoint-live", "token-live", "running", 1, nil, "", "")
+	if err != nil || !ok {
+		t.Fatalf("UpdateAutomationRunStateFencedIfRunning = (%v, %v), want (true, nil)", ok, err)
+	}
+	got, _, err := s.GetAutomationRun(ctx, "run-checkpoint-live")
+	if err != nil {
+		t.Fatalf("GetAutomationRun: %v", err)
+	}
+	if got.State != "running" || got.StepIndex != 1 {
+		t.Fatalf("row after checkpoint = %+v, want running at step 1", got)
+	}
+}
+
+// TestInterruptRunningAutomationRunSkipsNonRunningRow proves the
+// conditional interrupt touches only a row still in state running.
+func TestInterruptRunningAutomationRunSkipsNonRunningRow(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-done")
+	ended := time.Date(2026, 9, 10, 12, 5, 0, 0, time.UTC).Format(time.RFC3339)
+	if err := s.UpdateAutomationRunState(ctx, "run-done", "succeeded", 1, &ended, "", ""); err != nil {
+		t.Fatalf("UpdateAutomationRunState: %v", err)
+	}
+	later := time.Date(2026, 9, 10, 12, 9, 0, 0, time.UTC).Format(time.RFC3339)
+	ok, err := s.InterruptRunningAutomationRun(ctx, "run-done", later, "interrupted: too late")
+	if err != nil {
+		t.Fatalf("InterruptRunningAutomationRun: %v", err)
+	}
+	if ok {
+		t.Fatal("interrupt of a succeeded row reported ok=true, want false")
+	}
+	got, _, err := s.GetAutomationRun(ctx, "run-done")
+	if err != nil {
+		t.Fatalf("GetAutomationRun: %v", err)
+	}
+	if got.State != "succeeded" || *got.EndedAt != ended || got.Message != "" {
+		t.Fatalf("succeeded row changed by interrupt: %+v", got)
+	}
+}
+
+// TestInterruptRunningAutomationRunMarksRunningRow proves the
+// conditional interrupt marks a running row and keeps its step_index.
+func TestInterruptRunningAutomationRunMarksRunningRow(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "automation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	insertBareAutomationRun(t, s, "run-live")
+	if err := s.UpdateAutomationRunState(ctx, "run-live", "running", 2, nil, "", ""); err != nil {
+		t.Fatalf("UpdateAutomationRunState: %v", err)
+	}
+	ended := time.Date(2026, 9, 10, 12, 9, 0, 0, time.UTC).Format(time.RFC3339)
+	ok, err := s.InterruptRunningAutomationRun(ctx, "run-live", ended, "interrupted: service closed")
+	if err != nil || !ok {
+		t.Fatalf("InterruptRunningAutomationRun = (%v, %v), want (true, nil)", ok, err)
+	}
+	got, _, err := s.GetAutomationRun(ctx, "run-live")
+	if err != nil {
+		t.Fatalf("GetAutomationRun: %v", err)
+	}
+	if got.State != "interrupted" || got.StepIndex != 2 || got.EndedAt == nil || *got.EndedAt != ended || got.Message != "interrupted: service closed" {
+		t.Fatalf("row after interrupt = %+v", got)
+	}
+}

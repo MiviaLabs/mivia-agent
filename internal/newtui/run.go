@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -63,7 +64,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prevLogWriter)
 
-	root, settingsStore, runner, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
+	root, settingsStore, runner, closeAutomations, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
 	if err != nil {
 		return err
 	}
@@ -82,6 +83,13 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		runner.Pool().ReleaseLeases(ctx)
 		runner.Pool().CloseAll()
 	}()
+	// Registered after the pool defer, so it runs first (defers are
+	// LIFO). The automation Service cancels its in-flight runs and
+	// settles their rows while the pooled sessions they drive are still
+	// open. Without this, quitting mid-run left the row running and its
+	// claim held. Every later trigger was then refused as already
+	// running until a CLI sweep.
+	defer closeAutomations()
 
 	p := newTeaProgram(root)
 	wireMouseNotifier(settingsStore, p)
@@ -216,12 +224,11 @@ var newTeaProgram = func(root tea.Model) *tea.Program { return tea.NewProgram(ro
 // automation.SessionSpawner, the standard Go composition-root adapter:
 // this package (internal/newtui) is the only place that names both
 // uiadapter.BindFunc (a named type) and automation.SessionSpawner's
-// plain-func parameter signatures, converting between them (see
-// docs/design/automations.md D4's compile-hazard note). Widened from a
-// bare func type to a struct wrapping *uiadapter.SessionPool so it can
-// also implement SetApprovalOverride, which chunk 6 added to
-// SessionSpawner - a bare func type can only ever satisfy a
-// single-method interface.
+// plain-func parameter signatures, converting between them (a named
+// func type is not assignable to a plain func parameter). A struct
+// wrapping *uiadapter.SessionPool, not a bare func type, so it can also
+// implement SetApprovalOverride - a bare func type can only ever
+// satisfy a single-method interface.
 type automationSessionSpawner struct {
 	pool *uiadapter.SessionPool
 }
@@ -238,37 +245,94 @@ func (a automationSessionSpawner) SetApprovalOverride(sessionID string, gate fun
 // installs on automation.Service: it adapts pool's BindFunc-typed
 // CreateFreshInDir (and its SetApprovalOverride) to
 // automation.SessionSpawner's plain-func signatures (see
-// automationSessionSpawner's own doc comment and
-// docs/design/automations.md D4). A struct value, not a func literal,
-// so it is directly callable from a test without needing a live
-// executor (chunk 6) to invoke it first.
+// automationSessionSpawner's own doc comment). A struct value, not a
+// func literal, so it is directly callable from a test without needing
+// a live executor to invoke it first.
 func newAutomationSpawner(pool *uiadapter.SessionPool) automation.SessionSpawner {
 	return automationSessionSpawner{pool: pool}
 }
 
-// wireAutomationBackend constructs the concrete automation.Service and
-// installs it on store via SetAutomationBackend, adapting pool's
+// automationCloseTimeout bounds Service.Close on TUI exit. A run that
+// does not stop in time is marked interrupted and its claim released.
+const automationCloseTimeout = 5 * time.Second
+
+// wireAutomationBackend constructs the concrete automation.Service,
+// sweeps runs an earlier process left running, and installs the
+// Service on store via SetAutomationBackend. It adapts pool's
 // BindFunc-typed CreateFreshInDir to automation.SessionSpawner's plain-
-// func signature (see automationSpawnerFunc's own doc comment and
-// docs/design/automations.md D4). Failure is non-fatal: the Automations
-// settings section simply stays unbacked and the TUI starts normally.
-func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool, sess *chat.Session, agentState *cli.AgentSessionState) {
-	db, _ := sess.ContextStore().(*storage.SQLite)
+// func signature (see automationSessionSpawner's own doc comment).
+// Failure is non-fatal: the Automations settings section stays unbacked
+// and the TUI starts normally. The returned closer calls Service.Close
+// with a bounded context. It is a no-op when wiring failed, so RunTUI
+// can always defer it.
+//
+// sess.ContextStore() normally already holds the *storage.SQLite the
+// root session opened at startup (openContextStore, internal/clichat),
+// itself resolved through cli.ContextStorePath(root, res.Subagents) -
+// the SAME store `mivia automations` opens (openAutomationStore,
+// internal/cliautomations), so the common case needs no extra work
+// here. When it is not a *storage.SQLite (a session whose context store
+// was never wired, or wired to something else), a nil db is passed to
+// automation.New instead of a fallback open, and internal/automation's
+// own db==nil guards (runstore.go) turn every run-persistence call into
+// a silent no-op: the TUI would start with a working Automations
+// settings UI but no run history ever recorded for a run it started,
+// and nothing would surface the gap. Open the same shared store
+// directly instead, so the Service always has a real backing store
+// when one is resolvable, and own its lifecycle (opened here, closed
+// by the returned closer) since sess itself never held this handle.
+func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.SessionPool, sess *chat.Session, agentState *cli.AgentSessionState, res *config.Resolved) (closeFn func()) {
+	db, ok := sess.ContextStore().(*storage.SQLite)
+	var ownedDB *storage.SQLite
+	// An empty WorkspaceRoot is a "no workspace" condition automation.New
+	// rejects below anyway (see its own root=="" guard); skip the store
+	// open entirely rather than resolving a path against an empty root.
+	if !ok && agentState.WorkspaceRoot != "" {
+		opened, openErr := storage.OpenSQLite(cli.ContextStorePath(agentState.WorkspaceRoot, res.Subagents))
+		if openErr != nil {
+			log.Printf("automations disabled: open context store: %v", openErr) // non-fatal; TUI starts normally
+			return func() {}
+		}
+		db, ownedDB = opened, opened
+	}
 	spawn := newAutomationSpawner(pool)
 	autoSvc, err := automation.New(agentState.WorkspaceRoot, db, spawn, automation.Config{})
 	if err != nil {
 		log.Printf("automations disabled: %v", err) // non-fatal; TUI starts normally
-		return
+		if ownedDB != nil {
+			_ = ownedDB.Close()
+		}
+		return func() {}
+	}
+	// Same startup sweep as `mivia automations serve`
+	// (internal/cliautomations/serve_cmd.go): a sweep failure must not
+	// block the TUI, so it is logged, not returned.
+	if n, sweepErr := autoSvc.SweepInterrupted(context.Background()); sweepErr != nil {
+		log.Printf("automations: sweep interrupted runs at startup: %v", sweepErr)
+	} else if n > 0 {
+		log.Printf("automations: swept %d interrupted run(s) at startup", n)
 	}
 	store.SetAutomationBackend(autoSvc)
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), automationCloseTimeout)
+		defer cancel()
+		if err := autoSvc.Close(ctx); err != nil {
+			log.Printf("automations: close: %v", err)
+		}
+		if ownedDB != nil {
+			_ = ownedDB.Close()
+		}
+	}
 }
 
-func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, *uiadapter.CommandRunner, error) {
+// buildApp assembles the root model. The returned closer shuts the
+// automation Service down; RunTUI defers it before the pool teardown.
+func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, *uiadapter.CommandRunner, func(), error) {
 	registerSubagentProgress()
 	approver := uiadapter.NewApprover(sess)
 	themes, err := loadThemes()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	themeName := ""
 	if res != nil {
@@ -276,7 +340,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	}
 	th, err := chooseTheme(themes, themeName)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// runner owns the one SessionPool for this process; sourcing conv and
@@ -297,7 +361,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
-	wireAutomationBackend(settingsStore, pool, sess, agentState)
+	closeAutomations := wireAutomationBackend(settingsStore, pool, sess, agentState, res)
 	wireSyncOptsNotifier(settingsStore, pool)
 	runner.SetSettingsStore(settingsStore)
 	env := os.Environ()
@@ -338,5 +402,5 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 		PersistTheme: func(name string) tea.Cmd { return persistTheme(settingsStore, name) },
 	})
 
-	return root, settingsStore, runner, nil
+	return root, settingsStore, runner, closeAutomations, nil
 }

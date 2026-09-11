@@ -3,6 +3,7 @@ package uiadapter
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -86,6 +87,9 @@ func (a settingsAutomations) Apply(ctx context.Context, scope ports.Scope, e por
 	if trig, ok := e.(ports.TriggerAutomation); ok {
 		return a.newSaveHandle(func() error { return a.startRun(trig.ID) }), nil
 	}
+	if cancel, ok := e.(ports.CancelAutomationRun); ok {
+		return a.newSaveHandle(func() error { return a.cancelRun(cancel.RunID) }), nil
+	}
 	return a.newSaveHandle(func() error { return a.applyAutomation(e) }), nil
 }
 
@@ -141,6 +145,38 @@ func (s *SettingsStore) startRun(automationID string) error {
 	s.automations[i].LastRun = &summary
 	s.publishRunLocked(automationID, run)
 	return nil
+}
+
+// cancelRun stops a run that is still RunPending or RunRunning,
+// searching every automation's run list by run ID since a
+// CancelAutomationRun edit only carries the run ID (the section that
+// sends it does not track which automation the live run belongs to
+// separately from the run itself). Caller holds s.mu (invoked from
+// newSaveHandle's apply closure, same as applyAutomation/startRun).
+func (s *SettingsStore) cancelRun(runID string) error {
+	for automationID, runs := range s.runs {
+		for i := range runs {
+			if runs[i].ID != runID {
+				continue
+			}
+			if runs[i].State != ports.RunPending && runs[i].State != ports.RunRunning {
+				return fmt.Errorf("run %q is not cancellable (state %v)", runID, runs[i].State)
+			}
+			runs[i].State = ports.RunCancelled
+			now := time.Now()
+			runs[i].EndedAt = &now
+			if j := s.findAutomation(automationID); j >= 0 {
+				s.automations[j].LastRun = &ports.RunSummary{
+					ID:        runs[i].ID,
+					State:     runs[i].State,
+					StartedAt: runs[i].StartedAt,
+				}
+			}
+			s.publishRunLocked(automationID, runs[i])
+			return nil
+		}
+	}
+	return fmt.Errorf("run %q not found", runID)
 }
 
 // publishRunLocked delivers a run to every watcher of this automation.

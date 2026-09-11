@@ -8,13 +8,28 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
+	"github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// insertAutomationRun opens root's automations.db (the same path
-// openAutomationStore/buildService uses) and inserts one run row
+// automationStorePath resolves the SAME on-disk store path
+// openAutomationStore/buildService (automations.go) resolves for root:
+// re-load root's own config and run it through the identical resolver,
+// rather than hardcoding a filename here, so this helper cannot drift
+// from production's own path once a fixture's [subagents] store_path
+// changes.
+func automationStorePath(t *testing.T, root string) string {
+	t.Helper()
+	gotRoot, res, err := resolveWorkspaceAndConfig(root, "")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceAndConfig(%q, \"\"): %v", root, err)
+	}
+	return clichat.ContextStorePath(gotRoot, res.Subagents)
+}
+
+// insertAutomationRun opens root's automation/session store (the same
+// path openAutomationStore/buildService uses) and inserts one run row
 // directly, then closes the handle before returning - so the row
 // exists durably on disk without leaving any lock the CLI command's own
 // buildService call (invoked afterward, in the same test) would
@@ -24,9 +39,9 @@ import (
 // between fired runs.
 func insertAutomationRun(t *testing.T, root string, r storage.AutomationRun) {
 	t.Helper()
-	db, err := storage.OpenSQLite(workspace.NamespacePath(root, "automations.db"))
+	db, err := storage.OpenSQLite(automationStorePath(t, root))
 	if err != nil {
-		t.Fatalf("open automations db: %v", err)
+		t.Fatalf("open automation store: %v", err)
 	}
 	defer db.Close()
 	if err := db.InsertAutomationRun(context.Background(), r); err != nil {

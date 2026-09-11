@@ -176,6 +176,48 @@ func TestValidateSpecNegativeViaSaveAndLoad(t *testing.T) {
 	}
 }
 
+// TestValidateSpecSkillRefMustBeNonEmpty covers ValidateSpec's own
+// StepSkill guard: an empty or whitespace-only Ref is rejected
+// regardless of whether a registry is supplied - parseSkillRef's own
+// validation, reused by validateStepSkill.
+func TestValidateSpecSkillRefMustBeNonEmpty(t *testing.T) {
+	base := sampleSpec("skill-empty-ref")
+	base.Trigger = TriggerSpec{Kind: TriggerManual}
+	base.Steps = []Step{{Kind: StepSkill, Ref: "   "}}
+	if err := ValidateSpec(base, nil); err == nil {
+		t.Fatal("ValidateSpec with an empty StepSkill ref: got nil error, want rejection")
+	}
+}
+
+// TestValidateSpecSkillRefMustResolveWhenRegistryGiven covers
+// ValidateSpec's own StepSkill guard: a Ref naming a skill absent from a
+// SUPPLIED non-nil registry is rejected, but the same spec passes with a
+// nil registry (no registry to check against, matching StepSlash's own
+// documented nil-registry behavior) and with a registry that DOES carry
+// the skill.
+func TestValidateSpecSkillRefMustResolveWhenRegistryGiven(t *testing.T) {
+	base := sampleSpec("skill-must-resolve")
+	base.Trigger = TriggerSpec{Kind: TriggerManual}
+	base.Steps = []Step{{Kind: StepSkill, Ref: "/bug-audit"}}
+
+	if err := ValidateSpec(base, nil); err != nil {
+		t.Fatalf("ValidateSpec with nil registry: got error %v, want nil (no registry to check against)", err)
+	}
+
+	empty := skills.NewRegistry()
+	if err := ValidateSpec(base, empty); err == nil {
+		t.Fatal("ValidateSpec against a registry missing the referenced skill: got nil error, want rejection")
+	}
+
+	withSkill := skills.NewRegistry()
+	if err := withSkill.Register(skills.Definition{Name: "bug-audit", Instructions: "hunt bugs", UserInvocable: true}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := ValidateSpec(base, withSkill); err != nil {
+		t.Fatalf("ValidateSpec against a registry carrying the referenced skill: got error %v, want nil", err)
+	}
+}
+
 // TestValidateID covers the plan's ID validation negative cases:
 // ../../etc, __last__, __last__x, 64+ chars, uppercase, empty - all
 // rejected with a named error (ErrInvalidID). A couple of positive cases

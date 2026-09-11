@@ -204,11 +204,18 @@ type TriggerAutomation struct{ ID string }
 // instead of watching a no-op succeed.
 type ResumeAutomationRun struct{ RunID string }
 
+// CancelAutomationRun stops a run that is still RunPending or
+// RunRunning. Unlike ResumeAutomationRun, the in-memory store
+// (internal/uiadapter) handles this directly: cancelling a run needs
+// no saved session state to resume from, only a state transition.
+type CancelAutomationRun struct{ RunID string }
+
 func (UpsertAutomation) isAutomationEdit()     {}
 func (RemoveAutomation) isAutomationEdit()     {}
 func (SetAutomationEnabled) isAutomationEdit() {}
 func (TriggerAutomation) isAutomationEdit()    {}
 func (ResumeAutomationRun) isAutomationEdit()  {}
+func (CancelAutomationRun) isAutomationEdit()  {}
 
 // RunHandle streams one automation's runs as they happen - live-run
 // state, the same channel convention as TurnHandle and SaveHandle, so

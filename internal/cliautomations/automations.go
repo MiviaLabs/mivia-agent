@@ -162,11 +162,22 @@ func flagValueSeam(args []string, name string) (string, []string, bool, error) {
 var applyPrivacyPolicyFunc = func(*config.Resolved) {}
 
 // openAutomationStore opens (creating if needed) the SQLite store the
-// automation Service uses for run records and fenced claims, namespaced
-// under the workspace root exactly like the checkpoint store
-// composition.BuildSession opens for each spawned session.
-func openAutomationStore(root string) (*storage.SQLite, error) {
-	return storage.OpenSQLite(workspace.NamespacePath(root, "automations.db"))
+// automation Service uses for run records and fenced claims.
+//
+// This is the SAME store composition.BuildSession opens for a chat
+// session (clichat.ContextStorePath(root, cfg.Subagents), honoring an
+// operator-configured [subagents] store_path and otherwise defaulting to
+// workspace.GlobalContextStorePath - one store shared by every workspace
+// on the machine), not a package-private "automations.db". Before this,
+// the CLI opened its own separate automations.db while the TUI wired
+// wireAutomationBackend to sess.ContextStore() (also resolved through
+// ContextStorePath) - two different SQLite files recording the SAME
+// kind of run, so `mivia automations runs` could never see a run the
+// TUI started and the `serve` sweep could never see a run the TUI left
+// interrupted, or vice versa. Sharing the resolver unifies both
+// surfaces' run history in one file.
+func openAutomationStore(root string, cfg *config.Resolved) (*storage.SQLite, error) {
+	return storage.OpenSQLite(clichat.ContextStorePath(root, cfg.Subagents))
 }
 
 // buildService constructs the automation.Service used by every
@@ -181,7 +192,7 @@ func buildService(workspaceRoot, configPath string) (*automation.Service, *Headl
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	db, err := openAutomationStore(root)
+	db, err := openAutomationStore(root, res)
 	if err != nil {
 		return nil, nil, nil, err
 	}

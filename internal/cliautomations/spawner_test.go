@@ -36,11 +36,18 @@ func TestHeadlessSpawnerImplementsCloseLastRun(t *testing.T) {
 	}
 }
 
+// testResolvedConfig sets [subagents] store_path so storePathFor
+// resolves under the spawner's own root (matching this repo's own
+// dogfooded config) rather than the default shared, HOME-scoped store -
+// several tests below (e.g. TestCreateFreshInDirBuildSessionErrorPropagates)
+// chmod root's own .mivia dir and expect the session store open to fail
+// against that same directory.
 func testResolvedConfig() *config.Resolved {
 	return &config.Resolved{
 		ProviderName: "openrouter",
 		Model:        "test/model",
 		SystemPrompt: "ROOT PROMPT",
+		Subagents:    config.SubagentConfig{StorePath: ".mivia/context.db"},
 	}
 }
 

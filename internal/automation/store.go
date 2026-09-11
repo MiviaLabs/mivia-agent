@@ -18,28 +18,28 @@ import (
 // convention (paths.go).
 const automationsFileName = "automations.toml"
 
-// idPattern is D11's ID validation regex, applied to both automationID
+// idPattern is the ID validation regex ("Identification Rules" in
+// docs/design/automations.md), applied to both automationID
 // and any runID this package generates or accepts, at TOML load and at
-// run creation (run creation lands in a later chunk; the validator is
-// written now per D11's own text).
+// run creation (createRun, runstore.go).
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
-// ErrInvalidID is the named error D11 and the plan's Tests section
-// require: any automationID/runID failing idPattern is rejected with
+// ErrInvalidID is the named error "Identification Rules" requires:
+// any automationID/runID failing idPattern is rejected with
 // this error (wrapped with the offending value).
 var ErrInvalidID = errors.New("automation: invalid id")
 
 // ErrInvalidUnattendedPolicy is returned when spec.Unattended is a
-// non-empty value other than UnattendedDeny/UnattendedAuto (D8): an
+// non-empty value other than UnattendedDeny/UnattendedAuto: an
 // automation's unattended posture is a closed two-value choice, so an
 // unrecognized value (e.g. "yolo") must be refused at validation time
 // rather than silently treated as one of the two known policies.
 var ErrInvalidUnattendedPolicy = errors.New("automation: invalid unattended policy")
 
-// ValidateID reports whether id matches D11's charset/length rule
+// ValidateID reports whether id matches the charset/length rule
 // (^[a-z0-9][a-z0-9_-]{0,63}$), returning a wrapped ErrInvalidID when it
-// does not. Called by store load (below) and, in a later chunk, by run
-// creation - written now so both call sites share one rule.
+// does not. Called by store load (below) and by run creation
+// (createRun, runstore.go), so both call sites share one rule.
 func ValidateID(id string) error {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("%w: %q", ErrInvalidID, id)
@@ -85,15 +85,15 @@ type fileShape struct {
 // empty slice, mirroring config.Load's found=false-is-fine precedent for
 // an absent optional file. Every other error (unreadable file, malformed
 // TOML, or a Spec failing Validate) is returned; a single bad automation
-// fails the whole load rather than silently dropping it, matching D1's
-// stated reason for atomic writes (a partially-written file must not
+// fails the whole load rather than silently dropping it, matching the
+// stated reason for "Atomic Writes" (a partially-written file must not
 // silently disable every automation, and a per-entry error must not
 // either - the operator learns about it, not the empty list).
 //
-// registry is variadic (0 or 1 value) so every pre-D15 call site
+// registry is variadic (0 or 1 value) so every two-argument call site
 // (store_test.go, service.go, and every other package that already
 // calls LoadSpecs with two arguments) keeps compiling unchanged; a
-// caller that HAS a live *skills.Registry (chunk 6's executor, or a
+// caller that HAS a live *skills.Registry (the executor, or a
 // future Service wired with one via Config.Registry) passes it so a
 // StepSlash referencing a project/user skill command resolves and
 // validates correctly on load, not just at Apply time.
@@ -139,7 +139,7 @@ func firstRegistry(registry []*skills.Registry) *skills.Registry {
 
 // SaveSpecs atomically writes specs as automations.toml at scope under
 // workspaceRoot, validating every spec first so a bad in-memory Spec
-// never reaches disk. Follows D1's exact sequence -
+// never reaches disk. Follows the exact "Atomic Writes" sequence -
 // internal/chatsync/delivered_ledger.go:30-37's open-tmp/write/fsync/
 // close/rename, not internal/cliworktree/worktree_marker.go:81's
 // (which omits the fsync): os.CreateTemp in the target directory,
@@ -173,7 +173,7 @@ func SaveSpecs(scope ports.Scope, workspaceRoot string, specs []Spec, registry .
 	return writeFileAtomic(dir, filepath.Base(path), data)
 }
 
-// writeFileAtomic implements D1's exact write sequence: os.CreateTemp in
+// writeFileAtomic implements the "Atomic Writes" sequence: os.CreateTemp in
 // dir (never a fixed sibling name - CreateTemp's own randomized suffix
 // guards concurrent writers), Chmod(0600), write, Sync, Close, then
 // os.Rename over dir/name. A crash or a caller that stops before the
@@ -216,10 +216,10 @@ func writeFileAtomic(dir, name string, data []byte) error {
 // ValidateSpec runs the load-time validation the plan's Scope section
 // requires: reject an unknown Step.Kind, reject BaseRef set when
 // Worktree=WorktreeNone, reject empty Steps, reject a malformed
-// automation ID, reject an unrecognized Unattended value (D8), and
-// reject a StepSlash step whose Ref falls outside D15's headless-safe
-// allowlist. Cron string validation itself is explicitly deferred to
-// chunk 4 (internal/cronschedule does not exist yet): a cron/recurring
+// automation ID, reject an unrecognized Unattended value, and reject a
+// StepSlash step whose Ref falls outside the headless-safe "Slash
+// Command Allowlist". Cron string validation is not done here
+// (internal/cronschedule does not exist yet): a cron/recurring
 // trigger's raw Cron/TZ strings are stored as-is here, unparsed.
 //
 // registry may be nil: a caller with no live *skills.Registry (most of
@@ -246,6 +246,11 @@ func ValidateSpec(spec Spec, registry *skills.Registry) error {
 		}
 		if step.Kind == StepSlash {
 			if err := validateStepSlash(spec.ID, i, step.Ref, registry); err != nil {
+				return err
+			}
+		}
+		if step.Kind == StepSkill {
+			if err := validateStepSkill(spec.ID, i, step.Ref, registry); err != nil {
 				return err
 			}
 		}

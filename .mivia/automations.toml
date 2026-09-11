@@ -6,12 +6,12 @@ description = ''
 enabled = true
 worktree = 0
 base_ref = ''
-unattended = 'deny'
+unattended = 'auto'
 
 [automations.test-id.trigger]
 kind = 0
 
 [[automations.test-id.steps]]
-kind = 'prompt'
-ref = ''
-prompt = '/bug-audit scope of last 24h commits'
+kind = 'skill'
+ref = 'bug-audit scope of last 24h commits'
+prompt = ''

@@ -2,12 +2,17 @@ package newtui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -42,12 +47,12 @@ func TestNewAutomationSpawnerReachesPoolCreateFreshInDir(t *testing.T) {
 // automationSessionSpawner.CreateFreshInDir's own method body (run.go): the
 // standalone adapter type, tested in isolation from newAutomationSpawner's
 // own pool-specific wiring above, proving the plain-func-to-
-// uiadapter.BindFunc conversion (D4's compile-hazard fix) forwards both
+// uiadapter.BindFunc conversion forwards both
 // arguments and both return values unchanged. Uses a real, nil-config
 // SessionPool (as TestNewAutomationSpawnerReachesPoolCreateFreshInDir does)
 // since automationSessionSpawner now wraps a concrete *uiadapter.SessionPool
-// rather than an injectable closure (chunk 6 widened SessionSpawner to
-// 2 methods, which a bare func type can no longer satisfy).
+// rather than an injectable closure (SessionSpawner has 2 methods,
+// which a bare func type cannot satisfy).
 func TestAutomationSessionSpawnerCallsUnderlyingPool(t *testing.T) {
 	pool := uiadapter.NewSessionPool(nil, nil, nil, false)
 	var target automation.SessionSpawner = automationSessionSpawner{pool: pool} // pins that automationSessionSpawner satisfies automation.SessionSpawner
@@ -89,14 +94,20 @@ func TestAutomationSessionSpawnerSetApprovalOverride(t *testing.T) {
 // the backend actually landed on the store (SetAutomationBackend was
 // reached), not merely that buildApp returned no error.
 func TestWireAutomationBackendInstallsBackendOnSuccess(t *testing.T) {
-	res := &config.Resolved{}
+	// [subagents] store_path pins the fallback store this test's
+	// unwired sess.ContextStore() forces wireAutomationBackend to open
+	// (see TestWireAutomationBackendFallbackOpensSharedContextStorePath
+	// below) under this test's own temp root, instead of the default
+	// shared, HOME-scoped store - a `go test` run must never touch the
+	// real developer machine's home directory.
+	res := &config.Resolved{Subagents: config.SubagentConfig{StorePath: ".mivia/context.db"}}
 	sess := chat.NewSession(res, nil)
 	agentState := &cli.AgentSessionState{WorkspaceRoot: t.TempDir()}
 	store := uiadapter.NewSettingsStore(sess, res, agentState)
 	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	pool := runner.Pool()
 
-	wireAutomationBackend(store, pool, sess, agentState)
+	wireAutomationBackend(store, pool, sess, agentState, res)
 
 	// Automations() delegating to a real backend (rather than the
 	// in-memory fallback settings_automations.go carries when
@@ -125,4 +136,168 @@ func TestWireAutomationBackendInstallsBackendOnSuccess(t *testing.T) {
 	if len(specs) != 1 || specs[0].ID != "wired" {
 		t.Fatalf("automations.toml after Apply = %+v, want one automation persisted by the real backend Service", specs)
 	}
+}
+
+// TestWireAutomationBackendFallbackOpensSharedContextStorePath covers
+// wireAutomationBackend's own fallback branch (run.go): when
+// sess.ContextStore() is NOT a *storage.SQLite, the Service must still
+// get a real backing store, opened at the exact SAME path
+// cli.ContextStorePath(root, res.Subagents) resolves - the path
+// internal/cliautomations's openAutomationStore now also resolves for
+// the CLI surface (store_path_test.go). A path mismatch here would
+// silently reintroduce the split-history bug this slice fixes, just for
+// the TUI's own fallback path instead of its now-removed normal one.
+func TestWireAutomationBackendFallbackOpensSharedContextStorePath(t *testing.T) {
+	root := t.TempDir()
+	res := &config.Resolved{Subagents: config.SubagentConfig{StorePath: ".mivia/context.db"}}
+	sess := chat.NewSession(res, nil) // ContextStore() is nil, not *storage.SQLite
+	agentState := &cli.AgentSessionState{WorkspaceRoot: root}
+	store := uiadapter.NewSettingsStore(sess, res, agentState)
+	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
+
+	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	if closeFn == nil {
+		t.Fatal("wireAutomationBackend returned a nil closer")
+	}
+	defer closeFn()
+
+	wantPath := cli.ContextStorePath(root, res.Subagents)
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("wireAutomationBackend's fallback did not create a store at cli.ContextStorePath(%q, ...) = %q: %v", root, wantPath, err)
+	}
+}
+
+// newSQLiteSession builds a session whose ContextStore() is a real
+// *storage.SQLite, so wireAutomationBackend hands the Service a run
+// store. The session has no context manager, so SetContextStore only
+// records the store; nothing is armed.
+func newSQLiteSession(t *testing.T, res *config.Resolved) (*chat.Session, *storage.SQLite) {
+	t.Helper()
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ctx.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sess := chat.NewSession(res, nil)
+	if err := sess.SetContextStore(db); err != nil {
+		t.Fatalf("SetContextStore: %v", err)
+	}
+	if _, ok := sess.ContextStore().(*storage.SQLite); !ok {
+		t.Fatalf("ContextStore() = %T, want *storage.SQLite", sess.ContextStore())
+	}
+	return sess, db
+}
+
+// seedWiredAutomation writes one enabled single-step automation into
+// root's automations.toml and returns its id.
+func seedWiredAutomation(t *testing.T, root string) string {
+	t.Helper()
+	spec := automation.Spec{
+		ID: "wired-close", Name: "wired-close", Enabled: true,
+		Steps: []automation.Step{{Kind: automation.StepPrompt, Prompt: "p"}},
+	}
+	if err := automation.SaveSpecs(ports.ScopeProject, root, []automation.Spec{spec}); err != nil {
+		t.Fatalf("SaveSpecs: %v", err)
+	}
+	return spec.ID
+}
+
+// drainSaveEvents reads h to close and returns the last event.
+func drainSaveEvents(t *testing.T, h ports.SaveHandle) ports.SaveEvent {
+	t.Helper()
+	var last ports.SaveEvent
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev, ok := <-h.Events():
+			if !ok {
+				return last
+			}
+			last = ev
+		case <-deadline:
+			t.Fatal("SaveHandle did not close within 5s")
+		}
+	}
+}
+
+// TestWireAutomationBackendCloserClosesService proves the closer
+// wireAutomationBackend returns reaches Service.Close: a trigger
+// applied after the closer ran is refused as "service closed", and its
+// row is not left running with a held claim.
+func TestWireAutomationBackendCloserClosesService(t *testing.T) {
+	res := &config.Resolved{}
+	sess, db := newSQLiteSession(t, res)
+	agentState := &cli.AgentSessionState{WorkspaceRoot: t.TempDir()}
+	id := seedWiredAutomation(t, agentState.WorkspaceRoot)
+	store := uiadapter.NewSettingsStore(sess, res, agentState)
+	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
+
+	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	if closeFn == nil {
+		t.Fatal("wireAutomationBackend returned a nil closer")
+	}
+	closeFn()
+
+	h, err := store.Settings().Automations.Apply(context.Background(), ports.ScopeProject, ports.TriggerAutomation{ID: id})
+	if err != nil {
+		t.Fatalf("Apply after close: %v", err)
+	}
+	last := drainSaveEvents(t, h)
+	if last.State != ports.SaveFailed || !strings.Contains(last.Message, automation.ErrServiceClosed.Error()) {
+		t.Fatalf("final save event = %+v, want SaveFailed naming %q", last, automation.ErrServiceClosed.Error())
+	}
+	runs := store.Settings().Automations.Runs(id, 1)
+	if len(runs) != 1 || runs[0].State != ports.RunFailed {
+		t.Fatalf("runs after closed trigger = %+v, want one RunFailed row", runs)
+	}
+	if _, err := db.GetClaim(context.Background(), "automation:"+id); err == nil {
+		t.Fatal("claim still held after the closer ran and the trigger was refused")
+	}
+}
+
+// TestWireAutomationBackendSweepsInterruptedAtStart proves wiring runs
+// the interrupted-run sweep: a running row with no claim, left by an
+// earlier process, is RunInterrupted once wireAutomationBackend returns.
+func TestWireAutomationBackendSweepsInterruptedAtStart(t *testing.T) {
+	res := &config.Resolved{}
+	sess, db := newSQLiteSession(t, res)
+	agentState := &cli.AgentSessionState{WorkspaceRoot: t.TempDir()}
+	id := seedWiredAutomation(t, agentState.WorkspaceRoot)
+	ctx := context.Background()
+	if err := db.InsertAutomationRun(ctx, storage.AutomationRun{
+		ID: "run-orphan", AutomationID: id, Origin: "manual", State: "running",
+		StepCount: 1, ClaimToken: "dead-holder", StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("InsertAutomationRun: %v", err)
+	}
+	store := uiadapter.NewSettingsStore(sess, res, agentState)
+	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
+
+	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	defer closeFn()
+
+	row, ok, err := db.GetAutomationRun(ctx, "run-orphan")
+	if err != nil || !ok {
+		t.Fatalf("GetAutomationRun: ok=%v err=%v", ok, err)
+	}
+	if row.State != "interrupted" || row.EndedAt == nil {
+		t.Fatalf("orphan row after wiring = state %q ended %v, want interrupted with ended_at set", row.State, row.EndedAt)
+	}
+}
+
+// TestWireAutomationBackendCloserIsNoOpWhenWiringFails proves the
+// closer is safe to call when automation.New refused the workspace: an
+// empty root disables automations, and the returned closer does nothing.
+func TestWireAutomationBackendCloserIsNoOpWhenWiringFails(t *testing.T) {
+	res := &config.Resolved{}
+	sess := chat.NewSession(res, nil)
+	agentState := &cli.AgentSessionState{}
+	store := uiadapter.NewSettingsStore(sess, res, agentState)
+	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
+
+	closeFn := wireAutomationBackend(store, pool, sess, agentState, res)
+	if closeFn == nil {
+		t.Fatal("wireAutomationBackend returned a nil closer on the failure path")
+	}
+	closeFn()
 }

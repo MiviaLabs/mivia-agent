@@ -83,9 +83,9 @@ func TestRunOnceAdmitFirePropagatesRealError(t *testing.T) {
 
 // TestStartRunPropagatesUpdateRunStateError covers startRun's own
 // second error-wrap branch directly (the pending->running
-// updateRunState call): a SQLite trigger makes every UPDATE on
+// updateRunStateFenced call): a SQLite trigger makes every UPDATE on
 // automation_runs fail while INSERTs still succeed, so startRun's own
-// createRun call succeeds but its immediately-following updateRunState
+// createRun call succeeds but its immediately-following updateRunStateFenced
 // call fails - the two calls are synchronous with no seam between them
 // to interleave an out-of-band row mutation, so the trigger is the only
 // way to fail the second write specifically.
@@ -101,15 +101,15 @@ func TestStartRunPropagatesUpdateRunStateError(t *testing.T) {
 	}
 	spec := Spec{ID: "auto-startrun-err", Steps: []Step{{Kind: StepPrompt, Prompt: "x"}}}
 	if _, err := svc.startRun(context.Background(), spec, "auto-startrun-err", ports.TriggerManual, "holder-x"); err == nil {
-		t.Fatal("startRun with automation_runs UPDATEs forced to fail: got nil error, want the second updateRunState error wrapped")
+		t.Fatal("startRun with automation_runs UPDATEs forced to fail: got nil error, want the second updateRunStateFenced error wrapped")
 	}
 }
 
 // TestRunStepsPropagatesCheckpointError covers runSteps' own checkpoint
-// updateRunState-error-wrap branch: the fake conversation drops the
+// updateRunStateFenced-error-wrap branch: the fake conversation drops the
 // automation_runs table as a side effect of successfully completing its
 // one step's Send call, so runStep returns nil (the step itself
-// "succeeded") but the immediately following checkpoint updateRunState
+// "succeeded") but the immediately following checkpoint updateRunStateFenced
 // call - still inside runSteps, before it ever returns to RunOnce -
 // fails against the now-missing table.
 func TestRunStepsPropagatesCheckpointError(t *testing.T) {

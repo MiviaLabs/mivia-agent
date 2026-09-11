@@ -1,10 +1,11 @@
 // Package automation owns user-defined automations: their TOML
 // definitions, their schedules, and their durable run records.
 //
-// This file (resume.go) is chunk 8: turning an RunInterrupted or
-// RunFailed run row back into a live execution that continues from
-// exactly where it stopped (D13). It reuses the executor's own
-// runSteps/failRun (executor.go) and claim.go's admitFire/ReleaseClaim,
+// This file (resume.go) turns a RunInterrupted or RunFailed run row
+// back into a live execution that continues from exactly where it
+// stopped (docs/design/automations.md, "Resuming Runs"). It reuses the
+// executor's own runSteps (executor.go), failRun (executor_run.go), and
+// claim.go's admitFire/ReleaseClaim,
 // but is user-initiated (via Apply's ResumeAutomationRun edit), not a
 // scheduler fire - so a lost claim here is a NAMED refusal
 // (ErrRunAlreadyActive), never the silent RunSkipped no-op RunOnce uses
@@ -24,7 +25,7 @@ import (
 // defaultSweepMaxAge is the crash-recovery sweep's staleness threshold
 // used by the exported SweepInterrupted wrapper: a running run whose
 // fenced claim has been unrenewed for at least this long is presumed
-// abandoned (D13).
+// abandoned ("Interrupted Run Sweep").
 const defaultSweepMaxAge = 5 * time.Minute
 
 // ErrRunNotFound is returned by ResumeRun when runID names no run.
@@ -35,93 +36,121 @@ var ErrRunNotFound = fmt.Errorf("automation: run not found")
 var ErrRunNotResumable = fmt.Errorf("automation: run not resumable")
 
 // ErrRunSessionMissing is returned by ResumeRun when the run has no
-// recorded session name (D11) - it was never durably saved (no context
+// recorded session name ("Identification Rules") - it was never durably saved (no context
 // store configured at spawn time, or the run never reached spawn at
 // all) and so has nothing to Load back.
 var ErrRunSessionMissing = fmt.Errorf("automation: run has no resumable session")
 
 // ErrRunAlreadyActive is returned by ResumeRun when the automation's
-// fenced single-fire claim (D7) is currently held by someone else - a
+// fenced single-fire claim is currently held by someone else - a
 // NAMED refusal, not the silent RunSkipped no-op RunOnce uses for a
 // scheduler fire that lost the same race: Resume is user-initiated and
 // must surface the conflict rather than swallow it.
 var ErrRunAlreadyActive = fmt.Errorf("automation: already running")
 
 // ResumeRun restarts an interrupted or failed run from exactly the step
-// it stopped at (D13): re-claim the automation's fenced single-fire
-// claim, re-spawn a session bound to the run's saved conversation
-// (D11), install the same D8 unattended posture, and dispatch
-// spec.Steps starting at run.StepIndex - no +1 adjustment, since
-// StepIndex already names the next step to run in both the
-// success-checkpoint case (runSteps sets it to i+1 after step i
-// succeeds) and the failure-checkpoint case (runSteps leaves it at i
-// when step i itself failed, so resume re-runs that step whole).
+// it stopped at ("Resume Procedure"), synchronously on the caller's goroutine:
+// admission (admitResume) then execution (executeResume). StepIndex
+// already names the next step to run in both the success-checkpoint
+// case (runSteps sets it to i+1 after step i succeeds) and the
+// failure-checkpoint case (runSteps leaves it at i when step i itself
+// failed, so resume re-runs that step whole).
 func (s *Service) ResumeRun(ctx context.Context, runID string) (ports.Run, error) {
+	adm, err := s.admitResume(ctx, runID)
+	if err != nil {
+		return ports.Run{}, err
+	}
+	if adm.complete {
+		return runToPorts(adm.run), nil
+	}
+	return s.executeResume(ctx, adm)
+}
+
+// admitResume performs every synchronous admission step of a resume:
+// load and check the run row, load the spec, refuse a run with no saved
+// session, re-claim the automation's fenced single-fire claim (a lost
+// claim is the NAMED refusal ErrRunAlreadyActive), and persist the new
+// holder. A run whose StepIndex already covers every step is marked
+// succeeded here and returned with complete set.
+func (s *Service) admitResume(ctx context.Context, runID string) (admitted, error) {
 	run, ok, err := s.getRun(ctx, runID)
 	if err != nil {
-		return ports.Run{}, err
+		return admitted{}, err
 	}
 	if !ok {
-		return ports.Run{}, ErrRunNotFound
+		return admitted{}, ErrRunNotFound
 	}
 	if run.State != RunInterrupted && run.State != RunFailed {
-		return ports.Run{}, fmt.Errorf("%w: %q state %s", ErrRunNotResumable, runID, run.State)
+		return admitted{}, fmt.Errorf("%w: %q state %s", ErrRunNotResumable, runID, run.State)
 	}
-
 	spec, err := s.findSpec(run.AutomationID)
 	if err != nil {
-		return ports.Run{}, err
+		return admitted{}, err
 	}
-
 	if run.StepIndex >= len(spec.Steps) {
-		// The run's own step index already covers every step: this is a
-		// race or a stale interrupted flag, not genuinely unfinished
-		// work. Mark it succeeded and return without spawning anything.
-		return s.markResumedRunSucceeded(ctx, run, spec)
+		// A stale interrupted flag or a race, not unfinished work.
+		done, err := s.markResumedRunSucceeded(ctx, run, spec)
+		if err != nil {
+			return admitted{}, err
+		}
+		return admitted{spec: spec, run: done, complete: true}, nil
 	}
-
 	if run.SessionName == "" {
-		// Fail fast, before any spawn attempt: a run with no recorded
-		// session name has nothing to Load back into.
-		return ports.Run{}, fmt.Errorf("%w: run %q", ErrRunSessionMissing, runID)
+		return admitted{}, fmt.Errorf("%w: run %q", ErrRunSessionMissing, runID)
 	}
-
 	holder, ok, err := s.admitFire(ctx, run.AutomationID)
 	if err != nil {
-		return ports.Run{}, err
+		return admitted{}, err
 	}
 	if !ok {
-		return ports.Run{}, fmt.Errorf("%w: automation %q", ErrRunAlreadyActive, run.AutomationID)
+		return admitted{}, fmt.Errorf("%w: automation %q", ErrRunAlreadyActive, run.AutomationID)
 	}
-	defer func() {
-		_ = s.db.ReleaseClaim(context.Background(), claimKey(run.AutomationID), holder)
-	}()
 	// Persist the new holder so a later sweep sees the current owner,
 	// not the dead one the interrupted/failed row still carries.
 	if err := s.updateRunClaimToken(ctx, run.ID, holder); err != nil {
-		return ports.Run{}, err
+		_ = s.db.ReleaseClaim(context.WithoutCancel(ctx), claimKey(run.AutomationID), holder)
+		return admitted{}, err
 	}
+	run.ClaimToken = holder
+	return admitted{spec: spec, run: run, holder: holder, trigger: runOriginToTrigger(run.Origin)}, nil
+}
+
+// executeResume drives an admitted resume to a terminal state: re-spawn
+// a session bound to the run's saved conversation, install the same
+// unattended approval posture, and dispatch spec.Steps from
+// run.StepIndex. The claim is heartbeated while steps run and released
+// on every exit path. The error is non-nil only for a store failure on
+// the RunRunning transition, a fenced checkpoint, or a failed or fenced
+// terminal success write.
+func (s *Service) executeResume(ctx context.Context, adm admitted) (ports.Run, error) {
+	spec, run := adm.spec, adm.run
+	defer func() {
+		_ = s.db.ReleaseClaim(context.WithoutCancel(ctx), claimKey(run.AutomationID), adm.holder)
+	}()
+	stopRefresh := s.startClaimRefresh(run.AutomationID, adm.holder)
+	defer stopRefresh()
 
 	workDir, err := resumeWorkDir(s.root, run.WorktreePath)
 	if err != nil {
 		return s.failRun(ctx, run, run.StepIndex, err), nil
 	}
-
 	conv, boundSess, err := s.spawnAndLoadResumeSession(spec, run, workDir)
 	if err != nil {
 		return s.failRun(ctx, run, run.StepIndex, err), nil
 	}
-
-	if err := s.updateRunState(ctx, run.ID, RunRunning, run.StepIndex, nil, RunFailNone, ""); err != nil {
+	if err := s.updateRunStateFenced(ctx, run, RunRunning, run.StepIndex, nil, RunFailNone, ""); err != nil {
 		return ports.Run{}, err
 	}
 	run.State = RunRunning
+	run.EndedAt = nil
+	run.FailKind = RunFailNone
+	run.Message = ""
+	s.publishRun(run)
 
-	startIndex := run.StepIndex
-	if err := s.runSteps(ctx, spec, run.AutomationID, workDir, conv, boundSess, &run, startIndex); err != nil {
-		return s.failRun(ctx, run, run.StepIndex, err), nil
+	if err := s.runSteps(ctx, spec, run.AutomationID, workDir, conv, boundSess, &run, run.StepIndex); err != nil {
+		return s.endFailedRun(ctx, run, err)
 	}
-	return s.markResumedRunSucceeded(ctx, run, spec)
+	return s.succeedRun(ctx, run, len(spec.Steps))
 }
 
 // resumeWorkDir resolves ResumeRun's working directory: the run's
@@ -140,7 +169,7 @@ func resumeWorkDir(root, worktreePath string) (string, error) {
 }
 
 // spawnAndLoadResumeSession spawns the resume session and restores its
-// saved transcript, in the exact order D13 requires: spawn, THEN Load,
+// saved transcript, in the exact order "Resume Procedure" requires: spawn, THEN Load,
 // THEN the approval override - mirroring
 // uiadapter.SetApprovalOverride's own documented ordering rule
 // (CreateFreshInDir invokes the bind closure before wireEntryLocked's
@@ -162,19 +191,24 @@ func (s *Service) spawnAndLoadResumeSession(spec Spec, run Run, workDir string) 
 	return conv, boundSess, nil
 }
 
-// markResumedRunSucceeded handles ResumeRun's "already complete" branch:
+// markResumedRunSucceeded handles a resume's "already complete" branch:
 // run.StepIndex already covers every step of spec, so there is no work
-// left to (re)do - mark the row RunSucceeded and return it without ever
-// spawning a session or touching the fenced claim.
-func (s *Service) markResumedRunSucceeded(ctx context.Context, run Run, spec Spec) (ports.Run, error) {
+// left - mark the row RunSucceeded, publish it, and return it without
+// spawning a session or touching the fenced claim. The write carries the
+// row's own claim token and survives cancellation, like every other
+// terminal write.
+func (s *Service) markResumedRunSucceeded(ctx context.Context, run Run, spec Spec) (Run, error) {
 	endedAt := time.Now().UTC()
-	if err := s.updateRunState(ctx, run.ID, RunSucceeded, len(spec.Steps), &endedAt, RunFailNone, ""); err != nil {
-		return ports.Run{}, fmt.Errorf("automation: mark already-complete run succeeded: %w", err)
+	if err := s.updateRunStateFenced(context.WithoutCancel(ctx), run, RunSucceeded, len(spec.Steps), &endedAt, RunFailNone, ""); err != nil {
+		return Run{}, fmt.Errorf("automation: mark already-complete run succeeded: %w", err)
 	}
 	run.State = RunSucceeded
 	run.StepIndex = len(spec.Steps)
 	run.EndedAt = &endedAt
-	return runToPorts(run), nil
+	run.FailKind = RunFailNone
+	run.Message = ""
+	s.publishRun(run)
+	return run, nil
 }
 
 // spawnResumeSession spawns the ONE session ResumeRun drives for the
@@ -198,7 +232,7 @@ func (s *Service) spawnResumeSession(spec Spec, sessionName, workDir string) (po
 // SweepInterrupted is the exported wrapper claim.go's sweepInterrupted
 // needs to be reachable from outside the package (e.g. a periodic
 // crash-recovery job): it applies the package's own default staleness
-// threshold (D13) rather than requiring every caller to choose one.
+// threshold ("Interrupted Run Sweep") rather than requiring every caller to choose one.
 func (s *Service) SweepInterrupted(ctx context.Context) (int, error) {
 	return s.sweepInterrupted(ctx, defaultSweepMaxAge)
 }

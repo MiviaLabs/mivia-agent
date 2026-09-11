@@ -34,6 +34,21 @@ The TOML document contains a table of automation specifications keyed by automat
 # Automation fields
 ```
 
+Run history and fenced claims (see [Run History Schema](#run-history-schema))
+live in a SQLite store, not `automations.toml`. That store is the SAME
+one a chat session uses for its own context checkpoints: `mivia
+automations` (list/show/run/runs/resume/serve) and the TUI's Automations
+settings panel both resolve it through the identical rule a chat session
+uses - an explicit `[subagents] store_path` in `mivia.toml` (a relative
+path resolves against the workspace root, matching this repo's own
+dogfooded `.mivia/context.db`), or otherwise the shared, install-wide
+default `~/.mivia/context.db` used by every workspace on the machine.
+There is no separate `automations.db`. Before this was unified, the CLI
+and the TUI opened two different SQLite files for the same kind of run,
+so `mivia automations runs` could report "no runs recorded" for a run
+the TUI had just started, and a `serve` sweep could never see (or
+interrupt-mark) a run left running by the other surface.
+
 ### Atomic Writes
 
 When writing `automations.toml`, the store uses an atomic write sequence:
@@ -285,6 +300,8 @@ If worktree creation fails, the run terminates immediately with zero side effect
 
 Worktrees are not automatically removed after a run finishes. The resulting Git branch remains available for user inspection and manual cleanup.
 
+A worktree run's session store is not namespaced by the worktree directory. It shares the same root-resolved run store every other run uses (see Configuration and Storage), so run history for a worktree execution appears alongside every other automation's runs, not isolated per worktree.
+
 ### Headless Session Safety
 
 Automations run in headless background sessions without an interactive terminal.
@@ -477,6 +494,14 @@ If the daemon crashes or loses power while a run is in progress:
 - The next startup of `automations serve` (or a call to `SweepInterrupted`) scans all `running` rows.
 - If the claim is expired or missing, the runner updates the state to `interrupted` and sets `ended_at`.
 - Interrupted runs become eligible for manual resume.
+
+Because `automations serve` and the TUI's own startup sweep (run when
+the Automations settings panel wires up, see
+[File Locations](#file-locations)) read and write the one shared store,
+a run left `running` by either surface is swept and marked
+`interrupted` by whichever one starts next - a CLI `serve` daemon
+restarted after a TUI session crashed, or a TUI relaunch after a `serve`
+daemon was killed, both see and resolve the same stuck row.
 
 ## Limitations
 

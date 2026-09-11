@@ -325,24 +325,25 @@ func TestCreateRunPropagatesStoreError(t *testing.T) {
 	}
 }
 
-// TestUpdateRunStateTransitions proves updateRunState moves a run through
-// pending->running->succeeded and that each transition is reflected in
-// getRun/listRuns.
-func TestUpdateRunStateTransitions(t *testing.T) {
+// TestUpdateRunStateFencedTransitions proves updateRunStateFenced moves
+// a run through pending->running->succeeded while the row carries the
+// writer's claim token, and that getRun/listRuns reflect each step.
+func TestUpdateRunStateFencedTransitions(t *testing.T) {
 	db := newTestDB(t)
 	svc := newTestService(t, db)
 	ctx := context.Background()
 
 	started := time.Now().UTC()
-	if err := svc.createRun(ctx, Run{
+	runX := Run{
 		ID: "run-x", AutomationID: "auto-x", Origin: "manual",
-		State: RunPending, StepCount: 2, StartedAt: started,
-	}); err != nil {
+		State: RunPending, StepCount: 2, ClaimToken: "tok-x", StartedAt: started,
+	}
+	if err := svc.createRun(ctx, runX); err != nil {
 		t.Fatalf("createRun: %v", err)
 	}
 
-	if err := svc.updateRunState(ctx, "run-x", RunRunning, 0, nil, RunFailNone, ""); err != nil {
-		t.Fatalf("updateRunState -> running: %v", err)
+	if err := svc.updateRunStateFenced(ctx, runX, RunRunning, 0, nil, RunFailNone, ""); err != nil {
+		t.Fatalf("updateRunStateFenced -> running: %v", err)
 	}
 	got, ok, err := svc.getRun(ctx, "run-x")
 	if err != nil || !ok {
@@ -352,8 +353,8 @@ func TestUpdateRunStateTransitions(t *testing.T) {
 		t.Fatalf("after running transition = %+v, want State=running StepIndex=0 EndedAt=nil", got)
 	}
 
-	if err := svc.updateRunState(ctx, "run-x", RunRunning, 1, nil, RunFailNone, ""); err != nil {
-		t.Fatalf("updateRunState -> step 1: %v", err)
+	if err := svc.updateRunStateFenced(ctx, runX, RunRunning, 1, nil, RunFailNone, ""); err != nil {
+		t.Fatalf("updateRunStateFenced -> step 1: %v", err)
 	}
 	got, _, _ = svc.getRun(ctx, "run-x")
 	if got.StepIndex != 1 {
@@ -361,8 +362,8 @@ func TestUpdateRunStateTransitions(t *testing.T) {
 	}
 
 	ended := time.Now().UTC()
-	if err := svc.updateRunState(ctx, "run-x", RunSucceeded, 2, &ended, RunFailNone, "done"); err != nil {
-		t.Fatalf("updateRunState -> succeeded: %v", err)
+	if err := svc.updateRunStateFenced(ctx, runX, RunSucceeded, 2, &ended, RunFailNone, "done"); err != nil {
+		t.Fatalf("updateRunStateFenced -> succeeded: %v", err)
 	}
 	got, _, _ = svc.getRun(ctx, "run-x")
 	if got.State != RunSucceeded || got.StepIndex != 2 || got.EndedAt == nil || got.Message != "done" {
@@ -379,22 +380,23 @@ func TestUpdateRunStateTransitions(t *testing.T) {
 	}
 }
 
-// TestUpdateRunStateNotFound proves updateRunState on an unknown run ID
-// returns a named error rather than silently succeeding.
-func TestUpdateRunStateNotFound(t *testing.T) {
+// TestUpdateRunStateFencedNotFound proves updateRunStateFenced on an
+// unknown run ID reports ErrRunFenced rather than silently succeeding:
+// no row carries the token, so zero rows match.
+func TestUpdateRunStateFencedNotFound(t *testing.T) {
 	db := newTestDB(t)
 	svc := newTestService(t, db)
-	if err := svc.updateRunState(context.Background(), "no-such-run", RunRunning, 0, nil, RunFailNone, ""); err == nil {
-		t.Fatal("updateRunState on missing run: got nil error, want rejection")
+	missing := Run{ID: "no-such-run", AutomationID: "auto-x", ClaimToken: "tok"}
+	if err := svc.updateRunStateFenced(context.Background(), missing, RunRunning, 0, nil, RunFailNone, ""); !errors.Is(err, ErrRunFenced) {
+		t.Fatalf("updateRunStateFenced on missing run = %v, want ErrRunFenced", err)
 	}
 }
 
-// TestUpdateRunStatePropagatesStoreError closes the store's underlying
-// connection before calling updateRunState, so UpdateAutomationRunState
-// fails with a real error - exercising updateRunState's own error-wrap
-// branch, distinct from the not-found case above (which reaches the
-// store successfully and gets zero rows affected, not a real failure).
-func TestUpdateRunStatePropagatesStoreError(t *testing.T) {
+// TestUpdateRunStateFencedPropagatesStoreError closes the store's
+// underlying connection before the write, so the store fails with a
+// real error. This exercises the error-wrap branch, distinct from the
+// zero-rows case above.
+func TestUpdateRunStateFencedPropagatesStoreError(t *testing.T) {
 	db := newTestDB(t)
 	if err := db.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
@@ -403,8 +405,10 @@ func TestUpdateRunStatePropagatesStoreError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := svc.updateRunState(context.Background(), "run-x", RunRunning, 0, nil, RunFailNone, ""); err == nil {
-		t.Fatal("updateRunState against a closed store returned nil error, want a real error")
+	run := Run{ID: "run-x", AutomationID: "auto-x", ClaimToken: "tok"}
+	err = svc.updateRunStateFenced(context.Background(), run, RunRunning, 0, nil, RunFailNone, "")
+	if err == nil || errors.Is(err, ErrRunFenced) {
+		t.Fatalf("updateRunStateFenced against a closed store = %v, want a real store error", err)
 	}
 }
 
@@ -449,8 +453,8 @@ func TestNilDBRunStoreMethodsGracefulNeverPanic(t *testing.T) {
 	if err := svc.createRun(ctx, Run{ID: "run-1", AutomationID: "auto-1"}); err == nil {
 		t.Fatal("createRun with nil db: got nil error, want errNoRunStore")
 	}
-	if err := svc.updateRunState(ctx, "run-1", RunRunning, 0, nil, RunFailNone, ""); err == nil {
-		t.Fatal("updateRunState with nil db: got nil error, want errNoRunStore")
+	if err := svc.updateRunStateFenced(ctx, Run{ID: "run-1", AutomationID: "auto-1"}, RunRunning, 0, nil, RunFailNone, ""); err == nil {
+		t.Fatal("updateRunStateFenced with nil db: got nil error, want errNoRunStore")
 	}
 	if _, ok, err := svc.getRun(ctx, "run-1"); ok || err != nil {
 		t.Fatalf("getRun with nil db = (ok=%v err=%v), want (false, nil)", ok, err)
@@ -874,7 +878,7 @@ func TestSweepInterruptedPropagatesRealTakeoverError(t *testing.T) {
 }
 
 // TestSweepInterruptedPropagatesMarkInterruptedError covers
-// sweepInterrupted's own "mark interrupted" updateRunState error-wrap
+// sweepInterrupted's own "mark interrupted" interruptRunningRun error-wrap
 // branch: a running row with no claim at all (the ErrClaimNotHeld
 // branch, which does NOT skip like ErrClaimHeld) reaches the mark-
 // interrupted call for real, which then fails against a trigger that

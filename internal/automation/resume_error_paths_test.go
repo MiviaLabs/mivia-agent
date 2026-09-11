@@ -255,7 +255,7 @@ func TestResumeRunSpawnAndLoadSessionApprovalOverrideErrorFailsRun(t *testing.T)
 }
 
 // TestResumeRunUpdateRunStateRunningPropagatesStoreError covers
-// ResumeRun's own "mark RunRunning" updateRunState-error-and-return
+// ResumeRun's own "mark RunRunning" updateRunStateFenced-error-and-return
 // branch: a SQLite trigger allows the first automation_runs UPDATE
 // (updateRunClaimToken) to succeed for real, then fails every UPDATE
 // after that - so ResumeRun reaches a genuinely successful spawn/Load/
@@ -284,7 +284,7 @@ func TestResumeRunUpdateRunStateRunningPropagatesStoreError(t *testing.T) {
 }
 
 // TestResumeRunMarkAlreadyCompletePropagatesStoreError covers
-// markResumedRunSucceeded's own updateRunState-error-wrap branch,
+// markResumedRunSucceeded's own updateRunStateFenced-error-wrap branch,
 // reached through ResumeRun's "already complete" (StepIndex >=
 // len(spec.Steps)) branch: a run whose own step index already covers
 // every step reaches markResumedRunSucceeded directly, before

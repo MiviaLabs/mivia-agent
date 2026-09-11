@@ -20,3 +20,17 @@ func TestResumeAutomationRunSatisfiesAutomationEdit(t *testing.T) {
 		t.Fatalf("AutomationEdit holding ResumeAutomationRun type-asserted back as %T", e)
 	}
 }
+
+// TestCancelAutomationRunSatisfiesAutomationEdit mirrors
+// TestResumeAutomationRunSatisfiesAutomationEdit above for
+// CancelAutomationRun (settings_automations.go): proves the marker
+// method is implemented and the type round-trips through the closed
+// union.
+func TestCancelAutomationRunSatisfiesAutomationEdit(t *testing.T) {
+	edit := CancelAutomationRun{RunID: "run-1"}
+	edit.isAutomationEdit()
+	var e AutomationEdit = edit
+	if _, ok := e.(CancelAutomationRun); !ok {
+		t.Fatalf("AutomationEdit holding CancelAutomationRun type-asserted back as %T", e)
+	}
+}

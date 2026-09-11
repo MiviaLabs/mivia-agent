@@ -166,6 +166,10 @@ const (
 	// an operator tighten without first applying a weaker posture.
 	IDSettingsCycleBack ID = "settings-cycle-back"
 	IDSettingsTrigger   ID = "settings-trigger"
+	// IDSettingsCancelRun stops the currently live-watched run
+	// (Automations section only). "s" not "c": "c" is already
+	// IDSettingsClearOverride in this same context.
+	IDSettingsCancelRun ID = "settings-cancel-run"
 	IDSettingsFilter    ID = "settings-filter"
 	IDSettingsReveal    ID = "settings-reveal"
 	IDSettingsBack      ID = "settings-back"
@@ -350,6 +354,7 @@ func settingsBindings() []Binding {
 		// watch on it. Harmless no-op on any other section (their
 		// handleKey switches do not have a "t" case).
 		{ID: IDSettingsTrigger, Context: ContextSettings, Keys: []string{"t"}, Help: "trigger a manual run", Short: "trigger"},
+		{ID: IDSettingsCancelRun, Context: ContextSettings, Keys: []string{"s"}, Help: "stop the live run", Short: "stop"},
 		{ID: IDSettingsFilter, Context: ContextSettings, Keys: []string{"/"}, Help: "filter", Short: "filter"},
 		{ID: IDSettingsReveal, Context: ContextSettings, Keys: []string{"ctrl+r"}, Help: "reveal the focused secret value"},
 		{ID: IDSettingsBack, Context: ContextSettings, Keys: []string{"esc"}, Help: "back", Short: "back"},

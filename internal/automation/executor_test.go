@@ -42,7 +42,7 @@ import (
 // events.
 type recordingConversation struct {
 	mu       sync.Mutex
-	sent     []string
+	sent     []intent.Send
 	failAt   int // 1-based Send call count to fail at; 0 means never fail
 	failWith error
 	// onSend, when non-nil, is invoked synchronously on every successful
@@ -60,7 +60,7 @@ func newRecordingConversation() *recordingConversation {
 
 func (c *recordingConversation) Send(ctx context.Context, in intent.Send) (ports.TurnHandle, error) {
 	c.mu.Lock()
-	c.sent = append(c.sent, in.Text)
+	c.sent = append(c.sent, in)
 	n := len(c.sent)
 	onSend := c.onSend
 	c.mu.Unlock()
@@ -89,6 +89,20 @@ func (c *recordingConversation) sentTexts() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]string, len(c.sent))
+	for i, in := range c.sent {
+		out[i] = in.Text
+	}
+	return out
+}
+
+// sentIntents returns every intent.Send this conversation recorded, in
+// order, as full structs - used by tests that need to assert on
+// PersistedText as well as Text (sentTexts only exposes Text, for every
+// pre-existing test that only ever cared about the sent prompt string).
+func (c *recordingConversation) sentIntents() []intent.Send {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]intent.Send, len(c.sent))
 	copy(out, c.sent)
 	return out
 }
@@ -255,6 +269,15 @@ func TestRunOnceDedupConcurrent(t *testing.T) {
 // cliworkflow/cliagents machinery, not this file's own dispatch-order
 // logic. StepWorkflow's own zero-value AllowPublish contract is pinned
 // separately below (TestNewWorkflowStartRequestNeverSetsAllowPublish).
+//
+// StepSkill's ref ("foo") must resolve against a real skill for the run
+// to succeed (the executor no longer sends the literal "/"+Ref text -
+// see sendSkillStep/skillstep.go); fakeExecSpawner.CreateFreshInDir
+// always binds a nil *chat.Session (D2: "several steps, one session"
+// tests exercise dispatch order, not the real bind wiring), so the
+// registry must reach runStep through Service.Config.SkillRegistry, the
+// same fallback skillRegistryFor uses when a run's own bound session
+// carries none.
 func TestRunOnceMixedActionOneSessionInOrder(t *testing.T) {
 	root := t.TempDir()
 	db := newTestDB(t)
@@ -267,7 +290,11 @@ func TestRunOnceMixedActionOneSessionInOrder(t *testing.T) {
 	})
 	conv := newRecordingConversation()
 	spawn := &fakeExecSpawner{conv: conv}
-	svc, err := New(root, db, spawn, Config{})
+	reg := skills.NewRegistry()
+	if err := reg.Register(skills.Definition{Name: "foo", Instructions: "do foo things", UserInvocable: true}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	svc, err := New(root, db, spawn, Config{SkillRegistry: func() *skills.Registry { return reg }})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -279,15 +306,21 @@ func TestRunOnceMixedActionOneSessionInOrder(t *testing.T) {
 	if run.State != ports.RunSucceeded {
 		t.Fatalf("RunOnce State = %v, want RunSucceeded: %+v", run.State, run)
 	}
-	want := []string{"hello", "/foo", "/compact"}
-	got := conv.sentTexts()
-	if len(got) != len(want) {
-		t.Fatalf("sent texts = %v, want %v", got, want)
+	sent := conv.sentIntents()
+	if len(sent) != 3 {
+		t.Fatalf("sentIntents = %v, want exactly 3", sent)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("sent texts = %v, want %v (order mismatch at %d)", got, want, i)
-		}
+	if sent[0].Text != "hello" {
+		t.Fatalf("sentIntents[0].Text = %q, want %q", sent[0].Text, "hello")
+	}
+	if !strings.Contains(sent[1].Text, `<skill-instructions name="foo">`) || !strings.Contains(sent[1].Text, "do foo things") {
+		t.Fatalf("sentIntents[1].Text = %q, want the rendered foo skill instructions", sent[1].Text)
+	}
+	if sent[1].PersistedText != "/foo" {
+		t.Fatalf("sentIntents[1].PersistedText = %q, want %q", sent[1].PersistedText, "/foo")
+	}
+	if sent[2].Text != "/compact" {
+		t.Fatalf("sentIntents[2].Text = %q, want %q", sent[2].Text, "/compact")
 	}
 	if spawn.createCallCount() != 1 {
 		t.Fatalf("CreateFreshInDir called %d times, want exactly 1 (one session for the whole mixed action)", spawn.createCallCount())
@@ -355,7 +388,7 @@ func TestRunOnceWorktreeCreationFailureNoSessionNoOrphan(t *testing.T) {
 // TestRunOnceChecksPointsStepIndex covers the plan's "checkpoints step
 // index" test: a 3-step run whose THIRD step fails must have already
 // checkpointed steps 0 and 1 (StepIndex advanced to 1 then 2) before the
-// failure - proving updateRunState runs after EVERY successful step, not
+// failure - proving updateRunStateFenced runs after EVERY successful step, not
 // only once at the end.
 func TestRunOnceChecksPointsStepIndex(t *testing.T) {
 	root := t.TempDir()
@@ -637,10 +670,10 @@ func TestRunOnceStartRunPropagatesCreateRunError(t *testing.T) {
 // transition) to succeed for real, then fails every UPDATE after that
 // - so RunOnce reaches spawnRunSession successfully (a fresh session
 // spawns and the D8 override installs) before its own separate
-// updateRunSession call is the one that hits the trigger. The run must
-// still be marked RunFailed via failRun (which itself tolerates its own
-// updateRunState call failing under the same trigger), not returned as
-// a bare error.
+// updateRunSession call is the one that hits the trigger. The failure
+// goes through failRun, not a bare error. failRun's own write fails
+// under the same trigger, so the view RunOnce returns is the durable
+// row: still running, with no message.
 func TestRunOnceUpdateRunSessionPropagatesStoreError(t *testing.T) {
 	root := t.TempDir()
 	db := newTestDB(t)
@@ -658,11 +691,15 @@ func TestRunOnceUpdateRunSessionPropagatesStoreError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce: got error %v, want nil (failure is recorded on the run via failRun)", err)
 	}
-	if run.State != ports.RunFailed {
-		t.Fatalf("RunOnce State = %v, want RunFailed", run.State)
+	if run.State != ports.RunRunning || run.Message != "" {
+		t.Fatalf("RunOnce view = state %v message %q, want the durable running row with no message", run.State, run.Message)
 	}
-	if !strings.Contains(run.Message, "record run session") {
-		t.Fatalf("run.Message = %q, want it to name the record-run-session failure", run.Message)
+	row, ok, gerr := db.GetAutomationRun(context.Background(), run.ID)
+	if gerr != nil || !ok {
+		t.Fatalf("GetAutomationRun: ok=%v err=%v", ok, gerr)
+	}
+	if row.State != string(RunRunning) {
+		t.Fatalf("row state = %q, want running (the failed terminal write left it)", row.State)
 	}
 }
 

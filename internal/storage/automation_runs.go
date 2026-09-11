@@ -13,12 +13,13 @@ import (
 var ErrAutomationRunNotFound = errors.New("automation run not found")
 
 // AutomationRun is one row of the automation_runs table
-// (internal/automation's D1/D7/D13 run lifecycle, docs/design/automations.md).
+// (internal/automation's run lifecycle; "Run History Schema" in
+// docs/design/automations.md).
 // Columns match migrateAutomationRunsSchema (automation_schema.go) exactly.
 // Timestamps are RFC3339 strings, matching this store's other TEXT-timestamp
 // columns (e.g. run_claims.acquired_at); EndedAt is nil until the run
 // reaches a terminal state. internal/automation owns ID/AutomationID charset
-// validation (D11) and the state-name vocabulary; this type and its methods
+// validation ("Identification Rules") and the state-name vocabulary; this type and its methods
 // perform no automation-domain validation, only the SQL round trip.
 type AutomationRun struct {
 	ID             string
@@ -71,6 +72,57 @@ func (s *SQLite) UpdateAutomationRunState(ctx context.Context, id, state string,
 		return ErrAutomationRunNotFound
 	}
 	return nil
+}
+
+// UpdateAutomationRunStateFenced writes the same lifecycle columns as
+// UpdateAutomationRunState, but only when the row's claim_token still
+// equals claimToken. It returns false, nil when no row matched: the
+// caller lost its claim (a resume rotated the token) or the id is
+// unknown. Timestamps are RFC3339 strings, like every other column here.
+func (s *SQLite) UpdateAutomationRunStateFenced(ctx context.Context, id, claimToken, state string, stepIndex int, endedAt *string, failKind, message string) (bool, error) {
+	return s.execAutomationRunUpdate(ctx, id, `UPDATE automation_runs SET state=?, step_index=?, ended_at=?, fail_kind=?, message=? WHERE id=? AND claim_token=?`,
+		state, stepIndex, endedAt, failKind, message, id, claimToken)
+}
+
+// UpdateAutomationRunStateFencedIfRunning writes the same lifecycle
+// columns as UpdateAutomationRunStateFenced, but only while the row's
+// claim_token still equals claimToken AND its state is still 'running'.
+// It exists for the executor's mid-run checkpoint: mirroring
+// InterruptRunningAutomationRun's own "WHERE state='running'" guard
+// closes the race where that conditional interrupt can land on a row
+// between a step's completion and its checkpoint write - without this
+// added state guard, the checkpoint's claim-token-only fence could
+// overwrite an already-interrupted row back to state='running' with a
+// later step_index, resurrecting a row crash recovery already closed
+// out. It returns false, nil when no row matched: the caller lost its
+// claim, the id is unknown, or - the case this method exists for - the
+// row already moved off running.
+func (s *SQLite) UpdateAutomationRunStateFencedIfRunning(ctx context.Context, id, claimToken, state string, stepIndex int, endedAt *string, failKind, message string) (bool, error) {
+	return s.execAutomationRunUpdate(ctx, id, `UPDATE automation_runs SET state=?, step_index=?, ended_at=?, fail_kind=?, message=? WHERE id=? AND claim_token=? AND state='running'`,
+		state, stepIndex, endedAt, failKind, message, id, claimToken)
+}
+
+// InterruptRunningAutomationRun marks a row interrupted only while it is
+// still in state running, and keeps its step_index, so a run that
+// finished or checkpointed between a read and this write is never
+// overwritten. It returns false, nil when no row matched.
+func (s *SQLite) InterruptRunningAutomationRun(ctx context.Context, id, endedAt, message string) (bool, error) {
+	return s.execAutomationRunUpdate(ctx, id, `UPDATE automation_runs SET state='interrupted', ended_at=?, fail_kind='', message=? WHERE id=? AND state='running'`,
+		endedAt, message, id)
+}
+
+// execAutomationRunUpdate runs one conditional UPDATE and reports
+// whether a row matched.
+func (s *SQLite) execAutomationRunUpdate(ctx context.Context, id, query string, args ...any) (bool, error) {
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, fmt.Errorf("update automation run %q: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update automation run %q: %w", id, err)
+	}
+	return n > 0, nil
 }
 
 // UpdateAutomationRunSession persists sessionName onto an existing run
@@ -148,7 +200,8 @@ func (s *SQLite) ListAutomationRuns(ctx context.Context, automationID string, li
 }
 
 // ListRunningAutomationRuns reads every run currently in state "running",
-// across all automations - the crash-recovery sweep's input set (D13).
+// across all automations - the crash-recovery sweep's input set
+// ("Interrupted Run Sweep").
 func (s *SQLite) ListRunningAutomationRuns(ctx context.Context) ([]AutomationRun, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+automationRunColumns+` FROM automation_runs WHERE state = 'running' ORDER BY started_at ASC, id ASC`)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -88,12 +89,21 @@ func (h *HeadlessSpawner) buildCompleter() provider.Completer {
 	return comp
 }
 
-// storePathFor resolves the checkpoint store path for a session rooted at
-// dir (workspace.ContextStorePath's namespaced "context.db" under dir's
-// .mivia directory), mirroring cliworkflow.ApplyWorkflowStoreRoot's own
-// namespacing convention for a workflow/automation-run store.
-func storePathFor(dir string) string {
-	return workspace.ContextStorePath(dir)
+// storePathFor resolves the checkpoint store path a spawned session
+// uses: root's own clichat.ContextStorePath(root, cfg), the SAME store
+// openAutomationStore (automations.go) opens for the Service's run
+// records.
+//
+// Deliberately ignores any worktree directory a run executes in: a
+// worktree run must share the root/global automation and session store,
+// not a per-worktree-namespaced one, so CLI and TUI run history stay
+// unified regardless of where a step executes. This is a change from
+// the prior behavior (workspace.ContextStorePath(dir), namespaced by the
+// worktree's own directory), which forked a worktree run's session
+// history into its own SQLite file, invisible to `mivia automations
+// runs` and to the TUI's history for the same workspace.
+func storePathFor(root string, cfg config.SubagentConfig) string {
+	return clichat.ContextStorePath(root, cfg)
 }
 
 // CreateFreshInDir satisfies automation.SessionSpawner: builds a fresh
@@ -124,7 +134,7 @@ func (h *HeadlessSpawner) CreateFreshInDir(bind func(*chat.Session) (string, err
 		Config:      h.res,
 		Completer:   h.buildCompleter(),
 		Registry:    composition.RegistryInput{Workspace: wsRoot},
-		StorePath:   storePathFor(workDir),
+		StorePath:   storePathFor(h.root, h.res.Subagents),
 		WorkspaceID: workDir,
 	})
 	if err != nil {

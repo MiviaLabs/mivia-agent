@@ -43,6 +43,11 @@ func writeAutomationsFixture(t *testing.T, id string) string {
 	stubURL := stubProviderServer(t)
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
 	t.Setenv("CLIAUTOMATIONS_TEST_KEY", "test-key")
+	// [subagents] store_path pins the automation/session store under
+	// root's own .mivia dir (this repo's own dogfooded config does the
+	// same) rather than the default shared, HOME-scoped store - so each
+	// test's fixture root gets its own isolated run history file instead
+	// of sharing testmain_test.go's one package-wide isolated HOME.
 	cfg := `[provider]
 name = "openrouter"
 
@@ -51,6 +56,9 @@ default_model = "test/model"
 base_url = "` + stubURL + `"
 api_key_env = "CLIAUTOMATIONS_TEST_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+store_path = ".mivia/context.db"
 `
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write mivia.toml: %v", err)
@@ -254,6 +262,9 @@ default_model = "test/model"
 base_url = "` + stubURL + `"
 api_key_env = "CLIAUTOMATIONS_FAIL_TEST_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+store_path = ".mivia/context.db"
 `
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write mivia.toml: %v", err)
@@ -319,6 +330,9 @@ default_model = "test/model"
 base_url = "` + stubURL + `"
 api_key_env = "CLIAUTOMATIONS_WAIT_FAIL_TEST_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+store_path = ".mivia/context.db"
 `
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write mivia.toml: %v", err)

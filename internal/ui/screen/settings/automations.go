@@ -97,18 +97,42 @@ func (s *automationsSection) refreshRuns() {
 }
 
 type automationsSavedMsg struct{}
-type automationsFailedMsg struct{ message string }
-type automationsRunMsg struct{ run ports.Run }
-type automationsWatchEndedMsg struct{}
 
-func awaitAutomationsSave(handle ports.SaveHandle) tea.Cmd {
+// automationsFailedMsg carries a save failure. awaitAutomationsSave is
+// shared by toggleEnabled, remove, trigger, cancelRun, and the editor's
+// saveEditor, but only trigger and cancelRun legitimately target the
+// currently armed watch (they are the only operations that arm or act
+// on it). cancelsWatch distinguishes those two call sites from the
+// others so Update does not tear down an unrelated automation's live
+// watch on an unrelated failed save (cursor navigation only clears
+// s.liveRun, never s.watch, so the watch can still belong to a
+// different row than the one that just failed to save).
+type automationsFailedMsg struct {
+	message      string
+	cancelsWatch bool
+}
+type automationsRunMsg struct{ run ports.Run }
+
+// automationsWatchEndedMsg carries the handle whose channel closed, so
+// Update can tell a superseded watch's teardown (e.g. Cancel() called
+// by a later trigger or by automationsFailedMsg) from the CURRENT
+// watch's own end: only the latter should clear s.watch/s.watchID.
+type automationsWatchEndedMsg struct{ handle ports.RunHandle }
+
+// awaitAutomationsSave waits for handle to resolve. cancelsWatch is
+// threaded through to the resulting automationsFailedMsg on failure: pass
+// true only from the call sites that legitimately own the currently
+// armed watch (trigger, cancelRun); every other call site passes false so
+// an unrelated automation's failed save cannot tear down this row's live
+// watch.
+func awaitAutomationsSave(handle ports.SaveHandle, cancelsWatch bool) tea.Cmd {
 	return func() tea.Msg {
 		var last ports.SaveEvent
 		for ev := range handle.Events() {
 			last = ev
 		}
 		if last.State == ports.SaveFailed {
-			return automationsFailedMsg{message: last.Message}
+			return automationsFailedMsg{message: last.Message, cancelsWatch: cancelsWatch}
 		}
 		return automationsSavedMsg{}
 	}
@@ -122,7 +146,7 @@ func watchNext(handle ports.RunHandle) tea.Cmd {
 	return func() tea.Msg {
 		run, ok := <-handle.Events()
 		if !ok {
-			return automationsWatchEndedMsg{}
+			return automationsWatchEndedMsg{handle: handle}
 		}
 		return automationsRunMsg{run: run}
 	}
@@ -136,11 +160,31 @@ func (s *automationsSection) Update(msg tea.Msg) (section, tea.Cmd) {
 		return s, nil
 	case automationsFailedMsg:
 		s.notice = msg.message
+		if msg.cancelsWatch {
+			if s.watch != nil {
+				s.watch.Cancel()
+				s.watch, s.watchID = nil, ""
+			}
+			// A cancelsWatch failure means the backend rejected the
+			// action the user's last-seen liveRun snapshot was based on
+			// (e.g. cancelRun lost a race against the run reaching a
+			// terminal state) - that snapshot is now stale. Clear it and
+			// reconcile against the store's authoritative view, same as
+			// handleRunUpdate's own terminal-state branch does.
+			s.liveRun = nil
+			s.rebuild()
+		}
 		return s, nil
 	case automationsRunMsg:
 		return s.handleRunUpdate(msg.run)
 	case automationsWatchEndedMsg:
-		s.watch, s.watchID = nil, ""
+		// Only the CURRENT watch's own end clears state; a superseded
+		// watch's teardown (already replaced by a later trigger, or
+		// cancelled by automationsFailedMsg above) arrives here too and
+		// must be a no-op, not a clobber of the watch armed after it.
+		if msg.handle == s.watch {
+			s.watch, s.watchID = nil, ""
+		}
 		return s, nil
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)
@@ -158,6 +202,10 @@ func (s *automationsSection) Update(msg tea.Msg) (section, tea.Cmd) {
 func (s *automationsSection) handleRunUpdate(run ports.Run) (section, tea.Cmd) {
 	s.liveRun = &run
 	if run.State != ports.RunPending && run.State != ports.RunRunning {
+		if s.watch != nil {
+			s.watch.Cancel()
+			s.watch, s.watchID = nil, ""
+		}
 		s.rebuild()
 		return s, nil
 	}
@@ -201,6 +249,8 @@ func (s *automationsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 		return s.toggleEnabled()
 	case "t":
 		return s.trigger()
+	case "s":
+		return s.cancelRun()
 	case "x":
 		return s.remove()
 	case "n":
@@ -222,7 +272,7 @@ func (s *automationsSection) toggleEnabled() (section, tea.Cmd) {
 		s.notice = err.Error()
 		return s, nil
 	}
-	return s, awaitAutomationsSave(handle)
+	return s, awaitAutomationsSave(handle, false)
 }
 
 func (s *automationsSection) remove() (section, tea.Cmd) {
@@ -231,7 +281,7 @@ func (s *automationsSection) remove() (section, tea.Cmd) {
 		s.notice = err.Error()
 		return s, nil
 	}
-	return s, awaitAutomationsSave(handle)
+	return s, awaitAutomationsSave(handle, false)
 }
 
 // trigger fires a manual run and switches to watching it. Watch opens
@@ -256,7 +306,22 @@ func (s *automationsSection) trigger() (section, tea.Cmd) {
 		s.notice = err.Error()
 		return s, nil
 	}
-	return s, tea.Batch(awaitAutomationsSave(handle), watchNext(s.watch))
+	return s, tea.Batch(awaitAutomationsSave(handle, true), watchNext(s.watch))
+}
+
+// cancelRun stops the run currently shown as live, if any. A no-op
+// when there is no live run or it has already reached a terminal
+// state - there is nothing left for the backend to cancel.
+func (s *automationsSection) cancelRun() (section, tea.Cmd) {
+	if s.liveRun == nil || (s.liveRun.State != ports.RunPending && s.liveRun.State != ports.RunRunning) {
+		return s, nil
+	}
+	handle, err := s.store.Apply(context.Background(), ports.ScopeUser, ports.CancelAutomationRun{RunID: s.liveRun.ID})
+	if err != nil {
+		s.notice = err.Error()
+		return s, nil
+	}
+	return s, awaitAutomationsSave(handle, true)
 }
 
 func (s *automationsSection) View() string {
@@ -308,5 +373,5 @@ func (s *automationsSection) Hints() []keymap.ID {
 			keymap.IDSettingsBack,
 		}
 	}
-	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle, keymap.IDSettingsTrigger, keymap.IDSettingsNew, keymap.IDSettingsDelete}
+	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle, keymap.IDSettingsTrigger, keymap.IDSettingsCancelRun, keymap.IDSettingsNew, keymap.IDSettingsDelete}
 }

@@ -99,7 +99,7 @@ func TestApplyAutomationsRoundTrip(t *testing.T) {
 // TriggerAutomation is wired to RunOnce (chunk 6): triggering an
 // automation ID the store has never seen surfaces RunOnce's own
 // ErrAutomationNotFound through the SaveHandle's SaveFailed event,
-// rather than the old "not yet implemented" stub error.
+// rather than a silent no-op.
 func TestApplyTriggerAutomationRunsAndFailsForUnknownID(t *testing.T) {
 	root := t.TempDir()
 	svc, err := New(root, nil, nil, Config{})
@@ -142,7 +142,8 @@ func TestApplyResumeAutomationRunDelegatesToResumeRun(t *testing.T) {
 }
 
 // TestWatchNoRunsDoesNotFabricate proves Watch on an automation with no
-// runs neither errors nor invents a run: Events() closes immediately.
+// runs neither errors nor invents a run: Events() stays silent, and
+// Cancel closes it.
 func TestWatchNoRunsDoesNotFabricate(t *testing.T) {
 	root := t.TempDir()
 	svc, err := New(root, nil, nil, Config{})
@@ -155,11 +156,17 @@ func TestWatchNoRunsDoesNotFabricate(t *testing.T) {
 	}
 	select {
 	case run, ok := <-h.Events():
+		t.Fatalf("Watch Events() delivered a fabricated run: %+v (ok=%v)", run, ok)
+	case <-time.After(50 * time.Millisecond):
+	}
+	h.Cancel()
+	select {
+	case _, ok := <-h.Events():
 		if ok {
-			t.Fatalf("Watch Events() delivered a fabricated run: %+v", run)
+			t.Fatal("Watch Events() delivered a run after Cancel")
 		}
 	case <-time.After(time.Second):
-		t.Fatal("Watch Events() did not close promptly")
+		t.Fatal("Watch Events() did not close after Cancel")
 	}
 	if got := svc.Runs("no-such-automation", 10); got != nil {
 		t.Fatalf("Runs() = %v, want nil (no fabricated runs)", got)

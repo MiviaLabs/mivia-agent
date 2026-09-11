@@ -256,7 +256,15 @@ func (s *automationsSection) automationFromForm() (ports.Automation, string) {
 	promptVal := s.formFields[promptIdx].Value()
 	switch s.formFields[actionIdx].Value() {
 	case "skill":
-		result.Action = ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepSkill, Ref: promptVal}}}
+		// The executor (internal/automation/skillstep.go) prepends its
+		// own leading "/" when rendering a StepSkill dispatch - a
+		// promptVal already carrying one (typed with a leading slash, or
+		// pasted from a slash-command reference) would otherwise
+		// double-slash the stored Ref. Strip every leading slash here so
+		// Ref is always the bare skill name/args, matching what
+		// parseSkillRef expects on the read side.
+		skillRef := strings.TrimLeft(strings.TrimSpace(promptVal), "/")
+		result.Action = ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepSkill, Ref: skillRef}}}
 	default:
 		result.Action = ports.ActionRef{Steps: []ports.ActionStep{{Kind: ports.ActionStepPrompt, Prompt: promptVal}}}
 	}
@@ -283,7 +291,7 @@ func (s *automationsSection) saveEditor() (section, tea.Cmd) {
 		return s, nil
 	}
 	s.editing = false
-	return s, awaitAutomationsSave(handle)
+	return s, awaitAutomationsSave(handle, false)
 }
 
 func (s *automationsSection) renderEditor() string {

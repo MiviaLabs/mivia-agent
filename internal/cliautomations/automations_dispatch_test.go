@@ -47,6 +47,9 @@ default_model = "test/model"
 base_url = "http://127.0.0.1:0"
 api_key_env = "CLIAUTOMATIONS_DISPATCH_SERVE_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+store_path = ".mivia/context.db"
 `
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write mivia.toml: %v", err)
@@ -216,11 +219,14 @@ func TestBuildServiceOpenAutomationStoreError(t *testing.T) {
 	// Make the .mivia directory unwritable AFTER a real, loadable config
 	// already exists under it, so resolveWorkspaceAndConfig succeeds for
 	// real and buildService reaches its own openAutomationStore call -
-	// which then fails to create automations.db under the now-read-only
-	// directory. Making .mivia read-only BEFORE writing a config (the
-	// prior version of this test) instead made config.Load itself fail
-	// first (no [providers.openrouter] section ever got written), never
-	// reaching openAutomationStore at all.
+	// which then fails to create context.db under the now-read-only
+	// directory (writeAutomationsFixture's [subagents] store_path pins
+	// the store under root's own .mivia, so this chmod actually lands on
+	// the directory the resolved path opens). Making .mivia read-only
+	// BEFORE writing a config (the prior version of this test) instead
+	// made config.Load itself fail first (no [providers.openrouter]
+	// section ever got written), never reaching openAutomationStore at
+	// all.
 	miviaDir := filepath.Join(root, ".mivia")
 	if err := os.Chmod(miviaDir, 0o500); err != nil {
 		t.Fatalf("chmod read-only .mivia: %v", err)

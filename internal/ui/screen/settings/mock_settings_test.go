@@ -531,10 +531,45 @@ func (m *mockSettings) applyAutomation(e ports.AutomationEdit) error {
 			return fmt.Errorf("automation %q not found", v.ID)
 		}
 		m.automations[i].Enabled = v.On
+	case ports.CancelAutomationRun:
+		return m.cancelRun(v.RunID)
 	default:
 		return fmt.Errorf("unknown automation edit %T", e)
 	}
 	return nil
+}
+
+// cancelRun mirrors internal/uiadapter's in-memory CancelAutomationRun
+// handling: find the run by ID across every automation's run list,
+// mark it RunCancelled with EndedAt set, and publish it to watchers -
+// but only while the run is still cancellable (RunPending/RunRunning).
+// A run this mock's own advanceRun goroutine already resolved to
+// RunSucceeded/RunFailed must not be overwritten by a late cancel.
+// Caller holds m.mu (invoked from newSaveHandle's apply closure).
+func (m *mockSettings) cancelRun(runID string) error {
+	for automationID, runs := range m.runs {
+		for i := range runs {
+			if runs[i].ID != runID {
+				continue
+			}
+			if runs[i].State != ports.RunPending && runs[i].State != ports.RunRunning {
+				return fmt.Errorf("run %q is not cancellable (state %v)", runID, runs[i].State)
+			}
+			runs[i].State = ports.RunCancelled
+			now := timeNow()
+			runs[i].EndedAt = &now
+			if j := m.findAutomation(automationID); j >= 0 {
+				m.automations[j].LastRun = &ports.RunSummary{
+					ID:        runs[i].ID,
+					State:     runs[i].State,
+					StartedAt: runs[i].StartedAt,
+				}
+			}
+			m.publishRunLocked(runs[i])
+			return nil
+		}
+	}
+	return fmt.Errorf("run %q not found", runID)
 }
 
 func (m *mockSettings) startRun(automationID string) error {

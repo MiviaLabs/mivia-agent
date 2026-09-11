@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestServeCommandExitsCleanlyOnSignal proves `automations serve` stops
@@ -31,6 +30,9 @@ default_model = "test/model"
 base_url = "http://127.0.0.1:0"
 api_key_env = "CLIAUTOMATIONS_SERVE_TEST_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+store_path = ".mivia/context.db"
 `
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write mivia.toml: %v", err)
@@ -81,6 +83,9 @@ default_model = "test/model"
 base_url = "http://127.0.0.1:0"
 api_key_env = "CLIAUTOMATIONS_SERVE_DEADLINE_TEST_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
+
+[subagents]
+store_path = ".mivia/context.db"
 `
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write mivia.toml: %v", err)
@@ -147,9 +152,9 @@ func TestServeCommandSweepsInterruptedAtStartup(t *testing.T) {
 		t.Fatal("runServeCommand did not return within 5s of cancellation")
 	}
 
-	db, err := storage.OpenSQLite(workspace.NamespacePath(root, "automations.db"))
+	db, err := storage.OpenSQLite(automationStorePath(t, root))
 	if err != nil {
-		t.Fatalf("open automations db: %v", err)
+		t.Fatalf("open automation store: %v", err)
 	}
 	defer db.Close()
 	row, ok, err := db.GetAutomationRun(context.Background(), "sweep-startup-run")
