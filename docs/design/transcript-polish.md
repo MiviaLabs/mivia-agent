@@ -245,8 +245,8 @@ copy need the identity.
 R9. **Kill the streaming pop, within the repaint budget.** Done. The
 pending tail renders through the same markdown path as the committed
 block via `render.StreamRenderer`, a stable-prefix cache
-(`internal/ui/render/stream_markdown.go`; C6,
-[chat-tui-crush-comparison.md](chat-tui-crush-comparison.md)), and
+(`internal/ui/render/stream_markdown.go`; C6 of the removed chat TUI
+Crush-comparison plan), and
 `FlushMsg` now ticks at 66 ms (15 Hz, inside rule 2.5's 10-20 Hz
 ceiling; `uikit/config/defaults.go`), down from the prior 40 ms (25 Hz),
 which sat above that line. Commit rule: an open code fence, blockquote,

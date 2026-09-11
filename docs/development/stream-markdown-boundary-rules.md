@@ -4,8 +4,7 @@ Owner: quality. Implementation:
 [internal/ui/render/stream_markdown.go](../../internal/ui/render/stream_markdown.go).
 Tests: `stream_markdown_test.go`, fuzz target
 `FuzzStreamedMarkdownMatchesOneShot` in `stream_markdown_fuzz_test.go`.
-Part of C6 in
-[chat-tui-crush-comparison.md](../design/chat-tui-crush-comparison.md).
+Part of C6 in the (removed) chat TUI Crush-comparison plan.
 
 ## Why this exists
 
