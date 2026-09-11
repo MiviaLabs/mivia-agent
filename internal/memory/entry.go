@@ -106,12 +106,27 @@ const (
 // changes scope, verdict, tags, or references, and it never makes a field
 // empty that was non-empty.
 func (e Entry) Clamp() Entry {
-	e.Title = truncateRunes(e.Title, maxTitleLen)
-	e.Summary = truncateRunes(e.Summary, maxSummaryLen)
-	e.Why = truncateRunes(e.Why, maxWhyLen)
-	e.Good = truncateRunes(e.Good, maxBodyFieldLen)
-	e.Bad = truncateRunes(e.Bad, maxBodyFieldLen)
-	return e
+	clamped, _ := e.ClampWithReport()
+	return clamped
+}
+
+// ClampWithReport returns a copy of e with every free-text field truncated to its
+// rune limit, along with a slice of field names that were truncated.
+func (e Entry) ClampWithReport() (Entry, []string) {
+	var truncated []string
+	check := func(name, s string, max int) string {
+		out := truncateRunes(s, max)
+		if len(out) < len(s) {
+			truncated = append(truncated, name)
+		}
+		return out
+	}
+	e.Title = check("title", e.Title, maxTitleLen)
+	e.Summary = check("summary", e.Summary, maxSummaryLen)
+	e.Why = check("why", e.Why, maxWhyLen)
+	e.Good = check("good", e.Good, maxBodyFieldLen)
+	e.Bad = check("bad", e.Bad, maxBodyFieldLen)
+	return e, truncated
 }
 
 // truncateRunes returns the longest prefix of s that is at most max runes,

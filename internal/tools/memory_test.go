@@ -482,3 +482,22 @@ func TestMemoryEntryClampPinsRuneTruncation(t *testing.T) {
 		t.Error("clamped multibyte summary is not valid UTF-8")
 	}
 }
+
+func TestMemorySaveReportsTruncatedFields(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memorySaveTool{store: store}
+
+	input := map[string]any{
+		"title":   "Short title",
+		"summary": strings.Repeat("s", 450),
+		"why":     "valid why",
+	}
+	raw, _ := json.Marshal(input)
+	out, err := tool.Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !strings.Contains(out, "note: summary truncated to limit") {
+		t.Errorf("expected truncation note in output, got: %q", out)
+	}
+}
