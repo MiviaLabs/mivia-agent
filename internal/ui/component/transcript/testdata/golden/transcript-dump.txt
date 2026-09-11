@@ -48,5 +48,13 @@
   [2;38;2;161;161;170mv error[m [38;2;250;250;250mtransport refused after 3 attempts[m  [38;2;220;78;78mfatal[m
   [38;2;82;82;91m│ [m  dial tcp 10.0.0.4:443: i/o timeout
   [2;38;2;161;161;170m  notice[m [38;2;250;250;250mcontext 62% (78k of 125k). /compact frees about 30k.[m
+  [2;38;2;161;161;170m+ dispatch_tasks[m [38;2;250;250;250m2 tasks · 1 completed, 1 failed[m  [2;38;2;113;113;122m11.3s[m
+  
+     [48;2;25;27;29m [38;2;78;220;78m✔[m[48;2;25;27;29m [38;2;250;250;250mdispatch-golden:task-a[m[48;2;25;27;29m[2;38;2;113;113;122m agent=builder[m[48;2;25;27;29m[2;38;2;113;113;122m 8.1s[m[48;2;25;27;29m  wrote the retry policy      [m 
+     [48;2;25;27;29m [38;2;220;78;78m✖[m[48;2;25;27;29m [38;2;250;250;250mdispatch-golden:task-b[m[48;2;25;27;29m[2;38;2;113;113;122m agent=reviewer[m[48;2;25;27;29m[2;38;2;113;113;122m 31s[m[48;2;25;27;29m  provider error (HTTP 402)   [m 
+      [38;2;78;220;78m+[m [2;38;2;113;113;122mread_file[m [38;2;250;250;250minternal/storage/s3_uploader.go[m
+      [38;2;78;220;78m+[m [2;38;2;113;113;122medit[m [38;2;250;250;250minternal/storage/s3_uploader.go[m
+      [38;2;220;78;78mx[m [2;38;2;113;113;122mrun_command[m [38;2;250;250;250m$ go test ./internal/storage/...[m
+      [38;2;78;220;78m+[m [2;38;2;113;113;122mread_file[m [38;2;250;250;250minternal/storage/retry.go[m
 
 [2;38;2;113;113;122m+   0ms  1.3k in  2.9k out  $0.04-----------------------------------------------[m

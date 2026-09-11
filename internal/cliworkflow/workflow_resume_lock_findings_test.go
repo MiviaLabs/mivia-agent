@@ -9,8 +9,8 @@ import (
 )
 
 // TestLockWorkflowExecutionFileNeverMentionsGitExclude is the regression for
-// the misleading-error-text bug (docs/architecture/workflow-stack-settle.md
-// P2): lockWorktreeMarkerFile is shared with the real Git-exclude marker
+// the misleading-error-text bug (lock section of
+// docs/architecture/workflow-stack-settle.md): lockWorktreeMarkerFile is shared with the real Git-exclude marker
 // lock, so every error string it produces says "Git exclude" - including the
 // non-busy path, which the prior fix's bare %w wrap left untouched, so a
 // caller diagnosing a stuck workflow delivery/resume saw "lock workflow

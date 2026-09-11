@@ -55,7 +55,7 @@ func (m Model) Height() int { return m.height }
 
 // TotalRows is the height of the whole conversation at the current
 // width: every block span plus the separators the layout places between
-// sections (transcript-polish.md R1 - spacing follows turns, and the
+// sections (ux-rules.md 11.1 - spacing follows turns, and the
 // blank rows belong to the sequence, not to any block).
 func (m Model) TotalRows() int {
 	return m.totalLayoutRows(m.layout())
@@ -101,7 +101,7 @@ func (m *Model) push(b Block) {
 		m.missed++
 	}
 	// A block is collapsible only when it has a body to collapse
-	// (transcript-polish.md R3): push() used to force Collapsible on
+	// (ux-rules.md 11.5): push() used to force Collapsible on
 	// every non-prose block, which painted the "v" marker over
 	// header-only blocks with nothing under it. Blocks that arrive from
 	// values.go already marked Collapsible keep that marking; prose
@@ -335,7 +335,7 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	m.blocks = slices.Clone(m.blocks)
 	blk := m.blocks[i]
 	fn(&blk)
-	// Re-apply push()'s collapsibility rule (transcript-polish.md R3):
+	// Re-apply push()'s collapsibility rule (ux-rules.md 11.5):
 	// a tool call starts header-only and is not collapsible, then grows
 	// its body here as output and the end result merge in. Without the
 	// promotion, the merged block would render a body with no marker to

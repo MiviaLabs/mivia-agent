@@ -25,7 +25,7 @@ func TestViewIsAlwaysExactlyTheViewportHeight(t *testing.T) {
 	}
 }
 
-// TestSeparatorsFollowSections pins transcript-polish.md R1: blank rows
+// TestSeparatorsFollowSections pins ux-rules.md 11.1: blank rows
 // separate SECTIONS of the transcript - between prose and the activity
 // group that follows it - while consecutive activity blocks inside one
 // group read as one dense run with no blank rows between them. Spacing
@@ -737,7 +737,7 @@ func TestScrollByToTheBottomResetsCount(t *testing.T) {
 	}
 }
 
-// TestMarkerOnlyWhereABodyExists pins transcript-polish.md R3: a marker
+// TestMarkerOnlyWhereABodyExists pins ux-rules.md 11.5: a marker
 // may only be painted where there is a body to open. push() used to force
 // Collapsible on every non-prose block, so a one-line notice or a
 // one-line error carried a "v" with nothing under it. A body at or above

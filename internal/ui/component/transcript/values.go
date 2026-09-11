@@ -178,13 +178,13 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 	// first body line into the detail as a fallback printed line 1 twice
 	// on the direct-push end path (no live start block): once in the
 	// header, once as body row one. The body is the single home of the
-	// output (transcript-polish.md R7).
+	// output (ux-rules.md 11.9).
 	detail, body, coll := render.FormatToolOutputWithContext(t, tier, b.Name, args, summary, b.OK, w)
 	if noticeLine != "" {
 		body = append(body, noticeLine)
 	}
 
-	// One duration ladder everywhere (transcript-polish.md R5): the same
+	// One duration ladder everywhere (ux-rules.md 11.7): the same
 	// FormatElapsed a later status-line call uses, so "4.1s" never
 	// appears beside "4100ms" on one screen.
 	duration := render.FormatElapsed(int(b.DurationMS))

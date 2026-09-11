@@ -389,8 +389,8 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		blk.Diff = end.Diff
 		// The end block's formatted summary (ledger ref · size · paging
 		// state) outranks the start block's argument echo: the summary is
-		// what a reader needs without expanding (tool-output-polish.md
-		// R4). Only when the end carries no detail does the start's
+		// what a reader needs without expanding (ux-rules.md
+		// 12.5). Only when the end carries no detail does the start's
 		// survive, and never over a diff path.
 		startDetail := blk.Header.Detail
 		blk.Header = end.Header

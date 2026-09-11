@@ -39,6 +39,8 @@ v run_command  command=go vet ./internal/storage/...  waiting for result
   error   transport refused after 3 attempts                       fatal
           dial tcp 10.0.0.4:443: i/o timeout
   notice  context 62% (78k of 125k). /compact frees about 30k.
+v dispatch_tasks tasks=[map[agent:builder id:task-a prompt:audit the uploader] map[agent:reviewer id:task-b prompt:review the diff]]  waiting for result
+  dispatch_tasks [{"task_id":"dispatch-golden:task-a","status":"completed","agent":"builder","elapsed":"8.1s","synopsis":"wrote the retry policy"},{"task_id":"dispatch-golden:task-b","status":"failed","agent":"reviewer","elapsed":"31s","error":"provider error (HTTP 402)"}]  11350ms  ok
   usage   1284 in  2940 out  340 cached  $0.041  21.4s
 
 > (turn completed)

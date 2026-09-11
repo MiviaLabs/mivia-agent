@@ -9,6 +9,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -63,6 +65,68 @@ func TestConversationScreen_StreamingEventDeduplicationSmoke(t *testing.T) {
 	view := ansi.Strip(s.View())
 	if !strings.Contains(view, "Everything is clean and healthy.") {
 		t.Errorf("rendered view missing assistant text:\n%s", view)
+	}
+}
+
+// TestConversationScreen_ChildTreeSmoke extends the offline smoke surface
+// with C7's user-visible behavior (docs/design/chat-tui-crush-comparison.md
+// §3 C7): a dispatch_tasks batch shows its settled child calls once under
+// its own row, and the row is NOT folded into the work-run summary - the
+// fold would hide exactly the tree the feature exists to show. Mirrors what
+// manual acceptance does: dispatch, progress, settle, read the screen.
+func TestConversationScreen_ChildTreeSmoke(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.threads = stubThreads{"smoke-call:task-a": &scriptedThread{history: []ports.Message{
+		{Role: "assistant", ToolCalls: []ports.ToolCall{
+			{ID: "k1", Name: "read_file", Arguments: `{"path":"a.go"}`, Output: "48 lines", OK: true},
+			{ID: "k2", Name: "edit", Arguments: `{"path":"b.go"}`, Output: "error: denied", OK: false},
+		}},
+	}}}
+	s.active = fakeHandle{id: "t1"}
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	s = next.(Screen)
+
+	at := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	events := []uievent.Event{
+		{Kind: uievent.KindTurnStart, Seq: 1, At: at, Body: uievent.TurnStartBody{Input: "dispatch the batch"}},
+		// Three settled siblings that MAY fold.
+		{Kind: uievent.KindToolStart, Seq: 2, At: at, Body: uievent.ToolStartBody{ToolCallID: "s1", Name: "read_file", Args: map[string]any{"path": "z.go"}}},
+		{Kind: uievent.KindToolEnd, Seq: 3, At: at, Body: uievent.ToolEndBody{ToolCallID: "s1", Name: "read_file", OK: true, Result: "3 lines"}},
+		{Kind: uievent.KindToolStart, Seq: 4, At: at, Body: uievent.ToolStartBody{ToolCallID: "s2", Name: "edit", Args: map[string]any{"path": "z.go"}}},
+		{Kind: uievent.KindToolEnd, Seq: 5, At: at, Body: uievent.ToolEndBody{ToolCallID: "s2", Name: "edit", OK: true, Result: "patched"}},
+		{Kind: uievent.KindToolStart, Seq: 6, At: at, Body: uievent.ToolStartBody{ToolCallID: "s3", Name: "run_command", Args: map[string]any{"command": "go vet ./..."}}},
+		{Kind: uievent.KindToolEnd, Seq: 7, At: at, Body: uievent.ToolEndBody{ToolCallID: "s3", Name: "run_command", OK: true, Result: "exit=0"}},
+		// The batch: fan-out, one task's progress, then the batch settles.
+		{Kind: uievent.KindToolStart, Seq: 8, At: at, Body: uievent.ToolStartBody{ToolCallID: "smoke-call", Name: "dispatch_tasks", Args: map[string]any{"tasks": []any{
+			map[string]any{"id": "task-a", "prompt": "a"},
+			map[string]any{"id": "task-b", "prompt": "b"},
+		}}}},
+		{Kind: uievent.KindToolOutput, Seq: 9, At: at, Body: uievent.ToolOutputBody{ToolCallID: "smoke-call:task-a",
+			Progress: &uievent.Progress{Status: "running", Step: 2, ToolCalls: 2}}},
+		{Kind: uievent.KindToolEnd, Seq: 10, At: at, Body: uievent.ToolEndBody{ToolCallID: "smoke-call", Name: "dispatch_tasks", OK: true,
+			Result: `[{"task_id":"smoke-call:task-a","status":"completed"},{"task_id":"smoke-call:task-b","status":"completed"}]`}},
+		{Kind: uievent.KindTurnEnd, Seq: 11, At: at, Body: uievent.TurnEndBody{Reason: "completed"}},
+	}
+	for _, ev := range events {
+		next, _ = s.Update(uievent.EventMsg{Event: ev})
+		s = next.(Screen)
+	}
+
+	dump := ansi.Strip(s.transcript.Dump())
+	for _, row := range []string{"+ read_file a.go", "x edit b.go"} {
+		if c := strings.Count(dump, row); c != 1 {
+			t.Errorf("smoke: child row %q appears %d times, want exactly once:\n%s", row, c, dump)
+		}
+	}
+	view := ansi.Strip(s.View())
+	if !strings.Contains(view, "> work") {
+		t.Errorf("smoke: the settled siblings did not fold - the fixture does not mirror a real batch:\n%s", view)
+	}
+	if !strings.Contains(view, "dispatch_tasks") {
+		t.Errorf("smoke: the parent dispatch row was folded away; its tree must keep the row alive:\n%s", view)
+	}
+	if !strings.Contains(view, "+ read_file a.go") || !strings.Contains(view, "x edit b.go") {
+		t.Errorf("smoke: the child tree is not visible in the live view:\n%s", view)
 	}
 }
 

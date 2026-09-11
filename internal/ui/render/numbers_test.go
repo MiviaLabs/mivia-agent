@@ -17,7 +17,7 @@ func TestCompactTokens(t *testing.T) {
 }
 
 // TestGroupThousands pins the comma grouping used by other render surfaces
-// (transcript-polish.md R6, wireframes-panes.md section 4 grammar).
+// (ux-rules.md 11.8, wireframes-panes.md section 4 grammar).
 func TestGroupThousands(t *testing.T) {
 	cases := []struct {
 		n    int

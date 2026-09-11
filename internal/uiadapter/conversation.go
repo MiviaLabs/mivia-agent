@@ -500,8 +500,9 @@ func (c *Conversation) History() []ports.Message {
 			var tcs []ports.ToolCall
 			for _, tc := range m.ToolCalls {
 				output := toolOutputs[tc.ID]
+				ok := ports.ToolCallOK(ports.ToolCall{Name: tc.Function.Name, Output: output})
 				var diff *uievent.Diff
-				if ports.ToolCallOK(ports.ToolCall{Name: tc.Function.Name, Output: output}) {
+				if ok {
 					diff = parseToolDiff(tc.Function.Name, tc.Function.Arguments, output)
 				}
 				if diff != nil {
@@ -513,6 +514,7 @@ func (c *Conversation) History() []ports.Message {
 					Arguments: tc.Function.Arguments,
 					Output:    output,
 					Diff:      diff,
+					OK:        ok,
 				})
 			}
 			out = append(out, ports.Message{

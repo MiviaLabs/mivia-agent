@@ -15,7 +15,7 @@ import (
 // layout turns the block list into terminal geometry: where each block
 // starts, how many rows it owns, and the two presentation rules that
 // belong to the SEQUENCE rather than to any single block
-// (transcript-polish.md R1):
+// (ux-rules.md 11.1, 11.2):
 //
 //   - separators: one blank row before a block that starts a new
 //     section - anything after prose, or prose itself - and NO blank row
@@ -24,7 +24,7 @@ import (
 //     marker at column 3, so a turn's tool activity reads as one group
 //     hanging under the turn's prose.
 //
-// R2 adds the leader run: two or more consecutive collapsed read-only
+// Rule 11.3 adds the leader run: two or more consecutive collapsed read-only
 // tool calls draw as ONE row ("Read 3 files: a.go, b.go") instead of
 // three headers. Coalescing is display-only - the children stay real
 // blocks, so focus, click-to-expand, copy, and Dump keep per-child
@@ -225,6 +225,13 @@ func (m Model) workRunLen(i int) int {
 // screen hides - which is why RoleDanger is checked here rather than
 // left to the per-kind rules.
 func (m Model) settledWork(b Block) bool {
+	// A block with a child tree never folds (C7). The tree IS the row's
+	// content - a summary row would swallow exactly what the reader is
+	// being shown - and it can grow while the batch runs, so the fold's
+	// "already settled" premise does not hold for it either.
+	if len(b.Children) > 0 {
+		return false
+	}
 	if !b.Collapsible || !b.Collapsed || b.Header.Role == theme.RoleDanger {
 		return false
 	}

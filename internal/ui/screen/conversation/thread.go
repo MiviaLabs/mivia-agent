@@ -138,6 +138,15 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 						} else {
 							s.panel.observeAgentHistory(tc.ID, status, "")
 						}
+						// Rebuild C7's child tree for resumed sessions from the
+						// same thread histories the live path reads. This keeps a
+						// reopened dispatch row complete before any new progress
+						// event arrives.
+						if s.threads != nil {
+							if taskIDs, _ := dispatchTaskIDsAndNames(tc.ID, tc.Name, parseToolArgs(tc.Arguments)); len(taskIDs) > 0 {
+								s.transcript.SetChildren(tc.ID, collectChildCalls(s.threads, taskIDs, tc.ID))
+							}
+						}
 					} else {
 						s.panel.observeAgentHistory(tc.ID, status, "")
 					}

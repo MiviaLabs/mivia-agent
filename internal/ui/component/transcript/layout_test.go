@@ -81,7 +81,7 @@ func TestCollapsedShortCardsStillPackTight(t *testing.T) {
 	}
 }
 
-// TestReadOnlyRunsCoalesceIntoOneLeaderRow pins transcript-polish.md R2:
+// TestReadOnlyRunsCoalesceIntoOneLeaderRow pins ux-rules.md 11.3:
 // two consecutive collapsed read-only lookups draw as ONE leader row -
 // display-only coalescing. The children stay real blocks: clicking the
 // leader row dissolves the run back into per-block headers, each still

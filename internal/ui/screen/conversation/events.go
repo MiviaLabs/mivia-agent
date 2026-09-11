@@ -190,6 +190,20 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
 
+	s.applyTurnEventSideEffects(ev, &flushCmd)
+
+	s.refreshTopbar()
+
+	return s, tea.Batch(flushCmd, s.rearmRead(source))
+}
+
+// applyTurnEventSideEffects is handleTurnEventFrom's per-kind arm: the work a
+// streamed event does BESIDES rendering into the transcript - the approval
+// prompt, the status line, the files panel, the blackboard, and the dispatch
+// row's child tree (C7). flushCmd is in/out: the progress arm may wrap it
+// with the guarded animation tick, and the caller batches whatever comes
+// back with the read continuation.
+func (s *Screen) applyTurnEventSideEffects(ev uievent.Event, flushCmd *tea.Cmd) {
 	switch b := ev.Body.(type) {
 
 	case uievent.ToolPendingBody:
@@ -215,6 +229,11 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 		// from the same stream the transcript renders.
 		if b.Progress != nil {
 			s.panel.observeAgent(b.ToolCallID, b.Progress)
+			// The dispatch row's child tree (C7) rides the same progress
+			// stream: the batch's settled child calls are re-read from the
+			// thread history and pushed into the transcript. No clock is
+			// armed for it - the tree repaints with the event.
+			s.syncThreadChildrenFor(b.ToolCallID)
 			// A dispatch batch emits progress continuously, so this arm is
 			// guarded: without armTick every progress event started an
 			// additional self-re-arming clock and the marks animated N times
@@ -224,12 +243,15 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 			// block") is static, and gating on Active suppressed this arm
 			// entirely, freezing the panel marks while the batch ran.
 			if !s.statusline.Animating() && s.panel.activeAgentCount() > 0 {
-				flushCmd = tea.Batch(flushCmd, s.armTick())
+				*flushCmd = tea.Batch(*flushCmd, s.armTick())
 			}
 		}
 	case uievent.ToolEndBody:
 		s.approval.Resolve(b.ToolCallID)
 		s.statusline.SetLabel("thinking")
+		// Read child histories before observeToolEnd deletes the
+		// dispatchGroups entry needed to map task rows to this parent.
+		s.syncThreadChildrenFor(b.ToolCallID)
 		s.observeToolEnd(b)
 	case uievent.UsageBody:
 		// InputTokens is the whole prepared history the provider just
@@ -257,10 +279,6 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 		// high-water mark for the rest of the session.
 		s.liveUsage = nil
 	}
-
-	s.refreshTopbar()
-
-	return s, tea.Batch(flushCmd, s.rearmRead(source))
 }
 
 // rearmRead returns the continuation that keeps ONE reader on the stream

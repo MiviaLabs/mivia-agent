@@ -127,6 +127,14 @@ type Block struct {
 	// block catches up to the one the statusline already owns
 	// (.agents/memories/tui-spinner-clock-*.md).
 	SpinnerFrame int
+
+	// Children is the compact child tree C7 draws under a dispatch_tasks
+	// block: the tool calls the dispatched subagents made, pushed in by
+	// the screen (SetChildren) from the thread history it owns. They draw
+	// as body rows of THIS block (see children.go), and a block carrying
+	// them never folds into a work-run summary row - the tree is exactly
+	// what that fold would hide.
+	Children []ChildCall
 }
 
 // renderCalls counts Block.Render invocations. It exists so tests can
@@ -152,7 +160,7 @@ func (b Block) isEmpty() bool {
 // The blank rows BETWEEN blocks are not part of Height: the viewport
 // layout owns separators, because their placement depends on the
 // neighbours (one per turn section, none inside an activity run -
-// transcript-polish.md R1), not on the block alone.
+// ux-rules.md 11.1), not on the block alone.
 func (b Block) Height(width int) int {
 	if b.Kind == uievent.KindUsage {
 		return 1
@@ -168,7 +176,7 @@ func (b Block) Height(width int) int {
 		return b.reasoningHeight(width)
 	}
 	if b.isToolBlock() {
-		return 1 + b.card(width).rows()
+		return 1 + b.card(width).rows() + b.childRowCount()
 	}
 	if b.Collapsed {
 		return 1
@@ -207,7 +215,7 @@ func (b Block) reasoningRows(width int) []string {
 // Activity reports whether the block is tool activity rather than
 // conversation: header-carrying blocks whose bodies hang under an
 // activity group at a 2-column indent, with no blank row between
-// consecutive group members (transcript-polish.md R1). Prose - the user
+// consecutive group members (ux-rules.md 11.1, 11.2). Prose - the user
 // turn, assistant text, the usage footer - is the conversation voice.
 func (b Block) Activity() bool { return !b.Prose && b.Kind != uievent.KindUsage }
 
@@ -258,7 +266,7 @@ func defaultCollapsed(body []string) bool {
 // blocks with two spaces). Toggling collapse never moves any body row:
 // the header changes only in its first cell (the marker) and in the
 // magnitude hint the collapsed state appends to the meta column
-// ("… +N lines", transcript-polish.md R3; wireframes-panes.md section 5
+// ("… +N lines", ux-rules.md 11.5; wireframes-panes.md section 5
 // as amended).
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	renderCalls++
@@ -278,7 +286,7 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	// The "│" rail is reserved for the two moments where the block needs
 	// to stand out from the record: the focused block, and the failed
 	// block, where rail plus RoleDanger earns its weight
-	// (transcript-polish.md R4). The column count is identical either
+	// (ux-rules.md 11.6). The column count is identical either
 	// way, so a body never shifts when focus or state changes. render.Role
 	// still degrades the rail's colour to nothing at TierASCII/TierNoTTY
 	// with no code branch here.
@@ -320,7 +328,7 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 // empty) and returns the finished string.
 func (b Block) renderToolCard(t theme.Theme, tier theme.Tier, width int, sb *strings.Builder, indent string) string {
 	c := b.card(width)
-	if len(c.body) == 0 {
+	if len(c.body) == 0 && len(b.Children) == 0 {
 		return sb.String()
 	}
 	// One column of the indent is handed to the tint as a left
@@ -341,13 +349,28 @@ func (b Block) renderToolCard(t theme.Theme, tier theme.Tier, width int, sb *str
 	// truncates.
 	bodyIndent := indent[:len(indent)-1]
 	fillWidth := width - uikitconfig.BodyIndent
-	sb.WriteByte('\n') // the blank row a card opens with (C4)
+	// The blank row a card opens with (C4) - only for a card that HAS a
+	// body. cardLayout.rows() documents "Zero when there is no body - ...
+	// draws no card at all, only its header", and Height reads that count,
+	// so emitting the separator for a body-less block carrying only a child
+	// tree made Render one row taller than the block's own budget.
+	if len(c.body) > 0 {
+		sb.WriteByte('\n')
+	}
 	style := b.bodyStyle(t, tier)
 	for _, line := range c.body {
 		sb.WriteByte('\n')
 		sb.WriteString(bodyIndent)
 		sb.WriteString(render.FillBG(t, tier, theme.RoleBGSubtle, padToWidth(" "+style(line), fillWidth)))
 		sb.WriteByte(' ') // right margin: plain, matching the left
+	}
+	// The child tree draws after the body and before the hidden-count hint
+	// (C7): plain rows, no tint - a tree is not tool output. Rows come from
+	// the same childRowCount Height reads, so the two cannot disagree.
+	for _, line := range b.childRows(t, tier, width) {
+		sb.WriteByte('\n')
+		sb.WriteString(indent)
+		sb.WriteString(line)
 	}
 	if c.hidden > 0 {
 		sb.WriteByte('\n')

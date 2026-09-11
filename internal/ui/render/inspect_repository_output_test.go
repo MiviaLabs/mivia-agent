@@ -51,7 +51,7 @@ func TestFormatInspectRepositoryOutput_NoResultsFallsBack(t *testing.T) {
 		t.Errorf("expected empty summary for zero results, got %q", summary)
 	}
 	// The fallback is labelled, not naked: row one names the bytes as an
-	// unparsed tool result (tool-output-polish.md R1).
+	// unparsed tool result (ux-rules.md 12.2).
 	if len(lines) < 1 || !strings.Contains(ansi.Strip(lines[0]), "unparsed tool result") {
 		t.Errorf("expected the unparsed label, got %v", lines)
 	}

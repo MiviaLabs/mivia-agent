@@ -111,7 +111,7 @@ func TestCollapseMarker(t *testing.T) {
 }
 
 // TestCollapsedHeaderCarriesNoMagnitudeHint pins the C4 replacement for
-// transcript-polish.md R3: the "… +N lines" magnitude hint used to live
+// ux-rules.md 11.5: the "… +N lines" magnitude hint used to live
 // in the header's meta column; it now lives on the tool card's own hint
 // row instead (block_test.go's TestToolCardHintRow), so a plain
 // collapsible block's header - the case here has Kind unset, so it is
@@ -237,14 +237,14 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 	// The resting body of an unfocused, non-failed block carries no
 	// glyph in columns 1 to 4 at all: wireframes-panes.md section 2,
 	// "Nothing is drawn in columns 1 to 4 of a body line"
-	// (transcript-polish.md R4).
+	// (ux-rules.md 11.6).
 	want := "    line"
 	if rows[1] != want {
 		t.Errorf("got %q, want %q", rows[1], want)
 	}
 }
 
-// TestRailMarksOnlyFocusOrFailure pins transcript-polish.md R4: the "│ "
+// TestRailMarksOnlyFocusOrFailure pins ux-rules.md 11.6: the "│ "
 // body rail is reserved for the focused block and the failed block. The
 // column count is the same either way, so switching state must not shift
 // any body text.

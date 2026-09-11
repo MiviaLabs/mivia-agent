@@ -14,9 +14,8 @@ import (
 // MinSplitDiffWidth is the minimum terminal width a side-by-side split
 // diff needs to stay legible: two code columns plus line-number gutters
 // and a divider. FormatDiffLines refuses split below this width even
-// when the caller asks for it (transcript-polish.md R10 / C8:
-// wireframes-panes.md sections 11/14 specify unified below 120 columns,
-// split only above it via the "s"/"t" toggle).
+// when the caller asks for it (wireframes-panes.md sections 11/14
+// specify unified below 120 columns, split only above it via the "s"/"t" toggle).
 const MinSplitDiffWidth = 120
 
 // SplitDiff renders the hunks of a diff in side-by-side (split) column format.

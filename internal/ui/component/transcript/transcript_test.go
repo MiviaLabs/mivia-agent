@@ -62,6 +62,16 @@ func TestRenderGolden(t *testing.T) {
 	for _, ev := range events {
 		m, _ = m.HandleEvent(ev)
 	}
+	// C7: the fixture's dispatch_tasks row carries its child tree. The
+	// screen pushes this in live (child_tree.go) from the thread history
+	// it owns; the golden pins the same vocabulary at the component
+	// boundary, so the compact tree is part of both renderings' contract.
+	m.SetChildren("dispatch-golden", []ChildCall{
+		{Name: "read_file", Detail: "internal/storage/s3_uploader.go", OK: true},
+		{Name: "edit", Detail: "internal/storage/s3_uploader.go", OK: true},
+		{Name: "run_command", Detail: "$ go test ./internal/storage/...", OK: false},
+		{Name: "read_file", Detail: "internal/storage/retry.go", OK: true},
+	})
 
 	view := m.View()
 	compareGolden(t, filepath.Join("testdata", "golden", "cockpit-80x20.txt"), view)
@@ -730,7 +740,7 @@ func TestSingleEventReasoningHydrationPreservesBody(t *testing.T) {
 	}
 }
 
-// TestToolEndDurationUsesTheSharedLadder pins transcript-polish.md R5
+// TestToolEndDurationUsesTheSharedLadder pins ux-rules.md 11.7
 // in the transcript: both tool-end duration sites - the result path and
 // the diff path - go through render.FormatElapsed, so the header states
 // "4.1s", "23.5s", "1m 30s", never raw milliseconds above a second.
@@ -760,7 +770,7 @@ func TestToolEndDurationUsesTheSharedLadder(t *testing.T) {
 }
 
 // TestUnknownToolDoesNotDuplicateTheFirstBodyLine pins
-// transcript-polish.md R7: on the direct tool.end push path with no
+// ux-rules.md 11.9: on the direct tool.end push path with no
 // prior live block, a tool the formatter does not know used to copy
 // body line 1 into the header detail, printing it twice. The header
 // keeps the tool name with an empty detail; the body carries every line
@@ -788,7 +798,7 @@ func TestUnknownToolDoesNotDuplicateTheFirstBodyLine(t *testing.T) {
 	}
 }
 
-// TestUsageRendersAsAFooterLine pins transcript-polish.md R6: usage is
+// TestUsageRendersAsAFooterLine pins ux-rules.md 11.8: usage is
 // one dim, header-less prose footer line in the shared meta grammar -
 // grouped token counts and cost to two decimals - and it keeps the raw
 // payload so a theme change can restyle it.

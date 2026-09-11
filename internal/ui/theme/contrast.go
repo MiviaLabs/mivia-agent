@@ -7,7 +7,7 @@ import "fmt"
 // components need 3:1. AllContrastChecks is the single source of truth
 // for which pairs the UI actually renders — role.RoleBorder is
 // deliberately absent: no state is carried by border alone, so it is
-// decorative and exempt from WCAG 1.4.11 (wireframes.md section 7).
+// decorative and exempt from WCAG 1.4.11 (role list: docs/development/ui-theme-system.md).
 type ContrastCheck struct {
 	FG, BG Role
 	Min    float64

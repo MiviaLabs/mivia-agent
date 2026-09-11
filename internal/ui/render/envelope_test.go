@@ -17,7 +17,7 @@ func mustJSON(v any) string {
 }
 
 // TestFormatLedgerOutput_DoubleEncodedEnvelope pins the screenshot
-// regression (tool-output-polish.md R1): a ledger envelope delivered as
+// regression (ux-rules.md 12.1): a ledger envelope delivered as
 // a JSON STRING wrapping the whole object - the shape one production
 // session rendered as a raw escaped blob - still parses structured, with
 // the escapes decoded and no literal backslash sequences on screen.

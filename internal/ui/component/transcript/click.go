@@ -58,6 +58,12 @@ func (m Model) ToggleBlockAtScreenRow(x, y int) (Model, bool) {
 		}
 		if blk.isToolBlock() {
 			offset, ok := blk.card(m.width - s.indent).hintOffset()
+			// The child tree (C7) draws between the body and the hint row,
+			// so the hint sits that much further down. Height counts both,
+			// and so must the click target.
+			if ok {
+				offset += blk.childRowCount()
+			}
 			if !ok || row != s.top+offset {
 				return m, false
 			}
