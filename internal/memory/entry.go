@@ -62,7 +62,8 @@ type Entry struct {
 	Verdict    Verdict
 	Importance Importance // optional; RenderProtocolFile defaults to medium
 	Tags       []string
-	Created    string // YYYY-MM-DD; empty means "today" at save time
+	Related    []string // optional related memory ids (.agents/memories protocol)
+	Created    string   // YYYY-MM-DD; empty means "today" at save time
 	Summary    string
 	Good       string
 	Bad        string
@@ -394,7 +395,13 @@ func (e Entry) RenderProtocolFile(id string) string {
 		// carries real information instead of a placeholder.
 		b.WriteString(string(e.Scope))
 	}
-	b.WriteString("]\nupdated: ")
+	b.WriteString("]")
+	if len(e.Related) > 0 {
+		b.WriteString("\nrelated: [")
+		b.WriteString(strings.Join(e.Related, ", "))
+		b.WriteString("]")
+	}
+	b.WriteString("\nupdated: ")
 	b.WriteString(updated)
 	b.WriteString("\n---\n\n# ")
 	b.WriteString(strings.TrimSpace(e.Title))

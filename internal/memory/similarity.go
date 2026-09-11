@@ -57,6 +57,21 @@ func MergeEntries(existing, incoming Entry) Entry {
 	}
 	res.Tags = mergedTags
 
+	// Merge unique related
+	relSet := make(map[string]struct{}, len(existing.Related)+len(incoming.Related))
+	var mergedRels []string
+	for _, r := range append(existing.Related, incoming.Related...) {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		if _, seen := relSet[r]; !seen {
+			relSet[r] = struct{}{}
+			mergedRels = append(mergedRels, r)
+		}
+	}
+	res.Related = mergedRels
+
 	// Merge unique references
 	refSet := make(map[string]struct{}, len(existing.References)+len(incoming.References))
 	var mergedRefs []string

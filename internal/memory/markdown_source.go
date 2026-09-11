@@ -220,6 +220,13 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 			tagList = append(tagList, tag)
 		}
 	}
+	related := strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(values["related"], "]"), "["))
+	var relatedList []string
+	for _, rel := range strings.Split(related, ",") {
+		if rel = strings.TrimSpace(rel); rel != "" {
+			relatedList = append(relatedList, rel)
+		}
+	}
 	// Scope is always the directory-implied scan scope, never a value read
 	// from the frontmatter: Save always writes into the scope-correct
 	// directory, so the two never legitimately disagree for a file this
@@ -234,7 +241,7 @@ func parseProtocolMemory(data []byte, scope Scope) (Entry, string, bool) {
 	}
 	e := Entry{
 		Title: values["title"], Scope: scope, Verdict: verdict,
-		Importance: Importance(values["importance"]), Tags: tagList, Summary: values["content"],
+		Importance: Importance(values["importance"]), Tags: tagList, Related: relatedList, Summary: values["content"],
 		// README's "updated" key is this package's Created field: Save has
 		// no separate "last edited" concept (the capture skill never edits
 		// an existing memory either), so the two names carry one value.
