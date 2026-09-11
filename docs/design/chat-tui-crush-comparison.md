@@ -216,6 +216,15 @@ invalidated by ID in `updateLive` (`transcript.go:374,400,427`),
 `restyle`, `ToggleReasoning`, collapse and focus toggles; replaced in
 `Clear()`. Test: a copied `Model` shares no stale entry after `Clear()`.
 
+Re-measured 2026-09-11, after Phase 8 (C7): `BenchmarkLayout` ran three
+times at 785136-796696 ns/op (0.79-0.80 ms), 242.8 KB/op, 5777
+allocs/op. This stays close to the Phase 5 baseline (0.82 ms) and far
+under the 16 ms budget, so C13 stays unimplemented. Re-measure when any
+of these happens: `MaxTranscriptLines` rises well past 2,000 blocks; a
+new per-block render pass joins `layout()` or `Rows()` (for example,
+syntax highlighting or wrapped diff rendering); or a profile shows
+`Rows()` near the 16 ms budget on a real session.
+
 **C14. Per-line style prefix.** Pairs with C13: render bodies as lines
 and prepend the style prefix per line instead of `Style.Render` over a
 block, so the memo stores plain lines.
