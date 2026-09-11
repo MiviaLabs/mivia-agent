@@ -83,6 +83,11 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		// set, the snapshotted reading overrode the top bar the moment the
 		// user switched back, and nothing else could ever clear it.
 		st.liveUsage = nil
+		// Same reason the foreground path stops its statusline on turn
+		// end: an animating statusline is what hasActiveBackgroundSession
+		// keys the spinner clock on, so a turn that ends off-screen must
+		// stop it or the clock runs forever with nothing behind it.
+		st.statusline.Stop()
 	}
 }
 

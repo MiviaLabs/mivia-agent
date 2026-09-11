@@ -371,7 +371,7 @@ Each step's checkpoint re-saves the run's full session transcript, on both the s
 
 ### Live Session View
 
-A run's session is a normal session in the catalog: `/resume` attaches to it, shows the transcript so far, and - while the run keeps going - streams the run's turns into the view live. The screen subscribes to the conversation's event fan-out; the run's own event stream keeps exactly one consumer, so the run cannot stall on a slow viewer. If the viewer falls behind, the screen reloads the transcript from history and resubscribes.
+A run's session is a normal session in the catalog: `/resume` attaches to it, shows the transcript so far, and - while the run keeps going - streams the run's turns into the view live. The screen subscribes to the conversation's event fan-out; the run's own event stream keeps exactly one consumer, so the run cannot stall on a slow viewer. The status row shows the run's activity the same way a foreground turn's does, driven by the run's own turn framing. If the viewer falls behind, the screen reloads the transcript from history and resubscribes.
 
 Sending is refused while a run executes on the session - from the composer and from remote steering - so a user turn cannot interleave into the run's transcript. Once the run reaches a terminal state, the session accepts sends like any other. The live view covers runs hosted by the same TUI process; a cross-process resume is refused at the session lease (see Resuming Runs).
 

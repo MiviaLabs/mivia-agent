@@ -7,6 +7,7 @@ package conversation
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -266,6 +267,46 @@ func TestLiveEventUpdatesTrackedSessionOffScreen(t *testing.T) {
 	}
 	if sc.convID() != "primary" {
 		t.Fatalf("the user must stay on their tab (%q)", sc.convID())
+	}
+}
+
+// TestLiveTurnDrivesStatusline pins the status-row fix: a watched run's
+// TurnStart must give the row the same life a foreground send does
+// (Start + spinner clock; without Start, View renders nothing and a
+// working run looks dead), and its TurnEnd must stop it.
+func TestLiveTurnDrivesStatusline(t *testing.T) {
+	primary := &fakeMountConv{id: "primary"}
+	scr := newScreen(t, primary, nil, nil)
+	bg := newFakeLiveConv("bg-status")
+	bg.background = true
+	scr.switchConversation(bg)
+
+	startMsg := liveEventMsg{
+		sessionID: "bg-status",
+		ev:        uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "step"}},
+		events:    bg.events, sub: bg.sub,
+	}
+	next, cmd := scr.Update(startMsg)
+	sc := next.(Screen)
+	if !sc.statusline.Animating() {
+		t.Fatal("a watched run's TurnStart must start the status row")
+	}
+	if cmd == nil {
+		t.Fatal("the spinner clock must be armed with the turn")
+	}
+	if v := sc.statusline.View(fixedNow()); !strings.Contains(v, "AUTO") {
+		t.Fatalf("status row %q, want the AUTO badge", v)
+	}
+
+	endMsg := liveEventMsg{
+		sessionID: "bg-status",
+		ev:        uievent.Event{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
+		events:    bg.events, sub: bg.sub,
+	}
+	next2, _ := sc.Update(endMsg)
+	sc2 := next2.(Screen)
+	if sc2.statusline.Animating() {
+		t.Fatal("a watched run's TurnEnd must stop the status row")
 	}
 }
 

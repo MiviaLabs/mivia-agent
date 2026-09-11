@@ -143,8 +143,9 @@ func (s Screen) awaitLiveEvent(sessionID string, events <-chan uievent.Event, su
 func (s Screen) handleLiveEvent(msg liveEventMsg) (app.Screen, tea.Cmd) {
 	rearm := s.awaitLiveEvent(msg.sessionID, msg.events, msg.sub)
 	if msg.sessionID == s.convID() {
+		tick := s.driveStatuslineFromLive(msg.ev)
 		next, cmd := s.handleTurnEventFrom(msg.ev, nil)
-		return next, tea.Batch(cmd, rearm)
+		return next, tea.Batch(cmd, tick, rearm)
 	}
 	if st, ok := s.sessions[msg.sessionID]; ok {
 		st.handleTurnEvent(msg.ev)
@@ -153,6 +154,27 @@ func (s Screen) handleLiveEvent(msg liveEventMsg) (app.Screen, tea.Cmd) {
 	}
 	// Untracked session: keep draining so the tee never blocks.
 	return s, rearm
+}
+
+// driveStatuslineFromLive gives a watched run's turn the same status-row
+// life a foreground turn gets. The foreground path starts the clock in
+// sendTextWithPersisted and stops it on turn end; a live-viewed turn has
+// no local send, so the turn's own framing drives it: TurnStart arms
+// "auto" (the badge clips at 8 runes; the tool arms refine it to
+// "running"), and TurnEnd stops it. Without this the row renders nothing
+// - Start is the only thing that makes View draw - and a working run
+// looks dead.
+func (s *Screen) driveStatuslineFromLive(ev uievent.Event) tea.Cmd {
+	switch ev.Body.(type) {
+	case uievent.TurnStartBody:
+		// Start returns its own tick Cmd; discard it and arm through
+		// armTick, the one legal clock entry point (spinner_clock.go).
+		_ = s.statusline.Start("auto", s.now())
+		return s.armTick()
+	case uievent.TurnEndBody:
+		s.statusline.Stop()
+	}
+	return nil
 }
 
 // handleLiveDone clears a finished subscription. Nothing else changes:
