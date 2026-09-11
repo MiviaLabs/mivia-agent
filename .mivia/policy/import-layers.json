@@ -1,6 +1,6 @@
 {
   "allowedDeletions": [],
-  "edgeCap": 476,
+  "edgeCap": 478,
   "allow": {
     "cmd/mivia": [
       "internal/cli",
@@ -26,6 +26,7 @@
     "internal/automation": [
       "internal/chat",
       "internal/cliagents",
+      "internal/contextstate",
       "internal/clichat",
       "internal/cliworkflow",
       "internal/cliworktree",
@@ -122,11 +123,12 @@
     "internal/cliautomations": [
       "internal/automation",
       "internal/chat",
+      "internal/cliagents",
       "internal/clichat",
-      "internal/composition",
       "internal/config",
       "internal/provider",
       "internal/sdkadapter",
+      "internal/skills",
       "internal/storage",
       "internal/uiadapter",
       "internal/uikit/ports",

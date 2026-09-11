@@ -13,7 +13,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/clichat"
-	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -59,6 +58,13 @@ type HeadlessSpawner struct {
 	// id->session lookup map of its own. Cleared alongside `current` by
 	// CloseLastRun so a stale reference cannot outlive its store.
 	lastSession *chat.Session
+	// lastCleanup tears down the in-flight session's SURFACE (its
+	// dispatcher, and the memory store its registry opened). It is
+	// tracked beside `current` because the store close alone leaves the
+	// dispatcher's coordinator, subagent pool and lifecycle subscription
+	// registered in cliorchestrate's package-global maps - one set per
+	// fire, for the life of a daemon.
+	lastCleanup func()
 	root        string
 	res         *config.Resolved
 }
@@ -75,19 +81,22 @@ func NewHeadlessSpawner(workspaceRoot string, res *config.Resolved) (*HeadlessSp
 	return &HeadlessSpawner{root: workspaceRoot, res: res}, nil
 }
 
-// buildCompleter constructs a provider.Completer from h.res: a working
-// completer when the provider resolves, otherwise a nil completer -
-// composition.BuildSession accepts one for construction, but a session
-// built with it cannot run a turn until wired with a real provider.
-func (h *HeadlessSpawner) buildCompleter() provider.Completer {
+// buildCompleter constructs a provider.Completer from h.res.
+//
+// A failure is REPORTED, never swallowed into a nil completer. A session
+// with no completer makes cliagents.AttachRebuiltSurface a silent no-op,
+// so the run would proceed on a dispatcher that never saw the workspace's
+// tool policy - a fail-open. It cannot run a turn either way, so there is
+// nothing to preserve by degrading.
+func (h *HeadlessSpawner) buildCompleter() (provider.Completer, error) {
 	if h.res.ProviderName == "" {
-		return nil
+		return nil, fmt.Errorf("cliautomations: no provider configured")
 	}
 	comp, err := provider.New(h.res)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("cliautomations: build completer: %w", err)
 	}
-	return comp
+	return comp, nil
 }
 
 // storePathFor resolves the checkpoint store path a spawned session
@@ -122,38 +131,66 @@ func storePathFor(root string, cfg config.SubagentConfig) string {
 // bind error discards the newly-opened session and its store immediately
 // (closed, not retained as `current`) rather than leaking a half-used one.
 func (h *HeadlessSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
+	return h.createInDir(bind, dir, nil)
+}
+
+// createInDir is the shared construction body behind CreateFreshInDir and
+// GetOrResumeInDir. restore, when non-nil, runs between the session's
+// construction and its surface attach - see clichat.HeadlessSessionInput's
+// Restore field for why a resume must land in that window.
+func (h *HeadlessSpawner) createInDir(bind func(*chat.Session) (string, error), dir string, restore func(*chat.Session) error) (ports.Conversation, error) {
 	workDir := dir
 	if workDir == "" {
 		workDir = h.root
 	}
-	wsRoot, err := workspace.Open(workDir)
-	if err != nil {
+	if _, err := workspace.Open(workDir); err != nil {
 		return nil, fmt.Errorf("cliautomations: open workspace %q: %w", workDir, err)
 	}
+	completer, err := h.buildCompleter()
+	if err != nil {
+		return nil, err
+	}
 
-	sess, store, _, err := composition.BuildSession(composition.SessionInput{
-		Config:      h.res,
-		Completer:   h.buildCompleter(),
-		Registry:    composition.RegistryInput{Workspace: wsRoot},
-		StorePath:   storePathFor(h.root, h.res.Subagents),
-		WorkspaceID: workDir,
+	// clichat.NewHeadlessSession is the SAME attach sequence the
+	// interactive launch runs, so an automation run reaches the model with
+	// the workspace's configured tool registry, its lifecycle hooks, its
+	// skills, its agent roles and the session tool catalog - rather than
+	// the bare workspace registry and plain dispatcher this package used
+	// to compose itself. workDir is the execution root (tools, [tools]
+	// policy, memory, agents, skills); h.root stays the store root.
+	built, cleanup, err := clichat.NewHeadlessSession(clichat.HeadlessSessionInput{
+		RunDir:    workDir,
+		StorePath: storePathFor(h.root, h.res.Subagents),
+		// The store root, not the run dir: a worktree run's session must
+		// land in the project's own namespace, the same place its run
+		// history goes.
+		StoreRoot: h.root,
+		Resolved:  h.res,
+		Completer: completer,
+		Restore:   restore,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cliautomations: build session: %w", err)
 	}
+	sess, store := built.Session, built.Store
 
 	if bind != nil {
 		if _, bindErr := bind(sess); bindErr != nil {
+			cleanup()
 			_ = store.Close()
 			return nil, fmt.Errorf("cliautomations: bind fresh session: %w", bindErr)
 		}
 	}
 
 	h.mu.Lock()
-	staleSession, staleStore := h.lastSession, h.current
+	staleSession, staleStore, staleCleanup := h.lastSession, h.current, h.lastCleanup
 	h.current = store
 	h.lastSession = sess
+	h.lastCleanup = cleanup
 	h.mu.Unlock()
+	if staleCleanup != nil {
+		staleCleanup()
+	}
 	if staleStore != nil {
 		// Same leak class CloseLastRun below closes: a session's
 		// composition.BuildSession wiring arms a context-lease heartbeat
@@ -182,7 +219,12 @@ func (h *HeadlessSpawner) CreateFreshInDir(bind func(*chat.Session) (string, err
 // the caller must NOT call Load again - and returns the conversation
 // and the concrete session, READY for turns.
 func (h *HeadlessSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
-	conv, err := h.CreateFreshInDir(nil, dir)
+	conv, err := h.createInDir(nil, dir, func(sess *chat.Session) error {
+		if err := sess.Load(id); err != nil {
+			return fmt.Errorf("load session %q: %w", id, err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -191,9 +233,6 @@ func (h *HeadlessSpawner) GetOrResumeInDir(id string, dir string) (ports.Convers
 	h.mu.Unlock()
 	if sess == nil {
 		return nil, nil, fmt.Errorf("cliautomations: get or resume session: no active session")
-	}
-	if err := sess.Load(id); err != nil {
-		return nil, nil, fmt.Errorf("cliautomations: load session %q: %w", id, err)
 	}
 	return conv, sess, nil
 }
@@ -238,11 +277,19 @@ func (h *HeadlessSpawner) CloseLastRun() error {
 	h.mu.Lock()
 	sess := h.lastSession
 	store := h.current
+	cleanup := h.lastCleanup
 	h.current = nil
 	h.lastSession = nil
+	h.lastCleanup = nil
 	h.mu.Unlock()
 	if sess != nil {
 		sess.ReleaseContextLease(context.Background())
+	}
+	// Surface teardown before the store close: the dispatcher's own
+	// teardown reads through the ledger repository, which is borrowed over
+	// this very store.
+	if cleanup != nil {
+		cleanup()
 	}
 	if store == nil {
 		return nil

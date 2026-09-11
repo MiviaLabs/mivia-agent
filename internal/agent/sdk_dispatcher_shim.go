@@ -84,8 +84,10 @@ func (d *dispatcherShim) ExecutionProfile() sdktools.ExecutionProfile {
 }
 
 // ParameterSchema and DecodeArguments delegate to the inner tool: the
-// SDK's Definitions skips tools that do not implement SchemaTool, so
-// without delegation a wrapped tool would vanish from the offered set.
+// SDK's Definitions FAILS (ErrNoSchema, since v0.6.0) on a tool that does
+// not implement SchemaTool, so without delegation a wrapped tool would
+// fail the whole loop build rather than merely vanish from the offered
+// set.
 func (d *dispatcherShim) ParameterSchema() []byte { return d.schema.ParameterSchema() }
 
 func (d *dispatcherShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {

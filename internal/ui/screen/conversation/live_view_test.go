@@ -347,3 +347,56 @@ func TestLiveMsgsAreHandledByUpdate(t *testing.T) {
 		}
 	}
 }
+
+// TestAttachingToARunningTurnArmsTheStatusline covers the normal order:
+// the operator triggers a run and THEN opens its session. TurnStart is
+// already in the past and no further one arrives for that turn, so arming
+// only from TurnStart left the row blank for the whole run - and
+// statusline.View draws nothing until Start has been called, so a working
+// automation looked dead.
+func TestAttachingToARunningTurnArmsTheStatusline(t *testing.T) {
+	primary := &fakeMountConv{id: "primary"}
+	scr := newScreen(t, primary, nil, nil)
+	bg := newFakeLiveConv("bg-inflight")
+	bg.background = true
+	// A run is already executing on this session when the view attaches.
+	scr.SetRunActivitySource(func(id string) bool { return id == "bg-inflight" })
+
+	scr.switchConversation(bg)
+
+	if !scr.statusline.Animating() {
+		t.Fatal("attaching to an in-flight run left the status row dead")
+	}
+	if v := scr.statusline.View(fixedNow()); !strings.Contains(v, "AUTO") {
+		t.Fatalf("status row %q, want the AUTO badge", v)
+	}
+
+	// The run's own TurnEnd still stops it, exactly as for a turn whose
+	// start the view did see.
+	endMsg := liveEventMsg{
+		sessionID: "bg-inflight",
+		ev:        uievent.Event{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
+		events:    bg.events, sub: bg.sub,
+	}
+	next, _ := scr.Update(endMsg)
+	if next.(Screen).statusline.Animating() {
+		t.Fatal("the watched run's TurnEnd must still stop the status row")
+	}
+}
+
+// TestAttachingToAnIdleSessionLeavesTheStatuslineAlone pins the other
+// half: a background session with no run executing must not get a status
+// row claiming activity that is not happening.
+func TestAttachingToAnIdleSessionLeavesTheStatuslineAlone(t *testing.T) {
+	primary := &fakeMountConv{id: "primary"}
+	scr := newScreen(t, primary, nil, nil)
+	bg := newFakeLiveConv("bg-idle")
+	bg.background = true
+	scr.SetRunActivitySource(func(string) bool { return false })
+
+	scr.switchConversation(bg)
+
+	if scr.statusline.Animating() {
+		t.Fatal("attaching to an idle session started a status row for a turn that is not running")
+	}
+}

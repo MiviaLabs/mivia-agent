@@ -203,15 +203,55 @@ func buildService(workspaceRoot, configPath string) (*automation.Service, *Headl
 		_ = db.Close()
 		return nil, nil, nil, err
 	}
-	svc, err := automation.New(root, db, spawn, automation.Config{
-		SkillRegistry: skillRegistrySource(root),
-	})
+	releaseHooks, err := installAutomationHooks(root)
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, nil, err
 	}
-	cleanup := func() { _ = db.Close() }
+	svc, err := automation.New(root, db, spawn, automation.Config{
+		SkillRegistry: skillRegistrySource(root),
+		TurnTimeout:   clichat.StepTimeout(res.Subagents.DefaultTotalTimeoutSec),
+	})
+	if err != nil {
+		releaseHooks()
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	cleanup := func() {
+		releaseHooks()
+		_ = db.Close()
+	}
 	return svc, spawn, cleanup, nil
+}
+
+// installAutomationHooks arms this process's lifecycle-hook session, the
+// same install the interactive launch performs. Every session
+// clichat.NewHeadlessSession builds reads it at dispatcher-build time
+// (HookSessionConfiguredFunc), so without it the workspace's PreToolUse and
+// PostToolUse handlers never run for an automation.
+//
+// Installed ONCE per command, not per fire. The hook session is a
+// process-global atomic pointer whose release stores nil rather than
+// restoring the previous value, so a nested install-and-release would
+// disarm hooks for the rest of the process. A `serve` daemon that
+// re-installed per fire would also re-read the hook config on every fire
+// for no benefit: Load is a snapshot either way.
+//
+// A process with no hook seam wired (a test binary that never imports
+// internal/cli) gets a no-op release and unhooked dispatchers, which is the
+// same posture it had before.
+func installAutomationHooks(root string) (func(), error) {
+	if clichat.InstallHookSessionFunc == nil {
+		return func() {}, nil
+	}
+	release, err := clichat.InstallHookSessionFunc(root, false, true)
+	if err != nil {
+		return nil, fmt.Errorf("cliautomations: install hooks: %w", err)
+	}
+	if release == nil {
+		return func() {}, nil
+	}
+	return release, nil
 }
 
 // skillRegistrySource builds automation.Config.SkillRegistry's source:

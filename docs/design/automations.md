@@ -304,9 +304,23 @@ Automations run in headless background sessions without an interactive terminal.
 
 To prevent goroutine leaks and stalled turns, the headless runner enforces two rules:
 1. **Drain to Close**: The runner reads the conversation turn event channel until the channel closes. It never terminates early on intermediate turn events.
-2. **Context Deadlines**: Every headless turn executes under a strict context timeout. The default timeout is 10 minutes when unset in configuration.
+2. **Context Deadlines**: Every headless turn executes under a strict context timeout. Both hosts resolve it from `[subagents] default_total_timeout_seconds`, the whole-run wall-clock budget - every request, tool call, delegated subagent and wait added together. An unset knob resolves to 60 minutes. The executor's own 10-minute fallback applies only when a host supplies no budget at all.
 
 Each run spawns an independent session. Session wedges cannot propagate across runs.
+
+### Session Surface
+
+An automation session carries the same surface an interactive session carries:
+
+- **Tools**: the run directory's own `[tools]` policy governs the registry - allowlists, blocklists, `disable_tools`, `write_path_denylist`, the secret-path patterns, the byte caps, the diagnostics commands and the memory store.
+- **Lifecycle hooks**: `PreToolUse` and `PostToolUse` handlers run for every tool call. The hook session is installed once per command, not per fire.
+- **Session tools**: the session dispatcher's catalog is present - delegation (`dispatch_tasks`), the messaging and ledger tools, and `load_tools`.
+- **Agents and skills**: the run directory's agent roles and skills are loaded, and the subagent roster is composed into the system prompt.
+- **MCP**: every globally-enabled MCP server is merged into the registry, the same set the TUI attaches for the root identity.
+
+Everything a run reads as workspace content - the tool policy, the agent roles, the skills, the memory root - comes from the **run directory**, so a worktree run is governed by the branch it executes. The durable records (run history, the checkpoint store) stay at the project root regardless.
+
+The two hosts differ in how they handle a surface that cannot be published. The headless host (`mivia automations run`/`serve`) fails the run: a session is never degraded into one that executes tools without the workspace's policy. The TUI host records the failure in its tool-scope notice and continues with whatever surface the session has, and a background spawn - which is what an automation fire uses - suppresses that notice, so the failure is silent there.
 
 An automation's session in the TUI is isolated from whatever the operator is doing in the foreground: its turns never take over the foreground's live subagent-progress display, and its startup never plants a tool-adoption warning meant for a later, unrelated foreground action. Dispatched subagent threads from a background run are still visible in the same subagent registry the foreground session reads, so a background run's own subagent activity can appear in the foreground's subagent panel.
 
@@ -316,6 +330,7 @@ Automations run unattended and cannot prompt a human operator for tool call appr
 
 - **`unattended = "deny"` (default)**: Any tool call requiring interactive approval fails immediately. The failure records the error message `automation "<id>": unattended run denies all tool approvals`.
 - **`unattended = "auto"`**: The engine automatically approves all tool calls requiring approval. Auto-approval settings apply only to the active run session and do not persist standing operator permissions.
+- **Delegation is not gated on this posture.** An automation session advertises `dispatch_tasks` exactly as an interactive session does. Under `unattended = "auto"` that means a scheduled run can spawn subagents whose own tool calls are auto-approved with no operator present, bounded only by `[subagents]` `max_depth` and `max_fanout`. This is deliberate: the requirement is that an automation session differ from an interactive one in no way. Operators who do not want unsupervised delegation should use `unattended = "deny"`, under which a delegated child's approval-requiring tool calls fail fast.
 - **Workflow Steps**: Workflow steps never enable publication delivery. Deliveries remain pending for human review.
 
 ### Slash Command Allowlist

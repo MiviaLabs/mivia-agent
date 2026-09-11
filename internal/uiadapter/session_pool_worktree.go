@@ -269,8 +269,17 @@ func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string,
 	// the session into its worktree. On failure keep the bare registry (the
 	// binding itself is valid) and surface the reason through the pool's
 	// tool-scope notice, like adoptWorktreeToolsLocked does.
-	if _, err := cliagents.AttachRebuiltSurface(sess, p.res, entryState); err != nil && !background {
+	// The advertised-union truncation count comes back here rather than
+	// being printed inside the rebuild: that code runs while the TUI owns
+	// the terminal, so it routes the count through the same single-slot
+	// notice as every other message on this path (and skips it on the
+	// background spawn, like every other write site above).
+	_, advertisedDropped, err := cliagents.AttachRebuiltSurface(sess, p.res, entryState)
+	switch {
+	case err != nil && !background:
 		p.lastToolScopeNotice = "session tools: " + err.Error()
+	case advertisedDropped > 0 && !background:
+		p.lastToolScopeNotice = fmt.Sprintf("session tools: %d tool(s) exceed the advertising cap and are not offered to the model", advertisedDropped)
 	}
 	return entryState
 }

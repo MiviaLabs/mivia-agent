@@ -99,7 +99,33 @@ func (s *Screen) adoptLive() tea.Cmd {
 	}
 	events, sub := le.SubscribeLive()
 	s.liveSub, s.liveEvents = sub, events
-	return s.awaitLiveEvent(s.convID(), events, sub)
+	return tea.Batch(s.armLiveStatusline(), s.awaitLiveEvent(s.convID(), events, sub))
+}
+
+// armLiveStatusline gives the status row a life when the view attaches to
+// a run that is ALREADY in flight.
+//
+// driveStatuslineFromLive arms the row from the watched turn's own
+// TurnStart, which covers a viewer who was already on the session when the
+// turn began. The normal case is the opposite: the operator triggers a run
+// and then goes to look at it, so TurnStart is already in the past and no
+// further one arrives for that turn. statusline.View draws nothing until
+// Start has been called, so the row stayed blank for the whole run and a
+// working automation looked dead - the same symptom the TurnStart arming
+// was added to fix, one attach order over.
+//
+// The elapsed clock therefore measures how long this view has been
+// watching, not how long the turn has run: the turn's real start is in the
+// past and the freshly-attached view has no record of it. A clock that
+// starts at zero is honest about what it counts; a blank row is not.
+func (s *Screen) armLiveStatusline() tea.Cmd {
+	if !s.runOwnsSession(s.conv) {
+		return nil
+	}
+	// Start returns its own tick Cmd; discard it and arm through armTick,
+	// the one legal clock entry point (spinner_clock.go).
+	_ = s.statusline.Start("auto", s.now())
+	return s.armTick()
 }
 
 // pauseLive closes the current conversation's live view before a local

@@ -42,12 +42,25 @@ func TestHeadlessSpawnerImplementsCloseLastRun(t *testing.T) {
 // several tests below (e.g. TestCreateFreshInDirBuildSessionErrorPropagates)
 // chmod root's own .mivia dir and expect the session store open to fail
 // against that same directory.
+// A resolved provider runtime is part of the fixture because a spawned
+// session now REQUIRES a working completer: without one the surface attach
+// is a silent no-op and the run would execute on a dispatcher that never
+// saw the workspace's tool policy, so buildCompleter reports instead of
+// degrading.
 func testResolvedConfig() *config.Resolved {
 	return &config.Resolved{
 		ProviderName: "openrouter",
 		Model:        "test/model",
 		SystemPrompt: "ROOT PROMPT",
 		Subagents:    config.SubagentConfig{StorePath: ".mivia/context.db"},
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"openrouter": {
+				ProviderName: "openrouter",
+				BaseURL:      "https://openrouter.test/api/v1",
+				APIKeySet:    true,
+				APIKey:       "test-key",
+			},
+		},
 	}
 }
 
@@ -366,31 +379,40 @@ func TestNewHeadlessSpawnerRejectsNilConfig(t *testing.T) {
 	}
 }
 
-// TestBuildCompleterReturnsNilWhenProviderNameEmpty covers buildCompleter's
-// own empty-ProviderName guard directly (h.res.ProviderName == "").
-func TestBuildCompleterReturnsNilWhenProviderNameEmpty(t *testing.T) {
+// TestBuildCompleterReportsAnEmptyProviderName covers buildCompleter's own
+// empty-ProviderName guard. It REPORTS rather than returning a nil
+// completer: an absent completer makes the surface attach a silent no-op,
+// so the run would proceed on a dispatcher that never saw the workspace's
+// tool policy.
+func TestBuildCompleterReportsAnEmptyProviderName(t *testing.T) {
 	spawn, err := NewHeadlessSpawner(t.TempDir(), &config.Resolved{})
 	if err != nil {
 		t.Fatalf("NewHeadlessSpawner: %v", err)
 	}
-	if comp := spawn.buildCompleter(); comp != nil {
-		t.Fatalf("buildCompleter with an empty ProviderName = %v, want nil", comp)
+	comp, err := spawn.buildCompleter()
+	if err == nil {
+		t.Fatalf("buildCompleter with an empty ProviderName = %v, want an error", comp)
+	}
+	if comp != nil {
+		t.Fatalf("buildCompleter returned %v alongside its error, want nil", comp)
 	}
 }
 
-// TestBuildCompleterReturnsNilWhenProviderNotConfigured covers
-// buildCompleter's own provider.New-error fallback branch: a
-// config.Resolved with ProviderName set but no matching ProviderRuntimes
-// entry makes provider.New fail, and buildCompleter must swallow that
-// (returning nil, not propagating) since a session with a nil completer
-// is still constructible - it simply cannot run a turn yet.
-func TestBuildCompleterReturnsNilWhenProviderNotConfigured(t *testing.T) {
+// TestBuildCompleterPropagatesAProviderError covers buildCompleter's
+// provider.New-error branch: a config.Resolved with ProviderName set but no
+// matching ProviderRuntimes entry makes provider.New fail, and the error
+// must reach the caller rather than becoming a nil completer.
+func TestBuildCompleterPropagatesAProviderError(t *testing.T) {
 	spawn, err := NewHeadlessSpawner(t.TempDir(), &config.Resolved{ProviderName: "openrouter"})
 	if err != nil {
 		t.Fatalf("NewHeadlessSpawner: %v", err)
 	}
-	if comp := spawn.buildCompleter(); comp != nil {
-		t.Fatalf("buildCompleter with an unconfigured provider = %v, want nil", comp)
+	comp, err := spawn.buildCompleter()
+	if err == nil {
+		t.Fatalf("buildCompleter with an unconfigured provider = %v, want an error", comp)
+	}
+	if comp != nil {
+		t.Fatalf("buildCompleter returned %v alongside its error, want nil", comp)
 	}
 }
 

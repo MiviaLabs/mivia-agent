@@ -170,9 +170,9 @@
     },
     "internal/cliagents/attach_rebuilt_surface.go": {
       "lines": [
-        62,
-        63,
-        64
+        64,
+        65,
+        66
       ],
       "reason": "LoadSessionSkills' error return, unreachable given skills.LoadMarkdownSources' own contract: every failure inside loadMarkdownSource (an unopenable source dir, a broken skill directory) is converted to a warning string and folded into the returned warnings slice - LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error. Confirmed with a WorkspaceRoot whose .agents path is a blocking file: the load returns a \"skip skills directory\" warning and a nil error, not an error."
     },

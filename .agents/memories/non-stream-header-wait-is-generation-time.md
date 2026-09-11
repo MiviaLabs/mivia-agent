@@ -4,7 +4,7 @@ title: A non-stream LLM request's header wait is the model thinking, not a stall
 content: ResponseHeaderTimeout on a non-stream completion is a ceiling on thinking time; only streaming requests may carry a header bound, and every Completer must honor req.StreamTransport.
 importance: high
 tags: [provider, timeouts, streaming, subagents, anthropic, transport]
-related: [sibling_implementations_drift, stop_hook_appends_triggering_message, transport_stage_timeout_is_not_a_deadline]
+related: [provider_audit_dir_shows_the_real_request, sibling_implementations_drift, stop_hook_appends_triggering_message, transport_stage_timeout_is_not_a_deadline]
 updated: 2026-09-04
 ---
 

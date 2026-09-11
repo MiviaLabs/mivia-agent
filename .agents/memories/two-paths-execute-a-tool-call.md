@@ -4,7 +4,7 @@ title: Two routes execute a model's tool call through one shared implementation
 content: execution is now ONE implementation (dispatcherShim.Run); the deferred path decides admission and hands the tool to the loop. The conformance table in internal/clichat holds both routes to the same contracts.
 importance: high
 tags: [tools, execution, conformance, drift, approvals, deferred]
-related: [load_tools_deferred_stage_shadows_the_synchronous_unadmitted_tool_hot_path_64f326f742bb650f4ab75af081511c34, mcp_reliability_chain_schema_bridge_error_surfacing_root_identity_core_tier_5eb9058e91deeba1dd35afe92eddc3ee, sibling_implementations_drift]
+related: [load_tools_deferred_stage_shadows_the_synchronous_unadmitted_tool_hot_path_64f326f742bb650f4ab75af081511c34, mcp_reliability_chain_schema_bridge_error_surfacing_root_identity_core_tier_5eb9058e91deeba1dd35afe92eddc3ee, sdk_surface_advertised_replaces_wholesale, sibling_implementations_drift]
 updated: 2026-09-04
 ---
 

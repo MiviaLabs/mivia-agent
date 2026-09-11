@@ -466,9 +466,9 @@ reasoning_dialect = 'thinking_preserved'
 reasoning_efforts = ['off', 'high']
 
 [subagents]
-default_request_timeout_seconds = 900
+default_request_timeout_seconds = 3600
 default_timeout_seconds = 43200
-default_total_timeout_seconds = 1800
+default_total_timeout_seconds = 14400
 max_audit_rounds = 0
 max_depth = -1
 max_fanout = -1

@@ -332,7 +332,19 @@ func wireAutomationBackend(store *uiadapter.SettingsStore, pool *uiadapter.Sessi
 		db, ownedDB = opened, opened
 	}
 	spawn := newAutomationSpawner(pool)
-	autoSvc, err := automation.New(agentState.WorkspaceRoot, db, spawn, automation.Config{})
+	// TurnTimeout bounds a whole automation STEP - every request, tool call,
+	// delegated subagent and wait added together. Left unset the executor
+	// falls back to a hardcoded 10 minutes that no operator knob can reach,
+	// which silently killed any automation doing real work.
+	// res is nil in some harnesses; an unset budget resolves to the
+	// product default rather than the executor's hardcoded fallback.
+	totalTimeoutSec := 0
+	if res != nil {
+		totalTimeoutSec = res.Subagents.DefaultTotalTimeoutSec
+	}
+	autoSvc, err := automation.New(agentState.WorkspaceRoot, db, spawn, automation.Config{
+		TurnTimeout: cli.StepTimeout(totalTimeoutSec),
+	})
 	if err != nil {
 		log.Printf("automations disabled: %v", err) // non-fatal; TUI starts normally
 		if ownedDB != nil {
