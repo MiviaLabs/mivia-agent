@@ -515,6 +515,8 @@ def test_skips_directory_matching_glob() -> None:
         captured = io.StringIO()
         with contextlib.redirect_stderr(captured):
             mod.check_memories(directory)
+        if captured.getvalue() != "":
+            raise AssertionError(f"unexpected gate error: {captured.getvalue()}")
 
 
 def test_skips_readme_file() -> None:
@@ -528,6 +530,8 @@ def test_skips_readme_file() -> None:
         captured = io.StringIO()
         with contextlib.redirect_stderr(captured):
             mod.check_memories(directory)
+        if captured.getvalue() != "":
+            raise AssertionError(f"unexpected gate error: {captured.getvalue()}")
 
 
 def test_rejects_unreadable_file_with_clean_error() -> None:
