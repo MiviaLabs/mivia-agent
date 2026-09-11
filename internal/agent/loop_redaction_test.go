@@ -262,16 +262,19 @@ func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
 	}
 }
 
-// TestRedactToolInputForTool_DispatchTasksGetsTheWiderCap guards the fix for
+// TestRedactToolInputForTool_DispatchTasksStaysParseable guards
 // dispatch_tasks' live per-task fan-out in the TUI (internal/ui/screen/
 // conversation/events.go's dispatchTaskIDs): that logic parses the task list
-// back out of agent.Event.Input, but the default 256-byte input preview cap
-// truncates a multi-task batch mid-JSON, so json.Unmarshal fails and the fan-
-// out silently falls back to one aggregate row. redactToolOutputForTool
-// already special-cases dispatch_tasks for the identical reason ("a 512-byte
-// cut lands mid-string, which breaks the operator UI's JSON parse") - the
-// input side needs the same allowance.
-func TestRedactToolInputForTool_DispatchTasksGetsTheWiderCap(t *testing.T) {
+// back out of agent.Event.Input, and a preview cut mid-JSON makes the parse
+// fail so the fan-out silently falls back to one aggregate row.
+//
+// This used to assert the preview was byte-identical to the input. That was
+// a proxy for the property that matters - the consumer can parse it - and
+// the proxy held only while the batch fitted the budget; a real dispatch
+// runs to tens of kilobytes and was cut anyway. The assertion is now the
+// property itself: the preview parses, and every task keeps the identity
+// the fan-out reads.
+func TestRedactToolInputForTool_DispatchTasksStaysParseable(t *testing.T) {
 	redact.SetPolicy(nil)
 	t.Cleanup(func() { redact.SetPolicy(nil) })
 	tools.SetRedactToolArgs(false)
@@ -292,17 +295,25 @@ func TestRedactToolInputForTool_DispatchTasksGetsTheWiderCap(t *testing.T) {
 	}
 
 	got := redactToolInputForTool("dispatch_tasks", raw)
-	if got != raw {
-		t.Fatalf("expected dispatch_tasks' full task list to survive uncut, got %d of %d bytes", len(got), len(raw))
-	}
 
 	var decoded struct {
 		Tasks []struct {
-			ID string `json:"id"`
+			ID    string `json:"id"`
+			Agent string `json:"agent"`
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal([]byte(got), &decoded); err != nil || len(decoded.Tasks) != 4 {
-		t.Fatalf("expected the preview to still parse as the full 4-task list, err=%v decoded=%+v", err, decoded)
+		t.Fatalf("expected the preview to parse as the full 4-task list, err=%v decoded=%+v", err, decoded)
+	}
+	for i, task := range decoded.Tasks {
+		if task.ID == "" || task.Agent != "auditor" {
+			t.Fatalf("task %d lost the identity the fan-out reads: %+v", i, task)
+		}
+	}
+	// The prompts are the payload and must NOT ride along: dropping them is
+	// what removes the size dependency the byte cap could only move.
+	if strings.Contains(got, "deep dive prompt text") {
+		t.Fatalf("preview carried the task prompts: %q", got)
 	}
 
 	// An ordinary tool keeps the default, narrower cap.

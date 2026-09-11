@@ -27,12 +27,86 @@ func redactToolInput(raw string) string { return redactToolInputForTool("", raw)
 // re-parses that same preview as JSON - a cut mid-object silently breaks the
 // parse and collapses a multi-task batch back into one aggregate row.
 func redactToolInputForTool(name, raw string) string {
-	maxBytes := 256
+	redacted := redactedToolInput(raw)
 	if name == "dispatch_tasks" {
-		maxBytes = editToolPreviewMaxBytes
+		// A byte cut cannot work here whatever the budget: the consumer
+		// re-parses this string as JSON, so any cut that lands mid-object
+		// yields nothing at all. Reduce the STRUCTURE instead - keep the
+		// identifying fields, drop the prompt bodies that make the payload
+		// large - so the preview stays both small and parseable no matter
+		// how long the task prompts are.
+		if preview, ok := dispatchTasksPreview(redacted); ok {
+			return preview
+		}
+		// Unparseable input (a malformed call, or a redaction that replaced
+		// the whole body): fall back to the byte cut. No worse than before.
+		return truncatePreview(redacted, editToolPreviewMaxBytes)
 	}
-	return truncatePreview(redactedToolInput(raw), maxBytes)
+	return truncatePreview(redacted, 256)
 }
+
+// dispatchTasksPreview rewrites a dispatch_tasks argument object down to the
+// fields the operator surface actually reads - each task's id and whichever
+// key names its agent - and drops everything else, above all the prompts.
+//
+// It exists because the preview has a SECOND consumer beyond display:
+// internal/ui/screen/conversation/events.go re-parses it to fan a batch out
+// into one row per task. A real multi-task dispatch runs to tens of
+// kilobytes of prompts, so the previous byte cap (8 KiB, itself already
+// widened once for this reason) cut mid-object, the parse returned nothing,
+// and a six-task batch rendered as a single row with no tasks in it while
+// six subagents ran. Reducing the structure removes the size dependency
+// rather than moving its threshold.
+//
+// ok is false when raw is not a JSON object with a non-empty tasks array;
+// the caller then keeps the old byte-cut behavior.
+func dispatchTasksPreview(raw string) (string, bool) {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(raw), &root); err != nil {
+		return "", false
+	}
+	rawTasks, ok := root["tasks"].([]any)
+	if !ok || len(rawTasks) == 0 {
+		return "", false
+	}
+	tasks := make([]any, 0, len(rawTasks))
+	for _, rt := range rawTasks {
+		task, ok := rt.(map[string]any)
+		if !ok {
+			tasks = append(tasks, map[string]any{})
+			continue
+		}
+		kept := map[string]any{}
+		for _, key := range dispatchPreviewKeys {
+			if v, present := task[key]; present {
+				if s, isString := v.(string); isString && s != "" {
+					kept[key] = s
+				}
+			}
+		}
+		tasks = append(tasks, kept)
+	}
+	out := map[string]any{"tasks": tasks}
+	if wait, ok := root["wait"].(string); ok && wait != "" {
+		out["wait"] = wait
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return "", false
+	}
+	// Still bounded: a pathological batch (very many tasks, or very long
+	// ids) falls back rather than breaking this file's size contract. That
+	// costs the per-task rows for that batch alone, exactly as today.
+	if len(encoded) > editToolPreviewMaxBytes {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+// dispatchPreviewKeys are the per-task fields the operator surface reads:
+// the task id, and every key extractAgentDisplayName consults to label a
+// row. Nothing else is carried - a prompt is the payload, not an identity.
+var dispatchPreviewKeys = []string{"id", "agent", "subagent", "role", "type", "skill", "workflow", "name"}
 
 // redactedToolInput is the redacted arguments with NO preview cap: the body
 // Event.InputBody carries for chat-sync, which bounds and marks the cut
