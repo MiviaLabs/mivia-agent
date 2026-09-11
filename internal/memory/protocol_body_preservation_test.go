@@ -72,6 +72,55 @@ func TestParseProtocolMemoryRoundTripsTemplateBody(t *testing.T) {
 	}
 }
 
+func TestParseProtocolMemoryRoundTripsTemplateBodyWithHistory(t *testing.T) {
+	const file = `---
+id: with_history
+title: 'With history'
+content: 'Summary line.'
+importance: high
+updated: 2026-01-02
+tags: [memory]
+x-verdict: good
+---
+
+# With history
+
+## Summary
+Summary line.
+
+## What worked
+- Worked well.
+
+## What did not work
+- Did not work.
+
+## Why
+Because of the seam.
+
+## References
+- internal/memory/entry.go
+
+## History
+- Merged in other-memory on 2026-09-11.
+`
+	got, _, ok := parseProtocolMemory([]byte(file), ScopeProject)
+	if !ok {
+		t.Fatalf("parseProtocolMemory rejected template file with History")
+	}
+	if got.Good != "- Worked well." {
+		t.Errorf("Good = %q, want - Worked well.", got.Good)
+	}
+	if got.Bad != "- Did not work." {
+		t.Errorf("Bad = %q, want - Did not work.", got.Bad)
+	}
+	if len(got.References) != 1 || got.References[0] != "internal/memory/entry.go" {
+		t.Errorf("References = %v, want [internal/memory/entry.go]", got.References)
+	}
+	if !strings.Contains(got.Why, "Because of the seam.") || !strings.Contains(got.Why, "Merged in other-memory") {
+		t.Errorf("Why missing content or history note: %q", got.Why)
+	}
+}
+
 // protocolFile wraps a body in the minimal protocol frontmatter.
 func protocolFile(body string) string {
 	return "---\nid: partial\ntitle: 'Partial'\ncontent: 'Summary line.'\nimportance: high\nupdated: 2026-01-02\ntags: [ops]\nx-verdict: good\n---\n\n" + body

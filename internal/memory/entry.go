@@ -565,5 +565,11 @@ func assignSection(e *Entry, section, content string) {
 		e.Bad = content
 	case "why":
 		e.Why = content
+	case "history", "archive note":
+		if e.Why != "" {
+			e.Why = e.Why + "\n\n## " + section + "\n" + content
+		} else {
+			e.Why = content
+		}
 	}
 }

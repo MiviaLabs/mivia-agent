@@ -303,7 +303,7 @@ func parseFullyAccountedBody(body string) (Entry, bool) {
 		}
 		if heading, found := strings.CutPrefix(trimmed, "## "); found {
 			switch strings.ToLower(strings.TrimSpace(heading)) {
-			case "summary", "what worked", "what did not work", "why", "references":
+			case "summary", "what worked", "what did not work", "why", "references", "history", "archive note":
 				inSection = true
 				continue
 			default:
