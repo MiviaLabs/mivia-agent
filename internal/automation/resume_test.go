@@ -466,6 +466,47 @@ func TestResumeRunReleasesClaimOnFailure(t *testing.T) {
 	}
 }
 
+// TestResumeRunReSnapshotsSessionAfterEachCheckpoint proves a RESUMED
+// run's own per-step checkpoints keep re-saving the session snapshot
+// too, not just the pre-resume Load's own transcript: after a two-step
+// resume completes, the catalog row under run.SessionName carries both
+// steps' messages, so a SECOND interruption (after only the first
+// resumed step) would not lose that step's progress - runSteps' own
+// snapshot save is not special-cased away on the resume path.
+func TestResumeRunReSnapshotsSessionAfterEachCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	sess := newContextEnabledSession(t, db)
+	conv := newRecordingConversation()
+	conv.onSend = func() {
+		if _, err := sess.SendUser(context.Background(), "resumed step turn", io.Discard); err != nil {
+			t.Errorf("SendUser during resumed step: %v", err)
+		}
+	}
+	spawner := &sessionSpawner{sess: sess, conv: conv}
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runID, sessionName := seedResumableRun(t, svc, root, sess, []string{"one", "two"}, RunInterrupted, 0, true)
+
+	run, err := svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ResumeRun: %v", err)
+	}
+	if run.State != ports.RunSucceeded {
+		t.Fatalf("ResumeRun State = %v, want RunSucceeded", run.State)
+	}
+
+	_, info, err := db.LoadSession(context.Background(), sess.ContextPrincipal(), sessionName)
+	if err != nil {
+		t.Fatalf("LoadSession(%q): %v", sessionName, err)
+	}
+	if info.MessageCount < 2 {
+		t.Fatalf("catalog message count = %d, want >= 2 (both resumed steps' turns), want each resumed checkpoint to re-save the snapshot", info.MessageCount)
+	}
+}
+
 // TestResumeRunAlreadyCompleteMarksSucceededWithoutSpawn covers the
 // StepIndex >= len(spec.Steps) branch: a race or stale interrupted flag
 // on an already-fully-executed run is repaired to RunSucceeded without

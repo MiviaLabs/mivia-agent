@@ -234,7 +234,11 @@ type automationSessionSpawner struct {
 }
 
 func (a automationSessionSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
-	return a.pool.CreateFreshInDir(uiadapter.BindFunc(bind), dir)
+	// Background spawn: an automation run must not share the process-wide
+	// SubagentProgressRegistrar or the pool's single-slot tool-scope
+	// notice with whatever the foreground TUI is doing (see
+	// CreateFreshBackgroundInDir's doc comment).
+	return a.pool.CreateFreshBackgroundInDir(uiadapter.BindFunc(bind), dir)
 }
 
 func (a automationSessionSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {

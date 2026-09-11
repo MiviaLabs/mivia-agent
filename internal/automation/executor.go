@@ -168,29 +168,54 @@ func (s *Service) spawnRunSession(spec Spec, automationID, runID, workDir string
 	return conv, boundSess, savedName, nil
 }
 
+// saveRunSnapshot re-saves boundSess under sessionName so the run's
+// catalog row reflects the messages added since the last save (spawn
+// time, or the previous checkpoint) instead of staying frozen at
+// whatever it held then ("Resuming Runs"). It is a no-op when there is
+// nothing to save: no bound session, an empty sessionName
+// (spawnRunSession's own "no context store configured" state), or a
+// session with no context store wired in - mirroring spawnRunSession's
+// own guard.
+//
+// A save failure here is a HARD error, not swallowed, for the same
+// reason spawnRunSession's own Save failure is (see its doc comment): a
+// run whose latest progress cannot be persisted must fail loudly right
+// now, not silently report success or "just" the earlier step failure
+// while a resume would restart from stale history.
+func (s *Service) saveRunSnapshot(boundSess *chat.Session, sessionName string) error {
+	if boundSess == nil || sessionName == "" || !boundSess.ContextEnabled() {
+		return nil
+	}
+	if err := boundSess.Save(sessionName); err != nil {
+		return fmt.Errorf("save run snapshot: %w", err)
+	}
+	return nil
+}
+
 // runSteps dispatches spec.Steps[startIndex:] in order on the one
 // already-spawned conversation, checkpointing run.StepIndex after each
 // completed step so a later resume restarts at index+1. startIndex is
 // 0 for a fresh RunOnce run and run.StepIndex for a resumed one
-// (ResumeRun) - runSteps itself applies no +1 adjustment; the caller is
-// responsible for passing the correct starting point, per this
-// function's own checkpointing contract below. On a step failure,
-// run.StepIndex is left at the failing index (not advanced) so the
-// caller's failRun call records exactly where execution stopped. The
-// checkpoint write survives a cancel of ctx. A step that completed is
-// recorded even when the cancel lands after its turn drained. A resume
-// therefore does not run that step again. The pre-step ctx check still
-// stops the run before the next step.
+// (ResumeRun) - runSteps applies no +1 adjustment; the caller passes
+// the correct starting point. On a step failure, run.StepIndex is left
+// at the failing index. The checkpoint write survives a cancel of ctx,
+// so a completed step is recorded even when the cancel lands after its
+// turn drained; the pre-step ctx check still stops the run before the
+// next step.
 //
-// The checkpoint write is conditioned on the row still being running
-// (checkpointRunFenced), not just on the claim token: cancel-durability
-// alone would let the checkpoint land AFTER a concurrent
+// The checkpoint (checkpointRunFenced) is conditioned on the row still
+// being running, not just on the claim token: cancel-durability alone
+// would let the checkpoint land after a concurrent
 // InterruptRunningAutomationRun (Close's crash-recovery path) already
-// closed the row out, resurrecting it back to running with a later
-// step_index. When the checkpoint reports the row already settled,
-// runSteps stops advancing immediately and returns
-// ErrRunSettledElsewhere: someone else already closed this run out, so
-// neither RunRunning nor any further step is published.
+// closed the row out, resurrecting it. When the checkpoint reports the
+// row already settled, runSteps stops and returns
+// ErrRunSettledElsewhere - someone else already closed this run out.
+//
+// Each landed checkpoint or ordinary step failure also re-saves the
+// run's session snapshot under run.SessionName, so a resume finds that
+// step's turns instead of the spawn-time empty transcript. The save is
+// skipped on a fenced or settled-elsewhere checkpoint: another writer
+// already owns or closed the row.
 func (s *Service) runSteps(ctx context.Context, spec Spec, automationID, workDir string, conv ports.Conversation, boundSess *chat.Session, run *Run, startIndex int) error {
 	timeout := s.turnTimeout()
 	for i := startIndex; i < len(spec.Steps); i++ {
@@ -201,6 +226,9 @@ func (s *Service) runSteps(ctx context.Context, spec Spec, automationID, workDir
 		step := spec.Steps[i]
 		if stepErr := s.runStep(ctx, automationID, run.ID, i, workDir, conv, boundSess, step, timeout); stepErr != nil {
 			run.StepIndex = i
+			if saveErr := s.saveRunSnapshot(boundSess, run.SessionName); saveErr != nil {
+				return errors.Join(stepErr, saveErr)
+			}
 			return stepErr
 		}
 		if err := s.checkpointRunFenced(context.WithoutCancel(ctx), *run, i+1); err != nil {
@@ -210,6 +238,9 @@ func (s *Service) runSteps(ctx context.Context, spec Spec, automationID, workDir
 			return fmt.Errorf("automation: checkpoint run %q step %d: %w", run.ID, i, err)
 		}
 		run.StepIndex = i + 1
+		if err := s.saveRunSnapshot(boundSess, run.SessionName); err != nil {
+			return err
+		}
 		s.publishRun(*run)
 	}
 	return nil

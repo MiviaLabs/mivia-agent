@@ -33,7 +33,34 @@ func (p *SessionPool) CreateFreshBound(bind BindFunc) (ports.Conversation, error
 	return p.CreateFreshInDir(bind, "")
 }
 
+// CreateFreshBackgroundInDir is CreateFreshInDir for a session driven
+// off-screen (an automation run): the returned Conversation is marked
+// background (see Conversation.SetBackground), and the spawn never
+// touches the pool's single-slot tool-scope notice - that slot is
+// drained by the FOREGROUND's next /new or /resume, and a background
+// spawn publishing into it would silently misdirect a warning meant for
+// a later, unrelated foreground action.
+func (p *SessionPool) CreateFreshBackgroundInDir(bind BindFunc, dir string) (ports.Conversation, error) {
+	return p.createFreshInDirLocking(bind, dir, true)
+}
+
 func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Conversation, error) {
+	return p.createFreshInDirLocking(bind, dir, false)
+}
+
+// createFreshInDirLocking is the shared body behind CreateFreshInDir and
+// CreateFreshBackgroundInDir. wireEntryLocked's own adoptWorktreeToolsLocked
+// call RELEASES p.mu around its slow registry build (compute-then-adopt),
+// so this is NOT one uninterrupted lock acquisition: a foreground /new or
+// /resume can run to completion, including publishing its own real
+// tool-scope notice, entirely inside that unlocked window. A post-hoc
+// "clear the slot after wireEntryLocked returns" would race that
+// foreground publish and could wipe a warning that belongs to someone
+// else. Instead background is threaded into wireEntryLocked so the notice
+// is simply never WRITTEN for a background spawn in the first place, at
+// each write site, under the same lock hold that write would otherwise
+// happen under - there is nothing left to clear, so nothing to race.
+func (p *SessionPool) createFreshInDirLocking(bind BindFunc, dir string, background bool) (ports.Conversation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.res == nil {
@@ -48,11 +75,12 @@ func (p *SessionPool) CreateFreshInDir(bind BindFunc, dir string) (ports.Convers
 			return nil, fmt.Errorf("bind fresh session: %w", err)
 		}
 	}
-	entryState := p.wireEntryLocked(sess, boundRoot, dir, false)
+	entryState := p.wireEntryLocked(sess, boundRoot, dir, false, background)
 	if err := p.refuseIfDrainedLocked(); err != nil {
 		return nil, err
 	}
 	conv := NewConversation(sess)
+	conv.SetBackground(background)
 	p.wireContentResolver(entryState)
 	conv.SetSubagents(p.threads)
 	p.sessions[sess.SessionID] = sess
@@ -159,7 +187,7 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 			return nil, nil, false, fmt.Errorf("bind session %q: %w", id, err)
 		}
 	}
-	entryState := p.wireEntryLocked(sess, boundRoot, dir, true)
+	entryState := p.wireEntryLocked(sess, boundRoot, dir, true, false)
 	if err := sess.Load(id); err != nil {
 		return nil, nil, false, err
 	}
@@ -214,9 +242,18 @@ func (p *SessionPool) newEntrySessionLocked() *chat.Session {
 // invokes internally (deferred-tool widener, /model binding factory) - which
 // must never close over the pool's shared base. Returns that fork so the
 // caller registers it under the entry's key. Callers hold p.mu.
-func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string, withPolicies bool) *cliagents.AgentSessionState {
+//
+// background is true only for CreateFreshBackgroundInDir's spawn: the
+// tool-scope notice slot is single-slot and foreground-owned (see
+// session_pool_notice.go), so a background spawn must never publish into
+// it - every write site below checks background and skips the write
+// itself, rather than writing then clearing after the fact. Skipping at
+// the write site keeps the decision inside the same lock hold that write
+// would happen under, so there is no unlock/relock window in which a
+// concurrent foreground caller's own real notice could be clobbered.
+func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string, withPolicies, background bool) *cliagents.AgentSessionState {
 	inheritApprovalLocked(sess, p.inheritEntryStateLocked(sess, withPolicies), p.res)
-	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" {
+	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" && !background {
 		p.lastToolScopeNotice = notice
 	}
 	entryState := p.forkEntryStateLocked()
@@ -232,7 +269,7 @@ func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string,
 	// the session into its worktree. On failure keep the bare registry (the
 	// binding itself is valid) and surface the reason through the pool's
 	// tool-scope notice, like adoptWorktreeToolsLocked does.
-	if _, err := cliagents.AttachRebuiltSurface(sess, p.res, entryState); err != nil {
+	if _, err := cliagents.AttachRebuiltSurface(sess, p.res, entryState); err != nil && !background {
 		p.lastToolScopeNotice = "session tools: " + err.Error()
 	}
 	return entryState

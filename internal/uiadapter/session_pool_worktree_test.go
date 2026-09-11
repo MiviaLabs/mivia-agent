@@ -104,6 +104,66 @@ func TestGetOrCreateInDir_StoredRouteBindingFailurePropagates(t *testing.T) {
 	}
 }
 
+// TestCreateFreshBackgroundInDir_SkipsToolScopeNoticeAndMarksBackground
+// covers T6.3: CreateFreshBackgroundInDir must leave the pool's
+// single-slot tool-scope notice empty even when the underlying spawn
+// hits adoptWorktreeToolsLocked's canonical-resolution failure (the
+// same "relative/dir" trigger TestInDir_ToolScopeNoticeOnCanonicalFailure
+// uses against the ordinary CreateFreshInDir), and the returned
+// conversation must report IsBackground() true - so a background
+// automation spawn cannot plant a notice meant for a later, unrelated
+// foreground /new or /resume.
+func TestCreateFreshBackgroundInDir_SkipsToolScopeNoticeAndMarksBackground(t *testing.T) {
+	stubWorkflowWiring(t)
+	rootA := t.TempDir()
+	pool, mainSess, _ := newPoolAtRoot(t, rootA)
+	inherited := mainSess.Tools
+
+	conv, err := pool.CreateFreshBackgroundInDir(nil, "relative/dir")
+	if err != nil {
+		t.Fatalf("CreateFreshBackgroundInDir: %v", err)
+	}
+	if got := pool.takeToolScopeNotice(); got != "" {
+		t.Fatalf("notice = %q, want empty: a background spawn must not plant a notice for a later foreground action", got)
+	}
+	bc, ok := conv.(*Conversation)
+	if !ok {
+		t.Fatalf("conv is %T, want *Conversation", conv)
+	}
+	if !bc.IsBackground() {
+		t.Fatal("IsBackground() = false for CreateFreshBackgroundInDir's conversation, want true")
+	}
+	if got := pool.lastCreated.Session().Tools; got != inherited {
+		t.Fatal("failed adoption changed tool identity")
+	}
+}
+
+// TestCreateFreshInDir_StillSetsNoticeAndForegroundConversation is the
+// control case for T6.3: the ordinary CreateFreshInDir path must be
+// unaffected by CreateFreshBackgroundInDir's addition - it still
+// publishes the tool-scope notice on the same failure, and its
+// conversation reports IsBackground() false.
+func TestCreateFreshInDir_StillSetsNoticeAndForegroundConversation(t *testing.T) {
+	stubWorkflowWiring(t)
+	rootA := t.TempDir()
+	pool, _, _ := newPoolAtRoot(t, rootA)
+
+	conv, err := pool.CreateFreshInDir(nil, "relative/dir")
+	if err != nil {
+		t.Fatalf("CreateFreshInDir: %v", err)
+	}
+	if got := pool.takeToolScopeNotice(); !strings.Contains(got, toolScopeNotResolved) {
+		t.Fatalf("notice = %q, want %q fragment", got, toolScopeNotResolved)
+	}
+	bc, ok := conv.(*Conversation)
+	if !ok {
+		t.Fatalf("conv is %T, want *Conversation", conv)
+	}
+	if bc.IsBackground() {
+		t.Fatal("IsBackground() = true for CreateFreshInDir's conversation, want false")
+	}
+}
+
 // TestGetOrCreateInDir_NoRepositoryFallsBackToPlainSession covers
 // storedRouteLocked's swallowed worktreeroute.Root error (lines 242-243):
 // running outside any git repository must NOT surface a route-resolution

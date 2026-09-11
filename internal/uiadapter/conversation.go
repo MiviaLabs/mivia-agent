@@ -81,6 +81,30 @@ type Conversation struct {
 	active atomic.Bool
 
 	subagents *SubagentThreads
+
+	// background marks a conversation driven off-screen (an automation
+	// run), never the foreground TUI. Send checks it to skip the
+	// process-wide SubagentProgressRegistrar swap: two conversations
+	// share that single var, so a background run installing itself
+	// would hijack the foreground session's subagent-dispatch display.
+	background atomic.Bool
+}
+
+// SetBackground marks c as background (an automation run) or
+// foreground. See the background field doc for why Send consults it.
+func (c *Conversation) SetBackground(on bool) {
+	if c == nil {
+		return
+	}
+	c.background.Store(on)
+}
+
+// IsBackground reports whether c is marked background.
+func (c *Conversation) IsBackground() bool {
+	if c == nil {
+		return false
+	}
+	return c.background.Load()
 }
 
 // NewConversation wraps an existing chat.Session. The caller owns the
@@ -236,7 +260,7 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	previous, tapToken := c.sess.SwapOnAgentEventToken(handler)
 
 	var clearSubagent func()
-	if SubagentProgressRegistrar != nil {
+	if !c.IsBackground() && SubagentProgressRegistrar != nil {
 		clearSubagent = SubagentProgressRegistrar(handler)
 	}
 
