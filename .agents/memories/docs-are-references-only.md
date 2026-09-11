@@ -4,6 +4,7 @@ title: docs/ are references only - no plans, dev logs, or decision records
 content: docs/ is strictly present-tense reference documentation - no proposals, status lines, research logs, amendment history, or decision ledgers; verify every behavioral claim against code before writing it.
 importance: medium
 tags: [docs, conventions, ownership, verification]
+related: [prompt_lines_require_observed_failures]
 updated: 2026-09-11
 ---
 

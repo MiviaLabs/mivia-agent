@@ -370,6 +370,18 @@ func (f *gatedSessionSpawner) CreateFreshInDir(bind func(*chat.Session) (string,
 	return f.conv, nil
 }
 
+// GetOrResumeInDir restores history with Load(id) itself (the caller
+// must not call Load again) and returns the same session
+// CreateFreshInDir binds.
+func (f *gatedSessionSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	if f.sess != nil {
+		if err := f.sess.Load(id); err != nil {
+			return nil, nil, err
+		}
+	}
+	return f.conv, f.sess, nil
+}
+
 func (f *gatedSessionSpawner) SetApprovalOverride(string, func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, string) error {
 	return nil
 }
@@ -453,8 +465,13 @@ func TestApplyResumeAfterCloseKeepsFailedRowAndReleasesClaim(t *testing.T) {
 	ctx := context.Background()
 	failed := Run{
 		ID: "run-failed", AutomationID: id, Origin: "manual", State: RunFailed,
-		StepIndex: 0, StepCount: 1, SessionName: automationSessionName(id, "run-failed"),
-		StartedAt: time.Now().UTC(), FailKind: RunFailJobError, Message: "step 0 boom",
+		StepIndex: 0, StepCount: 1,
+		// A session id the row was saved under: 26 base32 characters,
+		// the shape the one-catalog-row scheme records. The resume below
+		// is refused at Close before any spawn, so only non-emptiness
+		// and immutability of the row matter here.
+		SessionName: "MWIVAMWIVAMWIVAMWIVAMWIVAA",
+		StartedAt:   time.Now().UTC(), FailKind: RunFailJobError, Message: "step 0 boom",
 	}
 	if err := svc.createRun(ctx, failed); err != nil {
 		t.Fatalf("createRun: %v", err)

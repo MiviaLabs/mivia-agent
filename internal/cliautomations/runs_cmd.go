@@ -43,6 +43,9 @@ func runRunsCommand(args []string) error {
 			return fmt.Errorf("automations runs: --limit expects an integer, got %q", limitStr)
 		}
 		limit = parsed
+		if limit <= 0 {
+			return fmt.Errorf("automations runs: --limit must be a positive integer, got %d", limit)
+		}
 	}
 	if len(rest) != 0 {
 		return fmt.Errorf("automations runs: unexpected arguments %v", rest)

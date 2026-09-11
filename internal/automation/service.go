@@ -40,6 +40,11 @@ import (
 // directly on the spawned session, keyed by its conversation id.
 type SessionSpawner interface {
 	CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error)
+	// GetOrResumeInDir returns the pooled or restored session for id,
+	// READY for turns: history is already restored by the implementor on
+	// the miss path, and the caller must NOT call Load again. dir scopes
+	// worktree resolution exactly as CreateFreshInDir's.
+	GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error)
 	SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error
 }
 

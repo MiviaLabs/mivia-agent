@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -84,6 +85,15 @@ type sessionSpawner struct {
 	createErr      error
 	setApprovalErr error
 	overrides      []approvalOverride
+	// resumeSess, when set, is what GetOrResumeInDir returns instead of
+	// sess: a session whose own id differs from the run's stored
+	// SessionName (the re-point fixture). getOrResumeErr, when set, is
+	// returned by GetOrResumeInDir directly. getOrResumeIDs records
+	// every id GetOrResumeInDir was asked for, in call order.
+	resumeSess       *chat.Session
+	getOrResumeErr   error
+	getOrResumeCalls int
+	getOrResumeIDs   []string
 }
 
 func (f *sessionSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error), dir string) (ports.Conversation, error) {
@@ -116,6 +126,59 @@ func (f *sessionSpawner) SetApprovalOverride(sessionID string, gate func(ctx con
 	return nil
 }
 
+// GetOrResumeInDir stands in for a real pool resume: it counts as the
+// create+load pair it replaces (so createCallCount assertions stay
+// meaningful), returns the same bound session CreateFreshInDir hands
+// out, and - when this fake has a real session - restores history with
+// Load(id) itself, since the caller must not call Load again. A failed
+// Load is wrapped the way a real spawner wraps it (cliautomations'
+// "cliautomations: load session %q" wrap); no real spawner attaches
+// ErrRunSessionMissing - that refusal is the caller's own admission
+// guard for a run with no recorded name at all. Every requested id is
+// recorded, so a test can pin which name a resume goes back through.
+func (f *sessionSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	f.mu.Lock()
+	f.createCalls++
+	f.getOrResumeCalls++
+	f.getOrResumeIDs = append(f.getOrResumeIDs, id)
+	createErr, resumeErr := f.createErr, f.getOrResumeErr
+	f.mu.Unlock()
+	if resumeErr != nil {
+		return nil, nil, resumeErr
+	}
+	if createErr != nil {
+		return nil, nil, createErr
+	}
+	if f.resumeSess != nil {
+		// Fresh-ID mode: the saved name resolved onto a session whose own
+		// id differs; that fixture session already carries its state, so
+		// no Load happens here.
+		return f.conv, f.resumeSess, nil
+	}
+	if f.sess != nil {
+		if err := f.sess.Load(id); err != nil {
+			return nil, nil, fmt.Errorf("cliautomations: load session %q: %w", id, err)
+		}
+	}
+	return f.conv, f.sess, nil
+}
+
+// getOrResumeRequestedIDs returns every id passed to GetOrResumeInDir,
+// in call order.
+func (f *sessionSpawner) getOrResumeRequestedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.getOrResumeIDs))
+	copy(out, f.getOrResumeIDs)
+	return out
+}
+
+func (f *sessionSpawner) getOrResumeCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getOrResumeCalls
+}
+
 func (f *sessionSpawner) createCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -132,10 +195,21 @@ type instrumentedStore struct {
 	*storage.SQLite
 	insideBind *int32
 
-	mu             sync.Mutex
-	saveCalls      int
-	saveDuringBind bool
-	saveErr        error
+	mu               sync.Mutex
+	saveCalls        int
+	saveDuringBind   bool
+	saveErr          error
+	loadSessionCalls int
+}
+
+// LoadSession counts catalog loads so a test can tell a spawner's own
+// history restore from any extra chat Load the caller was told not to
+// make.
+func (i *instrumentedStore) LoadSession(ctx context.Context, principal contextstate.Principal, name string) ([]byte, contextstate.SessionCatalogInfo, error) {
+	i.mu.Lock()
+	i.loadSessionCalls++
+	i.mu.Unlock()
+	return i.SQLite.LoadSession(ctx, principal, name)
 }
 
 func (i *instrumentedStore) SaveSession(ctx context.Context, principal contextstate.Principal, name string, data []byte, model, providerName string, turns, tokens, msgCount int, opts contextstate.SessionSaveOptions) error {
@@ -170,7 +244,7 @@ func TestSpawnRunSessionSaveOrderingHappensAfterCreateFreshInDir(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	conv, boundSess, savedName, err := svc.spawnRunSession(Spec{ID: "auto-x"}, "auto-x", "run-x", root)
+	conv, boundSess, savedName, err := svc.spawnRunSession(Spec{ID: "auto-x"}, "auto-x", root)
 	if err != nil {
 		t.Fatalf("spawnRunSession: %v", err)
 	}
@@ -180,7 +254,7 @@ func TestSpawnRunSessionSaveOrderingHappensAfterCreateFreshInDir(t *testing.T) {
 	if boundSess != sess {
 		t.Fatal("spawnRunSession did not return the bind closure's captured session")
 	}
-	want := automationSessionName("auto-x", "run-x")
+	want := sess.SessionID
 	if savedName != want {
 		t.Fatalf("savedName = %q, want %q", savedName, want)
 	}
@@ -207,7 +281,7 @@ func TestSpawnRunSessionSaveErrorFailsRun(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	conv, boundSess, savedName, err := svc.spawnRunSession(Spec{ID: "auto-x"}, "auto-x", "run-x", root)
+	conv, boundSess, savedName, err := svc.spawnRunSession(Spec{ID: "auto-x"}, "auto-x", root)
 	if err == nil {
 		t.Fatal("spawnRunSession with a failing Save: got nil error, want it propagated")
 	}
@@ -233,7 +307,9 @@ func seedResumableRun(t *testing.T, svc *Service, root string, sess *chat.Sessio
 	automationID = seedEnabledAutomation(t, root, func(s *Spec) { s.Steps = steps })
 	runID = "resume-run-" + automationID
 	if withSession {
-		sessionName = automationSessionName(automationID, runID)
+		// The one-catalog-row scheme: a run's snapshot lives under the
+		// bound session's own id.
+		sessionName = sess.SessionID
 		if err := sess.Save(sessionName); err != nil {
 			t.Fatalf("pre-save resumable session: %v", err)
 		}
@@ -625,5 +701,239 @@ func TestSweepInterruptedExportedWrapper(t *testing.T) {
 	}
 	if got.State != RunInterrupted {
 		t.Fatalf("state after SweepInterrupted = %v, want RunInterrupted", got.State)
+	}
+}
+
+// TestResumeRunLoadsThroughSpawnerWithoutSecondChatLoad pins the resume
+// session contract: the run's saved session comes back through
+// GetOrResumeInDir exactly once, and the caller never issues its own
+// chat Load afterwards - the implementor already restored history. The
+// instrumented store counts LoadSession calls, so any second Load shows
+// up as a second catalog read beyond the spawner's own restore.
+func TestResumeRunLoadsThroughSpawnerWithoutSecondChatLoad(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	spawner := &sessionSpawner{conv: newRecordingConversation()}
+	store := &instrumentedStore{SQLite: db, insideBind: &spawner.insideBind}
+	sess := newContextEnabledSession(t, store)
+	spawner.sess = sess
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runID, _ := seedResumableRun(t, svc, root, sess, []string{"one"}, RunInterrupted, 0, true)
+
+	run, err := svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ResumeRun: %v", err)
+	}
+	if run.State != ports.RunSucceeded {
+		t.Fatalf("ResumeRun State = %v, want RunSucceeded", run.State)
+	}
+	if got := spawner.getOrResumeCallCount(); got != 1 {
+		t.Fatalf("GetOrResumeInDir called %d times, want exactly 1 (the resume must go through the spawner)", got)
+	}
+	if store.loadSessionCalls != 1 {
+		t.Fatalf("store LoadSession called %d times, want exactly 1 (the spawner's own restore; the caller must not Load again)", store.loadSessionCalls)
+	}
+}
+
+// TestResumeRunRepointsSessionNameBeforeRunningWrite pins the re-point
+// ORDER: a run whose stored SessionName resolves onto a session whose
+// own id differs must have its row re-pointed (updateRunSession with the
+// new id) BEFORE the RunRunning state write. The trigger lets the first
+// two automation_runs UPDATEs through (the claim-token update, then the
+// re-point) and fails the third - the RunRunning transition - so the
+// durable row must already carry the new id when the resume errors.
+func TestResumeRunRepointsSessionNameBeforeRunningWrite(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	sess := newContextEnabledSession(t, db)
+	fresh := newContextEnabledSession(t, db)
+	spawner := &sessionSpawner{conv: newRecordingConversation(), sess: sess, resumeSess: fresh}
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runID, oldName := seedResumableRun(t, svc, root, sess, []string{"one", "two"}, RunInterrupted, 0, true)
+	if fresh.SessionID == oldName {
+		t.Fatal("fixture: the fresh session's id equals the stored name")
+	}
+	if err := forceAutomationRunsUpdateFailuresAfter(t, db, 2); err != nil {
+		t.Fatalf("install update-failing trigger: %v", err)
+	}
+
+	if _, err := svc.ResumeRun(context.Background(), runID); err == nil {
+		t.Fatal("ResumeRun: got nil error, want the third UPDATE (the RunRunning write) to fail")
+	}
+	stored, ok, err := svc.getRun(context.Background(), runID)
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if stored.SessionName != fresh.SessionID {
+		t.Fatalf("row session name = %q, want %q (updateRunSession must land BEFORE the RunRunning write the trigger failed)", stored.SessionName, fresh.SessionID)
+	}
+	if stored.State != RunInterrupted {
+		t.Fatalf("row state = %v, want RunInterrupted (the failed write was the RunRunning transition)", stored.State)
+	}
+}
+
+// TestResumeRunRepointsSessionNameAndCheckpointsUnderIt pins the
+// observable consequences of the re-point on a successful resume: the
+// durable row names the restored session's own id, the per-step
+// checkpoint saves land under that NEW id, and the old row keeps its
+// spawn-time snapshot untouched.
+func TestResumeRunRepointsSessionNameAndCheckpointsUnderIt(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	sess := newContextEnabledSession(t, db)
+	fresh := newContextEnabledSession(t, db)
+	conv := newRecordingConversation()
+	conv.onSend = func() {
+		if _, err := fresh.SendUser(context.Background(), "resumed step turn", io.Discard); err != nil {
+			t.Errorf("SendUser during resumed step: %v", err)
+		}
+	}
+	spawner := &sessionSpawner{conv: conv, sess: sess, resumeSess: fresh}
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runID, oldName := seedResumableRun(t, svc, root, sess, []string{"one", "two"}, RunInterrupted, 0, true)
+
+	run, err := svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ResumeRun: %v", err)
+	}
+	if run.State != ports.RunSucceeded {
+		t.Fatalf("ResumeRun State = %v, want RunSucceeded", run.State)
+	}
+	stored, ok, err := svc.getRun(context.Background(), runID)
+	if err != nil || !ok {
+		t.Fatalf("getRun: ok=%v err=%v", ok, err)
+	}
+	if stored.SessionName != fresh.SessionID {
+		t.Fatalf("row session name = %q, want the restored session's own id %q", stored.SessionName, fresh.SessionID)
+	}
+	_, info, err := db.LoadSession(context.Background(), fresh.ContextPrincipal(), fresh.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession(%q): %v", fresh.SessionID, err)
+	}
+	if info.MessageCount < 1 {
+		t.Fatalf("catalog message count under the new id = %d, want >= 1 (checkpoints must save under the new name)", info.MessageCount)
+	}
+	_, oldInfo, err := db.LoadSession(context.Background(), sess.ContextPrincipal(), oldName)
+	if err != nil {
+		t.Fatalf("LoadSession(%q): %v", oldName, err)
+	}
+	if oldInfo.MessageCount != 0 {
+		t.Fatalf("old row message count = %d, want 0 (no checkpoint may land under the stale name)", oldInfo.MessageCount)
+	}
+}
+
+// TestResumeRunLiveLeaseConflictNamesLeaseNotMissingSession pins the
+// error mapping for a live-lease conflict: a spawner refusal of type
+// contextstate.SessionLiveError becomes a failure message naming the
+// lease conflict, never the "no resumable session" wrap.
+func TestResumeRunLiveLeaseConflictNamesLeaseNotMissingSession(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	sess := newContextEnabledSession(t, db)
+	spawner := &sessionSpawner{
+		conv:           newRecordingConversation(),
+		sess:           sess,
+		getOrResumeErr: &contextstate.SessionLiveError{LeaseAge: 2 * time.Second, RetryAfter: 5 * time.Second},
+	}
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runID, _ := seedResumableRun(t, svc, root, sess, []string{"one"}, RunInterrupted, 0, true)
+
+	run, err := svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ResumeRun: got error %v, want nil (failure is recorded on the run)", err)
+	}
+	if run.State != ports.RunFailed {
+		t.Fatalf("ResumeRun State = %v, want RunFailed", run.State)
+	}
+	if !strings.Contains(run.Message, "in use by another mivia process") || !strings.Contains(run.Message, "lease") {
+		t.Fatalf("run.Message = %q, want it naming the live-lease conflict", run.Message)
+	}
+	if strings.Contains(run.Message, ErrRunSessionMissing.Error()) {
+		t.Fatalf("run.Message = %q, want a live-lease failure, not the %q wrap", run.Message, ErrRunSessionMissing.Error())
+	}
+}
+
+// TestResumeRunChainedResumeContinuesFromRepointedRow proves a chain of
+// two resumes of the same run stays coherent across the re-point. The
+// run row starts with a legacy reserved SessionName that no longer
+// matches any live session id, and the spawner resolves it onto a
+// session carrying a fresh id (the plain-snapshot fork). The first
+// resume re-points the row onto that fresh id, then fails mid-steps.
+// The SECOND resume must go back through the spawner asking for the
+// re-pointed id - not the legacy name - complete from the failed step,
+// and leave a succeeded row that still carries the re-pointed name.
+func TestResumeRunChainedResumeContinuesFromRepointedRow(t *testing.T) {
+	root := t.TempDir()
+	db := newTestDB(t)
+	fresh := newContextEnabledSession(t, db)
+	conv := newRecordingConversation()
+	conv.failAt = 2 // first resume fails on its second step
+	spawner := &sessionSpawner{conv: conv, resumeSess: fresh}
+	svc, err := New(root, db, spawner, Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	legacyName := "legacy-snapshot-name"
+	_, runID := seedResumableRunWithSessionName(t, svc, root, legacyName, []string{"one", "two"})
+
+	// First resume: re-point onto the restored session's own id, then a
+	// mid-steps failure on the forced second-step error.
+	run, err := svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("first ResumeRun: got error %v, want nil (step failure is recorded on the run)", err)
+	}
+	if run.State != ports.RunFailed {
+		t.Fatalf("first ResumeRun State = %v, want RunFailed", run.State)
+	}
+	stored, ok, err := svc.getRun(context.Background(), runID)
+	if err != nil || !ok {
+		t.Fatalf("getRun after first resume: ok=%v err=%v", ok, err)
+	}
+	if stored.SessionName != fresh.SessionID {
+		t.Fatalf("row session name after first resume = %q, want the re-pointed id %q", stored.SessionName, fresh.SessionID)
+	}
+	if stored.State != RunFailed || stored.StepIndex != 1 {
+		t.Fatalf("row after first resume = (state %v, stepIndex %d), want (RunFailed, 1) so the failed step re-runs whole", stored.State, stored.StepIndex)
+	}
+
+	// Second resume of the same run id: must load through the re-pointed
+	// id and finish the run.
+	conv.failAt = 0
+	run, err = svc.ResumeRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("second ResumeRun: %v", err)
+	}
+	if run.State != ports.RunSucceeded {
+		t.Fatalf("second ResumeRun State = %v, want RunSucceeded", run.State)
+	}
+	ids := spawner.getOrResumeRequestedIDs()
+	want := []string{legacyName, fresh.SessionID}
+	if len(ids) != len(want) || ids[0] != want[0] || ids[1] != want[1] {
+		t.Fatalf("GetOrResumeInDir requested ids = %v, want %v (the second resume must ask for the re-pointed id, not the legacy name)", ids, want)
+	}
+	if got := conv.sentTexts(); len(got) != 3 || got[0] != "one" || got[1] != "two" || got[2] != "two" {
+		t.Fatalf("sent texts = %v, want [one two two] (the second resume re-runs only the failed step)", got)
+	}
+	final, ok, err := svc.getRun(context.Background(), runID)
+	if err != nil || !ok {
+		t.Fatalf("getRun after second resume: ok=%v err=%v", ok, err)
+	}
+	if final.State != RunSucceeded {
+		t.Fatalf("terminal row state = %v, want RunSucceeded", final.State)
+	}
+	if final.SessionName != fresh.SessionID {
+		t.Fatalf("terminal row session name = %q, want the re-pointed id %q intact", final.SessionName, fresh.SessionID)
 	}
 }

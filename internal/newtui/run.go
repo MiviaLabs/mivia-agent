@@ -241,6 +241,24 @@ func (a automationSessionSpawner) CreateFreshInDir(bind func(*chat.Session) (str
 	return a.pool.CreateFreshBackgroundInDir(uiadapter.BindFunc(bind), dir)
 }
 
+// GetOrResumeInDir returns the pooled or restored session for id, READY
+// for turns: the pool already restored history on the miss path, so the
+// caller must NOT call Load again. dir scopes worktree resolution
+// exactly as CreateFreshInDir's. bind stays nil here:
+// GetOrCreateInDir's short-circuit, join, and live-entry branches never
+// invoke it, and a capture closure would blur that contract.
+func (a automationSessionSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	conv, err := a.pool.GetOrCreateInDir(id, nil, dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	c, ok := conv.(*uiadapter.Conversation)
+	if !ok {
+		return nil, nil, fmt.Errorf("automation spawner: pooled conversation is %T, want *uiadapter.Conversation", conv)
+	}
+	return conv, c.Session(), nil
+}
+
 func (a automationSessionSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {
 	return a.pool.SetApprovalOverride(sessionID, gate, policy)
 }

@@ -283,6 +283,15 @@ func (f *orderTrackingSpawner) SetApprovalOverride(sessionID string, gate func(c
 	return nil
 }
 
+// GetOrResumeInDir records the same "create" event CreateFreshInDir
+// does (it replaces that call on the resume path) and binds no session.
+func (f *orderTrackingSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	f.mu.Lock()
+	f.events = append(f.events, "create")
+	f.mu.Unlock()
+	return f.conv, nil, nil
+}
+
 func (f *orderTrackingSpawner) CloseLastRun() error {
 	f.mu.Lock()
 	f.events = append(f.events, "close")
@@ -429,10 +438,16 @@ func (f *nonClosingSpawner) SetApprovalOverride(sessionID string, gate func(ctx 
 	return nil
 }
 
+// GetOrResumeInDir binds no session, so it returns the conversation and
+// a nil *chat.Session the caller must not Load.
+func (f *nonClosingSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	return f.conv, nil, nil
+}
+
 // TestServeToleratesSpawnerWithoutCloseLastRun proves Serve's tick
-// proceeds without panicking against a spawner implementing only the
-// 2-method SessionSpawner interface - the exact shape
-// internal/newtui's automationSessionSpawner has.
+// proceeds without panicking against a spawner without a CloseLastRun
+// method - the exact shape internal/newtui's automationSessionSpawner
+// has.
 func TestServeToleratesSpawnerWithoutCloseLastRun(t *testing.T) {
 	root := t.TempDir()
 	db := newTestDB(t)

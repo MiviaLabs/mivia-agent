@@ -4,6 +4,7 @@ title: Interactive "commit" = local commit on the current branch, no PR
 content: When the user directly says "commit" in an interactive session, commit locally on the current branch and stop - do not open a PR. The branch+PR flow is what the ADLC agent-workflow delivery pipeline does on its own; it is not what "commit" means when the user is driving. There is no "master" branch in this repo (or its sibling repos) - GitHub's default branch here is `main`; `dev` is the active integration branch PRs target. Never assume a branch is named "master."
 importance: high
 tags: [git, commits, workflow]
+related: [commit_format_fix_commits_need_regression_class_sweep_trailers_463508bbc8c7377b8d9c5f2c5291f4bf]
 updated: 2026-09-04
 ---
 

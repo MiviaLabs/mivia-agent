@@ -4,6 +4,7 @@ title: ripgrep with no path argument reads stdin, not the tree
 content: A subprocess rg call with no search path searches stdin whenever stdin is not a tty.
 importance: high
 tags: [scripts, grep, subprocess]
+related: [test_fixtures_use_guaranteed_binaries_only]
 updated: 2026-09-04
 ---
 

@@ -14,11 +14,13 @@ package automation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -35,10 +37,13 @@ var ErrRunNotFound = fmt.Errorf("automation: run not found")
 // is not in a resumable state (only RunInterrupted and RunFailed are).
 var ErrRunNotResumable = fmt.Errorf("automation: run not resumable")
 
-// ErrRunSessionMissing is returned by ResumeRun when the run has no
-// recorded session name ("Identification Rules") - it was never durably saved (no context
-// store configured at spawn time, or the run never reached spawn at
-// all) and so has nothing to Load back.
+// ErrRunSessionMissing is returned by admitResume when the run has no
+// recorded session name - it was never durably saved (no context store
+// configured at spawn time, or the run never reached spawn at all) and
+// so has nothing to restore. It is the ONLY refusal of its kind: a name
+// that is recorded but does not resolve surfaces through the spawner's
+// own error, and a live-lease conflict is mapped separately in
+// executeResume.
 var ErrRunSessionMissing = fmt.Errorf("automation: run has no resumable session")
 
 // ErrRunAlreadyActive is returned by ResumeRun when the automation's
@@ -136,7 +141,27 @@ func (s *Service) executeResume(ctx context.Context, adm admitted) (ports.Run, e
 	}
 	conv, boundSess, err := s.spawnAndLoadResumeSession(spec, run, workDir)
 	if err != nil {
+		var live *contextstate.SessionLiveError
+		if errors.As(err, &live) {
+			// A deliberate refusal, not a missing snapshot: a new-format
+			// run resumed by ANOTHER process while the first is still
+			// alive must name the lease conflict (the old reserved-name
+			// fork silently allowed two writers on one session).
+			return s.failRun(ctx, run, run.StepIndex, fmt.Errorf("resume session is in use by another mivia process (lease held): %w", err)), nil
+		}
 		return s.failRun(ctx, run, run.StepIndex, err), nil
+	}
+	// The stored name and the restored session can disagree: a row
+	// written by an older build (a legacy reserved name), or a pool that
+	// resolved the saved name onto a session carrying a different live
+	// id. Re-point the row to the id the restored session actually has,
+	// BEFORE the RunRunning transition and any publish, so every later
+	// checkpoint save - and any later resume - lands on this same row.
+	if boundSess != nil && boundSess.SessionID != run.SessionName {
+		if err := s.updateRunSession(ctx, run.ID, boundSess.SessionID); err != nil {
+			return s.failRun(ctx, run, run.StepIndex, fmt.Errorf("record run session: %w", err)), nil
+		}
+		run.SessionName = boundSess.SessionID
 	}
 	if err := s.updateRunStateFenced(ctx, run, RunRunning, run.StepIndex, nil, RunFailNone, ""); err != nil {
 		return ports.Run{}, err
@@ -168,21 +193,16 @@ func resumeWorkDir(root, worktreePath string) (string, error) {
 	return worktreePath, nil
 }
 
-// spawnAndLoadResumeSession spawns the resume session and restores its
-// saved transcript, in the exact order "Resume Procedure" requires: spawn, THEN Load,
-// THEN the approval override - mirroring
-// uiadapter.SetApprovalOverride's own documented ordering rule
-// (CreateFreshInDir invokes the bind closure before wireEntryLocked's
-// own approval inheritance, so any durable session mutation performed
-// inside the bind closure would race that ordering; Load is exactly
-// such a mutation).
+// spawnAndLoadResumeSession returns the run's restored session through
+// the spawner's GetOrResumeInDir: the implementor restores history
+// itself on the miss path, so there is no caller-side Load and no bind
+// closure (nothing durable ever runs before SetApprovalOverride - see
+// uiadapter.SetApprovalOverride's own documented ordering rule). The
+// approval override still installs strictly after the spawn returns.
 func (s *Service) spawnAndLoadResumeSession(spec Spec, run Run, workDir string) (ports.Conversation, *chat.Session, error) {
-	conv, boundSess, err := s.spawnResumeSession(spec, run.SessionName, workDir)
+	conv, boundSess, err := s.spawn.GetOrResumeInDir(run.SessionName, workDir)
 	if err != nil {
-		return nil, nil, err
-	}
-	if err := boundSess.Load(run.SessionName); err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrRunSessionMissing, err)
+		return nil, nil, fmt.Errorf("spawn resume session: %w", err)
 	}
 	gate, policy := unattendedGateFor(run.AutomationID, spec.Unattended)
 	if err := s.spawn.SetApprovalOverride(conv.ID(), gate, policy); err != nil {
@@ -209,24 +229,6 @@ func (s *Service) markResumedRunSucceeded(ctx context.Context, run Run, spec Spe
 	run.Message = ""
 	s.publishRun(run)
 	return run, nil
-}
-
-// spawnResumeSession spawns the ONE session ResumeRun drives for the
-// rest of the run: the bind closure performs ONLY the capture (no
-// Save/Load), matching spawnRunSession's own ordering rule - Load
-// happens in the CALLER (ResumeRun) after CreateFreshInDir returns, the
-// same ordering SetApprovalOverride already requires.
-func (s *Service) spawnResumeSession(spec Spec, sessionName, workDir string) (ports.Conversation, *chat.Session, error) {
-	var boundSess *chat.Session
-	bindFn := func(sess *chat.Session) (string, error) {
-		boundSess = sess
-		return "", nil
-	}
-	conv, err := s.spawn.CreateFreshInDir(bindFn, workDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("spawn resume session: %w", err)
-	}
-	return conv, boundSess, nil
 }
 
 // SweepInterrupted is the exported wrapper claim.go's sweepInterrupted

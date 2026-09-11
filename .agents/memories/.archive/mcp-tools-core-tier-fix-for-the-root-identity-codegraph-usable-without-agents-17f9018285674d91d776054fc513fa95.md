@@ -4,7 +4,9 @@ title: 'MCP tools core-tier fix for the root identity (codegraph usable without 
 content: 'Fixed global MCP servers being deferred behind load_tools for root identity.'
 importance: medium
 tags: [mcp, codegraph, tool-tiers, root-identity, load_tools, regression-test]
-updated: 2026-09-04
+archived_on: 2026-09-11
+merged_into: mcp_reliability_chain_schema_bridge_error_surfacing_root_identity_core_tier_5eb9058e91deeba1dd35afe92eddc3ee
+updated: 2026-09-11
 ---
 
 # MCP tools core-tier fix for the root identity (codegraph usable without agents)
@@ -29,3 +31,12 @@ The workspace runs the root identity because no agent named config.DefaultAgentN
 - internal/cliagents/mcp_scope.go
 - internal/clichat/chat_mcp_entrypoint_integration_test.go
 - internal/cliagents/tool_tiers_mcp_test.go
+
+## Archive note
+Archived by the `memories-housekeeping` audit on 2026-09-11 as a near-duplicate of
+`mcp_reliability_chain_schema_bridge_error_surfacing_root_identity_core_tier_5eb9058e91deeba1dd35afe92eddc3ee`.
+Both are stamped 2026-09-04 and describe the same change: the umbrella already listed
+commit 6e91f4aa (root-identity core tier) among its four commits, and this file is that
+bullet written out in full. Content preserved verbatim above; the root-cause paragraph,
+the "deferring a connected global server" pitfall, and the four test/source references
+were folded into the umbrella before this copy was moved here.

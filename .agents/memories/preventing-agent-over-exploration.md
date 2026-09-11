@@ -4,6 +4,7 @@ title: Preventing agent over-exploration through dual-engine constraints
 content: Prevent agent over-exploration with hypothesis-first prompt discipline and physical harness tool schema boundaries rather than prompt bloat.
 importance: high
 tags: [agents, prompts, exploration, tools, instruction-following]
+related: [dispatch_tasks_must_name_an_agent_children_die_on_cumulative_token_cap_c6d9f683ce7a2dfcce668c98ce17fc19, prompt_lines_require_observed_failures]
 updated: 2026-09-05
 ---
 

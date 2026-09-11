@@ -6,6 +6,7 @@ importance: medium
 x-scope: project
 x-verdict: neutral
 tags: [go-structure, pre-commit, loc-caps, gates, commits]
+related: [commit_format_fix_commits_need_regression_class_sweep_trailers_463508bbc8c7377b8d9c5f2c5291f4bf, diff_coverage_py_reads_committed_staged_blobs_not_the_working_tree_385a7d442c5857b8cfed502c9ed6a566]
 updated: 2026-09-11
 ---
 

@@ -190,6 +190,12 @@ func (e *erroringSpawner) CreateFreshInDir(bind func(*chat.Session) (string, err
 	return nil, e.err
 }
 
+// GetOrResumeInDir fails the same way CreateFreshInDir does: this fake
+// exists only to exercise error paths.
+func (e *erroringSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	return nil, nil, e.err
+}
+
 // SetApprovalOverride is a no-op: erroringSpawner exists only to
 // exercise runTurnHeadless's spawn-error path.
 func (e *erroringSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {

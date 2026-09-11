@@ -259,7 +259,7 @@ func TestSpawnRunSessionPropagatesCreateFreshInDirError(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	conv, boundSess, savedName, err := svc.spawnRunSession(Spec{ID: "auto-x"}, "auto-x", "run-x", root)
+	conv, boundSess, savedName, err := svc.spawnRunSession(Spec{ID: "auto-x"}, "auto-x", root)
 	if err == nil {
 		t.Fatal("spawnRunSession with a failing CreateFreshInDir: got nil error, want it propagated")
 	}

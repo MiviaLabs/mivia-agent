@@ -1,6 +1,6 @@
 # Automations
 
-Automations provide scheduled and manual background execution for workflows, agents, skills, slash commands, and prompts.
+Automations run scheduled or manually triggered background work: prompts, skills, agents, slash commands, and workflows, executed in order in a headless session.
 
 ## Overview
 
@@ -16,7 +16,7 @@ The feature provides:
 - Headless execution with strict unattended tool approval policies.
 - Step-level checkpointing and manual resume for failed or interrupted runs.
 - CLI subcommands under `mivia automations`.
-- An interactive management interface in the Settings screen.
+- An interactive management interface in the Settings screen, including the ability to cancel a run in progress.
 
 ## Configuration and Storage
 
@@ -34,20 +34,11 @@ The TOML document contains a table of automation specifications keyed by automat
 # Automation fields
 ```
 
-Run history and fenced claims (see [Run History Schema](#run-history-schema))
-live in a SQLite store, not `automations.toml`. That store is the SAME
-one a chat session uses for its own context checkpoints: `mivia
-automations` (list/show/run/runs/resume/serve) and the TUI's Automations
-settings panel both resolve it through the identical rule a chat session
-uses - an explicit `[subagents] store_path` in `mivia.toml` (a relative
-path resolves against the workspace root, matching this repo's own
-dogfooded `.mivia/context.db`), or otherwise the shared, install-wide
-default `~/.mivia/context.db` used by every workspace on the machine.
-There is no separate `automations.db`. Before this was unified, the CLI
-and the TUI opened two different SQLite files for the same kind of run,
-so `mivia automations runs` could report "no runs recorded" for a run
-the TUI had just started, and a `serve` sweep could never see (or
-interrupt-mark) a run left running by the other surface.
+Run history and fenced claims (see [Run History Schema](#run-history-schema)) live in a SQLite store, not `automations.toml`. It is the same store a chat session uses for its own context checkpoints, so the CLI (`mivia automations` list/show/run/runs/resume/serve) and the TUI's Automations settings panel always see the same run history: a run triggered from one surface is immediately visible to the other, and a `serve` sweep can find and mark interrupted a run either surface left running.
+
+The store resolves through the same rule a chat session uses: an explicit `[subagents] store_path` in `mivia.toml` (a relative path resolves against the workspace root), or otherwise the shared, install-wide default `~/.mivia/context.db` used by every workspace on the machine.
+
+A worktree run's session history is not namespaced by its worktree directory - it shares the same store as every other run, so it appears alongside the rest of that automation's history rather than isolated per worktree.
 
 ### Atomic Writes
 
@@ -84,10 +75,10 @@ Run history is persisted in the `automation_runs` SQLite table:
 | `id` | TEXT PRIMARY KEY | Unique run identifier (for example `run-1a2b3c...`) |
 | `automation_id` | TEXT NOT NULL | Identifier of the parent automation |
 | `origin` | TEXT NOT NULL | Trigger origin: `manual` or `scheduled` |
-| `state` | TEXT NOT NULL | Run state: `pending`, `running`, `succeeded`, `failed`, `interrupted`, or `skipped` |
+| `state` | TEXT NOT NULL | Run state: `pending`, `running`, `succeeded`, `failed`, `interrupted`, `cancelled`, or `skipped` |
 | `step_index` | INTEGER NOT NULL | Current or next step index to execute |
 | `step_count` | INTEGER NOT NULL | Total number of steps in the action |
-| `session_name` | TEXT NOT NULL | Saved background chat session name (`__auto__<automation_id>__<run_id>`) |
+| `session_name` | TEXT NOT NULL | Saved background chat session's own catalog id (legacy rows used `__auto__<automation_id>__<run_id>`) |
 | `worktree_path` | TEXT NOT NULL | Filesystem path of the managed worktree |
 | `worktree_branch` | TEXT NOT NULL | Git branch name for the managed worktree |
 | `claim_token` | TEXT NOT NULL | Active fenced claim token |
@@ -147,7 +138,7 @@ An automation definition in `automations.toml` supports the following fields:
 The executor processes steps in sequential order within a single session:
 
 - **`prompt`**: Sends `prompt` text directly to the active conversation turn.
-- **`skill`**: Renders `ref` as a skill invocation (equivalent to `/<skill>`) and executes the skill.
+- **`skill`**: Resolves `ref` against the workspace's skill catalog and sends that skill's full rendered instructions, the same way an interactive `/<skill>` invocation does. Only the short command form (`/<skill> <args>`) is kept in the session's persisted history; the full instructions body is sent to the model for that one turn and not replayed on later turns. `ref` may be given with or without a leading slash. A `ref` that does not resolve to a user-invocable skill in the configured registry fails the step, and fails spec validation up front when a registry is available at save time.
 - **`agent`**: Selects the agent named in `ref` on the session state, then sends `prompt`.
 - **`slash`**: Executes the slash command in `ref`. The command must satisfy the headless allowlist.
 - **`workflow`**: Dispatches the workflow named in `ref` to the workflow engine with `inputs`.
@@ -278,6 +269,12 @@ Cron expressions handle Daylight Saving Time (DST) changes as follows:
 
 ## Execution Model
 
+### Triggering and Watching a Run
+
+Triggering an automation, whether from the CLI or the Settings screen, admits the run immediately (spec lookup, claim, and the initial run row) and then executes its steps in the background. From the TUI, this means starting a run never blocks the interface: the screen stays responsive while the run executes, and the automation's detail panel streams the run's state - pending, running, and its terminal outcome - as it happens.
+
+A run in progress can be cancelled from the Settings screen while it is pending or running. A cancelled run is recorded distinctly from one that was interrupted by a shutdown: cancelling is a deliberate operator action and is not resumable in the same way an interrupted run is.
+
 ### Fenced Single-Fire Claims
 
 The engine uses fenced claims to ensure exactly one run executes per automation at any time:
@@ -285,7 +282,8 @@ The engine uses fenced claims to ensure exactly one run executes per automation 
 - The executor attempts to acquire a fenced claim token before starting execution.
 - If a scheduled fire loses the claim race, the fire is skipped. The engine records a `skipped` run row with a nil error.
 - If a manual trigger or resume operation loses the claim race, the operation fails with `ErrRunAlreadyActive`.
-- The claim releases automatically when the run completes, fails, or is cancelled.
+- The claim releases automatically when the run completes, fails, is cancelled, or is interrupted.
+- While a run executes, its claim is periodically refreshed so a long-running step does not make the run look abandoned to a concurrent interrupted-run sweep.
 
 ### Managed Worktrees
 
@@ -300,8 +298,6 @@ If worktree creation fails, the run terminates immediately with zero side effect
 
 Worktrees are not automatically removed after a run finishes. The resulting Git branch remains available for user inspection and manual cleanup.
 
-A worktree run's session store is not namespaced by the worktree directory. It shares the same root-resolved run store every other run uses (see Configuration and Storage), so run history for a worktree execution appears alongside every other automation's runs, not isolated per worktree.
-
 ### Headless Session Safety
 
 Automations run in headless background sessions without an interactive terminal.
@@ -311,6 +307,8 @@ To prevent goroutine leaks and stalled turns, the headless runner enforces two r
 2. **Context Deadlines**: Every headless turn executes under a strict context timeout. The default timeout is 10 minutes when unset in configuration.
 
 Each run spawns an independent session. Session wedges cannot propagate across runs.
+
+An automation's session in the TUI is isolated from whatever the operator is doing in the foreground: its turns never take over the foreground's live subagent-progress display, and its startup never plants a tool-adoption warning meant for a later, unrelated foreground action. Dispatched subagent threads from a background run are still visible in the same subagent registry the foreground session reads, so a background run's own subagent activity can appear in the foreground's subagent panel.
 
 ### Unattended Approval Policy
 
@@ -344,24 +342,32 @@ The validator rejects built-in commands that require interactive capabilities:
 
 ## Resuming Runs
 
-A failed or interrupted run can resume from its last completed step.
+A failed or interrupted run can resume from its last completed step, picking up its full conversation history up to that point.
 
 ### Resumability Rules
 
 - Only runs in `interrupted` or `failed` state can resume.
-- The run record must contain a valid `session_name` (`__auto__<automation_id>__<run_id>`).
+- The run record must contain a valid `session_name`: the saved background chat session's own catalog id.
 - The automation definition must still exist in configuration.
+
+A run spawned before this scheme existed saved its session under a reserved `__auto__<automation_id>__<run_id>` name. That scheme was chosen because the composed name could never collide with the auto-save name (`__last__`), and because automation and run ids are validated before composition. Rows with those legacy reserved names stay in the catalog, are hidden from the resume picker, and can no longer be written; a resume re-points the row to the id the restored session carries.
+
+A new-format run resumed by another process refuses with a live-lease error once the first process's lease has been stamped (after its first heartbeat, about 40 seconds). Within that first interval an early resume can be admitted, and the old holder's next fenced write then fails with a stale-revision error instead, so fencing still prevents the silent two-writer corruption the old reserved-name fork allowed.
+
+The clichat and CLI session listings are out of scope and are not filtered; only the TUI resume picker hides the legacy reserved rows.
 
 ### Resume Procedure
 
 1. Acquire the fenced single-fire claim for `automation:<automation_id>`.
 2. Locate the worktree path recorded on the run row, or use the workspace root.
-3. Spawn a fresh session and load the saved transcript from the context store.
+3. Join the pooled session for `session_name` when one is already live, else spawn a fresh session; either way the saved transcript is restored before the caller proceeds.
 4. Set the run state to `running`.
 5. Start step execution at `step_index`. No index arithmetic is applied.
 6. If all steps complete successfully, mark the run `succeeded`.
 
 If the step index already equals or exceeds the total step count, the runner marks the run `succeeded` immediately without spawning a session.
+
+Each step's checkpoint re-saves the run's full session transcript, on both the successful path and an ordinary step failure, so a resumed run has everything the earlier steps produced, not just its starting prompt. A resumed run's own checkpoints continue re-saving the same way, so a second interruption does not lose the progress the resume itself made.
 
 ## CLI Commands
 
@@ -455,14 +461,14 @@ Lifecycle behavior:
 
 ## Settings UI
 
-The TUI Settings screen includes an **Automations** section (section 7 in the settings navigation).
+The TUI Settings screen includes an **Automations** section.
 
 ### Navigation and Display
 
 - **Unbacked Rendering**: If no automation backend is wired, the section renders an "unavailable" notice rather than failing navigation.
 - **Master List**: Displays a table of configured automations showing enabled state, name, and trigger format.
 - **Detail Area**: Shows selected automation details, full step lists, and the last 5 runs.
-- **Live Run View**: When triggering a run from the UI, the view subscribes to live status events and displays real-time progress.
+- **Live Run View**: Triggering a run subscribes the view to live status events and shows real-time progress without blocking the rest of the interface.
 
 ### Interactive Form Editor
 
@@ -474,6 +480,12 @@ Form shortcuts:
 - `Tab` / `Shift+Tab`: Move between form fields.
 - `Enter`: Submit and save changes atomically to `automations.toml`.
 - `Esc`: Cancel editing and discard form changes.
+
+Other keys, while browsing the automation list:
+- `t`: Trigger a manual run of the selected automation.
+- `s`: Cancel the selected automation's live run, while it is pending or running.
+- `space`: Toggle the selected automation enabled or disabled.
+- `x`: Remove the selected automation.
 
 ## Failure and Retry Behavior
 
@@ -488,20 +500,12 @@ When a step fails:
 
 ### Interrupted Run Sweep
 
-If the daemon crashes or loses power while a run is in progress:
-- The run row remains in state `running`.
-- The active claim expires after its validity timeout.
-- The next startup of `automations serve` (or a call to `SweepInterrupted`) scans all `running` rows.
-- If the claim is expired or missing, the runner updates the state to `interrupted` and sets `ended_at`.
-- Interrupted runs become eligible for manual resume.
+If the daemon or the TUI shuts down while a run is in progress:
+- A run stopped by a deliberate cancel is marked `cancelled`.
+- A run that was still executing when the process shut down is marked `interrupted` and remains eligible for resume.
+- If a process dies outright (crash, power loss) without marking anything, the run row stays `running` until its claim expires.
 
-Because `automations serve` and the TUI's own startup sweep (run when
-the Automations settings panel wires up, see
-[File Locations](#file-locations)) read and write the one shared store,
-a run left `running` by either surface is swept and marked
-`interrupted` by whichever one starts next - a CLI `serve` daemon
-restarted after a TUI session crashed, or a TUI relaunch after a `serve`
-daemon was killed, both see and resolve the same stuck row.
+The next startup of `automations serve`, or the TUI's own startup sweep, scans all `running` rows: if a row's claim is expired or missing, the runner marks it `interrupted` and sets `ended_at`. Because the CLI and the TUI read and write the same store, a run left `running` by either surface is found and marked `interrupted` by whichever one starts next - a CLI `serve` daemon restarted after a TUI session crashed, or a TUI relaunch after a `serve` daemon was killed, both see and resolve the same stuck row.
 
 ## Limitations
 
@@ -509,3 +513,4 @@ daemon was killed, both see and resolve the same stuck row.
 - **Sequential Daemon Dispatch**: The `serve` daemon dispatches due automations sequentially on each tick to maintain headless session stability.
 - **Manual Worktree Cleanup**: Managed worktrees created for runs are not deleted automatically. Operators must clean up old worktree branches manually.
 - **No Interactive Approvals**: Background runs cannot prompt for runtime permissions. Unattended tool calls must be auto-approved or denied fast.
+- **Shared Subagent Panel**: A background run's dispatched subagent threads appear in the same registry the foreground session's subagent panel reads, so they may be visible there alongside the foreground session's own activity.

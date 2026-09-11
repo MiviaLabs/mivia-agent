@@ -4,6 +4,7 @@ title: '"status"/"stats" request format for dispatched mivia workflow runs'
 content: Table with columns Run ID, scope, status+step, last heartbeat, resolution (no_diff or PR link), scoped to the currently-tracked batch only.
 importance: medium
 tags: [workflow, cli, reporting]
+related: [prefer_fast_bug_audit_for_speed, tui_spinner_clock_must_be_armed_only_via_screen_armtick_self_re_arming_tick_compounds_76541b96e8bf8da3bef7331fd9d7efdf]
 updated: 2026-09-04
 ---
 

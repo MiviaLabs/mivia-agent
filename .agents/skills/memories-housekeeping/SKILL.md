@@ -55,8 +55,9 @@ reason.
 | Future stamp | `updated` later than this session's date - the gate checks shape only and never reads the clock, so a typo like `9999-01-01` passes it; re-stamp with the real date | `fix-schema` |
 | Near-duplicate | Pair-wise Jaccard similarity > 0.6 over the union of title and content, OR identical `tags` plus overlapping prose | `merge-with` |
 
-Two soft flags, not proposals: orphan files (no inbound reference,
-newer than 90 days — surface them, do not act) and memories that
+Two soft flags, not proposals: orphan files (no other memory names this one
+in its `related` list — see `.agents/memories/README.md`, "The reference
+graph"; surface them, do not act) and memories that
 contradict current code or config (verify with `grep`, then propose
 `archive` only after the contradiction is confirmed).
 

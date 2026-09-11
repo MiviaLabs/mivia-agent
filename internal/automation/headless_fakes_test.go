@@ -99,6 +99,12 @@ func (f *fakeSpawner) CreateFreshInDir(bind func(*chat.Session) (string, error),
 	return f.conv, nil
 }
 
+// GetOrResumeInDir has no session to restore (this fake binds none), so
+// it returns the same conv CreateFreshInDir hands out and a nil session.
+func (f *fakeSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	return f.conv, nil, nil
+}
+
 // SetApprovalOverride is a no-op for headless.go's wedge tests: none of
 // them exercise D8's unattended approval override, only the drain-to-
 // close/spawn/send plumbing.

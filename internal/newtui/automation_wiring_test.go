@@ -2,6 +2,7 @@ package newtui
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -300,4 +304,115 @@ func TestWireAutomationBackendCloserIsNoOpWhenWiringFails(t *testing.T) {
 		t.Fatal("wireAutomationBackend returned a nil closer on the failure path")
 	}
 	closeFn()
+}
+
+// stubTurnCompleter is the minimal provider.Completer the seeded session
+// needs: SendUser runs a real turn through ChatTurn, which returns an
+// empty successful response without any provider behind it.
+type stubTurnCompleter struct{}
+
+func (stubTurnCompleter) Name() string { return "stub" }
+func (stubTurnCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return "", nil
+}
+func (stubTurnCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	return "", nil
+}
+func (stubTurnCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	return &provider.Response{}, nil
+}
+
+// newContextBoundSession builds a session the way internal/automation's
+// own test helper does: a bound Principal, an enabled ContextManager,
+// and a *storage.SQLite store, so Save/Load round-trip through the store
+// for real and the pool's entry inheritance can carry the store onto a
+// resumed entry.
+func newContextBoundSession(t *testing.T, res *config.Resolved, db *storage.SQLite, sessionID string) *chat.Session {
+	t.Helper()
+	sess := chat.NewSession(res, stubTurnCompleter{})
+	sess.SessionID = sessionID
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatalf("NewPrincipal: %v", err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: db},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatalf("SetContextManager: %v", err)
+	}
+	if err := sess.SetContextStore(db); err != nil {
+		t.Fatalf("SetContextStore: %v", err)
+	}
+	return sess
+}
+
+// TestAutomationSpawnerSpawnsBackgroundConversation pins the spawn
+// posture through the real wiring value: a conversation the spawner's
+// CreateFreshInDir produces must report IsBackground() true, so an
+// automation run never shares the foreground TUI's progress registrar or
+// tool-scope notice slot. Reverting run.go's CreateFreshBackgroundInDir
+// call to a plain foreground spawn fails this test.
+func TestAutomationSpawnerSpawnsBackgroundConversation(t *testing.T) {
+	root := t.TempDir()
+	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
+	sess := chat.NewSession(res, nil)
+	agentState := &cli.AgentSessionState{WorkspaceRoot: root}
+	pool := uiadapter.NewCommandRunner(sess, res, agentState).Pool()
+
+	conv, err := newAutomationSpawner(pool).CreateFreshInDir(nil, "")
+	if err != nil {
+		t.Fatalf("CreateFreshInDir through the wired spawner: %v", err)
+	}
+	c, ok := conv.(*uiadapter.Conversation)
+	if !ok {
+		t.Fatalf("spawner returned %T, want *uiadapter.Conversation", conv)
+	}
+	if !c.IsBackground() {
+		t.Fatal("spawner's CreateFreshInDir produced a foreground conversation; run.go must spawn automation sessions via CreateFreshBackgroundInDir")
+	}
+}
+
+// TestAutomationSpawnerGetOrResumeInDirRestoresSessionIdentity covers the
+// adapter's GetOrResumeInDir on a pool's miss path: the returned session
+// carries the requested id and the saved history is already restored, so
+// the caller never calls Load again.
+func TestAutomationSpawnerGetOrResumeInDirRestoresSessionIdentity(t *testing.T) {
+	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ctx.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	seed := newContextBoundSession(t, res, db, "pool-seed-main")
+	// A session-id-shaped row (26 base32 characters) with one real turn
+	// of history, saved under the session's own id.
+	resumeID := "MWIVAMWIVAMWIVAMWIVAMWIVAA"
+	saved := newContextBoundSession(t, res, db, resumeID)
+	if _, err := saved.SendUser(context.Background(), "seeded turn", io.Discard); err != nil {
+		t.Fatalf("seed turn: %v", err)
+	}
+	if err := saved.Save(resumeID); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	pool := uiadapter.NewCommandRunner(seed, res, nil).Pool()
+	t.Cleanup(pool.CloseAll)
+
+	conv, gotSess, err := newAutomationSpawner(pool).GetOrResumeInDir(resumeID, "")
+	if err != nil {
+		t.Fatalf("GetOrResumeInDir: %v", err)
+	}
+	if gotSess == nil {
+		t.Fatal("GetOrResumeInDir returned a nil session")
+	}
+	if gotSess.SessionID != resumeID {
+		t.Fatalf("restored session id = %q, want %q", gotSess.SessionID, resumeID)
+	}
+	if len(conv.History()) == 0 {
+		t.Fatal("restored conversation has empty history; the pool must restore it on the miss path")
+	}
 }

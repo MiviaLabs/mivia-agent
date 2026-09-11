@@ -234,3 +234,24 @@ func TestRunsCommandAcrossAllAutomationsTruncatesToLimit(t *testing.T) {
 		t.Fatalf("runs (all automations) --limit 2 output = %q, want the two most recent runs (trunc-b-2, trunc-a-2)", stdout)
 	}
 }
+
+// TestRunsCommandRejectsNonPositiveLimit covers --limit's sign contract,
+// which TestRunsCommandMalformedLimitErrors does not reach: a negative
+// integer parses cleanly through strconv.Atoi and then landed in the
+// cross-automation truncation as `runs[:limit]`, panicking the CLI with
+// "slice bounds out of range" (the guard `len(runs) > limit` is true even
+// for an empty slice when limit is negative). Zero is refused for the
+// sibling reason: storage reads limit <= 0 as "unlimited", so `--limit 0`
+// would print the entire history instead of nothing.
+func TestRunsCommandRejectsNonPositiveLimit(t *testing.T) {
+	for _, argv := range [][]string{{"--limit=-1"}, {"--limit", "-3"}, {"--limit", "0"}} {
+		args := append([]string{"--workspace", writeAutomationsFixture(t, "runs-limit-sign")}, argv...)
+		err := runRunsCommand(args)
+		if err == nil {
+			t.Fatalf("runRunsCommand %v: got nil error, want a --limit rejection", argv)
+		}
+		if !strings.Contains(err.Error(), "--limit") {
+			t.Fatalf("runRunsCommand %v error = %q, want it naming --limit", argv, err.Error())
+		}
+	}
+}

@@ -4,7 +4,7 @@ package automation
 // mechanically split out (matching executor_test.go/
 // executor_error_paths_test.go's own split) to keep resume_test.go
 // under the project's per-file LOC soft cap: every ResumeRun/
-// spawnAndLoadResumeSession/spawnResumeSession/markResumedRunSucceeded/
+// spawnAndLoadResumeSession/markResumedRunSucceeded/
 // resumeWorkDir error-wrap branch that resume_test.go's original 13
 // tests never drove a real, non-sentinel error through. See
 // resume_test.go's own header and helpers (sessionSpawner,
@@ -87,11 +87,11 @@ func TestResumeRunFindSpecPropagatesLoadError(t *testing.T) {
 // seedResumableRunWithSessionName is a narrower variant of
 // resume_test.go's own seedResumableRun: it stamps run.SessionName to
 // the given value WITHOUT ever actually Saving a session under that
-// name, letting a test reach ResumeRun's own spawnAndLoadResumeSession
-// call (SessionName != "" clears the earlier ErrRunSessionMissing
-// guard) while boundSess.Load(sessionName) itself still fails to find
-// anything - the "session missing" and "session name present but
-// unresolvable" cases are deliberately distinct code paths.
+// name, letting a test reach ResumeRun's own GetOrResumeInDir call
+// (SessionName != "" clears the earlier ErrRunSessionMissing guard)
+// while the spawner's own session restore still fails to find anything
+// - the "session missing" and "session name present but unresolvable"
+// cases are deliberately distinct code paths.
 func seedResumableRunWithSessionName(t *testing.T, svc *Service, root, sessionName string, prompts []string) (automationID, runID string) {
 	t.Helper()
 	steps := make([]Step, 0, len(prompts))
@@ -195,13 +195,17 @@ func TestResumeRunSpawnAndLoadSessionCreateErrorFailsRun(t *testing.T) {
 	}
 }
 
-// TestResumeRunSpawnAndLoadSessionLoadErrorFailsRun covers
-// spawnAndLoadResumeSession's own boundSess.Load-error branch directly:
-// the spawn itself succeeds (a real *chat.Session), but run.SessionName
-// names a session that was never actually Saved anywhere, so Load
-// fails to find it - distinct from the earlier CreateFreshInDir-error
-// test above.
-func TestResumeRunSpawnAndLoadSessionLoadErrorFailsRun(t *testing.T) {
+// TestResumeRunSpawnerLoadErrorFailsRun covers
+// spawnAndLoadResumeSession's own pass-through of a spawner load
+// failure: the spawn itself succeeds (a real *chat.Session), but the
+// spawner's own history restore cannot resolve run.SessionName, so
+// GetOrResumeInDir fails with the spawner's own wrapped load error -
+// a real spawner's shape, which never attaches ErrRunSessionMissing -
+// and ResumeRun records it on the run via failRun. Distinct from the
+// earlier CreateFreshInDir-error test above and from the genuine
+// missing-name admission guard
+// (TestResumeRunMissingSessionNameReturnsErrRunSessionMissing).
+func TestResumeRunSpawnerLoadErrorFailsRun(t *testing.T) {
 	root := t.TempDir()
 	db := newTestDB(t)
 	sess := newContextEnabledSession(t, db)
@@ -219,8 +223,11 @@ func TestResumeRunSpawnAndLoadSessionLoadErrorFailsRun(t *testing.T) {
 	if run.State != ports.RunFailed {
 		t.Fatalf("ResumeRun State = %v, want RunFailed", run.State)
 	}
-	if !strings.Contains(run.Message, "resumable session") {
-		t.Fatalf("run.Message = %q, want it to name the missing-resumable-session failure", run.Message)
+	if !strings.Contains(run.Message, "cliautomations: load session") || !strings.Contains(run.Message, "session-never-saved") {
+		t.Fatalf("run.Message = %q, want it to carry the spawner's own wrapped load error naming the unresolved id", run.Message)
+	}
+	if strings.Contains(run.Message, ErrRunSessionMissing.Error()) {
+		t.Fatalf("run.Message = %q, want a plain spawner load failure, not the %q wrap", run.Message, ErrRunSessionMissing.Error())
 	}
 }
 

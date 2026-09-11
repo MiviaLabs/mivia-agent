@@ -485,13 +485,6 @@ include_tool_io = false
 stream_assistant = true
 
 [tools]
-# Truncation disabled by default: 0 = uncapped for max_output_bytes and
-# max_tool_result_bytes (matches the binary's own shipped default), and
-# batch_result_budget_bytes = 0 turns off the aggregate per-batch cut
-# entirely instead of deriving one from the prompt budget. All three were
-# previously ON here, cutting run_command output over 256 KiB, cutting
-# any tool-result history entry over 64 KiB, and re-cutting whole tool
-# batches - forcing read_output round trips and losing content inline.
 batch_result_budget_bytes = 0
 core = ['read_file', 'list_dir', 'grep', 'glob', 'inspect_repository', 'write_file', 'search_replace', 'multi_edit', 'run_command', 'search', 'fetch_url', 'extract', 'delete_file', 'memory_save', 'memory_search', 'memory_delete', 'workflow_run', 'workflow_status', 'workflow_inspect', 'workflow_deliver']
 env_allow_keyword_blocklist = ['SECRET', 'TOKEN', 'PASSWORD', 'API_KEY']

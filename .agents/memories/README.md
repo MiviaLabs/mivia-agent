@@ -15,9 +15,19 @@ title: <short human-readable title>
 content: <one-sentence statement of the fact or rule>
 importance: <high | medium | low>
 tags: [<comma-separated keywords>]
+related: [<ids of memories this one touches; omit when genuinely unrelated>]
 updated: <ISO date the memory last changed, YYYY-MM-DD>
 ---
 ```
+
+`related` is the only optional key. It is a flat list of other memories'
+`id` values, and the links are read as symmetric: if A lists B, B is
+considered linked to A whether or not B says so. Keep them reciprocal
+anyway - the housekeeping audit reports an asymmetric pair as a defect.
+
+Name a memory in `related` when the two share a mechanism, a gate, or a
+failure mode - not when they merely sit in the same tag bucket. A link you
+cannot justify in one clause is a link that makes the graph noise.
 
 The body that follows the frontmatter is the full explanation: when the
 fact applies, why it matters, and what to do instead. A memory without
@@ -59,6 +69,26 @@ it becomes a hard rule; memories are operational, not authoritative.
   the age of the fact and not of the file.
 - Never rewrite a memory to invert a previous decision without
   recording why; the diff itself is the audit trail.
+
+## The reference graph
+
+`related` exists because the housekeeping audit's orphan check needs it. An
+**orphan** is a memory no other memory names in its `related` list. Orphans
+are a soft flag, not a deletion proposal: they say nobody has judged how this
+memory connects, not that it is wrong.
+
+Without these links the check has nothing to measure. Before 2026-09-11 the
+store carried no cross-references at all - `AGENTS.md` mandates reading every
+file but names none of them individually, and no rule or doctrine cited a
+memory id - so all 35 memories were orphans simultaneously and the flag had
+zero discriminating power. The graph was built that day; see
+`.agents/memories/.archive/` for the three entries the same audit removed.
+
+Maintenance is the point. A new memory that relates to an existing one must
+be linked **both ways** when it is written, or it will read as an orphan at
+the next audit. A memory that truly relates to nothing stays unlinked and
+stays flagged - that is the check working, and the honest answer is to say
+so rather than invent an edge to silence it.
 
 ## The archive
 

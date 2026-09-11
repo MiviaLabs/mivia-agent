@@ -4,6 +4,7 @@ title: Sweep greps must not filter the raw pattern
 content: A Sweep trailer must run the raw mechanism grep and disposition every hit by hand.
 importance: high
 tags: [commits, quality, sweep]
+related: [commit_format_fix_commits_need_regression_class_sweep_trailers_463508bbc8c7377b8d9c5f2c5291f4bf, sibling_implementations_drift]
 updated: 2026-09-04
 ---
 

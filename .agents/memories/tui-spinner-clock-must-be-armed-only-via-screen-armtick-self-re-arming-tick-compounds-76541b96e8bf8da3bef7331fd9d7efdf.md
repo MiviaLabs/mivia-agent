@@ -6,6 +6,7 @@ importance: high
 x-scope: project
 x-verdict: good
 tags: [tui, spinner, bubbletea, subagents, performance]
+related: [chatsync_lazy_attach_remote_session_created_on_first_message_not_at_cli_start_71a3cba28bc33a4769ffc31217b66c24, workflow_run_status_table_format]
 updated: 2026-09-08
 ---
 

@@ -40,9 +40,10 @@ import (
 // Resource lifecycle and its LOAD-BEARING sequential-dispatch invariant
 // are documented in full in docs/design/automations.md's chunk 9 section
 // (search "HeadlessSpawner"): in short, composition.BuildSession opens a
-// per-session *storage.SQLite that automation.SessionSpawner's 2-method
-// interface gives no end-of-run signal to close, so HeadlessSpawner
-// tracks a SINGLE in-flight session (not an ID-keyed map), correct only
+// per-session *storage.SQLite that automation.SessionSpawner's 3-method
+// interface (CreateFreshInDir, GetOrResumeInDir, SetApprovalOverride)
+// gives no end-of-run signal to close, so HeadlessSpawner tracks a
+// SINGLE in-flight session (not an ID-keyed map), correct only
 // because Service.Serve fires automations strictly sequentially and
 // `run <id>` is one-shot. This is safe against a dead prior session but
 // NOT safe against a live one from a future concurrent-dispatch design -
@@ -172,6 +173,29 @@ func (h *HeadlessSpawner) CreateFreshInDir(bind func(*chat.Session) (string, err
 	}
 
 	return uiadapter.NewConversation(sess), nil
+}
+
+// GetOrResumeInDir satisfies automation.SessionSpawner: it reuses
+// CreateFreshInDir's construction body (including the current/lastSession
+// bookkeeping, so a later SetApprovalOverride keeps working), then
+// restores the saved session id's history with sess.Load(id) itself -
+// the caller must NOT call Load again - and returns the conversation
+// and the concrete session, READY for turns.
+func (h *HeadlessSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	conv, err := h.CreateFreshInDir(nil, dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	h.mu.Lock()
+	sess := h.lastSession
+	h.mu.Unlock()
+	if sess == nil {
+		return nil, nil, fmt.Errorf("cliautomations: get or resume session: no active session")
+	}
+	if err := sess.Load(id); err != nil {
+		return nil, nil, fmt.Errorf("cliautomations: load session %q: %w", id, err)
+	}
+	return conv, sess, nil
 }
 
 // SetApprovalOverride satisfies automation.SessionSpawner. Does NOT

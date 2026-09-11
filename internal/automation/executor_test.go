@@ -145,6 +145,19 @@ func (f *fakeExecSpawner) CreateFreshInDir(bind func(*chat.Session) (string, err
 	return f.conv, nil
 }
 
+// GetOrResumeInDir counts like CreateFreshInDir (it replaces the
+// create+load pair), but binds no session, so it returns a nil
+// *chat.Session - the caller must not call Load on it.
+func (f *fakeExecSpawner) GetOrResumeInDir(id string, dir string) (ports.Conversation, *chat.Session, error) {
+	f.mu.Lock()
+	f.createCalls++
+	f.mu.Unlock()
+	if f.createErr != nil {
+		return nil, nil, f.createErr
+	}
+	return f.conv, nil, nil
+}
+
 func (f *fakeExecSpawner) SetApprovalOverride(sessionID string, gate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult, policy string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -544,19 +557,6 @@ func TestRunOnceDisabledRefused(t *testing.T) {
 	}
 	if spawn.createCallCount() != 0 {
 		t.Fatalf("CreateFreshInDir called %d times for a disabled automation, want 0", spawn.createCallCount())
-	}
-}
-
-// TestAutomationSessionNameUsesReservedScheme pins
-// automationSessionName's D11 save-name scheme directly.
-func TestAutomationSessionNameUsesReservedScheme(t *testing.T) {
-	got := automationSessionName("nightly-summary", "run-123")
-	want := "__auto__nightly-summary__run-123"
-	if got != want {
-		t.Fatalf("automationSessionName = %q, want %q", got, want)
-	}
-	if chat.IsAutoSaveName(got) {
-		t.Fatalf("automationSessionName %q collides with chat.AutoSaveName's prefix check", got)
 	}
 }
 

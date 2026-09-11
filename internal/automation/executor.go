@@ -44,16 +44,6 @@ var ErrAutomationNotFound = fmt.Errorf("automation: not found")
 // whether the fire was scheduled or a manual trigger.
 var ErrAutomationDisabled = fmt.Errorf("automation: disabled")
 
-// automationSessionName composes the reserved save-name scheme for an
-// automation run's background session: "__auto__<automationID>__<runID>"
-// ("Identification Rules"). It never collides with chat.AutoSaveName
-// ("__last__"), but this package does not rely on that safety net
-// alone: automationID and runID are both already ValidateID-checked
-// before this is ever composed (admitFire/createRun).
-func automationSessionName(automationID, runID string) string {
-	return "__auto__" + automationID + "__" + runID
-}
-
 // originForTrigger maps ports.TriggerKind to the Run.Origin string this
 // package's runstore persists ("manual"/"scheduled") - the forward
 // direction of runOriginToTrigger (service_map.go).
@@ -124,8 +114,10 @@ func unattendedGateFor(automationID string, policy UnattendedPolicy) (func(ctx c
 // spawnRunSession spawns the ONE session a run drives for all its
 // steps, installs its unattended approval override, and - only after
 // BOTH of those have returned successfully - saves the session under
-// its reserved automation name so the run is resumable ("Resuming
-// Runs").
+// its OWN id, so the run and the chat layer share one catalog row
+// ("Resuming Runs"). Rows old builds wrote under the reserved
+// "__auto__<automationID>__<runID>" names are hidden by consumers via
+// chat.IsReservedAutomationName.
 //
 // The bind closure itself does nothing but capture boundSess: it must
 // never call Save (or any other durable side effect) because
@@ -145,7 +137,7 @@ func unattendedGateFor(automationID string, policy UnattendedPolicy) (func(ctx c
 // boundSess carries no context store (many test fixtures) - that is a
 // valid, expected "not resumable" state, not itself an error; it is
 // returned to the caller so the durable run row can record it.
-func (s *Service) spawnRunSession(spec Spec, automationID, runID, workDir string) (conv ports.Conversation, boundSess *chat.Session, savedName string, err error) {
+func (s *Service) spawnRunSession(spec Spec, automationID, workDir string) (conv ports.Conversation, boundSess *chat.Session, savedName string, err error) {
 	bindFn := func(sess *chat.Session) (string, error) {
 		boundSess = sess
 		return "", nil
@@ -159,11 +151,10 @@ func (s *Service) spawnRunSession(spec Spec, automationID, runID, workDir string
 		return nil, nil, "", fmt.Errorf("install approval override: %w", err)
 	}
 	if boundSess != nil && boundSess.ContextEnabled() {
-		name := automationSessionName(automationID, runID)
-		if err := boundSess.Save(name); err != nil {
+		if err := boundSess.Save(boundSess.SessionID); err != nil {
 			return nil, nil, "", fmt.Errorf("save run session: %w", err)
 		}
-		savedName = name
+		savedName = boundSess.SessionID
 	}
 	return conv, boundSess, savedName, nil
 }

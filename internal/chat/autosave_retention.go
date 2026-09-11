@@ -20,6 +20,18 @@ func IsAutoSaveName(name string) bool {
 	return isAutoSaveStamp(rest)
 }
 
+// IsReservedAutomationName classifies LEGACY automation snapshot rows:
+// the reserved "__auto__<automation_id>__<run_id>" names internal/
+// automation used before runs saved under the session's own id. The
+// composer was deleted from internal/automation; this classifier stays
+// so consumers can keep hiding rows old builds wrote. The match is an
+// exact "__auto__" prefix check, the same exposure class as
+// IsAutoSaveName: a user /save named with the prefix is hidden by
+// consumers, which is their choice.
+func IsReservedAutomationName(name string) bool {
+	return strings.HasPrefix(name, "__auto__")
+}
+
 func isAutoSaveStamp(s string) bool {
 	stamp, rest := s, ""
 	if i := strings.IndexByte(s, '-'); i >= 0 {

@@ -6,6 +6,7 @@ importance: medium
 x-scope: project
 x-verdict: good
 tags: [diff-coverage, testing, sqlite, go]
+related: [branch_tip_moves_during_agent_runs_pin_a_hash_for_diff_scoped_audits_c4b05cbeb324667c319c968d3c1d19f0, pre_commit_structure_gate_strict_promotes_function_loc_warnings_on_touched_code_bb8192d7ecf41077e92a11dd41e204ec, workflow_rules_no_big_test_suites_absolute_local_sdk_replace_shared_tree_etiquette_c599e6279a4ba3aa4848f4cb798b67d8]
 updated: 2026-09-10
 ---
 

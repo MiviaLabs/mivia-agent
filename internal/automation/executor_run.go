@@ -123,7 +123,7 @@ func (s *Service) executeRun(ctx context.Context, adm admitted) (ports.Run, erro
 		run.WorktreeBranch = wtBranch
 	}
 
-	conv, boundSess, savedName, err := s.spawnRunSession(spec, automationID, run.ID, workDir)
+	conv, boundSess, savedName, err := s.spawnRunSession(spec, automationID, workDir)
 	if err != nil {
 		return s.failRun(ctx, run, 0, err), nil
 	}
