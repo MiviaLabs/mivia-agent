@@ -72,7 +72,7 @@ func (s *automationsSection) openEditor(a ports.Automation, isNew bool) {
 	everyVal := ""
 	if a.Trigger.Kind == ports.TriggerScheduled && a.Trigger.Schedule != nil && a.Trigger.Schedule.Kind == ports.ScheduleInterval {
 		triggerChoice = "every"
-		everyVal = a.Trigger.Schedule.Every.String()
+		everyVal = formatInterval(a.Trigger.Schedule.Every)
 	}
 
 	actionChoice := "prompt"
@@ -153,7 +153,7 @@ func (s *automationsSection) handleEditorKey(msg tea.KeyPressMsg) (section, tea.
 		return s, nil
 	}
 
-	_, _, _, enabledIdx, triggerIdx, _, actionIdx, _, unattendedIdx := s.automationFormIndices()
+	_, _, _, enabledIdx, triggerIdx, everyIdx, actionIdx, _, unattendedIdx := s.automationFormIndices()
 	isChoice := s.formFocus == enabledIdx || s.formFocus == triggerIdx || s.formFocus == actionIdx || s.formFocus == unattendedIdx
 	if isChoice {
 		switch msg.String() {
@@ -163,6 +163,28 @@ func (s *automationsSection) handleEditorKey(msg tea.KeyPressMsg) (section, tea.
 			s.formFields[s.formFocus].Cycle(-1)
 		}
 		return s, nil
+	}
+
+	if s.formFocus == everyIdx {
+		switch msg.String() {
+		case "up", "down":
+			val := s.formFields[everyIdx].Value()
+			var cur time.Duration
+			if strings.TrimSpace(val) != "" {
+				var rule string
+				cur, rule = parseInterval(val)
+				if rule != "" {
+					return s, nil
+				}
+			}
+			delta := 1
+			if msg.String() == "down" {
+				delta = -1
+			}
+			stepped := stepInterval(cur, delta)
+			s.formFields[everyIdx].SetValue(formatInterval(stepped))
+			return s, nil
+		}
 	}
 
 	var cmd tea.Cmd
@@ -225,22 +247,13 @@ func (s *automationsSection) automationFromForm() (ports.Automation, string) {
 
 	switch s.formFields[triggerIdx].Value() {
 	case "every":
-		d, err := time.ParseDuration(strings.TrimSpace(s.formFields[everyIdx].Value()))
-		if err != nil {
-			return ports.Automation{}, "Every must be a duration like 30m or 2h"
+		rawEvery := s.formFields[everyIdx].Value()
+		d, rule := parseInterval(rawEvery)
+		if rule != "" {
+			return ports.Automation{}, rule
 		}
-		if d <= 0 {
-			return ports.Automation{}, "Every must be positive"
-		}
-		// The on-disk wire format is whole seconds (automation.portsTriggerToSpec
-		// truncates via int64(Every / time.Second)), so a sub-second duration
-		// like "500ms" would silently save as every_seconds=0 - a broken
-		// schedule NextFire rejects and the scheduler's deadlineMap never
-		// arms, leaving an enabled automation that can never fire with no
-		// error surfaced at save time. Reject before that truncation can
-		// happen, not after.
-		if d.Truncate(time.Second) != d || d < time.Second {
-			return ports.Automation{}, "Every must be a whole number of seconds, at least 1s"
+		if rule := validateInterval(d); rule != "" {
+			return ports.Automation{}, rule
 		}
 		tz := ""
 		if s.editOriginal.Trigger.Kind == ports.TriggerScheduled && s.editOriginal.Trigger.Schedule != nil && s.editOriginal.Trigger.Schedule.Kind == ports.ScheduleInterval {
@@ -307,11 +320,21 @@ func (s *automationsSection) renderEditor() string {
 	lines = append(lines, accent.Bold(true).Render(title))
 	lines = append(lines, "")
 
-	for _, f := range s.formFields {
+	idIdx, _, _, _, triggerIdx, everyIdx, _, _, unattendedIdx := s.automationFormIndices()
+	_ = idIdx
+
+	for i, f := range s.formFields {
 		lines = append(lines, "  "+f.View())
+		if i == everyIdx && s.formFields[triggerIdx].Value() == "every" {
+			statusText, ok := intervalStatus(s.formFields[everyIdx].Value())
+			if ok {
+				lines = append(lines, "    "+subtle.Render(statusText))
+			} else {
+				lines = append(lines, "    "+render.Role(s.theme, s.tier, theme.RoleDanger).Render(statusText))
+			}
+		}
 	}
 
-	_, _, _, _, _, _, _, _, unattendedIdx := s.automationFormIndices()
 	if unattendedIdx >= 0 && unattendedIdx < len(s.formFields) && s.formFields[unattendedIdx].Value() == "auto" {
 		lines = append(lines, "  "+subtle.Render("caution: unattended tool calls will be auto-approved for this automation"))
 	}
@@ -322,7 +345,7 @@ func (s *automationsSection) renderEditor() string {
 		lines = append(lines, "")
 	}
 
-	hint := "ctrl+s save  esc cancel"
+	hint := "ctrl+s save  esc cancel  up/down step interval"
 	lines = append(lines, "  "+subtle.Render(hint))
 
 	return strings.Join(lines, "\n")

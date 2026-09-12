@@ -55,6 +55,46 @@ func TestAutomationsDetailShowsScheduleAndNoRunsYet(t *testing.T) {
 	}
 }
 
+func TestAutomationsDetailIntervalUsesCompactFormatting(t *testing.T) {
+	h := newMockSettings()
+	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
+
+	// Save an automation with ScheduleInterval = 24h.
+	applyHandle, err := h.SettingsAdapters().Automations.Apply(context.Background(), ports.ScopeUser, ports.UpsertAutomation{
+		Automation: ports.Automation{
+			ID:          "interval-job",
+			Name:        "Interval Job",
+			Description: "runs every 24 hours",
+			Enabled:     true,
+			Trigger: ports.TriggerSpec{
+				Kind: ports.TriggerScheduled,
+				Schedule: &ports.ScheduleSpec{
+					Kind:  ports.ScheduleInterval,
+					Every: 24 * time.Hour,
+				},
+			},
+			Action: ports.ActionRef{Workflow: "feature-delivery"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to apply automation: %v", err)
+	}
+	cmd := awaitAutomationsSave(applyHandle, false)
+	sec = awaitAutomationsSaveTest(t, sec, cmd)
+
+	// Move cursor down to interval-job
+	sec = pressKey(sec, "down")
+	sec = pressKey(sec, "down")
+
+	plain := ansi.Strip(sec.View())
+	if !strings.Contains(plain, "trigger: every 24h") {
+		t.Fatalf("expected compact format 'trigger: every 24h', got:\n%s", plain)
+	}
+	if strings.Contains(plain, "24h0m0s") {
+		t.Fatalf("expected compact formatting without unreduced units, got:\n%s", plain)
+	}
+}
+
 func TestTogglingAutomationEnabledPersists(t *testing.T) {
 	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)

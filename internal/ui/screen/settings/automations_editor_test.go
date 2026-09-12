@@ -630,8 +630,8 @@ func TestOpenEditorPrefillsIntervalSchedule(t *testing.T) {
 	if got := sec.formFields[triggerIdx].Value(); got != "every" {
 		t.Fatalf("Trigger field = %q, want %q", got, "every")
 	}
-	if got := sec.formFields[everyIdx].Value(); got != (30 * time.Minute).String() {
-		t.Fatalf("Every field = %q, want %q", got, (30 * time.Minute).String())
+	if got := sec.formFields[everyIdx].Value(); got != formatInterval(30*time.Minute) {
+		t.Fatalf("Every field = %q, want %q", got, formatInterval(30*time.Minute))
 	}
 }
 

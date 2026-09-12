@@ -7,7 +7,7 @@ x-scope: project
 x-verdict: good
 tags: [diff-coverage, testing, sqlite, go]
 related: [branch_tip_moves_during_agent_runs_pin_a_hash_for_diff_scoped_audits_c4b05cbeb324667c319c968d3c1d19f0, pre_commit_structure_gate_strict_promotes_function_loc_warnings_on_touched_code_bb8192d7ecf41077e92a11dd41e204ec, workflow_rules_no_big_test_suites_absolute_local_sdk_replace_shared_tree_etiquette_c599e6279a4ba3aa4848f4cb798b67d8]
-updated: 2026-09-10
+updated: 2026-09-13
 ---
 
 # diff_coverage.py reads committed/staged blobs, not the working tree
@@ -19,8 +19,7 @@ scripts/diff_coverage.py's --base mode reads tip_file_text via git show at a ref
 - git add -A -- paths && python3 scripts/diff_coverage.py --staged gives the real current gap list.
 - For a genuinely OS-unreachable branch (live-fd Write/Sync/Close, toml.Marshal on a validated struct), match the repo's own diff-coverage.json convention: name the exact reason class, cite existing precedent entries, keep it minimal.
 - Prefer making dead code reachable over excusing it: e.g. an error branch with no real validation became reachable via an EXISTING test fixture once a genuine validation was added, needing no exemption at all.
-- SQLite: CREATE TABLE/INDEX share one namespace, so a colliding INDEX name is a clean deterministic way to fail CREATE TABLE IF NOT EXISTS; substituting a VIEW for a TABLE makes CREATE TABLE IF NOT EXISTS no-op and the next ALTER TABLE fail for real.</parameter>
-<parameter name="importance">high
+- SQLite: CREATE TABLE/INDEX share one namespace, so a colliding INDEX name is a clean deterministic way to fail CREATE TABLE IF NOT EXISTS; substituting a VIEW for a TABLE makes CREATE TABLE IF NOT EXISTS no-op and the next ALTER TABLE fail for real.
 
 ## What did not work
 - Trusting make verify-fast diff-coverage output without checking what ref it diffs against, while working directly on a branch mid multi-commit chunk plan (no PR/worktree isolation).

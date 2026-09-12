@@ -97,7 +97,7 @@ func triggerDetail(t ports.TriggerSpec) string {
 	sched := t.Schedule
 	switch sched.Kind {
 	case ports.ScheduleInterval:
-		return fmt.Sprintf("every %s", sched.Every)
+		return fmt.Sprintf("every %s", formatInterval(sched.Every))
 	case ports.ScheduleAt:
 		return fmt.Sprintf("%d scheduled time(s)", len(sched.At))
 	case ports.ScheduleRecurring:

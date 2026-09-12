@@ -1,19 +1,19 @@
 ---
 id: tui_spinner_clock_must_be_armed_only_via_screen_armtick_self_re_arming_tick_compounds_76541b96e8bf8da3bef7331fd9d7efdf
 title: 'TUI spinner clock must be armed only via Screen.armTick (self-re-arming tick compounds)'
-content: 'statusline.TickMsg is self-re-arming (each tick returns the next TickCmd), so any unconditional statusline.TickCmd() starts an ADDITIONAL permanent clock rather than replacing one. Subagent progress events armed one per event, multiplying spinner speed and full-cockpit repaints. Fixed with Screen.armTick()/disarmTick() guarded by a pointer-shared tickArmed flag; armTick is now the only way to star'
+content: 'statusline.TickMsg is self-re-arming (each tick returns the next TickCmd), so any unconditional statusline.TickCmd() starts an ADDITIONAL permanent clock rather than replacing one. Subagent progress events armed one per event, multiplying spinner speed and full-cockpit repaints. Fixed with Screen.armTick()/disarmTick() guarded by a pointer-shared tickArmed flag; armTick is now the only way to start the clock.'
 importance: high
 x-scope: project
 x-verdict: good
 tags: [tui, spinner, bubbletea, subagents, performance]
 related: [chatsync_lazy_attach_remote_session_created_on_first_message_not_at_cli_start_71a3cba28bc33a4769ffc31217b66c24, workflow_run_status_table_format]
-updated: 2026-09-08
+updated: 2026-09-13
 ---
 
 # TUI spinner clock must be armed only via Screen.armTick (self-re-arming tick compounds)
 
 ## Summary
-statusline.TickMsg is self-re-arming (each tick returns the next TickCmd), so any unconditional statusline.TickCmd() starts an ADDITIONAL permanent clock rather than replacing one. Subagent progress events armed one per event, multiplying spinner speed and full-cockpit repaints. Fixed with Screen.armTick()/disarmTick() guarded by a pointer-shared tickArmed flag; armTick is now the only way to star
+statusline.TickMsg is self-re-arming (each tick returns the next TickCmd), so any unconditional statusline.TickCmd() starts an ADDITIONAL permanent clock rather than replacing one. Subagent progress events armed one per event, multiplying spinner speed and full-cockpit repaints. Fixed with Screen.armTick()/disarmTick() guarded by a pointer-shared tickArmed flag; armTick is now the only way to start the clock.
 
 ## What worked
 - none
