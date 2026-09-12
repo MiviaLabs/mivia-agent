@@ -211,6 +211,30 @@ func (s *SQLite) ListRunningAutomationRuns(ctx context.Context) ([]AutomationRun
 	return scanAutomationRuns(rows)
 }
 
+// GetRunningAutomationRunByClaimToken reads the one row (if any) that is
+// state='running', belongs to automationID, and carries claimToken as
+// its claim_token - the exact-association lookup a lazy stale-claim
+// takeover (admitFire, claim.go) needs to find and close out the prior
+// holder's own orphaned run without touching a concurrent, genuinely
+// fresh run for the SAME automation (which would carry a different
+// claim_token) or any run belonging to a different automation. A
+// missing row is reported as (AutomationRun{}, false, nil), matching
+// GetAutomationRun's own "not found is not an error" contract - the
+// caller (interruptOrphanedRun) is expected to treat "nothing to
+// interrupt" as a normal, common outcome, not a store failure.
+func (s *SQLite) GetRunningAutomationRunByClaimToken(ctx context.Context, automationID, claimToken string) (AutomationRun, bool, error) {
+	var r AutomationRun
+	err := s.db.QueryRowContext(ctx, `SELECT `+automationRunColumns+` FROM automation_runs WHERE automation_id = ? AND claim_token = ? AND state = 'running'`, automationID, claimToken).Scan(
+		&r.ID, &r.AutomationID, &r.Origin, &r.State, &r.StepIndex, &r.StepCount, &r.SessionName, &r.WorktreePath, &r.WorktreeBranch, &r.ClaimToken, &r.StartedAt, &r.EndedAt, &r.FailKind, &r.Message)
+	if err == sql.ErrNoRows {
+		return AutomationRun{}, false, nil
+	}
+	if err != nil {
+		return AutomationRun{}, false, fmt.Errorf("get running automation run by claim token %q: %w", automationID, err)
+	}
+	return r, true, nil
+}
+
 func scanAutomationRuns(rows *sql.Rows) ([]AutomationRun, error) {
 	var out []AutomationRun
 	for rows.Next() {

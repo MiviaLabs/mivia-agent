@@ -188,6 +188,9 @@ func (s *Screen) switchConversation(newConv ports.Conversation) tea.Cmd {
 	}
 
 	s.conv = newConv
+	if fm, ok := newConv.(ports.ForegroundMarker); ok {
+		fm.SetForeground(true)
+	}
 	newID := s.convID()
 	s.transcript.SetModel(newConv.Model().Name)
 	s.registerSession(newID)

@@ -12,19 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
-
-// TestHeadlessSpawnerSatisfiesSessionSpawner is a compile-time pin: the
-// package-level var _ assertion in spawner.go itself already enforces
-// this, but a dedicated test makes the intent discoverable from the
-// test file listing too.
-func TestHeadlessSpawnerSatisfiesSessionSpawner(t *testing.T) {
-	var _ automation.SessionSpawner = (*HeadlessSpawner)(nil)
-}
 
 // TestHeadlessSpawnerImplementsCloseLastRun pins the exact interface
 // shape internal/automation's serve.go type-asserts against:
@@ -259,6 +250,39 @@ func TestCreateFreshInDirFailureLeavesCurrentNil(t *testing.T) {
 	defer spawn.mu.Unlock()
 	if spawn.current != nil {
 		t.Fatal("current is set after a failed bind, want nil")
+	}
+}
+
+// TestCreateFreshInDirBindFailureReleasesContextLeaseHeartbeat verifies that
+// when bind fails, the context lease heartbeat goroutine started during session
+// construction is released rather than leaked.
+func TestCreateFreshInDirBindFailureReleasesContextLeaseHeartbeat(t *testing.T) {
+	root := t.TempDir()
+	spawn, err := NewHeadlessSpawner(root, testResolvedConfig())
+	if err != nil {
+		t.Fatalf("NewHeadlessSpawner: %v", err)
+	}
+
+	bindErr := context.Canceled
+	const iterations = 30
+	runtime.GC()
+	baseline := runtime.NumGoroutine()
+
+	for i := 0; i < iterations; i++ {
+		_, err := spawn.CreateFreshInDir(func(*chat.Session) (string, error) {
+			return "", bindErr
+		}, "")
+		if err == nil {
+			t.Fatalf("CreateFreshInDir iteration %d with failing bind: got nil error, want error", i)
+		}
+	}
+
+	runtime.GC()
+	after := runtime.NumGoroutine()
+
+	const slack = 5
+	if after > baseline+slack {
+		t.Fatalf("goroutine count grew from %d to %d across %d failed bind cycles (slack %d) - context lease heartbeat goroutines leaked", baseline, after, iterations, slack)
 	}
 }
 

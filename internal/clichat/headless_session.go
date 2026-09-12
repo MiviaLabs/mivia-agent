@@ -16,9 +16,11 @@ package clichat
 // NewSessionDispatcher; automations were the outlier.
 //
 // The sequence below is the same one runConfiguredChatOnce follows, in the
-// same order, minus the parts that only mean something to an interactive
-// terminal (the REPL, the memory index reconciler, the parked-run recovery
-// sweep, the full-disk posture prompt).
+// same order - including cliagents.ApplySelectedAgentPrompt, the site that
+// recomposes the root prompt with the real core-memory block - minus the
+// parts that only mean something to an interactive terminal (the REPL, the
+// memory index reconciler, the parked-run recovery sweep, the full-disk
+// posture prompt).
 
 import (
 	"context"
@@ -30,6 +32,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -114,6 +117,77 @@ func NewHeadlessSession(in HeadlessSessionInput) (*HeadlessSession, func(), erro
 	if err := in.validate(); err != nil {
 		return nil, noop, err
 	}
+
+	core, err := buildHeadlessCore(in)
+	if err != nil {
+		return nil, noop, err
+	}
+	sess, store, res := core.sess, core.store, core.res
+	state, skillReg, registry, closeSurface := core.state, core.skillReg, core.registry, core.closeSurface
+
+	// Mirrors chat_command.go's runConfiguredChatOnce sequence
+	// (configureSessionWorkspace -> ApplySelectedAgentPrompt -> ...
+	// SetBindingFactory): this is the only site that recomposes the root
+	// session's prompt with the real core-memory block for a no-agent
+	// session (see ApplySelectedAgentPrompt's doc comment), and it must run
+	// BEFORE SetBindingFactory/restoreHeadlessSession's Load, because a Load
+	// republishes the prompt and binding and would overwrite this.
+	cliagents.ApplySelectedAgentPrompt(sess, res, state.Selected, state)
+
+	// Required before any Load: chat.Session.Load refuses to publish a
+	// loaded transcript for a session carrying a model catalog without one
+	// ("session binding factory is required for configured model
+	// catalogs"), and every other host installs one.
+	sess.SetBindingFactory(cliagents.ChatBindingFactory(sess, res, in.RunDir, state))
+
+	if err := restoreHeadlessSession(sess, res, in.Restore); err != nil {
+		abandonHeadlessSession(sess, store, closeSurface, false)
+		return nil, noop, err
+	}
+
+	if err := attachHeadlessSurface(sess, res, state, skillReg, registry); err != nil {
+		abandonHeadlessSession(sess, store, closeSurface, true)
+		return nil, noop, err
+	}
+
+	cleanup := func() {
+		// Dispatcher first: its teardown reads through the ledger repo and
+		// the remainder spool, and cliorchestrate.InitCoordinator keys a
+		// coordinator, a subagent pool and a lifecycle subscription off it
+		// in package-global maps that only the dispatcher's OnClose hook
+		// removes. A daemon that skipped this would accumulate one of each
+		// per fire, forever.
+		sess.CloseDispatcher()
+		closeSurface()
+	}
+	return &HeadlessSession{Session: sess, Store: store, State: state}, cleanup, nil
+}
+
+// headlessCore is what buildHeadlessCore assembles before a session exists:
+// the copy-on-write config, the loaded agent state, the composed registry
+// and the freshly built (but not yet prompt-composed, bound or attached)
+// session. Splitting it out keeps NewHeadlessSession itself to the
+// post-construction sequence (prompt apply -> binding -> restore ->
+// attach), whose relative order is load-bearing and easiest to audit as
+// one short function.
+type headlessCore struct {
+	sess         *chat.Session
+	store        *storage.SQLite
+	res          *config.Resolved
+	state        *cliagents.AgentSessionState
+	skillReg     *skills.Registry
+	registry     *tools.Registry
+	closeSurface func()
+}
+
+// buildHeadlessCore performs every step that precedes
+// cliagents.ApplySelectedAgentPrompt: the config copy-on-write, the agent
+// state load, the registry composition and the composition.BuildSession
+// call itself. A failure here has nothing to unwind beyond closeSurface -
+// BuildSession's own tools only exist once this returns successfully - so
+// abandonHeadlessSession's fuller teardown starts only after this point,
+// in NewHeadlessSession.
+func buildHeadlessCore(in HeadlessSessionInput) (*headlessCore, error) {
 	// Copy-on-write: ApplyWorkspacePromptGate and the root-prompt assignment
 	// below both write to the config, and the caller's pointer is shared
 	// across every run a daemon fires.
@@ -121,7 +195,7 @@ func NewHeadlessSession(in HeadlessSessionInput) (*HeadlessSession, func(), erro
 
 	state, skillReg, err := loadHeadlessAgentState(in.RunDir)
 	if err != nil {
-		return nil, noop, err
+		return nil, err
 	}
 	cliagents.ApplyWorkspacePromptGate(&res, state.Global)
 	// The roster is environment fact and must reach the model that has
@@ -133,7 +207,7 @@ func NewHeadlessSession(in HeadlessSessionInput) (*HeadlessSession, func(), erro
 	bus := events.New()
 	registry, closeSurface, err := buildHeadlessRegistry(in.RunDir, &res, state, bus)
 	if err != nil {
-		return nil, noop, err
+		return nil, err
 	}
 
 	sess, store, _, err := composition.BuildSession(composition.SessionInput{
@@ -156,36 +230,14 @@ func NewHeadlessSession(in HeadlessSessionInput) (*HeadlessSession, func(), erro
 	})
 	if err != nil {
 		closeSurface()
-		return nil, noop, fmt.Errorf("clichat: headless session: %w", err)
+		return nil, fmt.Errorf("clichat: headless session: %w", err)
 	}
 
-	// Required before any Load: chat.Session.Load refuses to publish a
-	// loaded transcript for a session carrying a model catalog without one
-	// ("session binding factory is required for configured model
-	// catalogs"), and every other host installs one.
-	sess.SetBindingFactory(cliagents.ChatBindingFactory(sess, &res, in.RunDir, state))
-
-	if err := restoreHeadlessSession(sess, &res, in.Restore); err != nil {
-		abandonHeadlessSession(sess, store, closeSurface, false)
-		return nil, noop, err
-	}
-
-	if err := attachHeadlessSurface(sess, &res, state, skillReg, registry); err != nil {
-		abandonHeadlessSession(sess, store, closeSurface, true)
-		return nil, noop, err
-	}
-
-	cleanup := func() {
-		// Dispatcher first: its teardown reads through the ledger repo and
-		// the remainder spool, and cliorchestrate.InitCoordinator keys a
-		// coordinator, a subagent pool and a lifecycle subscription off it
-		// in package-global maps that only the dispatcher's OnClose hook
-		// removes. A daemon that skipped this would accumulate one of each
-		// per fire, forever.
-		sess.CloseDispatcher()
-		closeSurface()
-	}
-	return &HeadlessSession{Session: sess, Store: store, State: state}, cleanup, nil
+	return &headlessCore{
+		sess: sess, store: store, res: &res,
+		state: state, skillReg: skillReg, registry: registry,
+		closeSurface: closeSurface,
+	}, nil
 }
 
 // buildHeadlessRegistry composes the run's tool registry: the workspace's
@@ -208,6 +260,20 @@ func buildHeadlessRegistry(runDir string, res *config.Resolved, state *cliagents
 	registry, closeTools, err := cliagents.BuildToolsForRoot(runDir, runDir, false, res, cliagents.SessionRootWiring{
 		Bus:                 func() *events.Bus { return bus },
 		LoadWorkspaceConfig: state.Global.LoadWorkspaceConfig,
+		// stashMemoryOnState is ConfigureChatWorkspace's own private hook
+		// and unreachable from here, so this sink calls
+		// cliagents.StashMemoryOnState - the exported wrapper over that
+		// SAME single producer - rather than hand-setting
+		// state.Memory/state.MemoryConfig itself: a field added to the
+		// stash later needs no matching edit here. It populates them from
+		// the SAME store the registry's memory_save/memory_search tools
+		// were wired against, never a second Open of the file. Without it,
+		// cliagents.ApplySelectedAgentPrompt's CoreMemoryBlockForState(state)
+		// reads a nil state.Memory and always composes an empty
+		// core-memory block.
+		MemoryStoreSink: func(store memory.Store) {
+			cliagents.StashMemoryOnState(state, store, res)
+		},
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("clichat: headless session tools: %w", err)

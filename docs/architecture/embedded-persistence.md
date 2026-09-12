@@ -59,6 +59,19 @@ Defined in `internal/storage/context_schema.go:197` and versioned migration file
 - `memory_sources`, `memory_entries`: Project memory index and source records (schema v16, `internal/storage/context_schema_v16.go:11`).
 - `context_schema_migrations`: Versioned migration ledger (`applyContextMigration`).
 
+## Fenced Claim Takeover Concurrency
+
+`TakeoverClaimFenced` and `TakeoverExpiredClaimFenced` (`internal/storage/sqlite_claims.go`) replace an existing `run_claims` row's holder and bump its `fence` (seeding it on a fresh insert), so a previous holder's captured fence value never survives a takeover - without the bump, a stale holder with a matching fence kept write access after the owner changed. Each takeover also records the previous holder in `fenced_tokens` inside the same transaction, so a later `IsRunTokenFenced` query sees the prior owner as fenced exactly once.
+
+Two mechanisms guard the read-then-write inside a takeover against concurrent mutation:
+
+- `SQLite.writeMu` serialises takeovers in-process.
+- A bounded SQL retry (`retrySQLiteBusy`) clears `SQLITE_BUSY` raised when a separate `AppendClaimedFenced` goroutine saturates the connection pool - a snapshot-level conflict the in-process mutex cannot address.
+
+`beginWrite` (`internal/storage/sqlite.go`) runs every takeover's read-then-write on the `writeDB` pool, whose DSN carries `_txlock=immediate` (`sqliteWriteDSN`, `internal/storage/sqlite_dsn.go`): every `BeginTx` on that pool emits SQLite's `BEGIN IMMEDIATE`, taking the write lock before the prior-holder read runs, so a concurrent cross-process takeover of the same row cannot invalidate that read between it and the write that follows.
+
+Test coverage: `TestSQLiteWriteDSNTakesImmediateTxLock` (`sqlite_write_tx_test.go`) pins the DSN flag itself; `TestBeginWriteSurvivesConcurrentCommit` and `TestCrossProcessBeginWriteSurvivesConcurrentCommit` (`crossproc_test.go`) prove `beginWrite`'s read-then-write survives a concurrent sibling commit in-process and across a real OS process boundary; `TestTakeoverClaimConcurrentMutateSurvivesSQLiteBusy` (`sqlite_claims_test.go`) exercises `TakeoverClaimFenced` itself under sustained concurrent contention.
+
 ## Remainder storage contract
 
 The `internal/remainder` package manages truncated tool outputs and visibility grants:

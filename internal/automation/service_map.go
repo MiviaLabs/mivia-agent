@@ -175,7 +175,7 @@ func specToPortsTrigger(t TriggerSpec) ports.TriggerSpec {
 	if t.Schedule != nil {
 		out.Schedule = &ports.ScheduleSpec{
 			Kind:  scheduleKindToPorts(t.Schedule.Kind),
-			Every: time.Duration(t.Schedule.EverySeconds) * time.Second,
+			Every: saturatingSeconds(t.Schedule.EverySeconds),
 			Cron:  t.Schedule.Cron,
 			TZ:    t.Schedule.TZ,
 		}

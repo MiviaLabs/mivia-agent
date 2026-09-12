@@ -1,8 +1,11 @@
 package automation
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
 // TestStepKindStringCoversEveryCase exercises StepKind.String()'s full
@@ -79,5 +82,59 @@ func TestStepKindUnmarshalTextCoversEveryCase(t *testing.T) {
 		t.Fatal("UnmarshalText(\"bogus\"): got nil error, want rejection")
 	} else if !strings.Contains(err.Error(), "unknown step kind") {
 		t.Fatalf("error = %q, want it naming the unknown step kind", err.Error())
+	}
+}
+
+// specWithAgentStep builds the minimal valid Spec
+// TestValidateSpecRejectsNonRootAgentRef/TestValidateSpecAcceptsRootAgentRef
+// need: one StepAgent step referencing ref, a manual trigger (no
+// schedule to satisfy), and no worktree (so BaseRef stays empty and
+// never trips the "base_ref is set but worktree is none" check).
+func specWithAgentStep(id, ref string) Spec {
+	return Spec{
+		ID:      id,
+		Name:    "Agent step spec",
+		Enabled: true,
+		Trigger: TriggerSpec{Kind: TriggerManual},
+		Steps: []Step{
+			{Kind: StepAgent, Ref: ref, Prompt: "do the thing"},
+		},
+	}
+}
+
+// TestValidateSpecRejectsNonRootAgentRef is the negative half of the
+// interim StepAgent restriction: executor.go's runStep dispatches
+// StepAgent through cliagents.ApplySessionAgent with a nil
+// *config.Resolved and an always-empty AgentSessionState (its own
+// documented KNOWN GAP), so only config.RootAgentName can ever resolve
+// there today - any other agent name fails mid-run with "no agents
+// loaded". ValidateSpec must catch this at load time instead, naming
+// the automation id, the step index, and the offending ref, so an
+// operator sees the failure before the automation ever fires.
+func TestValidateSpecRejectsNonRootAgentRef(t *testing.T) {
+	spec := specWithAgentStep("agent-ref-case", "some-other-agent")
+	err := ValidateSpec(spec, nil)
+	if err == nil {
+		t.Fatal("ValidateSpec: got nil error, want rejection of a non-root StepAgent ref")
+	}
+	if !errors.Is(err, ErrNonRootAgentRef) {
+		t.Fatalf("ValidateSpec error = %v, want errors.Is match on ErrNonRootAgentRef", err)
+	}
+	for _, want := range []string{"agent-ref-case", "step 0", "some-other-agent", "resolves today"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ValidateSpec error %q does not mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestValidateSpecAcceptsRootAgentRef is the positive half: a StepAgent
+// step whose Ref is exactly config.RootAgentName is the one case that
+// resolves today (ApplySessionAgent's empty AgentSessionState still
+// answers a lookup for the root agent), so ValidateSpec must not reject
+// it.
+func TestValidateSpecAcceptsRootAgentRef(t *testing.T) {
+	spec := specWithAgentStep("agent-ref-root", config.RootAgentName)
+	if err := ValidateSpec(spec, nil); err != nil {
+		t.Fatalf("ValidateSpec with RootAgentName ref: got %v, want nil", err)
 	}
 }

@@ -13,5 +13,5 @@ kind = 0
 
 [[automations.test-id.steps]]
 kind = 'skill'
-ref = 'bug-audit scope of last 24h commits'
+ref = 'bug-audit scope of last 24h commits, validate findings and fix - tdd. commit your updates.'
 prompt = ''

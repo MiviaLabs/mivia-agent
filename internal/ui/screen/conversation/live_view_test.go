@@ -7,6 +7,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ type fakeLiveConv struct {
 	id         string
 	background bool
 	foreground bool
+	sendErr    error
 	sends      []intent.Send
 	subscribeN int
 	history    []ports.Message
@@ -51,6 +53,9 @@ func (c *fakeLiveConv) ActiveTurn() (ports.TurnHandle, bool) {
 
 func (c *fakeLiveConv) Send(_ context.Context, in intent.Send) (ports.TurnHandle, error) {
 	c.sends = append(c.sends, in)
+	if c.sendErr != nil {
+		return nil, c.sendErr
+	}
 	ch := make(chan uievent.Event)
 	close(ch)
 	return &fakeTurnHandle{events: ch}, nil
@@ -126,6 +131,75 @@ func TestSwitchAwayReleasesOwnership(t *testing.T) {
 		t.Fatal("a conversation the screen switched away from must stop being foreground")
 	}
 	_ = other
+}
+
+func TestSwitchRestoresForegroundOwnership(t *testing.T) {
+	convA := newFakeLiveConv("conv-a")
+	convA.SetForeground(true)
+	convB := newFakeLiveConv("conv-b")
+	convB.SetForeground(true)
+
+	scr := newScreen(t, convA, nil, nil)
+	scr.switchConversation(convB)
+	if convA.IsForeground() {
+		t.Fatal("switching away from A must mark A not foreground")
+	}
+	if !convB.IsForeground() {
+		t.Fatal("switching to B must mark B foreground")
+	}
+
+	scr.switchConversation(convA)
+	if !convA.IsForeground() {
+		t.Fatal("switching back to A must restore A's foreground ownership")
+	}
+	if convB.IsForeground() {
+		t.Fatal("switching back to A must leave B not foreground")
+	}
+}
+
+func TestRevisitMidRunArmsLiveViewAndStatusline(t *testing.T) {
+	primary := &fakeMountConv{id: "primary"}
+	scr := newScreen(t, primary, nil, nil)
+	bg := newFakeLiveConv("bg-revisit")
+	bg.background = true
+
+	// A run is active on bg-revisit.
+	scr.SetRunActivitySource(func(id string) bool { return id == "bg-revisit" })
+
+	// Initial visit: subscribes and stores live view.
+	scr.switchConversation(bg)
+	if scr.liveSub == nil {
+		t.Fatal("expected liveSub non-nil on first visit")
+	}
+
+	// Switch away to primary: bg-revisit live view rides the snapshot.
+	scr.switchConversation(primary)
+	st := scr.sessions["bg-revisit"]
+	if st == nil || st.live == nil {
+		t.Fatal("expected bg-revisit tracked with live subscription")
+	}
+
+	// Live subscription goes stale off-screen (e.g. buffer overflow).
+	next, _ := scr.Update(liveStaleMsg{sessionID: "bg-revisit", sub: st.live})
+	scr = next.(Screen)
+	if st.live != nil {
+		t.Fatal("expected st.live cleared after stale message")
+	}
+
+	// User revisits mid-run: replayOrResumeLive must re-arm live view and statusline.
+	cmd := scr.switchConversation(bg)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd on revisit mid-run")
+	}
+	if scr.liveSub == nil {
+		t.Fatal("expected liveSub non-nil on screen after revisit mid-run")
+	}
+	if !scr.statusline.Animating() {
+		t.Fatal("expected statusline animating on revisit mid-run")
+	}
+	if v := scr.statusline.View(fixedNow()); !strings.Contains(v, "AUTO") {
+		t.Fatalf("status row %q, want AUTO badge", v)
+	}
 }
 
 func TestRunActiveGuardRefusesComposerSendAndKeepsText(t *testing.T) {
@@ -398,5 +472,59 @@ func TestAttachingToAnIdleSessionLeavesTheStatuslineAlone(t *testing.T) {
 
 	if scr.statusline.Animating() {
 		t.Fatal("attaching to an idle session started a status row for a turn that is not running")
+	}
+}
+
+func TestFailedSendRearmsLiveView(t *testing.T) {
+	primary := &fakeMountConv{id: "primary"}
+	scr := newScreen(t, primary, nil, nil)
+	bg := newFakeLiveConv("bg-failed-send")
+	bg.background = true
+	bg.sendErr = errors.New("simulated send failure")
+
+	// Switch to background conversation arms the live view.
+	switchCmd := scr.switchConversation(bg)
+	if switchCmd == nil {
+		t.Fatal("precondition: switchConversation should return non-nil cmd")
+	}
+	if scr.liveSub == nil {
+		t.Fatal("precondition: liveSub should be non-nil after switch")
+	}
+
+	// Attempt sendTextWithPersisted, which will fail Send.
+	next, cmd := scr.sendTextWithPersisted("hello", "")
+	sc, ok := next.(Screen)
+	if !ok {
+		t.Fatalf("sendTextWithPersisted returned %T, want Screen", next)
+	}
+
+	if sc.liveSub == nil {
+		t.Fatal("liveSub must be non-nil after failed send (re-armed live view)")
+	}
+	if cmd == nil {
+		t.Fatal("cmd must be non-nil after failed send (batched transcript Cmd + adoptCmd)")
+	}
+
+	// Subsequently fanned-out live event still lands in the transcript.
+	liveEv := uievent.Event{
+		Kind: uievent.KindTurnStart,
+		Body: uievent.TurnStartBody{Input: "background turn started"},
+	}
+	scNext, _ := sc.Update(liveEventMsg{
+		sessionID: sc.convID(),
+		ev:        liveEv,
+		events:    sc.liveEvents,
+		sub:       sc.liveSub,
+	})
+	scFinal := scNext.(Screen)
+	found := false
+	for _, b := range scFinal.transcript.Blocks() {
+		if strings.Contains(b.Header.Label, "background turn started") || strings.Contains(scFinal.transcript.Dump(), "background turn started") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("fanned-out live event did not land in transcript; dump:\n%s", scFinal.transcript.Dump())
 	}
 }

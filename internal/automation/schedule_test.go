@@ -89,6 +89,27 @@ func TestNextFireIntervalRejectsNonPositiveEverySeconds(t *testing.T) {
 	}
 }
 
+// TestNextFireIntervalRejectsOverflowingEverySeconds covers DC-7: huge
+// EverySeconds values (e.g. >= 9,223,372,037) must not wrap negative to
+// return a past time (which would trigger permanent fire storms). NextFire
+// must yield either a validation error or a saturated future time, never a past time.
+func TestNextFireIntervalRejectsOverflowingEverySeconds(t *testing.T) {
+	now := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	for _, every := range []int64{9223372037, 10000000000} {
+		trig := TriggerSpec{
+			Kind:     TriggerScheduled,
+			Schedule: &ScheduleSpec{Kind: ScheduleInterval, EverySeconds: every},
+		}
+		next, err := NextFire(trig, now)
+		if err != nil {
+			continue
+		}
+		if !next.After(now) {
+			t.Fatalf("NextFire(every_seconds=%d) = %v, want a saturated future time after %v (never a past time)", every, next, now)
+		}
+	}
+}
+
 // TestNextFireAtTimesOneRemaining asserts an at-times schedule with
 // exactly one entry still in the future returns exactly that time.
 func TestNextFireAtTimesOneRemaining(t *testing.T) {

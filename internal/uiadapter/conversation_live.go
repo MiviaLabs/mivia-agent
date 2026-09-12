@@ -55,6 +55,7 @@ func (c *Conversation) SetForeground(on bool) {
 		return
 	}
 	c.foreground.Store(on)
+	c.syncProgressRegistration()
 }
 
 // IsForeground reports whether a UI currently owns c as its active
@@ -78,6 +79,7 @@ func (c *Conversation) SetBackground(on bool) {
 	if on {
 		c.foreground.Store(false)
 	}
+	c.syncProgressRegistration()
 }
 
 // SubscribeLive registers a read-only viewer for this conversation's

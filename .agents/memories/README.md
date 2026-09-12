@@ -2,9 +2,10 @@
 
 Team-shared, cross-tool operational memory. One Markdown file per memory,
 each file is git-committed and read at the start of every task. The
-frontmatter schema below is mandatory. `scripts/check_memories.py` enforces
-it; nothing in the compiled binary reads this directory, so that gate is the
-only control.
+frontmatter schema below is mandatory. The Go package `internal/memory`
+reads and writes this directory and enforces the format rules defined in
+`internal/memory/format_rules.go`. `scripts/check_memories.py` checks the
+same rules as a repository gate.
 
 ## Frontmatter schema (mandatory)
 

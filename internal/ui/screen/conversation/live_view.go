@@ -249,6 +249,11 @@ func (s *Screen) armSessionLive(id string, st *sessionState) tea.Cmd {
 	if st.live != nil || st.active != nil {
 		return nil
 	}
+	if id == s.convID() {
+		cmd := s.adoptLive()
+		st.live, st.liveEvents = s.liveSub, s.liveEvents
+		return cmd
+	}
 	le, ok := liveCapable(st.conv)
 	if !ok {
 		return nil

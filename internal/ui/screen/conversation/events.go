@@ -163,7 +163,8 @@ func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.C
 			Kind: uievent.KindError,
 			Body: uievent.ErrorBody{Text: err.Error(), Fatal: false},
 		})
-		return s, cmd
+		adoptCmd := s.adoptLive()
+		return s, tea.Batch(cmd, adoptCmd)
 	}
 	s.composer.Clear()
 	s.active = handle

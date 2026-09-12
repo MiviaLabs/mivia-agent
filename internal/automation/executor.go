@@ -294,9 +294,12 @@ func (s *Service) runStep(ctx context.Context, automationID, runID string, stepI
 		// boundSess (captured from the bind closure CreateFreshInDir
 		// invokes) is the real underlying session, so ApplySessionAgent
 		// is reachable, but with an empty per-run AgentSessionState it
-		// can only ever resolve config.RootAgentName; any other agent
-		// name fails with "no agents loaded". This is a real limitation
-		// of the executor as specified, not a stand-in.
+		// can only ever resolve config.RootAgentName. ValidateSpec
+		// (spec.go's validateStepAgent) is the enforcement point for
+		// this gap: it rejects any StepAgent Ref other than
+		// config.RootAgentName at load time, so step.Ref here is
+		// already guaranteed to be config.RootAgentName by the time a
+		// validated spec reaches this dispatch.
 		if err := cliagents.ApplySessionAgent(boundSess, nil, &cliagents.AgentSessionState{}, step.Ref, false); err != nil {
 			return fmt.Errorf("automation %q: step %d: agent %q: %w", automationID, stepIndex, step.Ref, err)
 		}

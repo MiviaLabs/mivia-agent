@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -116,8 +117,28 @@ func TestSubscribeLive_CloseIsIdempotentAndNeverClosesEvents(t *testing.T) {
 // new semantics: a fresh conversation is foreground; SetBackground(true)
 // clears foreground (an unadopted run must not install the registrar);
 // the screen re-marks ownership with SetForeground.
+//
+// Waits for the first (background) turn's per-turn goroutine to fully
+// return - via SetTurnWaiterForTest - before calling SetForeground(true).
+// This is the known test-only registrar race: SetForeground's
+// syncProgressRegistration acquires whenever progressHandler is
+// non-nil, and the background turn's OWN deferred endTurnProgress is
+// what clears progressHandler; calling SetForeground immediately after
+// drainUntilClose (which only proves the events CHANNEL closed, not that
+// the goroutine's defer chain finished - see
+// conversation_background_test.go's waitGroupDone doc comment) can land
+// inside that window and acquire the registrar using the finished
+// turn's stale handler, then a fresh acquisition follows once the
+// second (watched) turn starts - the registrar reads as invoked twice
+// instead of once, nondeterministically. Both progressMu-guarded calls
+// individually are race-safe under -race; this was a logic race in test
+// timing, not a data race, so waiting deterministically (rather than
+// adding more bookkeeping) is the correct-shaped fix.
 func TestSend_ForegroundTracksScreenOwnership(t *testing.T) {
 	calls := registerCountingSubagentProgress(t)
+	var wg sync.WaitGroup
+	uiadapter.SetTurnWaiterForTest(&wg)
+	defer uiadapter.SetTurnWaiterForTest(nil)
 
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	conv := newTestConversation(t, completer)
@@ -133,11 +154,13 @@ func TestSend_ForegroundTracksScreenOwnership(t *testing.T) {
 	}
 
 	// An off-screen conversation installs nothing.
+	wg.Add(1)
 	handle, err := conv.Send(context.Background(), intent.Send{Text: "run"})
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	drainUntilClose(t, handle.Events(), 5*time.Second)
+	waitGroupDone(t, &wg, 5*time.Second)
 	if *calls != 0 {
 		t.Fatalf("registrar installed %d times for an unowned conversation, want 0", *calls)
 	}
@@ -145,11 +168,13 @@ func TestSend_ForegroundTracksScreenOwnership(t *testing.T) {
 	// The screen adopting the background conversation re-marks ownership:
 	// its dispatches then belong on the panel while the user watches.
 	conv.SetForeground(true)
+	wg.Add(1)
 	handle, err = conv.Send(context.Background(), intent.Send{Text: "watched"})
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	drainUntilClose(t, handle.Events(), 5*time.Second)
+	waitGroupDone(t, &wg, 5*time.Second)
 	if *calls != 1 {
 		t.Fatalf("registrar installed %d times for an adopted conversation, want 1", *calls)
 	}

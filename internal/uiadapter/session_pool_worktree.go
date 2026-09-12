@@ -208,7 +208,7 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 		// twin's heartbeat; write nothing.
 		return existing, sess, true, nil
 	}
-	conv := NewConversation(sess)
+	conv := p.newPooledConversation(sess)
 	p.wireContentResolver(entryState)
 	conv.SetSubagents(p.threads)
 	p.publishEntryLocked(id, sess, conv, entryState)
@@ -216,6 +216,17 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 	p.lastCreated = conv
 	p.attachSyncLocked(sess)
 	return conv, nil, false, nil
+}
+
+// newPooledConversation builds a conversation for a pooled entry. It starts
+// non-foreground: whoever adopts it - a screen switch, or SetBackground on an
+// automation spawn - declares the ownership. Building it foreground would let
+// a background mount install the process-wide subagent progress registrar
+// before anything on screen owned the conversation.
+func (p *SessionPool) newPooledConversation(sess *chat.Session) *Conversation {
+	conv := NewConversation(sess)
+	conv.SetForeground(false)
+	return conv
 }
 
 // newEntrySessionLocked builds the bare session every pooled entry starts

@@ -176,6 +176,7 @@ func (h *HeadlessSpawner) createInDir(bind func(*chat.Session) (string, error), 
 
 	if bind != nil {
 		if _, bindErr := bind(sess); bindErr != nil {
+			sess.ReleaseContextLease(context.Background())
 			cleanup()
 			_ = store.Close()
 			return nil, fmt.Errorf("cliautomations: bind fresh session: %w", bindErr)

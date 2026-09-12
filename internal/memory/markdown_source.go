@@ -15,10 +15,11 @@ import (
 
 // MarkdownDocument is one memory source file and its parsed content.
 type MarkdownDocument struct {
-	Path  string
-	Hash  string
-	ID    string
-	Entry Entry
+	Path      string
+	Hash      string
+	ID        string
+	Entry     Entry
+	Truncated []string
 }
 
 // MarkdownSource owns the Markdown files for project and organization memory.
@@ -27,6 +28,10 @@ type MarkdownSource struct {
 	projectDir string
 	orgDir     string
 	orgID      string
+	// limits bounds entries this source validates, including the MERGED entry
+	// the near-duplicate path writes. Zero value means the protocol defaults
+	// (see Limits). Set via WithLimits.
+	limits Limits
 }
 
 var memorySlugChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -57,6 +62,13 @@ func NewMarkdownSource(projectRoot, orgDir, orgID string) (MarkdownSource, error
 	}, nil
 }
 
+// WithLimits returns a copy of the source that validates entries (including
+// merged ones) against the supplied limits instead of the protocol defaults.
+func (s MarkdownSource) WithLimits(l Limits) MarkdownSource {
+	s.limits = l
+	return s
+}
+
 // Save validates and atomically writes one source file. The target directory
 // is created only after validation succeeds.
 func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, error) {
@@ -69,7 +81,7 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	if e.Created == "" {
 		e.Created = time.Now().Format("2006-01-02")
 	}
-	if err := e.Validate(Limits{}); err != nil {
+	if err := e.Validate(s.limits); err != nil {
 		return MarkdownDocument{}, err
 	}
 	// id is the filename's uniqueness suffix, hashed from the legacy Render
@@ -93,12 +105,19 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 		return MarkdownDocument{}, err
 	}
 
+	// Validate cross-entry relations (dangling targets, reciprocity) against existing store.
+	existingDocs, err := s.Scan(ctx, e.Scope)
+	if err != nil {
+		return MarkdownDocument{}, err
+	}
 	// Check for a near-duplicate among existing documents in the scope.
 	// If one exists, merge into the existing document rather than writing a duplicate file.
-	if doc, merged, err := s.mergeSimilar(ctx, e); err != nil {
+	mergeDoc, merged, err := s.mergeSimilar(ctx, e, existingDocs)
+	if err != nil {
 		return MarkdownDocument{}, err
-	} else if merged {
-		return doc, nil
+	}
+	if merged {
+		return mergeDoc, nil
 	}
 	// .agents/memories/README.md derives a file's frontmatter id from its
 	// filename: drop .md, replace every hyphen with an underscore
@@ -106,12 +125,20 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	// that same id into the frontmatter so a file this package writes
 	// passes the pre-push gate the capture skill's own files must pass.
 	protocolID := strings.ReplaceAll(stem, "-", "_")
+	if err := ValidateEntryRelations(existingDocs, e, protocolID); err != nil {
+		return MarkdownDocument{}, err
+	}
 	content := []byte(e.RenderProtocolFile(protocolID))
 	path := filepath.Join(dir, stem+".md")
 	if err := atomicWrite(ctx, path, content); err != nil {
 		return MarkdownDocument{}, err
 	}
 	doc := document(path, e, content)
+	// mergeSimilar's mergeDoc carries no path/entry when it skipped the
+	// merge (a discarded Validate failure, most commonly), only the
+	// warning describing why - preserve that warning on the document
+	// this call actually writes, instead of dropping it here.
+	doc.Truncated = append(doc.Truncated, mergeDoc.Truncated...)
 	// A file this method writes always re-parses through parseProtocolMemory
 	// on the next Scan (its "id:" frontmatter key sets a value Parse's own
 	// legacy-header path never populates), which reports doc.ID as that
@@ -123,41 +150,59 @@ func (s MarkdownSource) Save(ctx context.Context, e Entry) (MarkdownDocument, er
 	return doc, nil
 }
 
-func (s MarkdownSource) mergeSimilar(ctx context.Context, e Entry) (MarkdownDocument, bool, error) {
+func (s MarkdownSource) mergeSimilar(ctx context.Context, e Entry, existingDocs []MarkdownDocument) (MarkdownDocument, bool, error) {
 	if err := contextErr(ctx); err != nil {
 		return MarkdownDocument{}, false, err
 	}
-	existingDocs, err := s.Scan(ctx, e.Scope)
-	if err != nil {
-		return MarkdownDocument{}, false, err
-	}
+	var bestDoc MarkdownDocument
+	bestSim := -1.0
+	found := false
 	for _, existing := range existingDocs {
-		if EntrySimilarity(existing.Entry, e) >= similarityMergeThreshold {
-			merged := MergeEntries(existing.Entry, e).Clamp()
-			if merged.Verdict == "" {
-				merged.Verdict = VerdictGood
+		if EntriesMergeable(existing.Entry, e) {
+			sim := EntrySimilarity(existing.Entry, e)
+			if !found || sim > bestSim {
+				bestSim = sim
+				bestDoc = existing
+				found = true
 			}
-			if merged.Created == "" {
-				merged.Created = time.Now().Format("2006-01-02")
-			}
-			if err := merged.Validate(Limits{}); err != nil {
-				// If merged fails validation (e.g. existing had an invalid legacy tag/format),
-				// do not fail the save. Skip merging into this entry and fall through to
-				// write a new valid file.
-				continue
-			}
-			stem := strings.TrimSuffix(filepath.Base(existing.Path), ".md")
-			protocolID := strings.ReplaceAll(stem, "-", "_")
-			content := []byte(merged.RenderProtocolFile(protocolID))
-			if err := atomicWrite(ctx, existing.Path, content); err != nil {
-				return MarkdownDocument{}, false, err
-			}
-			doc := document(existing.Path, merged, content)
-			doc.ID = protocolID
-			return doc, true, nil
 		}
 	}
-	return MarkdownDocument{}, false, nil
+	if !found {
+		return MarkdownDocument{}, false, nil
+	}
+	merged, mergeTruncated := MergeEntries(bestDoc.Entry, e)
+	var clampTruncated []string
+	merged, clampTruncated = merged.ClampWithReport()
+	truncated := append(mergeTruncated, clampTruncated...)
+	if merged.Verdict == "" {
+		merged.Verdict = VerdictGood
+	}
+	if merged.Created == "" {
+		merged.Created = time.Now().Format("2006-01-02")
+	}
+	if err := merged.Validate(s.limits); err != nil {
+		// If merged fails validation (e.g. existing had an invalid legacy tag/format),
+		// do not fail the save. Skip merging into this entry and fall through to
+		// write a new valid file, but surface the discarded error as a warning
+		// via the same Truncated-report channel Save's caller already reads
+		// (memory_save's tools.go path), so a silently skipped merge is not
+		// invisible: the similarity threshold existed to avoid this exact
+		// duplicate.
+		return MarkdownDocument{Truncated: []string{fmt.Sprintf("merge skipped: %v", err)}}, false, nil
+	}
+	stem := strings.TrimSuffix(filepath.Base(bestDoc.Path), ".md")
+	protocolID := strings.ReplaceAll(stem, "-", "_")
+	if err := ValidateEntryRelations(existingDocs, merged, protocolID); err != nil {
+		return MarkdownDocument{Truncated: []string{fmt.Sprintf("merge skipped: %v", err)}}, false, nil
+	}
+	content := []byte(merged.RenderProtocolFile(protocolID))
+	if err := atomicWrite(ctx, bestDoc.Path, content); err != nil {
+		return MarkdownDocument{}, false, err
+	}
+	doc := document(bestDoc.Path, merged, content)
+	doc.ID = protocolID
+	doc.Truncated = truncated
+	return doc, true, nil
 }
 
 // Scan returns all regular Markdown files in one scope. It does not recurse

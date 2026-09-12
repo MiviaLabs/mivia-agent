@@ -84,20 +84,20 @@ type Limits struct {
 // Limits defaults. The rendered template stays small by design: a memory is a
 // digest of a learning, not a document.
 const (
-	DefaultMaxEntryBytes = 8192
+	defaultMaxEntryBytes = DefaultMaxEntryBytes
 
-	maxTitleLen      = 120
-	maxSummaryLen    = 400
-	maxWhyLen        = 1000
-	maxBodyFieldLen  = 2000
-	maxTags          = 8
-	maxTagLen        = 32
-	maxReferences    = 8
-	maxReferenceLen  = 200
-	maxRelated       = 16
-	maxRelatedIDLen  = 120
-	minEntryBytes    = 256
-	maxEntryBytesCap = 65536
+	maxTitleLen      = MaxTitleLen
+	maxSummaryLen    = MaxSummaryLen
+	maxWhyLen        = MaxWhyLen
+	maxBodyFieldLen  = MaxBodyFieldLen
+	maxTags          = MaxTags
+	maxTagLen        = MaxTagLen
+	maxReferences    = MaxReferences
+	maxReferenceLen  = MaxReferenceLen
+	maxRelated       = MaxRelated
+	maxRelatedIDLen  = MaxRelatedIDLen
+	minEntryBytes    = MinEntryBytes
+	maxEntryBytesCap = MaxEntryBytesCap
 )
 
 // Clamp returns a copy of e with every free-text field truncated to its
@@ -276,14 +276,8 @@ func (e Entry) validateCollections() error {
 		return fmt.Errorf("related must have at most %d items", maxRelated)
 	}
 	for _, rel := range e.Related {
-		if rel == "" || utf8.RuneCountInString(rel) > maxRelatedIDLen {
-			return fmt.Errorf("each related id must be 1-%d characters", maxRelatedIDLen)
-		}
-		if hasLineControl(rel) {
-			return fmt.Errorf("related id must not contain line breaks")
-		}
-		if strings.ContainsAny(rel, ",:[]{}") || strings.Contains(rel, " #") {
-			return fmt.Errorf("related id must be a plain id without any of , : [ ] { } or \" #\"")
+		if err := ValidateRelatedIDFormat(rel); err != nil {
+			return err
 		}
 	}
 	return nil

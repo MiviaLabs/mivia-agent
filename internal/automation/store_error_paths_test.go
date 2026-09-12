@@ -124,6 +124,72 @@ func TestLoadSpecsUsesTableKeyWhenSpecIDIsEmpty(t *testing.T) {
 	}
 }
 
+// TestLoadSpecsRejectsDuplicateEffectiveID covers Test A: two tables
+// ([automations.nightly], [automations.backup]) both with id = "deploy"
+// must cause LoadSpecs to return a non-nil error.
+func TestLoadSpecsRejectsDuplicateEffectiveID(t *testing.T) {
+	root := t.TempDir()
+	path, err := automationsFilePath(ports.ScopeProject, root)
+	if err != nil {
+		t.Fatalf("automationsFilePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	doc := `[automations.nightly]
+id = "deploy"
+name = "Nightly Deploy"
+enabled = true
+[[automations.nightly.steps]]
+kind = "prompt"
+prompt = "deploy nightly"
+
+[automations.backup]
+id = "deploy"
+name = "Backup Deploy"
+enabled = true
+[[automations.backup.steps]]
+kind = "prompt"
+prompt = "deploy backup"
+`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	got, err := LoadSpecs(ports.ScopeProject, root)
+	if err == nil {
+		t.Fatalf("LoadSpecs with duplicate effective IDs returned nil error and specs: %#v", got)
+	}
+}
+
+// TestLoadSpecsRejectsMismatchedTableKeyAndID covers Test B: one table
+// [automations.nightly] with inner id = "deploy" (key/id disagree) must cause
+// LoadSpecs to return a non-nil error.
+func TestLoadSpecsRejectsMismatchedTableKeyAndID(t *testing.T) {
+	root := t.TempDir()
+	path, err := automationsFilePath(ports.ScopeProject, root)
+	if err != nil {
+		t.Fatalf("automationsFilePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	doc := `[automations.nightly]
+id = "deploy"
+name = "Nightly Deploy"
+enabled = true
+[[automations.nightly.steps]]
+kind = "prompt"
+prompt = "deploy nightly"
+`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	got, err := LoadSpecs(ports.ScopeProject, root)
+	if err == nil {
+		t.Fatalf("LoadSpecs with mismatched table key and inner id returned nil error and specs: %#v", got)
+	}
+}
+
 // TestLoadSpecsRejectsInvalidSpecFromDisk covers LoadSpecs' per-entry
 // ValidateSpec error branch: a hand-edited file with a structurally
 // invalid automation (here, empty steps) must fail the whole load with a

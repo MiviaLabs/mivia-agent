@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -118,6 +119,11 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 	saved, err := t.store.Save(ctx, entry)
 	if err != nil {
 		return "", err
+	}
+	for _, f := range saved.Truncated {
+		if !slices.Contains(truncated, f) {
+			truncated = append(truncated, f)
+		}
 	}
 	msg := fmt.Sprintf("saved memory %q (%s, id %s)", saved.Title, saved.Scope, saved.ID)
 	if len(truncated) > 0 {

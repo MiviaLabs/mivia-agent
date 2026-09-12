@@ -81,6 +81,28 @@ func TestTriggerSpecAtTimesRoundTrips(t *testing.T) {
 	}
 }
 
+// TestTriggerSpecIntervalDurationSaturatesForHugeValues covers DC-7:
+// converting huge EverySeconds to ports.ScheduleSpec.Every must not wrap
+// negative and must produce a positive saturated Duration.
+func TestTriggerSpecIntervalDurationSaturatesForHugeValues(t *testing.T) {
+	for _, huge := range []int64{9223372037, 10000000000, 1 << 62} {
+		spec := TriggerSpec{
+			Kind: TriggerScheduled,
+			Schedule: &ScheduleSpec{
+				Kind:         ScheduleInterval,
+				EverySeconds: huge,
+			},
+		}
+		viaPorts := specToPortsTrigger(spec)
+		if viaPorts.Schedule == nil {
+			t.Fatalf("specToPortsTrigger returned nil Schedule for EverySeconds=%d", huge)
+		}
+		if viaPorts.Schedule.Every <= 0 {
+			t.Fatalf("specToPortsTrigger EverySeconds=%d resulted in non-positive Every duration %v", huge, viaPorts.Schedule.Every)
+		}
+	}
+}
+
 // TestUpsertReplacesExistingAutomation covers upsert's found-and-replace
 // branch (service.go: "if specs[i].ID == spec.ID { specs[i] = spec;
 // found = true; break }"), which every other test only reaches via the

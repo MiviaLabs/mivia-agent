@@ -45,6 +45,16 @@ func stashMemoryOnState(state *AgentSessionState, store memory.Store, res *confi
 	}
 }
 
+// StashMemoryOnState is stashMemoryOnState, exported for a caller that does
+// not go through ConfigureChatWorkspace and so cannot reach that unexported
+// hook directly - today clichat.NewHeadlessSession's MemoryStoreSink. It is
+// a thin wrapper, not a second implementation: state.Memory/MemoryConfig
+// have exactly ONE producer (stashMemoryOnState's locked body), so a field
+// added there later needs no matching edit at any call site.
+func StashMemoryOnState(state *AgentSessionState, store memory.Store, res *config.Resolved) {
+	stashMemoryOnState(state, store, res)
+}
+
 // buildWorkflowToolOpts builds the base tool options for a chat workspace:
 // the workspace root and the tool policy. It carries no workflow wiring -
 // the event bus provider (and with it the parked-run recovery sweep, F14) is
@@ -124,6 +134,15 @@ type SessionRootWiring struct {
 	// when false the operator has refused workspace-provided values, so a
 	// root's own config is ignored and the launch policy stands.
 	LoadWorkspaceConfig bool
+	// MemoryStoreSink, when non-nil, receives the memory store this build
+	// opened for the root (WireSessionMemory's opts.Memory), or nil when
+	// memory is disabled/unconfigured. It exists for a caller that does not
+	// go through ConfigureChatWorkspace - stashMemoryOnState is that
+	// function's own private hook and is not reachable from outside this
+	// package - but still needs the store to reach its own
+	// AgentSessionState.Memory for core-tier prompt injection (see
+	// clichat.NewHeadlessSession).
+	MemoryStoreSink func(memory.Store)
 }
 
 // buildToolsForRootWired is the ONE wiring path both public entry points
@@ -168,7 +187,10 @@ func BuildToolsForRoot(rootWorkspace, rootMemory string, fullDisk bool, res *con
 	if err != nil {
 		return nil, func() {}, err
 	}
-	registry, _, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, rooted, wiring.Bus, false, true, wiring.SessionRepo)
+	registry, opts, closeFn, err := buildToolsForRootWired(rootWorkspace, rootMemory, fullDisk, rooted, wiring.Bus, false, true, wiring.SessionRepo)
+	if err == nil && wiring.MemoryStoreSink != nil {
+		wiring.MemoryStoreSink(opts.Memory)
+	}
 	return registry, closeFn, err
 }
 

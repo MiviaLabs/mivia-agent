@@ -254,6 +254,15 @@ func installAutomationHooks(root string) (func(), error) {
 	return release, nil
 }
 
+// loadSessionSkillsFunc indirects cliagents.LoadSessionSkills so tests can
+// force a load failure. skills.LoadMarkdownSources' own contract makes a
+// real LoadSessionSkills error effectively unreachable in production (every
+// per-source failure is folded into a warning, not returned as an error;
+// see .mivia/policy/diff-coverage.json's entries for this class), so this
+// seam is the only way to exercise skillRegistrySource's error-reporting
+// path.
+var loadSessionSkillsFunc = cliagents.LoadSessionSkills
+
 // skillRegistrySource builds automation.Config.SkillRegistry's source:
 // the SAME loader the interactive session's own binding freezes in
 // (cliagents.LoadSessionSkills - the launch attach's skillRegFull path),
@@ -266,8 +275,16 @@ func installAutomationHooks(root string) (func(), error) {
 // resolved the same step fine.
 func skillRegistrySource(root string) func() *skills.Registry {
 	return func() *skills.Registry {
-		reg, warnings, err := cliagents.LoadSessionSkills(root, true)
+		reg, warnings, err := loadSessionSkillsFunc(root, true)
 		if err != nil {
+			// LoadSessionSkills failing here used to come back as nil,
+			// silently: every subsequent StepSkill dispatch then failed
+			// with the opaque "no skill registry available", with no
+			// trace of the real cause. Route the real error through the
+			// package's existing warn/stderr path (the same one
+			// WarnSkillLoad and WarnAgentLoad use) so the operator sees
+			// why skills never loaded.
+			cliagents.WarnSkillLoad([]string{fmt.Sprintf("skill registry load failed: %v", err)})
 			return nil
 		}
 		cliagents.WarnSkillLoad(warnings)

@@ -53,6 +53,10 @@ func openMarkdownMemoryStore(root string, mc config.MemoryConfig, readOnly bool)
 	if err != nil {
 		return nil, fmt.Errorf("memory Markdown source: %w", err)
 	}
+	// The source validates the MERGED entry the near-duplicate path writes, so
+	// the configured [memory] limits must reach it too, not just the store's
+	// incoming-entry check.
+	source = source.WithLimits(memory.Limits{MaxEntryBytes: mc.MaxEntryBytes, BlockPatterns: mc.BlockPatterns})
 	indexPath := workspace.GlobalContextStorePath(projectRoot)
 	// Read-only applies to Markdown source mutations. The derived index is a
 	// cache, so searches may refresh it to reflect external file changes.

@@ -17,8 +17,21 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/cronschedule"
 )
+
+// saturatingSeconds converts an int64 seconds count to time.Duration,
+// saturating at config.MaxTimeoutSeconds to prevent integer overflow.
+func saturatingSeconds(sec int64) time.Duration {
+	if sec > int64(config.MaxTimeoutSeconds) {
+		return config.SaturatingSeconds(config.MaxTimeoutSeconds)
+	}
+	if sec < -int64(config.MaxTimeoutSeconds) {
+		return config.SaturatingSeconds(-config.MaxTimeoutSeconds)
+	}
+	return config.SaturatingSeconds(int(sec))
+}
 
 // ErrNoSchedule is returned by NextFire when the trigger is not
 // TriggerScheduled (e.g. TriggerManual), which has no next-fire
@@ -66,7 +79,7 @@ func NextFire(trigger TriggerSpec, now time.Time) (time.Time, error) {
 		// chunks) is to advance `now` to at least the previous result
 		// before calling again, matching D6's "recomputed strictly in the
 		// future from the persisted next_fire_at".
-		return now.Add(time.Duration(sched.EverySeconds) * time.Second), nil
+		return now.Add(saturatingSeconds(sched.EverySeconds)), nil
 	case ScheduleAt:
 		var next time.Time
 		found := false

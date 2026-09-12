@@ -40,6 +40,7 @@ See also "Delivery process" in `AGENTS.md`.
 | `.agents/rules/60-tools-project-language-generic.md` | Generic model-facing tools, default prompts, and portable review skill |
 | `.agents/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
 | `.agents/rules/80-commit-message.md` | Conventional commit format |
+| `.agents/rules/90-writing-standard-ste100.md` | ASD-STE100 writing standard for agent-authored prose; banned AI-slop patterns |
 
 ## Plans
 

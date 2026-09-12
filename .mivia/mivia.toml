@@ -437,7 +437,7 @@ default_model = 'glm-5.3-flash'
 context_window_tokens = 1048576
 max_output_tokens = 131072
 name = 'glm-5.3-flash'
-reasoning = 'max'
+reasoning = 'low'
 reasoning_dialect = 'thinking_preserved'
 reasoning_efforts = ['low', 'high', 'max']
 

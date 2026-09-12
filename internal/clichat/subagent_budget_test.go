@@ -39,6 +39,14 @@ func TestTotalTaskTimeout(t *testing.T) {
 	}
 }
 
+// TestExportedTotalTaskTimeout verifies TotalTaskTimeout delegates to totalTaskTimeout.
+func TestExportedTotalTaskTimeout(t *testing.T) {
+	t.Parallel()
+	if got, want := TotalTaskTimeout(42), 42*time.Second; got != want {
+		t.Fatalf("TotalTaskTimeout(42) = %v, want %v", got, want)
+	}
+}
+
 // TestSkillHandlerCarriesTotalBudget checks the resolved budget on the
 // skill surface's constructed handler (field assertion, not wall time),
 // so the same knob that bounds routed agents also bounds skill runs.

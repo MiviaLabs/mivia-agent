@@ -8,6 +8,7 @@ package cliautomations
 // lifecycle hooks never ran, and there was no delegation verb at all.
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,8 +17,10 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
 
 // errStubHookInstall is the failure a stubbed hook install returns.
@@ -377,5 +380,147 @@ func TestGetOrResumeInDirRestoresASavedRun(t *testing.T) {
 	// The surface must still be attached after the restore.
 	if len(resumed.AdvertisedToolSpecs()) == 0 {
 		t.Fatal("the resumed session carries no advertised tools[]")
+	}
+}
+
+// TestHeadlessSessionInjectsCoreMemoryBlock is the POSITIVE parity proof for
+// SLICE S2: a headless session built over a workspace with [memory]
+// inject_core enabled and a seeded, promoted core-tier memory must carry
+// that memory's text in its composed conversation, exactly like the
+// interactive path's ApplySelectedAgentPrompt call
+// (chat_command.go:211). Before the production fix, NewHeadlessSession never
+// called cliagents.ApplySelectedAgentPrompt at all, so this assertion
+// FAILED (no memory-context message existed in the session at all) - proof
+// this test is real, not a tautology against boilerplate.
+func TestHeadlessSessionInjectsCoreMemoryBlock(t *testing.T) {
+	root := writeAutomationsFixture(t, "parity-memory-positive")
+	appendWorkspaceConfig(t, root, "\n[memory]\ninject_core = true\nstore_backend = \"markdown\"\n")
+
+	// Seed and promote one project-scope memory directly through the same
+	// store-opening path the workspace itself uses, so the file lands where
+	// the headless session's own memory wiring will read it back from.
+	memRes := config.MemoryConfig{StoreBackend: "markdown", InjectCore: true,
+		MaxEntryBytes: memory.DefaultMaxEntryBytes, MaxSearchResults: memory.DefaultMaxSearchResults}
+	seedStore, err := cliagents.OpenMemoryStoreWithReadOnly(root, memRes, false)
+	if err != nil {
+		t.Fatalf("open seed memory store: %v", err)
+	}
+	saved, err := seedStore.Save(context.Background(), memory.Entry{
+		Title: "headless parity fact", Scope: memory.ScopeProject, Verdict: memory.VerdictGood,
+		Summary: "core memory must reach a headless session too", Why: "test",
+	})
+	if err != nil {
+		_ = seedStore.Close()
+		t.Fatalf("save seed memory: %v", err)
+	}
+	if err := seedStore.PromoteToCore(context.Background(), saved.ID); err != nil {
+		_ = seedStore.Close()
+		t.Fatalf("promote seed memory to core: %v", err)
+	}
+	if err := seedStore.Close(); err != nil {
+		t.Fatalf("close seed memory store: %v", err)
+	}
+
+	gotRoot, res, err := resolveWorkspaceAndConfig(root, "")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceAndConfig: %v", err)
+	}
+	spawn, err := NewHeadlessSpawner(gotRoot, res)
+	if err != nil {
+		t.Fatalf("NewHeadlessSpawner: %v", err)
+	}
+	t.Cleanup(func() { _ = spawn.CloseLastRun() })
+	if _, err := spawn.CreateFreshInDir(nil, ""); err != nil {
+		t.Fatalf("CreateFreshInDir: %v", err)
+	}
+	sess := spawn.lastSession
+	if sess == nil {
+		t.Fatal("spawner recorded no session")
+	}
+
+	var memoryMsg string
+	for _, m := range sess.MessagesCopy() {
+		if strings.Contains(m.Content, "<core-memory-context>") {
+			memoryMsg = m.Content
+			break
+		}
+	}
+	if memoryMsg == "" {
+		t.Fatal("headless session carries no core-memory-context message; the memory block never reached it")
+	}
+	if !strings.Contains(memoryMsg, "headless parity fact") {
+		t.Fatalf("injected block missing the seeded memory:\n%s", memoryMsg)
+	}
+}
+
+// TestHeadlessSessionEmptyMemoryDirYieldsNoBlock is the NEGATIVE proof
+// alongside the positive test above: a workspace with inject_core enabled
+// but NO promoted core-tier memories must compose no memory-context
+// message at all. This rules out the failure mode where the assertion
+// above would pass against a hardcoded/boilerplate block regardless of
+// what memory actually exists.
+func TestHeadlessSessionEmptyMemoryDirYieldsNoBlock(t *testing.T) {
+	root := writeAutomationsFixture(t, "parity-memory-negative")
+	appendWorkspaceConfig(t, root, "\n[memory]\ninject_core = true\nstore_backend = \"markdown\"\n")
+
+	gotRoot, res, err := resolveWorkspaceAndConfig(root, "")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceAndConfig: %v", err)
+	}
+	spawn, err := NewHeadlessSpawner(gotRoot, res)
+	if err != nil {
+		t.Fatalf("NewHeadlessSpawner: %v", err)
+	}
+	t.Cleanup(func() { _ = spawn.CloseLastRun() })
+	if _, err := spawn.CreateFreshInDir(nil, ""); err != nil {
+		t.Fatalf("CreateFreshInDir: %v", err)
+	}
+	sess := spawn.lastSession
+	if sess == nil {
+		t.Fatal("spawner recorded no session")
+	}
+
+	for _, m := range sess.MessagesCopy() {
+		if strings.Contains(m.Content, "<core-memory-context>") {
+			t.Fatalf("an empty memory dir must yield no memory-context message, got:\n%s", m.Content)
+		}
+	}
+}
+
+// TestHeadlessSessionMemoryDisabledRegistersNoMemoryTools is the sibling of
+// the positive/negative memory-injection proofs above, for the sink's OTHER
+// input: a workspace with [memory] enabled = false leaves
+// WireSessionMemory's opts.Memory nil, so buildHeadlessRegistry's
+// MemoryStoreSink is invoked with a nil store (see
+// cliagents.StashMemoryOnState's nil-safe assignment). That must be a
+// harmless no-op, not a panic or a phantom tool registration: memory_save
+// and memory_search are registered ONLY when a store exists
+// (registerMemoryTools), so their absence here is the externally
+// observable proof that the nil case was handled cleanly end to end.
+func TestHeadlessSessionMemoryDisabledRegistersNoMemoryTools(t *testing.T) {
+	root := writeAutomationsFixture(t, "parity-memory-disabled")
+	appendWorkspaceConfig(t, root, "\n[memory]\nenabled = false\n")
+
+	gotRoot, res, err := resolveWorkspaceAndConfig(root, "")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceAndConfig: %v", err)
+	}
+	spawn, err := NewHeadlessSpawner(gotRoot, res)
+	if err != nil {
+		t.Fatalf("NewHeadlessSpawner: %v", err)
+	}
+	t.Cleanup(func() { _ = spawn.CloseLastRun() })
+	if _, err := spawn.CreateFreshInDir(nil, ""); err != nil {
+		t.Fatalf("CreateFreshInDir: %v", err)
+	}
+	sess := spawn.lastSession
+	if sess == nil {
+		t.Fatal("spawner recorded no session")
+	}
+
+	for _, name := range []string{"memory_save", "memory_search", "memory_delete"} {
+		if _, ok := sess.Tools.Get(name); ok {
+			t.Fatalf("%s is registered despite [memory] enabled = false; the nil-store sink path is not truly a no-op", name)
+		}
 	}
 }

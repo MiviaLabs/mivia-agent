@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -114,11 +116,38 @@ func LoadSpecs(scope ports.Scope, workspaceRoot string, registry ...*skills.Regi
 	if err := toml.Unmarshal(data, &shape); err != nil {
 		return nil, fmt.Errorf("automation: parse %s: %w", path, err)
 	}
+	// Iterate the table keys in sorted order, not Go map order: the
+	// effective-ID checks below must report the same error for the same
+	// file on every load, and findSpec/serveTick consume this slice by
+	// position.
+	keys := make([]string, 0, len(shape.Automations))
+	for id := range shape.Automations {
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
 	specs := make([]Spec, 0, len(shape.Automations))
-	for id, spec := range shape.Automations {
+	for _, id := range keys {
+		spec := shape.Automations[id]
+		// The table key IS the automation's identity. A non-empty inner
+		// id that disagrees with its key leaves two plausible answers to
+		// "which automation is this", so refuse rather than silently
+		// picking one: the key and the id are both operator-authored and
+		// neither is more authoritative than the other.
 		if spec.ID == "" {
 			spec.ID = id
+		} else if spec.ID != id {
+			return nil, fmt.Errorf(
+				"automation: %s: table key %q declares id %q: the table key and the id must agree",
+				path, id, spec.ID,
+			)
 		}
+		// No separate duplicate-ID check is needed: the agreement rule
+		// above forces every effective ID to equal its table key, and
+		// TOML table keys are unique by construction. That is what makes
+		// lookups unambiguous - findSpec takes the first match and
+		// serveTick's specByID keeps the last writer, so two tables
+		// sharing one effective ID would run different steps from one
+		// fire to the next.
 		if err := ValidateSpec(spec, reg); err != nil {
 			return nil, fmt.Errorf("automation: %s: %w", path, err)
 		}
@@ -216,9 +245,12 @@ func writeFileAtomic(dir, name string, data []byte) error {
 // ValidateSpec runs the load-time validation the plan's Scope section
 // requires: reject an unknown Step.Kind, reject BaseRef set when
 // Worktree=WorktreeNone, reject empty Steps, reject a malformed
-// automation ID, reject an unrecognized Unattended value, and reject a
+// automation ID, reject an unrecognized Unattended value, reject a
 // StepSlash step whose Ref falls outside the headless-safe "Slash
-// Command Allowlist". Cron string validation is not done here
+// Command Allowlist", and reject a StepAgent step whose Ref names any
+// agent other than config.RootAgentName (see ErrNonRootAgentRef's doc
+// comment - an INTERIM restriction tracking a documented executor gap,
+// not a permanent one). Cron string validation is not done here
 // (internal/cronschedule does not exist yet): a cron/recurring
 // trigger's raw Cron/TZ strings are stored as-is here, unparsed.
 //
@@ -254,9 +286,22 @@ func ValidateSpec(spec Spec, registry *skills.Registry) error {
 				return err
 			}
 		}
+		if step.Kind == StepAgent {
+			if err := validateStepAgent(spec.ID, i, step.Ref); err != nil {
+				return err
+			}
+		}
 	}
 	if spec.Worktree == WorktreeNone && spec.BaseRef != "" {
 		return fmt.Errorf("automation %q: base_ref is set but worktree is none", spec.ID)
+	}
+	if spec.Trigger.Kind == TriggerScheduled && spec.Trigger.Schedule != nil && spec.Trigger.Schedule.Kind == ScheduleInterval {
+		if spec.Trigger.Schedule.EverySeconds <= 0 {
+			return fmt.Errorf("automation %q: interval schedule: every_seconds must be positive, got %d", spec.ID, spec.Trigger.Schedule.EverySeconds)
+		}
+		if spec.Trigger.Schedule.EverySeconds > int64(config.MaxTimeoutSeconds) {
+			return fmt.Errorf("automation %q: interval schedule: every_seconds exceeds maximum (%d), got %d", spec.ID, config.MaxTimeoutSeconds, spec.Trigger.Schedule.EverySeconds)
+		}
 	}
 	return nil
 }

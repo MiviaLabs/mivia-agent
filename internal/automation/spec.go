@@ -8,7 +8,43 @@
 // spawning lives here - see docs/design/automations.md's Chunks list.
 package automation
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+)
+
+// ErrNonRootAgentRef is returned by ValidateSpec when a StepAgent
+// step's Ref names any agent other than config.RootAgentName. This is
+// an INTERIM restriction, not a permanent design choice: executor.go's
+// runStep dispatches StepAgent through cliagents.ApplySessionAgent with
+// a nil *config.Resolved and an always-empty AgentSessionState (its own
+// documented KNOWN GAP comment), so only the root agent can resolve
+// there today - naming any other agent fails mid-run with "no agents
+// loaded". Rejecting the ref at load time moves that failure to a point
+// an operator can act on, instead of at 2am mid-automation. Loosen this
+// once the executor is wired with a real AgentSessionState/registry for
+// StepAgent (see docs/design/automations.md's Step Kinds entry for
+// "agent").
+var ErrNonRootAgentRef = errors.New("automation: step agent ref is not the root agent")
+
+// validateStepAgent implements ValidateSpec's StepAgent guard (see
+// ErrNonRootAgentRef's doc comment for the full rationale): Ref must be
+// non-empty - mirroring validateStepSlash's own "ref is empty" and
+// validateStepSkill's parseSkillRef empty-ref rejection, so all three
+// Ref-bearing step kinds treat an empty Ref as a validation failure,
+// never as some silent default - and must equal config.RootAgentName
+// exactly, the only agent name executor.go's runStep can resolve today.
+func validateStepAgent(automationID string, stepIndex int, ref string) error {
+	if ref == "" {
+		return fmt.Errorf("automation %q: step %d: agent ref is empty", automationID, stepIndex)
+	}
+	if ref != config.RootAgentName {
+		return fmt.Errorf("automation %q: step %d: %w: %q (only %q resolves today)", automationID, stepIndex, ErrNonRootAgentRef, ref, config.RootAgentName)
+	}
+	return nil
+}
 
 // StepKind names what one automation step runs. Every kind except
 // StepWorkflow executes as one turn in the automation's background

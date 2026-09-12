@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
@@ -18,9 +19,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -424,6 +427,199 @@ func TestAutomationSpawnerGetOrResumeInDirRestoresSessionIdentity(t *testing.T) 
 	}
 	if !c.IsBackground() {
 		t.Fatal("resumed automation conversation is foreground; automation resume must mark it background")
+	}
+}
+
+// TestAutomationSpawnerGetOrResumeInDirPreservesForegroundSession covers
+// the defect where GetOrResumeInDir unconditionally called SetBackground(true),
+// stripping foreground ownership and dropping the subagent progress registration
+// when GetOrResumeInDir was called for a session currently owned by the screen.
+// foregroundLiveEnv builds a real app around a gated provider so a test can
+// hold a turn open mid-flight: entered fires once the turn reaches the
+// provider, which is the only window where the progress registrar is
+// observably acquired.
+func foregroundLiveEnv(t *testing.T, sessionID string) (runner *uiadapter.CommandRunner, entered func() <-chan struct{}) {
+	t.Helper()
+	srv, enteredFn, release := gatingProviderServer(t)
+	t.Cleanup(release)
+
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ctx.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "m1",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {ProviderName: "ollama", BaseURL: srv.URL},
+		},
+	}
+	comp, err := provider.New(res)
+	if err != nil {
+		t.Fatalf("provider.New: %v", err)
+	}
+	seed := chat.NewSession(res, comp)
+	seed.SessionID = sessionID
+	seed.UseTools = true
+	seed.Tools = tools.NewRegistry()
+	principal, err := contextstate.NewPrincipal("workspace", seed.SessionID, "subject")
+	if err != nil {
+		t.Fatalf("NewPrincipal: %v", err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: db},
+		Enabled:             true,
+	}
+	if err := seed.SetContextManager(manager, principal); err != nil {
+		t.Fatalf("SetContextManager: %v", err)
+	}
+	if err := seed.SetContextStore(db); err != nil {
+		t.Fatalf("SetContextStore: %v", err)
+	}
+	agentState := &cli.AgentSessionState{WorkspaceRoot: t.TempDir()}
+
+	_, _, r, closeAutomations, err := buildApp(seed, res, true, agentState, "")
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	t.Cleanup(closeAutomations)
+	return r, enteredFn
+}
+
+// TestAutomationSpawnerGetOrResumeInDirPreservesForegroundSession covers
+// the defect where GetOrResumeInDir unconditionally called SetBackground(true),
+// stripping foreground ownership and dropping the subagent progress registration
+// when GetOrResumeInDir was called for a session currently owned by the screen.
+func TestAutomationSpawnerGetOrResumeInDirPreservesForegroundSession(t *testing.T) {
+	var acquires, cleanups int
+	prev := uiadapter.SubagentProgressRegistrar
+	t.Cleanup(func() { uiadapter.SubagentProgressRegistrar = prev })
+
+	const sessionID = "foreground-session-main"
+	runner, entered := foregroundLiveEnv(t, sessionID)
+
+	// buildApp calls registerSubagentProgress(), so install our counting registrar after buildApp.
+	uiadapter.SubagentProgressRegistrar = func(fn func(agent.Event)) func() {
+		acquires++
+		return func() {
+			cleanups++
+		}
+	}
+
+	pool := runner.Pool()
+	convPort, err := pool.GetOrCreate(sessionID)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	c, ok := convPort.(*uiadapter.Conversation)
+	if !ok {
+		t.Fatalf("conversation type = %T, want *uiadapter.Conversation", convPort)
+	}
+	if !c.IsForeground() {
+		t.Fatal("initial conversation is not foreground")
+	}
+
+	// Start a live turn to acquire progress registration.
+	errCh := make(chan error, 1)
+	go func() {
+		h, sendErr := c.Send(context.Background(), intent.Send{Text: "test turn"})
+		if sendErr != nil {
+			errCh <- sendErr
+			return
+		}
+		for range h.Events() {
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case <-entered():
+	case <-time.After(20 * time.Second):
+		t.Fatal("turn never reached provider")
+	}
+
+	if acquires != 1 || cleanups != 0 {
+		t.Fatalf("progress registrar state before GetOrResumeInDir: acquires=%d cleanups=%d, want 1/0", acquires, cleanups)
+	}
+
+	// Call GetOrResumeInDir on the foreground session id.
+	gotConv, _, err := newAutomationSpawner(pool).GetOrResumeInDir(sessionID, "")
+	if err != nil {
+		t.Fatalf("GetOrResumeInDir: %v", err)
+	}
+	if gotConv != convPort {
+		t.Fatalf("GetOrResumeInDir returned %p, want pooled instance %p", gotConv, convPort)
+	}
+
+	if !c.IsForeground() {
+		t.Errorf("foreground conversation became foreground=false after GetOrResumeInDir")
+	}
+	if c.IsBackground() {
+		t.Errorf("foreground conversation became background=true after GetOrResumeInDir")
+	}
+	if cleanups != 0 {
+		t.Errorf("SubagentProgressRegistrar was released across GetOrResumeInDir (cleanups=%d, want 0)", cleanups)
+	}
+}
+
+// TestAutomationSpawnerGetOrResumeInDirNonForegroundEntryEndsUpBackground
+// covers case (b): a restored or pool-hit entry that is NOT currently
+// foreground (e.g., loaded from disk or pooled off-screen) must still end up
+// marked background by GetOrResumeInDir.
+func TestAutomationSpawnerGetOrResumeInDirNonForegroundEntryEndsUpBackground(t *testing.T) {
+	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ctx.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	seed := newContextBoundSession(t, res, db, "pool-seed-main")
+	resumeID := "MWIVAMWIVAMWIVAMWIVAMWIVBB"
+	saved := newContextBoundSession(t, res, db, resumeID)
+	if _, err := saved.SendUser(context.Background(), "seeded turn", io.Discard); err != nil {
+		t.Fatalf("seed turn: %v", err)
+	}
+	if err := saved.Save(resumeID); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	pool := uiadapter.NewCommandRunner(seed, res, nil).Pool()
+	t.Cleanup(pool.CloseAll)
+
+	// Pre-populate pool with an entry that is explicitly NOT foreground.
+	// We can pre-fetch via GetOrCreate and clear foreground.
+	convPort, err := pool.GetOrCreate(resumeID)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	c, ok := convPort.(*uiadapter.Conversation)
+	if !ok {
+		t.Fatalf("conversation type = %T, want *uiadapter.Conversation", convPort)
+	}
+	c.SetForeground(false)
+	if c.IsForeground() {
+		t.Fatal("conversation should not be foreground")
+	}
+
+	conv, gotSess, err := newAutomationSpawner(pool).GetOrResumeInDir(resumeID, "")
+	if err != nil {
+		t.Fatalf("GetOrResumeInDir: %v", err)
+	}
+	if gotSess == nil {
+		t.Fatal("GetOrResumeInDir returned a nil session")
+	}
+	if conv != convPort {
+		t.Fatalf("GetOrResumeInDir returned %p, want pooled %p", conv, convPort)
+	}
+	if !c.IsBackground() {
+		t.Fatal("pool-hit non-foreground entry must end up background after GetOrResumeInDir")
+	}
+	if c.IsForeground() {
+		t.Fatal("pool-hit non-foreground entry must not be foreground")
 	}
 }
 

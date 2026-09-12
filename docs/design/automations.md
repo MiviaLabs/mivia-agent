@@ -129,7 +129,7 @@ An automation definition in `automations.toml` supports the following fields:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `kind` | string | Yes | Step kind: `"prompt"`, `"skill"`, `"agent"`, `"slash"`, or `"workflow"`. |
-| `ref` | string | Conditional | Reference target: skill name, agent name, slash command, or workflow name. |
+| `ref` | string | Conditional | Reference target: skill name, agent name, slash command, or workflow name. For `kind = "agent"`, `ref` must equal the root agent name (`general-orchestrator`) today. This is an interim restriction, not a permanent limit. See "Step Kinds" below. |
 | `prompt` | string | Conditional | Prompt text sent to the model or agent. |
 | `inputs` | table | No | String key-value input parameters for workflow steps (`kind = "workflow"`). |
 
@@ -139,7 +139,7 @@ The executor processes steps in sequential order within a single session:
 
 - **`prompt`**: Sends `prompt` text directly to the active conversation turn.
 - **`skill`**: Resolves `ref` against the workspace's skill catalog and sends that skill's full rendered instructions, the same way an interactive `/<skill>` invocation does. Only the short command form (`/<skill> <args>`) is kept in the session's persisted history; the full instructions body is sent to the model for that one turn and not replayed on later turns. `ref` may be given with or without a leading slash. A `ref` that does not resolve to a user-invocable skill in the configured registry fails the step, and fails spec validation up front when a registry is available at save time.
-- **`agent`**: Selects the agent named in `ref` on the session state, then sends `prompt`.
+- **`agent`**: Selects the agent named in `ref` on the session state, then sends `prompt`. `ref` must equal the root agent name (`general-orchestrator`) today; the store rejects any other value at load time. The executor selects a named agent through an empty per-run agent state, so only the root agent resolves. This is an interim restriction that tracks a documented executor gap, not a permanent design choice. A later change may wire the executor with a real agent registry and lift this restriction.
 - **`slash`**: Executes the slash command in `ref`. The command must satisfy the headless allowlist.
 - **`workflow`**: Dispatches the workflow named in `ref` to the workflow engine with `inputs`.
 
@@ -223,7 +223,7 @@ kind = 0
 
 [[automations.release-prep.steps]]
 kind = "agent"
-ref = "code-reviewer"
+ref = "general-orchestrator"
 prompt = "Audit open pull requests for merge readiness."
 
 [[automations.release-prep.steps]]
@@ -284,6 +284,12 @@ The engine uses fenced claims to ensure exactly one run executes per automation 
 - If a manual trigger or resume operation loses the claim race, the operation fails with `ErrRunAlreadyActive`.
 - The claim releases automatically when the run completes, fails, is cancelled, or is interrupted.
 - While a run executes, its claim is periodically refreshed so a long-running step does not make the run look abandoned to a concurrent interrupted-run sweep.
+
+### Stale-Claim Takeover
+
+A plain claim refusal only means some holder owns the row right now - which is also true of a holder that crashed without ever releasing it. Rather than wedge every future fire for an automation until an operator or a `serve` sweep intervenes, `admitFire` (`internal/automation/claim.go`) falls back to an expiry-aware takeover when a claim is held: if the held claim's `acquired_at` is older than `defaultSweepMaxAge` (the same threshold and the same `storage.TakeoverExpiredClaimFenced` primitive the crash-recovery sweep itself uses), admission takes it over atomically instead of refusing. A claim younger than that threshold keeps the original, unchanged refusal (`ok=false, err=nil` for RunOnce; `ErrRunAlreadyActive` for ResumeRun, decided by the caller).
+
+This applies uniformly to RunOnce's and ResumeRun's admission, since both call `admitFire`: a stale claim would otherwise wedge both identically. When a takeover succeeds, the crashed holder's own run row (if any) is closed out via `interruptOrphanedRun` before the new fire proceeds, matching an exact `claim_token` so a concurrent, unrelated automation's live run is never touched.
 
 ### Managed Worktrees
 

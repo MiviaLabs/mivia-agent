@@ -714,6 +714,7 @@
     "TestHandleSlashNewClassic",
     "TestHandleTabCycleChatFocusConsumesWithoutSidebar",
     "TestHandleTabCycleSidebarCyclesFocus",
+    "TestHeadlessSpawnerSatisfiesSessionSpawner",
     "TestHeartbeatPulsePhaseAlternates",
     "TestHelpIsGeneratedFromRegistry",
     "TestHelpReflowsAfterResize",

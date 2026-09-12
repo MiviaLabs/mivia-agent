@@ -256,7 +256,9 @@ func (a automationSessionSpawner) GetOrResumeInDir(id string, dir string) (ports
 	if !ok {
 		return nil, nil, fmt.Errorf("automation spawner: pooled conversation is %T, want *uiadapter.Conversation", conv)
 	}
-	c.SetBackground(true)
+	if !c.IsForeground() {
+		c.SetBackground(true)
+	}
 	return conv, c.Session(), nil
 }
 

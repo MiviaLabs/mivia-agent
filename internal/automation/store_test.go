@@ -149,6 +149,34 @@ func TestValidateSpecNegative(t *testing.T) {
 			},
 			wantErr: "steps must be non-empty",
 		},
+		{
+			name: "interval schedule with non-positive every_seconds",
+			mutate: func(s Spec) Spec {
+				s.Trigger = TriggerSpec{
+					Kind: TriggerScheduled,
+					Schedule: &ScheduleSpec{
+						Kind:         ScheduleInterval,
+						EverySeconds: 0,
+					},
+				}
+				return s
+			},
+			wantErr: "every_seconds must be positive",
+		},
+		{
+			name: "interval schedule with overflowing every_seconds",
+			mutate: func(s Spec) Spec {
+				s.Trigger = TriggerSpec{
+					Kind: TriggerScheduled,
+					Schedule: &ScheduleSpec{
+						Kind:         ScheduleInterval,
+						EverySeconds: 9223372037,
+					},
+				}
+				return s
+			},
+			wantErr: "every_seconds exceeds maximum",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
