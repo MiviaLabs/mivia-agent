@@ -477,6 +477,9 @@ func TestRecoveryAbandonsTheNewSessionWhenTheSessionIsAlreadyFinished(t *testing
 	a := f.NewSession("abandon")
 	bus, s, _ := openRecoverable(t, f, a, nil)
 	attachByFirstEvent(t, f, bus, a)
+	waitUntil(t, "the first upload cursor acknowledgement", func() bool {
+		return s.outbox.Cursor().FlushedSeq == 1
+	})
 	cursorBefore := s.outbox.Cursor().FlushedSeq
 	s.beforeRecoveryLock = func() {
 		s.handleRemoteEnd(context.Background(), "test: finished during recovery")
