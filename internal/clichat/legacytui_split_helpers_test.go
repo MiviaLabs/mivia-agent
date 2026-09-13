@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -54,44 +53,6 @@ func fixtureAgentStateWithTools(t *testing.T, fx map[string]agentFixture) *Agent
 		WorkspaceRoot:      t.TempDir(),
 		Global:             config.AgentsGlobal{FailOnEmptyToolset: true},
 	}
-}
-
-// blockKinds, hasAssistantText, hasBlockKind, and kindOrderContains:
-// tui_tools_test.go.
-func hasAssistantText(blocks []ChatBlock, substr string) bool {
-	for _, b := range blocks {
-		if b.Kind == ChatBlockAssistant && strings.Contains(b.Text, substr) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasBlockKind(blocks []ChatBlock, k ChatBlockKind) bool {
-	for _, b := range blocks {
-		if b.Kind == k {
-			return true
-		}
-	}
-	return false
-}
-
-func blockKinds(blocks []ChatBlock) []ChatBlockKind {
-	out := make([]ChatBlockKind, len(blocks))
-	for i, b := range blocks {
-		out[i] = b.Kind
-	}
-	return out
-}
-
-func kindOrderContains(have []ChatBlockKind, want ...ChatBlockKind) bool {
-	i := 0
-	for _, h := range have {
-		if i < len(want) && h == want[i] {
-			i++
-		}
-	}
-	return i == len(want)
 }
 
 // dumpPlain: chatblock_rail_integration_test.go.

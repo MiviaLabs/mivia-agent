@@ -41,48 +41,16 @@ const (
 	ThemeColorDim = "8"
 	// ThemeColorDiffAdd is the added-line diff color index.
 	ThemeColorDiffAdd = "10"
-	// ThemeColorDiffDel is the removed-line diff color index.
-	ThemeColorDiffDel = "9"
 )
 
-// themeColorError, themeColorUser, themeColorTime mirror the private indices
-// in internal/legacytui/theme.go and internal/legacytui/toolui.go that back
-// the styles below (kept private: only this file's own styles need them).
+// themeColorError and themeColorUser back the styles below.
 const (
-	themeColorError  = "9"
-	themeColorUser   = "12"
-	themeColorTime   = "11"
-	themeColorCardBg = "236"
+	themeColorError = "9"
+	themeColorUser  = "12"
 )
-
-// MinCardWidth is the floor width for a rendered chat card. Relocated from
-// internal/legacytui/composer.go: internal/legacytui aliases this value so
-// both packages share one source of truth.
-const MinCardWidth = 20
 
 // BrandColorThinking is the vivid cyan #00d7d7 thinking-ramp color.
-// Relocated from internal/legacytui/brand.go: internal/legacytui aliases this
-// value so both packages share one source of truth.
 const BrandColorThinking = "44"
-
-// brandColorMulti is the vivid magenta #d75fd7 multi-ramp color, mirroring
-// internal/legacytui/brand.go's private constant of the same value (backs
-// AgentBadgeStyle below).
-const brandColorMulti = "170"
-
-// BrandWorkFrames is an 8-frame single-rune braille diamond pulse. Relocated
-// from internal/legacytui/brand.go: internal/legacytui aliases this slice so
-// both packages share one source of truth.
-var BrandWorkFrames = []string{
-	"⠶", // U+2836 dots 2,3,5,6     - inner diamond
-	"⠛", // U+281B dots 1,2,4,5     - upper weight
-	"⠿", // U+283F dots 1–6         - mid expand
-	"⣿", // U+28FF all 8            - full pulse
-	"⣶", // U+28F6 dots 2,3,5,6,7,8 - lower weight
-	"⠿", // mid
-	"⠛", // upper
-	"⠶", // inner
-}
 
 // Semantic styles. Relocated from internal/legacytui/theme.go and
 // internal/legacytui/toolui.go: both are reconstructed here from the raw
@@ -92,8 +60,6 @@ var BrandWorkFrames = []string{
 var (
 	// TUIDimStyle is the dim/structural text style.
 	TUIDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ThemeColorDim))
-	// ToolDimStyle is the dim/structural text style for tool rows.
-	ToolDimStyle = TUIDimStyle
 	// TUIErrorStyle is the error text style.
 	TUIErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorError))
 	// ToolErrStyle is the inline error style for tool status icons.
@@ -108,10 +74,4 @@ var (
 	ToolOkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ThemeColorDiffAdd))
 	// ToolNameStyle renders a tool's name.
 	ToolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorUser)).Bold(true)
-	// ToolTimeStyle renders a tool's elapsed-time text.
-	ToolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorTime))
-	// ToolPathStyle renders the workspace-path chip on a tool row.
-	ToolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
-	// AgentBadgeStyle marks nested tool rows with their producing subagent.
-	AgentBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorMulti))
 )

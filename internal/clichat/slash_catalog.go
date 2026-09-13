@@ -53,8 +53,6 @@ func builtInSlashCommands() []SlashCommand {
 		{Name: "/session", Description: "Show current session", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
 		{Name: "/title", Description: "Set session title", ArgsHint: "[text]", Surface: SlashSurfaceTUI, Kind: SlashKindBuiltin},
 		{Name: "/tools", Description: "Show available tools", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
-		{Name: "/plain", Description: "Explain classic UI", Surface: SlashSurfaceTUI, Kind: SlashKindBuiltin, AutoExecute: true},
-		{Name: "/select", Description: "Toggle select mode", Surface: SlashSurfaceTUI, Kind: SlashKindBuiltin, AutoExecute: true},
 		{Name: "/model", Description: "Choose model", ArgsHint: "[model]", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin},
 		{Name: "/agent", Description: "Choose root agent", ArgsHint: "[name]", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin},
 		{Name: "/agents", Description: "List root agent", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
