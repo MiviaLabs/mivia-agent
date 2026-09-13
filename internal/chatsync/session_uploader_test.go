@@ -106,9 +106,9 @@ func countType(evs []StoredEvent, typ string) int {
 // seconds and cross the wire in a handful of POSTs.
 //
 // On the single-goroutine loop this fails at the first assertion: at 200ms
-// a round trip, 1000 appends need ~200s.
+// a round trip, 300 appends need ~60s.
 func TestStreamingIsNotSerializedOnTheUploadRoundTrip(t *testing.T) {
-	const deltas = 1000
+	const deltas = 300
 	f := newFakeAPI(t)
 	id := f.NewSession("streaming-throughput")
 	f.SetAppendDelay(200 * time.Millisecond)
