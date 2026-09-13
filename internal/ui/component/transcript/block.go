@@ -52,6 +52,16 @@ type Block struct {
 	Collapsed   bool
 	Focused     bool
 
+	// Expanded is a settled reasoning block's third toggle state (C1):
+	// false shows the last uikitconfig.CollapseThresholdLines rendered
+	// lines, true shows the full text. Meaningless outside KindReasoning.
+	// Collapsed still wins over this - ToggleReasoning (focus.go), the
+	// global ctrl+r hide, must collapse the block down to its one-line
+	// "Thought for Xs" summary regardless of how far a reader had opened
+	// it, so rendering always checks Collapsed before ever consulting
+	// this field.
+	Expanded bool
+
 	// Prose renders with no header and no indent, at column 1. It is the
 	// only content that reads as conversation rather than as tooling
 	// (wireframes-panes.md section 2, last paragraph).
@@ -69,10 +79,36 @@ type Block struct {
 	Diff *uievent.Diff
 	Plan *uievent.PlanBody
 
+	// DiffSplit is C8's per-block toggle: false (the default) renders
+	// Diff unified, true renders it side-by-side. It survives restyle
+	// (theme/width changes) the same way Diff itself does - restyle
+	// reads it back rather than resetting to unified, or every resize
+	// would silently discard the reader's choice.
+	DiffSplit bool
+
+	// DiffBodyPrefixLen is how many lines of Body come BEFORE the
+	// diff's own rendered lines - tool output printed above an edit
+	// (handleToolEnd's live-merge path), or 0 when the diff IS the
+	// whole body (the common case, and values.go's direct-push path,
+	// which overwrites Body with the diff entirely). restyle needs
+	// this to reslice Body correctly when rebuilding the diff portion:
+	// inferring the split point from the length of the OLD render (as
+	// replaceDiffTail used to) silently corrupted the body - kept one
+	// stale line of the old diff render, or duplicated the hunk header
+	// - the moment DiffSplit changed a render's OWN line count between
+	// the before and after render (unified and split do not render a
+	// balanced hunk to the same number of rows). Found by bug-audit's
+	// own regression test surfacing it as a side effect.
+	DiffBodyPrefixLen int
+
 	// Usage preserves the raw token-and-cost payload behind the usage
 	// footer line for the same reason: the footer is styled at push time,
 	// and restyle rebuilds it from this copy when the theme changes.
 	Usage *uievent.UsageBody
+	// UsageModel and UsageElapsedMS are transcript-side presentation facts.
+	// The raw Usage remains authoritative for token and cost values.
+	UsageModel     string
+	UsageElapsedMS int
 
 	// ElapsedMS is the call's own duration, kept as a number rather than
 	// only as the formatted Meta string, so a coalesced work run can add
@@ -84,6 +120,21 @@ type Block struct {
 	// derive ElapsedMS when the event carries no duration of its own.
 	// Zero for anything that is not a live tool call.
 	StartedAt time.Time
+
+	// SpinnerFrame is the statusline's own tick, copied onto a RUNNING
+	// tool block just before it renders (C3). It is meaningless on any
+	// other block: nothing arms a clock here, this is only where the
+	// block catches up to the one the statusline already owns
+	// (.agents/memories/tui-spinner-clock-*.md).
+	SpinnerFrame int
+
+	// Children is the compact child tree C7 draws under a dispatch_tasks
+	// block: the tool calls the dispatched subagents made, pushed in by
+	// the screen (SetChildren) from the thread history it owns. They draw
+	// as body rows of THIS block (see children.go), and a block carrying
+	// them never folds into a work-run summary row - the tree is exactly
+	// what that fold would hide.
+	Children []ChildCall
 }
 
 // renderCalls counts Block.Render invocations. It exists so tests can
@@ -109,14 +160,23 @@ func (b Block) isEmpty() bool {
 // The blank rows BETWEEN blocks are not part of Height: the viewport
 // layout owns separators, because their placement depends on the
 // neighbours (one per turn section, none inside an activity run -
-// transcript-polish.md R1), not on the block alone.
+// ux-rules.md 11.1), not on the block alone.
 func (b Block) Height(width int) int {
+	if b.Kind == uievent.KindUsage {
+		return 1
+	}
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		wrapped := render.Wrap(b.Input, render.ProseMeasure(width)-2)
 		return len(wrapped)
 	}
 	if b.Prose {
 		return len(b.bodyRows(width))
+	}
+	if b.Kind == uievent.KindReasoning {
+		return b.reasoningHeight(width)
+	}
+	if b.isToolBlock() {
+		return 1 + b.card(width).rows() + b.childRowCount()
 	}
 	if b.Collapsed {
 		return 1
@@ -125,12 +185,39 @@ func (b Block) Height(width int) int {
 	return 1 + len(b.bodyRows(width))
 }
 
+// reasoningHeight is Height's KindReasoning branch (C1): a collapsed
+// block is ALWAYS its one summary row, unlike a windowed tool card
+// (card.go), which still shows a small body under the threshold even
+// while "collapsed" - reasoning's third toggle is the only way back to
+// the text, so Collapsed must hide everything or that promise breaks.
+func (b Block) reasoningHeight(width int) int {
+	if b.Collapsed {
+		return 1
+	}
+	rows := b.reasoningRows(width)
+	if len(rows) == 0 {
+		return 1
+	}
+	return 2 + len(rows) // summary row + blank separator + shown rows
+}
+
+// reasoningRows is a settled reasoning block's body at width, windowed to
+// the last uikitconfig.CollapseThresholdLines rows unless Expanded shows
+// the full text (C1's third toggle state).
+func (b Block) reasoningRows(width int) []string {
+	rows := b.bodyRows(width)
+	if b.Expanded || len(rows) <= uikitconfig.CollapseThresholdLines {
+		return rows
+	}
+	return rows[len(rows)-uikitconfig.CollapseThresholdLines:]
+}
+
 // Activity reports whether the block is tool activity rather than
 // conversation: header-carrying blocks whose bodies hang under an
 // activity group at a 2-column indent, with no blank row between
-// consecutive group members (transcript-polish.md R1). Prose - the user
+// consecutive group members (ux-rules.md 11.1, 11.2). Prose - the user
 // turn, assistant text, the usage footer - is the conversation voice.
-func (b Block) Activity() bool { return !b.Prose }
+func (b Block) Activity() bool { return !b.Prose && b.Kind != uievent.KindUsage }
 
 // bodyRows is the body as terminal rows at width, already wrapped.
 //
@@ -140,6 +227,9 @@ func (b Block) Activity() bool { return !b.Prose }
 // Already-styled prose hard-wraps too, because the escape sequences in
 // it belong to code that should not reflow.
 func (b Block) bodyRows(width int) []string {
+	if b.Kind == uievent.KindUsage {
+		return b.Body
+	}
 	if width <= 0 || b.Kind == uievent.KindTurnStart {
 		return b.Body
 	}
@@ -160,9 +250,6 @@ func (b Block) bodyRows(width int) []string {
 	for _, line := range b.Body {
 		out = append(out, render.HardWrap(line, inner)...)
 	}
-	if b.Kind == uievent.KindReasoning && len(out) > 3 {
-		out = out[len(out)-3:]
-	}
 	return out
 }
 
@@ -179,10 +266,13 @@ func defaultCollapsed(body []string) bool {
 // blocks with two spaces). Toggling collapse never moves any body row:
 // the header changes only in its first cell (the marker) and in the
 // magnitude hint the collapsed state appends to the meta column
-// ("… +N lines", transcript-polish.md R3; wireframes-panes.md section 5
+// ("… +N lines", ux-rules.md 11.5; wireframes-panes.md section 5
 // as amended).
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	renderCalls++
+	if b.Kind == uievent.KindUsage {
+		return b.renderUsage(t, tier, width)
+	}
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		return strings.Join(userLines(t, tier, width, b.Input), "\n")
 	}
@@ -192,28 +282,121 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 
 	var sb strings.Builder
 	sb.WriteString(b.renderHeader(t, tier, width))
-	if b.Collapsed {
-		return sb.String()
-	}
-	// The resting body indents with plain spaces: wireframes-panes.md
-	// section 2 - "the body is indented 4 columns. Nothing is drawn in
-	// columns 1 to 4 of a body line." The "│" rail is reserved for the
-	// two moments where the block needs to stand out from the record:
-	// the focused block, and the failed block, where rail plus
-	// RoleDanger earns its weight (transcript-polish.md R4). The column
-	// count is identical either way, so a body never shifts when focus
-	// or state changes. render.Role still degrades the rail's colour to
-	// nothing at TierASCII/TierNoTTY with no code branch here.
+
+	// The "│" rail is reserved for the two moments where the block needs
+	// to stand out from the record: the focused block, and the failed
+	// block, where rail plus RoleDanger earns its weight
+	// (ux-rules.md 11.6). The column count is identical either
+	// way, so a body never shifts when focus or state changes. render.Role
+	// still degrades the rail's colour to nothing at TierASCII/TierNoTTY
+	// with no code branch here.
 	showRail := b.Focused || b.Header.Role == theme.RoleDanger
 	indent := "    "
 	if showRail {
 		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
 	}
+
+	if b.Kind == uievent.KindReasoning {
+		if b.Collapsed {
+			return sb.String()
+		}
+		return sb.String() + b.reasoningBody(t, tier, width, indent)
+	}
+
+	if b.isToolBlock() {
+		return b.renderToolCard(t, tier, width, &sb, indent)
+	}
+
+	if b.Collapsed {
+		return sb.String()
+	}
+	// The resting body indents with plain spaces: wireframes-panes.md
+	// section 2 - "the body is indented 4 columns. Nothing is drawn in
+	// columns 1 to 4 of a body line."
 	body := b.bodyStyle(t, tier)
 	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
 		sb.WriteString(body(line))
+	}
+	return sb.String()
+}
+
+// renderToolCard is Render's isToolBlock branch, split out to keep Render
+// itself under the file's per-function LOC cap. sb already carries the
+// rendered header; this appends the card body (or nothing, if the card is
+// empty) and returns the finished string.
+func (b Block) renderToolCard(t theme.Theme, tier theme.Tier, width int, sb *strings.Builder, indent string) string {
+	c := b.card(width)
+	if len(c.body) == 0 && len(b.Children) == 0 {
+		return sb.String()
+	}
+	// One column of the indent is handed to the tint as a left
+	// margin, and one more plain column follows the fill as a right
+	// margin, so the card reads as padded on both sides rather than
+	// text glued to the tint's own edges. bodyIndent is always three
+	// plain columns (the rail case ends in two literal ASCII spaces
+	// appended after the styled glyph, so trimming the last byte
+	// trims one space, never an escape sequence). fillWidth stays
+	// width-BodyIndent, the same budget bodyRows already wrapped
+	// every line to, so the row's total width - bodyIndent(3) +
+	// fillWidth + the trailing margin(1) - is unchanged.
+	//
+	// render.FillBG colours only the cells it is given ("Callers pad
+	// rows to the width they want covered first" - background.go);
+	// bodyRows already hard-wraps every line to at most this many
+	// columns, so padding here only ever adds trailing space, never
+	// truncates.
+	bodyIndent := indent[:len(indent)-1]
+	fillWidth := width - uikitconfig.BodyIndent
+	// The blank row a card opens with (C4) - only for a card that HAS a
+	// body. cardLayout.rows() documents "Zero when there is no body - ...
+	// draws no card at all, only its header", and Height reads that count,
+	// so emitting the separator for a body-less block carrying only a child
+	// tree made Render one row taller than the block's own budget.
+	if len(c.body) > 0 {
+		sb.WriteByte('\n')
+	}
+	style := b.bodyStyle(t, tier)
+	for _, line := range c.body {
+		sb.WriteByte('\n')
+		sb.WriteString(bodyIndent)
+		sb.WriteString(render.FillBG(t, tier, theme.RoleBGSubtle, padToWidth(" "+style(line), fillWidth)))
+		sb.WriteByte(' ') // right margin: plain, matching the left
+	}
+	// The child tree draws after the body and before the hidden-count hint
+	// (C7): plain rows, no tint - a tree is not tool output. Rows come from
+	// the same childRowCount Height reads, so the two cannot disagree.
+	for _, line := range b.childRows(t, tier, width) {
+		sb.WriteByte('\n')
+		sb.WriteString(indent)
+		sb.WriteString(line)
+	}
+	if c.hidden > 0 {
+		sb.WriteByte('\n')
+		sb.WriteString(indent)
+		sb.WriteString(render.Role(t, tier, theme.RoleFGSubtle).Render(cardHint(c.hidden, b.Focused)))
+	}
+	return sb.String()
+}
+
+// reasoningBody is Render's KindReasoning branch below its "Thought for
+// Xs" header row: the blank separator plus the windowed or full-text
+// body on RoleBGInset, the same card treatment isToolBlock's branch
+// gives a tool body (C4) - split out to keep Render itself short.
+func (b Block) reasoningBody(t theme.Theme, tier theme.Tier, width int, indent string) string {
+	rows := b.reasoningRows(width)
+	if len(rows) == 0 {
+		return ""
+	}
+	fillWidth := width - uikitconfig.BodyIndent
+	var sb strings.Builder
+	sb.WriteByte('\n') // the blank row a card opens with (C4)
+	style := b.bodyStyle(t, tier)
+	for _, line := range rows {
+		sb.WriteByte('\n')
+		sb.WriteString(indent)
+		sb.WriteString(render.FillBG(t, tier, theme.RoleBGInset, padToWidth(style(line), fillWidth)))
 	}
 	return sb.String()
 }
@@ -251,6 +434,10 @@ func (b Block) bodyStyle(t theme.Theme, tier theme.Tier) func(string) string {
 }
 
 func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
+	if b.Kind == uievent.KindReasoning {
+		return b.renderReasoningSummary(t, tier)
+	}
+
 	headerW := width
 	if headerW > uikitconfig.ProseMeasureWide+16 {
 		// Cap the width render.Header clips against on ultrawide screens, so a
@@ -263,14 +450,15 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	// one column set: focus changes only the reverse-video treatment and
 	// never moves a column (wireframes-panes.md section 5).
 	spec := render.HeaderSpec{
-		Marker:    b.collapseMarker(),
-		Label:     b.Header.Label,
-		Detail:    b.Header.Detail,
-		DiffAdd:   b.Header.DiffAdd,
-		DiffDel:   b.Header.DiffDel,
-		Meta:      b.headerMeta(),
-		State:     b.Header.State,
-		StateRole: b.Header.Role,
+		Marker:       b.columnOneGlyph(),
+		Label:        b.Header.Label,
+		Detail:       b.Header.Detail,
+		DetailSuffix: b.detailSuffix(),
+		DiffAdd:      b.Header.DiffAdd,
+		DiffDel:      b.Header.DiffDel,
+		Meta:         b.headerMeta(),
+		State:        b.displayState(),
+		StateRole:    b.Header.Role,
 	}
 
 	// A focused header is drawn as one reverse-video run rather than as
@@ -286,57 +474,73 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
 	}
 
-	// A reasoning header is drawn as one italic dim run, for the reason
-	// bodyStyle gives: collapsed - which is its default - the header is
-	// ALL the reader sees of it, and "> reasoning  9 words  hidden" was
-	// otherwise shaped and coloured exactly like "> edit  31ms  ok".
-	// Italic is a decoration, not a colour, so it survives NO_COLOR
-	// (ux-rules 9.5) and degrades to plain where the terminal has no
-	// italic - and there the word "reasoning" still carries it.
-	if b.Kind == uievent.KindReasoning {
-		plain := ansi.Strip(render.Header(t, tier, headerW, spec))
-		return render.Role(t, tier, theme.RoleFGSubtle).Italic(true).Render(plain)
-	}
-
 	return render.Header(t, tier, headerW, spec)
 }
 
-// headerMeta is the meta column as rendered. A collapsed block states
-// its magnitude there - "… +N lines" for the N logical body lines it
-// is hiding - because a collapsed body that says only "hidden" gives
-// the reader nothing to weigh before expanding (transcript-polish.md
-// R3). The ellipsis matches the truncation grammar values.go already
-// uses (truncationBadge); it is one codepoint at every tier, so no tier
-// branch is needed. render.Header keeps the whole row to one line: when
-// the extended meta squeezes the row, the detail clips first and the
-// meta and state survive.
+// reasoningSummaryText is a settled reasoning block's duration line with
+// no styling: "Thought for 8s" via render.FormatElapsed. Shared by
+// renderReasoningSummary, which styles it for the live view, and
+// FocusedText (focus.go), which copies this same plain text to the
+// clipboard - so a reasoning block's copy states the duration the screen
+// shows, not the pre-C1 word count headerPlain still builds from
+// Header.Meta.
+func (b Block) reasoningSummaryText() string {
+	return "Thought for " + render.FormatElapsed(b.ElapsedMS)
+}
+
+// renderReasoningSummary is a settled reasoning block's whole header
+// (C1): one dim line, "Thought for 8s" via render.FormatElapsed, in
+// place of the old "reasoning  84 words  hidden" row this used to share
+// with every other collapsible kind's render.Header layout. The reader
+// wants to know how long the model took, not how much it said, and it is
+// ALL they see of the block by default - which is why it carries no
+// marker column: unlike the generic v/>/blank collapse marker, there is
+// nothing here for a reader to read as a state glyph.
+//
+// Italic is a decoration, not a colour, so it survives NO_COLOR
+// (ux-rules 9.5) and degrades to plain where the terminal has no italic -
+// and there the word "Thought" still carries it.
+func (b Block) renderReasoningSummary(t theme.Theme, tier theme.Tier) string {
+	text := b.reasoningSummaryText()
+	if b.Focused {
+		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(text)
+	}
+	return render.Role(t, tier, theme.RoleFGSubtle).Italic(true).Render(text)
+}
+
+// headerMeta is the meta column as rendered. It used to append a
+// "… +N lines" magnitude hint for a collapsed block; that hint now lives
+// on the body's own hint row instead (C4),
+// which states the same count where the reader is already looking to
+// expand it, so the header needs nothing extra here.
 func (b Block) headerMeta() string {
-	meta := b.Header.Meta
-	if !b.Collapsible || !b.Collapsed || len(b.Body) == 0 {
-		return meta
-	}
-	hint := fmt.Sprintf("… +%d lines", len(b.Body))
-	if meta == "" {
-		return hint
-	}
-	return meta + "  " + hint
+	return b.Header.Meta
 }
 
 // headerPlain is the header with no styling, used for the focused run
 // and for width measurement.
 func (b Block) headerPlain() string {
 	spec := render.SanitizeSpec(render.HeaderSpec{
-		Marker:  b.collapseMarker(),
-		Label:   b.Header.Label,
-		Detail:  b.Header.Detail,
-		DiffAdd: b.Header.DiffAdd,
-		DiffDel: b.Header.DiffDel,
-		Meta:    b.Header.Meta,
-		State:   b.Header.State,
+		Marker:       b.columnOneGlyph(),
+		Label:        b.Header.Label,
+		Detail:       b.Header.Detail,
+		DetailSuffix: b.detailSuffix(),
+		DiffAdd:      b.Header.DiffAdd,
+		DiffDel:      b.Header.DiffDel,
+		Meta:         b.Header.Meta,
+		State:        b.displayState(),
 	})
 	out := spec.Marker + " " + spec.Label
 	if spec.Detail != "" {
 		out += " " + spec.Detail
+	}
+	if spec.DetailSuffix != "" {
+		if spec.Detail != "" {
+			out += "  "
+		} else {
+			out += " "
+		}
+		out += spec.DetailSuffix
 	}
 	var diffParts []string
 	if spec.DiffAdd > 0 {

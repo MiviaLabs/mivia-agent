@@ -4,6 +4,7 @@ title: 'Memories auto-stage via pre-commit hook'
 content: 'Pre-commit now auto-stages .agents/memories changes into every commit.'
 importance: medium
 tags: [hooks, pre-commit, memories, git]
+related: [commit_format_fix_commits_need_regression_class_sweep_trailers_463508bbc8c7377b8d9c5f2c5291f4bf]
 updated: 2026-09-04
 ---
 

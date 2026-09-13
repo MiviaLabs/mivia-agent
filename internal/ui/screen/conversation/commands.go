@@ -100,6 +100,7 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	outcome := s.runner.Run(context.Background(), name, args)
 	if s.conv != nil {
 		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+		s.transcript.SetModel(s.conv.Model().Name)
 	}
 	return s.applyCommandOutcome(outcome)
 }
@@ -178,13 +179,15 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 // replacement conversation when the outcome carries one. A notice riding
 // the same outcome is appended after the reset.
 func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd) {
+	var liveCmd tea.Cmd
 	if o.Conversation != nil {
-		s.switchConversation(o.Conversation)
+		liveCmd = s.switchConversation(o.Conversation)
 	} else {
 		s.transcript = s.transcript.Clear()
 		if s.conv != nil {
 			s.LoadHistory(s.conv.History())
 			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			s.transcript.SetModel(s.conv.Model().Name)
 			if title := s.conv.Title(); title != "" {
 				s.topbar.SetBreadcrumb([]string{title})
 			} else {
@@ -195,6 +198,9 @@ func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.
 	var cmd tea.Cmd
 	if s.hasActiveSession() {
 		cmd = s.armTick()
+	}
+	if liveCmd != nil {
+		cmd = tea.Batch(cmd, liveCmd)
 	}
 	if o.Notice != "" {
 		return s.withNotice(o.Notice), cmd
@@ -327,6 +333,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 		out := apply(m.Item)
 		if s.conv != nil {
 			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			s.transcript.SetModel(s.conv.Model().Name)
 		}
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)

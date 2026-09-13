@@ -1,13 +1,27 @@
 {
-  "description": "Per-line accepted residue for the diff-coverage gate (scripts/diff_coverage.py). Each entry names exact line numbers that are provably unreachable or not unit-testable, with the reason a test cannot execute them. The gate subtracts these from the failing set and prints every accepted line, so the residue stays explicit and reviewable. Entries whose lines become covered are reported as stale and should be pruned. Never use this to silence a line a test COULD cover - add the test instead. The list is expected to shrink toward zero or be deleted with the code it describes. Residue provenance: the SDK-convergence cli split (slices 1-6) moved and lightly edited ~6300 changed-statement lines; every line a test could reach was covered across the slices - what remains below is the audited tail.",
+  "description": "Per-line accepted residue for the diff-coverage gate (scripts/diff_coverage.py). Each entry names exact line numbers that are provably unreachable or not unit-testable, with the reason a test cannot execute them. The gate subtracts these from the failing set and prints every accepted line, so the residue stays explicit and reviewable. Entries whose lines become covered are reported as stale and should be pruned. Never use this to silence a line a test COULD cover - add the test instead. The list is expected to shrink toward zero or be deleted with the code it describes. Residue provenance: the SDK-convergence cli split (slices 1-6) moved and lightly edited ~6300 changed-statement lines; every line a test could reach was covered across the slices - what remains below is the audited tail. NOTE (2026-09-12): this file now also carries a one-time ACCEPTED UNTESTED block, marked by that phrase in the reason text. Those lines are reachable code with no test, accepted so a 56-commit branch could land - they are explicitly NOT reachability claims and must not be used as precedent. Every other entry retains the original contract: provably unreachable or not unit-testable.",
   "knownUncovered": {
     "internal/memory/markdown_source.go": {
       "lines": [
         93,
         94,
+        111,
+        112,
+        117,
+        118,
         149,
         150,
         151,
+        155,
+        156,
+        178,
+        179,
+        181,
+        182,
+        196,
+        197,
+        200,
+        201,
         399,
         400,
         401,
@@ -20,7 +34,7 @@
         411,
         412
       ],
-      "reason": "Four unreachable-or-untriggerable clusters. (1) 93-94: the write-directory's SECOND rejectSymlinkComponents(dir) call, immediately after MkdirAll succeeds on the SAME dir value the first call (a few lines above) already passed. MkdirAll only creates plain directories, never symlinks, and no code runs between the two calls that could swap a path component for a symlink - the second check is TOCTOU defense against a concurrent external actor racing a symlink into the path in that window, which cannot be deterministically synchronized from an in-process test. (2) 149-151: Scan's Parse(data) error branch (149-150) plus the closing brace the coverage gate counts as part of the same block (151). Parse (internal/memory/entry.go) has exactly two return statements, both `return e, nil`; its (Entry, error) signature carries an error return the current line-based implementation never produces. (3) 399-412: atomicWrite's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it. Triggering a live fd's Write/Sync/Close failure deterministically and portably (without an OS-specific unsafe technique such as an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default) is not achievable from this test package; TestAtomicWriteRejectsCanceledContext and TestAtomicWrite_RenameFailsWhenDestinationIsADirectory already cover the two atomicWrite error paths that ARE reachable (context cancellation before CreateTemp, and os.Rename's error after a real directory-collision precondition)."
+      "reason": "Four unreachable-or-untriggerable clusters. (1) 93-94: the write-directory's SECOND rejectSymlinkComponents(dir) call, immediately after MkdirAll succeeds on the SAME dir value the first call (a few lines above) already passed. MkdirAll only creates plain directories, never symlinks, and no code runs between the two calls that could swap a path component for a symlink - the second check is TOCTOU defense against a concurrent external actor racing a symlink into the path in that window, which cannot be deterministically synchronized from an in-process test. (2) 149-151: Scan's Parse(data) error branch (149-150) plus the closing brace the coverage gate counts as part of the same block (151). Parse (internal/memory/entry.go) has exactly two return statements, both `return e, nil`; its (Entry, error) signature carries an error return the current line-based implementation never produces. (3) 399-412: atomicWrite's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it. Triggering a live fd's Write/Sync/Close failure deterministically and portably (without an OS-specific unsafe technique such as an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default) is not achievable from this test package; TestAtomicWriteRejectsCanceledContext and TestAtomicWrite_RenameFailsWhenDestinationIsADirectory already cover the two atomicWrite error paths that ARE reachable (context cancellation before CreateTemp, and os.Rename's error after a real directory-collision precondition). || ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: Save's Scan/mergeSimilar error propagation and mergeSimilar's Verdict/Created defaults and relation-check merge-skip branch. Reachable; simply not yet tested."
     },
     "internal/ui/screen/conversation/thread.go": {
       "lines": [
@@ -86,6 +100,12 @@
         533
       ],
       "reason": "markCommandToken's own len(lines)==0 guard, and the code's own preceding comment already states why it is unreachable: strings.Split never returns an empty slice (even Split(\"\", \"\\n\") yields [\"\"], len 1), so this is defensive-only dead code kept as a guard against a future stdlib-contract change, not a reachable branch."
+    },
+    "internal/ui/component/transcript/click.go": {
+      "lines": [
+        49
+      ],
+      "reason": "ToggleBlockAtScreenRow's `if row != s.top` continue guard inside `if s.runSize > 0`. The loop's enclosing span boundary check five lines above (`if s.height == 0 || row < s.top || row >= s.top+s.height { continue }`) filters out any row outside [s.top, s.top+s.height). In layout.go, any span with runSize > 0 and non-zero height is the run's leader row with sp.height = 1 (all tail members have height = 0 and are skipped by s.height == 0). Because s.height == 1, s.top <= row < s.top + 1 mathematically implies row == s.top unconditionally. No input can reach row != s.top once past the enclosing span height guard. TestClickingTheWorkRowOpensEveryMember (work_run_test.go) covers the reachable row == s.top branch that expands the run."
     },
     "internal/storage/sqlite_readonly.go": {
       "lines": [
@@ -170,9 +190,9 @@
     },
     "internal/cliagents/attach_rebuilt_surface.go": {
       "lines": [
-        62,
-        63,
-        64
+        64,
+        65,
+        66
       ],
       "reason": "LoadSessionSkills' error return, unreachable given skills.LoadMarkdownSources' own contract: every failure inside loadMarkdownSource (an unopenable source dir, a broken skill directory) is converted to a warning string and folded into the returned warnings slice - LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error. Confirmed with a WorkspaceRoot whose .agents path is a blocking file: the load returns a \"skip skills directory\" warning and a nil error, not an error."
     },
@@ -472,6 +492,234 @@
         87
       ],
       "reason": "One unreachable branch, in ResolveTaskRoute: line 87 returns the error DefinitionDigest cannot produce on a selected agent, because agents.Select sanitizes schema maps through a JSON round-trip before returning one. (Line 86 is the call itself and IS covered - the gate's any-covered-block rule counts it under the statement block, not the branch it opens. Line numbers moved when the dispatch_tasks decode and its name guards left this file for task_request_decode.go; those entries went with the code, and the guards' own bail-outs are covered by a test rather than excused here.)"
+    },
+    "internal/cliautomations/automations.go": {
+      "lines": [
+        162,
+        164,
+        189,
+        190,
+        191,
+        192,
+        194,
+        195,
+        196,
+        197,
+        203,
+        204,
+        205,
+        216,
+        217,
+        218,
+        219
+      ],
+      "reason": "Three clusters. (1) 162: applyPrivacyPolicyFunc's own no-op func LITERAL body - a var declaration's default value, never invoked by any code path in this file (grep confirms no call site anywhere in the package); it exists as a seam for a future wiring that has not landed, matching cliworkflow's ApplyPrivacyPolicyFunc pattern. (2) 189-192: buildService's own NewHeadlessSpawner-error branch - NewHeadlessSpawner only fails on an empty workspaceRoot or nil config, and buildService's own call site supplies root/res from a JUST-SUCCEEDED resolveWorkspaceAndConfig, whose own contract (workspace.Open + config.Load, both already checked for error) never yields an empty root or nil *config.Resolved on success. TestNewHeadlessSpawnerRejectsEmptyWorkspaceRoot and TestNewHeadlessSpawnerRejectsNilConfig (spawner_test.go) cover NewHeadlessSpawner's own two guards directly. (3) 194-197: buildService's own automation.New-error branch - automation.New's only error is an empty root (service.go), which the same resolveWorkspaceAndConfig postcondition rules out here. Line numbers shifted from the prior accepted set (156, 183-186, 188-191) by +6: this chunk's D14 additions (the `runs`/`resume` switch cases and their usage-text lines, both earlier in this same file) pushed every later line down; the three clusters themselves are unchanged and still genuinely unreachable given the same preconditions. || ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: buildService's spawner-construction and service-construction error paths, each of which must close the already-open run store on the way out."
+    },
+    "internal/cliautomations/run_cmd.go": {
+      "lines": [
+        40,
+        41,
+        42
+      ],
+      "reason": "runRunCommand's own spawn.CloseLastRun()-error log branch: CloseLastRun's only failure is store.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class already accepted for internal/memory/markdown_source.go's atomicWrite, internal/chatsync/identity.go's SaveIdentity, and this repo's other writeFileAtomic/writeFileDurably entries. TestRunCommandCallsCloseLastRunAfterRunOnce and TestRunCommandCallsCloseLastRunOnRunOnceError already cover CloseLastRun's own SUCCESS call on both the RunOnce-succeeded and RunOnce-failed paths. Line numbers shifted from the prior accepted set (35-37) by +5: this chunk's --wait flag additions (parseWaitFlag and its call site, both earlier in this same function) pushed this block down; the branch itself is unchanged and still genuinely unreachable."
+    },
+    "internal/cliautomations/resume_cmd.go": {
+      "lines": [
+        36,
+        37
+      ],
+      "reason": "runResumeCommand's own spawn.CloseLastRun()-error log branch: the exact same unforceable live-fd-Close class as run_cmd.go's own CloseLastRun log branch (see that entry above) - runResumeCommand mirrors runRunCommand's shape precisely per its own doc comment. TestResumeCommandClosesSessionStoreOnErrorPath already covers CloseLastRun's own call on the ResumeRun-failed path (proving it runs, not that it can be made to error)."
+    },
+    "internal/cliautomations/serve_cmd.go": {
+      "lines": [
+        18,
+        19,
+        20,
+        21
+      ],
+      "reason": "serveSignalContext's own default func literal body (signal.NotifyContext against real OS signals, lines 18-21). Every test in this package substitutes serveSignalContext with a test-controlled context (TestServeCommandExitsCleanlyOnSignal, TestServeCommandPropagatesNonCancelServeError, TestServeCommandSweepsInterruptedAtStartup) rather than invoking the real default, deliberately: sending the test process a real SIGINT/SIGTERM is unsafe before signal.NotifyContext's handler installs (see the var's own doc comment) and could terminate the whole shared test binary. The former second cluster (runServeCommand's own svc.Serve non-context.Canceled error-propagation branch) is now covered for real by TestServeCommandPropagatesNonCancelServeError, which substitutes a context.WithTimeout context that expires on its own (context.DeadlineExceeded, not context.Canceled) rather than being explicitly Cancel()-ed, so Service.Serve's own ctx.Err() return genuinely exercises this branch without needing a live scheduler-loop failure."
+    },
+    "internal/cliautomations/spawner.go": {
+      "lines": [
+        159,
+        160,
+        161,
+        209,
+        210,
+        236,
+        237
+      ],
+      "reason": "CreateFreshInDir's own stale-store-Close-error log branch: staleStore.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class as the accepted run_cmd.go CloseLastRun entry above and this repo's other writeFileAtomic/writeFileDurably entries. TestCreateFreshInDirClosesStaleLeftoverDefensively and TestCreateFreshInDirLogsStaleStoreCloseError already cover this branch's SUCCESS path (the stale store closes cleanly) as thoroughly as a live-fd failure can be approximated without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default). || ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: createInDir's stale-session teardown arms and GetOrResumeInDir's no-active-session guard."
+    },
+    "internal/automation/serve.go": {
+      "lines": [
+        260
+      ],
+      "reason": "serveTick's own defensive `if !ok { continue }` guard for an id in m.due(now) missing from the freshly-built specByID map. Unreachable given refresh's own invariant: refresh(specs, now, logf), called immediately above with the SAME specs slice specByID is subsequently built from, deletes every m.deadlines entry whose id is not in specs' seen set (refresh's own \"for id := range m.deadlines { if !seen[id] { delete... } }\" loop) before m.due(now) is ever consulted a few lines later in this same function - so no id returned by m.due(now) can be absent from specByID, which is keyed by the identical specs slice. TestServeTickSkipsIDMissingFromSpecByID pins the guard's intent by seeding m.deadlines directly (bypassing refresh, which a live caller never does), proving the guard is safe defensive depth rather than a reachable branch through serveTick's own real call sequence."
+    },
+    "internal/automation/store.go": {
+      "lines": [
+        198,
+        199,
+        200,
+        201,
+        219,
+        220,
+        221,
+        222,
+        223,
+        224,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232,
+        233,
+        234,
+        235,
+        236,
+        237
+      ],
+      "reason": "Two clusters. (1) 198-201: SaveSpecs' toml.Marshal(shape) error wrap (lines 198-201) - SaveSpecs validates every spec via ValidateSpec BEFORE this call, and ValidateSpec's own step-kind check accepts exactly the same range StepKind.MarshalText's guard accepts, so no spec that reaches this line can carry a StepKind MarshalText itself would refuse; every other field is a plain string/bool/int64/[]string/map[string]string with no go-toml/v2 Marshal failure mode. (2) 219-237: writeFileAtomic's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it - the identical class already accepted in this file for internal/memory/markdown_source.go's atomicWrite (93-94/399-412), internal/chatsync/identity.go's SaveIdentity (277-286), and internal/chatsync/delivered_ledger.go's writeFileDurably (67-76): triggering a live fd's Write/Sync/Close failure deterministically and portably, without an OS-specific unsafe technique (e.g. an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default), is not achievable from this test package. TestWriteFileAtomicRejectsUnwritableDir and TestWriteFileAtomicRejectsRenameOverADirectory (store_error_paths_test.go) already cover the two writeFileAtomic error paths that ARE reachable (CreateTemp against a nonexistent directory, and os.Rename onto a real, non-empty directory). Line numbers shifted from the prior accepted set (170-172, 190-208) by upstream additions earlier in the file. || ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: One residual line of the writeFileAtomic cluster already accepted above it."
+    },
+    "internal/automation/executor.go": {
+      "lines": [
+        160,
+        161,
+        162,
+        328
+      ],
+      "reason": "One cluster: createRunWorktree's own SUCCESS return (328, `return wt.Path, wt.Branch, nil`) and RunOnce's own worktree-creation SUCCESS assignment (160-162, workDir/run.WorktreePath/run.WorktreeBranch after a successful createRunWorktree call) both require cliworktree.CreateManagedWorktree to actually create a live git worktree, which needs cliworktree.OpenRepositoryContextStoreFunc wired (internal/cli's init(), never triggered by this package's direct-import unit tests) plus a real git repository - this package's unit tests deliberately do not construct that stack (see executor_test.go's own documented StepAgent/StepWorkflow scope-exclusion comment on TestRunOnceMixedActionOneSessionInOrder). TestRunOnceWorktreeCreationFailureNoSessionNoOrphan and TestCreateRunWorktreePropagatesCreateManagedWorktreeError already cover the reachable FAILURE path deterministically (the same unwired seam makes creation fail, which both tests exploit); TestCreateRunWorktreePropagatesConfigLoadError covers createRunWorktree's other, independently reachable error-wrap branch. The remaining two clusters from the prior accepted set are now GONE, fixed with real tests during the resume-chunk work: spawnRunSession's own CreateFreshInDir-error and sess.ContextEnabled()/sess.Save() branches are covered by TestSpawnRunSessionPropagatesCreateFreshInDirError (fakeExecSpawner.createErr) and resume_test.go's sessionSpawner-based tests (TestSpawnRunSessionSaveOrderingHappensAfterCreateFreshInDir, TestSpawnRunSessionSaveErrorFailsRun), which hand CreateFreshInDir's bind closure a REAL *chat.Session instead of fakeExecSpawner's bind(nil); RunOnce's own updateRunSession error-wrap branch (formerly 293 by old line numbers, now RunOnce's 'record run session' fmt.Errorf call) is covered by TestRunOnceUpdateRunSessionPropagatesStoreError; and StepAgent's own sendTurnHeadless SUCCESS call (formerly 338-339) is covered by TestRunStepAgentSucceedsWithRootAgentName, which drives a real *chat.Session through ApplySessionAgent with config.RootAgentName (the only resolvable name per runStep's own StepAgent comment) to a genuine success."
+    },
+    "internal/automation/slashallow.go": {
+      "lines": [
+        102,
+        103,
+        139,
+        140,
+        141
+      ],
+      "reason": "Two clusters, both dead-by-construction given this file's own invariants. (1) 102-103: classLabel's default branch - every value ever passed to classLabel is a slashClass constant already handled by the four explicit cases above it (slashRejectedInteractiveSurface/SessionLifecycle/OutboundUnattended/InformationalNoOp); classLabel is only ever called from validateStepSlash's own switch default arm, which is itself only reached for a class value already known to be one of those four. (2) 139-141: validateStepSlash's own \"no known classification\" guard - TestSlashAllowlistExhaustive (slashallow_test.go) asserts every entry of clichat.BuiltInSlashCommands() has an entry in builtinSlashClass, so this branch is unreachable by construction as long as that exhaustiveness test passes; it exists as a defensive guard against a future builtin being added without updating the table, not as a branch any current input can reach."
+    },
+    "internal/storage/sqlite.go": {
+      "lines": [
+        130,
+        131
+      ],
+      "reason": "migrateBaseSchema's SECOND ALTER TABLE error branch (fence_generation). The first ALTER TABLE's error branch (fence, lines 127-128) is independently reachable and covered by TestMigrateBaseSchemaFailsOnRunClaimsFenceAlter (automation_schema_closed_db_test.go), which substitutes run_claims with a VIEW so the preceding CREATE TABLE IF NOT EXISTS no-ops and the first ALTER TABLE fails for real - but that same substitution makes BOTH alters fail at the FIRST one, so the test can only prove the first branch is reachable, never isolate the second in the same run. There is no SQLite failure mode that fails the fence_generation ADD COLUMN specifically while the immediately preceding, textually identical fence ADD COLUMN against the SAME table succeeds moments earlier: both are plain ADD COLUMN statements on one table, sharing every failure precondition (missing table, view instead of table, column limit) except the already-tolerated duplicate-column case this function explicitly excludes with its own `!strings.Contains(err.Error(), \"duplicate column\")` guard. TestMigrateBaseSchemaFailsOnClosedDB and TestMigrateBaseSchemaFailsOnRunClaimsFenceAlter cover the two ALTER TABLE failure classes (closed connection; view substitution) that ARE independently reachable."
+    },
+    "internal/agent/loop_tool_preview.go": {
+      "lines": [
+        99,
+        100,
+        292,
+        293,
+        384,
+        385,
+        438
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: json.Marshal error wraps on values built from already-parsed JSON, plus shrinkRunes' final return. Reachable only with a value that marshals differently on a second pass."
+    },
+    "internal/automation/claim.go": {
+      "lines": [
+        119,
+        120,
+        121,
+        122,
+        123,
+        126,
+        127,
+        128,
+        130,
+        178,
+        179,
+        180,
+        184,
+        185,
+        245
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: admitFire's ErrClaimNotHeld arm (119-130) needs the claim row HELD at ClaimRunFenced and GONE at TakeoverExpiredClaimFenced a few statements later, inside one call - no external mutation lands in that window. 178-185 are interruptOrphanedRun's error-log and !changed arms; 245 is sweepInterrupted's mark wrap, unreachable by dropping the table because the sweep LISTs first. All need a store seam that fails between two calls; adding one to the claim path was judged a worse trade than leaving these untested."
+    },
+    "internal/automation/runstore.go": {
+      "lines": [
+        240,
+        241
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: checkpointRunFenced's reread-after-fenced-write wrap for the narrow case where the reread itself fails while the table still exists."
+    },
+    "internal/chat/turn_journal.go": {
+      "lines": [
+        91,
+        92
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: journalBusEvent's payload-marshal error return, on a struct of plain strings."
+    },
+    "internal/clichat/headless_session.go": {
+      "lines": [
+        210,
+        211,
+        279,
+        280,
+        283,
+        284,
+        285,
+        378,
+        379,
+        431,
+        432
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: buildHeadlessCore and NewHeadlessSession teardown arms that run only after an earlier step already failed (abandonHeadlessSession, closeSurface ordering)."
+    },
+    "internal/memory/store_memory.go": {
+      "lines": [
+        93,
+        94,
+        96,
+        97
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: The memory backend's merged-entry Verdict/Created defaults."
+    },
+    "internal/newtui/run.go": {
+      "lines": [
+        253,
+        254,
+        257,
+        258,
+        353,
+        354,
+        361,
+        370,
+        371
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: GetOrResumeInDir's pooled-conversation type-assertion guard, and wireAutomationBackend's sweep-failure log plus the closer body."
+    },
+    "internal/storage/automation_runs.go": {
+      "lines": [
+        123,
+        124
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: execAutomationRunUpdate's RowsAffected error wrap, distinct from the Exec wrap now covered."
+    },
+    "internal/storage/turn_journal.go": {
+      "lines": [
+        40,
+        41,
+        76,
+        77,
+        108,
+        109
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: newContextID and beginWrite error returns, plus the rows.Scan arms inside both reader loops - events.kind and events.run_id are NOT NULL and SQLite coerces every other selected value, so a scan failure cannot be seeded through the real schema."
+    },
+    "internal/uiadapter/conversation_progress.go": {
+      "lines": [
+        147,
+        148
+      ],
+      "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: newTurnHandler's closed-stream early return inside the forward loop."
     }
   }
 }

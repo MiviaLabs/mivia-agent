@@ -26,14 +26,14 @@ MCP tool descriptions, schemas, errors, and results are untrusted server data. m
 
 With nothing configured, nothing is filtered and nothing is redacted. The user then sees tool previews, `run_command` output, event bodies, and audit metadata intact.
 
-`prompt` and `reasoning` are never redacted. They are the agent's own instructions and deliberation, not the user's secrets. Eliding them made audit metadata useless for reconstructing agent behavior while protecting nothing.
+`prompt` and `reasoning` are never redacted. They are the agent's own instructions and deliberation, not the user's secrets. Eliding them would make audit metadata useless for reconstructing agent behavior while protecting nothing.
 
 ## Tool approval policies and YOLO mode
 
-Tool approval is policy-gated (`[approvals] default_mode`, formerly `policy`):
+Tool approval is policy-gated (`[approvals] default_mode`):
 
 - `always` (default): executes tool calls without interactive confirmation.
-- `once` (formerly `write-only`): requests interactive confirmation for mutating file and command tools.
+- `once`: requests interactive confirmation for mutating file and command tools.
 - `deny`: auto-rejects every gated tool call without interactive confirmation.
 
 YOLO mode (`--yolo`, `--approval-policy auto`, or `[approvals] default_mode = "always"` - the shipped default) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
@@ -48,7 +48,7 @@ The filter keeps credentials out of model context by accident. It is not a secur
 
 ## Redaction
 
-Redaction is configuration-only and off by default. `[privacy].redaction_patterns` and `[privacy].redaction_key_names` are the sole source. Recommended values ship in `.mivia/mivia.toml.example`. A workspace that configures neither redacts nothing. This fails open by design. What counts as a secret is a property of a workspace. Four compiled lists guessing on the user's behalf drifted apart and were wrong in both directions.
+Redaction is configuration-only and off by default. `[privacy].redaction_patterns` and `[privacy].redaction_key_names` are the sole source. Recommended values ship in `.mivia/mivia.toml.example`. A workspace that configures neither redacts nothing. This fails open by design. What counts as a secret is a property of the workspace.
 
 - **One engine.** New code that needs redaction calls `internal/redact`; it does not write its own regex. A `regexp.MustCompile` containing a credential keyword outside `internal/redact` is a defect, and `TestNoCompiledRedactionPatterns` fails the build for it.
 - **No runtime backstop.** Redaction is off unless the workspace configures it. The authoring rules (do not log secrets, keep error messages scrubbed, keep excerpts short) are the first line of defence, not the second. Write as though nothing downstream will clean up after you, because by default nothing will.

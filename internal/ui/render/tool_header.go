@@ -180,6 +180,46 @@ func formatFileDetail(lower string, args map[string]any) string {
 	return ""
 }
 
+// ApprovalDetailRow returns the approval box's key/value target row: the
+// RAW value (no "$ " prefix or "[Lx-Ly]" suffix - those are
+// FormatToolDetail's one-line-summary conventions, not this row's own
+// "Label  value" layout), labelled "Command" for a shell tool, "Path"
+// for a directory tool, or "File" for any other file tool. Mirrors
+// formatCommandDetail/formatFileDetail's own tool and key matching, so
+// the two never classify the same call differently. ok is false when
+// args name none of these, so the approval box draws no second row.
+func ApprovalDetailRow(name string, args map[string]any) (label, value string, ok bool) {
+	lower := strings.ToLower(name)
+	if lower == "run_command" || lower == "bash" || lower == "terminal" || lower == "exec" || lower == "command" {
+		for _, k := range []string{"command", "CommandLine", "cmd"} {
+			if v, got := args[k].(string); got && v != "" {
+				return "Command", v, true
+			}
+		}
+		return "", "", false
+	}
+
+	isFileTool := strings.Contains(lower, "file") ||
+		strings.Contains(lower, "edit") ||
+		strings.Contains(lower, "replace") ||
+		strings.Contains(lower, "patch") ||
+		strings.Contains(lower, "dir") ||
+		lower == "view_file" || lower == "write_to_file"
+	if !isFileTool {
+		return "", "", false
+	}
+	label = "File"
+	if strings.Contains(lower, "dir") {
+		label = "Path"
+	}
+	for _, k := range []string{"file_path", "path", "AbsolutePath", "TargetFile", "target_file", "filePath", "filename", "DirectoryPath", "SearchDirectory"} {
+		if v, got := args[k].(string); got && v != "" {
+			return label, v, true
+		}
+	}
+	return "", "", false
+}
+
 func formatSearchDetail(lower string, args map[string]any) string {
 	isSearch := strings.Contains(lower, "grep") ||
 		strings.Contains(lower, "glob") ||

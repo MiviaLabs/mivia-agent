@@ -2,9 +2,10 @@
 
 Team-shared, cross-tool operational memory. One Markdown file per memory,
 each file is git-committed and read at the start of every task. The
-frontmatter schema below is mandatory. `scripts/check_memories.py` enforces
-it; nothing in the compiled binary reads this directory, so that gate is the
-only control.
+frontmatter schema below is mandatory. The Go package `internal/memory`
+reads and writes this directory and enforces the format rules defined in
+`internal/memory/format_rules.go`. `scripts/check_memories.py` checks the
+same rules as a repository gate.
 
 ## Frontmatter schema (mandatory)
 
@@ -15,9 +16,24 @@ title: <short human-readable title>
 content: <one-sentence statement of the fact or rule>
 importance: <high | medium | low>
 tags: [<comma-separated keywords>]
+related: [<ids of memories this one touches; omit when genuinely unrelated>]
 updated: <ISO date the memory last changed, YYYY-MM-DD>
 ---
 ```
+
+### Optional frontmatter keys
+
+- `related`: A flat list of other memories' `id` values. Links must be
+  **reciprocal** (if A lists B, B must list A). `scripts/check_memories.py`
+  enforces that all named targets exist and link back.
+- `x-scope`: Scope of the memory (`project` or `org`). Set by the programmatic
+  store (`RenderProtocolFile`) to preserve scope metadata during scanning.
+- `x-verdict`: Assessment of the learning (`good`, `bad`, `mixed`, or `neutral`).
+  Set by the programmatic store to preserve verdict metadata.
+
+Name a memory in `related` when the two share a mechanism, a gate, or a
+failure mode - not when they merely sit in the same tag bucket. A link you
+cannot justify in one clause is a link that makes the graph noise.
 
 The body that follows the frontmatter is the full explanation: when the
 fact applies, why it matters, and what to do instead. A memory without
@@ -59,6 +75,26 @@ it becomes a hard rule; memories are operational, not authoritative.
   the age of the fact and not of the file.
 - Never rewrite a memory to invert a previous decision without
   recording why; the diff itself is the audit trail.
+
+## The reference graph
+
+`related` exists because the housekeeping audit's orphan check needs it. An
+**orphan** is a memory no other memory names in its `related` list. Orphans
+are a soft flag, not a deletion proposal: they say nobody has judged how this
+memory connects, not that it is wrong.
+
+Without these links the check has nothing to measure. Before 2026-09-11 the
+store carried no cross-references at all - `AGENTS.md` mandates reading every
+file but names none of them individually, and no rule or doctrine cited a
+memory id - so all 35 memories were orphans simultaneously and the flag had
+zero discriminating power. The graph was built that day; see
+`.agents/memories/.archive/` for the three entries the same audit removed.
+
+Maintenance is the point. A new memory that relates to an existing one must
+be linked **both ways** when it is written, or it will read as an orphan at
+the next audit. A memory that truly relates to nothing stays unlinked and
+stays flagged - that is the check working, and the honest answer is to say
+so rather than invent an edge to silence it.
 
 ## The archive
 

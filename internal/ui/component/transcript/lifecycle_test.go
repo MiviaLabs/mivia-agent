@@ -294,7 +294,7 @@ func TestReasoningAndNoticesDuringStreamingDoesNotDuplicate(t *testing.T) {
 	if c := strings.Count(dump, "run query"); c != 1 {
 		t.Errorf("expected user input count=1, got %d", c)
 	}
-	if c := strings.Count(dump, "10 words"); c != 1 {
-		t.Errorf("expected reasoning meta count=1, got %d", c)
+	if c := strings.Count(dump, "Thought for"); c != 1 {
+		t.Errorf("expected the reasoning duration line count=1, got %d", c)
 	}
 }

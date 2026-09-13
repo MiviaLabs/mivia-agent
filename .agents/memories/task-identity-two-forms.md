@@ -4,6 +4,7 @@ title: A task id has two forms; ledger indexes key by the FULL namespaced one
 content: dispatch_tasks tasks carry a full namespaced TaskID (ledger, events, message index) and a stripped model-visible RawID; any producer lookup keyed by the stripped form compiles and silently misses - key lookups by the snapshot row's full TaskID, or read attachments off the snapshot row directly.
 importance: high
 tags: [orchestration, dispatch_tasks, ledger, identity, dc-11, conformance]
+related: [dispatch_tasks_must_name_an_agent_children_die_on_cumulative_token_cap_c6d9f683ce7a2dfcce668c98ce17fc19, hand_enumerated_struct_fields]
 updated: 2026-09-04
 ---
 

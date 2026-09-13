@@ -4,6 +4,7 @@ title: 'Workflow rules: no big test suites; absolute local SDK replace; shared t
 content: 'In mivia-agent, never run package-wide or ./... go test; verify with go build, go vet, and targeted -run tests; keep go.mod''s mivia-ai-sdk replace as an absolute local path; the tree is shared, so stage/commit only your own files by explicit path.'
 importance: high
 tags: [testing, verification, go, git-workflow, user-preference]
+related: [diff_coverage_py_reads_committed_staged_blobs_not_the_working_tree_385a7d442c5857b8cfed502c9ed6a566, test_fixtures_use_guaranteed_binaries_only]
 updated: 2026-09-07
 ---
 

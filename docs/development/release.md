@@ -124,7 +124,7 @@ Remove-Item "$env:LOCALAPPDATA\mivia\bin\mivia.exe"
 
 ## Package managers
 
-Homebrew, Scoop, and WinGet metadata are not active yet. Do not use package-manager commands until the project publishes an official formula, bucket entry, or WinGet manifest.
+Package-manager distribution (Homebrew, Scoop, WinGet) is not available. Install from a release archive (see [Manual installation](#manual-installation)) or with Go (see [Source installation](#source-installation)).
 
 ## Release integrity
 

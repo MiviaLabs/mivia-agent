@@ -7,7 +7,7 @@ import "fmt"
 // components need 3:1. AllContrastChecks is the single source of truth
 // for which pairs the UI actually renders — role.RoleBorder is
 // deliberately absent: no state is carried by border alone, so it is
-// decorative and exempt from WCAG 1.4.11 (wireframes.md section 7).
+// decorative and exempt from WCAG 1.4.11 (role list: docs/development/ui-theme-system.md).
 type ContrastCheck struct {
 	FG, BG Role
 	Min    float64
@@ -23,6 +23,10 @@ func AllContrastChecks() []ContrastCheck {
 		{RoleFG, RoleBG, body, "body text"},
 		{RoleFGMuted, RoleBG, body, "muted text"},
 		{RoleFGSubtle, RoleBG, large, "subtle text (large/UI use only)"},
+		{RoleFG, RoleBGInset, body, "body text on inset fill (inline code, prose panels)"},
+		{RoleFGSubtle, RoleBGInset, large, "subtle text on inset fill"},
+		{RoleFG, RoleBGSubtle, body, "body text on subtle fill (tool-card body)"},
+		{RoleFGSubtle, RoleBGSubtle, large, "subtle text on subtle fill"},
 		{RoleBorderFocus, RoleBG, large, "focus ring"},
 		{RoleAccent, RoleBG, large, "accent chrome"},
 		{RoleAccentFG, RoleAccent, body, "text on accent fill"},

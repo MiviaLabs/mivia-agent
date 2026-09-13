@@ -24,7 +24,7 @@ const sessionCancelWait = 3 * time.Second
 // stopActive: a settling controller can hold the flock past the cancel wait
 // bound, and a non-blocking acquire would surface as an opaque lock error
 // while the run keeps running. 60s (raised from 5s per
-// docs/architecture/workflow-stack-settle.md's P2): a still-settling deliver
+// docs/architecture/workflow-stack-settle.md): a still-settling deliver
 // (git push + PR + ledger CAS) or a same-run session controller finishing its
 // own auto-delivery repair loop routinely holds the per-run flock for tens of
 // seconds, not five - the short bound surfaced as a false "still held" refusal

@@ -437,7 +437,7 @@ default_model = 'glm-5.3-flash'
 context_window_tokens = 1048576
 max_output_tokens = 131072
 name = 'glm-5.3-flash'
-reasoning = 'max'
+reasoning = 'low'
 reasoning_dialect = 'thinking_preserved'
 reasoning_efforts = ['low', 'high', 'max']
 
@@ -466,9 +466,9 @@ reasoning_dialect = 'thinking_preserved'
 reasoning_efforts = ['off', 'high']
 
 [subagents]
-default_request_timeout_seconds = 900
+default_request_timeout_seconds = 3600
 default_timeout_seconds = 43200
-default_total_timeout_seconds = 1800
+default_total_timeout_seconds = 14400
 max_audit_rounds = 0
 max_depth = -1
 max_fanout = -1
@@ -485,6 +485,13 @@ include_tool_io = false
 stream_assistant = true
 
 [tools]
+# Result truncation is LOAD-BEARING for agent quality: with these caps
+# off (all 0, 2026-09-11 morning), a single `git log --stat` over a busy
+# day landed ~106 KB inline in one tool result, and every /bug-audit run
+# - interactive AND automation - quit after one tool roundtrip instead
+# of dispatching auditors (6-message sessions vs the capped era's
+# hundreds). Keep the caps; if a result is cut, narrow the command
+# instead of unbounding the context.
 batch_result_budget_bytes = -1
 core = ['read_file', 'list_dir', 'grep', 'glob', 'inspect_repository', 'write_file', 'search_replace', 'multi_edit', 'run_command', 'search', 'fetch_url', 'extract', 'delete_file', 'memory_save', 'memory_search', 'memory_delete', 'workflow_run', 'workflow_status', 'workflow_inspect', 'workflow_deliver']
 env_allow_keyword_blocklist = ['SECRET', 'TOKEN', 'PASSWORD', 'API_KEY']

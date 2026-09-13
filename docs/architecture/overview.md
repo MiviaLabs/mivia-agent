@@ -278,7 +278,7 @@ A workflow run that reaches its success terminal is not necessarily done: `deliv
 
 The Coordinator supports `SubscribeLifecycle(fn)` which returns an `unsubscribe()` function.
 Subscribers receive `LifecycleEvent` values synchronously as tasks transition.
-Used by future TUI integration and diagnostics.
+The orchestration state layer in `internal/cliorchestrate` uses it.
 
 ### Provider/model generations and TUI dialogs
 

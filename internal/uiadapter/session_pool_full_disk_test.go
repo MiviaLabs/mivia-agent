@@ -106,10 +106,12 @@ func TestPoolSettingsLiveAccessDuringBuild(t *testing.T) {
 			pool, store, outside := liveAccessPool(t)
 			setPoolAccess(t, store, initial)
 			entered, release := make(chan struct{}), make(chan struct{})
+			prevWire := cliagents.WireWorkflowToolOptionsVar
 			cliagents.WireWorkflowToolOptionsVar = func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository) {
 				close(entered)
 				<-release
 			}
+			t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prevWire })
 			result := make(chan error, 1)
 			root := t.TempDir()
 			go func() {

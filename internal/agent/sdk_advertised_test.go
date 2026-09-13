@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkprovider "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
 // advertisedSpec builds one OpenAI-shaped ToolSpec, the shape
@@ -212,5 +215,113 @@ func TestBuildAgentLoopOptions_NeverWiresWindow(t *testing.T) {
 	}
 	if out.Compaction.Window != nil {
 		t.Fatal("buildAgentLoopOptions wired an SDK Window; the prompt-too-long recovery gate relies on Window staying nil")
+	}
+}
+
+// TestBridgeSurface_RegistryOnlyRotationKeepsRegistryTools is the sibling
+// TestBridgeSurface_NilToolSpecsKeepsSDKSurface was missing: a rotation that
+// carries a REGISTRY but no ToolSpecs. Surface.Advertised replaces the
+// offered set wholesale, so the bridge's non-nil Surface with a nil
+// Advertised cleared every tool definition from step 2 on. A host that
+// installs a Surface hook and pins no snapshot - headless automation
+// sessions and pooled TUI sessions; internal/chat's hook is the only
+// producer of Options.Surface, and a loop that installs none keeps the SDK's
+// build-time defs - was handed an empty tools[] on every step after the
+// first and ended the turn in prose after one tool roundtrip.
+func TestBridgeSurface_RegistryOnlyRotationKeepsRegistryTools(t *testing.T) {
+	comp := &recordingCompleter{steps: []provider.Response{
+		{ToolCalls: []provider.ToolCall{advertisedToolCall("1", "echo")}, FinishReason: "tool_calls"},
+		{ToolCalls: []provider.ToolCall{advertisedToolCall("2", "echo")}, FinishReason: "tool_calls"},
+		{Content: "done", FinishReason: "stop"},
+	}}
+	reg := tools.NewRegistry()
+	reg.Register(echoTool{})
+	l := &Loop{Completer: comp, Tools: reg}
+
+	// No AdvertisedToolSpecs, and a rotation carrying only the registry -
+	// the exact shape internal/chat's Surface hook produces for a session
+	// that pinned nothing.
+	_, err := l.Run(context.Background(), "question", Options{MaxSteps: 5,
+		Surface: func() Surface { return Surface{Registry: reg} },
+	})
+	if err != nil {
+		t.Fatalf("run failed after a registry-only rotation: %v", err)
+	}
+	if got := comp.requestCount(); got != 3 {
+		t.Fatalf("completer calls = %d, want 3", got)
+	}
+	for i := 0; i < 3; i++ {
+		req := comp.requestAt(t, i)
+		if len(req.Tools) == 0 {
+			t.Fatalf("request %d advertised no tools: a registry-only rotation must restate the offered set, not clear it", i)
+		}
+		if !containsTool(t, req.Tools, "echo") {
+			t.Fatalf("request %d tools = %v, want the rotated registry's \"echo\"", i, toolNames(req.Tools))
+		}
+	}
+	if got, want := len(comp.requestAt(t, 1).Tools), len(comp.requestAt(t, 0).Tools); got != want {
+		t.Fatalf("post-rotation request advertised %d tools, want the same %d as the pre-rotation request", got, want)
+	}
+}
+
+// TestBridgeSurface_DerivedAdvertisedNeverPinsTurnState pins that the
+// derived set above is a WIRE value only. turn.currentAdvertised feeds
+// context preparation (sdk_prepare.go) and loop adoption
+// (agentloop_adoption.go); seeding it from a rotation would change those
+// inputs on every step boundary for hosts that deliberately pin nothing.
+func TestBridgeSurface_DerivedAdvertisedNeverPinsTurnState(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(echoTool{})
+	l := &Loop{Completer: &recordingCompleter{}, Tools: reg}
+
+	disp := surfaceHookDispatcher(t, reg)
+	opts := Options{MaxSteps: 5, Dispatcher: disp,
+		Surface: func() Surface { return Surface{Registry: reg, Dispatcher: disp} }}
+	sdkOpts, turn, err := buildAgentLoopOptions(l, opts, "hi")
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions failed: %v", err)
+	}
+	hook := sdkExtensions(&sdkOpts).Surface
+	if hook == nil {
+		t.Fatal("buildAgentLoopOptions wired no Surface hook")
+	}
+	out := hook()
+	if out == nil || len(out.Advertised) == 0 {
+		t.Fatal("registry-only rotation produced no advertised set")
+	}
+	if specs := turn.currentAdvertised(); specs != nil {
+		t.Fatalf("rotation pinned %d specs onto the turn state; the derived set must stay wire-only", len(specs))
+	}
+}
+
+// TestBridgeSurface_DefinitionsFailureFailsTheRotation pins that a registry
+// whose definitions cannot be computed fails the run through
+// recordBridgeError instead of degrading into a surface with no tools -
+// the exact silent outcome this branch exists to prevent.
+func TestBridgeSurface_DefinitionsFailureFailsTheRotation(t *testing.T) {
+	prev := rotatedRegistryDefinitions
+	t.Cleanup(func() { rotatedRegistryDefinitions = prev })
+	wantErr := errors.New("no schema for tool")
+	rotatedRegistryDefinitions = func(*sdktools.Registry, *sdktools.Scope) ([]sdkprovider.ToolDefinition, error) {
+		return nil, wantErr
+	}
+
+	comp := &recordingCompleter{steps: []provider.Response{
+		{ToolCalls: []provider.ToolCall{advertisedToolCall("1", "echo")}, FinishReason: "tool_calls"},
+		{Content: "done", FinishReason: "stop"},
+	}}
+	reg := tools.NewRegistry()
+	reg.Register(echoTool{})
+	disp := surfaceHookDispatcher(t, reg)
+	l := &Loop{Completer: comp, Tools: reg}
+
+	_, err := l.Run(context.Background(), "question", Options{MaxSteps: 5, Dispatcher: disp,
+		Surface: func() Surface { return Surface{Registry: reg, Dispatcher: disp} },
+	})
+	if err == nil {
+		t.Fatal("run succeeded after the rotation could not advertise its registry; it must fail instead of running on with no tools")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("run error = %v, want it to carry the Definitions failure %v", err, wantErr)
 	}
 }

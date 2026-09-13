@@ -19,7 +19,7 @@ canonical list; this table is a summary, not a second source of truth.
 | Base | `bg`, `bg-subtle`, `bg-inset`, `fg`, `fg-muted`, `fg-subtle`, `border`, `border-focus`, `accent`, `accent-fg`, `success`, `warning`, `danger`, `info` |
 | Syntax | `keyword`, `string`, `number`, `comment`, `function`, `type`, `variable` |
 | Diff | `diff-add-fg`, `diff-add-bg`, `diff-del-fg`, `diff-del-bg`, `diff-hunk` |
-| Added in Phase 1 (`wireframes.md` section 7 gap) | `bg-selection`, `diff-add-emph-bg`, `diff-del-emph-bg`, `gutter`, `link`, `fg-inverse` |
+| Added after the first role list | `bg-selection`, `diff-add-emph-bg`, `diff-del-emph-bg`, `gutter`, `link`, `fg-inverse` |
 
 Two rules that are easy to get wrong:
 
@@ -61,7 +61,7 @@ documented, not a defect. Every state also carries a word (`ok`, `failed`,
 `pending`, `running`) in addition to colour, so a reader who cannot
 separate two status hues loses no information.
 
-No third-party theme in the survey (`research-panes.md` section 3.1) is
+No third-party theme in `research-panes.md` section 3.1 is
 CVD-clean, so a hard gate there would reject nearly every upstream palette.
 `HardFailSeparation`'s gate is intended for first-party themes; treat a
 third-party theme's number as informational.

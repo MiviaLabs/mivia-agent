@@ -99,7 +99,7 @@ func (m Model) selectionRows() []string {
 	var out []string
 	for _, logical := range strings.Split(m.Value(), "\n") {
 		for wi, row := range wrapLikeTextarea(logical, inner) {
-			out = append(out, promptCells(promptGlyph(m.Tier), promptWidth, wi == 0)+strings.TrimRight(row, " "))
+			out = append(out, promptCells(m.activePrompt(), promptWidth, wi == 0)+strings.TrimRight(row, " "))
 		}
 	}
 	if len(out) > h {

@@ -324,6 +324,16 @@ func TestEntryClampTruncatesToRuneLimits(t *testing.T) {
 	if short.Title != "t" || short.Summary != "s" || short.Why != "w" {
 		t.Errorf("within-limit fields changed: %+v", short)
 	}
+
+	// Truncating Why must not cut mid-heading (e.g. leaving trailing "\n## Prio").
+	whyWithCutHeading := strings.Repeat("x", 990) + "\n\n## Prior context\nmore text"
+	clampedWhy := Entry{Title: "t", Summary: "s", Why: whyWithCutHeading}.Clamp()
+	if strings.Contains(clampedWhy.Why, "## Prio") {
+		t.Errorf("clamped Why contains broken heading: %q", clampedWhy.Why)
+	}
+	if strings.HasSuffix(clampedWhy.Why, "##") || strings.HasSuffix(clampedWhy.Why, "#") {
+		t.Errorf("clamped Why has broken trailing hashes: %q", clampedWhy.Why)
+	}
 }
 
 func min(a, b int) int {

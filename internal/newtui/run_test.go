@@ -28,7 +28,7 @@ func TestBuildAppPropagatesThemeLoadError(t *testing.T) {
 
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	agentState := &cli.AgentSessionState{}
-	if _, _, _, err := buildApp(sess, &config.Resolved{}, true, agentState, ""); !errors.Is(err, wantErr) {
+	if _, _, _, _, err := buildApp(sess, &config.Resolved{}, true, agentState, ""); !errors.Is(err, wantErr) {
 		t.Fatalf("buildApp err = %v, want %v", err, wantErr)
 	}
 }
@@ -38,7 +38,7 @@ func TestBuildApp(t *testing.T) {
 	res := &config.Resolved{}
 	agentState := &cli.AgentSessionState{}
 
-	appModel, _, _, err := buildApp(sess, res, true, agentState, "")
+	appModel, _, _, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestBuildApp(t *testing.T) {
 func TestBuildAppUsesConfiguredThemeAndDetectedTier(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	sess := chat.NewSession(&config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, nil)
-	root, _, _, err := buildApp(sess, &config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, true, &cli.AgentSessionState{}, "")
+	root, _, _, _, err := buildApp(sess, &config.Resolved{TUI: config.TUIConfig{Theme: "mivia-light"}}, true, &cli.AgentSessionState{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 	}
 	agentState := &cli.AgentSessionState{}
 
-	root, _, _, err := buildApp(sess, res, true, agentState, "")
+	root, _, _, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestBuildAppPropagatesChooseThemeError(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	res := &config.Resolved{TUI: config.TUIConfig{Theme: "missing-theme"}}
 	agentState := &cli.AgentSessionState{}
-	if _, _, _, err := buildApp(sess, res, true, agentState, ""); err == nil {
+	if _, _, _, _, err := buildApp(sess, res, true, agentState, ""); err == nil {
 		t.Fatal("buildApp accepted an unresolvable theme name with no default available")
 	}
 }

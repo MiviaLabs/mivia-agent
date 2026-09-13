@@ -709,7 +709,10 @@ func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
 		}})
 		scr = n.(Screen)
 	}
-	if got := strings.TrimSpace(ansi.Strip(scr.statusRow())); got != "?:help  ctrl+o:transcript  ctrl+b:sidebar  ctrl+c:quit" {
+	// " - " is the ASCII-tier divider (C9); newScreen's fixture theme
+	// renders at TierASCII, so this is the same tier the divider itself
+	// falls back to, not a truecolor " · " that got typo'd.
+	if got := strings.TrimSpace(ansi.Strip(scr.statusRow())); got != "?:help - ctrl+o:transcript - ctrl+b:sidebar - ctrl+c:quit" {
 		t.Errorf("got %q, want only the persistent key hint while following", got)
 	}
 

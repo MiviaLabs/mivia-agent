@@ -4,6 +4,7 @@ title: 'chatsync lazy attach: remote session created on first message, not at CL
 content: 'Chat sync now defers the remote attach (create/re-attach, heartbeat, input poller) to the session first event; OpenSession only arms local state.'
 importance: medium
 tags: [chatsync, lazy-attach, session, tdd, regression-test]
+related: [tui_spinner_clock_must_be_armed_only_via_screen_armtick_self_re_arming_tick_compounds_76541b96e8bf8da3bef7331fd9d7efdf, viewer_surfaces_must_agree]
 updated: 2026-09-04
 ---
 

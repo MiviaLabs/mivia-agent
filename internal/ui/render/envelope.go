@@ -12,7 +12,7 @@ import (
 // The recorded-result tools (ledger_read, read_output, inspect_repository,
 // memory_*) share one failure shape: a fixed-struct unmarshal that misses,
 // and the transcript prints raw escaped JSON. envelope.go holds the shared
-// defenses (transcript-polish sibling doc tool-output-polish.md R1/R2):
+// defenses (ux-rules.md 12.1, 12.2):
 //
 //   - UnwrapJSONString peels JSON-string layers off a payload, so an
 //     envelope delivered as a string of JSON still parses.

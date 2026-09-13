@@ -53,12 +53,58 @@ type TriggerSpec struct {
 	Schedule *ScheduleSpec
 }
 
-// ActionRef names what an automation runs. A workflow is the only
-// action kind mivia-agent has today (internal/workflows/definition);
-// this is a struct rather than a bare string so a second action kind
-// can be added as a field, not a breaking type change.
+// ActionRef names what an automation runs. Workflow is the original,
+// single-workflow-only shape (kept as a compat alias: setting it alone
+// is still a legal ActionRef, equivalent to a single StepWorkflow step).
+// Steps is the ordered multi-kind action list internal/automation's Spec
+// carries; ActionStepKind mirrors automation.StepKind's five values
+// without this leaf package importing that package (internal/automation
+// imports ports, never the reverse).
 type ActionRef struct {
 	Workflow string
+	Steps    []ActionStep
+}
+
+// ActionStepKind names what one ActionStep runs. Mirrors
+// automation.StepKind's five values exactly; kept as its own type here
+// so ports stays a leaf (no import of internal/automation).
+type ActionStepKind int
+
+const (
+	ActionStepPrompt ActionStepKind = iota
+	ActionStepSkill
+	ActionStepAgent
+	ActionStepSlash
+	ActionStepWorkflow
+)
+
+// ActionStep is one unit of a multi-kind automation action, mirroring
+// automation.Step's shape.
+type ActionStep struct {
+	Kind   ActionStepKind
+	Ref    string
+	Prompt string
+	Inputs map[string]string // ActionStepWorkflow only
+}
+
+// UnattendedPolicy names an automation's approval posture for
+// unattended (scheduled or manual-with-no-attached-approver) runs.
+// Mirrors automation.UnattendedPolicy's two values exactly; kept as its
+// own type here so ports stays a leaf (no import of
+// internal/automation), matching ActionStepKind's precedent above.
+type UnattendedPolicy int
+
+const (
+	UnattendedPolicyDeny UnattendedPolicy = iota // zero value = safe default
+	UnattendedPolicyAuto
+)
+
+// WorktreeSpec selects where an automation's run executes. Mode mirrors
+// automation.WorktreeMode's two values (0 = run in place, 1 = create a
+// managed worktree off BaseRef) without importing that package.
+type WorktreeSpec struct {
+	Mode    int
+	BaseRef string
 }
 
 // RunState is where one automation run has reached. RunCancelled is
@@ -74,6 +120,18 @@ const (
 	RunSucceeded
 	RunFailed
 	RunCancelled
+	// RunInterrupted marks a run left in RunRunning when its fenced
+	// claim (D7) is found expired at service start or sweep time (D13):
+	// the process holding it died or was killed without ending the run.
+	// Distinct from RunFailed - an interrupted run is resumable via
+	// ResumeAutomationRun (chunk 8), not a terminal failure requiring a
+	// fresh run.
+	RunInterrupted
+	// RunSkipped marks a fire that lost the fenced single-fire claim
+	// (D7): another fire already owns the automation's in-flight run,
+	// so this fire is a documented no-op, recorded as its own run row
+	// rather than silently vanishing.
+	RunSkipped
 )
 
 // RunFailKind classifies a failed run without echoing the SDK's raw
@@ -120,6 +178,8 @@ type Automation struct {
 	Enabled     bool
 	Trigger     TriggerSpec
 	Action      ActionRef
+	Worktree    WorktreeSpec
+	Unattended  UnattendedPolicy
 	LastRun     *RunSummary
 	NextFire    *time.Time
 	Scope       Scope
@@ -136,10 +196,26 @@ type SetAutomationEnabled struct {
 }
 type TriggerAutomation struct{ ID string }
 
+// ResumeAutomationRun resumes a run left interrupted (D13): it restarts
+// at step_index+1 of a saved session. Actual resume execution is a
+// later chunk (chunk 8); the Apply implementation in this chunk returns
+// a named "not yet implemented" error rather than silently dropping the
+// edit, so a caller wiring this variant learns the gap immediately
+// instead of watching a no-op succeed.
+type ResumeAutomationRun struct{ RunID string }
+
+// CancelAutomationRun stops a run that is still RunPending or
+// RunRunning. Unlike ResumeAutomationRun, the in-memory store
+// (internal/uiadapter) handles this directly: cancelling a run needs
+// no saved session state to resume from, only a state transition.
+type CancelAutomationRun struct{ RunID string }
+
 func (UpsertAutomation) isAutomationEdit()     {}
 func (RemoveAutomation) isAutomationEdit()     {}
 func (SetAutomationEnabled) isAutomationEdit() {}
 func (TriggerAutomation) isAutomationEdit()    {}
+func (ResumeAutomationRun) isAutomationEdit()  {}
+func (CancelAutomationRun) isAutomationEdit()  {}
 
 // RunHandle streams one automation's runs as they happen - live-run
 // state, the same channel convention as TurnHandle and SaveHandle, so

@@ -5,7 +5,7 @@ by hand.
 
 The bindings themselves are **not** listed here. `internal/clichat/keymap.go` is the
 single declaration, and `/help` renders from it - a second list in a document is
-the exact drift this layer was rebuilt to remove.
+the drift this rule prevents.
 
 ## What is already covered automatically
 
@@ -92,8 +92,7 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
     which already forwards a bare OSC 52 write to the outer terminal with no
     configuration - do not wrap the sequence in tmux's DCS passthrough
     envelope (`allow-passthrough` defaults *off*, so a wrapped sequence is
-    silently dropped in the common case; this bit Neovim and other tools
-    that "helpfully" wrap for tmux). If a user's `tmux.conf` sets
+    silently dropped in the common case). If a user's `tmux.conf` sets
     `set-clipboard off` explicitly, tmux drops the sequence outright and no
     escape sequence can override that from inside the pane - the clipboard-tool
     fallback in item 16 still runs locally regardless, since it never goes
@@ -107,8 +106,8 @@ Cover at least one from each family; the failure modes cluster by engine.
 |---|---|
 | kitty, foot, Ghostty | Kitty keyboard protocol; OSC 52 supported |
 | Alacritty, WezTerm | xterm-conformant; OSC 52 supported |
-| GNOME Terminal (VTE) | **No OSC 52** (refused on principle, unresolved since 2018); falls back to xclip/wl-copy locally; intercepts shift+home/end |
-| Konsole | OSC 52 write support landed in 2024 - update if copy still fails; also intercepts shift+home/end |
+| GNOME Terminal (VTE) | **No OSC 52** (refused upstream); falls back to xclip/wl-copy locally; intercepts shift+home/end |
+| Konsole | Supports OSC 52 writes; also intercepts shift+home/end |
 | iTerm2 | **Option**, not Shift, bypasses mouse capture |
 | Windows Terminal, VS Code terminal | Large-paste character loss reported upstream in VS Code |
 | xterm | Baseline encodings |
@@ -116,13 +115,6 @@ Cover at least one from each family; the failure modes cluster by engine.
 
 ## Known limitations
 
-- **SS3 `home`/`end`** (`ESC OH` / `ESC OF`, sent by terminals in application
-  cursor mode) are not decoded by bubbletea v1.3.10 - it accepts `CSI H/F`,
-  `CSI 1~/4~` and `CSI 7~/8~` only. Upgrading to bubbletea v2 (which also brings
-  the kitty keyboard protocol and native OSC 52) is the fix; there is no
-  app-side workaround.
-- **Shift+Enter** cannot be distinguished from Enter under bubbletea v1. Use
-  `alt+enter` for a newline.
 - An OSC 52 write can in principle interleave with a rendered frame; the write is
   a single call to keep the window minimal. See `tea.SetClipboard` usage in
   `internal/ui/app/mouse_router.go`.

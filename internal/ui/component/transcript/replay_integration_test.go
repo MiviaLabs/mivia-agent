@@ -65,14 +65,14 @@ func TestReplayDrivesTranscript(t *testing.T) {
 				plain := ansi.Strip(got)
 				for _, want := range []string{
 					"Add retry with exponential backoff", // turn.start, the user input
-					"reasoning",                          // reasoning summary
+					"Thought for",                        // reasoning summary (C1)
 					"read_file",                          // tool lifecycle
 					"edit",
 					"s3_uploader",       // a tool detail
 					"plan",              // plan block
 					"context 62%",       // notice
 					"transport refused", // error
-					"1,284 in",          // usage footer (R6: grouped, not raw)
+					"1.3k in",           // compact usage footer (C2)
 				} {
 					if !strings.Contains(plain, want) {
 						t.Errorf("replayed transcript is missing %q:\n%s", want, plain)

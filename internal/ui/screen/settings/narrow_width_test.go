@@ -43,17 +43,15 @@ func TestModelsSection_RenderGroupHeader_NarrowWidthFallsBack(t *testing.T) {
 	}
 }
 
-// TestRouteToOwningSection_AutomationsMsgWithNoSectionOwnerFallsThrough
-// pins two branches at once: the automationsSavedMsg/automationsFailedMsg/
-// automationsRunMsg/automationsWatchEndedMsg case itself, and the final
-// not-found fallback - Screen's own constructor (New) never builds an
-// *automationsSection, so a message this case owns by type still finds
-// no matching section instance and must report routed=false rather than
-// panicking or silently dropping the message somewhere else.
-func TestRouteToOwningSection_AutomationsMsgWithNoSectionOwnerFallsThrough(t *testing.T) {
+// TestRouteToOwningSection_AutomationsMsgRoutesToTheAutomationsSection
+// pins the automationsSavedMsg/automationsFailedMsg/automationsRunMsg/
+// automationsWatchEndedMsg case: since Screen's own constructor (New)
+// now always builds an *automationsSection (D9), a message this case
+// owns by type must find that section instance and report routed=true.
+func TestRouteToOwningSection_AutomationsMsgRoutesToTheAutomationsSection(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	_, _, routed := s.routeToOwningSection(automationsSavedMsg{})
-	if routed {
-		t.Fatal("routeToOwningSection reported routed=true with no *automationsSection in s.sections")
+	if !routed {
+		t.Fatal("routeToOwningSection reported routed=false with an *automationsSection present in s.sections")
 	}
 }

@@ -256,6 +256,32 @@ func TestExecuteRegisterAndVerifyAreUnknownCommands(t *testing.T) {
 	}
 }
 
+// TestRootDispatchesAutomations proves "automations" reaches
+// cliautomations.RunAutomations and usageText() documents the
+// subcommand.
+func TestRootDispatchesAutomations(t *testing.T) {
+	text := usageText()
+	if !strings.Contains(text, "automations list [--workspace dir] [--config path]") {
+		t.Fatalf("usageText() missing the automations list usage line:\n%s", text)
+	}
+	if !strings.Contains(text, "automations run <id> [--wait]") {
+		t.Fatalf("usageText() missing the automations run usage line:\n%s", text)
+	}
+	if !strings.Contains(text, "automations runs [--automation <id>] [--limit <n>]") {
+		t.Fatalf("usageText() missing the automations runs usage line:\n%s", text)
+	}
+	if !strings.Contains(text, "automations resume <run-id>") {
+		t.Fatalf("usageText() missing the automations resume usage line:\n%s", text)
+	}
+	err := Execute([]string{"automations"})
+	if err == nil {
+		t.Fatal("Execute([automations]) returned nil error, want a usage/subcommand error")
+	}
+	if !strings.Contains(err.Error(), "automations") {
+		t.Fatalf("error = %v, want it to name automations (proving dispatch reached cliautomations)", err)
+	}
+}
+
 // TestUsageTextChatCommandsMatchPlainCatalog verifies that every slash command
 // listed in usageText()'s "Chat: ..." line is valid for the plain chat surface.
 func TestUsageTextChatCommandsMatchPlainCatalog(t *testing.T) {

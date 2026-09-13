@@ -97,6 +97,34 @@ func TestMarkdownSourceScansProtocolMemory(t *testing.T) {
 	}
 }
 
+func TestMarkdownSourceScansAndRendersProtocolMemoryWithRelated(t *testing.T) {
+	root := t.TempDir()
+	source, err := NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".agents", "memories")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("---\nid: stable_memory\ntitle: Stable memory\ncontent: Keep this fact.\nimportance: high\ntags: [ops, tests]\nrelated: [other_fact, third_fact]\n---\n\nThe detail matters.\n")
+	if err := os.WriteFile(filepath.Join(dir, "stable-memory.md"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs, err := source.Scan(context.Background(), ScopeProject)
+	if err != nil || len(docs) != 1 {
+		t.Fatalf("docs=%d err=%v, want one protocol memory", len(docs), err)
+	}
+	if len(docs[0].Entry.Related) != 2 || docs[0].Entry.Related[0] != "other_fact" || docs[0].Entry.Related[1] != "third_fact" {
+		t.Fatalf("Related = %v, want [other_fact, third_fact]", docs[0].Entry.Related)
+	}
+
+	rendered := docs[0].Entry.RenderProtocolFile("stable_memory")
+	if !strings.Contains(rendered, "related: [other_fact, third_fact]") {
+		t.Fatalf("RenderProtocolFile missing related header: %s", rendered)
+	}
+}
+
 func TestMarkdownSourceDefaultsProjectMemoryWithoutScope(t *testing.T) {
 	root := t.TempDir()
 	source, err := NewMarkdownSource(root, filepath.Join(t.TempDir(), "org"), "acme")

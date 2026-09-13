@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -113,12 +114,22 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 	// these limits; a hard rejection just makes them retry the same long text.
 	// Clamp keeps the leading content and drops the tail, so the save always
 	// succeeds and the most informative part is retained.
-	entry = entry.Clamp()
+	var truncated []string
+	entry, truncated = entry.ClampWithReport()
 	saved, err := t.store.Save(ctx, entry)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("saved memory %q (%s, id %s)", saved.Title, saved.Scope, saved.ID), nil
+	for _, f := range saved.Truncated {
+		if !slices.Contains(truncated, f) {
+			truncated = append(truncated, f)
+		}
+	}
+	msg := fmt.Sprintf("saved memory %q (%s, id %s)", saved.Title, saved.Scope, saved.ID)
+	if len(truncated) > 0 {
+		msg += fmt.Sprintf(" (note: %s truncated to limit)", strings.Join(truncated, ", "))
+	}
+	return msg, nil
 }
 
 func (t *memorySaveTool) Capability(json.RawMessage) Capability {

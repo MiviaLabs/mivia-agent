@@ -9,7 +9,7 @@ package theme
 // colour; a view layer never holds a literal colour, only a Role.
 type Role string
 
-// Base roles. wireframes.md section 7.
+// Base roles. Reference: docs/development/ui-theme-system.md.
 const (
 	RoleBG          Role = "bg"
 	RoleBGSubtle    Role = "bg-subtle"
@@ -27,7 +27,7 @@ const (
 	RoleInfo        Role = "info"
 )
 
-// Syntax roles. wireframes.md section 7.
+// Syntax roles. Reference: docs/development/ui-theme-system.md.
 const (
 	RoleKeyword  Role = "keyword"
 	RoleString   Role = "string"
@@ -38,7 +38,7 @@ const (
 	RoleVariable Role = "variable"
 )
 
-// Diff roles. wireframes.md section 7.
+// Diff roles. Reference: docs/development/ui-theme-system.md.
 const (
 	RoleDiffAddFG Role = "diff-add-fg"
 	RoleDiffAddBG Role = "diff-add-bg"
@@ -47,8 +47,7 @@ const (
 	RoleDiffHunk  Role = "diff-hunk"
 )
 
-// Roles the Phase 0 mock needed that the original supplied list did not
-// contain. wireframes.md section 7 / research.md finding 3.
+// Roles added after the first role list; see docs/development/ui-theme-system.md.
 const (
 	RoleBGSelection   Role = "bg-selection"     // picker/completion selected row; not accent
 	RoleDiffAddEmphBG Role = "diff-add-emph-bg" // word-level diff emphasis

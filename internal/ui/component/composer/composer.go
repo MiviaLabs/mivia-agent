@@ -3,6 +3,7 @@
 package composer
 
 import (
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,6 +47,15 @@ type Model struct {
 	selRect  sel.Rect
 	selState sel.Selection
 	selValue string
+
+	// chips are the workspace paths accepted through the @-mention
+	// picker since the input was last Clear()ed (C10). They record what
+	// the NEXT turn carries in addition to the typed text, so the
+	// reader sees it before sending rather than having to recall it
+	// from the middle of a paragraph. AcceptMention is the only writer;
+	// Clear() is the only place they reset, matching Value()'s own
+	// lifetime.
+	chips []string
 }
 
 // maxInputLines is the maximum number of visible textarea rows before it
@@ -56,14 +66,35 @@ const maxInputLines = 6
 // package. Two columns: one for the glyph, one for the space.
 const promptWidth = 2
 
-// promptGlyph is the prompt drawn on the first input row: "› " on tiers
-// that can show it, the ASCII "> " otherwise. selectionRows uses the same
-// glyph so copied text matches what View draws.
+// promptGlyph is the FOCUSED prompt drawn on the first input row: "› "
+// on tiers that can show it, the ASCII "> " otherwise. activePrompt
+// picks between this and blurredMarker for the current focus state, so
+// selectionRows and applyPromptStyle never disagree on which one shows.
 func promptGlyph(tier theme.Tier) string {
 	if tier == theme.TierASCII || tier == theme.TierNoTTY {
 		return "> "
 	}
 	return "› "
+}
+
+// blurredMarker is the BLURRED prompt (C10): a quiet ":" rather than
+// the accent arrow, so the reader can tell at a glance which pane last
+// took a keystroke without needing to try typing into it. Padded to
+// promptWidth like promptGlyph, so the textarea's own column math (the
+// mention/completion trigger positions, ClickToColumn) never has to
+// know which state produced the prompt it is measuring around.
+func blurredMarker() string { return ": " }
+
+// activePrompt is the unstyled prompt text for the bar's current focus
+// state: promptGlyph while focused, blurredMarker while blurred. Both
+// applyPromptStyle (what View paints) and selectionRows (what copy
+// reads) call this one function, so they can never disagree about which
+// prompt is "current."
+func (m Model) activePrompt() string {
+	if m.Focused() {
+		return promptGlyph(m.Tier)
+	}
+	return blurredMarker()
 }
 
 // padInset is the total column overhead the padding removes from the inner
@@ -153,10 +184,25 @@ func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 		s.Focused.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(ac.ANSI16)))
 	}
 	m.input.SetStyles(s)
+	m.applyPromptStyle()
+}
 
-	// Prompt: themed accent prompt on the first line, blank indent on
-	// continuation lines.
-	prompt := render.Role(t, tier, theme.RoleAccent).Render(promptGlyph(tier))
+// applyPromptStyle (re)installs the first-row prompt for the CURRENT
+// focus state (C10): the accent arrow while focused, a quiet ":" while
+// blurred. Continuation lines always get a blank indent, regardless of
+// focus - only the first row carries the marker.
+//
+// Called from every place that can change either theme or focus
+// (SetTheme, Focus, Blur) rather than computed once at construction:
+// textarea.PromptFunc is a closure captured at SetPromptFunc time, so
+// nothing re-derives it on its own as focus later toggles.
+func (m *Model) applyPromptStyle() {
+	var prompt string
+	if m.Focused() {
+		prompt = render.Role(m.Theme, m.Tier, theme.RoleAccent).Render(m.activePrompt())
+	} else {
+		prompt = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(m.activePrompt())
+	}
 	cont := strings.Repeat(" ", promptWidth)
 	m.input.SetPromptFunc(promptWidth, func(info textarea.PromptInfo) string {
 		if info.LineNumber == 0 {
@@ -231,7 +277,9 @@ func (m Model) AcceptSelected() Model {
 	return m
 }
 
-// AcceptMention replaces the "@query" fragment with the selected mention path.
+// AcceptMention replaces the "@query" fragment with the selected mention
+// path, and records it as a chip (C10) so the reader sees what the next
+// turn carries without having to find it again inside the typed text.
 func (m Model) AcceptMention() Model {
 	if !m.MentionMenuActive() {
 		return m
@@ -243,6 +291,9 @@ func (m Model) AcceptMention() Model {
 	// Reposition cursor after the inserted path.
 	m.input.CursorEnd()
 	_ = newCursor // cursor repositioning: CursorEnd is the safe approximation for now
+	if picked, ok := m.mmenu.selected(); ok {
+		m.chips = append(slices.Clone(m.chips), filepath.Base(picked.Path))
+	}
 	m.mmenu.active = false
 	m.mmenu.triggerPos = -1
 	return m
@@ -278,10 +329,22 @@ func (m *Model) SetWidth(width int) {
 }
 
 // Focus focuses the composer input.
-func (m *Model) Focus() { _ = m.input.Focus() }
+func (m *Model) Focus() {
+	_ = m.input.Focus()
+	m.applyPromptStyle()
+}
 
 // Blur blurs the composer input.
-func (m *Model) Blur() { m.input.Blur() }
+func (m *Model) Blur() {
+	m.input.Blur()
+	m.applyPromptStyle()
+}
+
+// Focused reports whether the composer currently holds focus (C10):
+// the fill bar and the accent prompt show only while it does; a quiet
+// ":" marker and no fill bar are what the reader sees when focus has
+// moved elsewhere (the transcript, a menu, another pane).
+func (m Model) Focused() bool { return m.input.Focused() }
 
 // Value returns the current input text (may be multi-line).
 func (m Model) Value() string { return m.input.Value() }
@@ -295,11 +358,14 @@ func (m Model) SubmitText() string {
 	return strings.ReplaceAll(v, "\\\n", "\n")
 }
 
-// Clear resets the input after a message is sent.
+// Clear resets the input after a message is sent, including the
+// mention-chip list (C10): the chips describe THIS turn's attachments,
+// and a sent turn's attachments are no longer the next turn's.
 func (m *Model) Clear() {
 	m.input.Reset()
 	m.menu.refresh("")
 	m.mmenu.refresh("", 0)
+	m.chips = nil
 }
 
 // SetValue replaces the input text (e.g. when a cancelled turn is restored).
@@ -416,7 +482,11 @@ func (m Model) Height() int {
 		taRows = 1
 	}
 	if m.width >= minPaddedWidth {
-		return taRows + 2 // top + bottom padding row
+		rows := taRows + 2 // top + bottom padding row
+		if m.HasChipRow() {
+			rows++ // C10: the mention-chip row, under the prompt
+		}
+		return rows
 	}
 	return taRows
 }
@@ -436,6 +506,13 @@ func (m Model) MenuRows() int { return len(m.Popup()) }
 func (m Model) InputRowFromBottom() int {
 	if m.width < minPaddedWidth {
 		return 1
+	}
+	if m.HasChipRow() {
+		// C10: the chip row sits between the textarea's last line and
+		// the bottom padding row, pushing the input one row further up
+		// - a click on the input still needs to land on the RIGHT
+		// textarea row, not the chip row painted over it.
+		return 3
 	}
 	return 2
 }
@@ -495,10 +572,24 @@ func (m Model) View() string {
 			}
 			lines[i] = pad + ln + pad
 		}
+		if chipRow := m.chipRow(inner); chipRow != "" {
+			lines = append(lines, pad+chipRow+pad)
+		}
 		blank := strings.Repeat(" ", m.width)
 		rows := append([]string{blank}, lines...)
 		rows = append(rows, blank)
-		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(rows, "\n"))
+		joined := strings.Join(rows, "\n")
+		// C10: the fill bar itself is the focus tell - a coloured
+		// background says "typing lands here," so it shows only while
+		// focused. The padding ROWS and COLUMNS stay identical either
+		// way: Height(), Padded(), and every mouse-geometry method
+		// (InputRowFromBottom, InputColumnOffset, PopupWidth/Offset)
+		// key off m.width alone, and blurring the composer must not
+		// silently invalidate them.
+		if m.Focused() {
+			joined = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, joined)
+		}
+		body = joined
 	} else if m.width > 0 {
 		lines := strings.Split(body, "\n")
 		for i, ln := range lines {
@@ -512,6 +603,37 @@ func (m Model) View() string {
 		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, strings.Join(lines, "\n"))
 	}
 	return body
+}
+
+// chipRow renders the accepted-mention chips as one line ("@ a.go  @
+// b.go"), clipped to inner columns, or "" when there are none - the
+// caller skips the row entirely rather than drawing an empty one, so
+// Height() and this stay in agreement without a separate "has chips"
+// flag to keep in sync.
+func (m Model) chipRow(inner int) string {
+	if len(m.chips) == 0 || inner < 1 {
+		return ""
+	}
+	parts := make([]string, len(m.chips))
+	for i, c := range m.chips {
+		parts[i] = "@ " + c
+	}
+	row := strings.Join(parts, "  ")
+	style := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	if w := ansi.StringWidth(row); w < inner {
+		row += strings.Repeat(" ", inner-w)
+	} else if w > inner {
+		row = ansi.Truncate(row, inner, "")
+	}
+	return style.Render(row)
+}
+
+// HasChipRow reports whether View draws a chip row: chips exist AND
+// the bar is wide enough for the padded layout that row lives inside.
+// Height reads this instead of duplicating the width/emptiness check,
+// so the two can never disagree about whether the row is there.
+func (m Model) HasChipRow() bool {
+	return len(m.chips) > 0 && m.width >= minPaddedWidth
 }
 
 // markCommandToken restyles the leading "/name" on the first drawn row, w

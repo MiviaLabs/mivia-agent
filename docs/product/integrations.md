@@ -8,7 +8,7 @@ use.
 ## AI providers
 
 mivia sends prompts and selected context to one configured AI provider. Eight
-providers are built in today:
+providers are built in:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|

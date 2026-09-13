@@ -67,8 +67,11 @@ func (s Screen) switchToSessionID(id string) (app.Screen, tea.Cmd) {
 		return s, nil
 	}
 	if st, ok := s.sessions[id]; ok && st.conv != nil {
-		s.switchConversation(st.conv)
+		liveCmd := s.switchConversation(st.conv)
 		cmds := []tea.Cmd{tea.ClearScreen}
+		if liveCmd != nil {
+			cmds = append(cmds, liveCmd)
+		}
 		if s.hasActiveSession() {
 			cmds = append(cmds, s.armTick())
 		}

@@ -101,8 +101,14 @@ func (s Screen) composerRegion() sel.Rect {
 	// bodyRows is never below 1: composer.Height() already adds the same
 	// pad term subtracted here (padRows mirrors Padded()'s own two rows),
 	// so this always reduces to the textarea's own row count, which
-	// composer.Height() clamps to at least 1.
+	// composer.Height() clamps to at least 1. The mention-chip row (C10)
+	// is a third term Height() adds on top of padding - subtract it too,
+	// or the selection rect grows one row too tall and drifts onto the
+	// chip/padding row instead of the textarea's own rows.
 	bodyRows := s.composer.Height() - padRows
+	if s.composer.HasChipRow() {
+		bodyRows--
+	}
 	// The status row is the last content row: the screen's last row less
 	// the bottom gutter row, which gutter() draws exactly when it draws
 	// the top one (tg). InputRowFromBottom counts from the status row up

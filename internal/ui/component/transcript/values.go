@@ -178,13 +178,13 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 	// first body line into the detail as a fallback printed line 1 twice
 	// on the direct-push end path (no live start block): once in the
 	// header, once as body row one. The body is the single home of the
-	// output (transcript-polish.md R7).
+	// output (ux-rules.md 11.9).
 	detail, body, coll := render.FormatToolOutputWithContext(t, tier, b.Name, args, summary, b.OK, w)
 	if noticeLine != "" {
 		body = append(body, noticeLine)
 	}
 
-	// One duration ladder everywhere (transcript-polish.md R5): the same
+	// One duration ladder everywhere (ux-rules.md 11.7): the same
 	// FormatElapsed a later status-line call uses, so "4.1s" never
 	// appears beside "4100ms" on one screen.
 	duration := render.FormatElapsed(int(b.DurationMS))
@@ -207,7 +207,12 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		blk.Header.DiffAdd = b.Diff.Added
 		blk.Header.DiffDel = b.Diff.Removed
 		blk.Header.Meta = duration
-		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff)
+		// false: a freshly constructed block has no prior toggle to
+		// preserve - unified is the default (C8).
+		// DiffBodyPrefixLen stays its zero value: this OVERWRITES Body
+		// entirely, so the diff IS the whole body, with nothing before
+		// it for restyle to preserve.
+		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff, false)
 	}
 	// A finished call collapses by default whatever its body size, so
 	// consecutive calls coalesce into one summary row; failures keep the
@@ -336,26 +341,25 @@ func hookBlockValue(b uievent.HookBody) Block {
 	}
 }
 
-// usageBlockValue renders the turn's token and cost accounting as one
-// dim, header-less prose footer line (transcript-polish.md R6): the
-// per-turn facts belong to the record - and to Dump(), so `[` and
-// grep still reach them - while the live cost and context surfaces stay
-// on the statusline pill and the topbar gauge. The footer keeps the
-// header meta grammar: grouped token counts (render.GroupThousands)
-// joined by the fixed two-column gap, cost to two decimals.
-func usageBlockValue(t theme.Theme, tier theme.Tier, b uievent.UsageBody) Block {
+// usageBlockValue renders the turn's token, cost, and transcript-measured
+// elapsed time as one compact footer row. The row's final padding is applied
+// by Block.Render because only that method has the current terminal width.
+func usageBlockValue(t theme.Theme, tier theme.Tier, b uievent.UsageBody, model string, elapsed float64) Block {
 	usage := b
 	line := render.Role(t, tier, theme.RoleFGSubtle).Render(fmt.Sprintf(
-		"%s in  %s out  %s cached  $%.2f",
-		render.GroupThousands(int(b.InputTokens)),
-		render.GroupThousands(int(b.OutputTokens)),
-		render.GroupThousands(int(b.CachedTokens)),
+		"+ %s  %s  %s in  %s out  $%.2f",
+		model,
+		render.FormatElapsed(int(elapsed*1000)),
+		render.CompactTokens(b.InputTokens),
+		render.CompactTokens(b.OutputTokens),
 		b.CostUSD))
 	return Block{
-		Kind:  uievent.KindUsage,
-		Prose: true,
-		Usage: &usage,
-		Body:  []string{line},
+		Kind:           uievent.KindUsage,
+		Usage:          &usage,
+		UsageModel:     model,
+		UsageElapsedMS: int(elapsed * 1000),
+		Collapsible:    false,
+		Body:           []string{line},
 	}
 }
 

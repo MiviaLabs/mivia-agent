@@ -297,3 +297,6 @@ var LoadChatSkills = clichat.LoadChatSkills
 
 // LoadAgentDefinitions re-exports the clichat.LoadAgentDefinitions function.
 var LoadAgentDefinitions = clichat.LoadAgentDefinitions
+
+// StepTimeout re-exports the clichat.StepTimeout helper.
+var StepTimeout = clichat.StepTimeout

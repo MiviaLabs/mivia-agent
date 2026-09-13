@@ -51,12 +51,13 @@ reason.
 |-------|------|-------|
 | Schema | Frontmatter missing one of `id`/`title`/`content`/`importance`/`tags`/`updated`, or `importance` not in `high|medium|low`, or `tags` not a YAML list | `fix-schema` |
 | Filename/id match | `id` is not the filename with `.md` removed and hyphens replaced by underscores (README convention, enforced by `scripts/check_memories.py`) | `fix-schema` |
-| Stale | `updated` (or `created` when `updated` is absent) older than 90 days, AND no inbound reference from any other memory or from `.agents/rules/`, `.agents/doctrines/`, `AGENTS.md` | `mark-stale` |
+| Stale | `updated` (or `created` when `updated` is absent) older than 90 days. Memories older than 90 days require an accuracy review to verify the underlying facts before re-stamping `updated` | `mark-stale` |
 | Future stamp | `updated` later than this session's date - the gate checks shape only and never reads the clock, so a typo like `9999-01-01` passes it; re-stamp with the real date | `fix-schema` |
 | Near-duplicate | Pair-wise Jaccard similarity > 0.6 over the union of title and content, OR identical `tags` plus overlapping prose | `merge-with` |
 
-Two soft flags, not proposals: orphan files (no inbound reference,
-newer than 90 days — surface them, do not act) and memories that
+Two soft flags, not proposals: orphan files (no other memory names this one
+in its `related` list — see `.agents/memories/README.md`, "The reference
+graph"; surface them, do not act) and memories that
 contradict current code or config (verify with `grep`, then propose
 `archive` only after the contradiction is confirmed).
 

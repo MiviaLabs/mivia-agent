@@ -482,3 +482,82 @@ func TestMemoryEntryClampPinsRuneTruncation(t *testing.T) {
 		t.Error("clamped multibyte summary is not valid UTF-8")
 	}
 }
+
+func TestMemorySaveReportsTruncatedFields(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memorySaveTool{store: store}
+
+	input := map[string]any{
+		"title":   "Short title",
+		"summary": strings.Repeat("s", 450),
+		"why":     "valid why",
+	}
+	raw, _ := json.Marshal(input)
+	out, err := tool.Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !strings.Contains(out, "note: summary truncated to limit") {
+		t.Errorf("expected truncation note in output, got: %q", out)
+	}
+}
+
+func TestMemorySaveReportsTruncatedFieldsOnMerge(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memorySaveTool{store: store}
+
+	input1 := map[string]any{
+		"title":   "deploy pipeline runner image caching failed",
+		"summary": "github actions workflow timeout docker registry",
+		"why":     strings.Repeat("a", 900),
+	}
+	raw1, _ := json.Marshal(input1)
+	if _, err := tool.Execute(context.Background(), raw1); err != nil {
+		t.Fatalf("first Execute failed: %v", err)
+	}
+
+	input2 := map[string]any{
+		"title":   "deploy pipeline runner image caching failed",
+		"summary": "github actions workflow timeout docker registry mirror",
+		"why":     strings.Repeat("b", 900),
+	}
+	raw2, _ := json.Marshal(input2)
+	out, err := tool.Execute(context.Background(), raw2)
+	if err != nil {
+		t.Fatalf("second Execute failed: %v", err)
+	}
+	if !strings.Contains(out, "note: why truncated to limit") {
+		t.Errorf("expected truncation note on merge, got: %q", out)
+	}
+}
+
+func TestMemorySaveReportsCollectionTruncationOnMerge(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memorySaveTool{store: store}
+
+	input1 := map[string]any{
+		"title":   "deploy pipeline runner image caching failed",
+		"summary": "github actions workflow timeout docker registry",
+		"why":     "runner image caching failed in workflow",
+		"tags":    []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"},
+	}
+	raw1, _ := json.Marshal(input1)
+	if _, err := tool.Execute(context.Background(), raw1); err != nil {
+		t.Fatalf("first Execute failed: %v", err)
+	}
+
+	input2 := map[string]any{
+		"title":   "deploy pipeline runner image caching failed",
+		"summary": "github actions workflow timeout docker registry mirror",
+		"why":     "runner image caching failed in workflow with registry mirror",
+		"tags":    []string{"t1", "t9"},
+	}
+	raw2, _ := json.Marshal(input2)
+	out, err := tool.Execute(context.Background(), raw2)
+	if err != nil {
+		t.Fatalf("second Execute failed: %v", err)
+	}
+	if !strings.Contains(out, "note: tags truncated to limit") {
+		t.Errorf("expected collection truncation note on merge, got: %q", out)
+	}
+}

@@ -92,6 +92,29 @@ func TestEmbeddedThreadTickDoesNotTouchTheSharedClock(t *testing.T) {
 	}
 }
 
+// TestForwardSharedMsgUpdatesTheThreadInPlace pins forwardSharedMsg's
+// only observable effect: it has a value receiver and returns nothing,
+// so the sole way its update of s.thread.Update(msg) can reach the
+// caller is by writing through the shared *Screen pointer (*s.thread =
+// t) rather than rebinding s.thread on its own throwaway copy of s. The
+// bug this pins (a plain `s.thread = &t` here) made every tick this
+// function forwards a no-op: an embedded thread dialog's statusline
+// frame - and, via C3, a running tool block's column-1 spinner in that
+// dialog - would freeze at whatever it was when the dialog opened.
+func TestForwardSharedMsgUpdatesTheThreadInPlace(t *testing.T) {
+	parent := newScreen(t, replay.New(nil, 0), nil, nil)
+	thread := NewThread(loadTheme(t), theme.TierASCII, replay.New(nil, 0), 60, fixedNow)
+	thread.statusline.Start("running", fixedNow())
+	parent.thread = &thread
+
+	before := parent.thread.statusline.Frame()
+	parent.forwardSharedMsg(statusline.TickMsg{})
+
+	if got := parent.thread.statusline.Frame(); got == before {
+		t.Error("forwardSharedMsg did not advance the thread's statusline frame through the shared pointer")
+	}
+}
+
 // TestOpenThreadTurnKeepsTheClockAlive pins the counterpart in
 // hasActiveSession: since the embedded screen no longer sustains the
 // clock itself, an open thread's in-flight turn has to keep the parent's
@@ -168,5 +191,24 @@ func TestSubagentProgressDoesNotMultiplySpinnerClocks(t *testing.T) {
 			t.Fatalf("cycle %d: spinner clocks grew from %d to %d", cycle, live, total)
 		}
 		live = total
+	}
+}
+
+// TestReasoningStreamingDoesNotArmASpinnerClock pins C1's "Thinking  Xs"
+// live tail: it refreshes off the transcript's own pending-flush clock
+// (transcript.FlushMsg), a Msg type countTicks does not even count, not
+// off the shared statusline.TickMsg clock armTick guards. A reasoning
+// delta must therefore arm zero spinner clocks, the same way a plain
+// text delta always has.
+func TestReasoningStreamingDoesNotArmASpinnerClock(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+
+	_, cmd := s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "weighing the options"},
+	}})
+
+	if n := countTicks(cmd); n != 0 {
+		t.Fatalf("a reasoning delta armed %d spinner clocks, want 0 (it rides the transcript's own flush clock)", n)
 	}
 }

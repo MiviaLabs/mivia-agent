@@ -72,9 +72,10 @@ var _ sdktools.SchemaTool = (*refOnlyShim)(nil)
 func (r *refOnlyShim) Name() string { return r.inner.Name() }
 
 // ParameterSchema and DecodeArguments delegate to the inner tool: the
-// SDK's Definitions skips any tool that does not implement SchemaTool,
-// so without the delegation a ref-only tool silently vanishes from the
-// offered set.
+// SDK's Definitions FAILS (ErrNoSchema, since v0.6.0) on any tool that
+// does not implement SchemaTool, so without the delegation a ref-only
+// tool would fail the whole loop build rather than merely vanish from
+// the offered set.
 func (r *refOnlyShim) ParameterSchema() []byte { return r.schema.ParameterSchema() }
 
 func (r *refOnlyShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {

@@ -176,6 +176,9 @@ func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result
 	if err := e.Validate(s.cfg.Limits); err != nil {
 		return memory.Result{}, err
 	}
+	// Report the STORED entry: on the near-duplicate merge path the source
+	// merged e into an existing document and kept that one's Title/Verdict/
+	// Tags, so echoing e would describe a memory that was never written.
 	doc, err := s.cfg.Source.Save(ctx, e)
 	if err != nil {
 		return memory.Result{}, err
@@ -183,7 +186,7 @@ func (s *markdownStore) Save(ctx context.Context, e memory.Entry) (memory.Result
 	if err := s.syncScopeLocked(ctx, e.Scope); err != nil {
 		return memory.Result{}, err
 	}
-	return memory.Result{ID: doc.ID, Scope: e.Scope, Org: s.cfg.OrgID, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: doc.Entry.Created, Snippet: e.Summary}, nil
+	return memory.Result{ID: doc.ID, Scope: e.Scope, Org: s.cfg.OrgID, Title: doc.Entry.Title, Verdict: doc.Entry.Verdict, Tags: append([]string(nil), doc.Entry.Tags...), Created: doc.Entry.Created, Snippet: doc.Entry.Summary, Truncated: doc.Truncated}, nil
 }
 
 func (s *markdownStore) Search(ctx context.Context, q memory.Query) ([]memory.Result, error) {

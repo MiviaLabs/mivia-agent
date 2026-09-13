@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliautomations "github.com/MiviaLabs/mivia-agent/internal/cliautomations"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
@@ -53,6 +54,8 @@ func Execute(args []string) error {
 		return runStack(args[1:])
 	case "worktree":
 		return cliworktree.RunWorktree(args[1:])
+	case "automations":
+		return cliautomations.RunAutomations(args[1:])
 	case "completion":
 		return runCompletion(args[1:])
 	case "setup":
@@ -123,6 +126,12 @@ Usage:
   %s worktree create <name> [--branch ref] [--workspace dir]
   %s worktree list [--workspace dir]
   %s worktree remove <name> [--workspace dir]
+  %s automations list [--workspace dir] [--config path]
+  %s automations show <id> [--workspace dir] [--config path]
+  %s automations run <id> [--wait] [--workspace dir] [--config path]
+  %s automations runs [--automation <id>] [--limit <n>] [--workspace dir] [--config path]
+  %s automations resume <run-id> [--workspace dir] [--config path]
+  %s automations serve [--workspace dir] [--config path]
   %s completion bash|zsh|fish
   %s setup [--provider name] [--key value] [--env-file path] [--config path] [--yes]
   %s login --email <addr> [--password-stdin] [--server-url <url>]
@@ -151,7 +160,7 @@ Chat: /help /tools /hooks /exit /clear /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,

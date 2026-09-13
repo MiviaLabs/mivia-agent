@@ -7,7 +7,15 @@ import "time"
 
 // Text-delta batching: one Msg per token would be one render per token
 // even with the cell-based renderer. Accumulate and flush on this tick.
-const TextDeltaFlushInterval = 40 * time.Millisecond
+//
+// 66ms is 15Hz, inside ux-rules.md rule 2.5's 10-20Hz repaint cap. The
+// prior 40ms (25Hz) sat above that cap; it was affordable only because
+// the streaming tail rendered plain text (render.Wrap). Once the tail
+// started rendering markdown through render.StreamRenderer (C6,
+// docs/design/chat-tui-crush-comparison.md), each flush costs a real
+// (cached-prefix) render rather than a wrap, so the tick now has to
+// respect the same budget every other repaint does.
+const TextDeltaFlushInterval = 66 * time.Millisecond
 
 // SpinnerFPS bounds the activity-indicator repaint rate.
 const SpinnerFPS = 10
@@ -33,9 +41,12 @@ const MaxToolOutputBytes = 64 * 1024
 const BodyIndent = 4
 
 // CollapseThresholdLines is the body height at or above which a block
-// first renders collapsed. wireframes-panes.md section 5: "open under 12
-// body lines, closed at or above".
-const CollapseThresholdLines = 12
+// first renders collapsed, AND (C4) the window a collapsed tool card
+// shows before it hands the rest to the trailing "… N more lines" hint
+// row. One constant, because the two are the same fact: what a collapsed
+// block hides is exactly what its hint states. wireframes-panes.md
+// section 5: "Default: open under 10 body lines, closed at or above."
+const CollapseThresholdLines = 10
 
 // Prose is wrapped to a measure, not to the terminal width, so long
 // lines stay readable on a wide terminal. wireframes-panes.md section 14.

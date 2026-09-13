@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -13,11 +14,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
-	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-func loadTheme(t *testing.T) theme.Theme {
+func loadTheme(t testing.TB) theme.Theme {
 	t.Helper()
 	themes, err := theme.Embedded()
 	if err != nil {
@@ -51,10 +51,27 @@ func TestRenderGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(loadTheme(t), theme.TierTrueColor)
+	// A fixed, non-advancing clock (C1): the fixture's reasoning block
+	// carries no producer-supplied duration, so its "Thought for Xs"
+	// line is measured wall-clock, same as tool StartedAt/ElapsedMS.
+	// Pinning Now keeps that measured value ("0ms") deterministic instead
+	// of depending on how fast this test happens to run.
+	clock := time.Unix(1700000000, 0)
+	m.Now = func() time.Time { return clock }
 	m.SetSize(width, height)
 	for _, ev := range events {
 		m, _ = m.HandleEvent(ev)
 	}
+	// C7: the fixture's dispatch_tasks row carries its child tree. The
+	// screen pushes this in live (child_tree.go) from the thread history
+	// it owns; the golden pins the same vocabulary at the component
+	// boundary, so the compact tree is part of both renderings' contract.
+	m.SetChildren("dispatch-golden", []ChildCall{
+		{Name: "read_file", Detail: "internal/storage/s3_uploader.go", OK: true},
+		{Name: "edit", Detail: "internal/storage/s3_uploader.go", OK: true},
+		{Name: "run_command", Detail: "$ go test ./internal/storage/...", OK: false},
+		{Name: "read_file", Detail: "internal/storage/retry.go", OK: true},
+	})
 
 	view := m.View()
 	compareGolden(t, filepath.Join("testdata", "golden", "cockpit-80x20.txt"), view)
@@ -79,8 +96,12 @@ func TestRenderGolden(t *testing.T) {
 }
 
 func TestLiveSplitDiffDoesNotInsertBlankRows(t *testing.T) {
+	// Split is opt-in and needs render.MinSplitDiffWidth (C8): 80
+	// columns used to cross the OLD auto-split threshold (60) on its
+	// own, but no longer does anything at any width without the
+	// explicit toggle below.
 	m := New(loadTheme(t), theme.TierTrueColor)
-	m.SetSize(80, 30)
+	m.SetSize(160, 30)
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
 		Body: uievent.ToolStartBody{ToolCallID: "diff-1", Name: "edit"}})
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
@@ -99,6 +120,12 @@ func TestLiveSplitDiffDoesNotInsertBlankRows(t *testing.T) {
 		}})
 
 	m.blocks[0].Collapsed = false
+	m.focus = 0
+	var ok bool
+	m, ok = m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the diff-split toggle to succeed at width 160")
+	}
 	rows := m.Rows()
 	for i := 1; i < len(rows); i++ {
 		if ansi.Strip(rows[i-1]) == "" || ansi.Strip(rows[i]) == "" {
@@ -158,7 +185,7 @@ func TestHandleEventEveryKind(t *testing.T) {
 	m.SetSize(80, 200)
 	m = drain(t, m, events)
 	got := ansi.Strip(m.Dump())
-	for _, want := range []string{"hi", "full reply", "3 words", "hidden", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "fmt.sh", "failed", "10 in"} {
+	for _, want := range []string{"hi", "full reply", "Thought for", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "fmt.sh", "failed", "10 in"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the transcript is missing %q:\n%s", want, got)
 		}
@@ -181,20 +208,86 @@ func TestToolOutputEmptyChunkCommitsNothing(t *testing.T) {
 	}
 }
 
-func TestReasoningLiveTailUsesSubtleStyle(t *testing.T) {
+// TestReasoningLiveTailShowsAThinkingDuration pins C1's streaming tail:
+// while a reasoning span is still open, the tail row states how long the
+// model has been thinking ("Thinking  Xs"), not a preview of the raw
+// text - the same "duration, not content" contract the settled block's
+// "Thought for Xs" line carries. It is refreshed by the existing
+// pending-flush clock (transcript.go's FlushMsg), so no new clock is
+// armed for it.
+func TestReasoningLiveTailShowsAThinkingDuration(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
 	m := New(loadTheme(t), theme.TierTrueColor)
+	m.Now = func() time.Time { return clock }
 	m.SetSize(80, 24)
 	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{Text: "thinking..."}})
 	if cmd == nil {
 		t.Fatal("expected the first reasoning delta to schedule a flush Cmd")
 	}
+
+	clock = clock.Add(4 * time.Second)
 	got := m.View()
-	if !strings.Contains(got, "thinking...") {
-		t.Fatalf("got %q, want the live reasoning tail present before the final word-count chunk", got)
+	if strings.Contains(got, "thinking...") {
+		t.Errorf("got %q, want the raw reasoning text NOT previewed, only the duration", got)
 	}
-	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true).Render("thinking...")
+	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true).Render("Thinking  4.0s")
 	if !strings.Contains(got, wantStyle) {
-		t.Errorf("got %q, want the reasoning tail styled with RoleFGSubtle italic: %q", got, wantStyle)
+		t.Errorf("got %q, want the reasoning tail to read \"Thinking  4.0s\" styled with RoleFGSubtle italic", got)
+	}
+}
+
+// TestReasoningElapsedIsMeasuredFromTheFirstDelta pins C1: a reasoning
+// span's duration is the wall time between this transcript seeing its
+// first delta (appendPending stamping pendingStartedAt) and whatever
+// event settles the block - here a text delta, which switches pending
+// out of KindReasoning and flushes it - the same StartedAt/ElapsedMS
+// contract handleToolEnd already applies to tool calls (see
+// TestAToolStartAfterAPendingBlockKeepsTheOriginalStartTime).
+func TestReasoningElapsedIsMeasuredFromTheFirstDelta(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "step 1: analyze"}})
+
+	clock = clock.Add(8 * time.Second)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "the answer"}})
+
+	blocks := m.Blocks()
+	if len(blocks) != 1 || blocks[0].Kind != uievent.KindReasoning {
+		t.Fatalf("expected 1 committed reasoning block, got %+v", blocks)
+	}
+	if got := blocks[0].ElapsedMS; got != 8000 {
+		t.Errorf("ElapsedMS = %d, want 8000 (8s between the reasoning delta and the text delta that flushed it)", got)
+	}
+}
+
+// TestReasoningWholeTextStampsNowWithZeroElapsed pins C1's other timing
+// path: a single reasoning.delta that arrives with both text and a final
+// WordCount, with no prior delta buffered, has no separate start event to
+// measure from - it stamps StartedAt from Now() directly, and its
+// ElapsedMS is 0 rather than measured against a fabricated earlier time.
+func TestReasoningWholeTextStampsNowWithZeroElapsed(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "one-shot reasoning", WordCount: 3}})
+
+	blocks := m.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if !blocks[0].StartedAt.Equal(clock) {
+		t.Errorf("StartedAt = %v, want the Now() at commit time (%v)", blocks[0].StartedAt, clock)
+	}
+	if got := blocks[0].ElapsedMS; got != 0 {
+		t.Errorf("ElapsedMS = %d, want 0 (start and settle are the same instant for a single event)", got)
 	}
 }
 
@@ -396,7 +489,9 @@ func TestSetThemeReRendersADiffMergedIntoALiveBlock(t *testing.T) {
 	m.SetTheme(light, theme.TierTrueColor)
 	after := strings.Join(m.Blocks()[0].Body, "\n")
 
-	want := render.SplitDiff(light, theme.TierTrueColor, 80-groupIndent-uikitconfig.BodyIndent, *sampleDiff())
+	// render.Diff (unified), not SplitDiff: unified is the default at
+	// every width now (C8), and this block never toggled DiffSplit.
+	want := render.Diff(light, theme.TierTrueColor, *sampleDiff())
 	if !strings.Contains(after, want) {
 		t.Errorf("the diff was not re-rendered in the new theme:\ngot  %q\nwant %q", after, want)
 	}
@@ -645,7 +740,7 @@ func TestSingleEventReasoningHydrationPreservesBody(t *testing.T) {
 	}
 }
 
-// TestToolEndDurationUsesTheSharedLadder pins transcript-polish.md R5
+// TestToolEndDurationUsesTheSharedLadder pins ux-rules.md 11.7
 // in the transcript: both tool-end duration sites - the result path and
 // the diff path - go through render.FormatElapsed, so the header states
 // "4.1s", "23.5s", "1m 30s", never raw milliseconds above a second.
@@ -675,7 +770,7 @@ func TestToolEndDurationUsesTheSharedLadder(t *testing.T) {
 }
 
 // TestUnknownToolDoesNotDuplicateTheFirstBodyLine pins
-// transcript-polish.md R7: on the direct tool.end push path with no
+// ux-rules.md 11.9: on the direct tool.end push path with no
 // prior live block, a tool the formatter does not know used to copy
 // body line 1 into the header detail, printing it twice. The header
 // keeps the tool name with an empty detail; the body carries every line
@@ -703,33 +798,33 @@ func TestUnknownToolDoesNotDuplicateTheFirstBodyLine(t *testing.T) {
 	}
 }
 
-// TestUsageRendersAsAFooterLine pins transcript-polish.md R6: usage is
+// TestUsageRendersAsAFooterLine pins ux-rules.md 11.8: usage is
 // one dim, header-less prose footer line in the shared meta grammar -
 // grouped token counts and cost to two decimals - and it keeps the raw
 // payload so a theme change can restyle it.
 func TestUsageRendersAsAFooterLine(t *testing.T) {
-	th := loadTheme(t)
-	m := New(th, theme.TierASCII)
-	m.SetSize(80, 40)
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{
-		InputTokens: 1284, OutputTokens: 2940, CachedTokens: 340, CostUSD: 0.041,
-	}})
-
-	blocks := m.Blocks()
-	if len(blocks) != 1 {
-		t.Fatalf("got %d blocks, want 1", len(blocks))
+	clock := time.Unix(1700000000, 0)
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Now = func() time.Time { return clock }
+	m.SetModel("claude-opus-5")
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}})
+	clock = clock.Add(102 * time.Second)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{InputTokens: 1284, OutputTokens: 2940, CostUSD: 0.04}})
+	b := m.Blocks()[len(m.Blocks())-1]
+	if b.Prose || b.Collapsible || b.Usage == nil {
+		t.Fatalf("bad footer shape: %+v", b)
 	}
-	b := blocks[0]
-	if !b.Prose {
-		t.Error("the usage footer must be prose: no header, no marker")
+	for _, width := range []int{40, 80, 120} {
+		row := ansi.Strip(b.Render(m.Theme, m.Tier, width))
+		if b.Height(width) != 1 || strings.Contains(row, "\n") || ansi.StringWidth(row) != width {
+			t.Errorf("width %d: height=%d row=%q", width, b.Height(width), row)
+		}
+		if !strings.Contains(row, "claude-opus-5") || !strings.Contains(row, "1m 42s") {
+			t.Errorf("width %d: footer=%q", width, row)
+		}
 	}
-	if b.Usage == nil {
-		t.Fatal("the raw usage payload must be preserved for restyle")
-	}
-	row := ansi.Strip(strings.SplitN(b.Render(th, theme.TierASCII, 80), "\n", 2)[0])
-	if want := "1,284 in  2,940 out  340 cached  $0.04"; row != want {
-		t.Errorf("usage footer = %q, want %q", row, want)
-	}
+	// Existing theme rebuild coverage is kept in this test's raw payload assertion.
+	return
 }
 
 // TestSetThemeRestylesTheUsageFooter mirrors the plan-rebuild check: the
@@ -740,17 +835,19 @@ func TestSetThemeRestylesTheUsageFooter(t *testing.T) {
 	// rebuild check needs a theme whose subtle colour differs.
 	dark, light := loadTheme(t), namedTheme(t, "mivia-high-contrast")
 	m := New(dark, theme.TierTrueColor)
+	m.SetModel("model")
 	m.SetSize(80, 24)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}})
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{
 		InputTokens: 1284, OutputTokens: 2940,
 	}})
-	before := m.Blocks()[0].Body[0]
+	before := m.Blocks()[1].Body[0]
 	m.SetTheme(light, theme.TierTrueColor)
-	after := m.Blocks()[0].Body[0]
+	after := m.Blocks()[1].Body[0]
 	if before == after {
 		t.Error("SetTheme left the usage footer on the previous theme's colours")
 	}
-	if !strings.Contains(ansi.Strip(after), "1,284 in") {
+	if !strings.Contains(ansi.Strip(after), "1.3k in") {
 		t.Errorf("the footer lost its facts on rebuild: %q", ansi.Strip(after))
 	}
 }

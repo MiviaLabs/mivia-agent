@@ -67,7 +67,12 @@ func TestNewSessionState_ReplaysHistoricalToolDiff(t *testing.T) {
 	if blocks[0].Diff == nil || blocks[0].Diff.Path != "a.go" {
 		t.Fatalf("historical diff was not attached to tool block: %+v", blocks[0])
 	}
-	if len(blocks[0].Body) == 0 || !strings.Contains(strings.Join(blocks[0].Body, "\n"), "-old") {
+	// "- old", not "-old": unified diff lines are "- "+text
+	// (render/diff.go's diffLine), and unified is the default at every
+	// width now (C8) - this fixture's width 100 used to cross the old
+	// 60-column auto-split threshold, whose split cells concatenated
+	// "-"+text with no space, which is what the old assertion matched.
+	if len(blocks[0].Body) == 0 || !strings.Contains(strings.Join(blocks[0].Body, "\n"), "- old") {
 		t.Fatalf("historical diff was not rendered: %+v", blocks[0].Body)
 	}
 }
@@ -129,9 +134,9 @@ func TestNewSessionState_ReplaysHistoryIntoTranscriptAndComposer(t *testing.T) {
 	// The reasoning and trailing text turns render collapsed/folded
 	// summaries rather than their literal body, so assert on what the
 	// transcript actually surfaces: the user prompt, the reasoning
-	// marker, both replayed tool calls, and the end_turn reason emitted
-	// for every non-last message.
-	for _, want := range []string{"what is the plan?", "reasoning", "run_command", "read_file", "end_turn"} {
+	// duration line (C1), both replayed tool calls, and the end_turn
+	// reason emitted for every non-last message.
+	for _, want := range []string{"what is the plan?", "Thought for", "run_command", "read_file", "end_turn"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("transcript view missing %q; view=%q", want, view)
 		}
