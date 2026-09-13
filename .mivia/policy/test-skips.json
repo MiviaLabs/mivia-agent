@@ -186,6 +186,18 @@
         "reason": "platform rejects a NUL path before the store can degrade: %v"
       }
     ],
+    "internal/cliautomations/spawner_test.go": [
+      {
+        "line": 489,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
+    "internal/cliautomations/automations_dispatch_test.go": [
+      {
+        "line": 239,
+        "reason": "platform still creates files in a read-only directory"
+      }
+    ],
     "internal/cliagents/memory_reconciler_unix_test.go": [
       {
         "line": 41,
@@ -431,9 +443,37 @@
         "line": 91,
         "reason": "platform still reads a 0000 file"
       }
+    ],
+    "internal/clichat/headless_session_test.go": [
+      {
+        "line": 195,
+        "reason": "this workspace shape does not fail the agent load on this platform; the branch stays covered by its sibling cases"
+      }
+    ],
+    "internal/ui/render/stream_markdown_fuzz_test.go": [
+      {
+        "line": 65,
+        "reason": "fuzz corpus size guard: input exceeds 16KiB"
+      },
+      {
+        "line": 71,
+        "reason": "fuzz corpus guard: input is not valid UTF-8"
+      }
+    ],
+    "internal/ui/render/stream_markdown_test.go": [
+      {
+        "line": 331,
+        "reason": "need two embedded themes"
+      },
+      {
+        "line": 341,
+        "reason": "only one distinct theme"
+      }
     ]
   },
   "allowedDeletions": [
+    "TestActionRidesInTheBorderLabel",
+    "TestActionStaysInTheBodyWhenItCannotFitTheBorder",
     "TestActivateSelected_WorkGroupAndTool",
     "TestAgentDialogLifecycle",
     "TestAgentDialogOpenAndSelect",
@@ -524,6 +564,7 @@
     "TestClipboardPrefersLocalToolThenOSC52",
     "TestClipboardReadCommandPrefersAvailableTool",
     "TestClipboardReadReportsFailureWhenNoToolExists",
+    "TestCollapsedHeaderStatesItsMagnitude",
     "TestCollapsedThinkingBlockSummarises",
     "TestColorDiffLine",
     "TestCompactionEventReachesBridgeAsBanner",
@@ -1047,8 +1088,10 @@
     "TestREPLAutoRestoreSurfacesModelNotice",
     "TestRasterDiamondBrandLeftSolid",
     "TestReactivationRejectsConcurrentlyRemovedWorktree",
+    "TestReasoningLiveTailUsesSubtleStyle",
     "TestRedactPreviewRedactsWithConfiguredPolicy",
     "TestRedactPreviewWithoutPolicyPassesThrough",
+    "TestRedactToolInputForTool_DispatchTasksGetsTheWiderCap",
     "TestRefOnlyElisionAsLastKeepsPriorSibling",
     "TestRefOnlyElisionLeavesFittingSiblingUnchanged",
     "TestRefreshSendsBearerAndNoBodyAndParses",
@@ -1120,6 +1163,7 @@
     "TestRightClickCopiesBlock",
     "TestRouteFocusKeyWorkflowsSidebar",
     "TestRouteModalKeyModelAndAgentDialogs",
+    "TestRouteToOwningSection_AutomationsMsgWithNoSectionOwnerFallsThrough",
     "TestRoutes_ListsRegisteredRouteRows",
     "TestRunDashboardRendersHeldRuns",
     "TestRunDashboard_ActiveCount",
@@ -2249,6 +2293,7 @@
     "TestForgetWorktreeUnknownRunIsNoop",
     "TestFormatAgentHelpers",
     "TestGeneralEditVariantsSatisfyTheClosedUnion",
+    "TestHeadlessMCPStubHelper",
     "TestHighlightInlineCodeNotHighlighted",
     "TestInheritApprovalLocked_NilSessionIsANoop",
     "TestInputPoller_StartIsIdempotent",

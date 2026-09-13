@@ -117,7 +117,11 @@ func TestWireAutomationBackendInstallsBackendOnSuccess(t *testing.T) {
 	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	pool := runner.Pool()
 
-	wireAutomationBackend(store, pool, sess, agentState, res)
+	closeFn, _ := wireAutomationBackend(store, pool, sess, agentState, res)
+	if closeFn == nil {
+		t.Fatal("wireAutomationBackend returned a nil closer")
+	}
+	defer closeFn()
 
 	// Automations() delegating to a real backend (rather than the
 	// in-memory fallback settings_automations.go carries when

@@ -232,6 +232,12 @@ func TestBuildServiceOpenAutomationStoreError(t *testing.T) {
 		t.Fatalf("chmod read-only .mivia: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(miviaDir, 0o755) })
+	probe := filepath.Join(miviaDir, "writability-probe")
+	if f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("platform still creates files in a read-only directory")
+	}
 
 	_, _, _, err := buildService(root, "")
 	if err == nil {
