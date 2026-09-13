@@ -420,3 +420,127 @@ func TestParseIntervalTokenizerEdges(t *testing.T) {
 		}
 	})
 }
+
+func TestParseIntervalRemainingSubUnitsAndUnits(t *testing.T) {
+	tests := []struct {
+		input string
+		want  time.Duration
+	}{
+		{input: "500 us", want: 500 * time.Microsecond},
+		{input: "1w2", want: 7*24*time.Hour + 2*24*time.Hour},
+		{input: "1d5", want: 24*time.Hour + 5*time.Hour},
+		{input: "1m30", want: time.Minute + 30*time.Second},
+		{input: "1s500", want: time.Second + 500*time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, rule := parseInterval(tt.input)
+			if rule != "" {
+				t.Fatalf("parseInterval(%q) unexpected rule %q", tt.input, rule)
+			}
+			if got != tt.want {
+				t.Fatalf("parseInterval(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseIntervalHumanFormEdgesUnreachableThroughTrim(t *testing.T) {
+	// parseInterval trims raw before ever calling parseHumanInterval, so a
+	// human form that sums to exactly zero, or trailing whitespace after
+	// the last component, can only be exercised by calling the helper
+	// directly rather than through the trimming entry point.
+	t.Run("summing to zero returns the positivity rule", func(t *testing.T) {
+		got, rule := parseInterval("0 minutes")
+		if got != 0 || rule != intervalRulePositive {
+			t.Fatalf("parseInterval(%q) = (%v, %q), want (0, %q)", "0 minutes", got, rule, intervalRulePositive)
+		}
+	})
+
+	t.Run("trailing whitespace after the last component is skipped, not a new one", func(t *testing.T) {
+		got, err := parseHumanInterval("2h  ")
+		if err != nil {
+			t.Fatalf("parseHumanInterval(%q) unexpected error: %v", "2h  ", err)
+		}
+		if got != 2*time.Hour {
+			t.Fatalf("parseHumanInterval(%q) = %v, want %v", "2h  ", got, 2*time.Hour)
+		}
+	})
+
+	t.Run("empty input never enters the tokenizer loop and refuses for lacking a unit", func(t *testing.T) {
+		if _, err := parseHumanInterval(""); err == nil {
+			t.Fatal("parseHumanInterval(\"\") = nil error, want the no-unit-found refusal")
+		}
+	})
+}
+
+func TestParseIntervalRefusesUnknownUnitAndFloatRangeError(t *testing.T) {
+	t.Run("unknown unit", func(t *testing.T) {
+		got, rule := parseInterval("5xyz")
+		if got != 0 || rule == "" {
+			t.Fatalf("parseInterval(%q) = (%v,%q), want a refusal", "5xyz", got, rule)
+		}
+	})
+
+	t.Run("a component large enough to trip strconv.ParseFloat's own range error", func(t *testing.T) {
+		huge := strings.Repeat("9", 400) + "h"
+		got, rule := parseInterval(huge)
+		if got != 0 || rule == "" {
+			t.Fatalf("parseInterval(huge) = (%v,%q), want a refusal", got, rule)
+		}
+	})
+
+	t.Run("two individually-valid components whose sum overflows int64", func(t *testing.T) {
+		const input = "5000000000000000000ns 5000000000000000000ns"
+		got, rule := parseInterval(input)
+		if got != 0 || rule == "" {
+			t.Fatalf("parseInterval(%q) = (%v,%q), want a refusal", input, got, rule)
+		}
+	})
+}
+
+func TestFormatIntervalPureSeconds(t *testing.T) {
+	if got, want := formatInterval(45*time.Second), "45s"; got != want {
+		t.Fatalf("formatInterval(45s) = %q, want %q", got, want)
+	}
+}
+
+func TestResolveUnitTailScanSkipsTrailingWhitespaceBeforeBorrowing(t *testing.T) {
+	// parseHumanInterval's own whitespace skip (lines 121-123) always
+	// consumes every space ahead of the point where it calls resolveUnit
+	// with an empty unit, so this defensive tail-scan is unreachable
+	// through the tokenizer and is exercised here by calling resolveUnit
+	// directly instead.
+	d, unit, err := resolveUnit("5  ", 1, "", "h")
+	if err != nil {
+		t.Fatalf("resolveUnit(%q, 1, \"\", %q) unexpected error: %v", "5  ", "h", err)
+	}
+	if want := time.Minute; d != want {
+		t.Fatalf("resolveUnit(...) duration = %v, want %v (hour's sub-unit)", d, want)
+	}
+	if unit != "h" {
+		t.Fatalf("resolveUnit(...) prevUnit = %q, want %q", unit, "h")
+	}
+}
+
+func TestStepIntervalOffLadderBeyondBounds(t *testing.T) {
+	last := intervalLadder[len(intervalLadder)-1]
+	tests := []struct {
+		name  string
+		cur   time.Duration
+		delta int
+		want  time.Duration
+	}{
+		{name: "below the first rung, positive delta lands delta-1 rungs in", cur: 30 * time.Second, delta: 2, want: intervalLadder[1]},
+		{name: "below the first rung, non-positive delta clamps to the first rung", cur: 30 * time.Second, delta: 0, want: intervalLadder[0]},
+		{name: "above the last rung, negative delta lands (delta+1) rungs back", cur: last + 30*24*time.Hour, delta: -2, want: intervalLadder[len(intervalLadder)-2]},
+		{name: "above the last rung, non-negative delta clamps to the last rung", cur: last + 30*24*time.Hour, delta: 0, want: last},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stepInterval(tt.cur, tt.delta); got != tt.want {
+				t.Fatalf("stepInterval(%v, %d) = %v, want %v", tt.cur, tt.delta, got, tt.want)
+			}
+		})
+	}
+}
