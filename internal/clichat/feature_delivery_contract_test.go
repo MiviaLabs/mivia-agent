@@ -88,7 +88,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	assertFeatureDeliveryReviewPanel(t, workflow)
 	// assertFeatureDeliveryIntegrationGate(t, workflow) — disabled on the fast
 	// debug path: review_integration is commented out of feature-delivery.toml.
-	// Restore with the step (see docs/development/debug-cut.md).
+	// Restore with the step; the test body is in git history before the cut.
 	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
 	assertFeatureDeliveryTemplatesInstructPRMetadata(t, root)
 }

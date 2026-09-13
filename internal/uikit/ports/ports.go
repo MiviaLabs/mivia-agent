@@ -30,6 +30,15 @@ type ToolCall struct {
 	Arguments string
 	Output    string
 	Diff      *uievent.Diff
+	// OK records the call's outcome as its tool.end reported it. The zero
+	// value is "no outcome recorded yet" (the call started but has not
+	// ended), NEVER "failed" - a caller that must show a verdict for a
+	// call whose end event is long gone derives it with ToolCallOK from
+	// Output instead. Producers: the live event path copies the tool.end
+	// body's flag (uiadapter's applyEvent), and the replay paths set it
+	// from ToolCallOK (toolCallSummariesToPortsToolCalls,
+	// Conversation.History) so a resumed session reads the same way.
+	OK bool
 }
 
 // Message is one turn of conversation history.

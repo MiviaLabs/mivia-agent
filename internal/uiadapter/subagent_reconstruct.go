@@ -236,13 +236,19 @@ func toolCallSummariesToPortsToolCalls(toolCalls []toolCallSummary) []ports.Tool
 	}
 	out := make([]ports.ToolCall, len(toolCalls))
 	for i, s := range toolCalls {
+		// One classifier for the outcome, shared with the live event path:
+		// it both gates the diff parse and records the verdict the child
+		// tree renders, so a replayed history reads the same way the live
+		// stream did.
+		ok := ports.ToolCallOK(ports.ToolCall{Name: s.Name, Output: s.Output})
 		out[i] = ports.ToolCall{
 			ID:        s.ToolCallID,
 			Name:      s.Name,
 			Arguments: s.Input,
 			Output:    s.Output,
+			OK:        ok,
 		}
-		if ports.ToolCallOK(ports.ToolCall{Name: s.Name, Output: s.Output}) {
+		if ok {
 			out[i].Diff = parseToolDiff(s.Name, s.Input, s.Output)
 		}
 	}

@@ -56,7 +56,12 @@ func renderOne(w io.Writer, ev uievent.Event) error {
 		_, err := fmt.Fprintf(w, "? approve %s %s\n", b.Name, formatArgs(b.Args))
 		return err
 	case uievent.ToolStartBody:
-		_, err := fmt.Fprintf(w, "v %-12s %s\n", b.Name, formatArgs(b.Args))
+		// The C5 phrase the live transcript renders, so a piped log
+		// tells the same story: the call has begun and its result is
+		// what the reader is waiting on. The line is terminal-only
+		// truth (the renderer cannot retract it), which is why the
+		// settled status still arrives separately on tool.end.
+		_, err := fmt.Fprintf(w, "v %-12s %s  waiting for result\n", b.Name, formatArgs(b.Args))
 		return err
 	case uievent.ToolOutputBody:
 		return renderToolOutput(w, b)

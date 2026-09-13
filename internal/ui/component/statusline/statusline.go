@@ -240,7 +240,7 @@ func (m Model) View(now time.Time) string {
 	if !m.active {
 		return ""
 	}
-	// One duration ladder everywhere (transcript-polish.md R5): the turn
+	// One duration ladder everywhere (ux-rules.md 11.7): the turn
 	// clock prints in the same grammar as the transcript's tool meta, so
 	// a live "18.3s" beside a committed "4.1s" reads as one language.
 	elapsed := now.Sub(m.started).Round(time.Second)

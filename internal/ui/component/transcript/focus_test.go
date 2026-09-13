@@ -1,10 +1,15 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -168,6 +173,16 @@ func TestExpandingCanEvict(t *testing.T) {
 	// Built at a roomy size so every block keeps its body, then shrunk
 	// while collapsed so the three header rows still fit. Expanding is
 	// then the only thing that can overflow the budget.
+	//
+	// Each body is longer than CollapseThresholdLines: a collapsed tool
+	// card windows to that many lines plus a hint row (C4), so a body AT
+	// or under the window would render identically collapsed or
+	// expanded and prove nothing about growth.
+	long := make([]string, uikitconfig.CollapseThresholdLines+5)
+	for i := range long {
+		long[i] = fmt.Sprintf("line %d", i)
+	}
+	chunk := strings.Join(long, "\n")
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 40)
 	for i := 0; i < 3; i++ {
@@ -178,7 +193,7 @@ func TestExpandingCanEvict(t *testing.T) {
 		})
 		m, _ = m.HandleEvent(uievent.Event{
 			Kind: uievent.KindToolOutput,
-			Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: "one\ntwo\nthree"},
+			Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: chunk},
 		})
 	}
 	m = m.SetAllCollapsed(true)
@@ -236,6 +251,41 @@ func TestFocusedText(t *testing.T) {
 	}
 }
 
+// TestFocusedTextCopiesTheReasoningDurationNotTheWordCount pins C1's
+// clipboard parity: a reasoning block's copied text must state the same
+// duration the screen shows ("Thought for Xs"), not the pre-C1
+// "reasoning  N words  hidden" header headerPlain still builds from
+// Header.Meta/State - and it must carry the block's full body regardless
+// of whether the live view happens to be windowed (state 2) or collapsed
+// (state 1) at the moment of the copy.
+func TestFocusedTextCopiesTheReasoningDurationNotTheWordCount(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{
+		Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true,
+		ElapsedMS: 4100,
+		Header:    Header{Label: "reasoning", Meta: "9 words", State: "hidden"},
+		Body:      []string{"step 1: analyze", "step 2: plan"},
+	}}
+	m = m.FocusPrev()
+
+	got, ok := m.FocusedText()
+	if !ok {
+		t.Fatal("expected the focused block's text")
+	}
+	if !strings.Contains(got, "Thought for 4.1s") {
+		t.Errorf("copied text = %q, want it to state the duration \"Thought for 4.1s\"", got)
+	}
+	if strings.Contains(got, "words") || strings.Contains(got, "hidden") {
+		t.Errorf("copied text = %q, still carries the pre-C1 word-count header", got)
+	}
+	for _, want := range []string{"step 1: analyze", "step 2: plan"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("copied text is missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestFocusedTextIgnoresCollapseState: the user asked for the block's
 // content, and collapse is a view state, not part of what they meant.
 func TestFocusedTextIgnoresCollapseState(t *testing.T) {
@@ -251,6 +301,31 @@ func TestFocusedTextIgnoresCollapseState(t *testing.T) {
 	shut, _ := closed.FocusedText()
 	if open != shut {
 		t.Errorf("copied text changed with the collapse state:\nopen:   %q\nclosed: %q", open, shut)
+	}
+}
+
+// TestFocusedTextIgnoresCollapseStateForNonToolBlock covers the OTHER
+// side of the C3 change TestFocusedTextIgnoresCollapseState above pins
+// for a tool block: a NON-tool collapsible kind (a hook here) still
+// carries the plain v/>/blank collapse marker in column 1, and that
+// marker IS view state, so the copy must not flip between "v " and "> "
+// depending on whether the block happened to be open when copied.
+func TestFocusedTextIgnoresCollapseStateForNonToolBlock(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindHook,
+		Body: uievent.HookBody{Event: "PreToolUse", Program: "p", Tool: "run_command", Input: "line-1"},
+	})
+	m = m.FocusPrev()
+	open, _ := m.FocusedText()
+	closed, _ := m.ToggleFocused()
+	shut, _ := closed.FocusedText()
+	if open != shut {
+		t.Errorf("copied text changed with the collapse state:\nopen:   %q\nclosed: %q", open, shut)
+	}
+	if strings.HasPrefix(open, "v ") || strings.HasPrefix(open, "> ") {
+		t.Errorf("copied text leaked the collapse marker: %q", open)
 	}
 }
 
@@ -291,6 +366,106 @@ func TestToggleReasoning(t *testing.T) {
 	m = m.ToggleReasoning()
 	if m.ReasoningHidden() {
 		t.Error("the second press did not show reasoning again")
+	}
+}
+
+// TestSetAllCollapsedNormalizesReasoningToAConsistentState pins that the
+// global expand-all/collapse-all keys (IDExpandAll/IDCollapseAll) leave
+// every reasoning block in the SAME state, not a mix that depends on
+// which blocks a reader had individually cycled to the third (full-text)
+// state (C1) before pressing the global key: a blanket "expand all" must
+// not silently reveal one block's full text while every sibling opens to
+// the windowed state, and a blanket "collapse all" must not leave a
+// stale Expanded=true sitting behind a Collapsed block for a later
+// expand-all to surface.
+func TestSetAllCollapsedNormalizesReasoningToAConsistentState(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{
+		{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: false, Expanded: true, Body: []string{"a"}},
+		{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true, Expanded: false, Body: []string{"b"}},
+	}
+
+	expanded := m.SetAllCollapsed(false)
+	for i, b := range expanded.Blocks() {
+		if b.Collapsed {
+			t.Errorf("block %d: want Collapsed=false after expand-all", i)
+		}
+		if b.Expanded {
+			t.Errorf("block %d: want Expanded=false after expand-all (windowed, not a leaked full-text state)", i)
+		}
+	}
+
+	collapsed := expanded.SetAllCollapsed(true)
+	for i, b := range collapsed.Blocks() {
+		if !b.Collapsed {
+			t.Errorf("block %d: want Collapsed=true after collapse-all", i)
+		}
+		if b.Expanded {
+			t.Errorf("block %d: want Expanded=false after collapse-all, not left stale for the next expand-all", i)
+		}
+	}
+}
+
+// TestReasoningToggleFocusedCyclesThreeStates pins C1's three-state
+// toggle path (space/enter on the focused block, ToggleFocused):
+// collapsed (only the "Thought for Xs" summary) -> windowed (the last
+// CollapseThresholdLines lines) -> full text -> back to collapsed.
+func TestReasoningToggleFocusedCyclesThreeStates(t *testing.T) {
+	body := make([]string, uikitconfig.CollapseThresholdLines+5)
+	for i := range body {
+		body[i] = fmt.Sprintf("line %d", i+1)
+	}
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true, Body: body}}
+	m = m.FocusPrev()
+
+	if !m.blocks[0].Collapsed || m.blocks[0].Expanded {
+		t.Fatalf("reasoning must start collapsed with Expanded=false, got Collapsed=%v Expanded=%v",
+			m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+
+	m, ok := m.ToggleFocused()
+	if !ok || m.blocks[0].Collapsed || m.blocks[0].Expanded {
+		t.Fatalf("first toggle: want the windowed state (Collapsed=false, Expanded=false), got ok=%v Collapsed=%v Expanded=%v",
+			ok, m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+
+	m, ok = m.ToggleFocused()
+	if !ok || m.blocks[0].Collapsed || !m.blocks[0].Expanded {
+		t.Fatalf("second toggle: want the full-text state (Collapsed=false, Expanded=true), got ok=%v Collapsed=%v Expanded=%v",
+			ok, m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+
+	m, ok = m.ToggleFocused()
+	if !ok || !m.blocks[0].Collapsed || m.blocks[0].Expanded {
+		t.Fatalf("third toggle: want back to collapsed (Collapsed=true, Expanded=false), got ok=%v Collapsed=%v Expanded=%v",
+			ok, m.blocks[0].Collapsed, m.blocks[0].Expanded)
+	}
+}
+
+// TestToggleReasoningHidesEveryReasoningBlockRegardlessOfExpanded pins
+// that ctrl+r's global hide (ToggleReasoning) still collapses a
+// reasoning block down to its one-line summary even when a reader had
+// fully expanded it (C1's third state) - Collapsed always wins over
+// Expanded when both are consulted at render time.
+func TestToggleReasoningHidesEveryReasoningBlockRegardlessOfExpanded(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{
+		Kind: uievent.KindReasoning, Collapsible: true,
+		Collapsed: false, Expanded: true, Body: []string{"the full reasoning text"},
+	}}
+
+	m = m.ToggleReasoning()
+
+	if !m.blocks[0].Collapsed {
+		t.Error("ctrl+r must collapse a reasoning block even when it was fully expanded")
+	}
+	rendered := m.blocks[0].Render(loadTheme(t), theme.TierASCII, 80)
+	if strings.Contains(rendered, "the full reasoning text") {
+		t.Errorf("a collapsed reasoning block must show only its summary line, got:\n%s", rendered)
 	}
 }
 
@@ -336,5 +511,250 @@ func TestFocusedText_DiffBlockHeaderPlain(t *testing.T) {
 	}
 	if !strings.Contains(text, "search_replace") || !strings.Contains(text, "foo.go") {
 		t.Errorf("expected tool label and detail in FocusedText(), got %q", text)
+	}
+}
+
+// diffSample is a two-line hunk wide enough that unified and split
+// renders visibly differ - used by every ToggleFocusedDiffSplit test.
+func diffSample() *uievent.Diff {
+	return &uievent.Diff{Path: "file.go", Hunks: []uievent.DiffHunk{{
+		Header: "@@ -1,1 +1,1 @@",
+		Lines: []uievent.DiffLine{
+			{Kind: uievent.DiffLineDel, Text: "old line"},
+			{Kind: uievent.DiffLineAdd, Text: "new line"},
+		},
+	}}}
+}
+
+// modelWithFocusedDiff builds a measured model holding one focused
+// tool.end block that carries diffSample(), at the given width.
+func modelWithFocusedDiff(t *testing.T, width int) Model {
+	t.Helper()
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(width, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit", OK: true, Diff: diffSample()}})
+	m.blocks[0].Collapsed = false
+	m.focus = 0
+	return m
+}
+
+// TestToggleFocusedDiffSplitRoundTrip pins C8's toggle: pressing "s"
+// twice on a wide-enough focused diff block returns to unified, and the
+// FIRST press actually rendered split - not just flipped a flag no one
+// reads.
+func TestToggleFocusedDiffSplitRoundTrip(t *testing.T) {
+	m := modelWithFocusedDiff(t, 160)
+	unified := strings.Join(m.blocks[0].Body, "\n")
+	if strings.Contains(unified, "│") {
+		t.Fatalf("a freshly pushed diff block must start unified, got a column divider: %q", unified)
+	}
+
+	m, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	if !m.blocks[0].DiffSplit {
+		t.Error("DiffSplit did not flip to true")
+	}
+	split := strings.Join(m.blocks[0].Body, "\n")
+	if !strings.Contains(split, "│") {
+		t.Errorf("split render carries no column divider: %q", split)
+	}
+	if split == unified {
+		t.Error("toggling split did not change the rendered body at all")
+	}
+
+	m, ok = m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the second toggle to succeed")
+	}
+	if m.blocks[0].DiffSplit {
+		t.Error("DiffSplit did not flip back to false")
+	}
+	backToUnified := strings.Join(m.blocks[0].Body, "\n")
+	if backToUnified != unified {
+		t.Errorf("round trip did not restore the original unified render\n got  %q\n want %q", backToUnified, unified)
+	}
+}
+
+// TestToggleFocusedDiffSplitRefusedBelowMinWidth pins the refusal: the
+// toggle is a documented no-op - false, no state change - under
+// render.MinSplitDiffWidth, not a silent split at an illegible width.
+func TestToggleFocusedDiffSplitRefusedBelowMinWidth(t *testing.T) {
+	m := modelWithFocusedDiff(t, render.MinSplitDiffWidth-1)
+	before := m.blocks[0].DiffSplit
+	beforeBody := strings.Join(m.blocks[0].Body, "\n")
+
+	next, ok := m.ToggleFocusedDiffSplit()
+	if ok {
+		t.Fatal("expected the toggle to be refused below MinSplitDiffWidth")
+	}
+	if next.blocks[0].DiffSplit != before {
+		t.Error("a refused toggle must not change DiffSplit")
+	}
+	if strings.Join(next.blocks[0].Body, "\n") != beforeBody {
+		t.Error("a refused toggle must not change the rendered body")
+	}
+}
+
+// TestToggleFocusedDiffSplitRefusedWithoutFocusOrDiff pins the other two
+// refusal conditions: nothing focused, and a focused block with no diff.
+func TestToggleFocusedDiffSplitRefusedWithoutFocusOrDiff(t *testing.T) {
+	t.Run("nothing focused", func(t *testing.T) {
+		m := focused(t, 2)
+		m.SetSize(160, 40)
+		if _, ok := m.ToggleFocusedDiffSplit(); ok {
+			t.Error("expected refusal with no block focused")
+		}
+	})
+	t.Run("focused block has no diff", func(t *testing.T) {
+		m := focused(t, 2)
+		m.SetSize(160, 40)
+		m = m.FocusPrev()
+		if _, ok := m.ToggleFocusedDiffSplit(); ok {
+			t.Error("expected refusal on a focused block with no diff")
+		}
+	})
+}
+
+// TestToggleFocusedDiffSplitRefusedInTheContentWidthDeadZone pins a real
+// bug found by bug-audit: ToggleFocusedDiffSplit checked the raw
+// viewport width against render.MinSplitDiffWidth, but restyle (the
+// path this toggle calls) renders the diff at
+// m.width-groupIndent-uikitconfig.BodyIndent (6 columns narrower). A
+// viewport width in [120,125] passed the raw check while the actual
+// render width [114,119] was still below MinSplitDiffWidth -
+// DiffSplit flipped true and the toggle reported success, but the
+// rendered Body stayed unified: state and render disagreed, and a
+// LATER unrelated resize could silently flip the render to split with
+// no further key press.
+func TestToggleFocusedDiffSplitRefusedInTheContentWidthDeadZone(t *testing.T) {
+	for width := render.MinSplitDiffWidth; width < render.MinSplitDiffWidth+groupIndent+uikitconfig.BodyIndent; width++ {
+		m := modelWithFocusedDiff(t, width)
+		beforeBody := strings.Join(m.blocks[0].Body, "\n")
+
+		next, ok := m.ToggleFocusedDiffSplit()
+		if ok {
+			t.Errorf("width %d: expected refusal (render width %d < MinSplitDiffWidth %d), but the toggle succeeded",
+				width, width-groupIndent-uikitconfig.BodyIndent, render.MinSplitDiffWidth)
+		}
+		if next.blocks[0].DiffSplit {
+			t.Errorf("width %d: DiffSplit flipped true even though the toggle was refused", width)
+		}
+		if strings.Join(next.blocks[0].Body, "\n") != beforeBody {
+			t.Errorf("width %d: Body changed even though the toggle was refused", width)
+		}
+	}
+}
+
+// TestToggleFocusedDiffSplitReanchorsTheViewport pins a real bug found
+// by bug-audit: every OTHER height-changing mutator in this file
+// (ToggleFocused, toggleReasoningFocused, SetAllCollapsed) ends by
+// calling ScrollToFocus/clampOffset, because changing a block's height
+// shifts every row below it - without re-anchoring, a transcript
+// following the tail stops following, or a fixed offset now points
+// into the wrong content. ToggleFocusedDiffSplit changes a block's
+// rendered row count (split and unified pack a hunk into a different
+// number of lines) but returned with neither call.
+func TestToggleFocusedDiffSplitReanchorsTheViewport(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	// Small height and several prior blocks: the transcript is already
+	// scrolled, following the tail, so a height change that is not
+	// re-anchored is observable as "stopped following".
+	m.SetSize(160, 6)
+	for i := 0; i < 5; i++ {
+		m, _ = m.HandleEvent(noticeEvent("n" + string(rune('a'+i))))
+	}
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit", OK: true, Diff: diffSample()}})
+	m.blocks[len(m.blocks)-1].Collapsed = false
+
+	if !m.Following() {
+		t.Fatal("precondition: expected the transcript to be following the tail")
+	}
+	m.focus = len(m.blocks) - 1
+
+	next, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	// Following() alone does not prove this: it is a FLAG that only
+	// clampOffset/ScrollToFocus consult to decide whether to advance
+	// m.offset, not something Rows() re-derives at render time. The
+	// real invariant every sibling mutator keeps is offset==maxOffset
+	// while following - checked directly, in-package, since neither is
+	// exported.
+	if !next.follow {
+		t.Errorf("toggling the focused diff block's split view cleared the follow flag")
+	}
+	if next.offset != next.maxOffset() {
+		t.Errorf("offset (%d) does not track the tail (maxOffset %d) after the toggle changed the block's height - the viewport was not re-anchored",
+			next.offset, next.maxOffset())
+	}
+}
+
+// TestToggleFocusedDiffSplitDoesNotCorruptTheBody pins a real bug found
+// alongside the viewport re-anchor issue: restyle's diff branch used to
+// infer where the diff's own rendered lines began in Body by comparing
+// the OLD and NEW render lengths (replaceDiffTail). Unified and split
+// do not render a balanced hunk to the same row count, so toggling
+// DiffSplit exposed the inference as wrong - it kept a stale line of
+// the OLD render, or duplicated the hunk header, depending on which
+// direction the length changed. block.go's DiffBodyPrefixLen field
+// fixes this by tracking the true split point instead of inferring it.
+func TestToggleFocusedDiffSplitDoesNotCorruptTheBody(t *testing.T) {
+	m := modelWithFocusedDiff(t, 160)
+	next, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	body := next.blocks[0].Body
+	headers := 0
+	for _, line := range body {
+		if strings.Contains(ansi.Strip(line), "@@") {
+			headers++
+		}
+	}
+	if headers != 1 {
+		t.Errorf("got %d hunk headers after toggling to split, want exactly 1 - the render is corrupted: %q", headers, body)
+	}
+	// The one-shot render of the same diff, at the same split state, is
+	// the ground truth for what a correct rebuild must equal.
+	want := render.FormatDiffLines(next.Theme, next.Tier, next.diffContentWidth(), *diffSample(), true)
+	if strings.Join(body, "\n") != strings.Join(want, "\n") {
+		t.Errorf("toggled body does not match a one-shot split render\n got  %q\n want %q", body, want)
+	}
+}
+
+// TestToggleFocusedDiffSplitPreservesOutputAboveTheDiff pins the other
+// half of the DiffBodyPrefixLen contract: a tool call that printed
+// output before its diff (handleToolEnd's live-merge path) must keep
+// that output when the diff portion below it is rebuilt for a toggle,
+// the same guarantee TestSetThemeKeepsToolOutputAboveTheDiff already
+// pins for a theme change.
+func TestToggleFocusedDiffSplitPreservesOutputAboveTheDiff(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(160, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit_file"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "c1", Chunk: "scanning up.go\n"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit_file", OK: true, Diff: diffSample()}})
+	m.blocks[0].Collapsed = false
+	m.focus = 0
+
+	next, ok := m.ToggleFocusedDiffSplit()
+	if !ok {
+		t.Fatal("expected the toggle to succeed at width 160")
+	}
+	joined := strings.Join(next.blocks[0].Body, "\n")
+	if !strings.Contains(joined, "scanning up.go") {
+		t.Errorf("toggling split lost the tool output that preceded the diff: %q", joined)
 	}
 }

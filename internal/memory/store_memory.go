@@ -66,13 +66,40 @@ func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 	if e.Scope == ScopeOrg {
 		rows = &s.org
 	}
-	for _, row := range *rows {
+	bestIdx := -1
+	bestSim := -1.0
+	for i, row := range *rows {
 		// Defense-in-depth: the id is already org-namespaced, but the
 		// dedup loop also requires the row to belong to the same org so a
 		// stale or cross-org row can never answer another org's save.
-		if row.id == id && row.org == org {
-			return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
+		if row.org == org && (row.id == id || EntriesMergeable(row.e, e)) {
+			sim := EntrySimilarity(row.e, e)
+			if row.id == id {
+				sim = 1.0
+			}
+			if bestIdx < 0 || sim > bestSim {
+				bestSim = sim
+				bestIdx = i
+			}
 		}
+	}
+	if bestIdx >= 0 {
+		row := (*rows)[bestIdx]
+		merged, mergeTruncated := MergeEntries(row.e, e)
+		var clampTruncated []string
+		merged, clampTruncated = merged.ClampWithReport()
+		truncated := append(mergeTruncated, clampTruncated...)
+		if merged.Verdict == "" {
+			merged.Verdict = VerdictGood
+		}
+		if merged.Created == "" {
+			merged.Created = time.Now().Format("2006-01-02")
+		}
+		if err := merged.Validate(s.cfg.limits()); err == nil {
+			(*rows)[bestIdx].e = merged
+			return Result{ID: row.id, Scope: e.Scope, Org: org, Title: merged.Title, Verdict: merged.Verdict, Tags: append([]string(nil), merged.Tags...), Created: merged.Created, Snippet: merged.Summary, Truncated: truncated}, nil
+		}
+		// If merged fails validation, skip merging into this entry and fall through to append
 	}
 	if len(*rows) >= s.cfg.MaxEntries {
 		return Result{}, fmt.Errorf("memory store is full (max_entries=%d); consolidate or raise [memory] max_entries", s.cfg.MaxEntries)

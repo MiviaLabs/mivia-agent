@@ -16,6 +16,15 @@ func (s *Session) contextCatalogState() (contextstate.SessionCatalog, contextsta
 	return catalog, s.contextPrincipal, ok && s.contextEnabledLocked()
 }
 
+// turnJournalState mirrors contextCatalogState for the optional crash-
+// forensic turn journal (internal/chat/turn_journal.go).
+func (s *Session) turnJournalState() (contextstate.TurnJournal, contextstate.Principal, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	journal, ok := s.contextStore.(contextstate.TurnJournal)
+	return journal, s.contextPrincipal, ok && s.contextEnabledLocked()
+}
+
 // catalogMessages builds the canonical payload that lands in the context
 // catalog's chat_sessions row. It is durable, operator-visible state, so
 // assistant ReasoningContent is redacted on the copy before marshaling while

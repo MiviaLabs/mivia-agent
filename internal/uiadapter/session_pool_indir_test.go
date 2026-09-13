@@ -796,3 +796,70 @@ func TestInDir_BindWithoutARootKeepsTheDirParameter(t *testing.T) {
 		t.Errorf("tools scoped to %s, want the dir parameter %s", got, want)
 	}
 }
+
+// TestInDir_BackgroundSpawnDoesNotClobberForegroundNotice pins the fix for
+// the false "same lock acquisition" claim on createFreshInDirLocking: a
+// background spawn's own adoptWorktreeToolsLocked call releases p.mu
+// around its registry build, so a foreground CreateFreshInDir can run to
+// completion - including publishing its OWN real tool-scope notice -
+// entirely inside that unlocked window. Sequencing is deterministic
+// (channel-gated), not timing-based: the background build is held open
+// until AFTER the foreground call has published and returned, so if the
+// background spawn's notice-suppression ever clears the slot
+// unconditionally, it destroys the foreground's real notice before this
+// test ever drains it.
+func TestInDir_BackgroundSpawnDoesNotClobberForegroundNotice(t *testing.T) {
+	stubWorkflowWiring(t)
+	rootA := t.TempDir()
+	pool, _, _ := newPoolAtRoot(t, rootA)
+	t.Cleanup(pool.CloseAll)
+
+	inBuild := make(chan struct{})
+	releaseBuild := make(chan struct{})
+	prevHook := cliagents.BuildToolsForRootHookForTest
+	cliagents.BuildToolsForRootHookForTest = func(string, string, bool, *config.Resolved) (*tools.Registry, func(), error) {
+		close(inBuild)
+		<-releaseBuild
+		return tools.NewRegistry(), func() {}, nil
+	}
+	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prevHook })
+
+	bgWt := otherRoot(t, t.TempDir())
+	bgDone := make(chan error, 1)
+	go func() {
+		_, err := pool.CreateFreshBackgroundInDir(nil, bgWt)
+		bgDone <- err
+	}()
+
+	select {
+	case <-inBuild:
+		// The background spawn is now unlocked, sitting inside the
+		// registry build.
+	case <-time.After(10 * time.Second):
+		close(releaseBuild)
+		t.Fatal("background spawn never reached the registry build")
+	}
+
+	// Foreground call while the background spawn is unlocked mid-build:
+	// a relative dir fails canonicalization, so this publishes a REAL
+	// tool-scope notice fast, without ever touching the blocked hook.
+	if _, err := pool.CreateFreshInDir(nil, "relative/dir"); err != nil {
+		t.Fatalf("foreground CreateFreshInDir: %v", err)
+	}
+
+	// Only now let the background spawn finish and (on the unfixed code)
+	// unconditionally clear the notice slot the foreground call just
+	// published into.
+	close(releaseBuild)
+	if err := <-bgDone; err != nil {
+		t.Fatalf("background CreateFreshBackgroundInDir: %v", err)
+	}
+
+	got := pool.takeToolScopeNotice()
+	if got == "" {
+		t.Fatal("background spawn clobbered the foreground's real tool-scope notice")
+	}
+	if !strings.Contains(got, toolScopeNotResolved) {
+		t.Fatalf("notice = %q, want %q fragment", got, toolScopeNotResolved)
+	}
+}

@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 func TestBlockHeightCountsHeaderAndBody(t *testing.T) {
@@ -34,6 +36,61 @@ func TestBlockHeightCountsHeaderAndBody(t *testing.T) {
 	}
 }
 
+// TestReasoningThreeStatesHeightRenderAgreement pins C1's collapsed /
+// windowed / full-text states: Height and Render must count the same
+// number of rows at every state (the invariant every other block kind
+// already keeps - see TestToolCardHintRow), the collapsed row is exactly
+// the "Thought for Xs" summary and nothing else, the windowed state
+// shows only the last CollapseThresholdLines lines, and the expanded
+// state shows the whole body.
+func TestReasoningThreeStatesHeightRenderAgreement(t *testing.T) {
+	th := loadTheme(t)
+	n := uikitconfig.CollapseThresholdLines + 5
+	body := make([]string, n)
+	for i := range body {
+		body[i] = fmt.Sprintf("line %d", i+1)
+	}
+	base := Block{Kind: uievent.KindReasoning, Collapsible: true, Body: body, ElapsedMS: 4100}
+
+	collapsed := base
+	collapsed.Collapsed = true
+	windowed := base
+	windowed.Collapsed, windowed.Expanded = false, false
+	expanded := base
+	expanded.Collapsed, expanded.Expanded = false, true
+
+	for name, b := range map[string]Block{"collapsed": collapsed, "windowed": windowed, "expanded": expanded} {
+		rows := strings.Split(ansi.Strip(b.Render(th, theme.TierASCII, 80)), "\n")
+		if got, want := len(rows), b.Height(80); got != want {
+			t.Errorf("%s: Height=%d, Render produced %d rows:\n%s", name, want, got, strings.Join(rows, "\n"))
+		}
+	}
+
+	collapsedRows := strings.Split(ansi.Strip(collapsed.Render(th, theme.TierASCII, 80)), "\n")
+	if len(collapsedRows) != 1 || collapsedRows[0] != "Thought for 4.1s" {
+		t.Errorf("collapsed reasoning rows = %q, want exactly one row \"Thought for 4.1s\"", collapsedRows)
+	}
+
+	hasTrimmedLine := func(rendered, line string) bool {
+		for _, row := range strings.Split(ansi.Strip(rendered), "\n") {
+			if strings.TrimSpace(row) == line {
+				return true
+			}
+		}
+		return false
+	}
+
+	windowedText := windowed.Render(th, theme.TierASCII, 80)
+	if hasTrimmedLine(windowedText, "line 1") || !hasTrimmedLine(windowedText, fmt.Sprintf("line %d", n)) {
+		t.Errorf("windowed reasoning must show only the last %d lines, got:\n%s", uikitconfig.CollapseThresholdLines, ansi.Strip(windowedText))
+	}
+
+	expandedText := expanded.Render(th, theme.TierASCII, 80)
+	if !hasTrimmedLine(expandedText, "line 1") || !hasTrimmedLine(expandedText, fmt.Sprintf("line %d", n)) {
+		t.Errorf("expanded reasoning must show the full body, got:\n%s", ansi.Strip(expandedText))
+	}
+}
+
 func TestCollapseMarker(t *testing.T) {
 	cases := []struct {
 		name string
@@ -53,55 +110,45 @@ func TestCollapseMarker(t *testing.T) {
 	}
 }
 
-// TestCollapsedHeaderStatesItsMagnitude pins transcript-polish.md R3: a
-// collapsed block with a body says what expanding costs - the meta column
-// gains "… +N lines" for the N hidden logical body lines - and the
-// expanded header says nothing of the kind. The hint must appear on BOTH
-// the focused and the unfocused header: renderHeader builds one spec, and
-// a hint that only the unfocused path carries would make the column set
-// jump when the block takes focus.
-func TestCollapsedHeaderStatesItsMagnitude(t *testing.T) {
+// TestCollapsedHeaderCarriesNoMagnitudeHint pins the C4 replacement for
+// ux-rules.md 11.5: the "… +N lines" magnitude hint used to live
+// in the header's meta column; it now lives on the tool card's own hint
+// row instead (block_test.go's TestToolCardHintRow), so a plain
+// collapsible block's header - the case here has Kind unset, so it is
+// NOT a tool block and never grows a card - states no magnitude at all,
+// collapsed or not, focused or not.
+func TestCollapsedHeaderCarriesNoMagnitudeHint(t *testing.T) {
 	th := loadTheme(t)
 	body := make([]string, 20)
 	for i := range body {
 		body[i] = "row"
 	}
 	base := Block{
-		Header:      Header{Label: "run_command", Detail: "go test ./...", Meta: "4.1s", State: "ok"},
+		Header:      Header{Label: "plan", Meta: "2 of 4"},
 		Body:        body,
 		Collapsible: true,
 	}
-	openHeader := ansi.Strip(strings.SplitN(base.Render(th, theme.TierASCII, 80), "\n", 2)[0])
-	if strings.Contains(openHeader, "…") {
-		t.Errorf("the expanded header states a magnitude: %q", openHeader)
-	}
-
-	closed := base
-	closed.Collapsed = true
-	closedHeader := ansi.Strip(strings.SplitN(closed.Render(th, theme.TierASCII, 80), "\n", 2)[0])
-	if want := "4.1s  … +20 lines"; !strings.Contains(closedHeader, want) {
-		t.Errorf("collapsed header meta = %q, want it to carry %q", closedHeader, want)
-	}
-
-	focused := closed
-	focused.Focused = true
-	focusedHeader := ansi.Strip(strings.SplitN(focused.Render(th, theme.TierASCII, 80), "\n", 2)[0])
-	if want := "4.1s  … +20 lines"; !strings.Contains(focusedHeader, want) {
-		t.Errorf("focused collapsed header = %q, want it to carry %q", focusedHeader, want)
-	}
-
-	// A meta-less header takes the hint as its whole meta column.
-	bare := Block{Header: Header{Label: "plan"}, Body: body, Collapsible: true, Collapsed: true}
-	bareHeader := ansi.Strip(strings.SplitN(bare.Render(th, theme.TierASCII, 80), "\n", 2)[0])
-	if !strings.Contains(bareHeader, "plan  … +20 lines") {
-		t.Errorf("meta-less collapsed header = %q, want %q", bareHeader, "plan  … +20 lines")
+	for _, tc := range []struct {
+		name string
+		b    Block
+	}{
+		{"open", base},
+		{"closed", func() Block { b := base; b.Collapsed = true; return b }()},
+		{"focused closed", func() Block { b := base; b.Collapsed, b.Focused = true, true; return b }()},
+	} {
+		header := ansi.Strip(strings.SplitN(tc.b.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+		if strings.Contains(header, "…") {
+			t.Errorf("%s: header states a magnitude it no longer owns: %q", tc.name, header)
+		}
 	}
 }
 
 // TestCollapsedHeaderStaysOneRowAtNarrowWidth pins the header one-row
-// guarantee against the widened meta: at 40 columns the extended meta
-// ("… +20 lines") must survive, the detail must clip first (marked with
-// the shared ClipMarker), and the row must not wrap.
+// guarantee for a non-tool collapsible block: at 40 columns the detail
+// clips first (marked with the shared ClipMarker) and the row never
+// wraps. This block's Kind is unset, so it is not a tool block and
+// stays fully hidden when collapsed (see TestToolCardHintRow for the
+// windowed-card contract).
 func TestCollapsedHeaderStaysOneRowAtNarrowWidth(t *testing.T) {
 	th := loadTheme(t)
 	body := make([]string, 20)
@@ -124,11 +171,50 @@ func TestCollapsedHeaderStaysOneRowAtNarrowWidth(t *testing.T) {
 		t.Errorf("collapsed header is %d columns at width 40: %q", w, rows[0])
 	}
 	plain := ansi.Strip(rows[0])
-	if !strings.Contains(plain, "… +20 lines") {
-		t.Errorf("the magnitude hint must survive the clip, got %q", plain)
-	}
 	if !strings.Contains(plain, uikitconfig.ClipMarker) {
 		t.Errorf("the detail must clip before the meta, got %q", plain)
+	}
+}
+
+// TestToolCardHintRow pins C4's card shape for a tool block: a blank
+// separator row after the header, the body windowed to
+// CollapseThresholdLines while collapsed, and a trailing hint row that
+// states the hidden count - plus "space to expand" only when the block
+// is focused. headerMeta carries none of this any more
+// (TestCollapsedHeaderCarriesNoMagnitudeHint).
+func TestToolCardHintRow(t *testing.T) {
+	th := loadTheme(t)
+	body := make([]string, uikitconfig.CollapseThresholdLines+4)
+	for i := range body {
+		body[i] = fmt.Sprintf("row-%d", i)
+	}
+	b := Block{
+		Kind:        uievent.KindToolEnd,
+		Header:      Header{Label: "run_command", Detail: "go test ./...", Meta: "4.1s", Role: theme.RoleSuccess},
+		Body:        body,
+		Collapsible: true,
+		Collapsed:   true,
+	}
+	rows := strings.Split(ansi.Strip(b.Render(th, theme.TierASCII, 80)), "\n")
+	wantHidden := len(body) - uikitconfig.CollapseThresholdLines
+	wantHint := fmt.Sprintf("… %d more lines", wantHidden)
+	last := rows[len(rows)-1]
+	if !strings.HasSuffix(last, wantHint) {
+		t.Errorf("unfocused hint row = %q, want it to end with %q", last, wantHint)
+	}
+	if rows[1] != "" {
+		t.Errorf("row after the header = %q, want the blank card separator", rows[1])
+	}
+	if got := len(rows); got != 1+1+uikitconfig.CollapseThresholdLines+1 {
+		t.Errorf("card rows = %d, want header+blank+window+hint = %d", got, 1+1+uikitconfig.CollapseThresholdLines+1)
+	}
+
+	focused := b
+	focused.Focused = true
+	focusedRows := strings.Split(ansi.Strip(focused.Render(th, theme.TierASCII, 80)), "\n")
+	wantFocusedHint := wantHint + "  space to expand"
+	if got := focusedRows[len(focusedRows)-1]; !strings.HasSuffix(got, wantFocusedHint) {
+		t.Errorf("focused hint row = %q, want it to end with %q", got, wantFocusedHint)
 	}
 }
 
@@ -151,14 +237,14 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 	// The resting body of an unfocused, non-failed block carries no
 	// glyph in columns 1 to 4 at all: wireframes-panes.md section 2,
 	// "Nothing is drawn in columns 1 to 4 of a body line"
-	// (transcript-polish.md R4).
+	// (ux-rules.md 11.6).
 	want := "    line"
 	if rows[1] != want {
 		t.Errorf("got %q, want %q", rows[1], want)
 	}
 }
 
-// TestRailMarksOnlyFocusOrFailure pins transcript-polish.md R4: the "│ "
+// TestRailMarksOnlyFocusOrFailure pins ux-rules.md 11.6: the "│ "
 // body rail is reserved for the focused block and the failed block. The
 // column count is the same either way, so switching state must not shift
 // any body text.

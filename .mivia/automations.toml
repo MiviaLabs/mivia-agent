@@ -1,0 +1,17 @@
+[automations]
+[automations.test-id]
+id = 'test-id'
+name = 'Test Automation - Review'
+description = ''
+enabled = true
+worktree = 0
+base_ref = ''
+unattended = 'auto'
+
+[automations.test-id.trigger]
+kind = 0
+
+[[automations.test-id.steps]]
+kind = 'skill'
+ref = 'bug-audit scope of last 24h commits, validate findings and fix - tdd. commit your updates.'
+prompt = ''

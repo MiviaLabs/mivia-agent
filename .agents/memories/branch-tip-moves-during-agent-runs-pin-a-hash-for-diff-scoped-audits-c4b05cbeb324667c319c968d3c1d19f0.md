@@ -6,6 +6,7 @@ importance: medium
 x-scope: project
 x-verdict: neutral
 tags: [git, audits, parallel-sessions, dispatch]
+related: [diff_coverage_py_reads_committed_staged_blobs_not_the_working_tree_385a7d442c5857b8cfed502c9ed6a566, dispatch_tasks_must_name_an_agent_children_die_on_cumulative_token_cap_c6d9f683ce7a2dfcce668c98ce17fc19, prefer_fast_bug_audit_for_speed]
 updated: 2026-09-08
 ---
 

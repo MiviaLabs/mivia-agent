@@ -51,23 +51,75 @@ type Model struct {
 	// line is widest (ux-rules.md rule 2.7: moving chrome reflows the
 	// reading). 0 means unsized, for tests and non-terminal renders.
 	width int
+
+	// split is C8's toggle: false (the default) renders the diff
+	// preview unified, true renders it side-by-side. ToggleSplit is the
+	// only writer; diffLines reads it back through effectiveSplit,
+	// which also enforces the render.MinSplitDiffWidth floor so a
+	// resize below that width cannot leave a stale split request
+	// rendering illegibly.
+	split bool
 }
 
 // SetWidth records the terminal width so the box renders at a fixed size.
 // Call it on WindowSizeMsg, like the composer.
 //
-// It re-clamps the scroll offset, because the width DECIDES the line count: a
-// diff renders unified below render.MinSplitDiffWidth and split above it,
-// roughly halving the number of lines. Widening a scrolled prompt therefore
-// left the offset past the end of the new content, and View sliced backwards
-// and panicked - killing the process, and with it every queued prompt and
-// every tool-call goroutine waiting on one.
+// It re-clamps the scroll offset, because width can still change the line
+// count even though split no longer auto-follows it (C8: unified is the
+// default at every width; split is opt-in via ToggleSplit and still, on
+// its own, roughly halves the line count). Narrowing below
+// render.MinSplitDiffWidth while split is on falls back to unified
+// THROUGH effectiveSplit, with no explicit toggle - so a resize alone
+// can change diffTotal(). Widening (or narrowing) a scrolled prompt
+// without this re-clamp left the offset past the end of the new
+// content, and View sliced backwards and panicked - killing the
+// process, and with it every queued prompt and every tool-call
+// goroutine waiting on one.
 //
 // Reached from Screen.reflow, so it fires on every terminal resize AND every
 // files-panel toggle, not only at startup.
 func (m *Model) SetWidth(w int) {
 	m.width = w
 	m.clampOffset()
+}
+
+// ToggleSplit flips unified/split rendering of the diff preview (C8,
+// "t" in ContextApproval). It is a no-op - the returned Model is
+// unchanged in every observable way - below render.MinSplitDiffWidth:
+// pressing the key at a narrow terminal does nothing, rather than
+// arming a request that effectiveSplit would refuse anyway, so
+// Height()/View() never observe a "toggled but still unified" state
+// that could confuse a caller checking m.split directly.
+func (m Model) ToggleSplit() Model {
+	if m.diffContentWidth() < render.MinSplitDiffWidth {
+		return m
+	}
+	m.split = !m.split
+	m.clampOffset()
+	return m
+}
+
+// diffContentWidth is the width the diff preview actually renders at -
+// m.width less the border's four columns (two edges, one padding
+// column each side; diffLines and the hint's clip both use the same
+// subtraction). Every width check in this file - ToggleSplit's
+// refusal, effectiveSplit, and the hint row - must use THIS width, not
+// the raw terminal width: checking the raw width let a 120-column
+// terminal toggle split "on" while diffLines' own MinSplitDiffWidth
+// floor, applied to the already-narrower content width, refused to
+// render it - the hint said "t unified" (split active) while the box
+// stayed unified underneath it.
+func (m Model) diffContentWidth() int { return m.width - 4 }
+
+// effectiveSplit is what diffLines actually renders with: split only
+// when both the toggle is on AND the current content width supports
+// it. Kept separate from the raw split field so a narrow-then-wide
+// resize restores the reader's last choice instead of forgetting it
+// (compare FormatDiffLines' own width floor, enforced again there for
+// the same reason: two independent call sites, one invariant, checked
+// at both).
+func (m Model) effectiveSplit() bool {
+	return m.split && m.diffContentWidth() >= render.MinSplitDiffWidth
 }
 
 // clampOffset holds the scroll offset inside the content the CURRENT width
@@ -227,34 +279,32 @@ func (m Model) View() string {
 	if m.head() == nil {
 		return ""
 	}
-	// Every chrome row is clipped to the wrap width before it enters the
-	// box: lipgloss wraps a row that does not fit, and a wrapped row is a
-	// row Height() does not claim - the box would push into the composer.
-	// The title is the realistic breaker (a long command's arguments).
-	clip := func(s string) string {
-		if m.width > 4 {
-			return ansi.Truncate(s, m.width-4, "")
-		}
-		return s
-	}
-	label, folded := m.borderLabel()
+	label := m.borderLabel()
 	// The hint states the complete truth for this state: every key listed
 	// works, and no key that works is omitted. The scroll keys live in the
 	// keymap's approval context; they are absent here because this line
 	// names decision keys only - scrolling has its own position row.
-	hint := clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
-		"o once    a always    d deny    D deny always"))
+	// "t" (C8) is appended ONLY when it would actually do something:
+	// there is a diff to toggle, and the terminal is wide enough that
+	// toggling it is not an immediate no-op (ux-rules 1.4 - never
+	// advertise a key that does nothing right now).
+	hintText := "o once    a always    d deny    D deny always"
+	if m.head().Diff != nil && m.diffContentWidth() >= render.MinSplitDiffWidth {
+		if m.split {
+			hintText += "    t unified"
+		} else {
+			hintText += "    t split"
+		}
+	}
+	hint := m.clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(hintText))
 	var body string
-	if !folded {
-		// The action did not fit the border row, so it stays where it has
-		// always been. Dropping it would hide WHAT is being approved.
-		body = clip(render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).
-			Render("approve "+m.action())) + "\n"
+	for _, row := range m.headerRows() {
+		body += row + "\n"
 	}
 	if diff := m.diffWindow(); len(diff) > 0 {
 		body += strings.Join(diff, "\n") + "\n"
 		if m.scrollable() {
-			body += clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
+			body += m.clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 				fmt.Sprintf("lines %d-%d of %d  up/down:scroll",
 					m.offset+1, m.offset+len(diff), m.diffTotal()))) + "\n"
 		}
@@ -272,46 +322,72 @@ func (m Model) View() string {
 	return render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleWarning, inner, body, label)
 }
 
-// action names what this request would do: the tool and its arguments.
-func (m Model) action() string {
-	if m.head() == nil {
-		return ""
+// clip truncates a chrome row to the wrap width before it enters the
+// box: lipgloss wraps a row that does not fit, and a wrapped row is a
+// row Height() does not claim - the box would push into the composer.
+func (m Model) clip(s string) string {
+	if m.width > 4 {
+		return ansi.Truncate(s, m.width-4, "")
 	}
-	h := m.head()
-	return strings.TrimSpace(h.Name + " " + render.FormatToolDetail(h.Name, h.Args))
+	return s
 }
 
-// borderLabel is the text of the top border row, and whether the action
-// went into it.
+// headerRows is the "Tool" row, then the "Command"/"File"/"Path" row
+// when the call's args name one (C11), as aligned "Label  value" lines
+// above the diff preview. Labels right-pad to the widest label present
+// so the values line up in a column, matching the status hints' own
+// key/label styling: the label muted, the value plain.
 //
-// The state badge always rides there. The action joins it when the row
-// can carry the pair whole - a truncated action would name the wrong
-// path or the wrong command, which is worse than putting it back in the
-// body. The second return is what View and Height agree on, so the row
-// count never depends on two separate readings of the same rule.
-func (m Model) borderLabel() (string, bool) {
+// This replaced the action folding into the border label (or, failing
+// that, a free-floating "approve <action>" line in the body): a reader
+// scanning several prompts in a row now finds the target at the same
+// column every time, rather than hunting a border row or a prose line
+// depending on how long the command happened to be.
+func (m Model) headerRows() []string {
+	h := m.head()
+	if h == nil {
+		return nil
+	}
+	type kv struct{ label, value string }
+	rows := []kv{{"Tool", h.Name}}
+	if label, value, ok := render.ApprovalDetailRow(h.Name, h.Args); ok {
+		rows = append(rows, kv{label, value})
+	}
+	labelWidth := 0
+	for _, r := range rows {
+		if w := ansi.StringWidth(r.label); w > labelWidth {
+			labelWidth = w
+		}
+	}
+	labelStyle := render.Role(m.Theme, m.Tier, theme.RoleFGMuted)
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		label := r.label + strings.Repeat(" ", labelWidth-ansi.StringWidth(r.label))
+		out[i] = m.clip(labelStyle.Render(label) + "  " + r.value)
+	}
+	return out
+}
+
+// borderLabel is the text of the top border row: the state badge and,
+// behind the head, how many more calls are waiting. The action used to
+// ride here (or fold into the body) - C11 moved it into headerRows
+// instead, so this row is now always the one fixed string below,
+// regardless of width or how long the action is.
+func (m Model) borderLabel() string {
 	badge := "⚠ Approval Required"
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
 		badge = "! Approval Required"
 	}
 	// The queue depth belongs here rather than on the hint row. The hint is
 	// clipped to the width and promises to name every key that works;
-	// appending to it would let a narrow terminal truncate a live key. The
-	// badge is already the part that survives the fold below.
+	// appending to it would let a narrow terminal truncate a live key.
 	if behind := m.Waiting() - 1; behind > 0 {
 		badge += fmt.Sprintf(" (%d more)", behind)
 	}
 	// Bracketed like the composer's own top-border hint: the two frames
 	// sit one above the other, and matching chrome is what makes the
 	// prompt read as part of the same surface rather than an alarm.
-	action := m.action()
-	if action == "" {
-		return "[ " + badge + " ]", true
-	}
-	if full := "[ " + badge + " - " + action + " ]"; render.HintFits(m.width, full) {
-		return full, true
-	}
-	return "[ " + badge + " ]", false
+	return "[ " + badge + " ]"
 }
 
 // ScrollBy moves the diff preview window by n lines and returns the
@@ -330,7 +406,7 @@ func (m Model) diffLines() []string {
 	if m.head() == nil || m.head().Diff == nil {
 		return nil
 	}
-	return render.FormatDiffLines(m.Theme, m.Tier, m.width-4, *m.head().Diff)
+	return render.FormatDiffLines(m.Theme, m.Tier, m.diffContentWidth(), *m.head().Diff, m.effectiveSplit())
 }
 
 // diffTotal is the full rendered line count of the pending diff.
@@ -395,9 +471,7 @@ func (m Model) Height() int {
 		return 0
 	}
 	rows := 1 // the decision-key hint
-	if _, folded := m.borderLabel(); !folded {
-		rows++ // the action, back in the body
-	}
+	rows += len(m.headerRows())
 	if n := m.windowHeight(); n > 0 {
 		rows += n
 		if m.scrollable() {

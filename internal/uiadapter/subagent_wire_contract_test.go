@@ -72,10 +72,13 @@ func contractWireMessages(toolCallsJSON []byte) []ports.Message {
 
 // wantContractToolCalls is what every row in the fixture must reconstruct to.
 // The incomplete tail row keeps its input but carries no output text.
+// OK is not carried on the frozen wire shape - the reconstruction derives it
+// from the output with ports.ToolCallOK (the shared classifier), so every
+// row here records true: none of the fixture outputs is an error body.
 var wantContractToolCalls = []ports.ToolCall{
-	{ID: "call_grep_01", Name: "grep", Arguments: `{"pattern":"func load"}`, Output: "3 matches in 2 files"},
-	{ID: "call_read_02", Name: "read"},
-	{ID: "call_bash_03", Name: "bash", Arguments: `{"cmd":"go build ./..."}`, Output: ""},
+	{ID: "call_grep_01", Name: "grep", Arguments: `{"pattern":"func load"}`, Output: "3 matches in 2 files", OK: true},
+	{ID: "call_read_02", Name: "read", OK: true},
+	{ID: "call_bash_03", Name: "bash", Arguments: `{"cmd":"go build ./..."}`, Output: "", OK: true},
 }
 
 // assertReconstruction runs PopulateFromToolCalls and checks the full

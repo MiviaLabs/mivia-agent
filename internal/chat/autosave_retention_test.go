@@ -56,6 +56,33 @@ func TestIsAutoSaveNameRejectsUserNames(t *testing.T) {
 	}
 }
 
+// TestIsReservedAutomationName pins the legacy automation snapshot-row
+// classifier: an exact "__auto__" prefix marks a reserved name, anything
+// else does not. A real session id is 26 base32 characters and must never
+// classify as reserved.
+func TestIsReservedAutomationName(t *testing.T) {
+	// base32ID has the shape of a real session id: exactly 26 base32
+	// characters.
+	base32ID := "MWIVAMWIVAMWIVAMWIVAMWIVAA"
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"__auto__x__y", true},
+		{"__auto__", true},
+		{"", false},
+		{"__last__", false},
+		{"__auto_", false},
+		{"session-1", false},
+		{base32ID, false},
+	}
+	for _, tt := range tests {
+		if got := IsReservedAutomationName(tt.name); got != tt.want {
+			t.Errorf("IsReservedAutomationName(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 // TestSanitizeSessionName verifies path traversal prevention - relocated
 // from persistence_test.go; sanitizeSessionName itself is unrelated to the
 // removed legacy file-backed session store.

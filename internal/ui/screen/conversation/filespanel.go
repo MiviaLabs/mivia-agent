@@ -415,7 +415,10 @@ func (p panel) contentRows(t theme.Theme, tier theme.Tier, width int) []string {
 		}
 		return e.Diff.After
 	}
-	if lines := render.FormatDiffLines(t, tier, width, e.Diff); len(lines) > 0 {
+	// false: the files-panel diff preview has no split toggle (C8 scopes
+	// the toggle to the focused transcript diff block and the approval
+	// preview); it always renders unified.
+	if lines := render.FormatDiffLines(t, tier, width, e.Diff, false); len(lines) > 0 {
 		return lines
 	}
 	return []string{"no changes recorded"}

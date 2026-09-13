@@ -15,7 +15,7 @@ import (
 // layout turns the block list into terminal geometry: where each block
 // starts, how many rows it owns, and the two presentation rules that
 // belong to the SEQUENCE rather than to any single block
-// (transcript-polish.md R1):
+// (ux-rules.md 11.1, 11.2):
 //
 //   - separators: one blank row before a block that starts a new
 //     section - anything after prose, or prose itself - and NO blank row
@@ -24,7 +24,7 @@ import (
 //     marker at column 3, so a turn's tool activity reads as one group
 //     hanging under the turn's prose.
 //
-// R2 adds the leader run: two or more consecutive collapsed read-only
+// Rule 11.3 adds the leader run: two or more consecutive collapsed read-only
 // tool calls draw as ONE row ("Read 3 files: a.go, b.go") instead of
 // three headers. Coalescing is display-only - the children stay real
 // blocks, so focus, click-to-expand, copy, and Dump keep per-child
@@ -65,7 +65,7 @@ func (m Model) layout() []span {
 		if act {
 			ind = groupIndent
 		}
-		sp := span{indent: ind, sepBefore: i > 0 && !(prevActivity && act)}
+		sp := span{indent: ind, sepBefore: i > 0 && (!(prevActivity && act) || m.cardNeedsGapAfter(i, ind, spans))}
 		if sp.sepBefore {
 			row++ // the separator belongs above the span, not inside it
 		}
@@ -88,6 +88,24 @@ func (m Model) layout() []span {
 		i++
 	}
 	return spans
+}
+
+// cardNeedsGapAfter reports whether the block immediately before i (already
+// laid out in spans) painted a visible tool card - a tinted body, not just
+// a header - that must not touch whatever draws next. R1's "no blank row
+// inside a run of activity blocks" is for a dense BURST of short calls
+// reading as one line each; it was never meant to glue a multi-line tinted
+// card directly to the next block's header, which reads as one merged
+// block instead of two. A block folded into a coalesced run (spans[i-1]
+// with runSize > 0 - always a hidden, height-0 tail member here, since the
+// loop only reaches index i after skipping the whole run) or a card with
+// nothing to show yet (pending/running, no body) still packs tight.
+func (m Model) cardNeedsGapAfter(i, ind int, spans []span) bool {
+	if i <= 0 || spans[i-1].runSize != 0 {
+		return false
+	}
+	prev := m.blocks[i-1]
+	return prev.isToolBlock() && len(prev.card(m.width-ind).body) > 0
 }
 
 // totalLayoutRows is the height of the whole conversation: every block
@@ -207,6 +225,13 @@ func (m Model) workRunLen(i int) int {
 // screen hides - which is why RoleDanger is checked here rather than
 // left to the per-kind rules.
 func (m Model) settledWork(b Block) bool {
+	// A block with a child tree never folds (C7). The tree IS the row's
+	// content - a summary row would swallow exactly what the reader is
+	// being shown - and it can grow while the batch runs, so the fold's
+	// "already settled" premise does not hold for it either.
+	if len(b.Children) > 0 {
+		return false
+	}
 	if !b.Collapsible || !b.Collapsed || b.Header.Role == theme.RoleDanger {
 		return false
 	}
@@ -376,6 +401,9 @@ func leaderTarget(detail string) string {
 // indent prefixes every row, and the block renders at the correspondingly
 // narrower width so its internal wrap math still fits the terminal.
 func (m Model) renderSpanRows(b Block, s span) []string {
+	if b.Header.State == "running" {
+		b.SpinnerFrame = m.spinnerFrame
+	}
 	lines := strings.Split(b.Render(m.Theme, m.Tier, m.width-s.indent), "\n")
 	if s.indent == 0 {
 		return lines

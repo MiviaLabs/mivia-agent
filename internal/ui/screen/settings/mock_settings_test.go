@@ -28,6 +28,14 @@ type mockSettings struct {
 	// return it directly instead of a SaveHandle - the Apply-itself-fails
 	// path, distinct from a SaveHandle resolving to a Failed SaveEvent.
 	generalApplyErr error
+
+	// automationsApplyErr, when set, makes the next mockAutomations.Apply
+	// call return it directly instead of a SaveHandle - mirrors
+	// generalApplyErr, exercising the Automations editor's own
+	// saveEditor "Apply itself failed" branch (as opposed to a
+	// SaveHandle resolving to a Failed SaveEvent, which the async
+	// SaveFailed message path already covers elsewhere).
+	automationsApplyErr error
 }
 
 func newMockSettings() *mockSettings {
@@ -482,6 +490,12 @@ func (a mockAutomations) Run(runID string) (ports.Run, bool) {
 }
 
 func (a mockAutomations) Apply(_ context.Context, _ ports.Scope, e ports.AutomationEdit) (ports.SaveHandle, error) {
+	a.mu.Lock()
+	applyErr := a.automationsApplyErr
+	a.mu.Unlock()
+	if applyErr != nil {
+		return nil, applyErr
+	}
 	if trig, ok := e.(ports.TriggerAutomation); ok {
 		return a.newSaveHandle(func() error { return a.startRun(trig.ID) }), nil
 	}
@@ -517,10 +531,45 @@ func (m *mockSettings) applyAutomation(e ports.AutomationEdit) error {
 			return fmt.Errorf("automation %q not found", v.ID)
 		}
 		m.automations[i].Enabled = v.On
+	case ports.CancelAutomationRun:
+		return m.cancelRun(v.RunID)
 	default:
 		return fmt.Errorf("unknown automation edit %T", e)
 	}
 	return nil
+}
+
+// cancelRun mirrors internal/uiadapter's in-memory CancelAutomationRun
+// handling: find the run by ID across every automation's run list,
+// mark it RunCancelled with EndedAt set, and publish it to watchers -
+// but only while the run is still cancellable (RunPending/RunRunning).
+// A run this mock's own advanceRun goroutine already resolved to
+// RunSucceeded/RunFailed must not be overwritten by a late cancel.
+// Caller holds m.mu (invoked from newSaveHandle's apply closure).
+func (m *mockSettings) cancelRun(runID string) error {
+	for automationID, runs := range m.runs {
+		for i := range runs {
+			if runs[i].ID != runID {
+				continue
+			}
+			if runs[i].State != ports.RunPending && runs[i].State != ports.RunRunning {
+				return fmt.Errorf("run %q is not cancellable (state %v)", runID, runs[i].State)
+			}
+			runs[i].State = ports.RunCancelled
+			now := timeNow()
+			runs[i].EndedAt = &now
+			if j := m.findAutomation(automationID); j >= 0 {
+				m.automations[j].LastRun = &ports.RunSummary{
+					ID:        runs[i].ID,
+					State:     runs[i].State,
+					StartedAt: runs[i].StartedAt,
+				}
+			}
+			m.publishRunLocked(runs[i])
+			return nil
+		}
+	}
+	return fmt.Errorf("run %q not found", runID)
 }
 
 func (m *mockSettings) startRun(automationID string) error {

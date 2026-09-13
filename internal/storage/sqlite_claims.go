@@ -44,19 +44,19 @@ func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 	if h == "" {
 		return ErrClaimNotHeld
 	}
-	// The takeover bumps the fence on an existing row (and seeds it on a fresh
-	// insert) so a previous holder's captured fence never survives a takeover:
-	// without the bump, a stale holder with a matching fence value kept write
-	// access after the owner changed (F2). It also bumps fence_generation and
-	// records the previous holder in fenced_tokens atomically inside the same
-	// transaction so a later state query (IsRunTokenFenced) sees the prior
-	// owner as fenced exactly once.
+	// The takeover bumps the fence (seeding it on a fresh insert) so a
+	// previous holder's captured fence never survives a takeover (F2), and
+	// records the previous holder in fenced_tokens in the same transaction
+	// so IsRunTokenFenced sees it exactly once.
 	//
-	// The Go writeMu serialises concurrent takeovers in-process; the SQL
-	// retry handles cross-process or connection-pool contention: a separate
-	// AppendClaimedFenced goroutine saturating the connection pool can raise
-	// SQLITE_BUSY (snapshot-level, not lock-wait-level) before busy_timeout
-	// clears, which the in-Go mutex cannot help with.
+	// writeMu serialises in-process takeovers; the SQL retry clears
+	// SQLITE_BUSY raised by a separate saturating AppendClaimedFenced
+	// goroutine. beginWrite's BEGIN IMMEDIATE (writeDB pool,
+	// _txlock=immediate) takes the write lock before the prior-holder read,
+	// so a concurrent cross-process takeover cannot invalidate that read.
+	// See "Fenced Claim Takeover Concurrency" in
+	// docs/architecture/embedded-persistence.md for the full argument and
+	// test coverage.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return retrySQLiteBusy(ctx, func() error {

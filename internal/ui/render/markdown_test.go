@@ -1,6 +1,7 @@
 package render
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -235,5 +236,28 @@ func TestMarkdownMermaidIsCodeNotDiagram(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Errorf("mermaid fence body missing %q: %q", want, plain)
 		}
+	}
+}
+
+// TestMarkdownDropsEmptyStyledSpans pins the post-processing that drops
+// glamour's empty spans. Before it, a wrapped prose line carried dozens
+// of "open colour, reset" pairs with nothing between them - one per
+// padding column the trailing-blank cut removed - and every repaint and
+// every width measurement paid for bytes that draw nothing. The words
+// here deliberately end in no "m", so the literal adjacency check cannot
+// trip on prose.
+func TestMarkdownDropsEmptyStyledSpans(t *testing.T) {
+	th := loadTheme(t)
+	in := "Retries back off with jitter, and a cap of five seconds. " +
+		"The second sentence wraps the line so the padding cut has to run on it too."
+	out := Markdown(th, theme.TierTrueColor, 40, in)
+	if strings.Contains(out, "m\x1b[m") {
+		t.Errorf("rendered prose still carries an empty styled span (SGR open followed by reset):\n%q", out)
+	}
+	if re := regexp.MustCompile(`\x1b\[[0-9;]*m\x1b\[m`); re.MatchString(out) {
+		t.Errorf("rendered prose still carries an empty styled span:\n%q", out)
+	}
+	if got, want := ansi.Strip(out), ansi.Strip(Markdown(th, theme.TierASCII, 40, in)); got != want {
+		t.Errorf("stripping spans changed the text:\n got %q\nwant %q", got, want)
 	}
 }

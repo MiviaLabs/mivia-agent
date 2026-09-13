@@ -3,6 +3,7 @@ package transcript
 import (
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -110,6 +111,9 @@ func (m Model) ToggleFocused() (Model, bool) {
 	if !m.blocks[m.focus].Collapsible {
 		return m, false
 	}
+	if m.blocks[m.focus].Kind == uievent.KindReasoning {
+		return m.toggleReasoningFocused()
+	}
 	if m.blocks[m.focus].Collapsed {
 		if head, ok := m.leaderHeadOf(m.focus); ok {
 			next := m
@@ -121,6 +125,79 @@ func (m Model) ToggleFocused() (Model, bool) {
 	copy(blocks, m.blocks)
 	blocks[m.focus].Collapsed = !blocks[m.focus].Collapsed
 	m.blocks = blocks
+	return m.ScrollToFocus(), true
+}
+
+// ToggleFocusedDiffSplit toggles unified/split rendering on the focused
+// diff block (C8, "s" in ContextTranscript). It reports false - no
+// state change - when nothing is focused, the focused block carries no
+// diff, or the viewport is narrower than render.MinSplitDiffWidth: a
+// split diff below that width is illegible (wireframes-panes.md
+// sections 11/14), and refusing silently rather than rendering
+// something unreadable is the same contract render.FormatDiffLines
+// itself enforces one layer down.
+//
+// Unlike ToggleFocused's Collapsed flip, this rebuilds the block's Body
+// through restyle - the same path a theme or width change already
+// uses - because DiffSplit changes the RENDERED lines, not just which
+// of them are shown.
+func (m Model) ToggleFocusedDiffSplit() (Model, bool) {
+	if !m.Focused() {
+		return m, false
+	}
+	if m.blocks[m.focus].Diff == nil {
+		return m, false
+	}
+	if m.diffContentWidth() < render.MinSplitDiffWidth {
+		return m, false
+	}
+	blocks := slicesCloneBlocks(m.blocks)
+	blocks[m.focus].DiffSplit = !blocks[m.focus].DiffSplit
+	blocks[m.focus] = m.restyle(blocks[m.focus])
+	m.blocks = blocks
+	// ScrollToFocus, not a bare return: unified and split do not render
+	// a balanced hunk to the same row count, so this toggle - like
+	// EVERY other height-changing mutator in this file (ToggleFocused,
+	// toggleReasoningFocused, SetAllCollapsed) - must re-anchor the
+	// viewport on the block whose height it just changed. Omitting
+	// this left m.offset stale: a transcript already following the
+	// tail stopped following (offset no longer equal to the new,
+	// shrunk-or-grown maxOffset) the moment the toggle changed the
+	// block's row count. Found by bug-audit.
+	return m.ScrollToFocus(), true
+}
+
+// toggleReasoningFocused is ToggleFocused's branch for a reasoning
+// block (C1): its third state (Block.Expanded) means one press cannot
+// be a plain Collapsed flip. The cycle is collapsed (only "Thought for
+// Xs") -> windowed (the last CollapseThresholdLines lines) -> full text
+// -> back to collapsed. A collapsed block heading a coalesced work run
+// (layout.go workRunLen) still dissolves the whole run on the first
+// press, the same promise ToggleFocused makes for every other
+// collapsible kind.
+func (m Model) toggleReasoningFocused() (Model, bool) {
+	blk := m.blocks[m.focus]
+	switch {
+	case blk.Collapsed:
+		if head, ok := m.leaderHeadOf(m.focus); ok {
+			next := m
+			next.expandRun(head)
+			return next.ScrollToFocus(), true
+		}
+		blocks := slicesCloneBlocks(m.blocks)
+		blocks[m.focus].Collapsed = false
+		blocks[m.focus].Expanded = false
+		m.blocks = blocks
+	case !blk.Expanded:
+		blocks := slicesCloneBlocks(m.blocks)
+		blocks[m.focus].Expanded = true
+		m.blocks = blocks
+	default:
+		blocks := slicesCloneBlocks(m.blocks)
+		blocks[m.focus].Collapsed = true
+		blocks[m.focus].Expanded = false
+		m.blocks = blocks
+	}
 	return m.ScrollToFocus(), true
 }
 
@@ -136,6 +213,13 @@ func (m Model) SetAllCollapsed(collapsed bool) Model {
 	for i := range blocks {
 		if blocks[i].Collapsible {
 			blocks[i].Collapsed = collapsed
+			// The global expand-all/collapse-all keys are blanket
+			// operations: every reasoning block must land in the SAME
+			// state, not a mix that depends on which ones a reader had
+			// separately cycled to the third full-text state (C1) before
+			// pressing the key. Resetting Expanded here is a no-op on
+			// every other kind.
+			blocks[i].Expanded = false
 		}
 	}
 	m.blocks = blocks
@@ -218,13 +302,31 @@ func (m Model) FocusedText() (string, bool) {
 		return "", false
 	}
 	b := m.blocks[m.focus]
+	if b.Header.State == "running" {
+		b.SpinnerFrame = m.spinnerFrame
+	}
 	rows := make([]string, 0, len(b.Body)+1)
 	if !b.Prose {
-		// The collapse marker is dropped, not just trimmed. It is view
-		// state, so keeping it would make the copied text differ
-		// depending on whether the block happened to be open.
-		header := strings.TrimSpace(strings.TrimPrefix(b.headerPlain(), b.collapseMarker()))
-		rows = append(rows, header)
+		var header string
+		switch {
+		case b.Kind == uievent.KindReasoning:
+			// The live view shows a duration, not the word-count/hidden
+			// header headerPlain still builds from Header.Meta/State (C1) -
+			// the clipboard copy must say the same thing the screen does.
+			header = b.reasoningSummaryText()
+		case b.isToolBlock():
+			// A tool block's column 1 is the call's outcome (C3), a fact of
+			// the record, so it is kept verbatim.
+			header = b.headerPlain()
+		default:
+			// Every other kind still carries the plain v/>/blank collapse
+			// marker there, which IS view state - dropped exactly as
+			// before, or a focused block's copied text would flip between
+			// a "v " and a "> " prefix depending on whether the reader
+			// happened to have it open when they pressed y.
+			header = strings.TrimPrefix(b.headerPlain(), b.collapseMarker())
+		}
+		rows = append(rows, strings.TrimSpace(header))
 	}
 	rows = append(rows, b.Body...)
 	return strings.Join(rows, "\n"), true

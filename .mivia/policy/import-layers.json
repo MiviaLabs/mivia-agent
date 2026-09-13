@@ -1,6 +1,6 @@
 {
   "allowedDeletions": [],
-  "edgeCap": 452,
+  "edgeCap": 478,
   "allow": {
     "cmd/mivia": [
       "internal/cli",
@@ -22,6 +22,24 @@
     ],
     "internal/agentmsg": [
       "internal/sdkadapter"
+    ],
+    "internal/automation": [
+      "internal/chat",
+      "internal/cliagents",
+      "internal/contextstate",
+      "internal/clichat",
+      "internal/cliworkflow",
+      "internal/cliworktree",
+      "internal/config",
+      "internal/cronschedule",
+      "internal/sdkadapter",
+      "internal/skills",
+      "internal/storage",
+      "internal/uikit/intent",
+      "internal/uikit/ports",
+      "internal/uikit/uievent",
+      "internal/workflows/ledger",
+      "internal/workspace"
     ],
     "internal/agents": [
       "internal/config",
@@ -58,6 +76,7 @@
       "internal/chat",
       "internal/cliagents",
       "internal/clichat",
+      "internal/cliautomations",
       "internal/cliorchestrate",
       "internal/cliworkflow",
       "internal/cliworktree",
@@ -99,6 +118,20 @@
       "internal/tools",
       "internal/workflows/definition",
       "internal/workflows/ledger",
+      "internal/workspace"
+    ],
+    "internal/cliautomations": [
+      "internal/automation",
+      "internal/chat",
+      "internal/cliagents",
+      "internal/clichat",
+      "internal/config",
+      "internal/provider",
+      "internal/sdkadapter",
+      "internal/skills",
+      "internal/storage",
+      "internal/uiadapter",
+      "internal/uikit/ports",
       "internal/workspace"
     ],
     "internal/clichat": [
@@ -270,14 +303,18 @@
     ],
     "internal/newtui": [
       "internal/agent",
+      "internal/automation",
       "internal/chat",
       "internal/chatsync",
       "internal/cli",
       "internal/config",
+      "internal/sdkadapter",
+      "internal/storage",
       "internal/ui/app",
       "internal/ui/screen/conversation",
       "internal/ui/theme",
       "internal/uiadapter",
+      "internal/uikit/ports",
       "internal/uikit/termprobe"
     ],
     "internal/provider": [

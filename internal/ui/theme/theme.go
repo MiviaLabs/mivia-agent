@@ -14,7 +14,7 @@ type Theme struct {
 	Colors     map[Role]string `json:"colors"`
 	// ANSI16 gives each role an explicit ANSI SGR colour index (0-15) for
 	// the 16-colour degradation tier. A generic nearest-RGB downsample
-	// turns an achromatic accent to silver (research.md finding 8); this
+	// turns an achromatic accent to silver; this
 	// map is the fix, authored per theme rather than computed.
 	ANSI16 map[Role]int `json:"ansi16"`
 }

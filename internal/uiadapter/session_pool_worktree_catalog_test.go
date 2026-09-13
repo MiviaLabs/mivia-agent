@@ -121,3 +121,31 @@ func TestWireEntryLocked_AttachRebuiltSurfaceErrorSurfacesAsNotice(t *testing.T)
 		t.Fatalf("lastToolScopeNotice = %q, want it to name the AttachRebuiltSurface failure", pool.lastToolScopeNotice)
 	}
 }
+
+// TestCreateFreshBackgroundInDir_AttachRebuiltSurfaceErrorSkipsNotice
+// pins the background twin of the test above: the AttachRebuiltSurface
+// error-notice write site checks !background, so a background spawn (an
+// automation run) into a dir that forces the same AttachRebuiltSurface
+// failure must leave the single-slot tool-scope notice EMPTY, while the
+// foreground control case still publishes it. Deleting the
+// `&& !background` conjunct at wireEntryLocked's AttachRebuiltSurface
+// call fails this test (and only this test - the gap was audited).
+func TestCreateFreshBackgroundInDir_AttachRebuiltSurfaceErrorSkipsNotice(t *testing.T) {
+	rootA := t.TempDir()
+	pool, _, _ := newPoolWithAgentState(t, rootA)
+	t.Cleanup(pool.CloseAll)
+
+	if _, err := pool.CreateFreshBackgroundInDir(nil, rootA); err != nil {
+		t.Fatalf("CreateFreshBackgroundInDir: %v", err)
+	}
+	if got := pool.takeToolScopeNotice(); got != "" {
+		t.Fatalf("background spawn published a tool-scope notice %q, want an empty slot", got)
+	}
+
+	if _, err := pool.CreateFreshInDir(nil, rootA); err != nil {
+		t.Fatalf("CreateFreshInDir: %v", err)
+	}
+	if got := pool.takeToolScopeNotice(); !strings.Contains(got, "session tools:") {
+		t.Fatalf("foreground notice = %q, want it to name the AttachRebuiltSurface failure", got)
+	}
+}

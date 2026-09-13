@@ -4,6 +4,7 @@ title: Do not add timeout_seconds/max_tokens ceilings to .agents/agents/*.md
 content: Keep max_turns=0 (unlimited); rely on session-level caps only.
 importance: medium
 tags: [mivia, agents, config, budget]
+related: [dispatch_tasks_must_name_an_agent_children_die_on_cumulative_token_cap_c6d9f683ce7a2dfcce668c98ce17fc19]
 updated: 2026-09-04
 ---
 

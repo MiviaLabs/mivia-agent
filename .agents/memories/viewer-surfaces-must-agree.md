@@ -4,6 +4,7 @@ title: Every event kind must reach every viewer, or say why not
 content: An event kind is produced once and rendered on four surfaces; all four must agree.
 importance: high
 tags: [events, ui, invariants]
+related: [chatsync_lazy_attach_remote_session_created_on_first_message_not_at_cli_start_71a3cba28bc33a4769ffc31217b66c24, hand_enumerated_struct_fields, sibling_implementations_drift]
 updated: 2026-09-04
 ---
 

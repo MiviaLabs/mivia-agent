@@ -3,7 +3,7 @@ package render
 import "fmt"
 
 // FormatElapsed renders a duration in milliseconds with the one
-// duration grammar every surface shares (transcript-polish.md R5;
+// duration grammar every surface shares (ux-rules.md 11.7;
 // docs/design/wireframes-panes.md section 4):
 //
 //   - below 1s:    "250ms"

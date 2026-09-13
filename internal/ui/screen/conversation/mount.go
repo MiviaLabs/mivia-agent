@@ -89,8 +89,28 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 		cmds = append(cmds, ackCmd(remaining.AckReceived))
 	}
 
+	return s.mountedDirectSend(msg.sessionID, st, text, persisted, firstEvent, cmds)
+}
+
+// mountedDirectSend dispatches a mounted session's first queued remote
+// input as a direct turn once the session is tracked and idle: refused
+// when a run owns the session (see runOwnsSession), queued when a local
+// turn is still active, sent and acked otherwise.
+func (s Screen) mountedDirectSend(sessionID string, st *sessionState, text, persisted string, firstEvent ports.RemoteInputEvent, cmds []tea.Cmd) (Screen, tea.Cmd) {
 	if st.active != nil {
 		st.queue = append(st.queue, text)
+		cmds = append(cmds, ackCmd(firstEvent.AckReceived))
+		return s, tea.Batch(cmds...)
+	}
+
+	// Run-activity guard, same as remote_input.go's tracked-session
+	// branch: refuse rather than interleave a steering turn into a run's
+	// transcript; ack fires because custody was taken.
+	if s.runOwnsSession(st.conv) {
+		st.handleTurnEvent(uievent.Event{
+			Kind: uievent.KindError,
+			Body: uievent.ErrorBody{Text: "remote send refused: an automation run is in progress on this session", Fatal: false},
+		})
 		cmds = append(cmds, ackCmd(firstEvent.AckReceived))
 		return s, tea.Batch(cmds...)
 	}
@@ -107,7 +127,7 @@ func (s Screen) handleSessionMountedMsg(msg sessionMountedMsg) (Screen, tea.Cmd)
 	st.active = handle
 	st.statusline.Start("thinking", s.now())
 	s.refreshTopbar()
-	cmds = append(cmds, s.awaitSessionEvent(msg.sessionID, handle.Events()), ackCmd(firstEvent.AckReceived))
+	cmds = append(cmds, s.awaitSessionEvent(sessionID, handle.Events()), ackCmd(firstEvent.AckReceived))
 	return s, tea.Batch(cmds...)
 }
 

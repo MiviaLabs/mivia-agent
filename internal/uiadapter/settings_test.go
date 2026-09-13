@@ -461,6 +461,142 @@ func TestAutomationSettingsRejectsUnknownIDsAndEditTypes(t *testing.T) {
 	}
 }
 
+// TestCancelAutomationRun covers the in-memory store's
+// CancelAutomationRun handling: cancelling a triggered run marks it
+// RunCancelled with EndedAt set and publishes the update to watchers;
+// cancelling an unknown run ID fails.
+func TestCancelAutomationRun(t *testing.T) {
+	settings := setupTestSettings(t)
+	upsertTestAutomation(t, settings, "Daily Review")
+
+	watch, err := settings.Automations.Watch(context.Background(), "auto-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Cancel()
+
+	h, err := settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.TriggerAutomation{ID: "auto-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	runs := settings.Automations.Runs("auto-1", 1)
+	if len(runs) == 0 {
+		t.Fatal("expected a run recorded for auto-1")
+	}
+	runID := runs[0].ID
+
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.CancelAutomationRun{RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	got, ok := settings.Automations.Run(runID)
+	if !ok {
+		t.Fatalf("expected Run(%q) to still find the run", runID)
+	}
+	if got.State != ports.RunCancelled {
+		t.Errorf("expected run state RunCancelled, got %v", got.State)
+	}
+	if got.EndedAt == nil {
+		t.Error("expected EndedAt to be set on a cancelled run")
+	}
+
+	// The watch channel already carries the trigger's own RunPending
+	// event ahead of the cancellation's; drain until the cancelled
+	// state for this run ID arrives or the deadline expires.
+	deadline := time.After(time.Second)
+	found := false
+	for !found {
+		select {
+		case published := <-watch.Events():
+			if published.ID == runID && published.State == ports.RunCancelled {
+				found = true
+			}
+		case <-deadline:
+			t.Fatal("expected the cancellation to publish to watchers of auto-1")
+		}
+	}
+
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.CancelAutomationRun{RunID: "no-such-run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := drainWithFailure(h); states[len(states)-1] != ports.SaveFailed {
+		t.Error("expected SaveFailed cancelling an unknown run ID")
+	}
+}
+
+// TestCancelAutomationRun_AlreadyTerminalIsRejected covers the guard
+// cancelRun must apply before mutating a run: a run that already
+// reached a terminal state (here RunCancelled, reached via a first,
+// legitimate cancel) must not be silently overwritten by a second
+// cancel attempt. Without the state check, cancelRun unconditionally
+// rewrote State to RunCancelled and EndedAt to a fresh timestamp on
+// every call, which would republish a false cancellation event to
+// watchers for a run a background goroutine already resolved to
+// RunSucceeded/RunFailed in production use.
+func TestCancelAutomationRun_AlreadyTerminalIsRejected(t *testing.T) {
+	settings := setupTestSettings(t)
+	upsertTestAutomation(t, settings, "Daily Review")
+
+	h, err := settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.TriggerAutomation{ID: "auto-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	runs := settings.Automations.Runs("auto-1", 1)
+	if len(runs) == 0 {
+		t.Fatal("expected a run recorded for auto-1")
+	}
+	runID := runs[0].ID
+
+	// First cancel: legitimate, the run is still RunPending.
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.CancelAutomationRun{RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	got, ok := settings.Automations.Run(runID)
+	if !ok {
+		t.Fatalf("expected Run(%q) to still find the run", runID)
+	}
+	if got.State != ports.RunCancelled {
+		t.Fatalf("expected run state RunCancelled after first cancel, got %v", got.State)
+	}
+	if got.EndedAt == nil {
+		t.Fatal("expected EndedAt to be set after first cancel")
+	}
+	firstEndedAt := *got.EndedAt
+
+	time.Sleep(time.Millisecond)
+
+	// Second cancel: the run is already terminal, so this must fail
+	// and must not mutate State or EndedAt.
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.CancelAutomationRun{RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := drainWithFailure(h); states[len(states)-1] != ports.SaveFailed {
+		t.Error("expected SaveFailed cancelling an already-cancelled run")
+	}
+
+	got, ok = settings.Automations.Run(runID)
+	if !ok {
+		t.Fatalf("expected Run(%q) to still find the run", runID)
+	}
+	if got.State != ports.RunCancelled {
+		t.Errorf("expected run state to remain RunCancelled, got %v", got.State)
+	}
+	if got.EndedAt == nil || !got.EndedAt.Equal(firstEndedAt) {
+		t.Errorf("expected EndedAt to remain %v, got %v", firstEndedAt, got.EndedAt)
+	}
+}
+
 func projectSettingTestCases() []struct {
 	name string
 	edit ports.ProjectEdit

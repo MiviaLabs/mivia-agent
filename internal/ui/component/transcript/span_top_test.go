@@ -11,22 +11,26 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// proseThenTool is the commonest shape on screen: assistant prose, then a
-// tool call. The tool block starts a new section, so the layout puts a
-// blank separator row above it - which is exactly the case where span.top
-// used to point at the separator instead of the header.
+// proseThenTool is the commonest shape on screen: assistant prose, then
+// activity. The activity block starts a new section, so the layout puts
+// a blank separator row above it - which is exactly the case where
+// span.top used to point at the separator instead of the header.
+//
+// The activity here is a HOOK block, not a tool call: C3/C4 moved a tool
+// block's click target off its header (column 1 is the call's outcome,
+// not a collapse marker, and the hit target for a windowed card is its
+// hint row - see viewport_test.go's own tool-card tests for that
+// contract). A hook block still uses the original marker-click contract
+// this file exercises, so it is the fixture that keeps these tests about
+// the GENERIC click/span mechanics rather than the tool-specific one.
 func proseThenTool(t *testing.T) Model {
 	t.Helper()
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 20)
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "some prose"}})
 	m, _ = m.HandleEvent(uievent.Event{
-		Kind: uievent.KindToolStart,
-		Body: uievent.ToolStartBody{ToolCallID: "a", Name: "run_command"},
-	})
-	m, _ = m.HandleEvent(uievent.Event{
-		Kind: uievent.KindToolOutput,
-		Body: uievent.ToolOutputBody{ToolCallID: "a", Chunk: "hidden-line"},
+		Kind: uievent.KindHook,
+		Body: uievent.HookBody{Event: "PreToolUse", Program: "run_command", Tool: "run_command", Input: "hidden-line"},
 	})
 	return m.SetAllCollapsed(true)
 }

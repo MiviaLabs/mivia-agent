@@ -45,6 +45,10 @@ SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # empty element, a trailing comma and a nested map.
 TAGS = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
 
+# `related` is the one optional frontmatter key (.agents/memories/README.md,
+# "The reference graph"). Same shape as tags: a flat list of memory ids.
+RELATED = re.compile(r"^\[\s*[^\[\]\s][^\[\]]*\]\s*(#.*)?$")
+
 # The `updated` stamp: an ISO calendar date, the only format the README
 # declares. The shape alone is not enough - "2026-02-30" matches - so the
 # value is also parsed and refused when it is not a real calendar date.
@@ -207,8 +211,14 @@ def check_memories(directory: Path) -> None:
     can exercise this against a fixture."""
     if not directory.is_dir():
         return
+    # Two passes: a link can only be resolved once every id in the store is
+    # known. `seen` collects the ids, `edges` the (file, source_id, target)
+    # triples, and `related_by_id` the outbound link sets for reciprocal checks.
+    seen: set[str] = set()
+    edges: list[tuple[str, str, str]] = []
+    related_by_id: dict[str, set[str]] = {}
     for path in sorted(directory.glob("*.md")):
-        if path.name == "README.md":
+        if path.name == "README.md" or not path.is_file():
             continue
         name = rel_to_root(path)
         if not SLUG.match(path.stem):
@@ -216,7 +226,13 @@ def check_memories(directory: Path) -> None:
                 f"{name}: filename must be a kebab-case slug of [a-z0-9-], "
                 f"with no leading, trailing or doubled hyphen."
             )
-        front = frontmatter(path.read_text(encoding="utf-8"))
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            fail(f"{name}: file is not valid UTF-8.")
+        except OSError as err:
+            fail(f"{name}: failed to read file: {err}.")
+        front = frontmatter(raw_text)
         if front is None:
             fail(
                 f"{name}: missing a closed YAML frontmatter block. Every memory "
@@ -373,6 +389,49 @@ def check_memories(directory: Path) -> None:
                     f"scalar, so no YAML parser can read this frontmatter. "
                     f"Wrap the whole value in single quotes: {value!r}."
                 )
+        seen.add(fields["id"])
+        # A present-but-malformed `related` must fail rather than read as
+        # absent: an unquoted single id ("related: some_id") is a plain
+        # scalar, and a check that only looked for "[" would ignore the key
+        # and report the memory as unlinked - the opposite of a dangling link.
+        if fields.get("related"):
+            value = fields["related"]
+            if not RELATED.match(value):
+                fail(
+                    f"{name}: related must be a flat list of memory ids, for "
+                    f"example [some_id, other_id]; got {value!r}. Omit the key "
+                    f"entirely when nothing relates."
+                )
+            inner = value[value.index("[") + 1 : value.rindex("]")]
+            for target in inner.split(","):
+                target = target.strip()
+                if not target:
+                    fail(
+                        f"{name}: related holds an empty element: {value!r}."
+                    )
+                if ":" in target or "{" in target or "}" in target:
+                    fail(
+                        f"{name}: related entry {target!r} is not a plain id."
+                    )
+                edges.append((name, fields["id"], target))
+                related_by_id.setdefault(fields["id"], set()).add(target)
+    for name, source_id, target in edges:
+        # Only the active store resolves a link. check_memories globs
+        # directory itself and not .archive/, so an id moved out of the store
+        # stops being a target and a `related` pointing at it must fail here.
+        if target not in seen:
+            fail(
+                f"{name}: related names {target!r}, which is not the id of any "
+                f"memory in this directory. A dangling link un-orphans a memory "
+                f"nobody actually relates to, defeating the housekeeping orphan "
+                f"check. Drop the entry or fix the id."
+            )
+        if source_id not in related_by_id.get(target, set()):
+            fail(
+                f"{name}: related link to {target!r} is asymmetric: "
+                f"{target} does not link back to {source_id}. Reciprocal "
+                f"linking is mandatory."
+            )
 
 
 def main() -> None:

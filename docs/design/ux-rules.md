@@ -1,18 +1,11 @@
 # Mivia terminal UI - UX rules
 
-Status: evidence-based rules for the new terminal UI. Derived from external
-research on 2026-08-19, not from the existing `internal/cli` TUI.
+Scope: these rules govern `internal/ui`, `internal/uikit` and the terminal
+entry path in `internal/newtui`. They bind implementation choices. A rule
+that only says "be consistent" is not a rule and is not listed here.
 
-Scope: these rules govern `internal/ui`, `internal/uikit` and `cmd/mivia-ui`.
-They bind implementation choices. A rule that only says "be consistent" is not
-a rule and is not listed here.
-
-Every rule carries a source. Where sources conflict, the rule says so. Where a
-claim could not be verified, the rule marks it UNVERIFIED.
-
-Section 10 lists what this document overturns in `wireframes-panes.md`. That
-file stays the visual specification. This file wins on interaction and
-mechanics.
+`wireframes-panes.md` stays the visual specification. This file wins on
+interaction and mechanics. Section 10 cross-references it.
 
 ---
 
@@ -38,266 +31,200 @@ them. The consequence column states what breaks.
 | `Ctrl-R` | readline `reverse-search-history` | Same |
 | `Ctrl-B` | `screen` prefix | Invisible to `screen` users |
 
-Reservation applies to the context that the owner claims. `Ctrl-U`, `Ctrl-E`,
-`Ctrl-K` and `Ctrl-R` belong to readline, which owns the line editor. Bind them
-outside the composer, or bind them to the same action readline gives them. Do
-not bind `Ctrl-S`, `Ctrl-Q`, `Ctrl-C`, `Ctrl-Z`, `Ctrl-\`, `Ctrl-V`
-or `Ctrl-M` in any context. The tty or the terminal owns those, and no context
-escapes them. `internal/uikit/keymap` enforces the second list mechanically.
+Reservation applies to the context that the owner claims.
 
-**Amended 2026-08-19, with transcript mode.** `Ctrl-D` moved from the
-never-bind list to the readline-owned class above: readline uses it as EOF on
-an empty line, so it is reserved inside the composer and free outside the line
-editor. The pager binds it as half a page down, which is what `less` itself
-does, and a pager has no EOF gesture to break. `Ctrl-B` (the GNU screen
-prefix) is bound in the pager the same way: screen intercepts it before the
-app sees it, which makes the binding inert for screen users, not harmful, and
-the pager keeps modifier-free alternates (`b`, `space`). `Ctrl-S` stays
-unbound everywhere (rule 1.2).
+`Ctrl-U`, `Ctrl-E`, `Ctrl-K` and `Ctrl-R` belong to readline, and readline
+owns the line editor. Bind them outside the composer, or bind them to the
+same action readline gives them. The keymap binds `Ctrl-U` in the composer
+to clear-line, which is the readline action.
 
-Sources: [stty(1)](https://man7.org/linux/man-pages/man1/stty.1.html),
-[GNU Readline](https://tiswww.case.edu/php/chet/readline/readline.html),
-[GNU screen flow control](https://www.gnu.org/software/screen/manual/html_node/Flow-Control-Summary.html),
-[copilot-cli #2677](https://github.com/github/copilot-cli/issues/2677).
+`Ctrl-D` is EOF on an empty line, so it stays reserved inside the composer.
+Outside the line editor it is free. The pager binds it as half a page down,
+which is what `less` does; a pager has no EOF gesture to break.
 
-**Rule 1.1.** Bind actions to `Ctrl-G`, `Ctrl-O`, `Ctrl-T`, function keys, or a
-prefix. These are free in practice.
+`Ctrl-B` is the GNU screen prefix. Screen intercepts it before the
+application sees it, so the pager's binding is inert for screen users, not
+harmful. The pager keeps the modifier-free alternates `b` and `space`.
 
-**Rule 1.2.** `Ctrl-S` is radioactive even in raw mode. Raw mode clears `IXON`,
-so the application does receive the byte. But `ssh`, `screen`, and any spawned
-pager reinstate flow control. Do not bind it.
-Source: [GNU screen flow control](https://www.gnu.org/software/screen/manual/html_node/Flow-Control-Summary.html).
+`Ctrl-S`, `Ctrl-Q`, `Ctrl-C`, `Ctrl-Z`, `Ctrl-\`, `Ctrl-V` and `Ctrl-M`
+belong to the tty or the terminal in every context. No context escapes
+them. `internal/uikit/keymap` enforces this list mechanically.
 
-**Rule 1.3.** `Ctrl-C` cancels the running turn. A second `Ctrl-C`, at an empty
-composer and within a timeout, exits. Print the second step on screen when the
-first press lands.
-Sources: [opencode #9041](https://github.com/anomalyco/opencode/issues/9041),
-[codex #14708](https://github.com/openai/codex/issues/14708),
-[claude-code #15161](https://github.com/anthropics/claude-code/issues/15161).
+**Rule 1.1.** Bind actions to `Ctrl-G`, `Ctrl-O`, `Ctrl-T`, function keys,
+or a prefix. These are free in practice.
+
+**Rule 1.2.** `Ctrl-S` is radioactive even in raw mode. Raw mode clears
+`IXON`, so the application does receive the byte. But `ssh`, `screen`, and
+any spawned pager reinstate flow control. Do not bind it.
+
+**Rule 1.3.** `Ctrl-C` cancels the running turn. A second `Ctrl-C`, at an
+empty composer and within a timeout, exits. Print the second step on screen
+when the first press lands.
 
 **Rule 1.4.** The footer hint must state the complete truth for the current
 state. Do not advertise one cancel key and silently accept another.
-Source: [copilot-cli #1422](https://github.com/github/copilot-cli/issues/1422).
 
 ---
 
 ## 2. Rendering and repaint
 
 **Rule 2.1.** A committed turn is immutable. Only the live tail and the
-composer repaint. Re-rendering history crashes NVDA and produces input lag of
-up to 10 seconds.
-Source: [The text-mode lie](https://xogium.me/the-text-mode-lie-why-modern-tuis-are-a-nightmare-for-accessibility).
+composer repaint. Re-rendering history breaks screen readers and adds
+seconds of input lag.
 
-**Rule 2.2.** Split the transcript into an append-only committed region and a
-small live region. This is Ink's `<Static>` and Ratatui's `Viewport::Inline`.
-Sources: [Ink](https://github.com/vadimdemedes/ink),
-[Ratatui Viewport](https://docs.rs/ratatui/latest/ratatui/enum.Viewport.html).
+**Rule 2.2.** Split the transcript into an append-only committed region and
+a small live region. This is Ink's `<Static>` and Ratatui's
+`Viewport::Inline`.
 
-**Rule 2.3.** Never full-erase and repaint the whole transcript. That is the
-documented cause of the flicker reports against Gemini CLI's default mode.
-Source: [gemini-cli #21924](https://github.com/google-gemini/gemini-cli/issues/21924).
+**Rule 2.3.** Never full-erase and repaint the whole transcript. That is
+the documented cause of the flicker reports against Gemini CLI's default
+mode.
 
-**Rule 2.4.** An inline mode must be genuinely append-only. Full-screen redraw
-in the primary buffer corrupts scrollback and gives up layout guarantees.
-Codex CLI's `--no-alt-screen` does this and carries four open issues.
-Source: [codex #20063](https://github.com/openai/codex/issues/20063).
+**Rule 2.4.** An inline mode must be genuinely append-only. Full-screen
+redraw in the primary buffer corrupts scrollback and gives up layout
+guarantees.
 
 **Rule 2.5.** Cap the repaint rate at 10-20 Hz. Coalesce token deltas.
-`indicatif` refreshes at most 20 times a second.
-Source: [indicatif](https://docs.rs/indicatif/latest/indicatif/struct.ProgressBar.html).
+`indicatif` refreshes at most 20 times a second. The transcript's flush
+tick is 66 ms (15 Hz), inside this ceiling.
 
-**Rule 2.6.** Do not hand-roll synchronized output. Bubble Tea v2 enables mode
-2026, which prevents tearing, and mode 2027 for wide Unicode, automatically.
-The underlying sequences are `CSI ?2026 h` and `CSI ?2026 l`; read them to
-understand the mechanism, not to emit them.
-Sources: [Bubble Tea v2 release](https://charm.land/blog/v2/),
-[synchronized output spec](https://github.com/contour-terminal/vt-extensions/blob/master/synchronized-output.md).
+**Rule 2.6.** Do not hand-roll synchronized output. Bubble Tea v2 enables
+mode 2026, which prevents tearing, and mode 2027 for wide Unicode,
+automatically. The underlying sequences are `CSI ?2026 h` and
+`CSI ?2026 l`; read them to understand the mechanism, not to emit them.
 
-**Rule 2.7.** Reserve fixed height for transient chrome. A warning that appears
-and disappears must occupy its row when hidden. A one-line change reflows every
-wrapped line above it and destroys both reading position and any selection. The
-cockpit's fixed chrome - the top bar, the status row, the framed composer, the
-one-column gutter each side - is exactly this rule applied: every row is claimed
-whether or not it has content, and scrolling a surface (the approval diff) never
-changes the rows it claims.
-Source: [gemini-cli PR #22584](https://github.com/google-gemini/gemini-cli/pull/22584).
+**Rule 2.7.** Reserve fixed height for transient chrome. A warning that
+appears and disappears must occupy its row when hidden. A one-line change
+reflows every wrapped line above it and destroys both reading position and
+any selection. The cockpit applies this rule directly: the top bar, the
+status row, the framed composer, and the one-column gutter each side claim
+their rows whether or not they have content. Scrolling a surface, such as
+the approval diff, never changes the rows it claims.
 
 **Rule 2.8.** Never move the composer while output streams.
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
 
 ---
 
-## 3. Inline against cockpit
+## 3. The renderer
 
-The field disagrees. State the disagreement rather than hiding it.
-
-Frontier agent CLIs moved to the alternate screen. Claude Code made fullscreen
-the default for new users on 2026-05-06. Codex ships alt-screen by default.
-opencode and crush started there.
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen),
-[codex PR #8555](https://github.com/openai/codex/pull/8555).
-
-Terminal fundamentals point the other way. The alternate screen removes four
-capabilities the user already had.
+The cockpit owns the whole terminal surface through the alternate screen.
+The alternate screen costs four capabilities the user already had:
 
 1. The session transcript never enters scrollback.
 2. `tmux` copy-mode has nothing to show.
 3. The terminal's own find cannot search it.
 4. Selection across the whole session is impossible.
 
-Sources: [xterm ctlseqs](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html),
-[tmux scrollback](https://www.freecodecamp.org/news/tmux-in-practice-scrollback-buffer-47d5ffa71c93/),
-[claude-code #67289](https://github.com/anthropics/claude-code/issues/67289).
+These are requirements, not objections: the cockpit must replace each one.
+[Cockpit rules](cockpit-research.md) maps every lost capability to its
+replacement. One warning survives intact: "the alternate screen preserves
+scrollback" conflates two guarantees. It preserves what existed before the
+application started. Everything the application prints is destroyed on
+exit.
 
-**Rule 3.1. SUPERSEDED on 2026-08-19 by rule 6.1 of
-[cockpit-research.md](cockpit-research.md).** The cockpit is the default and
-inline is the opt-out. Read that file, not this rule.
-
-The original rule said the opposite: "Inline is the default. The cockpit is
-opt-in." Two pieces of its evidence below are wrong, and section 6 of the
-cockpit research states why. The lost capabilities it names are real, and
-they became the mitigation list rather than a reason to refuse.
-
-Two further pieces of evidence support this ordering.
-
-**This paragraph was wrong.** It said Claude Code "walked its own default
-back". Version 2.1.132 added an opt-out environment variable, which is not a
-reversal. The default then moved forward: fullscreen renders by default for
-every user who started on or after 2026-05-06.
-Source: [Claude Code fullscreen rendering](https://code.claude.com/docs/en/fullscreen).
-
-Charm states that Bubble Tea "supports inline mode as a first-class use case".
-Source: [Bubble Tea v2 release](https://charm.land/blog/v2/).
-
-**Rule 3.1a.** A composer pinned to the bottom does not require the alternate
-screen. Bubble Tea's inline mode already holds the managed frame at the bottom
-while `tea.Println` flushes committed content above it. OpenTUI ships the same
-shape as a named mode, `split-footer`, with `externalOutputMode:
-"capture-stdout"`. Build the cockpit feel this way before reaching for
-alt-screen.
-Source: [OpenTUI renderer](https://opentui.com/docs/core-concepts/renderer/).
-
-**Rule 3.2. REMOVED on 2026-08-19.** It required shipping both renderers
-behind one command. There is only one interactive renderer now, so there is
-nothing to switch between. See rule 6.1 of
-[cockpit-research.md](cockpit-research.md).
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
+**Rule 3.1.** The cockpit is the only interactive renderer. There is no
+inline mode and no flag that selects one. The non-interactive paths are
+unaffected: `--output json` gives NDJSON, and a non-TTY stdout gives the
+plain stream. Two interactive renderers double the surface that every
+later feature must satisfy, so the second one does not exist.
 
 **Rule 3.3.** A cockpit owes the user a one-key path that writes the whole
-conversation into native scrollback. A file export does not restore terminal
-find, `tmux` copy-mode, or selection.
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
+conversation into native scrollback. A file export does not restore
+terminal find, `tmux` copy-mode, or selection. The pager binds this to
+`[`; see rule 6.3 of [cockpit-research.md](cockpit-research.md).
 
-**Rule 3.4.** Detect multiplexers at startup and change the default. Alternate
-screen buffers have no scrollback, and Zellij enforces that.
-Source: [codex PR #8555](https://github.com/openai/codex/pull/8555).
+**Rule 3.4.** Detect multiplexers at startup and change the default.
+Alternate screen buffers have no scrollback, and Zellij enforces that.
 
-**Rule 3.5.** Do not enable the cockpit and mouse capture without shipping the
-copy path in the same change. Copilot CLI did, broke macOS `Cmd-C`, and shipped
-`Ctrl-Insert` as the fix. Mac keyboards have no `Insert` key.
-Source: [copilot-cli #1585](https://github.com/github/copilot-cli/issues/1585).
+**Rule 3.5.** Do not enable the cockpit and mouse capture without shipping
+the copy path in the same change. In-app drag-select with copy, the
+override key for native selection (rule 7.5), and the capture off switch
+(rule 7.2) ship together or capture stays off.
 
 ---
 
 ## 4. Composer input
 
 **Rule 4.1.** `Enter` submits, always.
-Source: [Claude Code terminal config](https://code.claude.com/docs/en/terminal-config).
 
-**Rule 4.2.** `Ctrl-J` is the primary newline, not a fallback. `Ctrl-J` is line
-feed, `0x0A`. It works in every terminal with no setup and no negotiation.
-Source: [terminal keyboard protocol survey](https://blog.fsck.com/agent-blog/2026/02/26/terminal-keyboard-protocol/).
+**Rule 4.2.** `Ctrl-J` is the primary newline, not a fallback. `Ctrl-J` is
+line feed, `0x0A`. It works in every terminal with no setup and no
+negotiation.
 
-**Rule 4.3.** Backslash then `Enter` is the typeable newline escape hatch. It
-needs no key detection and survives `screen` and mosh.
-Source: [Claude Code terminal config](https://code.claude.com/docs/en/terminal-config).
+**Rule 4.3.** Backslash then `Enter` is the typeable newline escape hatch.
+It needs no key detection and survives `screen` and mosh.
 
-**Rule 4.4.** `Shift-Enter` is a bonus. Enable it only after querying the Kitty
-keyboard protocol with `CSI ? u`. Push flag `0b1`. Pop it on exit, including on
-panic. Never push flag `0b1000`: it stops `Ctrl-C` generating SIGINT.
-Source: [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/).
+**Rule 4.4.** `Shift-Enter` is a bonus. Enable it only after querying the
+Kitty keyboard protocol with `CSI ? u`. Push flag `0b1`. Pop it on exit,
+including on panic. Never push flag `0b1000`: it stops `Ctrl-C` generating
+SIGINT.
 
-**Rule 4.5.** A failed `Shift-Enter` must never print into the composer. The
-common symptom is a literal `OM`. Filter unknown SS3 and CSI sequences.
-Sources: [claude-code #9321](https://github.com/anthropics/claude-code/issues/9321),
-[#32090](https://github.com/anthropics/claude-code/issues/32090).
+**Rule 4.5.** A failed `Shift-Enter` must never print into the composer.
+The common symptom is a literal `OM`. Filter unknown SS3 and CSI sequences.
 
 **Rule 4.6.** Do not document `Alt-Enter` as primary. macOS does not send
 Option as a modifier until the user enables "Use Option as Meta Key".
-Source: [Claude Code terminal config](https://code.claude.com/docs/en/terminal-config).
 
 ---
 
 ## 5. Slash commands and mentions
 
-**Rule 5.1.** Open the command menu only when the buffer's first non-whitespace
-character is `/`, the cursor sits in that leading token, and the keystroke came
-from typing. This makes `src/foo` structurally incapable of triggering it.
-Source: [Claude Code interactive mode](https://code.claude.com/docs/en/interactive-mode).
+**Rule 5.1.** Open the command menu only when the buffer's first
+non-whitespace character is `/`, the cursor sits in that leading token, and
+the keystroke came from typing. This makes `src/foo` structurally incapable
+of triggering it.
 
-**Rule 5.2.** A `/` typed mid-sentence must not open the menu. Claude Code
-crashed on this and the report links five prior regressions of the same family.
-Source: [claude-code #25477](https://github.com/anthropics/claude-code/issues/25477).
+**Rule 5.2.** A `/` typed mid-sentence must not open the menu. This failure
+mode has a long regression history across agent CLIs.
 
-**Rule 5.3.** Check menu state before submit, from one flag. `Enter` accepts
-the highlighted row when the menu is open, and does not also submit. The
-"accepts and also submits" bug has three issue numbers across two products.
-Source: [claude-code #25353](https://github.com/anthropics/claude-code/issues/25353).
+**Rule 5.3.** Check menu state before submit, from one flag. `Enter`
+accepts the highlighted row when the menu is open, and does not also
+submit.
 
-**Rule 5.4.** `Esc` closes the menu and nothing else on the first press. The
-buffer keeps its text. A second `Esc` falls through to the application.
-Source: [ARIA combobox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/).
+**Rule 5.4.** `Esc` closes the menu and nothing else on the first press.
+The buffer keeps its text. A second `Esc` falls through to the
+application.
 
 **Rule 5.5.** Arrow keys move the highlight only while the menu is open.
-Otherwise they belong to history. Gate the menu on a typed-keystroke flag, not
-on buffer contents, or history recall traps the arrows.
-Source: [claude-code #56923](https://github.com/anthropics/claude-code/issues/56923).
+Otherwise they belong to history. Gate the menu on a typed-keystroke flag,
+not on buffer contents, or history recall traps the arrows.
 
-**Rule 5.6.** Do not auto-descend into subcommands on an exact match. Do not
-append a trailing space after one. `/stats` plus `Enter` ran `/stats session`.
-Source: [gemini-cli PR #20136](https://github.com/google-gemini/gemini-cli/pull/20136).
+**Rule 5.6.** Do not auto-descend into subcommands on an exact match. Do
+not append a trailing space after one. `/stats` plus `Enter` must run
+`/stats`, not `/stats session`.
 
 **Rule 5.7.** Score every candidate. Cap only the rendered rows. Render at
-least 6 rows with a scrolling window. opencode capped candidates before
-rendering and made later matches unreachable. The row cap is
-`config.MaxCompletionRows`, which `wireframes-panes.md` section 10 sets to 6.
-Source: [opencode #17027](https://github.com/anomalyco/opencode/issues/17027).
+least 6 rows with a scrolling window. Capping candidates before scoring
+makes later matches unreachable. The row cap is `config.MaxCompletionRows`
+(6).
 
 **Rule 5.8.** Use fzf-style scored fuzzy matching with word-boundary,
 path-separator and camelCase bonuses. Sort exact name matches first.
-Source: [fzf matching](https://deepwiki.com/junegunn/fzf/2.2-fuzzy-matching-algorithm).
 
 **Rule 5.9.** Trigger `@` at any token start, anywhere in the line. With no
 match, leave the `@` as literal text and never block submission.
-Source: [Gemini CLI commands](https://google-gemini.github.io/gemini-cli/docs/cli/commands.html).
 
-**Rule 5.10.** Ship one sigil. `@` covers every workspace entity. Disambiguate
-by a type badge on the row, not by a second sigil. `#` and `>` carry no
-cross-product meaning.
-Source: [Cursor @-symbols](https://cursor.com/docs/context/@-symbols).
+**Rule 5.10.** Ship one sigil. `@` covers every workspace entity.
+Disambiguate by a type badge on the row, not by a second sigil. `#` and
+`>` carry no cross-product meaning.
 
-**Rule 5.11.** Exclude git-ignored paths from mention candidates. This is a
-relevance rule and a secrets rule; it keeps `.env` out.
-Source: [Gemini CLI commands](https://google-gemini.github.io/gemini-cli/docs/cli/commands.html).
+**Rule 5.11.** Exclude git-ignored paths from mention candidates. This is
+a relevance rule and a secrets rule; it keeps `.env` out.
 
 **Rule 5.12.** Build the candidate index once and update it incrementally.
-Never rebuild per keystroke. Never walk outside the workspace. opencode scanned
-`$HOME` at startup and hit 1000% CPU for ten minutes.
-Sources: [gemini-cli #7928](https://github.com/google-gemini/gemini-cli/issues/7928),
-[opencode #6741](https://github.com/anomalyco/opencode/issues/6741).
+Never rebuild per keystroke. Never walk outside the workspace. A startup
+scan of `$HOME` pins a CPU core for minutes.
 
-**Rule 5.13.** Repaint the menu within 100 ms of the keystroke. That is the
-limit for the user to feel their action caused it.
-Source: [NN/g response limits](https://www.nngroup.com/articles/response-times-3-important-limits/).
+**Rule 5.13.** Repaint the menu within 100 ms of the keystroke. That is
+the limit for the user to feel their action caused it.
 
 ---
 
 ## 6. Focus
 
-**Rule 6.1.** Do not use `Tab` to move focus while a completion menu can be
-open. Resolve it as: `Tab` completes when the menu is open, and moves focus
-only when it is closed.
-Source: [mui #20904](https://github.com/mui/material-ui/issues/20904).
+**Rule 6.1.** Do not use `Tab` to move focus while a completion menu can
+be open. Resolve it as: `Tab` completes when the menu is open, and moves
+focus only when it is closed.
 
 **Rule 6.2.** Single-key actions are unavailable while the composer holds
 focus. Route them through an explicit focus change or a command palette. A
@@ -305,275 +232,307 @@ text-first application cannot bind bare letters globally.
 
 **Rule 6.3.** Never signal focus by colour alone. WCAG 1.4.1 requires the
 information without colour perception.
-Source: [W3C SC 1.4.1](https://www.w3.org/WAI/WCAG21/Understanding/use-of-color.html).
 
-**Rule 6.4.** Indicate focus with a gutter marker plus reverse video. Reverse
-video inherits the theme's own contrast, so it survives any palette. Bold alone
-is unreliable: many terminals render bold as a brighter colour, which degrades
-to a colour-only cue.
-Source: [W3C SC 2.4.13](https://www.w3.org/WAI/WCAG22/Understanding/focus-appearance.html).
+**Rule 6.4.** Indicate focus with a gutter marker plus reverse video.
+Reverse video inherits the theme's own contrast, so it survives any
+palette. Bold alone is unreliable: many terminals render bold as a
+brighter colour, which degrades to a colour-only cue.
 
-**Rule 6.5.** Focusing an older item turns auto-follow off. Show that it is
-off. Anchor focus to a stable item identity, not a line offset, so content
-arriving above does not move the selection. k9s has five open issues from
-getting this wrong.
-Sources: [k9s #444](https://github.com/derailed/k9s/issues/444),
-[k9s #155](https://github.com/derailed/k9s/issues/155).
+**Rule 6.5.** Focusing an older item turns auto-follow off. Show that it
+is off. Anchor focus to a stable item identity, and capture the anchor at
+the moment of the move, not at the moment of the restore. Live mutations
+append rows and then rebind, so an index captured after the move can point
+into a changed list; the move is the only moment where index and model
+agree. Restoring from a stale index silently selects the wrong row.
 
-> **Amended 2026-09-04 (mivia sidebar).** "Anchor to identity" is not enough
-> on its own: the identity has to be CAPTURED AT THE MOVE. The sidebar
-> recovered its selection by asking the current model what the current cursor
-> index meant - but live mutations append rows and then rebind, so by then the
-> index already pointed into a changed list. A file arriving above the
-> subagents header made that index name a file, and the restore faithfully
-> restored the wrong row. The move is the only moment where index and model
-> agree, so that is where the key is taken.
-
-**Rule 6.8 (mivia, added 2026-09-04).** A list whose sections grow without
-bound during a run must let the user fold a section. The files and subagents
-lists both grow for the length of a long run and push each other off the pane;
-without a fold the reader cannot keep either in view. The section header
-becomes the selectable row that owns the fold: left closes, right opens, Enter
-toggles. A section with nothing in it keeps a plain caption and no marker -
-offering a fold over nothing costs a stop on the way past and does nothing
-when taken. A folded section still states its count, and a folded gauge still
-states its share: folding must not cost the reader the number they were
-watching.
-
-**Rule 6.6.** Keep a paused viewport paused when the turn finishes. The finish
-event is when a naive implementation yanks the user away.
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
+**Rule 6.6.** Keep a paused viewport paused when the turn finishes. The
+finish event is when a naive implementation yanks the user away.
 
 **Rule 6.7.** Show a jump-to-latest affordance with a count while paused.
-Approval prompts override the pause and scroll into view, or the agent appears
-to hang.
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
+Approval prompts override the pause and scroll into view, or the agent
+appears to hang.
+
+**Rule 6.8.** A list whose sections grow without bound during a run must
+let the user fold a section. The files and subagents lists both grow for
+the length of a long run and push each other off the pane; without a fold
+the reader cannot keep either in view. The section header is the
+selectable row that owns the fold: left closes, right opens, Enter
+toggles. A section with nothing in it keeps a plain caption and no marker;
+offering a fold over nothing costs a stop on the way past and does nothing
+when taken. A folded section still states its count, and a folded gauge
+still states its share: folding must not cost the reader the number they
+were watching.
 
 ---
 
 ## 7. Mouse
 
-**Rule 7.1.** Mouse is off by default. An agent CLI's output is prose, code,
-diffs and paths. That text exists to be copied. Mouse capture removes exactly
-that. k9s defaults `enableMouse` to false for the same reason.
-Sources: [k9s config](https://k9scli.io/topics/config/),
-[Bubble Tea #162](https://github.com/charmbracelet/bubbletea/issues/162).
+**Rule 7.1.** Mouse capture is ON by default in the cockpit, because the
+cockpit provides its own drag-select with OSC 52 copy while capturing, so
+"text exists to be copied" is served in-app. Native terminal selection
+stays reachable through the per-terminal override key (rule 7.5) and the
+live Settings toggle that hands the mouse back entirely. Capture resolves
+at startup as `MIVIA_MOUSE` env > `[tui] mouse` config > default true.
+The warning stands for any surface without a working in-app selection:
+ship capture off there, because agent output is prose, code, diffs and
+paths, and that text exists to be copied.
 
-> **Amended 2026-08-29 (mivia cockpit).** The cockpit ships capture ON by
-> default because it provides its own drag-select with OSC 52 copy while
-> capturing, so "text exists to be copied" is served in-app; native terminal
-> selection stays reachable through the per-terminal override key (rule 7.5)
-> and a live Settings toggle that hands the mouse back entirely. The rule's
-> warning still holds for any surface without a working in-app selection:
-> ship capture off there. See cockpit-research.md rule 6.5.
-
-**Rule 7.2.** Ship `mouse: off` before shipping any mouse feature. Its absence
-is logged as a regression across three independent tools.
-Source: [lazygit #602](https://github.com/jesseduffield/lazygit/issues/602).
+**Rule 7.2.** The capture off switch ships with the first mouse feature,
+not after it. The switches are the `[tui] mouse` config key, the
+`MIVIA_MOUSE` environment variable, and the Settings → General toggle. A
+mouse feature without a working off switch is a regression; three
+independent tools logged exactly that.
 
 **Rule 7.3.** Use SGR mode 1006 only. Legacy encodings cap coordinates at
 column 223. Terminals routinely exceed that.
-Source: [xterm ctlseqs](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
 
 **Rule 7.4.** Enable the narrowest mode that satisfies the feature. Prefer
-alternate-scroll, `CSI ?1007h`, for wheel-only. Do not reach for mode 1003.
-Source: [xterm ctlseqs](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
+alternate-scroll, `CSI ?1007h`, for wheel-only. Do not reach for mode
+1003.
 
-**Rule 7.5.** Never tell the user to hold Shift. The modifier is `Option` in
-iTerm2, `Fn` in Terminal.app, and absent in xterm.js, code-server and VS Code
-web. Show the correct key for the detected terminal, or show none.
-Sources: [iTerm2 docs](https://iterm2.com/3.2/documentation-general-usage.html),
-[claude-code #74320](https://github.com/anthropics/claude-code/issues/74320).
+**Rule 7.5.** Never tell the user to hold Shift. The modifier is `Option`
+in iTerm2, `Fn` in Terminal.app, and absent in xterm.js, code-server and
+VS Code web. Show the correct key for the detected terminal, or show none.
+The help overlay shows the probed terminal's own key.
 
-**Rule 7.6.** Mouse capture also steals middle-click PRIMARY paste on Linux.
-Treat that as a first-class regression, not an edge case.
-Source: [claude-code #66957](https://github.com/anthropics/claude-code/issues/66957).
+**Rule 7.6.** Mouse capture also steals middle-click PRIMARY paste on
+Linux. Treat that as a first-class regression, not an edge case.
 
-**Rule 7.7.** Disable mouse tracking on exit and on panic. Otherwise the user's
-terminal stays broken.
-Source: [lazygit #1764](https://github.com/jesseduffield/lazygit/issues/1764).
+**Rule 7.7.** Disable mouse tracking on exit and on panic. Otherwise the
+user's terminal stays broken.
 
-**Rule 7.8 (mivia, added 2026-09-04).** A row that DRAWS a fold marker must
-toggle on a click on that row, in both directions. A marker that only ever
-opens is a control the user cannot use to put the screen back: the transcript's
-click handler was expand-only, so a mis-click on a 400-line tool result was
-undoable from the keyboard alone. The converse still holds - a click on a
-BODY row falls through, so expanded content is never folded away by a stray
-click. Surfaces bound by this: transcript block headers and coalesced run rows
-(`ToggleBlockAtScreenRow`), and sidebar section headers (`handleNavClick`).
+**Rule 7.8.** A row that draws a fold marker must toggle on a click on
+that row, in both directions. A marker that only ever opens is a control
+the user cannot use to put the screen back: with an expand-only handler, a
+mis-click on a 400-line tool result was undoable from the keyboard alone.
+The converse holds: a click on a body row falls through, so expanded
+content is never folded away by a stray click. Bound by this rule:
+transcript block headers and coalesced run rows (`ToggleBlockAtScreenRow`),
+and sidebar section headers (`handleNavClick`).
 
-**Rule 7.9 (mivia, added 2026-09-04).** A click row must be derived from the
-same geometry the renderer drew, and tests for it must read the row back OUT
-of the rendered output. A test that recomputes the renderer's arithmetic
-agrees with the code by construction: the transcript's span geometry named the
-blank separator row instead of the header for every block that started a
-section, so clicking the header did nothing and clicking the blank row above
-it expanded the block - and every existing test passed, because each derived
-its click row from the same wrong arithmetic.
+**Rule 7.9.** A click row must be derived from the same geometry the
+renderer drew, and tests for it must read the row back out of the rendered
+output. A test that recomputes the renderer's arithmetic agrees with the
+code by construction: when the span geometry named the blank separator row
+instead of the header, clicking the header did nothing, clicking the blank
+row expanded the block, and every test passed, because each derived its
+click row from the same wrong arithmetic.
 
 ---
 
 ## 8. Clipboard
 
-**Rule 8.1.** OSC 52 is a supplement, never the primary clipboard path. Prefer
-the platform tool. Use the `tmux` buffer inside `tmux`. Fall back to OSC 52
-over SSH only.
-Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
+**Rule 8.1.** OSC 52 is a supplement, never the primary clipboard path.
+Prefer the platform tool. Use the `tmux` buffer inside `tmux`. Fall back
+to OSC 52 over SSH only.
 
 **Rule 8.1a.** Bubble Tea v2 provides OSC 52 directly: `tea.SetClipboard`,
-`SetPrimaryClipboard`, `ReadClipboard` and `ClipboardMsg`. Use those for the
-fallback path rather than writing escape sequences. Note the counter-example:
-Charm's own Crush uses the local OS clipboard instead, and carries WSL,
-Wayland and remote copy complaints.
-Sources: [Bubble Tea v2 release](https://charm.land/blog/v2/),
-[crush #661](https://github.com/charmbracelet/crush/issues/661).
+`SetPrimaryClipboard`, `ReadClipboard` and `ClipboardMsg`. Use those for
+the fallback path rather than writing escape sequences. Pair them with a
+local clipboard path: terminals that refuse OSC 52 outright still get the
+copy.
 
-**Rule 8.2.** OSC 52 is absent on VTE, which is the GNOME Terminal family, and
-on macOS Terminal.app. Those are the two most common defaults on Linux desktop
-and macOS.
-Sources: [VTE issue 2495](https://gitlab.gnome.org/GNOME/vte/-/issues/2495),
-[can-i-use-terminal](https://can-i-use-terminal.github.io/features/osc52copy.html).
+**Rule 8.2.** OSC 52 is absent on VTE, which is the GNOME Terminal family,
+and on macOS Terminal.app. Those are the two most common defaults on Linux
+desktop and macOS.
 
-**Rule 8.3.** OSC 52 payload limits fail silently. xterm caps decoded content
-at 100,000 bytes. VTE drops oversize sequences with no error. Base64 inflates
-the payload by a third.
-Source: [OSC 52 write](https://vtdn.dev/docs/osc/osc52-write/).
+**Rule 8.3.** OSC 52 payload limits fail silently. xterm caps decoded
+content at 100,000 bytes. VTE drops oversize sequences with no error.
+Base64 inflates the payload by a third. "OSC 52 solves clipboard over SSH"
+holds only where every layer supports it and the payload is small.
 
 **Rule 8.4.** Treat clipboard read as unavailable. xterm disallows
-`GetSelection` by default; kitty asks; WezTerm defaults reading off. Do not
-design a feature that needs it.
-Sources: [xterm(1)](https://linux.die.net/man/1/xterm),
-[kitty conf](https://sw.kovidgoyal.net/kitty/conf/).
+`GetSelection` by default; kitty asks; WezTerm defaults reading off. Do
+not design a feature that needs it.
 
-**Rule 8.5.** Suppress OSC 52 inside a multiplexer that already handles it.
-Two writers race and corrupt the clipboard.
-Source: [opencode #12455](https://github.com/anomalyco/opencode/issues/12455).
+**Rule 8.5.** Suppress OSC 52 inside a multiplexer that already handles
+it. Two writers race and corrupt the clipboard.
 
 **Rule 8.6.** Print which clipboard path was used after every copy. Silent
-clipboard failure is a recurring bug class; opencode showed success while the
-clipboard stayed empty.
-Source: [opencode #17796](https://github.com/anomalyco/opencode/issues/17796).
+clipboard failure is a recurring bug class; the copy confirmation states
+the path so a silent drop is visible.
 
 ---
 
 ## 9. Accessibility, colour and degradation
 
-**Rule 9.1.** Screen-reader mode always renders plain scrolling text. It never
-enters the cockpit. Print an explanation instead of switching. An app-owned
-viewport emits nothing a screen reader can follow.
-Source: [Claude Code accessibility](https://code.claude.com/docs/en/accessibility).
+**Rule 9.1.** Screen-reader mode always renders plain scrolling text. It
+never enters the cockpit. Print an explanation instead of switching. An
+app-owned viewport emits nothing a screen reader can follow.
 
-**Rule 9.2.** Screen-reader mode is a separate render path, not a theme. Remove
-box drawing, colour-only cues, and redraws of unchanged content. Prefix every
-turn with a searchable label.
-Source: [Claude Code accessibility](https://code.claude.com/docs/en/accessibility).
+**Rule 9.2.** Screen-reader mode is a separate render path, not a theme.
+Remove box drawing, colour-only cues, and redraws of unchanged content.
+Prefix every turn with a searchable label.
 
-**Rule 9.3.** Reduced motion is a separate setting from screen-reader mode.
-Magnifier and colourblind users are not screen-reader users.
-Source: [Claude Code accessibility](https://code.claude.com/docs/en/accessibility).
+**Rule 9.3.** Reduced motion is a separate setting from screen-reader
+mode. Magnifier and colourblind users are not screen-reader users.
 
 **Rule 9.4.** Suppress colour when `NO_COLOR` is present and not empty,
 whatever its value. `NO_COLOR=yes` and `NO_COLOR=0` both disable colour.
 `NO_COLOR=` empty does not.
-Source: [no-color.org](https://no-color.org/).
 
-**Rule 9.5.** `NO_COLOR` disables colour, not text decoration. Bold, faint and
-underline survive.
-Source: [no-color.org](https://no-color.org/).
+**Rule 9.5.** `NO_COLOR` disables colour, not text decoration. Bold, faint
+and underline survive.
 
-**Rule 9.6.** Treat `TERM=dumb` as a hard signal to take the non-TTY path. A
-dumb terminal has no cursor addressing, so repaint-in-place is invalid.
-Source: [clig.dev](https://clig.dev/).
+**Rule 9.6.** Treat `TERM=dumb` as a hard signal to take the non-TTY path.
+A dumb terminal has no cursor addressing, so repaint-in-place is invalid.
 
-**Rule 9.7.** Gate every terminal feature on stdout and stdin both being TTYs.
-Show no animation when stdout is not a TTY.
-Source: [clig.dev](https://clig.dev/).
+**Rule 9.7.** Gate every terminal feature on stdout and stdin both being
+TTYs. Show no animation when stdout is not a TTY.
 
-**Rule 9.8.** Never prompt when stdin is not a TTY. A permission prompt needs a
-non-interactive failure mode, never a silent approval.
-Source: [clig.dev](https://clig.dev/).
+**Rule 9.8.** Never prompt when stdin is not a TTY. A permission prompt
+needs a non-interactive failure mode, never a silent approval.
 
 **Rule 9.9.** Restore terminal state on SIGINT, SIGTERM, SIGHUP and panic.
-Alternate screen, mouse tracking, raw mode and keyboard flags all leave the
-terminal unusable if the process dies without emitting the reset.
-Source: [clig.dev](https://clig.dev/).
+Alternate screen, mouse tracking, raw mode and keyboard flags all leave
+the terminal unusable if the process dies without emitting the reset.
 
 **Rule 9.10.** Show the active tool or step, not only a spinner. A spinner
 cannot distinguish thinking from hung.
-Source: [clig.dev](https://clig.dev/).
 
 ---
 
-## 10. What this overturns in `wireframes-panes.md`
+## 10. Cross-reference: `wireframes-panes.md`
 
-That file stays the visual specification. These interaction points change.
+That file stays the visual specification. This table maps its rows to the
+current interaction state. The keymap package (`internal/uikit/keymap`) is
+the authority for current bindings; read it, never this table.
 
-The keymap rebinds are **applied**: `wireframes-panes.md` section 15 and
-`internal/uikit/keymap` now agree, and the table below records only why.
-Read the keymap package for the current bindings, never this table.
-
-| Section | Was | Now | Why |
-|---|---|---|---|
-| 15 | `Ctrl-S` toggles reasoning | `Ctrl-R`, global | `Ctrl-S` is XOFF (rule 1.2) |
-| 15 | `Ctrl-W` collapses all | `Ctrl-G` | readline word-rubout; emulator close-tab (section 1) |
-| 15 | `Ctrl-E` expands all | Kept, live window only | The composer never holds focus when it acts |
-| 15 | `Ctrl-M` opens the model dialog | `Ctrl-P` | `Ctrl-M` is byte-identical to `Enter` |
-| 15 | `Tab` focuses blocks | Conditional | Conflicts with completion (rule 6.1) |
-| 15 | Bare `y`, `s`, `n`, `N` act | Needs a focus model | Composer holds focus (rule 6.2) |
-| 15 | No newline key | `Ctrl-J`, then `\`+`Enter` | Composer is single-line today (section 4) |
-| 5 | Blocks freeze in scrollback | Resolved | Blocks freeze on eviction, not on finalize |
-| 10 | Slash trigger unstated | Start-anchored | Prevents the `src/foo` trigger (rule 5.1) |
-| 10 | `Tab` accepts common prefix | Accepts selection | The menu keeps a highlighted row (rule 6.1) |
-| 12 | No mention affordance | `@` at token start | Section 5 |
-| 3 | Mouse unstated | Off by default | Rule 7.1 |
-| 3 | Inline is the default | Cockpit is the default | Rule 6.1 of [cockpit-research.md](cockpit-research.md) |
-| 1 | `Ctrl-D` never bound | Readline-owned, pager binds it | less binds ctrl+d as half a page; a pager is not a line editor (amended 2026-08-19, transcript mode) |
-| 4 | `v` marker on every non-prose block | Marker only where a body exists | A marker over no body is a phantom affordance (amended 2026-08-28, transcript-polish.md R3) |
-| 4/5 | Collapsed header identical to expanded | A collapsed header also states its magnitude: `… +N lines` in the meta column | The reader must see what expanding reveals (transcript-polish.md R3) |
-| 4/9 | Per-surface durations (`18s`, `4100ms`) | One `render.FormatElapsed` ladder: `250ms`, `4.1s`, `1m 05s` | One duration grammar on one screen (transcript-polish.md R5) |
-| 4 | Usage printed as a header block | One dim prose footer line per turn | History stays in the record; live totals stay chrome (transcript-polish.md R6) |
-| 2/4 | `│` body rail on every expanded block | Rail on the focused and the failed body only; plain 4-column indent at rest | Restores section 2's resting state (transcript-polish.md R4) |
-| 4 | Unknown tool repeats its first output line in the header | Header keeps the tool name; the body carries each line once | One fact, one place (transcript-polish.md R7) |
-| 4 | One blank row after every block | Blank rows separate turn sections: prose and activity groups. Activity runs are dense | Spacing follows turns, not events (transcript-polish.md R1, amended 2026-08-28) |
-| 4 | Every tool call draws its own header row | Two or more consecutive collapsed read-only lookups coalesce into one leader row, and three or more consecutive FINISHED activity blocks of any kind into one work row; opening either restores the headers | Magnitude first, detail on demand; display-only - copy, pager and dump keep per-block identity. Running work and failures never coalesce (transcript-polish.md R2, R2a) |
-
-`research-panes.md` stays as the record of the colour and contrast work. Its
-sections 7.1 and 7.2, on markdown and diagram rendering, are unverified against
-current library availability and are not binding until re-checked.
+| `wireframes-panes.md` section | Current state |
+|---|---|
+| 1 | `Ctrl-D` is readline-owned inside the composer and free outside; the pager binds it as half page down (section 1) |
+| 3 | The cockpit is the only interactive renderer (rule 3.1); mouse capture defaults on, with in-app selection and the rule 7.2 off switches |
+| 5 | Blocks open under the collapse threshold, close at or above it; a collapsed header states its magnitude (section 11) |
+| 10 | The slash menu is start-anchored (rule 5.1); `Tab` accepts the common prefix and `Enter` accepts the highlighted row while the menu is open (rule 6.1) |
+| 12 | `@` triggers at any token start, anywhere in the line (rule 5.9) |
+| 15 | Reasoning toggles on `Ctrl-R` (global), collapse-all on `Ctrl-G`, expand-all on `Ctrl-E` (transcript context), settings on `F2`, palette on `Ctrl-P`/`Ctrl-X`; `Ctrl-M` is never bound (byte-identical to `Enter`); bare decision keys live in the transcript focus context (`y` copy, `s` diff split, `x` cancel tool call) |
+| 2, 4, 5 | Transcript presentation grammar (markers, magnitude hints, duration ladder, usage footer, body rail, run coalescing) lives in section 11 of this file |
 
 ---
 
-## 11. Confidence
+## 11. Transcript layout
 
-High confidence, from a specification or vendor documentation:
+These rules govern `internal/ui/component/transcript`. They are
+presentation rules: coalescing and grouping change only what renders.
+Blocks stay individual records, so focus, click-to-toggle, copy and
+`Dump()` keep per-block identity and full content.
 
-- Every reserved key in section 1.
-- xterm mode numbers, SGR 1006, alternate-scroll 1007, alternate screen 1049.
-- The `NO_COLOR` wording.
-- Kitty keyboard protocol flag semantics, including flag `0b1000` and SIGINT.
-- Synchronized output sequences and the query reply.
-- Claude Code accessibility behaviours.
+**Rule 11.1.** Spacing follows turns, not events. A blank row separates
+turn sections - prose, or the start of a new activity group - and no blank
+row sits between members of one activity run. The one exception: a visible
+tool card (a tinted multi-line body) does not touch the block after it; a
+gap row separates them.
 
-Medium confidence:
+**Rule 11.2.** Activity blocks hang under the turn that produced them at a
+2-column group indent; the marker sits at column 3. Prose - the user turn,
+assistant text, the usage footer - is the conversation voice and stays at
+the top level.
 
-- The OSC 52 support matrix. Two trackers agree on writing and conflict on
-  WezTerm, which resolves as write supported and read gated. Neither publishes
-  a per-row verification date.
-- Kitty keyboard protocol support on Windows Terminal's stable channel. Sources
-  conflict. Treat as UNVERIFIED.
+**Rule 11.3.** Two or more consecutive collapsed read-only lookups of one
+class (`read_file`, `search`, `list`) coalesce into one leader row that
+names its targets (`Read 3 files: a.go, b.go, c.go`). A live, failed or
+expanded block never folds into one.
 
-Low confidence, or user reports rather than vendor statements:
+**Rule 11.4.** Three or more consecutive finished activity blocks of any
+kind coalesce into one work row that states what ran, how many calls, and
+the elapsed time. Rules: running work keeps its own row (it is what the
+reader waits on); a failed block never folds (a summary row that could
+swallow a failure hides the one block worth the rows); three is the floor;
+the read-only row wins a tie because it names its targets; the run's
+duration is the sum of the member durations, because calls issued in
+parallel add to more than the wall clock. The fold is driven by each
+member's own collapsed state, so collapsing the members again re-forms the
+run with no extra state.
 
-- All linked issue trackers. They are strong evidence of what users experience.
-  They are not vendor positions.
-- The claim that which-key popups improve discoverability. Adoption and
-  testimony only; no controlled study found.
+**Rule 11.5.** Collapse behaviour: a marker prints only where a body
+exists; header-only blocks keep a blank marker column. A collapsed body
+states its magnitude in the meta (`… +N lines`). A toggle works in both
+directions from the keyboard (`space`/`enter` on the focused block) and
+from a click on the marker row (rule 7.8). Hints name the true keys; a
+global one-key expand needs a reserved-key analysis against section 1
+first. Reasoning blocks have three states: collapsed is one summary row,
+windowed shows the last `CollapseThresholdLines` rows, expanded shows all.
 
-Folklore corrected by this research:
+**Rule 11.6.** The `│` body rail prints on the focused block and the
+failed block only. Every other expanded body indents with plain spaces at
+the same 4-column position. A rail on every block contradicts the resting
+layout and costs a column for no information.
 
-1. "Hold Shift to bypass mouse reporting" is false as a portable claim.
-2. "OSC 52 solves clipboard over SSH" holds only where every layer supports it
-   and the payload is small.
-3. "Alternate screen preserves scrollback" conflates two guarantees. It
-   preserves what existed before the application started. Everything the
-   application prints is destroyed on exit.
+**Rule 11.7.** One duration ladder everywhere: `render.FormatElapsed`
+renders under a second as milliseconds (`250ms`), under a minute as
+seconds (`4.1s`), and past that as minutes and seconds (`1m 05s`). Tool
+meta, subagent ends, and the statusline all use it. Raw `%dms` values do
+not appear on screen.
+
+**Rule 11.8.** Usage is one dim, header-less footer line per turn
+(`1,284 in  2,940 out  340 cached  $0.04`), not a header block. The footer
+stays a `Block` in the model: the alternate screen has no native
+scrollback, so removing the fact from the model removes it from the `[`
+dump, grep and `tmux` copy. The topbar gauge and statusline cost pill keep
+their live roles; the transcript keeps the historical record.
+
+**Rule 11.9.** For a tool the formatter does not know, the header keeps
+the tool name and the body carries each output line once. The first output
+line must not print twice, once as header detail and once as body row one.
+
+**Rule 11.10.** The streaming tail renders through the same markdown path
+as the committed block, so the flush changes style, not layout. The tail
+keeps a fixed indent, and an open code fence, blockquote or heading stays
+in the tail buffer and commits atomically once its boundary is safe to
+cut. The flush tick is 66 ms (15 Hz), inside rule 2.5.
+
+**Rule 11.11.** The `Ctrl-O` pager and the `[` scrollback dump render the
+conversation expanded, with the same section separators and group indents
+as the live view. Leader runs never appear in a dump: with every member
+expanded there is no run to coalesce.
+
+---
+
+## 12. Tool output framing
+
+These rules govern the recorded-result tool formatters
+(`internal/ui/render`): `ledger_read`, `read_output`,
+`inspect_repository`, the `memory_*` family, and every formatter that
+prints a tool result into the transcript.
+
+**Rule 12.1.** Every recorded-result formatter decodes through one ladder:
+trim, unwrap JSON-string layers (bounded, so a hostile payload cannot
+drive a loop), parse the envelope, salvage with expressions that accept
+escaped quotes, and only then fall back. The ladder styles recorded bytes;
+it never executes them.
+
+**Rule 12.2.** Bytes the ladder cannot parse still render - the model saw
+them, and the reader may need them - but a dim first line labels them
+(`unparsed tool result · N B`), so a blob is never mistaken for formatted
+content.
+
+**Rule 12.3.** A raw model reasoning dump never reaches the transcript.
+Every closed `<think>…</think>` block, and one leading unclosed block from
+a truncated payload, is replaced by one dim badge (`· thinking N words
+hidden`) that leads the body, so the fact survives a collapsed block's
+head window. The model keeps receiving the raw bytes; this shapes only the
+display.
+
+**Rule 12.4.** Each tool family recognizes its own error envelope and
+renders the error as a one-line summary (`✖ message`) instead of dumping
+the JSON object.
+
+**Rule 12.5.** The tool-end header carries the formatter's summary - ref,
+size, kind, truncation and paging state - not a raw echo of the call
+arguments. The header must state the facts a reader needs without
+expanding.
+
+**Rule 12.6.** Truncation is a header badge, not only a tail trailer:
+`· truncated` for a cut payload, `· more · offset=N` for a paged read. The
+trailer lines stay in the body and travel with `Dump()`, but a reader who
+never expands still sees the fact.
+
+**Rule 12.7.** `inspect_repository` output caps per-file matches and
+prints `… +N more in this file`; long paths middle-truncate so both ends
+stay visible; the summary counts what the envelope claims
+(`N matches in M files · truncated, showing X`), not only what survived.
+
+**Rule 12.8.** The memory formatters route through the same ladder: a
+`{"results": [...]}` wrapper parses, plain save/delete sentences pass
+through unchanged, and a payload that looks like JSON but does not parse
+gets the unparsed label, never a naked dump.

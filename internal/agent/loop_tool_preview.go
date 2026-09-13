@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -27,12 +28,109 @@ func redactToolInput(raw string) string { return redactToolInputForTool("", raw)
 // re-parses that same preview as JSON - a cut mid-object silently breaks the
 // parse and collapses a multi-task batch back into one aggregate row.
 func redactToolInputForTool(name, raw string) string {
-	maxBytes := 256
+	redacted := redactedToolInput(raw)
 	if name == "dispatch_tasks" {
-		maxBytes = editToolPreviewMaxBytes
+		// A byte cut cannot work here whatever the budget: the consumer
+		// re-parses this string as JSON, so any cut that lands mid-object
+		// yields nothing at all. Reduce the STRUCTURE instead - keep the
+		// identifying fields, drop the prompt bodies that make the payload
+		// large - so the preview stays both small and parseable no matter
+		// how long the task prompts are.
+		if preview, ok := dispatchTasksPreview(redacted); ok {
+			return preview
+		}
+		// Unparseable input (a malformed call, or a redaction that replaced
+		// the whole body): fall back to the byte cut. No worse than before.
+		return truncatePreview(redacted, editToolPreviewMaxBytes)
 	}
-	return truncatePreview(redactedToolInput(raw), maxBytes)
+	return truncatePreview(redacted, 256)
 }
+
+// dispatchTasksPreview rewrites a dispatch_tasks argument object down to the
+// fields the operator surface actually reads - each task's id and whichever
+// key names its agent - and drops everything else, above all the prompts.
+//
+// It exists because the preview has a SECOND consumer beyond display:
+// internal/ui/screen/conversation/events.go re-parses it to fan a batch out
+// into one row per task. A real multi-task dispatch runs to tens of
+// kilobytes of prompts, so the previous byte cap (8 KiB, itself already
+// widened once for this reason) cut mid-object, the parse returned nothing,
+// and a six-task batch rendered as a single row with no tasks in it while
+// six subagents ran. Reducing the structure removes the size dependency
+// rather than moving its threshold.
+//
+// ok is false when raw is not a JSON object with a non-empty tasks array;
+// the caller then keeps the old byte-cut behavior.
+func dispatchTasksPreview(raw string) (string, bool) {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(raw), &root); err != nil {
+		return "", false
+	}
+	tasksVal := foldedTaskArg(root, "tasks")
+	rawTasks, ok := tasksVal.([]any)
+	if !ok || len(rawTasks) == 0 {
+		return "", false
+	}
+	tasks := make([]any, 0, len(rawTasks))
+	for _, rt := range rawTasks {
+		task, ok := rt.(map[string]any)
+		if !ok {
+			tasks = append(tasks, map[string]any{})
+			continue
+		}
+		kept := map[string]any{}
+		for _, key := range dispatchPreviewKeys {
+			if v := foldedTaskArg(task, key); v != nil {
+				if s, isString := v.(string); isString && s != "" {
+					kept[key] = s
+				}
+			}
+		}
+		tasks = append(tasks, kept)
+	}
+	out := map[string]any{"tasks": tasks}
+	if waitVal := foldedTaskArg(root, "wait"); waitVal != nil {
+		if wait, ok := waitVal.(string); ok && wait != "" {
+			out["wait"] = wait
+		}
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return "", false
+	}
+	// Still bounded: a pathological batch (very many tasks, or very long
+	// ids) falls back rather than breaking this file's size contract. That
+	// costs the per-task rows for that batch alone, exactly as today.
+	if len(encoded) > editToolPreviewMaxBytes {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+// foldedTaskArg reads key from a model-authored JSON map the way encoding/json
+// resolves a struct tag: exact match first, else a case-insensitive one.
+// Matches the deterministic behavior of foldedArg in internal/ui/screen/conversation/events.go.
+func foldedTaskArg(m map[string]any, key string) any {
+	if v, ok := m[key]; ok {
+		return v
+	}
+	folded := make([]string, 0, len(m))
+	for k := range m {
+		if strings.EqualFold(k, key) {
+			folded = append(folded, k)
+		}
+	}
+	if len(folded) == 0 {
+		return nil
+	}
+	sort.Strings(folded)
+	return m[folded[0]]
+}
+
+// dispatchPreviewKeys are the per-task fields the operator surface reads:
+// the task id, and every key extractAgentDisplayName consults to label a
+// row. Nothing else is carried - a prompt is the payload, not an identity.
+var dispatchPreviewKeys = []string{"id", "agent", "subagent", "role", "type", "skill", "workflow", "name"}
 
 // redactedToolInput is the redacted arguments with NO preview cap: the body
 // Event.InputBody carries for chat-sync, which bounds and marks the cut
@@ -133,7 +231,211 @@ func redactToolOutputForTool(name, output string) string {
 		"ledger_read", "read_output", "dispatch_tasks":
 		maxBytes = editToolPreviewMaxBytes
 	}
-	return truncatePreview(redactedToolOutput(output), maxBytes)
+	redacted := redactedToolOutput(output)
+	if len(redacted) <= maxBytes {
+		return redacted
+	}
+	// Over budget. A byte cut here lands mid-string and destroys the parse
+	// the consumers depend on, so shrink the VALUE first and only cut if
+	// that is impossible.
+	if shrunk, ok := shrinkJSONPreview(redacted, maxBytes); ok {
+		return shrunk
+	}
+	// Leaf-shrinking failed: the document's size is in its KEYS, not its
+	// values (enough rows that the fixed per-row key text - task_id,
+	// status, output_ref, output_bytes, synopsis, read_hint - outweighs the
+	// budget on its own, so shortening the already-short leaves changes
+	// nothing). dispatch_tasks results have a second, structural way to
+	// shrink that a generic tool result does not: drop every column but
+	// the two the panel actually reads.
+	if name == "dispatch_tasks" {
+		if reduced, ok := structurallyReduceDispatchOutput(redacted, maxBytes); ok {
+			return reduced
+		}
+	}
+	return truncatePreview(redacted, maxBytes)
+}
+
+// structurallyReduceDispatchOutput is shrinkJSONPreview's fallback for a
+// dispatch_tasks result that leaf-shrinking cannot bring under budget: a
+// batch of enough SHORT task rows outgrows the budget on key text alone,
+// so shortening string leaves does not help, and driving the leaf budget
+// to zero would erase task_id and status themselves - the two fields the
+// consumer's contract (parseDispatchTaskStatuses) requires to survive.
+//
+// The fix reduces the STRUCTURE instead, mirroring dispatchTasksPreview's
+// input-side fix: keep only task_id (or id) and status per row and drop
+// every other column. Those two fields are kept byte-identical - never
+// passed through shrinkStringLeaves - because they are exactly what this
+// function exists to protect; a reduction that then truncated them would
+// solve nothing. Row COUNT never changes: a row that is not a JSON object,
+// or carries neither key, is left as-is rather than dropped, so the
+// fan-out's positions still line up with the call's own task list.
+//
+// Handles the three envelope shapes parseDispatchTaskStatuses accepts: a
+// bare array (wait="run"), or an object wrapping the array under "tasks"
+// or "task_results" (wait="none"/"task"). ok is false when raw is not one
+// of those shapes, or when even the reduced form cannot fit maxBytes (for
+// example a task_id long enough on its own to blow the budget); the
+// caller then falls back to the byte cut, no worse than before this fix.
+func structurallyReduceDispatchOutput(raw string, maxBytes int) (string, bool) {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return "", false
+	}
+	reduced, rows := reduceDispatchRowsIn(value)
+	if rows == 0 {
+		return "", false
+	}
+	encoded, err := json.Marshal(reduced)
+	if err != nil {
+		return "", false
+	}
+	if len(encoded) > maxBytes {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+// reduceDispatchRowsIn locates the task-row array within value - a bare
+// array, or an object's "tasks"/"task_results" key - and rewrites each row
+// to carry only task_id (or id) and status. rows is the number of rows
+// found, 0 when value matches neither shape (the caller then keeps the
+// byte-cut fallback).
+func reduceDispatchRowsIn(value any) (any, int) {
+	switch typed := value.(type) {
+	case []any:
+		return reduceDispatchRows(typed), len(typed)
+	case map[string]any:
+		out := map[string]any{}
+		rows := 0
+		for _, key := range []string{"tasks", "task_results"} {
+			arr, ok := foldedTaskArg(typed, key).([]any)
+			if !ok {
+				continue
+			}
+			out[key] = reduceDispatchRows(arr)
+			rows += len(arr)
+		}
+		if rows == 0 {
+			return nil, 0
+		}
+		return out, rows
+	default:
+		return nil, 0
+	}
+}
+
+// reduceDispatchRows keeps only task_id (or id) and status per row. A row
+// that is not a JSON object, or carries neither key, is left untouched: it
+// still occupies its position in the array - preserving the row count
+// invariant callers rely on - and there is nothing structural left to drop
+// from it.
+func reduceDispatchRows(rows []any) []any {
+	out := make([]any, len(rows))
+	for i, rt := range rows {
+		row, ok := rt.(map[string]any)
+		if !ok {
+			out[i] = rt
+			continue
+		}
+		kept := map[string]any{}
+		for _, key := range []string{"task_id", "id", "status"} {
+			if v := foldedTaskArg(row, key); v != nil {
+				kept[key] = v
+			}
+		}
+		if len(kept) == 0 {
+			out[i] = row
+			continue
+		}
+		out[i] = kept
+	}
+	return out
+}
+
+// shrinkJSONPreview reduces a JSON preview to fit maxBytes while keeping it
+// parseable, by shortening its long string leaves rather than cutting the
+// document.
+//
+// The output preview has consumers beyond display, and they need different
+// parts of it: internal/ui/screen/conversation re-parses it for each task's
+// own status (parseDispatchTaskStatuses), and internal/ui/render formats the
+// envelope. A byte cut serves neither - it lands mid-string, the parse
+// fails, and every task in the group is then labelled with the BATCH's
+// single verdict instead of its own, so a half-failed batch reads as
+// uniformly succeeded. Shrinking the leaves keeps every key and the whole
+// shape, so both consumers keep working and only the long free text gets
+// shorter.
+//
+// ok is false when raw is not JSON, or when no leaf budget gets it under
+// maxBytes (a document whose size is in its KEYS, not its values); the
+// caller then falls back to the byte cut, which is no worse than before.
+func shrinkJSONPreview(raw string, maxBytes int) (string, bool) {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return "", false
+	}
+	// Descending leaf budgets: keep as much text as the document can afford
+	// rather than flattening straight to nothing.
+	for _, leafBudget := range []int{512, 128, 32, 8, 0} {
+		encoded, err := json.Marshal(shrinkStringLeaves(value, leafBudget, 0))
+		if err != nil {
+			return "", false
+		}
+		if len(encoded) <= maxBytes {
+			return string(encoded), true
+		}
+	}
+	return "", false
+}
+
+// shrinkStringLeaves rebuilds value with every string leaf bounded to
+// budget runes, marked with an ellipsis where it was shortened. It never
+// mutates value: each pass of shrinkJSONPreview rebuilds from the original
+// tree, so a tighter budget is applied to the full text rather than to an
+// already-shortened copy.
+func shrinkStringLeaves(value any, budget, depth int) any {
+	if depth > redactJSONMaxDepth {
+		return value
+	}
+	switch typed := value.(type) {
+	case string:
+		return shrinkRunes(typed, budget)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = shrinkStringLeaves(item, budget, depth+1)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = shrinkStringLeaves(item, budget, depth+1)
+		}
+		return out
+	}
+	return value
+}
+
+// shrinkRunes bounds s to budget runes, appending an ellipsis when it cut.
+// Rune-wise, so a multi-byte character is never split into invalid UTF-8 -
+// json.Marshal would otherwise re-encode the broken tail as U+FFFD.
+func shrinkRunes(s string, budget int) string {
+	if utf8.RuneCountInString(s) <= budget {
+		return s
+	}
+	if budget <= 0 {
+		return "\u2026"
+	}
+	kept := 0
+	for i := range s {
+		if kept == budget {
+			return s[:i] + "\u2026"
+		}
+		kept++
+	}
+	return s
 }
 
 // redactedToolOutput is the redacted result with NO preview cap: the body

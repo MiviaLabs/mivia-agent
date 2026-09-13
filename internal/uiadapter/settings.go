@@ -34,6 +34,14 @@ type SettingsStore struct {
 	skills      []ports.SkillView
 	runs        map[string][]ports.Run
 	watchers    map[string][]chan ports.Run
+	// automationBackend, when set, is the real automation.Service the
+	// Automations section delegates to instead of the in-memory
+	// automations/runs/watchers fields above. Held by ports.AutomationSettings
+	// (an interface), never by the concrete internal/automation type: this
+	// package must never import internal/automation (INV-TUI-29; see
+	// SetAutomationBackend in settings_automations.go for the full rationale).
+	// nil restores the in-memory behaviour every existing test relies on.
+	automationBackend ports.AutomationSettings
 
 	// mouseNotifier, when set by the launcher, receives every live
 	// "mouse capture" change so the running program can flip its mouse

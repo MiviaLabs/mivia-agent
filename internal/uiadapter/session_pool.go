@@ -475,7 +475,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	}
 
 	sess := p.newEntrySessionLocked()
-	entryState := p.wireEntryLocked(sess, "", "", true)
+	entryState := p.wireEntryLocked(sess, "", "", true, false)
 
 	conv := NewConversation(sess)
 	p.wireContentResolver(entryState)

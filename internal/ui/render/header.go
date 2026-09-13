@@ -27,6 +27,13 @@ type HeaderSpec struct {
 	// StateRole colours the state word. The word is always rendered, so
 	// meaning never depends on colour alone.
 	StateRole theme.Role
+	// DetailSuffix is context appended after Detail in the detail
+	// column, always styled RoleFGSubtle rather than Detail's own role -
+	// a live tool row's "waiting to run"/"waiting for result" (C5). It
+	// is the first thing dropped when width is tight: Detail survives
+	// intact before DetailSuffix keeps any of its room, and the lead
+	// (marker and label) is truncated only once both are already empty.
+	DetailSuffix string
 }
 
 // minHeaderGap is the fixed space between the detail and the meta/state
@@ -104,7 +111,7 @@ func headerRow(t theme.Theme, tier theme.Tier, width int, spec HeaderSpec) strin
 	// A width of zero means "unknown": fall back to single spaces rather
 	// than inventing a column layout for a terminal we have not measured.
 	if width <= 0 {
-		return styleHeader(t, tier, spec, lead, spec.Detail, "  ", right)
+		return styleHeader(t, tier, spec, lead, spec.Detail, spec.DetailSuffix, "  ", right)
 	}
 
 	// Degenerate: the right columns alone do not fit. The state carries
@@ -125,17 +132,17 @@ func headerRow(t theme.Theme, tier theme.Tier, width int, spec HeaderSpec) strin
 		return Role(t, tier, role).Render(word)
 	}
 
-	lead, detail, gap := fit(lead, spec.Detail, right, width)
-	return styleHeader(t, tier, spec, lead, detail, gap, right)
+	lead, detail, suffix, gap := fit(lead, spec.Detail, spec.DetailSuffix, right, width)
+	return styleHeader(t, tier, spec, lead, detail, suffix, gap, right)
 }
 
 // fit solves the column layout at a known width. It returns the lead
-// (marker and label), the detail, and the gap before the meta and state.
-// The gap is the fixed minHeaderGap, not a fill: meta and state sit
-// ragged-right, immediately after the detail, rather than flush against
-// width. The detail is clipped only when the row would otherwise
-// overflow width.
-func fit(lead, detail, right string, width int) (string, string, string) {
+// (marker and label), the detail, the detail's suffix (C5), and the gap
+// before the meta and state. The gap is the fixed minHeaderGap, not a
+// fill: meta and state sit ragged-right, immediately after the detail,
+// rather than flush against width. The detail is clipped, and the
+// suffix dropped, only when the row would otherwise overflow width.
+func fit(lead, detail, suffix, right string, width int) (string, string, string, string) {
 	gap := ""
 	if right != "" {
 		gap = pad(minHeaderGap)
@@ -147,16 +154,39 @@ func fit(lead, detail, right string, width int) (string, string, string) {
 		avail -= minHeaderGap
 	}
 	if avail <= 0 {
-		return "", "", gap
+		return "", "", "", gap
 	}
 
 	if ansi.StringWidth(lead) > avail {
 		lead = ansi.Truncate(lead, avail, "")
-		detail = ""
-	} else {
-		detail = clipDetail(detail, avail-ansi.StringWidth(lead))
+		return lead, "", "", gap
 	}
-	return lead, detail, gap
+
+	detail, suffix = fitDetailSuffix(detail, suffix, avail-ansi.StringWidth(lead))
+	return lead, detail, suffix, gap
+}
+
+// fitDetailSuffix fits detail and its C5 suffix into room display
+// columns, room being what is left after the lead (still including the
+// one column that separates lead from this content). The suffix is
+// decorative context, not identifying content, so it gives way FIRST: a
+// full detail with no suffix always beats a clipped detail carrying one.
+func fitDetailSuffix(detail, suffix string, room int) (string, string) {
+	if detail == "" && suffix == "" {
+		return "", ""
+	}
+	if detail == "" {
+		room-- // the space between the lead and the suffix
+		return "", clipSuffix(suffix, room)
+	}
+	if suffix != "" {
+		const sep = 2 // spacing between the detail and its suffix
+		combined := ansi.StringWidth(detail) + sep + ansi.StringWidth(suffix)
+		if combined <= room-1 { // -1: the space between the lead and detail
+			return detail, suffix
+		}
+	}
+	return clipDetail(detail, room), ""
 }
 
 // pad is a run of n spaces, never a negative Repeat. Truncation is not
@@ -187,6 +217,24 @@ func clipDetail(detail string, room int) string {
 		return ""
 	}
 	return ansi.Truncate(detail, room-markW, "") + uikitconfig.ClipMarker
+}
+
+// clipSuffix shortens the C5 detail suffix to the room left for it,
+// marking the cut the same way clipDetail marks a clipped detail. room
+// is content room only - the caller has already removed the separating
+// space before this column.
+func clipSuffix(suffix string, room int) string {
+	if suffix == "" || room < 1 {
+		return ""
+	}
+	if ansi.StringWidth(suffix) <= room {
+		return suffix
+	}
+	markW := ansi.StringWidth(uikitconfig.ClipMarker)
+	if room <= markW {
+		return ""
+	}
+	return ansi.Truncate(suffix, room-markW, "") + uikitconfig.ClipMarker
 }
 
 // headerSanitizer folds every C0 control and DEL to a space. A tab or a
@@ -225,6 +273,7 @@ func SanitizeSpec(spec HeaderSpec) HeaderSpec {
 	spec.Detail = sanitizeField(spec.Detail)
 	spec.Meta = sanitizeField(spec.Meta)
 	spec.State = sanitizeField(spec.State)
+	spec.DetailSuffix = sanitizeField(spec.DetailSuffix)
 	return spec
 }
 
@@ -232,15 +281,23 @@ func sanitizeSpec(spec HeaderSpec) HeaderSpec {
 	return SanitizeSpec(spec)
 }
 
-func styleHeader(t theme.Theme, tier theme.Tier, spec HeaderSpec, lead, detail, gap, right string) string {
-	// The marker and label are dim; the detail is normal weight; meta is
-	// subtle; the state carries its own role.
+func styleHeader(t theme.Theme, tier theme.Tier, spec HeaderSpec, lead, detail, suffix, gap, right string) string {
+	// The marker and label are dim; the detail is normal weight; the
+	// suffix (C5) is subtle, distinct from the detail it follows; meta
+	// is subtle; the state carries its own role.
 	var out string
 	if lead != "" {
 		out = Role(t, tier, theme.RoleFGMuted).Render(lead)
 	}
 	if detail != "" {
 		out += " " + Role(t, tier, theme.RoleFG).Render(detail)
+	}
+	if suffix != "" {
+		sep := " "
+		if detail != "" {
+			sep = "  "
+		}
+		out += sep + Role(t, tier, theme.RoleFGSubtle).Render(suffix)
 	}
 	if right == "" {
 		return out

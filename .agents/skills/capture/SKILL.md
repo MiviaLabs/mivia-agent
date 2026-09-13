@@ -45,7 +45,9 @@ to `.agents/rules/`, do not duplicate it as a memory.
 2. `glob` for `*.md` under `.agents/memories/` and `grep` the proposed
    content's distinctive terms against the existing files. If a memory
    covers the same ground, stop and tell the operator. Do not silently
-   duplicate.
+   duplicate. This step is not satisfied by having looked: a near-duplicate
+   that reaches disk has to be merged into the existing entry, not filed
+   beside it.
 3. Derive the filename and the id:
    - The filename is `<slug>.md`, a kebab-case phrase of 1-6 words using
      only `[a-z0-9-]`.
@@ -61,15 +63,23 @@ to `.agents/rules/`, do not duplicate it as a memory.
    - **Narrative** (~40 lines): the rule plus `## Why` and
      `## How to apply`.
    - **Incident writeup** (~80-100 lines): the timeline plus the lesson.
-6. After writing, `read_file` the new file and confirm:
-   - Frontmatter parses (six fields, `tags` is a YAML list).
+6. Link it. Name in `related` every existing memory that shares a
+   mechanism, a gate, or a failure mode with this one, and add this
+   memory's id to each of those files' `related` lists in return. An
+   unlinked new memory reads as an orphan at the next housekeeping audit;
+   staying unlinked is correct only when nothing genuinely relates. Do not
+   invent an edge to silence the flag.
+7. After writing, `read_file` the new file and confirm:
+   - Frontmatter parses (the six mandatory fields, `tags` a YAML list, and
+     `related` if present a flat list of ids that each resolve to a file in
+     `.agents/memories/`).
    - `id` is the filename without `.md`, with every hyphen replaced by an
      underscore.
    - `updated` is today's date, in the `YYYY-MM-DD` shape
      `scripts/check_memories.py` enforces.
    - The body has substance (not a one-liner stub).
-7. Report: the file path, the `id`, the `importance`, and a one-line
-   summary of what was captured.
+8. Report: the file path, the `id`, the `importance`, the `related` ids
+   written and reciprocated, and a one-line summary of what was captured.
 
 ## Reading memories safely
 

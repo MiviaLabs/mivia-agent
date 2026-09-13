@@ -102,7 +102,7 @@ Ground findings in a concrete file, symbol, execution path, diff, or reproducibl
 - For public writing, start with a defensible thesis and explain the mechanism or consequence.
 - For technical writing, make the recommendation clear and include relevant tradeoffs and limits.
 - For emails and follow-ups, state the context, request, and next action early.
-- Use normal hyphens instead of em dashes.
+- Follow `.agents/rules/90-writing-standard-ste100.md` for punctuation, em dashes, and LLM style tells.
 
 ## Final response
 

@@ -25,7 +25,7 @@ func TestViewIsAlwaysExactlyTheViewportHeight(t *testing.T) {
 	}
 }
 
-// TestSeparatorsFollowSections pins transcript-polish.md R1: blank rows
+// TestSeparatorsFollowSections pins ux-rules.md 11.1: blank rows
 // separate SECTIONS of the transcript - between prose and the activity
 // group that follows it - while consecutive activity blocks inside one
 // group read as one dense run with no blank rows between them. Spacing
@@ -284,6 +284,11 @@ func TestTrimCountsWhatItDropped(t *testing.T) {
 
 // TestDumpExpandsCollapsedBlocks: a collapse is a view state, and a dump
 // the user asked for must not hide what they cannot see.
+// TestDumpExpandsCollapsedBlocks pins Dump()'s "expand everything"
+// contract against a tool CARD (C4): a collapsed card windows to
+// CollapseThresholdLines and hands the rest to a "… N more lines" hint,
+// so the line past the window is exactly what the live view must hide
+// and the dump must not.
 func TestDumpExpandsCollapsedBlocks(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 20)
@@ -291,17 +296,47 @@ func TestDumpExpandsCollapsedBlocks(t *testing.T) {
 		Kind: uievent.KindToolStart,
 		Body: uievent.ToolStartBody{ToolCallID: "a", Name: "run_command"},
 	})
+	lines := make([]string, uikitconfig.CollapseThresholdLines+1)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%d", i)
+	}
+	lines[len(lines)-1] = "hidden-line"
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolOutput,
-		Body: uievent.ToolOutputBody{ToolCallID: "a", Chunk: "hidden-line"},
+		Body: uievent.ToolOutputBody{ToolCallID: "a", Chunk: strings.Join(lines, "\n")},
 	})
 	m = m.SetAllCollapsed(true)
 
 	if strings.Contains(ansi.Strip(m.View()), "hidden-line") {
-		t.Fatal("the collapsed block still shows its body on screen")
+		t.Fatal("the collapsed card still shows the line past its window on screen")
 	}
 	if !strings.Contains(ansi.Strip(m.Dump()), "hidden-line") {
 		t.Error("the dump hides a collapsed body; it must expand everything")
+	}
+}
+
+// TestDumpExpandsAReasoningBlockToItsFullText pins the same "the dump
+// must not hide what the screen hides" invariant TestDumpExpandsCollapsedBlocks
+// pins for tool cards, for a settled reasoning block (C1): a reasoning
+// body longer than CollapseThresholdLines renders WINDOWED in the live
+// view (state 2, Collapsed=false && Expanded=false) unless the reader
+// pressed the third toggle, but the scrollback dump must show every
+// line regardless of that live toggle state - it is a re-read of the
+// record, not a live view a reader has necessarily opened all the way.
+func TestDumpExpandsAReasoningBlockToItsFullText(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	body := make([]string, uikitconfig.CollapseThresholdLines+1)
+	for i := range body {
+		body[i] = fmt.Sprintf("line-%d", i)
+	}
+	m.blocks = []Block{{Kind: uievent.KindReasoning, Collapsible: true, Collapsed: true, Body: body}}
+
+	if strings.Contains(ansi.Strip(m.View()), "line-0") {
+		t.Fatal("precondition: a collapsed reasoning block must show no body on screen")
+	}
+	if !strings.Contains(ansi.Strip(m.Dump()), "line-0") {
+		t.Error("the dump windows a reasoning body instead of showing the full text; it must expand everything")
 	}
 }
 
@@ -702,7 +737,7 @@ func TestScrollByToTheBottomResetsCount(t *testing.T) {
 	}
 }
 
-// TestMarkerOnlyWhereABodyExists pins transcript-polish.md R3: a marker
+// TestMarkerOnlyWhereABodyExists pins ux-rules.md 11.5: a marker
 // may only be painted where there is a body to open. push() used to force
 // Collapsible on every non-prose block, so a one-line notice or a
 // one-line error carried a "v" with nothing under it. A body at or above
@@ -743,22 +778,21 @@ func TestMarkerOnlyWhereABodyExists(t *testing.T) {
 	}
 }
 
-// TestToggleBlockAtScreenRow pins the click contract: the header row of
-// a collapsed block expands it; other rows and off-screen rows do not.
+// TestToggleBlockAtScreenRow pins the click contract for a NON-tool
+// collapsible block: the header row of a collapsed block expands it;
+// other rows and off-screen rows do not. A tool block's own hit target
+// (the card's hint row, C4) is pinned separately below by
+// TestToggleBlockAtScreenRowExpandsToolCardFromItsHintRow.
 func TestToggleBlockAtScreenRow(t *testing.T) {
-	// One header-only notice plus one tool call with a body. Under R3
+	// One header-only notice plus one hook block with a body. Under R3
 	// only the block WITH a body is collapsible, so it is the click
 	// target; the header-only block stays a fall-through.
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 10)
 	m, _ = m.HandleEvent(noticeEvent("header-only"))
 	m, _ = m.HandleEvent(uievent.Event{
-		Kind: uievent.KindToolStart,
-		Body: uievent.ToolStartBody{ToolCallID: "a", Name: "run_command"},
-	})
-	m, _ = m.HandleEvent(uievent.Event{
-		Kind: uievent.KindToolOutput,
-		Body: uievent.ToolOutputBody{ToolCallID: "a", Chunk: "hidden-line"},
+		Kind: uievent.KindHook,
+		Body: uievent.HookBody{Event: "PreToolUse", Program: "run_command", Tool: "run_command", Input: "hidden-line"},
 	})
 	m = m.SetAllCollapsed(true)
 	m.SetSize(80, 10)
@@ -769,7 +803,7 @@ func TestToggleBlockAtScreenRow(t *testing.T) {
 		t.Fatal("precondition: the header-only block must not be collapsible")
 	}
 	if !m.Blocks()[1].Collapsed {
-		t.Fatal("precondition: the tool block must start collapsed")
+		t.Fatal("precondition: the hook block must start collapsed")
 	}
 
 	// A header-only block carries no expansion, so the click falls
@@ -778,11 +812,11 @@ func TestToggleBlockAtScreenRow(t *testing.T) {
 		t.Error("clicking a header-only block must report nothing to expand")
 	}
 
-	// The tool block is the last one; scroll so its header is the first
+	// The hook block is the last one; scroll so its header is the first
 	// visible row. Its header is at maxOffset.
 	m = m.ScrollToBottom()
 	target := len(m.Blocks()) - 1
-	// Walk heights to the tool block's first row, then click the row
+	// Walk heights to the hook block's first row, then click the row
 	// relative to the viewport.
 	first := 0
 	for i := range m.Blocks()[:target] {
@@ -795,7 +829,7 @@ func TestToggleBlockAtScreenRow(t *testing.T) {
 
 	next, ok := m.ToggleBlockAtScreenRow(groupIndent, click)
 	if !ok {
-		t.Fatal("click on the tool block header must expand it")
+		t.Fatal("click on the hook block header must expand it")
 	}
 	if next.Blocks()[target].Collapsed {
 		t.Error("the clicked block must be expanded")
@@ -812,6 +846,88 @@ func TestToggleBlockAtScreenRow(t *testing.T) {
 	}
 	if _, ok := next.ToggleBlockAtScreenRow(groupIndent, -1); ok {
 		t.Error("a negative row must be refused")
+	}
+}
+
+// TestClickToggleDoesNotLeakReasoningExpandedAcrossACollapseRoundTrip
+// pins a C1 boundary the mouse path shares with the keyboard path
+// (focus.go, toggleReasoningFocused): ToggleBlockAtScreenRow only ever
+// flips Collapsed, so reaching the third state (Expanded=true) via
+// keyboard, then closing and reopening the SAME block with the mouse,
+// must not silently skip the windowed second state - a stale Expanded
+// flag surviving the round trip would jump straight back to the full
+// text with no click having asked for it.
+func TestClickToggleDoesNotLeakReasoningExpandedAcrossACollapseRoundTrip(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m.blocks = []Block{{
+		Kind: uievent.KindReasoning, Collapsible: true,
+		Collapsed: false, Expanded: true, Body: []string{"the full reasoning text"},
+	}}
+	m.SetSize(80, 40)
+
+	// Close it with a click (row 0 is the block's own header/summary row).
+	m, ok := m.ToggleBlockAtScreenRow(groupIndent, 0)
+	if !ok || !m.blocks[0].Collapsed {
+		t.Fatalf("click did not collapse the block: ok=%v Collapsed=%v", ok, m.blocks[0].Collapsed)
+	}
+
+	// Reopen it with a second click on the same row.
+	m, ok = m.ToggleBlockAtScreenRow(groupIndent, 0)
+	if !ok || m.blocks[0].Collapsed {
+		t.Fatalf("click did not reopen the block: ok=%v Collapsed=%v", ok, m.blocks[0].Collapsed)
+	}
+	if m.blocks[0].Expanded {
+		t.Error("reopening via mouse must land in the windowed state, not leak a stale Expanded=true from before the collapse")
+	}
+}
+
+// TestToggleBlockAtScreenRowExpandsToolCardFromItsHintRow pins C4's new
+// hit target: a tool block's column 1 is its outcome glyph, not a
+// collapse marker (C3), so clicking its HEADER must do nothing, and only
+// a click on the card's trailing "… N more lines" hint row opens it.
+func TestToggleBlockAtScreenRowExpandsToolCardFromItsHintRow(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	lines := make([]string, uikitconfig.CollapseThresholdLines+3)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%d", i)
+	}
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "a", Name: "run_command", OK: false, Result: strings.Join(lines, "\n")},
+	})
+	if !m.Blocks()[0].Collapsed {
+		t.Fatal("precondition: the tool block starts collapsed (defaultCollapsed, body over threshold)")
+	}
+
+	header := 0
+	hintOffset, ok := m.Blocks()[0].card(80).hintOffset()
+	if !ok {
+		t.Fatal("precondition: the card must hide lines past the window and carry a hint row")
+	}
+	hint := header + hintOffset
+
+	// The header row is no longer a collapse control for a tool block:
+	// clicking it must report nothing to toggle.
+	if _, ok := m.ToggleBlockAtScreenRow(0, header); ok {
+		t.Error("clicking a tool block's header must not toggle it (C3: column 1 is the outcome, not a marker)")
+	}
+
+	// The hint row is the new hit target, and any column on it opens the
+	// card - it carries no marker column to aim at.
+	next, ok := m.ToggleBlockAtScreenRow(40, hint)
+	if !ok {
+		t.Fatal("clicking the card's hint row must expand it")
+	}
+	if next.Blocks()[0].Collapsed {
+		t.Error("the clicked card must be expanded")
+	}
+
+	// Once expanded there is no hint row left, so a click at the same
+	// screen row (now a plain body row) reports nothing.
+	if _, ok := next.ToggleBlockAtScreenRow(40, hint); ok {
+		t.Error("a body row of the expanded card must not report a toggle")
 	}
 }
 

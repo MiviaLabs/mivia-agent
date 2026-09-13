@@ -174,7 +174,7 @@ func TestRenderErrorEmptyTextFatalStillRenders(t *testing.T) {
 // TestRenderToolStartNameErrorDoesNotMisformat pins the related
 // risk: a KindToolStart with Name="error" formats as
 // "v error ...". That is documented stream behaviour behaviour
-// (see renderToolStart at line 51-53), and is the most plausible
+// (see the ToolStartBody case in renderOne), and is the most plausible
 // source of the user's "v error" screenshot when no producer of
 // KindError was reachable. The regression test pins the format
 // so a future change that conflates tool output and error events
@@ -299,6 +299,27 @@ func TestRenderSmoke_IntermediateReasoningAndNoticesDuringStream(t *testing.T) {
 	}
 	if c := strings.Count(out, "tokens cached: 500"); c != 1 {
 		t.Errorf("notice occurrence=%d, want 1", c)
+	}
+}
+
+// TestRenderRunningToolSaysWhatItWaitsFor pins the plain surface's C5
+// phrase: a KindToolStart line says what the call is waiting for, in the
+// same words the live transcript renders, so a piped log and the TUI
+// tell one story.
+func TestRenderRunningToolSaysWhatItWaitsFor(t *testing.T) {
+	var buf bytes.Buffer
+	err := Render(&buf, []uievent.Event{{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{
+			ToolCallID: "c1", Name: "run_command",
+			Args: map[string]any{"command": "go vet ./..."},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "waiting for result") {
+		t.Errorf("running tool line = %q, want the C5 waiting phrase the transcript renders", got)
 	}
 }
 

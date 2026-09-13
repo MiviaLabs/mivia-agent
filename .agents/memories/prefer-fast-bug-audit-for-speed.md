@@ -4,6 +4,7 @@ title: Fast bug hunt requests → bug-fix-fast / fast-bug-audit, not the slow de
 content: When the user wants a quick/fast bug hunt in this repo, dispatch bug-fix-fast.toml or the fast-bug-audit skill directly - not the default bug-fix.toml / bug-audit path, which is deliberately slow and exhaustive.
 importance: medium
 tags: [workflows, skills, bug-hunting]
+related: [branch_tip_moves_during_agent_runs_pin_a_hash_for_diff_scoped_audits_c4b05cbeb324667c319c968d3c1d19f0, workflow_run_status_table_format]
 updated: 2026-09-04
 ---
 

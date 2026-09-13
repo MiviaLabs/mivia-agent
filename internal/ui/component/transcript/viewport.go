@@ -55,7 +55,7 @@ func (m Model) Height() int { return m.height }
 
 // TotalRows is the height of the whole conversation at the current
 // width: every block span plus the separators the layout places between
-// sections (transcript-polish.md R1 - spacing follows turns, and the
+// sections (ux-rules.md 11.1 - spacing follows turns, and the
 // blank rows belong to the sequence, not to any block).
 func (m Model) TotalRows() int {
 	return m.totalLayoutRows(m.layout())
@@ -101,12 +101,12 @@ func (m *Model) push(b Block) {
 		m.missed++
 	}
 	// A block is collapsible only when it has a body to collapse
-	// (transcript-polish.md R3): push() used to force Collapsible on
+	// (ux-rules.md 11.5): push() used to force Collapsible on
 	// every non-prose block, which painted the "v" marker over
 	// header-only blocks with nothing under it. Blocks that arrive from
 	// values.go already marked Collapsible keep that marking; prose
 	// never takes a marker.
-	if !b.Prose && len(b.Body) > 0 {
+	if !b.Prose && b.Kind != uievent.KindUsage && len(b.Body) > 0 {
 		b.Collapsible = true
 	}
 	if b.Collapsible && !b.Collapsed {
@@ -244,71 +244,7 @@ func (m Model) Rows() []string {
 // View is the visible rows joined, which is what the screen draws.
 func (m Model) View() string { return strings.Join(m.Rows(), "\n") }
 
-// ToggleBlockAtScreenRow opens or closes the block whose HEADER draws on
-// the given viewport row. x and y are relative to the transcript's own
-// top-left, the way a mouse event reports them. It reports false when the
-// row holds no collapsible header, so a click can fall through.
-//
-// Only the header row acts; a click on a body row falls through, so
-// expanded content is never folded away by a stray click.
-//
-// CLOSING additionally requires the click to land on the collapse
-// MARKER, the "v"/">" glyph in the header's first cell. Opening does not.
-// The asymmetry is about drag-select, which shares this surface: a left
-// press both arms a drag and reaches this function, so a press anywhere
-// on a header would fold the block the user was about to select text
-// from. Restricting the destructive direction to the marker is the
-// disclosure-triangle convention, and nobody begins a text selection on
-// the triangle. Opening stays available across the whole header because
-// revealing content cannot destroy what the user was reaching for.
-//
-// Either direction cancels a live selection. The rows under it just
-// moved or vanished, and a selection left anchored across them copies
-// text the user never highlighted - the same rule push, ScrollBy and
-// SetSize already follow (selection.go).
-//
-// Clicking a coalesced leader row (R2) opens the whole run: the row the
-// user sees stands in for every member, so the click means "show me
-// these". Closing that run again is per-member - collapse them and the
-// layout re-coalesces them on its own.
-func (m Model) ToggleBlockAtScreenRow(x, y int) (Model, bool) {
-	if y < 0 || !m.FocusedRowVisible(y) {
-		return m, false
-	}
-	row := m.offset + y
-	spans := m.layout()
-	for i := range m.blocks {
-		s := spans[i]
-		if s.height == 0 || row != s.top {
-			continue
-		}
-		if s.runSize > 0 {
-			m.invalidateSelection()
-			m.expandRun(i)
-			return m, true
-		}
-		if !m.blocks[i].Collapsible {
-			return m, false
-		}
-		if !m.blocks[i].Collapsed && !hitsCollapseMarker(x, s.indent) {
-			return m, false
-		}
-		m.invalidateSelection()
-		m.blocks = slices.Clone(m.blocks)
-		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
-		m.clampOffset()
-		return m, true
-	}
-	return m, false
-}
-
-// hitsCollapseMarker reports whether column x lands on a header's
-// collapse glyph. The marker occupies one column at the block's indent,
-// and the space after it is included so a one-column target does not
-// have to be hit exactly.
-func hitsCollapseMarker(x, indent int) bool {
-	return x >= indent && x <= indent+1
-}
+// ToggleBlockAtScreenRow and hitsCollapseMarker live in click.go.
 
 // FocusedRowVisible reports whether y is inside the viewport.
 func (m Model) FocusedRowVisible(y int) bool {
@@ -399,7 +335,7 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	m.blocks = slices.Clone(m.blocks)
 	blk := m.blocks[i]
 	fn(&blk)
-	// Re-apply push()'s collapsibility rule (transcript-polish.md R3):
+	// Re-apply push()'s collapsibility rule (ux-rules.md 11.5):
 	// a tool call starts header-only and is not collapsible, then grows
 	// its body here as output and the end result merge in. Without the
 	// promotion, the merged block would render a body with no marker to
@@ -483,6 +419,15 @@ func (m Model) ExpandedRows(width int) (rows []string, blockTops []int) {
 	for i := range dm.blocks {
 		dm.blocks[i].Collapsed = false
 		dm.blocks[i].Focused = false
+		// A reasoning block's Collapsed=false alone only reaches the
+		// windowed second state (C1) - Expanded is the field that shows
+		// the full text, and a dump must not hide what the live view's
+		// window happened to leave out (same "no hiding" contract
+		// TestDumpExpandsCollapsedBlocks pins for a windowed tool card,
+		// whose own card() layout already reveals everything once
+		// Collapsed is false). Harmless on every other kind: Expanded is
+		// meaningless outside KindReasoning.
+		dm.blocks[i].Expanded = true
 	}
 	spans := dm.layout()
 	rows = make([]string, 0, len(dm.blocks))

@@ -259,6 +259,10 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 
 func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 	outboxDir := t.TempDir()
+	allowAppend := make(chan struct{})
+	var releaseAppend sync.Once
+	release := func() { releaseAppend.Do(func() { close(allowAppend) }) }
+	t.Cleanup(release)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +273,14 @@ func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-allowAppend:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AppendResult{InsertedCount: 1, LastSeq: 1})
+		case <-r.Context().Done():
+		}
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -287,7 +299,7 @@ func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 
-	// 1. Publish 1st event -> successfully appended (Seq: 1)
+	// 1. Publish 1st event -> successfully appended (Seq: 1).
 	bus.Publish(events.Event{
 		Kind:      events.KindTurnStart,
 		SessionID: "sess-overflow",
@@ -295,7 +307,9 @@ func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 		Detail:    "message 1",
 		Timestamp: time.Now(),
 	})
-	time.Sleep(50 * time.Millisecond)
+	waitUntil(t, "the first event to append", func() bool {
+		return syncSess.LastSeq() == 1
+	})
 
 	if syncSess.LastSeq() != 1 {
 		t.Fatalf("syncSess.LastSeq() = %d, want 1", syncSess.LastSeq())
@@ -310,7 +324,10 @@ func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 		Detail:    "message 2 (overflowed)",
 		Timestamp: time.Now(),
 	})
-	time.Sleep(50 * time.Millisecond)
+	waitUntil(t, "the overflow append to fail", func() bool {
+		return syncSess.appendDrops.Load() == 1
+	})
+	release()
 
 	if syncSess.LastSeq() != 1 {
 		t.Errorf("syncSess.LastSeq() after overflow = %d, want 1 (must not consume sequence on overflow)", syncSess.LastSeq())

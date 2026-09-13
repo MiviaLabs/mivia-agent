@@ -301,6 +301,16 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 	return sdkReg, nil
 }
 
+// rotatedRegistryDefinitions is sdkagentloop.Definitions behind a package
+// seam. Every tool in a registry buildSDKToolRegistry returned is a
+// dispatcherShim (applyDispatcherShim refuses to return one where it is
+// not), and a dispatcherShim always publishes a parameter schema, so
+// Definitions cannot fail on that registry in production. The seam exists
+// so the failure path is still exercised rather than assumed: an error here
+// must fail the run through recordBridgeError, never be swallowed into a
+// surface with no tools - which is the defect the caller repairs.
+var rotatedRegistryDefinitions = sdkagentloop.Definitions
+
 // bridgeSDKBridgeSurface adapts the CLI's per-step Surface hook onto
 // the SDK's Options.Surface. Non-nil rotation fields install: the
 // Dispatcher and RemainderSpool go to the turn state (per-call shim
@@ -330,6 +340,29 @@ func bridgeSDKBridgeSurface(l *Loop, opts Options, turn *sdkTurnState) func() *s
 				return nil
 			}
 			out.Registry = reg
+			// Surface.Advertised REPLACES the offered set wholesale
+			// (applySurface: next.defs = s.Advertised, unconditional), so a
+			// rotation that carries a registry and no host-pinned specs
+			// must restate the offered set or it clears it. A host that
+			// pins nothing - every headless automation session and every
+			// pooled TUI session, since internal/chat's hook is the only
+			// producer of Options.Surface and it carries ToolSpecs only
+			// for a session that pinned a snapshot - therefore lost EVERY
+			// tool from step 2 on: the model was
+			// handed an empty tools[], answered in prose, and the turn
+			// ended "successfully" after one tool roundtrip. Restating the
+			// rotated registry's own definitions is exactly what the SDK
+			// computed for step 1 (loop.New's Definitions(opts.Tools,
+			// opts.Scope); the host never sets a Scope, so nil matches),
+			// which keeps the wire array byte-stable across the rotation.
+			if out.Advertised == nil {
+				defs, defsErr := rotatedRegistryDefinitions(reg, nil)
+				if defsErr != nil {
+					turn.recordBridgeError(fmt.Errorf("agent: SDK surface rotation: advertise rotated registry: %w", defsErr))
+					return nil
+				}
+				out.Advertised = defs
+			}
 		}
 		// A rotation that carries neither ToolSpecs nor a Registry keeps
 		// the SDK's prior surface (nil return, the SDK's documented

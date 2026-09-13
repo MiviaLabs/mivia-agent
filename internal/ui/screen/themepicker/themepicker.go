@@ -32,8 +32,8 @@ const previewSample = "Add retry with backoff to the uploader."
 // alone never exercises RoleKeyword/RoleFunction/RoleType/RoleVariable
 // or the diff add/del roles - exactly the roles most likely to fail a
 // contrast or CVD check (theme/contrast.go checks them, but a human
-// browsing themes could not see them before this). docs/design/
-// mivia-ui-mock.html section 7 shows the same two additions.
+// browsing themes could not see them before this). The preview adds a
+// keyword/function/type sample and a syntax-stressed code line.
 //
 // previewFuncName and previewParamType are pulled out because the
 // tests reference them directly, so the sample and its assertions

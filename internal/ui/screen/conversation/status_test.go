@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -185,4 +186,158 @@ func TestHandleTurnEventUsageUpdatesTopbarAndStatusline(t *testing.T) {
 	if !strings.Contains(status, "$0.08") {
 		t.Errorf("expected statusline to contain $0.08, got %q", status)
 	}
+}
+
+// TestEscHintPerState pins C9's truthfulness contract directly on
+// escHint, independent of width fitting: a turn running says cancel, a
+// queued message with nothing running says clear queue, and idle with
+// nothing queued says nothing at all - the three states the status row
+// must never blur together.
+func TestEscHintPerState(t *testing.T) {
+	t.Run("active turn: cancel", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		s.active = fakeHandle{id: "t1"}
+		part, ok := s.escHint()
+		if !ok || part.Key != "esc" || part.Label != "cancel" {
+			t.Errorf("got %+v ok=%v, want esc:cancel", part, ok)
+		}
+	})
+	t.Run("idle with a queued message: clear queue", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		s.queue = []string{"queued message"}
+		part, ok := s.escHint()
+		if !ok || part.Key != "esc" || part.Label != "clear queue" {
+			t.Errorf("got %+v ok=%v, want esc:clear queue", part, ok)
+		}
+	})
+	t.Run("idle with nothing queued: no hint", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		if _, ok := s.escHint(); ok {
+			t.Error("expected no esc hint while idle with an empty queue")
+		}
+	})
+	t.Run("active turn wins over a queued message", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		s.active = fakeHandle{id: "t1"}
+		s.queue = []string{"queued message"}
+		part, ok := s.escHint()
+		if !ok || part.Label != "cancel" {
+			t.Errorf("got %+v ok=%v, want cancel to take priority over a queued message", part, ok)
+		}
+	})
+}
+
+// TestStatusRowShowsClearQueueHintWhenIdleWithAQueuedMessage exercises
+// the same three states end to end through statusRow, so the truthful
+// label and the truthful width-fitting path are both proven, not just
+// escHint in isolation.
+func TestStatusRowShowsClearQueueHintWhenIdleWithAQueuedMessage(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	s = next.(Screen)
+	s.queue = []string{"queued message"}
+
+	row := ansi.Strip(s.statusRow())
+	if !strings.Contains(row, "esc:clear queue") {
+		t.Errorf("got %q, want the clear-queue hint while idle with a queued message", row)
+	}
+	if strings.Contains(row, "esc:cancel") {
+		t.Errorf("got %q, want no cancel hint while idle", row)
+	}
+}
+
+// TestEscHintNeverShownIdleWithEmptyQueue is the negative half of the
+// same contract, through statusRow: today's idle-with-nothing-queued
+// row must still say nothing about esc at all.
+func TestEscHintNeverShownIdleWithEmptyQueue(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	row := ansi.Strip(s.statusRow())
+	if strings.Contains(row, "esc:") {
+		t.Errorf("got %q, want no esc hint at all while idle with nothing queued", row)
+	}
+}
+
+// TestEscClearsTheQueueWhenIdle is cancelTurn's own regression: the
+// behaviour the new hint promises. Escape with a turn active still
+// cancels the turn (unchanged); escape while idle with a queued
+// message clears it; escape while idle with nothing queued is still
+// the pre-existing no-op (returns handled=false, so a caller falls
+// through to whatever else "esc" might mean, e.g. blurring focus).
+func TestEscClearsTheQueueWhenIdle(t *testing.T) {
+	t.Run("clears a non-empty queue", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		s.queue = []string{"a", "b"}
+		next, _, handled := s.cancelTurn()
+		scr := next.(Screen)
+		if !handled {
+			t.Fatal("expected cancelTurn to handle esc with a queued message")
+		}
+		if len(scr.queue) != 0 {
+			t.Errorf("got queue %v, want it cleared", scr.queue)
+		}
+		if len(scr.queueOverlay.Items()) != 0 {
+			t.Errorf("got queueOverlay items %v, want them cleared too", scr.queueOverlay.Items())
+		}
+		// C9 review round 2: every OTHER queue mutation in this package
+		// (handleQueueKey's delete, force-send's re-queue) tells the
+		// user what happened via statusline.Notice - clearing the
+		// WHOLE queue with one keypress is the biggest queue mutation
+		// there is, and was the only silent one.
+		if got := scr.statusline.View(fixedNow()); !strings.Contains(got, "queue cleared") {
+			t.Errorf("got statusline %q, want a notice that the queue was cleared", got)
+		}
+	})
+	t.Run("empty queue and no active turn stays a no-op", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		_, _, handled := s.cancelTurn()
+		if handled {
+			t.Error("expected cancelTurn to report unhandled with nothing to cancel and nothing queued")
+		}
+	})
+}
+
+// TestEscHintNamesAKeyBoundInContextGlobal is the "no hint names an
+// unbound key" gate, scoped to what C9 actually changed: the esc hint
+// (escHint, both its cancel and its clear-queue form) must name a key
+// keymap.Default genuinely binds to IDCancel in ContextGlobal, in every
+// state that produces it - a hint promising a key does something the
+// keymap does not back is exactly the lie ux-rules 1.4 forbids.
+//
+// This does not re-check the status row's OTHER, pre-existing hints
+// (help/pager/panel/quit source from ContextGlobal, "?" for help
+// sources from ContextComposer, and the panel-focused row's own
+// navigation keys have no keymap.ID at all) - none of those are C9's
+// scope, and asserting them here would pin pre-existing architecture
+// this task was not asked to change.
+func TestEscHintNamesAKeyBoundInContextGlobal(t *testing.T) {
+	m := keymap.New(keymap.Default())
+	assertEscBound := func(t *testing.T, part keymap.HintPart) {
+		t.Helper()
+		id, ok := m.Match(keymap.ContextGlobal, part.Key)
+		if !ok {
+			t.Fatalf("escHint named key %q, which ContextGlobal does not bind", part.Key)
+		}
+		if id != keymap.IDCancel {
+			t.Errorf("escHint's key %q resolves to %q in ContextGlobal, want %q", part.Key, id, keymap.IDCancel)
+		}
+	}
+
+	t.Run("active turn", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		s.active = fakeHandle{id: "t1"}
+		part, ok := s.escHint()
+		if !ok {
+			t.Fatal("expected an esc hint with a turn active")
+		}
+		assertEscBound(t, part)
+	})
+	t.Run("idle with a queued message", func(t *testing.T) {
+		s := newScreen(t, replay.New(nil, 0), nil, nil)
+		s.queue = []string{"queued"}
+		part, ok := s.escHint()
+		if !ok {
+			t.Fatal("expected an esc hint with a queued message")
+		}
+		assertEscBound(t, part)
+	})
 }

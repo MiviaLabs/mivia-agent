@@ -321,6 +321,9 @@ func (s Screen) handleApprovalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, boo
 		case keymap.IDScrollDown:
 			s.approval = s.approval.ScrollBy(1)
 			return s, nil, true
+		case keymap.IDApprovalToggleSplit:
+			s.approval = s.approval.ToggleSplit()
+			return s, nil, true
 		}
 	}
 	// ctrl+c stays the emergency exit even under the modal: quit()
@@ -491,6 +494,8 @@ func (s Screen) transcriptAction(id keymap.ID) (app.Screen, tea.Cmd) {
 		s.transcript = s.transcript.ClearFocus()
 	case keymap.IDToggleBlock:
 		s.transcript, _ = s.transcript.ToggleFocused()
+	case keymap.IDToggleDiffSplit:
+		s.transcript, _ = s.transcript.ToggleFocusedDiffSplit()
 	case keymap.IDExpandAll:
 		s.transcript = s.transcript.SetAllCollapsed(false)
 	case keymap.IDCollapseAll:
@@ -685,7 +690,22 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 // holds the focus, so this is only reached with the composer focused.
 func (s Screen) cancelTurn() (app.Screen, tea.Cmd, bool) {
 	if s.active == nil {
-		return s, nil, false
+		// C9: idle esc clears a queued message rather than doing
+		// nothing, matching the status row's own "esc clear queue"
+		// hint (status.go's escHint) - a hint promising a key does
+		// something the key does not do is worse than no hint.
+		if len(s.queue) == 0 {
+			return s, nil, false
+		}
+		s.queue = nil
+		s.queueOverlay.SetItems(nil)
+		// Every OTHER queue mutation in this package tells the user what
+		// happened (handleQueueKey's delete: "removed queued message";
+		// force_push.go's re-queue on send failure). Clearing the WHOLE
+		// queue is the biggest one; it must not be the only silent one.
+		// Found by C9's review round 2.
+		s.statusline.Notice("queue cleared")
+		return s, nil, true
 	}
 	s.approval.ClearAll()
 	s.active.Cancel()

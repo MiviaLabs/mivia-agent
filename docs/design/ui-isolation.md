@@ -1,85 +1,72 @@
-# mivia-ui isolation - mocks only, integration later
+# Terminal UI isolation
 
-Status: binding policy for the new terminal UI. Decided by the product
-owner on 2026-08-19.
+The terminal UI packages are self-contained. They build against ports interfaces and
+fakes, and one adapter connects them to real sessions.
 
 ## The rule
 
-The new terminal UI is SELF-CONTAINED:
+`internal/ui/**` and `internal/uikit/**` are self-contained view packages:
 
-- `cmd/mivia-ui`, `internal/ui/**`, and
-  `internal/uikit/**` build and run against mock data or ports interfaces.
-- `internal/ui/**` and `internal/uikit/**` must not import `internal/cli*`,
-  `internal/chat`, `internal/agent`, `internal/coordinator`, `internal/hub`,
-  or `internal/uiadapter`. Semgrep enforces this with rule
-  `mivia.go.ui-no-harness-imports`, which runs in `make semgrep` and in
-  `make verify`.
-- The ONLY integration seam for UI components is the ports surface in
+- They build against the ports interfaces or against fakes, never against the
+  harness.
+- They must not import the CLI family (`internal/cli*`), and they must not import
+  `internal/uiadapter`. `internal/uiadapter` points the other way: it adapts real
+  sessions to the ports the UI already speaks.
+- The only integration seam for UI components is the ports surface in
   `internal/uikit/ports` (`Conversation`, `TurnHandle`, `Approver`,
   `CommandRunner`, `Settings`) plus the event vocabulary in
   `internal/uikit/uievent`.
-- `internal/uiadapter` connects real sessions (`internal/chat`, `internal/agent`)
-  to `internal/uikit/ports` for `cmd/mivia-ui` live mode (`--demo=false`).
-  Per invariant INV-TUI-29, `internal/uiadapter` must never import `internal/cli*`.
+- `internal/uikit/**` must not import bubbletea or lipgloss
+  (`internal/uikit/ports/ports.go`), so the toolkit stays testable without a
+  terminal.
+
+## The adapter and the composition root
+
+`internal/uiadapter` connects real sessions (`internal/chat`, `internal/agent`) to
+`internal/uikit/ports`. It is the one package that touches both sides. Per invariant
+INV-TUI-29 (`.mivia/invariants.md`), `internal/uiadapter` must never import
+`internal/cli*`.
+
+`internal/newtui` is the composition root: `cmd/mivia` builds the UI there and wires
+the `uiadapter` implementations into the screens.
 
 ## Why
 
-The CLI and the harness code under `internal/cli` will be refactored
-BEFORE the UI connects to them. Building UI code against that moving
-surface now would couple both sides to shapes that are about to change.
-The UI therefore develops against fakes that implement the same ports,
-and integration becomes one adapter written AFTER the refactor settles,
-not a thousand call sites.
+The harness code under `internal/cli` is a moving surface. UI code built against it
+couples both sides to shapes that are about to change. The UI therefore develops
+against fakes that implement the same ports, and integration stays one adapter, not
+a thousand call sites.
 
 ## What this means for feature work
 
-- Build the WHOLE UI - every screen, component, key, mouse action, and
-  command - with full logic and state, driven by the fake
-  implementations in `internal/uikit/replay` (and whatever richer fakes
-  replace them).
-- When a feature needs something the ports do not carry yet, EXTEND the
-  ports or the uievent vocabulary. Do not reach around them.
-- A fake that grows a second behavior (different replies per turn,
-  streaming with pacing, mid-turn tool calls and approvals) is feature
-  work on the UI, not integration, and belongs under `internal/uikit`
-  with tests of its own.
-- The day real wiring starts, this file changes first: the semgrep rule
-  narrows or retires, and one adapter under the UI (not a refactor of
-  it) connects the ports to the real harness.
-
-## The demo harness (internal/uikit/demoharness)
-
-`internal/uikit/demoharness` is the fake `cmd/mivia-ui --demo` runs
-against today. It replaced `internal/uikit/replay` as the demo driver.
-One `Harness` type implements the whole ports surface -
-`ports.Conversation`, `ports.Approver`, and `ports.CommandRunner` - over
-shared state, so a `/model` pick or an approval decision changes what
-later turns and later commands see. `internal/uikit/replay` still
-exists: some existing tests build a `conversation.Screen` against it
-directly, and it stays a valid minimal fake for that use. It is no
-longer what the demo binary runs.
-
-The scripted conversation is DATA, not code: `internal/uikit/demoharness/testdata`
-holds one JSON turn-script file per turn shape (small talk, a tool
-call, a diff, a failing tool, a plan, reasoning, a usage summary, and a
-mid-turn approval), in the wire shape `uievent.LoadFixture` already
-reads. A `--scenario` flag on `cmd/mivia-ui` picks which named,
-ordered list of those files to play; `New` errors on an unknown name.
+- Build the UI - every screen, component, key, mouse action, and command - with
+  full logic and state, driven by the fakes in `internal/uikit/replay` and the
+  recorded JSON fixtures that `uievent.LoadFixture` reads.
+- When a feature needs something the ports do not carry yet, extend the ports or
+  the uievent vocabulary. Do not reach around them.
+- A fake that grows a second behaviour (different replies per turn, streaming with
+  pacing, mid-turn tool calls and approvals) is feature work on the UI, not
+  integration, and belongs under `internal/uikit` with tests of its own.
 
 ## The command-dispatch seam (ports.CommandRunner)
 
-Slash commands are the other integration knob this phase adds.
-`internal/uikit/ports.CommandRunner` (`Run`, `SelectModel`) is what a
-`conversation.Screen` calls when Enter submits a `/command` line; it
-never inspects harness state directly, only this interface
-(`internal/ui/screen/conversation/commands.go`). `demoharness.Harness`
-implements it today. A future real-harness adapter implements the same
-interface; the screen does not change.
+Slash commands go through `ports.CommandRunner` (`Run`, `SelectModel`, in
+`internal/uikit/ports/commandrunner.go`). A `conversation.Screen` calls the
+interface when Enter submits a `/command` line; it never inspects harness state
+directly (`internal/ui/screen/conversation/commands.go`). The test fakes implement
+it today. The real adapter implements the same interface, and the screen does not
+change.
 
-## Source
+## Enforcement
 
-Product owner decision, 2026-08-19: at this point there is no
-integration with the CLI, because that code will be refactored first.
-The goal is a fully functional, fully interactive UI with the whole
-feature set, on fake data, with clean knobs (the ports) for integration
-later.
+- `scripts/check_import_layers.py` checks the tree against
+  `.mivia/policy/import-layers.json`: every import edge between module packages
+  must be declared in the policy's allow map, deny rules override the allow map,
+  and the total edge count stays under the policy cap. `make verify` runs it as
+  `import-layers-check`.
+- `TestConversation_DoesNotImportCLIFamily` and
+  `TestUIPackages_DoNotImportUIAdapter` (`internal/uiadapter/conversation_test.go`)
+  pin the two halves of the boundary: `internal/uiadapter` never imports the CLI
+  family, and `internal/ui/...` plus `internal/uikit/...` never import
+  `internal/uiadapter`. Both tests implement invariant INV-TUI-29
+  (`.mivia/invariants.md`).

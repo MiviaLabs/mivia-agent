@@ -32,6 +32,13 @@ type turnStream struct {
 	done   <-chan struct{}
 	cancel func()
 	closed bool
+	// fanout, when set, receives every event this stream accepts, after
+	// the primary channel send. It is the live-viewer tee (Conversation's
+	// viewer registry). Implementations must be non-blocking and must
+	// only take locks the registry owns: the call happens under this
+	// stream's RLock, so the lock order stream.mu -> registry.mu is fixed
+	// here and the registry must never call back into the stream.
+	fanout func(uievent.Event)
 }
 
 // newTurnStream builds the stream. done is the per-turn context's Done
@@ -56,10 +63,32 @@ func (s *turnStream) Send(e uievent.Event) bool {
 	}
 	select {
 	case s.ch <- e:
+		if s.fanout != nil {
+			s.fanout(e)
+		}
 		return true
 	case <-s.done:
 		return false
 	}
+}
+
+// SendInitial delivers the turn's very first event - the synthetic
+// turn.start - and reports whether it was accepted. Unlike Send it has
+// no done arm: the caller's context may already be cancelled when the
+// stream is built, and a select would then drop this event about half
+// the time. The buffer is guaranteed to have room (nothing has been
+// sent yet), so the blocking send cannot park.
+func (s *turnStream) SendInitial(e uievent.Event) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return false
+	}
+	s.ch <- e
+	if s.fanout != nil {
+		s.fanout(e)
+	}
+	return true
 }
 
 // TrySend delivers one event only if it can be accepted immediately,
@@ -75,8 +104,17 @@ func (s *turnStream) TrySend(e uievent.Event) bool {
 	}
 	select {
 	case s.ch <- e:
+		if s.fanout != nil {
+			s.fanout(e)
+		}
 		return true
 	default:
+		// The primary reader has stopped draining, but a live viewer may
+		// still be watching: the terminal event reaches it even when the
+		// primary send was refused.
+		if s.fanout != nil {
+			s.fanout(e)
+		}
 		return false
 	}
 }

@@ -71,3 +71,71 @@ func TestFormatToolDetail(t *testing.T) {
 		})
 	}
 }
+
+// TestApprovalDetailRow pins C11: the approval box's key/value target
+// row is the RAW arg value - no "$ " prefix, no "[Lx-Ly]" suffix - so a
+// reader aligning "Command"/"File"/"Path" columns sees just the target,
+// and a tool that names none of these gets no second row at all.
+func TestApprovalDetailRow(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      map[string]any
+		wantLabel string
+		wantValue string
+		wantOK    bool
+	}{
+		{
+			name:      "run_command",
+			args:      map[string]any{"command": "go test ./..."},
+			wantLabel: "Command",
+			wantValue: "go test ./...",
+			wantOK:    true,
+		},
+		{
+			name:      "edit_file",
+			args:      map[string]any{"path": "internal/ui/app.go"},
+			wantLabel: "File",
+			wantValue: "internal/ui/app.go",
+			wantOK:    true,
+		},
+		{
+			name:      "view_file",
+			args:      map[string]any{"AbsolutePath": "/foo/bar.go", "StartLine": 10, "EndLine": 50},
+			wantLabel: "File",
+			wantValue: "/foo/bar.go",
+			wantOK:    true,
+		},
+		{
+			name:      "list_directory",
+			args:      map[string]any{"DirectoryPath": "internal/ui"},
+			wantLabel: "Path",
+			wantValue: "internal/ui",
+			wantOK:    true,
+		},
+		{
+			name:   "grep_search",
+			args:   map[string]any{"Query": "func Run", "SearchPath": "internal/ui"},
+			wantOK: false,
+		},
+		{
+			name:   "custom_generic_tool",
+			args:   map[string]any{"foo": "bar"},
+			wantOK: false,
+		},
+		{
+			name:   "run_command_no_args",
+			args:   map[string]any{},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotLabel, gotValue, gotOK := ApprovalDetailRow(tt.name, tt.args)
+			if gotOK != tt.wantOK || gotLabel != tt.wantLabel || gotValue != tt.wantValue {
+				t.Errorf("ApprovalDetailRow(%q, %v) = (%q, %q, %v), want (%q, %q, %v)",
+					tt.name, tt.args, gotLabel, gotValue, gotOK, tt.wantLabel, tt.wantValue, tt.wantOK)
+			}
+		})
+	}
+}

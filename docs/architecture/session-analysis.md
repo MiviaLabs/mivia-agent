@@ -1,111 +1,64 @@
-# Session-Analysis Skill: Ledger Surface
+# Session analysis
 
-`session-analysis` is a read-only, metadata-only process-quality analysis skill
-(`.agents/skills/session-analysis/`). It analyzes chat sessions recorded in the
-durable chat ledger. This document records the design surface and the hostile
-audit/review findings that shaped it (both challenges returned conditional-fail
-verdicts; every must-fix landed).
+The `session-analysis` skill (`.agents/skills/session-analysis/`) provides read-only, metadata-only analysis of chat sessions in the durable SQLite chat ledger. It evaluates process quality and session metrics without inspecting message contents.
 
-## Data surface: the durable chat ledger, not JSON files
+## Ledger resolution and principal scoping
 
-Early drafts read `.mivia/sessions/<name>/meta.json` (the legacy file-backed
-session store). That design was wrong twice over: the file store is not the
-default (`.mivia/mivia.toml:479` `store_backend = "sqlite"`; chat is
-unconditionally SQLite-backed per `internal/clichat/context_setup.go`), and
-reading file transcripts re-opened the content-privacy surface. The skill's
-surface is the SQLite ledger, opened read-only.
+The analysis tool resolves the database path through two steps (`.agents/skills/session-analysis/queries.py:72`):
 
-Ledger resolution (mirrors `internal/clichat/chat_repository_binding.go:125-141`,
-`internal/workspace/namespace.go:98` `GlobalContextStorePath`):
+1. **Workspace store**: Checks `[subagents].store_path` in `.mivia/mivia.toml` (expands `~` and resolves relative paths to the workspace root).
+2. **Global context store**: Defaults to `~/.mivia/context.db` (`internal/workspace/namespace.go:98`), shared by workspaces on the machine.
 
-1. `[subagents].store_path` in `.mivia/mivia.toml` (expand `~`; join relative
-   to the workspace root) — pins this workspace to its own file.
-2. Else `~/.mivia/context.db` — the **global ledger, shared across every
-   workspace on the machine**. Sessions are isolated inside it by workspace ID.
+Every query enforces principal scoping to isolate workspace data:
 
-Principal scoping (mirrors `internal/clichat/context_setup_session.go:93-103`):
-`workspace_id = "workspace-" + hex(sha256(realpath(root))[:8])` (hex of the first
-8 bytes = 16 hex chars, matching `context_setup_session.go`;
-`hex.EncodeToString(digest[:8])`), `subject_id = "local-user"`. Every query is scoped by both. The audit rated
-"wrong ledger path + no principal derivation" the top failure mode: on a
-machine-shared ledger, an unscoped query reads other workspaces' session
-metadata.
+- `workspace_id`: `"workspace-"` prefix followed by the 16-character hex encoding of the first 8 bytes of the workspace root's SHA-256 digest (`internal/clichat/context_setup_session.go:93`).
+- `subject_id`: Fixed to `"local-user"`.
 
-## Query parity: the harness's own read path
+Ledger execution stops with a `NOT_RUN` status if Python is older than version 3.11, the ledger file is missing, opening the database fails, or `user_version` is below 11.
 
-The companion `queries.py` embeds `ListSessions` (`internal/storage/chat_sessions.go:285`)
-verbatim — the three-arm union (snapshots/projections, live sessions deduped by
-`NOT EXISTS`, worktree routes with the active-instance guard) — plus derived
-queries that keep its parity predicates:
+## Query parity with the harness
 
-- arm 2 window anchor is `MAX(context_checkpoints.created_at)` because
-  `context_sessions` has **no `updated_at`** (only `title` was added, v10);
-- `context_checkpoints` has no `instance_id` (joins must not reference it);
-- copies = `session_id IS NULL OR NOT EXISTS(live row)` — a post-tombstone
-  projection keeps a non-NULL `session_id` (`chat_sessions.go:170-172`);
-- orphan dirs left-join BOTH `chat_sessions` (by name) and `context_sessions`
-  (by session_id), because `chat_session_dirs.name` is a snapshot name *or* a
-  live session_id (`chat_sessions.go:333`).
+`queries.py` mirrors the harness catalog query in `ListSessions` (`internal/storage/chat_sessions.go:285`). It executes a three-arm union across session types:
 
-Schema gate: `user_version >= 11` required (the `session_id` column is v11).
+| Arm | Source | Identity | Window anchor |
+|---|---|---|---|
+| 1. Snapshots | `chat_sessions` ⋈ `context_sessions` ⋈ `chat_session_dirs` | Snapshot name | `chat_sessions.updated_at` |
+| 2. Live sessions | `context_sessions` ⋈ `context_checkpoints` (`complete=1`), deduped against snapshots | `session_id` | `MAX(context_checkpoints.created_at)` |
+| 3. Worktree routes | `worktree_routes` filtered by active instances in `worktree_instances` | `worktree:<name>` | `worktree_routes.updated_at` |
+
+Query predicates maintain exact catalog behavior:
+
+- **Arm 2 window anchor**: Uses `MAX(context_checkpoints.created_at)` because `context_sessions` does not contain an `updated_at` column.
+- **Checkpoints**: `context_checkpoints` joins omit `instance_id` because the column does not exist on that table.
+- **Session copies**: Distinguishes copies from live sessions using `session_id IS NULL OR NOT EXISTS (...)` (`internal/storage/chat_sessions.go:170`).
+- **Orphan directories**: Left joins `chat_session_dirs` against both `chat_sessions` by name and `context_sessions` by session ID (`internal/storage/chat_sessions.go:333`).
 
 ## Privacy perimeter
 
-- `messages` VALUE never selected; `LENGTH(messages)` only (a scalar).
-- Closed never-touch list: `context_payloads.data`, `context_payload_chunks.data`,
-  `context_source_events.payload_ref`, `context_checkpoints.summary_metadata` /
-  `active_context`, `chat_session_admissions.names/agent/digest` values,
-  `context_sessions.title`.
-- Read-only open (`mode=ro` + `PRAGMA query_only`); no dot-commands; never
-  `--immutable` against the live WAL ledger (`-readonly` may touch `-shm`; a
-  hot `-wal` from a crashed writer can surface `SQLITE_CORRUPT` — both map to
-  NOT_RUN).
+The skill enforces strict data isolation boundaries:
 
-## Method decisions (review-driven)
+- **Message values**: The query never selects the `messages` column value from `chat_sessions`. It selects only `LENGTH(messages)` as a size proxy.
+- **Excluded columns**: The tool never reads `context_payloads.data`, `context_payload_chunks.data`, `context_source_events.payload_ref`, `context_checkpoints.summary_metadata`, `context_checkpoints.active_context`, `chat_session_admissions.agent / digest / names`, or `context_sessions.title`.
+- **Read-only access**: Opens connections using URI `mode=ro` and executes `PRAGMA query_only`.
+- **Tool boundaries**: Does not invoke the `mivia` executable or access legacy file-based session stores in `.mivia/sessions/`.
 
-- **Stalled** = `session_type='live' AND checkpoint_count=0`; snapshots are
-  never stalled (they have no checkpoint relationship).
-- **Staleness labels**: `token_count`/`turn_count` are save-time estimates,
-  invalidated by compaction (`internal/clichat/sessions_command.go:321` labels
-  them STALE); `payload_bytes` is current, post-compaction.
-- **Anchor bias**: per-arm anchor translation table + whole-store context line
-  in every report.
-- **Never "duration"**: `updated − created` is first-to-last-save span.
-- **Outlier floors**: n<5 none; 5≤n<10 Tukey IQR only (5×-median dropped — too
-  aggressive on count data with ties); n≥10 Tukey + z>2, z>3 EXTREME.
-- **Measured absence**: zero-session window is a real finding with calibration
-  (ledger totals vs workspace totals + derived workspace_id); NOT_RUN only for
-  dependency/ledger/schema failures.
-- **Validation**: primary = blind subagent re-derivation from raw JSON; fallback
-  = two-output cross-check (COUNT vs SUM, window total = sum of arms); selftest
-  = hermetic golden DB from the real v11 DDL. `validated:false` is acceptable
-  only when the run produced no data findings.
+## Analysis metrics
 
-## Fixture strategy
+- **Stalled live sessions**: Identifies live sessions with zero completed checkpoints (`session_type='live' AND checkpoint_count=0`).
+- **Staleness markers**: Treats `token_count` and `turn_count` from `chat_sessions` as save-time estimates invalidated by compaction (`internal/clichat/sessions_command.go:321`). It treats `payload_bytes` as current post-compaction size.
+- **Timestamp span**: Measures elapsed time between first and last saves (`updated_at - created_at`), rather than active interaction duration.
+- **Outlier calculation**: Applies Tukey Interquartile Range (IQR) filtering when sample size $n \ge 5$, and adds standard score thresholds ($z > 2$, $z > 3$) when $n \ge 10$.
+- **Measured absence**: Reports an empty session window as a valid finding with store calibration metrics rather than an error.
 
-`queries.py --selftest` builds a golden in-memory DB from the v11-era DDL
-(chat_sessions, context_sessions, context_checkpoints, chat_session_dirs,
-worktree_routes, worktree_instances, chat_session_admissions), seeds
-representative rows (projection, copy, arm-2 dedup, stalled, tombstoned,
-unknown-model recovery artifact, active/inactive instance routes, orphan dir,
-admissions, stale rows), and asserts exact outputs — including that no message
-value or title ever appears in the JSON. The schema has since advanced past
-v11 (currently v16; see `internal/storage/context_schema_v16.go`), but the
-`user_version >= 11` gate and the v11-shaped tables this fixture covers
-remain valid: verify the fixture's table shapes still match production before
-trusting it blindly on a schema this many versions stale. This is hermetic: no
-dependency on the machine-shared ledger, no sqlite3 CLI, no delegation. The repo's committed-skill
-gate is `internal/agents/project_agents_fixture_test.go`
-(`TestCommittedSkillsDeclareValidTools` pins the catalogue; the roster matrix
-passes because the skill is owned by the unrestricted root agent `mivia`, which
-has no skills allowlist).
+## Validation
 
-## Operational notes
+The skill validates analysis accuracy through multiple consistency checks:
 
-- Driver: `python3` (stdlib `sqlite3` + `tomllib`, Python ≥ 3.11); the `sqlite3`
-  CLI is allowlisted but not on every sandbox PATH, and `mivia` is not
-  allowlisted at all — the skill must never depend on either.
-- Verified on this machine: ledger at `~/.mivia/context.db` (user_version 11,
-  3806 context sessions / 95 snapshots for other workspaces; 0 for this
-  workspace) — the skill reports measured absence with calibration, which is
-  the honest outcome when a workspace has no recorded sessions.
+- **Metric cross-checks**: Verifies aggregate counts against sums across union arms (`COUNT` vs `SUM`).
+- **Hermetic self-test**: `queries.py --selftest` constructs an in-memory SQLite database matching the schema DDL, populates test rows, runs queries, and asserts expected results. The test confirms that message payloads and session titles never appear in output records.
+
+## See also
+
+- [Embedded persistence](embedded-persistence.md)
+- [Token usage ledger](token-usage-ledger.md)
+- [Configuration](../product/config.md)

@@ -138,6 +138,15 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 						} else {
 							s.panel.observeAgentHistory(tc.ID, status, "")
 						}
+						// Rebuild C7's child tree for resumed sessions from the
+						// same thread histories the live path reads. This keeps a
+						// reopened dispatch row complete before any new progress
+						// event arrives.
+						if s.threads != nil {
+							if taskIDs, _ := dispatchTaskIDsAndNames(tc.ID, tc.Name, parseToolArgs(tc.Arguments)); len(taskIDs) > 0 {
+								s.transcript.SetChildren(tc.ID, collectChildCalls(s.threads, taskIDs, tc.ID))
+							}
+						}
 					} else {
 						s.panel.observeAgentHistory(tc.ID, status, "")
 					}
@@ -442,12 +451,25 @@ func (s Screen) forwardThreadMsg(msg tea.Msg) (app.Screen, tea.Cmd) {
 // to hand to both surfaces (statusline ticks, transcript flushes):
 // they are idempotent repaint clocks, so double delivery cannot double
 // anything a user sees.
+//
+// This method has a value receiver and returns nothing, unlike
+// threadDialogKey and forwardThreadMsg above: those propagate their
+// updated thread by RETURNING a new Screen the caller assigns back to
+// itself. forwardSharedMsg's caller (handleStatuslineTick) calls it as a
+// bare statement, so the update must instead go through the pointer:
+// *s.thread = t writes into the Screen every copy of s.thread already
+// points at, rather than rebinding s.thread on this call's own throwaway
+// copy of s - which is what `s.thread = &t` here used to do, silently
+// discarding every tick this function was supposed to deliver (bug
+// surfaced by C3: an embedded thread dialog's running-tool spinner never
+// advanced, because the frame this function copied onto its transcript
+// never left the stack).
 func (s Screen) forwardSharedMsg(msg tea.Msg) {
 	if s.thread == nil {
 		return
 	}
 	next, _ := s.thread.Update(msg)
 	if t, ok := next.(Screen); ok {
-		s.thread = &t
+		*s.thread = t
 	}
 }

@@ -48,7 +48,7 @@ func TestStartArmsAndReturnsTickCmd(t *testing.T) {
 		t.Fatal("expected Active() after Start")
 	}
 	got := m.View(start.Add(3 * time.Second))
-	// "3.0s" is the shared FormatElapsed ladder (transcript-polish.md R5),
+	// "3.0s" is the shared FormatElapsed ladder (ux-rules.md 11.7),
 	// not the old Go time.Duration String() output.
 	for _, want := range []string{"THINKING", "3.0s"} {
 		if !strings.Contains(got, want) {

@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 )
 
@@ -234,6 +235,39 @@ func TestComposerRegionTracksBodyColumns(t *testing.T) {
 	// one cell, never more than the chat column minus the frame insets.
 	if cr.Width() < 1 || cr.MaxX > s.chatWidth()+1 {
 		t.Fatalf("composer region columns out of bounds: %+v (chatWidth %d)", cr, s.chatWidth())
+	}
+}
+
+// TestComposerRegionExcludesChipRow pins C10: Height() grows by one row
+// when a mention chip is present, and composerRegion must shrink its own
+// bodyRows term to match, or the selection rect drifts onto the chip/
+// padding row instead of the textarea's own content row.
+func TestComposerRegionExcludesChipRow(t *testing.T) {
+	s := sized(t, 0)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+
+	before, ok := findRegion(t, s, sel.RegionComposer)
+	if !ok {
+		t.Fatal("a normal surface must report a composer region")
+	}
+
+	s.composer.SetMentions([]composer.Mention{{Path: "a.go"}})
+	s.composer.SetValue("@a")
+	s.composer = s.composer.AcceptMention()
+	_ = s.View()
+
+	after, ok := findRegion(t, s, sel.RegionComposer)
+	if !ok {
+		t.Fatal("a composer with a chip must still report a composer region")
+	}
+	// The composer is bottom-anchored: adding the chip row grows the bar
+	// by one row and its top edge moves up to make room, but the
+	// textarea's OWN row count - what the selection rect must cover - is
+	// unchanged, since the new row sits between the textarea and the
+	// bottom padding, not inside the textarea.
+	if after.Height() != before.Height() {
+		t.Fatalf("chip row must not change the textarea's own row count: before=%+v after=%+v", before, after)
 	}
 }
 

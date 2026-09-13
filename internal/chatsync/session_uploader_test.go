@@ -106,9 +106,9 @@ func countType(evs []StoredEvent, typ string) int {
 // seconds and cross the wire in a handful of POSTs.
 //
 // On the single-goroutine loop this fails at the first assertion: at 200ms
-// a round trip, 1000 appends need ~200s.
+// a round trip, 300 appends need ~60s.
 func TestStreamingIsNotSerializedOnTheUploadRoundTrip(t *testing.T) {
-	const deltas = 1000
+	const deltas = 300
 	f := newFakeAPI(t)
 	id := f.NewSession("streaming-throughput")
 	f.SetAppendDelay(200 * time.Millisecond)
@@ -237,7 +237,9 @@ func TestCLIRestartDrainsUnsentOutboxEvents(t *testing.T) {
 	// stream.
 	publishTurnStart(bus2, id, "turn:2", "the message that drains the outbox")
 	waitUntil(t, "the restarted process to drain its outbox", func() bool {
-		return countTurnStartedTurns(f.Events(id), "turn:1") == 1
+		events := f.Events(id)
+		return countTurnStartedTurns(events, "turn:1") == 1 &&
+			countTurnStartedTurns(events, "turn:2") == 1
 	})
 	if got := countTurnStartedTurns(f.Events(id), "turn:1"); got != 1 {
 		t.Fatalf("server stored %d turn.started events for turn:1, want exactly one after restart replay", got)

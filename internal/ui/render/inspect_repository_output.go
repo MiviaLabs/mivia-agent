@@ -67,7 +67,7 @@ func FormatInspectRepositoryOutput(t theme.Theme, tier theme.Tier, output string
 		for _, m := range group {
 			// One hot file must not own the whole expanded body: cap
 			// each file's rows and say what the cap hid
-			// (tool-output-polish.md R5).
+			// (ux-rules.md 12.7).
 			if shown >= maxInspectMatchesPerFile {
 				out = append(out, subtle.Render(fmt.Sprintf("  … +%d more in this file", len(group)-shown)))
 				break

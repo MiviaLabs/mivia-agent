@@ -83,8 +83,8 @@ func TestPreviewFollowsTheHighlightedThemeNotTheAppliedOne(t *testing.T) {
 	}
 }
 
-// TestPreviewShowsADiffInTheHighlightedTheme pins the mock
-// (docs/design/mivia-ui-mock.html section 7): the preview is not just
+// TestPreviewShowsADiffInTheHighlightedTheme pins the preview content
+// requirement: the preview is not just
 // prose, it shows a diff hunk so an add/del-heavy theme choice (the
 // pair most likely to fail contrast or CVD checks) is judged on the
 // content that actually stresses those roles, not on a sentence that

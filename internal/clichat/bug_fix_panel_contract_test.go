@@ -250,7 +250,7 @@ func assertBugFixPanelLimits(t *testing.T, workflow definition.WorkflowFile) {
 
 // TestBugFixPanelMemberTemplatesRenderWithoutRound and TestBugFixPanelMembersAdmit
 // are DISABLED on the fast debug path: review_panel is commented out of
-// bug-fix.toml (see docs/development/debug-cut.md). They guard the panel
+// bug-fix.toml as a temporary debug cut; restore from git history). They guard the panel
 // member templates rendering without an inputs.round injection and
 // cliworkflow.ValidatePanelAgentTools admission for every member plus the synthesizer.
 // Restore them with the panel; the live bodies are in git history at the

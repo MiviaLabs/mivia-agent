@@ -538,6 +538,12 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 	currID := sess.SessionID
 	var out []ports.SessionSummary
 	for _, info := range infos {
+		// Legacy automation runs saved their sessions under reserved
+		// "__auto__" names; those rows are never user-resumable sessions,
+		// so they stay out of the picker.
+		if chat.IsReservedAutomationName(info.Name) {
+			continue
+		}
 		id := info.SessionID
 		if id == "" {
 			id = info.Name

@@ -415,11 +415,12 @@ func TestDeadOutboxLatchesInsteadOfForking(t *testing.T) {
 	if !s.outbox.Dead() {
 		t.Fatal("outbox is not dead after a failed rebase")
 	}
-	f.DeleteSession(a)
-	s.triggerFlush()
-	// Measured ~20ms of real work locally. Linux-only now (see the GOOS
-	// skip above); 5s is generous margin over that.
-	waitUntilWithin(t, "the latch", 5*time.Second, s.Stopped)
+	// Dead() is the first recovery guard. Invoke recovery directly so this
+	// assertion does not depend on the uploader's asynchronous flush tick.
+	s.recoverRemoteSession(context.Background(), errors.New("recover the dead outbox"))
+	if !s.Stopped() {
+		t.Fatal("sync did not latch after recovery found a dead outbox")
+	}
 	if n := len(f.SessionIDs()); n != 1 {
 		t.Errorf("%d sessions, want 1: nothing may be created for a backlog that cannot move", n)
 	}
@@ -477,6 +478,9 @@ func TestRecoveryAbandonsTheNewSessionWhenTheSessionIsAlreadyFinished(t *testing
 	a := f.NewSession("abandon")
 	bus, s, _ := openRecoverable(t, f, a, nil)
 	attachByFirstEvent(t, f, bus, a)
+	waitUntil(t, "the first upload cursor acknowledgement", func() bool {
+		return s.outbox.Cursor().FlushedSeq == 1
+	})
 	cursorBefore := s.outbox.Cursor().FlushedSeq
 	s.beforeRecoveryLock = func() {
 		s.handleRemoteEnd(context.Background(), "test: finished during recovery")

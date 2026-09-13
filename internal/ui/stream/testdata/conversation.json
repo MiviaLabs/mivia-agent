@@ -231,9 +231,22 @@
     }
   },
   {
-    "kind": "plan",
+    "kind": "tool.start",
     "turn_id": "t1",
     "seq": 18,
+    "at": "2026-08-19T12:00:28.25Z",
+    "body": {
+      "tool_call_id": "c5",
+      "name": "run_command",
+      "args": {
+        "command": "go vet ./internal/storage/..."
+      }
+    }
+  },
+  {
+    "kind": "plan",
+    "turn_id": "t1",
+    "seq": 19,
     "at": "2026-08-19T12:00:28.3Z",
     "body": {
       "items": [
@@ -261,7 +274,7 @@
   {
     "kind": "error",
     "turn_id": "t1",
-    "seq": 19,
+    "seq": 20,
     "at": "2026-08-19T12:00:28.4Z",
     "body": {
       "text": "transport refused after 3 attempts\ndial tcp 10.0.0.4:443: i/o timeout",
@@ -271,17 +284,46 @@
   {
     "kind": "notice",
     "turn_id": "t1",
-    "seq": 20,
+    "seq": 21,
     "at": "2026-08-19T12:00:28.5Z",
     "body": {
       "text": "context 62% (78k of 125k). /compact frees about 30k."
     }
   },
   {
+    "kind": "tool.start",
+    "turn_id": "t1",
+    "seq": 22,
+    "at": "2026-08-19T12:00:28.65Z",
+    "body": {
+      "tool_call_id": "dispatch-golden",
+      "name": "dispatch_tasks",
+      "args": {
+        "tasks": [
+          {"id": "task-a", "prompt": "audit the uploader", "agent": "builder"},
+          {"id": "task-b", "prompt": "review the diff", "agent": "reviewer"}
+        ]
+      }
+    }
+  },
+  {
+    "kind": "tool.end",
+    "turn_id": "t1",
+    "seq": 23,
+    "at": "2026-08-19T12:00:40Z",
+    "body": {
+      "tool_call_id": "dispatch-golden",
+      "name": "dispatch_tasks",
+      "ok": true,
+      "duration_ms": 11350,
+      "result": "[{\"task_id\":\"dispatch-golden:task-a\",\"status\":\"completed\",\"agent\":\"builder\",\"elapsed\":\"8.1s\",\"synopsis\":\"wrote the retry policy\"},{\"task_id\":\"dispatch-golden:task-b\",\"status\":\"failed\",\"agent\":\"reviewer\",\"elapsed\":\"31s\",\"error\":\"provider error (HTTP 402)\"}]"
+    }
+  },
+  {
     "kind": "usage",
     "turn_id": "t1",
-    "seq": 21,
-    "at": "2026-08-19T12:00:28.6Z",
+    "seq": 24,
+    "at": "2026-08-19T12:00:40.1Z",
     "body": {
       "input_tokens": 1284,
       "output_tokens": 2940,
@@ -293,8 +335,8 @@
   {
     "kind": "turn.end",
     "turn_id": "t1",
-    "seq": 22,
-    "at": "2026-08-19T12:00:28.7Z",
+    "seq": 25,
+    "at": "2026-08-19T12:00:40.2Z",
     "body": {
       "reason": "completed"
     }

@@ -26,7 +26,62 @@ func readEndEvent(id, path string) uievent.Event {
 	}
 }
 
-// TestReadOnlyRunsCoalesceIntoOneLeaderRow pins transcript-polish.md R2:
+// TestConsecutiveToolCardsGetABlankSeparator pins the C4 exception to
+// R1's "no blank row inside a run of activity blocks": that rule is for
+// a dense BURST of short calls reading as one line each, never meant to
+// glue a multi-line tinted card directly to the next block's header. Two
+// "edit" calls never coalesce into an R2 leader run (edit is not a
+// read-only class) and are too few for an R2 work run (minWorkRun is 3),
+// so each renders its own header and card - and the second must not
+// touch the first.
+func TestConsecutiveToolCardsGetABlankSeparator(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "a", Name: "edit", OK: true, Result: "diff a"},
+	})
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "b", Name: "edit", OK: true, Result: "diff b"},
+	})
+	if len(m.Blocks()) != 2 {
+		t.Fatalf("precondition: 2 standalone blocks, got %d", len(m.Blocks()))
+	}
+	if len(m.Blocks()[0].card(m.Width()-groupIndent).body) == 0 {
+		t.Fatal("precondition: the first block must render a visible card")
+	}
+	spans := m.layout()
+	if !spans[1].sepBefore {
+		t.Error("a tool card followed by another tool block must get a blank separator, so the two cards don't read as one")
+	}
+}
+
+// TestCollapsedShortCardsStillPackTight is the flip side: a tool call
+// with nothing to show (no body at all - a live pending/running call)
+// keeps R1's dense-burst packing, because there is no card to glue
+// anything to.
+func TestCollapsedShortCardsStillPackTight(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "a", Name: "edit"},
+	})
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "b", Name: "edit"},
+	})
+	if len(m.Blocks()) != 2 {
+		t.Fatalf("precondition: 2 blocks, got %d", len(m.Blocks()))
+	}
+	spans := m.layout()
+	if spans[1].sepBefore {
+		t.Error("two header-only pending calls with no card must still pack tight, no separator")
+	}
+}
+
+// TestReadOnlyRunsCoalesceIntoOneLeaderRow pins ux-rules.md 11.3:
 // two consecutive collapsed read-only lookups draw as ONE leader row -
 // display-only coalescing. The children stay real blocks: clicking the
 // leader row dissolves the run back into per-block headers, each still

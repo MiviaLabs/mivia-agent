@@ -1,6 +1,6 @@
 // Package settings is the full-screen /settings modal: a left nav
-// sidebar (General, Models, MCP, Agents, Automations) beside a detail
-// pane, keeping the top bar and a status row.
+// sidebar (General, Projects, Agents, Skills, Models, MCP, Automations)
+// beside a detail pane, keeping the top bar and a status row.
 package settings
 
 import (
@@ -21,11 +21,11 @@ import (
 var _ app.Screen = Screen{}
 
 // sectionCount is the fixed number of nav entries: General, Projects,
-// Agents, Skills, Models, MCP, in that order everywhere
+// Agents, Skills, Models, MCP, Automations, in that order everywhere
 // (nav, breadcrumb, sectionNames, the theme-walk fixture). A slice
 // length rather than a named const per section would let the two
 // drift.
-const sectionCount = 6
+const sectionCount = 7
 
 // Screen is the settings modal. It owns the frame (top bar, nav,
 // status row); each section owns only its own detail body.
@@ -65,10 +65,13 @@ var _ app.OwnsQuit = Screen{}
 // sectionNames is the deep-link vocabulary "/settings <name>" resolves
 // against, in nav order. Lowercase, matching SectionIndex's own
 // case-folding. Projects and Skills have no ports-backed section yet
-// (no domain model has been scoped for either, the same state Automations
-// was in before it gained one) - they are placeholders like every other
-// nil-backed section until one lands.
-var sectionNames = []string{"general", "projects", "agents", "skills", "models", "mcp"}
+// (no domain model has been scoped for either) - they are placeholders
+// like any nil-backed section until one lands. Automations sits
+// unconditionally in the nav too (D9): whether its backend is wired is
+// decided later, in New(), never here - SectionIndex runs before any
+// Screen or backend exists (deep-link resolution in commands.go), so a
+// backend-conditional nav would give it no way to know if one is wired.
+var sectionNames = []string{"general", "projects", "agents", "skills", "models", "mcp", "automations"}
 
 // SectionIndex resolves a deep-link section name (as "/settings models"
 // or CommandOutcome.SettingsSection would carry) to its nav index,
@@ -112,6 +115,7 @@ func New(t theme.Theme, tier theme.Tier, top topbar.Model, store ports.Settings,
 			newSkillsSection(store.Skills),
 			newModelsSection(store.Providers),
 			newMCPSection(store.MCP),
+			newAutomationsSection(store.Automations),
 		},
 		focus: render.Left,
 	}

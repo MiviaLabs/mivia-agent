@@ -155,7 +155,7 @@ The synthesis adds two steps and a repair loop to the workflow graph:
    the decompose output against the stacking rules (see below).
 3. Router transitions from the plan step:
    - `succeeded` + `stack_mode=single` → continue inline to `implement_step`
-     (today's single-PR path, zero driver involvement).
+     (the single-PR path, zero driver involvement).
    - `succeeded` + `stack_mode=no_bug` → `success` (no plan, nothing to stack).
    - `succeeded` + `stack_mode=multi` → `chunk_plan_validate`.
    - `failed` → `failure`.
@@ -217,7 +217,7 @@ An invalid plan is routed back to decompose through the repair loop; a
 valid plan passes through. The route decision uses the synthesized graph's
 edges (`chunkPlanRepairRoute` / `settleSucceededRoute`).
 
-### Generic task ledger (D8) as durable stack state
+### Generic task ledger as durable stack state
 
 Plans and task statuses are engine-ledger artifacts with scope bindings,
 not stacking-specific state. The generic task ledger (`internal/workflows/ledger`)
@@ -336,7 +336,7 @@ admission per chunk even when multiple chunks are dispatched at once, so
 re-running `stack drive` after a restart or a partial failure never
 double-admits a chunk that is already in flight. The claim is an optimistic
 compare-and-swap on the chunk task's status in the generic task ledger
-(§ [Generic task ledger (D8) as durable stack state](#generic-task-ledger-d8-as-durable-stack-state)
+(§ [Generic task ledger as durable stack state](#generic-task-ledger-as-durable-stack-state)
 below): admission reads the current status, then CASes it to `queued` only if
 it still matches what was read; a losing CAS means another admission already
 claimed the chunk, so the loser simply skips it instead of retrying the
@@ -364,17 +364,17 @@ the full cross-wave chunk list from the run ledger before driving, so a
 wave admitted by a prior process is never lost.
 
 **Merge policies:**
-- `approve` (default, policy A): each PR stays at `delivery_pending` until a
+- `approve` (default): each PR stays at `delivery_pending` until a
   human grants publish (`mivia workflow deliver <run-id> --allow-publish`).
   The driver halts at the publish grant and waits.
-- `auto` (policy B): the driver auto-delivers green PRs and continues.
+- `auto`: the driver auto-delivers green PRs and continues.
   The publish grant remains the single human checkpoint.
 
 **Halt-on-failure:** any chunk that fails terminally (exhausted retry budget)
 halts the stack. The driver returns an error naming the chunk and the cause.
 
-**Recovery on restart:** every driver start runs idempotent reconciliation
-(§5a). The driver loads tasks by scope, reconciles each non-terminal task
+**Recovery on restart:** every driver start runs idempotent
+reconciliation. The driver loads tasks by scope, reconciles each non-terminal task
 against its run and git merge state, and schedules the next admission wave.
 Stable admission keys (`<stack-id>:<chunk-id>`) ensure that re-admission
 after a restart returns the same run — no duplicate runs, no lost tasks.
@@ -388,11 +388,11 @@ gates delivery on a completed drive: `waitForIntegrationSettle` and
 the plan run does. This ordering holds for both the API-admitted path and
 the CLI `stack drive` path.
 
-This settle logic is not fully autonomous yet. Merging a stack's chunk PRs
+This settle logic is not fully autonomous. Merging a stack's chunk PRs
 out of band, with no live `stack drive` or `workflow deliver` process
 watching, does not settle the plan run — nothing polls for that merge.
-See [Workflow stack settle: known gaps](workflow-stack-settle.md) for the
-specific gaps and their evidence.
+See [Stack settle](workflow-stack-settle.md) for how settle behaves and
+its known limitations.
 
 ## See also
 

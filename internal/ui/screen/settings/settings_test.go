@@ -74,7 +74,7 @@ func TestViewEmitsExactlyHeightRowsNoneOverWidth(t *testing.T) {
 func TestNavListsEveryTitle(t *testing.T) {
 	s := newScreen(t, 100, 30)
 	plain := ansi.Strip(s.View())
-	for _, want := range []string{"General", "Projects", "Agents", "Skills", "Models", "MCP"} {
+	for _, want := range []string{"General", "Projects", "Agents", "Skills", "Models", "MCP", "Automations"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("nav is missing %q:\n%s", want, plain)
 		}
@@ -177,16 +177,13 @@ func TestUnavailableSectionsSayUnavailable(t *testing.T) {
 func TestSectionIndexResolvesNamesCaseInsensitively(t *testing.T) {
 	cases := map[string]int{
 		"": 0, "general": 0, "General": 0, "projects": 1,
-		"agents": 2, "skills": 3, "MODELS": 4, "mcp": 5,
+		"agents": 2, "skills": 3, "MODELS": 4, "mcp": 5, "automations": 6, "AUTOMATIONS": 6,
 	}
 	for name, want := range cases {
 		got, ok := SectionIndex(name)
 		if !ok || got != want {
 			t.Errorf("SectionIndex(%q) = %d, %v; want %d, true", name, got, ok, want)
 		}
-	}
-	if _, ok := SectionIndex("automations"); ok {
-		t.Error("expected automations section name to resolve false while hidden")
 	}
 	if _, ok := SectionIndex("nope"); ok {
 		t.Error("expected an unknown section name to resolve false")
@@ -203,6 +200,47 @@ func TestNewClampsAnOutOfRangeInitialNav(t *testing.T) {
 	s = New(th, theme.TierTrueColor, tb, ports.Settings{}, -1)
 	if s.nav != 0 {
 		t.Errorf("nav = %d, want clamped to 0", s.nav)
+	}
+}
+
+// TestNavLengthIsSevenRegardlessOfBackend pins D9: Automations sits
+// unconditionally in the nav (sectionCount == 7), whether or not a
+// ports.AutomationSettings backend is wired - the nav never shrinks or
+// grows with the backend, only the section's own View changes.
+func TestNavLengthIsSevenRegardlessOfBackend(t *testing.T) {
+	unbacked := newScreen(t, 100, 30)
+	if len(unbacked.sections) != sectionCount {
+		t.Errorf("unbacked nav has %d sections, want %d", len(unbacked.sections), sectionCount)
+	}
+	backed, _ := newHarnessScreen(t, 100, 30)
+	if len(backed.sections) != sectionCount {
+		t.Errorf("backed nav has %d sections, want %d", len(backed.sections), sectionCount)
+	}
+}
+
+// TestAutomationsSectionRendersRealRowsWithABackend, paired with
+// TestUnavailableSectionsSayUnavailable (which covers the nil-backend
+// side), proves the Automations nav slot is backed by a real
+// automation.Service-shaped store when one is wired: navigating to it
+// renders seeded automation rows, not the "unavailable" placeholder.
+func TestAutomationsSectionRendersRealRowsWithABackend(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	idx, ok := SectionIndex("automations")
+	if !ok {
+		t.Fatal("expected \"automations\" to resolve to a nav index")
+	}
+	if got := s.sections[idx].Title(); got != "Automations" {
+		t.Fatalf("section at automations index is %q, want Automations", got)
+	}
+	s.nav = idx
+	view := ansi.Strip(s.sections[idx].View())
+	if strings.Contains(view, "unavailable") {
+		t.Errorf("expected a real backend to render rows, not unavailable:\n%s", view)
+	}
+	for _, want := range []string{"Nightly bug audit", "Release checklist"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("automations view is missing seeded row %q:\n%s", want, view)
+		}
 	}
 }
 

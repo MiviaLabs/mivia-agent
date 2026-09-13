@@ -16,15 +16,17 @@ Required tools: Go 1.25+, Python 3, Semgrep.
 private-module fetch. It only tells `go get` to skip the module proxy and
 sumdb for paths that match the glob. It carries no credential.
 
-Credential wiring (an SSH `insteadOf` rewrite, or a PAT-backed HTTPS
-rewrite) is a deferred follow-up. It lands alongside dropping any future
-`go.mod` `replace` directive. Until it lands, a developer who adds a
-genuine private MiviaLabs import will hit an unexplained 404 or auth
-failure at `go get`. This note exists so that failure is not a mystery.
+A private MiviaLabs fetch needs a credential. Configure one of these Git URL
+rewrites before you add a private MiviaLabs import:
 
-The setup above assumes developers already hold SSH keys for
-`github.com:MiviaLabs/*`. This assumption is unconfirmed with the team;
-treat it as an assumption to verify, not a settled fact.
+- An SSH `insteadOf` rewrite for `github.com:MiviaLabs/*`, so Git fetches
+  those modules over SSH. SSH access requires an SSH key registered with
+  your GitHub account.
+- A PAT-backed HTTPS rewrite, so Git fetches `https://github.com/` URLs
+  with a personal access token.
+
+Without one of these rewrites, Git fetches `github.com/MiviaLabs/*` over
+HTTPS with no credential, and `go get` fails with a 404 or auth error.
 
 ## Workflow
 

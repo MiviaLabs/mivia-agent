@@ -4,6 +4,7 @@ title: Test fixtures use only platform-guaranteed binaries
 content: A test fixture that shells out may invoke only binaries every CI surface guarantees.
 importance: high
 tags: [tests, ci, fixtures]
+related: [positional_fixture_returns_invite_silent_misbinding, rg_subprocess_reads_stdin, synchronous_fakes_cannot_see_a_hang, workflow_rules_no_big_test_suites_absolute_local_sdk_replace_shared_tree_etiquette_c599e6279a4ba3aa4848f4cb798b67d8]
 updated: 2026-09-04
 ---
 

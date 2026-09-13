@@ -96,6 +96,12 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 // active turn completes. Empty text returns no-op. The provider error path
 // appends to the transcript (where the user is looking) rather than failing silently.
 func (s Screen) send() (app.Screen, tea.Cmd) {
+	// Guard before SubmitText so a refused submit keeps the composer
+	// text exactly as the user left it.
+	if s.runOwnsSession(s.conv) {
+		s.Notice("an automation run is in progress on this session; sending is disabled until it finishes")
+		return s, nil
+	}
 	text := s.composer.SubmitText()
 	// Trimmed, not just empty: the shape gate the history is validated
 	// against rejects a user message whose content trims to nothing, so a
@@ -136,6 +142,18 @@ func (s Screen) sendText(text string) (app.Screen, tea.Cmd) {
 // intent.Send.PersistedText. An empty persisted keeps sendText's existing
 // behavior: the sent text is what gets persisted too.
 func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.Cmd) {
+	// Same guard as send(): every path that can reach a Send on this
+	// conversation - skill submits, command outcomes - must refuse while
+	// a run owns the session, or a user turn would interleave into the
+	// run's transcript.
+	if s.runOwnsSession(s.conv) {
+		s.Notice("an automation run is in progress on this session; sending is disabled until it finishes")
+		return s, nil
+	}
+	// The conversation's live view pauses for this turn: its events
+	// would otherwise arrive twice (primary stream and tee). The turn's
+	// end re-arms it (handleTurnEndedMsg's foreground tail).
+	s.pauseLive()
 	s.history.Push(text)
 	s.history.Close()
 	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text, PersistedText: persisted})
@@ -145,7 +163,8 @@ func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.C
 			Kind: uievent.KindError,
 			Body: uievent.ErrorBody{Text: err.Error(), Fatal: false},
 		})
-		return s, cmd
+		adoptCmd := s.adoptLive()
+		return s, tea.Batch(cmd, adoptCmd)
 	}
 	s.composer.Clear()
 	s.active = handle
@@ -190,6 +209,20 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
 
+	s.applyTurnEventSideEffects(ev, &flushCmd)
+
+	s.refreshTopbar()
+
+	return s, tea.Batch(flushCmd, s.rearmRead(source))
+}
+
+// applyTurnEventSideEffects is handleTurnEventFrom's per-kind arm: the work a
+// streamed event does BESIDES rendering into the transcript - the approval
+// prompt, the status line, the files panel, the blackboard, and the dispatch
+// row's child tree (C7). flushCmd is in/out: the progress arm may wrap it
+// with the guarded animation tick, and the caller batches whatever comes
+// back with the read continuation.
+func (s *Screen) applyTurnEventSideEffects(ev uievent.Event, flushCmd *tea.Cmd) {
 	switch b := ev.Body.(type) {
 
 	case uievent.ToolPendingBody:
@@ -215,6 +248,11 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 		// from the same stream the transcript renders.
 		if b.Progress != nil {
 			s.panel.observeAgent(b.ToolCallID, b.Progress)
+			// The dispatch row's child tree (C7) rides the same progress
+			// stream: the batch's settled child calls are re-read from the
+			// thread history and pushed into the transcript. No clock is
+			// armed for it - the tree repaints with the event.
+			s.syncThreadChildrenFor(b.ToolCallID)
 			// A dispatch batch emits progress continuously, so this arm is
 			// guarded: without armTick every progress event started an
 			// additional self-re-arming clock and the marks animated N times
@@ -224,12 +262,15 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 			// block") is static, and gating on Active suppressed this arm
 			// entirely, freezing the panel marks while the batch ran.
 			if !s.statusline.Animating() && s.panel.activeAgentCount() > 0 {
-				flushCmd = tea.Batch(flushCmd, s.armTick())
+				*flushCmd = tea.Batch(*flushCmd, s.armTick())
 			}
 		}
 	case uievent.ToolEndBody:
 		s.approval.Resolve(b.ToolCallID)
 		s.statusline.SetLabel("thinking")
+		// Read child histories before observeToolEnd deletes the
+		// dispatchGroups entry needed to map task rows to this parent.
+		s.syncThreadChildrenFor(b.ToolCallID)
 		s.observeToolEnd(b)
 	case uievent.UsageBody:
 		// InputTokens is the whole prepared history the provider just
@@ -257,10 +298,6 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 		// high-water mark for the rest of the session.
 		s.liveUsage = nil
 	}
-
-	s.refreshTopbar()
-
-	return s, tea.Batch(flushCmd, s.rearmRead(source))
 }
 
 // rearmRead returns the continuation that keeps ONE reader on the stream

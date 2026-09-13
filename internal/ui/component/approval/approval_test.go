@@ -47,7 +47,7 @@ func TestViewShowsPendingRequest(t *testing.T) {
 		t.Fatal("expected Active() after SetRequest")
 	}
 	got := m.View()
-	for _, want := range []string{"run_command", "$ ls", "o once", "D deny always"} {
+	for _, want := range []string{"Tool", "run_command", "Command", "ls", "o once", "D deny always"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("approval view missing %q:\n%s", want, got)
 		}
@@ -264,8 +264,8 @@ func previewDiff(t *testing.T, hunkLines int) *uievent.Diff {
 }
 
 // TestViewShowsDiffPreview pins the wiring: a pending file-edit with a
-// diff renders the diff inside the border, above the hint, and the hint
-// line stays complete.
+// diff renders the Tool/File header rows, then the diff, above the
+// hint, and the hint line stays complete.
 func TestViewShowsDiffPreview(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetRequest(uievent.ToolPendingBody{
@@ -273,13 +273,16 @@ func TestViewShowsDiffPreview(t *testing.T) {
 		Args: map[string]any{"path": "a.go"}, Diff: previewDiff(t, 3),
 	})
 	got := m.View()
-	for _, want := range []string{"approve edit_file", "@@ -1,1 +1,2 @@", "+ line 0", "+ line 2", "o once    a always    d deny    D deny always"} {
+	for _, want := range []string{"Tool", "edit_file", "File", "a.go", "@@ -1,1 +1,2 @@", "+ line 0", "+ line 2", "o once    a always    d deny    D deny always"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("approval view missing %q:\n%s", want, got)
 		}
 	}
 	if i, j := strings.Index(got, "line 2"), strings.Index(got, "o once"); i > j || j < 0 {
 		t.Errorf("hint must come after the diff preview:\n%s", got)
+	}
+	if i, j := strings.Index(got, "File"), strings.Index(got, "@@"); i < 0 || i > j {
+		t.Errorf("header rows must come before the diff preview:\n%s", got)
 	}
 }
 
@@ -541,35 +544,37 @@ func colourOf(th theme.Theme, r theme.Role) string {
 	return styled[i : i+strings.IndexByte(styled[i:], 'm')]
 }
 
-// TestActionRidesInTheBorderLabel: what is being approved belongs beside
-// "Approval Required" in the top border row, not on a full-width line of
-// its own inside the box.
-func TestActionRidesInTheBorderLabel(t *testing.T) {
+// TestActionRowsLiveInTheHeader (C11): what is being approved belongs
+// in the aligned "Tool"/"File" key/value rows above the diff preview,
+// never folded into or truncated onto the top border row - the border
+// carries only the state badge and the queue depth.
+func TestActionRowsLiveInTheHeader(t *testing.T) {
 	m, rows := pendingRows(t, New(loadTheme(t), theme.TierTrueColor), 80,
 		uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file",
 			Args: map[string]any{"path": "/asdasd"}})
 
 	top := ansi.Strip(rows[0])
-	for _, want := range []string{"Approval Required", "edit_file", "/asdasd"} {
-		if !strings.Contains(top, want) {
-			t.Errorf("the top border is missing %q: %q", want, top)
-		}
+	if !strings.Contains(top, "Approval Required") {
+		t.Errorf("the top border is missing the badge: %q", top)
 	}
-	// The body must not repeat it.
+	if strings.Contains(top, "edit_file") || strings.Contains(top, "/asdasd") {
+		t.Errorf("the action must not ride in the border row any more: %q", top)
+	}
 	body := ansi.Strip(strings.Join(rows[1:], "\n"))
-	if strings.Contains(body, "edit_file") {
-		t.Errorf("the action is still drawn inside the box as well:\n%s", body)
+	for _, want := range []string{"Tool", "edit_file", "File", "/asdasd"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the header rows are missing %q:\n%s", want, body)
+		}
 	}
 	if got, want := len(rows), m.Height(); got != want {
 		t.Errorf("View drew %d rows, Height claims %d", got, want)
 	}
 }
 
-// TestActionStaysInTheBodyWhenItCannotFitTheBorder: the border row is a
-// fixed budget, so a long action cannot always ride there. It must then
-// stay in the body - dropping it would hide what is being approved, and
-// truncating it into the border would name the wrong command.
-func TestActionStaysInTheBodyWhenItCannotFitTheBorder(t *testing.T) {
+// TestActionRowClipsAtNarrowWidths (C11): a long command or path must
+// clip to the box's width like every other chrome row, never widen or
+// wrap it - and Height must still agree with what View actually draws.
+func TestActionRowClipsAtNarrowWidths(t *testing.T) {
 	long := uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command",
 		Args: map[string]any{"cmd": strings.Repeat("very-long-argument ", 12)}}
 
@@ -577,14 +582,47 @@ func TestActionStaysInTheBodyWhenItCannotFitTheBorder(t *testing.T) {
 		m, rows := pendingRows(t, New(loadTheme(t), theme.TierTrueColor), width, long)
 		plain := ansi.Strip(strings.Join(rows, "\n"))
 		if !strings.Contains(plain, "run_command") {
-			t.Errorf("width %d: the action is nowhere on screen:\n%s", width, plain)
+			t.Errorf("width %d: the tool name is nowhere on screen:\n%s", width, plain)
 		}
 		if strings.Contains(ansi.Strip(rows[0]), "run_command") {
-			t.Errorf("width %d: a long action was forced into the border row: %q", width, rows[0])
+			t.Errorf("width %d: the action is still in the border row: %q", width, rows[0])
+		}
+		for i, r := range rows {
+			if w := ansi.StringWidth(r); w > width {
+				t.Errorf("width %d: row %d is %d columns wide: %q", width, i, w, r)
+			}
 		}
 		if got, want := len(rows), m.Height(); got != want {
 			t.Errorf("width %d: View drew %d rows, Height claims %d", width, got, want)
 		}
+	}
+}
+
+// TestCommandRowClipsToOneRowAtWidth40 (C11): the task's own width-40
+// clip case - a command long enough to wrap at most widths must still
+// render as exactly one header row, clipped, not wrapped onto a second
+// line Height() does not claim.
+func TestCommandRowClipsToOneRowAtWidth40(t *testing.T) {
+	m, rows := pendingRows(t, New(loadTheme(t), theme.TierTrueColor), 40,
+		uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command",
+			Args: map[string]any{"cmd": strings.Repeat("x", 200)}})
+
+	var commandRows int
+	for _, r := range rows {
+		if strings.Contains(ansi.Strip(r), "Command") {
+			commandRows++
+		}
+	}
+	if commandRows != 1 {
+		t.Fatalf("want exactly one Command row at width 40, got %d:\n%s", commandRows, strings.Join(rows, "\n"))
+	}
+	for i, r := range rows {
+		if w := ansi.StringWidth(r); w > 40 {
+			t.Errorf("row %d is %d columns wide at width 40: %q", i, w, r)
+		}
+	}
+	if got, want := len(rows), m.Height(); got != want {
+		t.Errorf("View drew %d rows, Height claims %d", got, want)
 	}
 }
 
@@ -608,17 +646,130 @@ func TestNarrowTerminalKeepsTheBoxIntact(t *testing.T) {
 }
 
 // TestBorderLabelDegradesToASCII: the warning glyph is not ASCII, so the
-// no-colour tiers must still name the state.
+// no-colour tiers must still name the state. The action no longer rides
+// in the border (C11), so this checks only the badge.
 func TestBorderLabelDegradesToASCII(t *testing.T) {
 	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierNoTTY} {
 		_, rows := pendingRows(t, New(loadTheme(t), tier), 80,
 			uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file"})
 		top := ansi.Strip(rows[0])
-		if !strings.Contains(top, "Approval Required") || !strings.Contains(top, "edit_file") {
+		if !strings.Contains(top, "Approval Required") {
 			t.Errorf("tier %v top border: %q", tier, top)
 		}
 		if strings.Contains(top, "⚠") {
 			t.Errorf("tier %v drew a non-ASCII glyph: %q", tier, top)
 		}
+		body := ansi.Strip(strings.Join(rows[1:], "\n"))
+		if !strings.Contains(body, "edit_file") {
+			t.Errorf("tier %v: the Tool row is missing the action:\n%s", tier, body)
+		}
 	}
+}
+
+// TestToggleSplitHeightViewAgreement pins C8: toggling the diff preview
+// between unified and split at a wide-enough terminal actually renders
+// differently, and Height() always agrees with the row count View()
+// claims - split typically changes the line count (columns instead of
+// stacked rows), so this is the case most likely to let the two drift.
+func TestToggleSplitHeightViewAgreement(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	// +4: the box border eats 4 columns before the diff preview ever
+	// sees them (diffContentWidth), so the RAW width SetWidth takes
+	// must clear MinSplitDiffWidth by that much for the toggle to
+	// actually take effect.
+	m.SetWidth(render.MinSplitDiffWidth + 4)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file", Diff: previewDiff(t, 3)})
+
+	unified := m.View()
+	if hasSplitDivider(unified) {
+		t.Fatalf("a fresh request must start unified, got a column divider:\n%s", unified)
+	}
+	if rows := len(strings.Split(unified, "\n")); m.Height() != rows {
+		t.Errorf("unified: Height() = %d, want %d (View's row count)", m.Height(), rows)
+	}
+
+	m = m.ToggleSplit()
+	split := m.View()
+	if !hasSplitDivider(split) {
+		t.Errorf("split render carries no column divider:\n%s", split)
+	}
+	if split == unified {
+		t.Error("ToggleSplit did not change the rendered view at all")
+	}
+	if rows := len(strings.Split(split, "\n")); m.Height() != rows {
+		t.Errorf("split: Height() = %d, want %d (View's row count)", m.Height(), rows)
+	}
+
+	m = m.ToggleSplit()
+	backToUnified := m.View()
+	if backToUnified != unified {
+		t.Errorf("round trip did not restore the original unified view\n got  %s\n want %s", backToUnified, unified)
+	}
+	if rows := len(strings.Split(backToUnified, "\n")); m.Height() != rows {
+		t.Errorf("back to unified: Height() = %d, want %d", m.Height(), rows)
+	}
+}
+
+// TestToggleSplitRefusedBelowMinWidth pins the refusal: below
+// render.MinSplitDiffWidth, ToggleSplit is a documented no-op.
+func TestToggleSplitRefusedBelowMinWidth(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetWidth(render.MinSplitDiffWidth + 3) // one column short of diffContentWidth's floor
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file", Diff: previewDiff(t, 3)})
+
+	before := m.View()
+	next := m.ToggleSplit()
+	if next.View() != before {
+		t.Errorf("a refused toggle must not change the view\n before %s\n after  %s", before, next.View())
+	}
+	if next.Height() != m.Height() {
+		t.Error("a refused toggle must not change Height")
+	}
+}
+
+// TestApprovalHintNamesSplitOnlyWhenAvailable pins ux-rules 1.4: the
+// hint row names "t split"/"t unified" only when the key would actually
+// do something - a diff is present AND the terminal is wide enough.
+func TestApprovalHintNamesSplitOnlyWhenAvailable(t *testing.T) {
+	t.Run("no diff: hint omits t", func(t *testing.T) {
+		m := New(loadTheme(t), theme.TierTrueColor)
+		m.SetWidth(render.MinSplitDiffWidth)
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+		if strings.Contains(m.View(), " t split") || strings.Contains(m.View(), " t unified") {
+			t.Errorf("hint names t with no diff to toggle:\n%s", m.View())
+		}
+	})
+	t.Run("narrow: hint omits t", func(t *testing.T) {
+		m := New(loadTheme(t), theme.TierTrueColor)
+		m.SetWidth(render.MinSplitDiffWidth + 3) // one column short of diffContentWidth's floor
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file", Diff: previewDiff(t, 3)})
+		if strings.Contains(m.View(), " t split") {
+			t.Errorf("hint names t below MinSplitDiffWidth, where it is refused:\n%s", m.View())
+		}
+	})
+	t.Run("wide with diff: hint names t split", func(t *testing.T) {
+		m := New(loadTheme(t), theme.TierTrueColor)
+		m.SetWidth(render.MinSplitDiffWidth + 4)
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file", Diff: previewDiff(t, 3)})
+		if !strings.Contains(m.View(), "t split") {
+			t.Errorf("hint missing 't split' when the toggle is actually available:\n%s", m.View())
+		}
+		m = m.ToggleSplit()
+		if !strings.Contains(m.View(), "t unified") {
+			t.Errorf("hint missing 't unified' once split is on:\n%s", m.View())
+		}
+	})
+}
+
+// hasSplitDivider reports whether any row carries a column divider
+// beyond the box's own left/right border edges - the box border itself
+// draws "│" on every row, so a bare Contains(view, "│") cannot tell a
+// split-diff row from an ordinary bordered one.
+func hasSplitDivider(view string) bool {
+	for _, row := range strings.Split(view, "\n") {
+		if strings.Count(row, "│") > 2 {
+			return true
+		}
+	}
+	return false
 }

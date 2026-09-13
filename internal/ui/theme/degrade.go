@@ -41,7 +41,7 @@ type Style struct {
 
 // Resolve returns the Style a role should render as at the given tier.
 // Tier256 uses the theme's truecolor hex and lets the terminal/library
-// downsample it (research.md finding 8: safe at 256, only 16 needs an
+// downsample it (measured: safe at 256, only 16 needs an
 // explicit map); Tier16 uses the theme's authored ANSI16 index directly,
 // never a computed nearest match.
 func (t Theme) Resolve(r Role, tier Tier) Style {

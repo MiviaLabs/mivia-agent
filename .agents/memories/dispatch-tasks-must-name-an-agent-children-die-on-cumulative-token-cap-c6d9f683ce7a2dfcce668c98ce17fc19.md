@@ -4,6 +4,7 @@ title: 'dispatch_tasks must name an agent; children die on cumulative token cap'
 content: 'dispatch_tasks without the agent field runs tool-less one-shot calls; sub-agents also carry a MaxTotalTokens cap that kills long tasks around iteration 22.'
 importance: medium
 tags: [orchestration, dispatch_tasks, token-budget, review]
+related: [branch_tip_moves_during_agent_runs_pin_a_hash_for_diff_scoped_audits_c4b05cbeb324667c319c968d3c1d19f0, no_per_agent_spend_ceilings, preventing_agent_over_exploration, task_identity_two_forms]
 updated: 2026-09-07
 ---
 

@@ -10,8 +10,7 @@ The agent system prompt for **agent mode** (tools enabled) comes from:
 2. **`[chat].system_prompt`** in config (if set and not stripped by the workspace gate)
 3. **Compiled root prompt** (`BuiltInOrchestratorPrompt` in `internal/agents/builtin.go`)
 
-Workspace agent files **always load** from `<workspace>/.agents/agents/`. They
-replace the former `.mivia/agent-prompt.md` surface.
+Workspace agent files **always load** from `<workspace>/.agents/agents/`.
 
 ## Built-in agents
 

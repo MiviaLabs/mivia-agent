@@ -2,8 +2,8 @@ package render
 
 import "testing"
 
-// TestFormatElapsed pins the single duration ladder (transcript-polish.md
-// R5, wireframes-panes.md section 4): raw milliseconds under a second,
+// TestFormatElapsed pins the single duration ladder (ux-rules.md
+// 11.7, wireframes-panes.md section 4): raw milliseconds under a second,
 // one-decimal seconds to the rounding boundary, minutes past it. The
 // boundary values are the ones a format change can quietly break.
 func TestFormatElapsed(t *testing.T) {

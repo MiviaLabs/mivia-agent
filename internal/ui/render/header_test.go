@@ -95,6 +95,38 @@ func TestHeaderClipsDetailNotState(t *testing.T) {
 	}
 }
 
+// TestHeaderClipsDetailNotOutcomeGlyphOrState pins the same clip
+// priority TestHeaderClipsDetailNotState pins, for a tool block's own
+// Marker content: C3 puts the call's outcome glyph ("x" for failed) in
+// the Marker column instead of the generic collapse arrow, and this
+// contract must not care which one it is. A failed row must stay
+// exactly one row, the detail gives way first, and neither the glyph
+// nor the "failed" word may be dropped.
+func TestHeaderClipsDetailNotOutcomeGlyphOrState(t *testing.T) {
+	th := loadTheme(t)
+	const width = 40
+	long := strings.Repeat("verylongpath/", 12)
+	got := Header(th, theme.TierASCII, width, HeaderSpec{
+		Marker: "x", Label: "run_command", Detail: long, Meta: "4.1s", State: "failed", StateRole: theme.RoleDanger,
+	})
+	p := plain(got)
+	if strings.Count(p, "\n") != 0 {
+		t.Fatalf("got %q, want exactly one row", p)
+	}
+	if w := lipgloss.Width(got); w > width {
+		t.Errorf("got width %d, want at most %d:\n%q", w, width, got)
+	}
+	if !strings.HasPrefix(p, "x run_command") {
+		t.Errorf("got %q, want the outcome glyph and label preserved", p)
+	}
+	if !strings.Contains(p, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the clip marker: the detail must give way first", p)
+	}
+	if !strings.HasSuffix(p, "failed") {
+		t.Errorf("got %q, want the state preserved as the last thing on the row", p)
+	}
+}
+
 // TestHeaderUnclippableStillRenders covers a width so small that even
 // clipping the detail cannot help. It must degrade, never panic or
 // produce a negative-width pad.
@@ -149,6 +181,97 @@ func TestHeaderDefaultsStateRole(t *testing.T) {
 	}
 }
 
+// TestFitClipsDetailSuffixBeforeLabel pins C5's own priority order, one
+// step below TestHeaderClipsDetailNotState: the DetailSuffix is
+// decorative context, so it gives way before Detail, and Detail (like
+// the label) still gives way before the label is ever touched.
+//
+// It asserts on fit() directly, not through Header(): Header's own
+// clampWidth backstop truncates the RENDERED row's tail regardless of
+// which column gave way internally, and the suffix is always the
+// rightmost column - so at some widths a wrong priority order (keep the
+// suffix, sacrifice the label) still produces a row that happens not to
+// contain the full suffix text, passing a content check for the wrong
+// reason. fit() is where the decision is actually made, so it is what
+// must be pinned.
+func TestFitClipsDetailSuffixBeforeLabel(t *testing.T) {
+	// Room for the lead and detail together (15 columns: "v run_command"
+	// is 13, plus a space and "x") but not for "waiting for result" (19)
+	// beside them. The suffix must give way; the lead and detail must
+	// come back untouched - clipDetail was never called on them.
+	lead, detail, suffix, _ := fit("v run_command", "x", "waiting for result", "", 20)
+	if lead != "v run_command" || detail != "x" {
+		t.Errorf("fit(...) = (%q, %q, %q, _), want lead and detail preserved intact", lead, detail, suffix)
+	}
+	if suffix != "" {
+		t.Errorf("fit(...) suffix = %q, want it dropped before the detail gives up any room", suffix)
+	}
+
+	// Narrower still: not even the lead fits whole, which is fit()'s own
+	// last-resort branch. The suffix must already be empty by the time
+	// that branch is reached - it never survives past the point where
+	// the label itself has to give way.
+	lead, _, suffix, _ = fit("v run_command", "x", "waiting for result", "", 6)
+	if suffix != "" {
+		t.Errorf("fit(...) suffix = %q, want it clipped before the label", suffix)
+	}
+	if w := ansi.StringWidth(lead); w > 6 {
+		t.Errorf("fit(...) lead = %q, %d columns wider than the 6 available", lead, w)
+	}
+}
+
+// TestFitClippedDetailReservesItsSeparator pins the fallback budget from
+// the caller's side: whatever fit returns must reconstruct, with the
+// separators the renderer adds, a row of at most width columns. The
+// separator column is owned inside clipDetail (its room parameter
+// includes it); this test holds that contract where the row is
+// measurable, so an edit that loses the decrement fails here and not
+// only as a one-column difference eaten by clampWidth.
+func TestFitClippedDetailReservesItsSeparator(t *testing.T) {
+	const detail = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" // 40 columns
+
+	// With meta and state on the right (gap of 2): the rendered row is
+	// lead + " " + detail + gap + right.
+	lead, got, suffix, _ := fit("v run_command", detail, "waiting for result", "running", 40)
+	if suffix != "" {
+		t.Errorf("suffix = %q, want it dropped before the detail gives up room", suffix)
+	}
+	rowW := ansi.StringWidth(lead) + 1 + ansi.StringWidth(got) + 2 + ansi.StringWidth("running")
+	if rowW > 40 {
+		t.Errorf("fit returned lead %q + detail %q: reconstructed row is %d columns at width 40, want at most 40", lead, got, rowW)
+	}
+
+	// With nothing on the right there is no gap, but the separator
+	// before the detail remains.
+	lead, got, _, _ = fit("v edit", detail, "", "", 20)
+	rowW = ansi.StringWidth(lead) + 1 + ansi.StringWidth(got)
+	if rowW > 20 {
+		t.Errorf("fit returned lead %q + detail %q: reconstructed row is %d columns at width 20, want at most 20", lead, got, rowW)
+	}
+}
+
+// TestHeaderClippedDetailKeepsTheStateWhole pins the visible end of the
+// same contract: a clipped detail never costs the state word a column,
+// so clampWidth has nothing to eat - at any width, the reader sees the
+// whole word.
+func TestHeaderClippedDetailKeepsTheStateWhole(t *testing.T) {
+	th := loadTheme(t)
+	for _, width := range []int{20, 30, 40, 60, 80} {
+		got := Header(th, theme.TierASCII, width, HeaderSpec{
+			Marker: "v", Label: "run_command",
+			Detail:       strings.Repeat("x", 40),
+			DetailSuffix: "waiting for result",
+			State:        "running",
+		})
+		if w := ansi.StringWidth(got); w > width {
+			t.Errorf("width %d: rendered row is %d columns, want at most %d", width, w, width)
+		}
+		if p := plain(got); !strings.HasSuffix(p, "running") {
+			t.Errorf("width %d: row %q does not end with the whole state word", width, p)
+		}
+	}
+}
+
 func TestClipDetail(t *testing.T) {
 	cases := []struct {
 		detail string
@@ -185,6 +308,11 @@ var widthHostileSpecs = []HeaderSpec{
 	{Marker: "v", Label: strings.Repeat("漢", 30), Detail: "x", State: "running"},
 	{Marker: "v", Label: "x", State: strings.Repeat("failed ", 20)},
 	{Marker: "v", Label: "", Detail: "", Meta: "", State: ""},
+	// C5's own column: wide runes and a combining mark beside a normal
+	// detail, exercising fitDetailSuffix/clipSuffix rather than clipDetail.
+	{Marker: "v", Label: "run_command", Detail: "go vet", DetailSuffix: strings.Repeat("漢", 30), State: "running"},
+	{Marker: "v", Label: "run_command", Detail: strings.Repeat("é", 40), DetailSuffix: "waiting for result", State: "running"},
+	{Marker: "v", Label: "x", DetailSuffix: "a\tb\nc", State: "pending"},
 }
 
 // TestHeaderWidthContract pins the guarantee Block.Height depends on: at
@@ -227,11 +355,14 @@ func TestHeaderKeepsTheStateWhenNothingElseFits(t *testing.T) {
 // write. Both assertions are the contract itself, not a golden.
 func FuzzHeader(f *testing.F) {
 	for _, s := range widthHostileSpecs {
-		f.Add(s.Marker, s.Label, s.Detail, s.Meta, s.State, 40)
+		f.Add(s.Marker, s.Label, s.Detail, s.Meta, s.State, s.DetailSuffix, 40)
 	}
-	f.Add("v", "edit", "main.go", "+1", "ok", 80)
+	f.Add("v", "edit", "main.go", "+1", "ok", "", 80)
+	// C5's column, so random inputs exercise fitDetailSuffix/clipSuffix;
+	// before this seed the fuzzer never set a suffix at all.
+	f.Add("v", "run_command", "go vet ./...", "4.1s", "running", "waiting for result", 40)
 	th := loadTheme(f)
-	f.Fuzz(func(t *testing.T, marker, label, detail, meta, state string, width int) {
+	f.Fuzz(func(t *testing.T, marker, label, detail, meta, state, suffix string, width int) {
 		// Bound the width: the contract is about layout, and a huge
 		// allocation proves nothing.
 		if width < -4 || width > 400 {
@@ -239,6 +370,7 @@ func FuzzHeader(f *testing.F) {
 		}
 		got := Header(th, theme.TierASCII, width, HeaderSpec{
 			Marker: marker, Label: label, Detail: detail, Meta: meta, State: state,
+			DetailSuffix: suffix,
 		})
 		if strings.ContainsAny(plain(got), "\n\r\t") {
 			t.Fatalf("control character in a header row: %q", got)

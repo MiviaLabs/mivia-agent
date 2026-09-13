@@ -4,6 +4,7 @@ title: 'load_tools deferred stage shadows the synchronous unadmitted-tool hot pa
 content: 'The mivia agent loop hot-load path is shadowed whenever load_tools staged the tool and publication deferred.'
 importance: medium
 tags: [load_tools, admission, mcp, tool-surface, design-gap, staged-tools]
+related: [mcp_reliability_chain_schema_bridge_error_surfacing_root_identity_core_tier_5eb9058e91deeba1dd35afe92eddc3ee, two_paths_execute_a_tool_call]
 updated: 2026-09-04
 ---
 

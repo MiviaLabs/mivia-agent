@@ -40,7 +40,7 @@ Opting a category out is one explicit `false` away:
 1. **Authentication required**: an upload without a resolvable token is
    refused before it is attempted, rather than sent anonymously.
 2. **Tool I/O redacted**: Tool inputs and outputs are on the wire by default
-   (`sync.include_tool_io`, default `true` since 0282fac4) and pass through the
+   (`sync.include_tool_io`, default `true`) and pass through the
    workspace redaction policy. Set it to `false`, or set `redact_tool_args`, to
    omit them entirely; the envelope's `redacted` array then records the
    omission. A hook's captured stdout is withheld outright whenever a redaction
@@ -72,9 +72,9 @@ enable sync on sensitive work:
   recommended policy that tail is zero to a dozen bytes (the longest key-name
   word, `"authorization`), so the viewer trails the model by less than one
   delta rather than by a fixed window, and a mid-message pause leaves nothing
-  invisible. There is no fixed window any more: `redact.StreamHoldBack` names
-  the 256 bytes the old one held, and bounds nothing. A delta that ends inside
-  a multi-byte character holds that character's opening bytes too, so a key
+  invisible. The hold is not a fixed window: `redact.StreamHoldBack` names
+  the 256 bytes a flat window would hold, and bounds nothing. A delta that
+  ends inside a multi-byte character holds that character's opening bytes too, so a key
   whose case-folded letters straddle a delta cannot ship in two clean halves.
   The held tail is flushed as one final delta at the block's close - the next tool
   call, the turn's end, the turn's failure, a subagent's terminal - and, since
@@ -95,7 +95,7 @@ enable sync on sensitive work:
     header to the end of the buffer on EVERY push. `safeCut` refuses to cut
     inside a live match, so once the header is in the held tail the cut is
     pinned at it and **nothing further ships until the block closes** - 10 KB
-    of prose after a PEM header shipped zero bytes. This is the SAFE direction:
+    of prose after a PEM header ships zero bytes. This is the SAFE direction:
     no key body escapes. It is also a live stall for prose that merely mentions
     the header, and when the block finally settles `redactText` rewrites the
     whole remainder from the header onward, so the surrounding narration is
@@ -106,9 +106,8 @@ enable sync on sensitive work:
     pattern such as `(?s)BEGIN KEY.*?END KEY` is a live partial match from its
     header onward, so the header and everything after it wait for the closing
     bytes or the block's close - the same pin as above, and the same safe
-    direction, whatever the body's length. The old flat window could begin
-    further back than it reached and leak such a pattern's opening bytes; the
-    automaton cannot.
+    direction, whatever the body's length. The automaton holds from the earliest
+    live partial match, so it cannot leak such a pattern's opening bytes.
   - **A rule that starts with an assertion can over-redact at a delta edge.**
     `\b`, `^` and `$` are evaluated by the redactor at the edges of the text
     it is given, and a shipped prefix has an artificial edge at the cut. A
@@ -127,11 +126,8 @@ enable sync on sensitive work:
   turn to see any of it.
 - To send no chat content at all, set `enabled = false`.
 
-Subagent prose was formerly withheld whatever the settings said. That made a
-remote viewer weaker than the local TUI, which shows a subagent's thread in
-full: the viewer could list a running subagent but never open it. The prose
-now ships. An operator who has sync on therefore sends a subagent's answers
-where earlier versions sent none, WITHOUT having changed any setting.
+Subagent prose ships by default. A remote viewer can open a running
+subagent's thread in full, as the local TUI does.
 
 ## Truncation Budgets
 
@@ -151,11 +147,10 @@ fields use rune-safe byte budgets:
 Tool Input and Tool Output are cut from the tool's **full redacted arguments
 and result** (`events.Event.InputBody` / `OutputBody`), not from the
 256/512-byte operator preview the local NDJSON stream and log show
-(`internal/agent/loop_tool_preview.go`). Until 2026-09-02 the projector read
-the preview, so every `read_file` reached the wire as 512 bytes reporting
-`output_bytes: 512` with no `trunc` marker, and a viewer could not tell a
-512-byte file from a cut 200 KB one. `input_bytes` / `output_bytes` now report
-the full size, and a result over budget carries `trunc.fields.output`.
+(`internal/agent/loop_tool_preview.go`). The projector cuts the wire fields
+from those bodies (`internal/chatsync/projector_tools.go`), so `input_bytes`
+/ `output_bytes` report the full size, and a result over budget carries
+`trunc.fields.output`.
 
 A budget counts the **JSON-escaped** size of the field, not its raw size. That
 is the unit the receiving store measures in, and the two are far apart for
@@ -195,10 +190,8 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
     shipped - `fragments` > 0, `text` empty, `bytes` the size the deltas
     shipped. This is what lets a viewer stop showing a finished message as
     streaming while the reasoning pass or tool call after it is still
-    running; before it, a block completed only at the turn's end. It is NOT
-    emitted under `stream_assistant` off: no delta ever ships, so the
-    turn-end aggregate stays the sole carrier of the text, exactly as it
-    always was. A message held whole by the redaction window is different:
+    running. It is NOT emitted under `stream_assistant` off: no delta ever
+    ships, so the turn-end aggregate stays the sole carrier of the text. A message held whole by the redaction window is different:
     the flag first releases it as one `assistant.delta`, then settles the
     block with `fragments` 1. A flag for a message that produced no new
     deltas (a tool-only iteration) settles nothing. `bytes` here is the
@@ -256,7 +249,7 @@ the same depth do not share.
 `parent_task` is absent whenever the root loop dispatched the run, which is
 the common case. A subagent cannot dispatch a subagent - the mandatory tool
 denylist removes `delegate`, `dispatch_tasks` and `spawn_agent` from every
-spawned registry - so the one relationship that produces a parent today is an
+spawned registry - so the one relationship that produces a parent is an
 `ask_agent` referral: a task asks a peer role a question, and the referral
 started to answer it reports the asking task as its parent.
 
@@ -270,8 +263,8 @@ preview of what the run was asked to do that the producer bounds to 200
 bytes, and its timestamp is the run's start time;
 `subagent.ended` carries the terminal status. `subagent.progress` carries a
 heartbeat, and its `detail` text holds the elapsed time, step count and tool
-count. That type once declared `elapsed_seconds`, `steps` and `tool_calls`
-fields as well; no version ever populated them, so they were removed.
+count. The payload carries nothing beyond the heartbeat and its `detail`
+text.
 
 The envelope's `block` groups the fragments a consumer must stitch together.
 A tool event's block is its `tool_call_id`. Prose blocks name a stream and a
@@ -409,8 +402,8 @@ jittered backoff.
 
 The API appends a batch as one multi-row statement, so a rejection of any
 single event rejects the whole batch - up to 100 events. Combined with the
-poison rule above, one unacceptable event used to cost the rest of the
-session: the 400 stopped sync permanently.
+poison rule above, one unacceptable event would otherwise cost the rest of
+the session: the 400 would stop sync permanently.
 
 The API therefore repairs rather than rejects. It removes a `U+0000` it cannot
 store, and shrinks a payload over its column bound by cutting the longest

@@ -62,7 +62,8 @@ type Entry struct {
 	Verdict    Verdict
 	Importance Importance // optional; RenderProtocolFile defaults to medium
 	Tags       []string
-	Created    string // YYYY-MM-DD; empty means "today" at save time
+	Related    []string // optional related memory ids (.agents/memories protocol)
+	Created    string   // YYYY-MM-DD; empty means "today" at save time
 	Summary    string
 	Good       string
 	Bad        string
@@ -83,18 +84,20 @@ type Limits struct {
 // Limits defaults. The rendered template stays small by design: a memory is a
 // digest of a learning, not a document.
 const (
-	DefaultMaxEntryBytes = 8192
+	defaultMaxEntryBytes = DefaultMaxEntryBytes
 
-	maxTitleLen      = 120
-	maxSummaryLen    = 400
-	maxWhyLen        = 1000
-	maxBodyFieldLen  = 2000
-	maxTags          = 8
-	maxTagLen        = 32
-	maxReferences    = 8
-	maxReferenceLen  = 200
-	minEntryBytes    = 256
-	maxEntryBytesCap = 65536
+	maxTitleLen      = MaxTitleLen
+	maxSummaryLen    = MaxSummaryLen
+	maxWhyLen        = MaxWhyLen
+	maxBodyFieldLen  = MaxBodyFieldLen
+	maxTags          = MaxTags
+	maxTagLen        = MaxTagLen
+	maxReferences    = MaxReferences
+	maxReferenceLen  = MaxReferenceLen
+	maxRelated       = MaxRelated
+	maxRelatedIDLen  = MaxRelatedIDLen
+	minEntryBytes    = MinEntryBytes
+	maxEntryBytesCap = MaxEntryBytesCap
 )
 
 // Clamp returns a copy of e with every free-text field truncated to its
@@ -106,12 +109,38 @@ const (
 // changes scope, verdict, tags, or references, and it never makes a field
 // empty that was non-empty.
 func (e Entry) Clamp() Entry {
-	e.Title = truncateRunes(e.Title, maxTitleLen)
-	e.Summary = truncateRunes(e.Summary, maxSummaryLen)
-	e.Why = truncateRunes(e.Why, maxWhyLen)
-	e.Good = truncateRunes(e.Good, maxBodyFieldLen)
-	e.Bad = truncateRunes(e.Bad, maxBodyFieldLen)
-	return e
+	clamped, _ := e.ClampWithReport()
+	return clamped
+}
+
+// ClampWithReport returns a copy of e with every free-text field truncated to its
+// rune limit, along with a slice of field names that were truncated.
+func (e Entry) ClampWithReport() (Entry, []string) {
+	var truncated []string
+	check := func(name, s string, max int) string {
+		out := truncateRunes(s, max)
+		if len(out) < len(s) {
+			if name == "why" {
+				if lastHeading := strings.LastIndex(out, "\n## "); lastHeading >= 0 {
+					after := out[lastHeading+len("\n## "):]
+					if !strings.Contains(after, "\n") {
+						trimmed := strings.TrimRight(out[:lastHeading], "\n")
+						if strings.TrimSpace(trimmed) != "" {
+							out = trimmed
+						}
+					}
+				}
+			}
+			truncated = append(truncated, name)
+		}
+		return out
+	}
+	e.Title = check("title", e.Title, maxTitleLen)
+	e.Summary = check("summary", e.Summary, maxSummaryLen)
+	e.Why = check("why", e.Why, maxWhyLen)
+	e.Good = check("good", e.Good, maxBodyFieldLen)
+	e.Bad = check("bad", e.Bad, maxBodyFieldLen)
+	return e, truncated
 }
 
 // truncateRunes returns the longest prefix of s that is at most max runes,
@@ -241,6 +270,14 @@ func (e Entry) validateCollections() error {
 		}
 		if hasLineControl(ref) {
 			return fmt.Errorf("reference must not contain line breaks")
+		}
+	}
+	if len(e.Related) > maxRelated {
+		return fmt.Errorf("related must have at most %d items", maxRelated)
+	}
+	for _, rel := range e.Related {
+		if err := ValidateRelatedIDFormat(rel); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -379,7 +416,13 @@ func (e Entry) RenderProtocolFile(id string) string {
 		// carries real information instead of a placeholder.
 		b.WriteString(string(e.Scope))
 	}
-	b.WriteString("]\nupdated: ")
+	b.WriteString("]")
+	if len(e.Related) > 0 {
+		b.WriteString("\nrelated: [")
+		b.WriteString(strings.Join(e.Related, ", "))
+		b.WriteString("]")
+	}
+	b.WriteString("\nupdated: ")
 	b.WriteString(updated)
 	b.WriteString("\n---\n\n# ")
 	b.WriteString(strings.TrimSpace(e.Title))
@@ -542,6 +585,17 @@ func assignSection(e *Entry, section, content string) {
 	case "what did not work":
 		e.Bad = content
 	case "why":
-		e.Why = content
+		if e.Why != "" && !strings.Contains(content, e.Why) {
+			e.Why = content + "\n\n" + e.Why
+		} else {
+			e.Why = content
+		}
+	case "history", "archive note", "prior context":
+		heading := "## " + section + "\n" + content
+		if e.Why != "" {
+			e.Why = e.Why + "\n\n" + heading
+		} else {
+			e.Why = heading
+		}
 	}
 }

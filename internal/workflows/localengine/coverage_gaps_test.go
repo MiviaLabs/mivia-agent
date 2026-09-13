@@ -479,6 +479,11 @@ func TestGapResumeDeliveryPendingIsRefused(t *testing.T) {
 	e := gapsStaticEngine(t, gapsDeliveryWorkspace(t))
 	res := gapsStart(t, e, workflowledger.StartRequest{Workflow: "deliver-me", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, e, res.RunID, workflowledger.RunStatusDeliveryPending, 15*time.Second)
+	waitCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := e.Wait(waitCtx, res.RunID); err != nil {
+		t.Fatalf("wait for delivery_pending controller: %v", err)
+	}
 	_, err := e.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
 	if err == nil || !strings.Contains(err.Error(), "waiting for delivery") {
 		t.Fatalf("resume of a delivery_pending run error = %v", err)

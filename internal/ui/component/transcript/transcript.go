@@ -25,10 +25,8 @@
 package transcript
 
 import (
-	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -68,9 +66,24 @@ type Model struct {
 	pendingKind uievent.Kind // uievent.KindTextDelta or KindReasoning while streaming; "" when idle
 	flushWait   bool
 
+	// pendingStartedAt is when THIS transcript first saw the current
+	// reasoning span begin (appendPending, on the switch into
+	// KindReasoning), the same StartedAt/ElapsedMS timing contract
+	// handleToolEnd already applies to tool calls (C1): no producer sends
+	// a reasoning duration, so the wall time between the first delta and
+	// whatever event settles the block is what the reader actually
+	// waited. Zero while nothing is pending.
+	pendingStartedAt time.Time
+
 	// hideReasoning collapses every live reasoning block. It is a view
 	// state, not a filter: the blocks stay in the window and in the ring.
 	hideReasoning bool
+
+	// spinnerFrame mirrors the statusline's own tick (SetSpinnerFrame),
+	// the frame a RUNNING tool block's column-1 spinner draws
+	// (C3). The transcript arms no clock of
+	// its own for it - see .agents/memories/tui-spinner-clock-*.md.
+	spinnerFrame int
 
 	// Mouse selection (selection.go): the absolute rect the owning
 	// screen injects at layout, and the anchor/focus pair the router
@@ -91,6 +104,22 @@ type Model struct {
 	// the end event, which is the interval the person watching the screen
 	// actually waited. A DurationMS the producer does supply still wins.
 	Now func() time.Time
+
+	// turnStartedAt is stamped when the transcript sees turn.start and is
+	// used to supply the wall-time portion of the usage footer.
+	turnStartedAt time.Time
+	modelName     string
+
+	// stream caches the rendered prefix of the in-flight text-delta
+	// span (C6). It is a POINTER on purpose: Model is copied by value on
+	// every HandleEvent (see the pending field's own comment), and the
+	// whole point of the cache is to survive across that copy chain so
+	// the same growing buffer is not rendered from scratch on every
+	// flush tick - a copy of the pointer still refers to the one
+	// renderer for this span. clearPending resets it whenever a span
+	// ends, so the NEXT span starts from a clean cache rather than
+	// inheriting one built for different text.
+	stream *render.StreamRenderer
 }
 
 // now reads the transcript's clock.
@@ -109,30 +138,8 @@ func New(t theme.Theme, tier theme.Tier) Model {
 // Empty reports whether the transcript has no conversation blocks and no active streaming tail.
 func (m Model) Empty() bool { return len(m.blocks) == 0 && m.pending == "" }
 
-// FlushMsg ticks the repaint clock while a text/reasoning span streams.
-type FlushMsg struct{}
-
-func flushCmd() tea.Cmd {
-	return tea.Tick(uikitconfig.TextDeltaFlushInterval, func(time.Time) tea.Msg { return FlushMsg{} })
-}
-
-// Update handles FlushMsg only; every other Msg is ignored, so this
-// Model can sit inside a larger Update without a type-switch guard at
-// the call site.
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	if _, ok := msg.(FlushMsg); !ok {
-		return m, nil
-	}
-	m.flushWait = false
-	if m.pending != "" {
-		// Still streaming (or awaiting the terminal chunk): keep the
-		// repaint clock alive. One extra harmless tick lands right after
-		// the span ends, since flushWait was already true when it did.
-		m.flushWait = true
-		return m, flushCmd()
-	}
-	return m, nil
-}
+// SetModel updates the model name shown on subsequently pushed usage footers.
+func (m *Model) SetModel(name string) { m.modelName = name }
 
 // HandleEvent applies one uievent.Event to the model and returns the
 // updated Model plus a Cmd exactly when a new streaming span needs its
@@ -147,32 +154,12 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	case uievent.ReasoningDeltaBody:
 		return m.handleReasoningDelta(b)
 	case uievent.TextEndBody:
-		// A pending REASONING span must be flushed, not discarded. text.end
-		// carries the answer, which says nothing about the reasoning that
-		// preceded it, so discarding here wiped the whole reasoning block of
-		// any agent that reasoned and then answered with no tool call in
-		// between - the exact shape of a subagent run.
-		//
-		// Only reasoning is flushed. A pending TEXT span is already contained
-		// in this event's own Text (the loop sends the full accumulated
-		// answer), so flushing that would render the answer twice.
-		if m.pendingKind == uievent.KindReasoning {
-			m = m.flushPending()
-		}
-		m.clearPending()
-		if b.Text == "" {
-			return m, nil
-		}
-		return m.pushBlock(Block{
-			Kind:  uievent.KindTextEnd,
-			Prose: true,
-			Input: b.Text,
-			Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
-		})
+		return m.handleTextEnd(b)
 	case uievent.AssistantResetBody:
 		return m.handleAssistantReset(b)
 	case uievent.TurnStartBody:
 		m = m.flushPending()
+		m.turnStartedAt = m.now()
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTurnStart,
 			Prose: true,
@@ -198,23 +185,60 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(errorBlockValue(b))
 	case uievent.UsageBody:
-		// A dim footer line, not a header block (transcript-polish.md
-		// R6): the per-turn facts belong to the record, the live cost
-		// and context chrome belongs to the statusline and the topbar.
-		return m.pushBlock(usageBlockValue(m.Theme, m.Tier, b))
-	case uievent.TurnEndBody:
-		// A completed turn commits nothing: turn-state belongs to the
-		// statusline. A turn that did NOT complete must say so, and must
-		// keep whatever partial text had streamed. Dropping the partial
-		// text with no explanation is the transcript lying about why it
-		// stopped, which section 13 forbids.
-		if b.Reason == "" || b.Reason == turnReasonCompleted {
-			m.clearPending()
-			return m, nil
+		elapsed := b.ElapsedSeconds
+		if !m.turnStartedAt.IsZero() {
+			elapsed = m.now().Sub(m.turnStartedAt).Seconds()
+			if elapsed < 0 {
+				elapsed = 0
+			}
 		}
-		return m.endTurnUnfinished(b.Reason)
+		return m.pushBlock(usageBlockValue(m.Theme, m.Tier, b, m.modelName, elapsed))
+	case uievent.TurnEndBody:
+		return m.handleTurnEndEvent(b)
 	}
 	return m, nil
+}
+
+// handleTextEnd is HandleEvent's TextEndBody arm, split out to keep
+// HandleEvent itself under the file's per-function LOC cap.
+func (m Model) handleTextEnd(b uievent.TextEndBody) (Model, tea.Cmd) {
+	// A pending REASONING span must be flushed, not discarded. text.end
+	// carries the answer, which says nothing about the reasoning that
+	// preceded it, so discarding here wiped the whole reasoning block of
+	// any agent that reasoned and then answered with no tool call in
+	// between - the exact shape of a subagent run.
+	//
+	// Only reasoning is flushed. A pending TEXT span is already contained
+	// in this event's own Text (the loop sends the full accumulated
+	// answer), so flushing that would render the answer twice.
+	if m.pendingKind == uievent.KindReasoning {
+		m = m.flushPending()
+	}
+	m.clearPending()
+	if b.Text == "" {
+		return m, nil
+	}
+	return m.pushBlock(Block{
+		Kind:  uievent.KindTextEnd,
+		Prose: true,
+		Input: b.Text,
+		Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
+	})
+}
+
+// handleTurnEndEvent is HandleEvent's TurnEndBody arm, split out to keep
+// HandleEvent itself under the file's per-function LOC cap.
+func (m Model) handleTurnEndEvent(b uievent.TurnEndBody) (Model, tea.Cmd) {
+	// A completed turn commits nothing: turn-state belongs to the
+	// statusline. A turn that did NOT complete must say so, and must
+	// keep whatever partial text had streamed. Dropping the partial
+	// text with no explanation is the transcript lying about why it
+	// stopped, which section 13 forbids.
+	if b.Reason == "" || b.Reason == turnReasonCompleted {
+		m.clearPending()
+		return m, nil
+	}
+	return m.endTurnUnfinished(b.Reason)
 }
 
 // Clear empties the transcript: every block, the drop count, the
@@ -228,9 +252,21 @@ func (m Model) Clear() Model {
 	m.offset = 0
 	m.follow = true
 	m.missed = 0
-	m.pending = ""
-	m.pendingKind = ""
-	m.flushWait = false
+	// clearPending, not an inlined field reset: it also resets m.stream
+	// (the streaming-markdown cache), which every OTHER span-ending path
+	// already goes through. Inlining the reset here once let it drift
+	// out of sync with that invariant - Clear() zeroed pending/
+	// pendingKind/pendingStartedAt/flushWait but left m.stream's cached
+	// prefix (and a poisoned flag, if the span had one) pointing at the
+	// wiped conversation, silently reintroducing the O(n^2) render cost
+	// StreamRenderer exists to remove for the rest of whatever streams
+	// next. /clear is accepted mid-turn (uiadapter's handleClear does
+	// not check s.active) and the turn keeps emitting deltas afterward
+	// (chat.Session.resetSystem invalidates the history writeback, not
+	// the running turn), so this path is reachable in practice, not
+	// just in theory. Found by bug-audit; regression:
+	// TestClearResetsStreamCache.
+	m.clearPending()
 	return m
 }
 
@@ -239,56 +275,6 @@ const turnReasonCompleted = "completed"
 
 // endTurnUnfinished flushes any partial stream as prose, then records
 // why the turn stopped.
-// flushPending commits any in-flight text or reasoning span as a
-// finished prose block. Every event that starts a new top-level block
-// must call this first unless it already carries its own final text
-// (text.end, and the terminal reasoning.delta both replace pending
-// rather than continue it - see their own case bodies). Skipping the
-// flush silently drops the partial span, and the next block's own first
-// row can then visually collide with the abandoned streaming tail.
-//
-// flushPending renders through render.Markdown (not the raw partial
-// bytes) for streaming-parity with text.end: the live streaming tail
-// is plain text styled via render.Wrap, the committed text.end block
-// is markdown, and a partial stream that gets bumped by a tool.start /
-// turn.start / plan / error / unfinished-turn.end event used to land as
-// raw text. The two rendering paths disagreed on heading chrome, list
-// markers, and code fences - a partial stream that contained "# "
-// would render as '# heading' in the streaming tail and as styled bold
-// in the committed block. Routing flushPending through the same
-// renderer as text.end makes a bump-mid-stream indistinguishable from
-// a clean text.end, which is the contract the user picked.
-func (m Model) flushPending() Model {
-	partial := m.pending
-	if partial == "" {
-		return m
-	}
-	kind := m.pendingKind
-	m.clearPending()
-	if kind == uievent.KindReasoning {
-		body := strings.Split(strings.TrimRight(partial, "\n"), "\n")
-		words := len(strings.Fields(partial))
-		m, _ = m.pushBlock(Block{
-			Kind:        uievent.KindReasoning,
-			Collapsible: true,
-			Collapsed:   true,
-			Header: Header{
-				Label: "reasoning",
-				Meta:  fmt.Sprintf("%d words", words),
-				State: "hidden",
-			},
-			Body: body,
-		})
-		return m
-	}
-	m, _ = m.pushBlock(Block{
-		Kind:  uievent.KindTextEnd,
-		Prose: true,
-		Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), partial)),
-	})
-	return m
-}
-
 func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 	m = m.flushPending()
 
@@ -299,50 +285,6 @@ func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 		Kind:   uievent.KindTurnEnd,
 		Header: Header{Label: reason, Role: theme.RoleWarning},
 	})
-}
-
-func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cmd) {
-	// Providers may return reasoning only after they streamed answer text.
-	// That text is still pending and text.end will commit it. Do not switch
-	// the shared pending span to reasoning: appendPending would flush the
-	// answer early, then text.end would commit the same answer again.
-	if m.pendingKind == uievent.KindTextDelta {
-		if b.Text == "" {
-			return m, nil
-		}
-		words := b.WordCount
-		if words == 0 {
-			words = len(strings.Fields(b.Text))
-		}
-		return m.pushBlock(reasoningBlock(b.Text, words))
-	}
-	if b.WordCount == 0 {
-		return m, m.appendPending(uievent.KindReasoning, b.Text)
-	}
-	raw := m.pending
-	if raw == "" && b.Text != "" {
-		raw = b.Text
-	}
-	m.clearPending()
-	return m.pushBlock(reasoningBlock(raw, b.WordCount))
-}
-
-func reasoningBlock(text string, words int) Block {
-	var body []string
-	if text != "" {
-		body = strings.Split(strings.TrimRight(text, "\n"), "\n")
-	}
-	return Block{
-		Kind:        uievent.KindReasoning,
-		Collapsible: true,
-		Collapsed:   true,
-		Header: Header{
-			Label: "reasoning",
-			Meta:  fmt.Sprintf("%d words", words),
-			State: "hidden",
-		},
-		Body: body,
-	}
 }
 
 func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
@@ -422,10 +364,7 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
-	w := m.width - groupIndent - uikitconfig.BodyIndent
-	if w <= 0 {
-		w = 80
-	}
+	w := m.diffContentWidth()
 	var existingArgs map[string]any
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].CallID == b.ToolCallID && len(m.blocks[i].Args) > 0 {
@@ -450,8 +389,8 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		blk.Diff = end.Diff
 		// The end block's formatted summary (ledger ref · size · paging
 		// state) outranks the start block's argument echo: the summary is
-		// what a reader needs without expanding (tool-output-polish.md
-		// R4). Only when the end carries no detail does the start's
+		// what a reader needs without expanding (ux-rules.md
+		// 12.5). Only when the end carries no detail does the start's
 		// survive, and never over a diff path.
 		startDetail := blk.Header.Detail
 		blk.Header = end.Header
@@ -465,7 +404,18 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 			blk.Header.Meta = render.FormatElapsed(blk.ElapsedMS)
 		}
 		if b.Diff != nil {
-			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)
+			// DiffBodyPrefixLen, captured BEFORE the append: restyle
+			// needs to know exactly how many of these lines precede the
+			// diff, because it cannot re-derive that by comparing
+			// lengths once DiffSplit can change the diff's OWN rendered
+			// line count (see the field's doc comment).
+			blk.DiffBodyPrefixLen = len(blk.Body)
+			// blk.DiffSplit, not false: this is a live block merging its
+			// first diff in, and DiffSplit's zero value is already
+			// unified - but reading it here (rather than hardcoding
+			// false) keeps this site correct if a future event ever
+			// lets a running block carry an earlier toggle.
+			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff, blk.DiffSplit)...)
 		} else if len(end.Body) > 0 {
 			blk.Body = append(slices.Clone(blk.Body), end.Body...)
 		}
@@ -489,48 +439,12 @@ func (m Model) pushBlock(b Block) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) clearPending() {
-	m.pending = ""
-	m.pendingKind = ""
-}
-
-func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
-	// A change of kind ends the previous span. Without this, a text delta
-	// arriving after reasoning deltas concatenates into the same buffer and
-	// the reasoning renders as prose, attributed to the model's answer.
-	if m.pendingKind != "" && m.pendingKind != kind && m.pending != "" {
-		flushed := m.flushPending()
-		*m = flushed
-	}
-	m.pending += text
-	m.pendingKind = kind
-	if m.flushWait {
-		return nil
-	}
-	m.flushWait = true
-	return flushCmd()
-}
-
-// tailRows is the still-streaming span, drawn below the last finished
-// block. It is separate from the blocks because it is not addressable:
-// it has no header, cannot take focus, and is replaced wholesale when
-// the span ends.
-func (m Model) tailRows() []string {
-	if m.pending == "" {
-		return nil
-	}
-	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
-	if m.pendingKind == uievent.KindReasoning {
-		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true)
-	}
-	measure := render.ProseMeasure(m.width)
-	var out []string
-	for _, line := range strings.Split(m.pending, "\n") {
-		for _, row := range render.Wrap(line, measure) {
-			out = append(out, style.Render(row))
-		}
-	}
-	return out
+// SetSpinnerFrame records the statusline's current spinner tick. The
+// caller already owns the one shared clock (armTick/disarmTick in
+// internal/ui/screen/conversation); this only lets a running tool
+// block's column-1 glyph catch up to it on the next render.
+func (m *Model) SetSpinnerFrame(frame int) {
+	m.spinnerFrame = frame
 }
 
 // SetTheme records a theme change and rebuilds every block body that was
@@ -564,29 +478,33 @@ func (m Model) restyle(b Block) Block {
 	case b.Usage != nil:
 		// Same payload-preserving rebuild as the plan: the footer line is
 		// styled at push time, so the theme change must restyle it.
-		b.Body = usageBlockValue(m.Theme, m.Tier, *b.Usage).Body
+		next := usageBlockValue(m.Theme, m.Tier, *b.Usage, b.UsageModel, float64(b.UsageElapsedMS)/1000)
+		b.Body = next.Body
 	case b.Diff != nil:
-		w := m.width - groupIndent - uikitconfig.BodyIndent
-		if w <= 0 {
-			w = 80
+		w := m.diffContentWidth()
+		// b.DiffSplit, not false: restyle is the toggle's own re-render
+		// path (ToggleFocusedDiffSplit flips DiffSplit then calls this),
+		// as well as the theme/width-change path - either way the
+		// EXISTING split state must survive the rebuild, not reset to
+		// unified.
+		//
+		// Reslice by b.DiffBodyPrefixLen, not by matching the OLD and
+		// NEW diff renders' lengths (replaceDiffTail's approach, until
+		// bug-audit found it corrupting the body): unified and split do
+		// not render a balanced hunk to the same row count, so the
+		// moment DiffSplit toggles, "keep body[:len(body)-len(newDiff)]"
+		// keeps the wrong number of lines - stale old-diff content, or a
+		// duplicated hunk header, depending on which direction the
+		// count changed. The prefix length is captured once, when the
+		// diff first joins the body (handleToolEnd), and never needs
+		// inferring again.
+		prefix := b.DiffBodyPrefixLen
+		if prefix > len(b.Body) {
+			prefix = 0 // defensive: a corrupted prefix must not panic the slice below
 		}
-		b.Body = replaceDiffTail(b.Body, render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff))
+		b.Body = append(slices.Clone(b.Body[:prefix]), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff, b.DiffSplit)...)
 	}
 	return b
-}
-
-// replaceDiffTail swaps the rendered diff at the END of a body for a
-// freshly rendered one. A tool call that produced output before its diff
-// keeps that output above it (handleToolEnd appends the diff), and the
-// rendered line count is theme-independent, so the tail is exactly the
-// diff.
-func replaceDiffTail(body, diff []string) []string {
-	if len(body) < len(diff) {
-		return diff
-	}
-	out := make([]string, 0, len(body))
-	out = append(out, body[:len(body)-len(diff)]...)
-	return append(out, diff...)
 }
 
 // proseRenderWidth is the wrap width the Glamour-backed markdown
@@ -604,4 +522,23 @@ func (m Model) proseRenderWidth() int {
 		return 20
 	}
 	return m.width - 2
+}
+
+// diffContentWidth is the width a diff block actually renders at - the
+// SAME arithmetic handleToolEnd and restyle already use
+// (m.width-groupIndent-uikitconfig.BodyIndent), centralized here so a
+// width check has exactly one place to read (matching
+// approval.Model.diffContentWidth's own rationale). Checking m.width
+// directly instead of this let ToggleFocusedDiffSplit report success at
+// a viewport width in [120,125] while restyle's actual render width
+// ([114,119]) was still below render.MinSplitDiffWidth - the toggle
+// flipped DiffSplit and returned true, but the rendered Body stayed
+// unified, and a LATER unrelated resize could then silently flip the
+// render to split with no further key press. Found by bug-audit.
+func (m Model) diffContentWidth() int {
+	w := m.width - groupIndent - uikitconfig.BodyIndent
+	if w <= 0 {
+		return 80
+	}
+	return w
 }

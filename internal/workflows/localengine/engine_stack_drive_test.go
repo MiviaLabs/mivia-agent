@@ -655,7 +655,10 @@ type integrationFaultStackGit struct {
 }
 
 func (g *integrationFaultStackGit) Run(ctx context.Context, gc delivery.GitContext, args ...string) (string, error) {
-	if gc.Dir == g.failDir {
+	g.mu.Lock()
+	failDir := g.failDir
+	g.mu.Unlock()
+	if gc.Dir == failDir {
 		g.mu.Lock()
 		g.calls = append(g.calls, time.Now())
 		g.mu.Unlock()

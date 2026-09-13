@@ -180,7 +180,7 @@ func collapseLedgerLines(t theme.Theme, tier theme.Tier, lines []string) []strin
 // every response identically. The summary doubles as the tool-end
 // header detail, so it carries the facts a reader needs without
 // expanding: ref, size, and the truncation/paging state
-// (tool-output-polish.md R3/R4).
+// (ux-rules.md 12.5, 12.6).
 func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
 	trimmed := UnwrapJSONString(strings.TrimSpace(output))
 
@@ -232,7 +232,7 @@ func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int
 	}
 	// A raw reasoning dump never reaches the transcript: the badge leads
 	// the body so the fact survives even a collapsed block's head window
-	// (tool-output-polish.md R2).
+	// (ux-rules.md 12.3).
 	if thinkWords > 0 {
 		lines = append([]string{subtle.Render(ThinkBadge(thinkWords))}, lines...)
 	}

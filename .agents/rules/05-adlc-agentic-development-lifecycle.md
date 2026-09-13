@@ -117,7 +117,7 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 | **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave: `agent: "verifier"` + `skill: "verify-code-change"`. Route each task by `agent` (+ optional `skill`); no `handler` field |
 | **Step 4** - Implement | `dispatch_tasks` (tasks with `depends_on` or sequential waves) | `agent: "go-engineer"`, `wait: "run"` |
 | **Step 4** - Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
-| **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors: `agent: "auditor"` + `skill: "bug-audit"`. Add one `agent: "performance"` + `skill: "performance-review"` when the change touches a hot path. Route each task by `agent` (+ optional `skill`); no `handler` field |
+| **Step 5** - Bug audit | `dispatch_tasks` | Per slice/phase diff: 3-4 auditors: `agent: "auditor"` + `skill: "bug-audit"`. Add one `agent: "performance"` + `skill: "performance-review"` when the change touches a hot path. Route each task by `agent` (+ optional `skill`); no `handler` field |
 | **Step 5** - Fix bug | `dispatch_tasks` | Single focused fix: `agent: "go-engineer"`, `timeout_seconds: 60` |
 | **Step 6** - Verify | Direct execution, or `dispatch_tasks` with `agent: "verifier"` + `skill: "verify-change"` | `go build ./... && go vet ./... && go test -race ./...` |
 
@@ -169,9 +169,10 @@ tool-resolved reference. Do this explicitly on every repeat round:
    findings with no way to tell which one is stale.
 4. **Track round count and confirmed/rejected history in the orchestrator's
    own context across the whole loop**, not just within one Step 0 or Step
-   5 pass - Step 0 and Step 5 share the same 3-round-default /
-   5-round-max discipline (see Step 5's round limit), and neither round
-   count means anything if round N+1 cannot see round N's disposition.
+   5 pass - Step 0 keeps its challenge-round cap, while Step 5's fix-and-
+   re-audit loop is unbounded until a zero-bug round (see Step 5's gate),
+   and neither round count means anything if round N+1 cannot see round
+   N's disposition.
 
 ### Handler Types - Critical
 
@@ -251,6 +252,11 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    - **1 function per production task.** If a file needs 3 functions, that's 3 tasks.
    - **Test task precedes each production task.** For every production task, a test task goes first (same wave).
    - **Reviewer every 2-3 implementation tasks.** Placed in the next wave - they read and validate.
+   - **Group waves into slices/phases.** A slice is a coherent, independently
+     reviewable and committable unit (typically one capability). Each slice
+     exits the loop through Step 5 (bug audit) and Step 6 (commit) before
+     the next slice starts - implementation never runs ahead of an
+     unreviewed, uncommitted slice.
 
 2. Declare dependency waves in your context:
    ```
@@ -260,7 +266,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 3. Every task in your context must specify: ID, Wave, File, Type (test|prod|review), API, Depends on, Verification command, Timeout, Context scope (≤5 files).
 
-**Gate**: No task exceeds 1 file. Every production task has a preceding test task. Every 2-3 production tasks has a reviewer in the next wave. Context scope ≤5 files.
+**Gate**: No task exceeds 1 file. Every production task has a preceding test task. Every 2-3 production tasks has a reviewer in the next wave. Context scope ≤5 files. Every wave belongs to exactly one slice.
 
 ---
 
@@ -330,10 +336,13 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 ---
 
-### Step 5 - Bug Audit Loop
+### Step 5 - Bug Audit Loop (per slice/phase)
 
 **Who**: Orchestrator + 3-4 hostile sub-agents.
-**Duration cap**: 3 rounds default, 5 max.
+**Duration cap**: none on rounds. The loop is unbounded: it ends only when
+a round reports zero confirmed bugs (see Gate), or via the per-bug
+escalation in action 3. A slice may not reach Step 6 on any other
+outcome, no matter how many rounds it takes.
 
 **Actions**:
 
@@ -357,9 +366,13 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    - **Rejected**: write a targeted test proving it's not a bug. Keep test in codebase.
    - **Uncertain**: write a targeted test. If passes → rejected. If fails → confirmed.
 
-3. Loop until zero bugs. The round limit is configured via subagents.max_audit_rounds
-   in mivia.toml (default: 0, meaning unlimited). If the same bug keeps
-   reappearing after 3 fix attempts, escalate to Step 0 (plan rejected).
+3. Loop until a round reports zero bugs. There is no round limit: repeat
+   fix-and-re-audit rounds until the panel returns a round with zero
+   confirmed bugs - that clean round is the only verdict that unblocks
+   Step 6 (commit). The only other exit is the per-bug escalation: if the
+   same bug keeps reappearing after 3 fix attempts, escalate to Step 0
+   (plan rejected). This is a per-bug fix cap, not a round cap - a round
+   that finds different bugs simply continues the loop.
    Each round after the first carries forward the "Round-to-round evidence
    carryover" block (prior findings, dispositions, what changed) in the
    auditor prompts - do not dispatch round N+1 with only the restated scope
@@ -373,7 +386,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    with `cancel_run` and dispatch a replacement. Never let stuck agents
    delay the loop.
 
-**Gate**: All auditors report zero bugs. `go test -race ./...` passes on ALL packages.
+**Gate** (per slice): the latest round reports zero bugs from all auditors. `go test -race ./...` passes on ALL packages. This gate - and nothing else - admits the slice to Step 6.
 
 **Unit/race-clean is not the same claim as "verified".** For a change in
 `internal/workflows/delivery/` or `internal/workflows/controller/` (the
@@ -390,10 +403,16 @@ The runbook lives in `docs/development/agent-workflow.md`.
 
 ---
 
-### Step 6 - Commit & Push
+### Step 6 - Commit & Push (per slice/phase)
 
 **Who**: Orchestrator.
 **Duration cap**: 5 minutes.
+
+**Gate first**: a slice arrives here only after its Step 5 loop ended
+with a zero-bug round. Commit that slice immediately; do not batch
+multiple slices into one commit, and never commit a slice whose latest
+review round still has open findings. Then return to Step 4 for the
+next slice.
 
 **Actions**:
 
@@ -416,6 +435,8 @@ A change under `internal/workflows/` is never Fast Path, regardless of line coun
 their bugs are near-universally a missed sibling site (see Invariant
 Enforcement above), which only Step 0's caller-reading and Step 5's
 multi-auditor pass catch - the exact machinery Fast Path skips.
+A trivial change is a single slice: same per-slice discipline, one audit
+loop until zero findings, one commit.
 - Skip Steps 0-3. Implement directly in Step 4.
 - Step 5: 1 hostile auditor (not 3-4).
 - Step 6: normal commit.
@@ -434,8 +455,9 @@ multi-auditor pass catch - the exact machinery Fast Path skips.
 | Step 4 RED test doesn't compile (just "undefined") | Task rejected. Write assertion-failing test. |
 | Step 4 reviewer requests changes | Orchestrator fixes. If fix >5 lines → return to Step 1. |
 | Step 4 wave fails - plan flaw | Return to Step 0. |
-| Step 5 audit loop exceeds configured max_audit_rounds | Plan rejected. Return to Step 0 with evidence. |
+| Step 5 same bug reappears after 3 fix attempts | Plan rejected. Return to Step 0 with evidence. |
 | Step 5 fix breaks existing tests | Halt. Revert. Re-analyse. |
+| Step 6 commit attempted while the slice's latest review round has open findings | Do not commit. Return to Step 5. |
 | Step 6 missing test for production file | Return to Step 4. Do not commit. |
 | Any regression discovered | Halt, revert, Step 0. |
 

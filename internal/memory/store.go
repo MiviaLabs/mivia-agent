@@ -9,14 +9,15 @@ import (
 
 // Result is one search hit.
 type Result struct {
-	ID      string
-	Scope   Scope
-	Org     string
-	Title   string
-	Verdict Verdict
-	Tags    []string
-	Created string
-	Snippet string
+	ID        string
+	Scope     Scope
+	Org       string
+	Title     string
+	Verdict   Verdict
+	Tags      []string
+	Created   string
+	Snippet   string
+	Truncated []string
 }
 
 // Query is a search request.

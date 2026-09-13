@@ -97,7 +97,7 @@ func triggerDetail(t ports.TriggerSpec) string {
 	sched := t.Schedule
 	switch sched.Kind {
 	case ports.ScheduleInterval:
-		return fmt.Sprintf("every %s", sched.Every)
+		return fmt.Sprintf("every %s", formatInterval(sched.Every))
 	case ports.ScheduleAt:
 		return fmt.Sprintf("%d scheduled time(s)", len(sched.At))
 	case ports.ScheduleRecurring:
@@ -119,6 +119,8 @@ func runStateLabel(st ports.RunState) string {
 		return "failed"
 	case ports.RunCancelled:
 		return "cancelled"
+	case ports.RunSkipped:
+		return "skipped"
 	default:
 		return "unknown"
 	}
@@ -132,6 +134,8 @@ func runStateRole(st ports.RunState) theme.Role {
 		return theme.RoleDanger
 	case ports.RunRunning, ports.RunPending:
 		return theme.RoleInfo
+	case ports.RunSkipped:
+		return theme.RoleFGSubtle
 	default:
 		return theme.RoleFGSubtle
 	}
