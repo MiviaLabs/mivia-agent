@@ -9,7 +9,7 @@
 
 ## Layers
 
-1. **CLI** - chat REPL / one-shot; tool event tracing; TUI rendering
+1. **CLI** - chat REPL / one-shot; tool event tracing. Interactive TTY chat uses one compositor: `internal/newtui` composing `internal/ui` + `internal/uikit` + `internal/uiadapter`. `cmd/mivia` calls `cli.SetTUILauncher(newtui.RunTUI)`. `--plain` is a line-mode REPL, not a second compositor.
 2. **Agent loop** - tool_calls until stop (`internal/agent`)
 3. **Tool gateway** - read/search/edit/run under workspace policy (`internal/tools`)
 4. **Workspace** - path confinement (`internal/workspace`)
@@ -291,17 +291,12 @@ The model picker is a base-plus-modal surface: it renders the explicit catalog,
 keeps providers and slash-containing model IDs distinct, and disables rows with
 missing credentials without exposing secret or provider payload details.
 
-### TUI base-plus-modal rendering
+### Interactive TUI
 
-The chat TUI always renders its base frame first. Help, status, tools, sessions,
-and block/fleet detail are modal producers rendered into a bounded, centered
-cell rectangle over that base; they do not replace the transcript canvas.
-`internal/cli` computes one `dialogLayout` per render, including the exact inner
-width and page height, and uses that geometry for wrapping, paging, wheel input,
-and resize clamping. The compositor normalizes both canvases to the raw terminal
-dimensions and carries ANSI SGR state across panel seams. Modal input owns mouse
-and paste messages before transcript hit testing or viewport fallback. Status
-and fleet detail are snapshots captured at open; reopening refreshes them.
+Interactive TTY chat uses one compositor: `internal/newtui` composing
+`internal/ui`, `internal/uikit`, and `internal/uiadapter`. `cmd/mivia` wires
+that path with `cli.SetTUILauncher(newtui.RunTUI)`. `--plain` is a line-mode
+REPL in `internal/clichat`; it is not a second interactive compositor.
 
 ### See also
 

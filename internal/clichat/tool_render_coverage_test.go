@@ -126,18 +126,6 @@ func TestIsEditTool(t *testing.T) {
 	}
 }
 
-func TestColorDiffLine(t *testing.T) {
-	if got := ColorDiffLine("+added"); !strings.Contains(got, "+") {
-		t.Fatalf("ColorDiffLine must preserve the line content; got %q", got)
-	}
-}
-
-func TestClipPreviewLine(t *testing.T) {
-	if got := ClipPreviewLine("hello world", 5); got == "" {
-		t.Fatal("ClipPreviewLine must not return empty")
-	}
-}
-
 func TestTruncatePreviewUTF8(t *testing.T) {
 	if got := TruncatePreviewUTF8("hello", 100); got != "hello" {
 		t.Fatalf("TruncatePreviewUTF8(short) = %q", got)

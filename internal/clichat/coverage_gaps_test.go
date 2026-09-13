@@ -350,16 +350,6 @@ func TestSummarizeAgentToolBranches(t *testing.T) {
 }
 
 func TestClipAndTruncatePreviewEdges(t *testing.T) {
-	long := strings.Repeat("abcdef", 20)
-	if got := ClipPreviewLine(long, 40); !strings.HasSuffix(got, "...") {
-		t.Fatalf("ClipPreviewLine(long) = %q; want ellipsis suffix", got)
-	}
-	if got := ClipPreviewLine("short", 40); got != "short" {
-		t.Fatalf("ClipPreviewLine(short) = %q", got)
-	}
-	if got := ClipPreviewLine("x", 0); got != "x" {
-		t.Fatalf("ClipPreviewLine(width 0) = %q", got)
-	}
 	// TruncatePreviewUTF8 backs off to a rune boundary.
 	if got := TruncatePreviewUTF8("héllo", 2); got != "h" {
 		t.Fatalf("TruncatePreviewUTF8(mid rune) = %q; want h", got)

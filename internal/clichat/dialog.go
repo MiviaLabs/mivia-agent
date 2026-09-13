@@ -7,10 +7,8 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-// replHelpContent is the classic REPL's help: catalog-driven Commands plus
-// hand-written key sections. The TUI documents its keys in tuiHelpContent
-// (tui_help_content.go); the two surfaces bind different keys and must never
-// share a help source.
+// replHelpContent is the --plain REPL's help: catalog-driven Commands plus
+// hand-written key sections. newtui help lives in internal/uikit/keymap.
 func replHelpContent() []helpSection {
 	return append(replHelpCommands(), replHelpKeySections()...)
 }

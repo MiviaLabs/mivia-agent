@@ -71,51 +71,6 @@ func TestToolStatusLine_WithoutPolicyShowsSecrets(t *testing.T) {
 	}
 }
 
-func TestToolBatchStatusLine_ParallelNotSpam(t *testing.T) {
-	t.Parallel()
-	starts := []BridgeToolEvt{
-		{Start: true, Name: "parallel", Detail: "2 tools"},
-		{Start: true, ToolCallID: "a", Name: "list_dir", Detail: `{"path":"."}`},
-		{Start: true, ToolCallID: "b", Name: "glob", Detail: `{"pattern":"*"}`},
-	}
-	got := toolBatchStatusLine(starts)
-	if !strings.Contains(got, "2 tools") && !strings.Contains(got, "Running") {
-		t.Fatalf("expected batch summary, got %q", got)
-	}
-	// Single real tool falls through to ToolStatusLine.
-	one := toolBatchStatusLine([]BridgeToolEvt{
-		{Start: true, ToolCallID: "a", Name: "read_file", Detail: `{"path":"a.go"}`},
-	})
-	if !strings.Contains(one, "Reading") {
-		t.Fatalf("single tool status=%q", one)
-	}
-}
-
-func TestToolBatchStatusDetailListsTools(t *testing.T) {
-	t.Parallel()
-	starts := []BridgeToolEvt{
-		{Start: true, ToolCallID: "a", Name: "list_dir", Detail: `{"path":"."}`},
-		{Start: true, ToolCallID: "b", Name: "glob", Detail: `{"pattern":"*"}`},
-	}
-	got := ToolBatchStatusDetail(starts)
-	if !strings.Contains(got, "Running 2 tools") {
-		t.Fatalf("summary missing: %q", got)
-	}
-	if !strings.Contains(got, "Listing") || !strings.Contains(got, "Finding") {
-		t.Fatalf("per-tool lines missing: %q", got)
-	}
-	if strings.Count(got, "\n") < 2 {
-		t.Fatalf("want multi-line detail, got %q", got)
-	}
-	// Single tool stays one line.
-	one := ToolBatchStatusDetail([]BridgeToolEvt{
-		{Start: true, ToolCallID: "a", Name: "read_file", Detail: `{"path":"a.go"}`},
-	})
-	if strings.Contains(one, "\n") {
-		t.Fatalf("single tool must be one line: %q", one)
-	}
-}
-
 func TestInterimRejectedWhenTooShort(t *testing.T) {
 	t.Parallel()
 	for _, s := range []string{"", "  ", "OK.", "…", "a", "queued", "running", "!!!"} {
@@ -135,21 +90,5 @@ func TestInterimAcceptedWhenRealProse(t *testing.T) {
 		if !ShouldCommitInterim(s) {
 			t.Errorf("should accept %q", s)
 		}
-	}
-}
-
-func TestShouldFollowOutput(t *testing.T) {
-	t.Parallel()
-	if ShouldFollowOutput(true, false, true) {
-		t.Fatal("scrolled up must drop follow")
-	}
-	if !ShouldFollowOutput(false, true, false) {
-		t.Fatal("at bottom must re-enable follow")
-	}
-	if !ShouldFollowOutput(true, false, false) {
-		t.Fatal("sticky follow without scroll keeps follow")
-	}
-	if ShouldFollowOutput(false, false, false) {
-		t.Fatal("not follow and not at bottom stays unfollowed")
 	}
 }
