@@ -31,8 +31,14 @@ const GlyphTriR = clichat.GlyphTriR
 // TUIDimStyle re-exports the clichat.TUIDimStyle variable.
 var TUIDimStyle = clichat.TUIDimStyle
 
+// TUIHelpContentFor re-exports the clichat.TUIHelpContentFor function.
+var TUIHelpContentFor = clichat.TUIHelpContentFor
+
 // ThemeColorDim re-exports the clichat.ThemeColorDim constant.
 const ThemeColorDim = clichat.ThemeColorDim
+
+// TuiHelpCommands re-exports the clichat.TuiHelpCommands function.
+var TuiHelpCommands = clichat.TuiHelpCommands
 
 // AnsiBold re-exports the clichat.AnsiBold constant.
 const AnsiBold = clichat.AnsiBold
@@ -70,6 +76,9 @@ const AnsiReset = clichat.AnsiReset
 // TUIErrorStyle re-exports the clichat.TUIErrorStyle variable.
 var TUIErrorStyle = clichat.TUIErrorStyle
 
+// ToolDimStyle re-exports the clichat.ToolDimStyle variable.
+var ToolDimStyle = clichat.ToolDimStyle
+
 // ToolErrStyle re-exports the clichat.ToolErrStyle variable.
 var ToolErrStyle = clichat.ToolErrStyle
 
@@ -79,8 +88,20 @@ var ToolOkStyle = clichat.ToolOkStyle
 // UserLabelStyle re-exports the clichat.UserLabelStyle variable.
 var UserLabelStyle = clichat.UserLabelStyle
 
+// AgentBadgeStyle re-exports the clichat.AgentBadgeStyle variable.
+var AgentBadgeStyle = clichat.AgentBadgeStyle
+
 // TUIThinkingStyle re-exports the clichat.TUIThinkingStyle variable.
 var TUIThinkingStyle = clichat.TUIThinkingStyle
 
 // ToolNameStyle re-exports the clichat.ToolNameStyle variable.
 var ToolNameStyle = clichat.ToolNameStyle
+
+// ToolPathStyle re-exports the clichat.ToolPathStyle variable.
+var ToolPathStyle = clichat.ToolPathStyle
+
+// ToolTimeStyle re-exports the clichat.ToolTimeStyle variable.
+var ToolTimeStyle = clichat.ToolTimeStyle
+
+// TuiFocus re-exports the clichat.TuiFocus type.
+type TuiFocus = clichat.TuiFocus

@@ -65,6 +65,7 @@ var builtinSlashClass = map[string]slashClass{
 	"/agent":     slashRejectedInteractiveSurface,
 	"/title":     slashRejectedInteractiveSurface,
 	"/new":       slashRejectedInteractiveSurface,
+	"/select":    slashRejectedInteractiveSurface,
 
 	"/clear":  slashRejectedSessionLifecycle,
 	"/save":   slashRejectedSessionLifecycle,
@@ -82,6 +83,7 @@ var builtinSlashClass = map[string]slashClass{
 	"/tools":     slashRejectedInformationalNoOp,
 	"/hooks":     slashRejectedInformationalNoOp,
 	"/agents":    slashRejectedInformationalNoOp,
+	"/plain":     slashRejectedInformationalNoOp,
 	"/provider":  slashRejectedInformationalNoOp,
 	"/workspace": slashRejectedInformationalNoOp,
 }

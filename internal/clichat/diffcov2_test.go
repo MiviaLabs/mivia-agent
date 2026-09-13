@@ -95,6 +95,30 @@ func TestDiffCov2HandleSlashAgentDispatch(t *testing.T) {
 	}
 }
 
+// --- chatblock.go / chatblock_render.go ---
+
+func TestDiffCov2ChatBlockFromMessageAndHydrateDivider(t *testing.T) {
+	b := chatBlockFromMessage(1, 2, provider.Message{Role: provider.RoleUser, Content: "hi"})
+	if b.ID == "" || b.Kind != ChatBlockUser || b.Text != "hi" {
+		t.Fatalf("chatBlockFromMessage = %+v", b)
+	}
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "a"},
+		{Role: provider.RoleAssistant, Content: "b"},
+		{Role: provider.RoleUser, Content: "c"},
+	}
+	blocks := HydrateChatBlocks(msgs)
+	found := false
+	for _, blk := range blocks {
+		if blk.Kind == ChatBlockDivider {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("HydrateChatBlocks(two turns) must insert a divider block")
+	}
+}
+
 // --- dialog.go ---
 
 func TestDiffCov2HelpDialogLayoutAndDraw(t *testing.T) {
@@ -111,6 +135,20 @@ func TestDiffCov2HelpDialogLayoutAndDraw(t *testing.T) {
 	}
 }
 
+// --- diff_render.go ---
+
+func TestDiffCov2RenderCollapsedEditBlockFallbackPathAndFailed(t *testing.T) {
+	block := ChatBlock{ToolName: "edit", Text: `{"path":"/tmp/a"}`, Failed: true, Elapsed: 2 * time.Second}
+	lines := renderCollapsedEditBlock(block, "changed two files", "agent", 60)
+	if len(lines) == 0 {
+		t.Fatal("renderCollapsedEditBlock returned no lines")
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "/tmp/a") {
+		t.Fatalf("renderCollapsedEditBlock missing fallback path: %q", joined)
+	}
+}
+
 // --- highlight.go ---
 
 func TestDiffCov2HighlightLinePlainUnknownAndInlineComment(t *testing.T) {
@@ -124,6 +162,19 @@ func TestDiffCov2HighlightLinePlainUnknownAndInlineComment(t *testing.T) {
 	out, multi := highlightLine("x /* note */ y", "go", false)
 	if multi || !strings.Contains(out, "note") {
 		t.Fatalf("highlightLine(inline comment) = (%q, %v)", out, multi)
+	}
+}
+
+// --- keymap.go ---
+
+func TestDiffCov2ValidateKeyRegistryStructuralErrors(t *testing.T) {
+	errs := validateKeyRegistry([]binding{
+		{Group: "g"},          // no keys, no help
+		{Keys: []string{"x"}}, // no group, no help
+		{Keys: []string{"y"}, Group: "g", Scope: scopeGlobal, Help: "h"},
+	})
+	if len(errs) < 3 {
+		t.Fatalf("validateKeyRegistry errors = %v; want at least 3", errs)
 	}
 }
 
@@ -257,9 +308,15 @@ func TestDiffCov2ToolWaveCountsAndNegativeElapsed(t *testing.T) {
 	}
 }
 
-// --- tui_shared.go / tui_helpers.go ---
+// --- tui_focus.go / tui_shared.go / tui_helpers.go / tui_stream.go ---
 
-func TestDiffCov2SharedHelpers(t *testing.T) {
+func TestDiffCov2TuiFocusStringsAndSharedHelpers(t *testing.T) {
+	if got := FocusSidebar.String(); got != "sidebar" {
+		t.Fatalf("FocusSidebar.String() = %q", got)
+	}
+	if got := FocusWorkflowsSidebar.String(); got != "workflows" {
+		t.Fatalf("FocusWorkflowsSidebar.String() = %q", got)
+	}
 	if got := FormatAgentUnavailable(nil); got != "agent switch failed" {
 		t.Fatalf("FormatAgentUnavailable(nil) = %q", got)
 	}
@@ -274,6 +331,32 @@ func TestDiffCov2SharedHelpers(t *testing.T) {
 	}
 	if got := wrapANSI("aa bb", 2); !strings.Contains(got, "aa") {
 		t.Fatalf("wrapANSI = %q", got)
+	}
+	b := NewStreamBridge()
+	b.SetTurnID(9)
+	b.Close()
+}
+
+// --- tui_tools_apply.go ---
+
+func TestDiffCov2ToolResultFailedMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{"", false},
+		{"all good", false},
+		{"ERROR: bad", true},
+		{"failed", true},
+		{"failed halfway", true},
+		{"exit=0", false},
+		{"exit=01", true},
+		{"code exit=127 stop", true},
+		{"exitit=0", false},
+	} {
+		if got := ToolResultFailed(tc.body); got != tc.want {
+			t.Errorf("ToolResultFailed(%q) = %v; want %v", tc.body, got, tc.want)
+		}
 	}
 }
 

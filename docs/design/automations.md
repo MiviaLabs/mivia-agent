@@ -356,10 +356,10 @@ Step definitions with `kind = "slash"` validate against a strict headless allowl
 
 The validator rejects built-in commands that require interactive capabilities:
 
-- **Interactive UI Pickers**: `/worktrees`, `/sessions`, `/workflows`, `/queue`, `/agent`, `/title`, `/new`.
+- **Interactive UI Pickers**: `/worktrees`, `/sessions`, `/workflows`, `/queue`, `/agent`, `/title`, `/new`, `/select`.
 - **Session Lifecycle Mutations**: `/clear`, `/save`, `/load`, `/delete`, `/resume`, `/exit`.
 - **Unattended Outbound Effects**: `/search`.
-- **Informational Output**: `/help`, `/status`, `/list`, `/session`, `/tools`, `/hooks`, `/agents`, `/provider`, `/workspace`.
+- **Informational Output**: `/help`, `/status`, `/list`, `/session`, `/tools`, `/hooks`, `/agents`, `/plain`, `/provider`, `/workspace`.
 
 ## Resuming Runs
 

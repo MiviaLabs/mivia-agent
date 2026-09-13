@@ -13,14 +13,26 @@ const AnsiBgDiffAdd = clichat.AnsiBgDiffAdd
 // AnsiBgDiffDel re-exports the clichat.AnsiBgDiffDel constant.
 const AnsiBgDiffDel = clichat.AnsiBgDiffDel
 
+// ApplyChatBlockEvent re-exports the clichat.ApplyChatBlockEvent function.
+var ApplyChatBlockEvent = clichat.ApplyChatBlockEvent
+
 // BrandColorThinking re-exports the clichat.BrandColorThinking constant.
 const BrandColorThinking = clichat.BrandColorThinking
+
+// ChatBlockEvent re-exports the clichat.ChatBlockEvent type.
+type ChatBlockEvent = clichat.ChatBlockEvent
+
+// ChatBlockID re-exports the clichat.ChatBlockID function.
+var ChatBlockID = clichat.ChatBlockID
 
 // ChatRenderer re-exports the clichat.ChatRenderer type.
 type ChatRenderer = clichat.ChatRenderer
 
 // CollapseConversations re-exports the clichat.CollapseConversations function.
 var CollapseConversations = clichat.CollapseConversations
+
+// ColorDiffLine re-exports the clichat.ColorDiffLine function.
+var ColorDiffLine = clichat.ColorDiffLine
 
 // FormatAgentCurrent re-exports the clichat.FormatAgentCurrent function.
 var FormatAgentCurrent = clichat.FormatAgentCurrent
@@ -70,6 +82,9 @@ var RenderSkillSlashPrompt = clichat.RenderSkillSlashPrompt
 // ResultLooksLikeDiff re-exports the clichat.ResultLooksLikeDiff function.
 var ResultLooksLikeDiff = clichat.ResultLooksLikeDiff
 
+// SafeChatBlockText re-exports the clichat.SafeChatBlockText function.
+var SafeChatBlockText = clichat.SafeChatBlockText
+
 // ShortenModel re-exports the clichat.ShortenModel function.
 var ShortenModel = clichat.ShortenModel
 
@@ -79,8 +94,35 @@ var ShortenWorkspacePath = clichat.ShortenWorkspacePath
 // ThemeColorDiffAdd re-exports the clichat.ThemeColorDiffAdd constant.
 const ThemeColorDiffAdd = clichat.ThemeColorDiffAdd
 
+// ThemeColorDiffDel re-exports the clichat.ThemeColorDiffDel constant.
+const ThemeColorDiffDel = clichat.ThemeColorDiffDel
+
 // ToolRenderItem re-exports the clichat.ToolRenderItem type.
 type ToolRenderItem = clichat.ToolRenderItem
+
+// BrandWorkFrames re-exports the clichat.BrandWorkFrames variable.
+var BrandWorkFrames = clichat.BrandWorkFrames
+
+// ChatBlockSystem re-exports the clichat.ChatBlockSystem constant.
+const ChatBlockSystem = clichat.ChatBlockSystem
+
+// ChatBlockThinking re-exports the clichat.ChatBlockThinking constant.
+const ChatBlockThinking = clichat.ChatBlockThinking
+
+// ChatBlockTool re-exports the clichat.ChatBlockTool constant.
+const ChatBlockTool = clichat.ChatBlockTool
+
+// ChatBlockDivider re-exports the clichat.ChatBlockDivider constant.
+const ChatBlockDivider = clichat.ChatBlockDivider
+
+// ChatBlockUser re-exports the clichat.ChatBlockUser constant.
+const ChatBlockUser = clichat.ChatBlockUser
+
+// RenderDiffBody re-exports the clichat.RenderDiffBody function.
+var RenderDiffBody = clichat.RenderDiffBody
+
+// ChatBlockAssistant re-exports the clichat.ChatBlockAssistant constant.
+const ChatBlockAssistant = clichat.ChatBlockAssistant
 
 // FormatModelUnavailable re-exports the clichat.FormatModelUnavailable function.
 var FormatModelUnavailable = clichat.FormatModelUnavailable
@@ -106,8 +148,20 @@ var FormatStepsSet = clichat.FormatStepsSet
 // FormatStepsSummary re-exports the clichat.FormatStepsSummary function.
 var FormatStepsSummary = clichat.FormatStepsSummary
 
+// ToolBatchStatusDetail re-exports the clichat.ToolBatchStatusDetail function.
+var ToolBatchStatusDetail = clichat.ToolBatchStatusDetail
+
 // ToolStatusLine re-exports the clichat.ToolStatusLine function.
 var ToolStatusLine = clichat.ToolStatusLine
+
+// ChatBlock re-exports the clichat.ChatBlock type.
+type ChatBlock = clichat.ChatBlock
+
+// ChatBlockKind re-exports the clichat.ChatBlockKind type.
+type ChatBlockKind = clichat.ChatBlockKind
+
+// HydrateChatBlocks re-exports the clichat.HydrateChatBlocks function.
+var HydrateChatBlocks = clichat.HydrateChatBlocks
 
 // RenderMarkdown re-exports the clichat.RenderMarkdown function.
 var RenderMarkdown = clichat.RenderMarkdown

@@ -7,14 +7,23 @@ package cli
 
 import clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 
+// AppendCtxSuffix re-exports the clichat.AppendCtxSuffix function.
+var AppendCtxSuffix = clichat.AppendCtxSuffix
+
 // BoundedToolText re-exports the clichat.BoundedToolText function.
 var BoundedToolText = clichat.BoundedToolText
+
+// BridgeDrain re-exports the clichat.BridgeDrain type.
+type BridgeDrain = clichat.BridgeDrain
 
 // ClassicAgentStatePtr re-exports the clichat.ClassicAgentStatePtr variable.
 var ClassicAgentStatePtr = clichat.ClassicAgentStatePtr
 
 // ClearSubagentProgress re-exports the clichat.ClearSubagentProgress function.
 var ClearSubagentProgress = clichat.ClearSubagentProgress
+
+// ClipPreviewLine re-exports the clichat.ClipPreviewLine function.
+var ClipPreviewLine = clichat.ClipPreviewLine
 
 // CompactStructuralOnlyNotice re-exports the clichat.CompactStructuralOnlyNotice function.
 var CompactStructuralOnlyNotice = clichat.CompactStructuralOnlyNotice
@@ -43,6 +52,9 @@ var EventPreview = clichat.EventPreview
 // FindSlashCommand re-exports the clichat.FindSlashCommand function.
 var FindSlashCommand = clichat.FindSlashCommand
 
+// ForbiddenKeys re-exports the clichat.ForbiddenKeys variable.
+var ForbiddenKeys = clichat.ForbiddenKeys
+
 // HandleSlash re-exports the clichat.HandleSlash function.
 var HandleSlash = clichat.HandleSlash
 
@@ -61,8 +73,17 @@ var IsBannerTool = clichat.IsBannerTool
 // IsEditTool re-exports the clichat.IsEditTool function.
 var IsEditTool = clichat.IsEditTool
 
+// IsLocalSlash re-exports the clichat.IsLocalSlash function.
+var IsLocalSlash = clichat.IsLocalSlash
+
 // JoinHub re-exports the clichat.JoinHub function.
 var JoinHub = clichat.JoinHub
+
+// KeyLabel re-exports the clichat.KeyLabel function.
+var KeyLabel = clichat.KeyLabel
+
+// KeyRegistry re-exports the clichat.KeyRegistry variable.
+var KeyRegistry = clichat.KeyRegistry
 
 // LatestAutoSaveName re-exports the clichat.LatestAutoSaveName function.
 var LatestAutoSaveName = clichat.LatestAutoSaveName
@@ -70,8 +91,14 @@ var LatestAutoSaveName = clichat.LatestAutoSaveName
 // Max re-exports the clichat.Max function.
 var Max = clichat.Max
 
+// MinCardWidth re-exports the clichat.MinCardWidth constant.
+const MinCardWidth = clichat.MinCardWidth
+
 // NewAgentTaskHandler re-exports the clichat.NewAgentTaskHandler function.
 var NewAgentTaskHandler = clichat.NewAgentTaskHandler
+
+// NewStreamBridge re-exports the clichat.NewStreamBridge function.
+var NewStreamBridge = clichat.NewStreamBridge
 
 // NewTerminal re-exports the clichat.NewTerminal function.
 var NewTerminal = clichat.NewTerminal
@@ -84,6 +111,9 @@ var ParseEffortArg = clichat.ParseEffortArg
 
 // ParseToolPath re-exports the clichat.ParseToolPath function.
 var ParseToolPath = clichat.ParseToolPath
+
+// RealToolStarts re-exports the clichat.RealToolStarts function.
+var RealToolStarts = clichat.RealToolStarts
 
 // RegistryForState re-exports the clichat.RegistryForState function.
 var RegistryForState = clichat.RegistryForState
@@ -109,14 +139,23 @@ const SlashKindBuiltin = clichat.SlashKindBuiltin
 // SummarizeToolDetail re-exports the clichat.SummarizeToolDetail function.
 var SummarizeToolDetail = clichat.SummarizeToolDetail
 
+// ToolResultFailed re-exports the clichat.ToolResultFailed function.
+var ToolResultFailed = clichat.ToolResultFailed
+
 // ToolWaveCounts re-exports the clichat.ToolWaveCounts function.
 var ToolWaveCounts = clichat.ToolWaveCounts
 
 // TruncatePreviewUTF8 re-exports the clichat.TruncatePreviewUTF8 function.
 var TruncatePreviewUTF8 = clichat.TruncatePreviewUTF8
 
+// ValidateKeyRegistry re-exports the clichat.ValidateKeyRegistry function.
+var ValidateKeyRegistry = clichat.ValidateKeyRegistry
+
 // ValidateWorkspaceRestart re-exports the clichat.ValidateWorkspaceRestart function.
 var ValidateWorkspaceRestart = clichat.ValidateWorkspaceRestart
+
+// VisualLineCount re-exports the clichat.VisualLineCount function.
+var VisualLineCount = clichat.VisualLineCount
 
 // EffortOrchestrationNotice re-exports the clichat.EffortOrchestrationNotice constant.
 const EffortOrchestrationNotice = clichat.EffortOrchestrationNotice
@@ -127,14 +166,23 @@ var SafeEffortError = clichat.SafeEffortError
 // ToolIconForName re-exports the clichat.ToolIconForName function.
 var ToolIconForName = clichat.ToolIconForName
 
+// BridgeToolEvt re-exports the clichat.BridgeToolEvt type.
+type BridgeToolEvt = clichat.BridgeToolEvt
+
 // CurrentAgentName re-exports the clichat.CurrentAgentName function.
 var CurrentAgentName = clichat.CurrentAgentName
+
+// FocusScrollback re-exports the clichat.FocusScrollback constant.
+const FocusScrollback = clichat.FocusScrollback
 
 // Min re-exports the clichat.Min function.
 var Min = clichat.Min
 
 // TruncateToWidth re-exports the clichat.TruncateToWidth function.
 var TruncateToWidth = clichat.TruncateToWidth
+
+// FocusComposer re-exports the clichat.FocusComposer constant.
+const FocusComposer = clichat.FocusComposer
 
 // MaxHistorySize re-exports the clichat.MaxHistorySize constant.
 const MaxHistorySize = clichat.MaxHistorySize
@@ -151,6 +199,15 @@ var SlashCommands = clichat.SlashCommands
 // SlashKindSkill re-exports the clichat.SlashKindSkill constant.
 const SlashKindSkill = clichat.SlashKindSkill
 
+// FocusSidebar re-exports the clichat.FocusSidebar constant.
+const FocusSidebar = clichat.FocusSidebar
+
+// FocusWorkflowsSidebar re-exports the clichat.FocusWorkflowsSidebar constant.
+const FocusWorkflowsSidebar = clichat.FocusWorkflowsSidebar
+
+// ShouldFollowOutput re-exports the clichat.ShouldFollowOutput function.
+var ShouldFollowOutput = clichat.ShouldFollowOutput
+
 // SummaryDisabledReason re-exports the clichat.SummaryDisabledReason function.
 var SummaryDisabledReason = clichat.SummaryDisabledReason
 
@@ -165,6 +222,9 @@ var ModelSwitchChoices = clichat.ModelSwitchChoices
 
 // ParseModelArgs re-exports the clichat.ParseModelArgs function.
 var ParseModelArgs = clichat.ParseModelArgs
+
+// RouteFocusKey re-exports the clichat.RouteFocusKey function.
+var RouteFocusKey = clichat.RouteFocusKey
 
 // ShouldCommitInterim re-exports the clichat.ShouldCommitInterim function.
 var ShouldCommitInterim = clichat.ShouldCommitInterim
@@ -187,6 +247,9 @@ var OpenRepositoryContextStore = clichat.OpenRepositoryContextStore
 // SlashCommand re-exports the clichat.SlashCommand type.
 type SlashCommand = clichat.SlashCommand
 
+// StreamBridge re-exports the clichat.StreamBridge type.
+type StreamBridge = clichat.StreamBridge
+
 // ToolRow re-exports the clichat.ToolRow type.
 type ToolRow = clichat.ToolRow
 
@@ -207,6 +270,9 @@ var ContextStorePath = clichat.ContextStorePath
 
 // OpenContextStorePath re-exports the clichat.OpenContextStorePath function.
 var OpenContextStorePath = clichat.OpenContextStorePath
+
+// Binding re-exports the clichat.Binding type.
+type Binding = clichat.Binding
 
 // ConfigureChatWorkspace re-exports the clichat.ConfigureChatWorkspace function.
 var ConfigureChatWorkspace = clichat.ConfigureChatWorkspace

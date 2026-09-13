@@ -2,6 +2,7 @@ package clichat
 
 import (
 	"encoding/json"
+	"fmt"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"unicode"
@@ -65,6 +66,61 @@ func ToolStatusLine(name, detail string) string {
 		return capRunes(verb+"…", toolStatusMaxRunes)
 	}
 	return capRunes(verb+" "+obj+"…", toolStatusMaxRunes)
+}
+
+// RealToolStarts filters a tool-event batch to non-banner Start events.
+func RealToolStarts(starts []BridgeToolEvt) []BridgeToolEvt {
+	var real []BridgeToolEvt
+	for _, e := range starts {
+		if !e.Start || IsBannerTool(e.Name) {
+			continue
+		}
+		// Lifecycle-only restarts (queued→running) without args: still count name.
+		real = append(real, e)
+	}
+	return real
+}
+
+// toolBatchStatusLine summarizes a wave of tool starts (one line, not N).
+func toolBatchStatusLine(starts []BridgeToolEvt) string {
+	real := RealToolStarts(starts)
+	if len(real) == 0 {
+		// Only banners (parallel/prune).
+		for _, e := range starts {
+			if e.Start && IsBannerTool(e.Name) {
+				return ToolStatusLine(e.Name, e.Detail)
+			}
+		}
+		return ""
+	}
+	if len(real) == 1 {
+		return ToolStatusLine(real[0].Name, real[0].Detail)
+	}
+	return capRunes(fmt.Sprintf("Running %d tools…", len(real)), toolStatusMaxRunes)
+}
+
+// ToolBatchStatusDetail is the expandable body for a multi-tool wave:
+// first line is the one-line summary; following lines list each tool verb.
+// Single-tool waves return the same string as toolBatchStatusLine (no extra rows).
+func ToolBatchStatusDetail(starts []BridgeToolEvt) string {
+	real := RealToolStarts(starts)
+	if len(real) == 0 {
+		return toolBatchStatusLine(starts)
+	}
+	if len(real) == 1 {
+		return ToolStatusLine(real[0].Name, real[0].Detail)
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Running %d tools…", len(real)))
+	for _, e := range real {
+		line := ToolStatusLine(e.Name, e.Detail)
+		if line == "" {
+			line = e.Name
+		}
+		b.WriteByte('\n')
+		b.WriteString("· " + line)
+	}
+	return b.String()
 }
 
 // IsBannerTool implements is banner tool.
@@ -243,4 +299,17 @@ func ShouldCommitInterim(s string) bool {
 		}
 	}
 	return hasWord
+}
+
+// ShouldFollowOutput decides whether the viewport should stick to the bottom.
+// follow is the sticky flag; atBottom is viewport.AtBottom(); scrolledUp is an
+// explicit user scroll-away gesture in this update.
+func ShouldFollowOutput(follow bool, atBottom bool, scrolledUp bool) bool {
+	if scrolledUp {
+		return false
+	}
+	if atBottom {
+		return true
+	}
+	return follow
 }

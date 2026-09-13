@@ -15,9 +15,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+func TestKeyLabel(t *testing.T) {
+	if got := KeyLabel(Binding{Keys: []string{"enter"}}); got == "" {
+		t.Fatal("KeyLabel must return non-empty for a binding")
+	}
+}
+
 func TestContextWorkspaceID(t *testing.T) {
 	if got := ContextWorkspaceID("/tmp/foo"); got == "" {
 		t.Fatal("ContextWorkspaceID must return non-empty")
+	}
+}
+
+func TestValidateKeyRegistry(t *testing.T) {
+	errs := ValidateKeyRegistry([]binding{})
+	if len(errs) != 0 {
+		t.Fatalf("ValidateKeyRegistry(empty) = %v", errs)
 	}
 }
 
@@ -109,6 +122,12 @@ func TestReplHelpAndRender(t *testing.T) {
 	}
 }
 
+func TestTuiHelpCommands(t *testing.T) {
+	if got := TuiHelpCommands(); len(got) == 0 {
+		t.Fatal("TuiHelpCommands returned empty")
+	}
+}
+
 func TestWorktreeAndWorkflowExports(t *testing.T) {
 	// Each export is a one-line wrapper to the underlying
 	// implementation. We drive the call path even when the
@@ -175,4 +194,10 @@ func TestWorktreeListAndAgentExports(t *testing.T) {
 	_ = SessionIdentity
 	_ = ApplySessionAgent
 	_ = SwitchModelCommand
+}
+
+func TestTuiHelpContentNilRegistry(t *testing.T) {
+	if got := tuiHelpContent(); len(got) == 0 {
+		t.Fatal("tuiHelpContent() returned empty")
+	}
 }

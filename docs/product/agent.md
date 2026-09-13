@@ -14,7 +14,7 @@ mivia chat --workspace /path/to/repo
 mivia chat --agent reviewer -p "review the last commit"
 ```
 
-`--plain` uses the classic line-mode REPL. Use it when the interactive TUI misbehaves.
+`--plain` uses the classic terminal UI. Use it when the modern UI misbehaves.
 
 `--quiet` suppresses the informational startup notices (the limits summary,
 the lifecycle-hooks armed notice, the diagnostics-commands line, the session
@@ -275,6 +275,8 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/session` | Show current session |
 | `/title [text]` | Set the session title (TUI) |
 | `/tools` | Show available tools |
+| `/plain` | Explain classic UI (TUI) |
+| `/select` | Toggle select mode (TUI) |
 | `/model [model]` | Choose model |
 | `/agent [name]` | Choose root agent |
 | `/agents` | List root agents |
@@ -290,9 +292,9 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/queue` | Manage queued messages |
 | `/search` | Search the web |
 | `/workflows` | Show workflow runs (TUI) |
-| `/exit`, `/quit`, `/q` | Exit (`--plain` REPL) |
-| `/provider` | Show provider (`--plain` REPL) |
-| `/workspace` | Show workspace (`--plain` REPL) |
+| `/exit`, `/quit`, `/q` | Exit (classic terminal) |
+| `/provider` | Show provider (classic terminal) |
+| `/workspace` | Show workspace (classic terminal) |
 
 ## Lifecycle hooks
 

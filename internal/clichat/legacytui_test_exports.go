@@ -1,7 +1,14 @@
 package clichat
 
-// Remaining wrappers exist only for coverage of live helpers. They are
-// not a public API.
+// This file exists to support internal/legacytui's test suite across the
+// package boundary. It exports package-private helpers that
+// internal/legacytui's relocated tests still need. Each export is a thin
+// identity wrapper (or alias) around a cli-only symbol with real internal
+// callers; wrapping keeps every existing call site untouched.
+//
+// Treat these exports as test-support API, not general-purpose public API:
+// they exist for internal/legacytui's tests, not for arbitrary callers, and
+// carry no compatibility promise beyond that use.
 
 import (
 	"io"
@@ -35,6 +42,51 @@ type ChatInvocation = chatInvocation
 // SessionRouting is sessionRouting, exported for internal/legacytui.
 type SessionRouting = sessionRouting
 
+// KeyRegistry is keyRegistry, exported for internal/legacytui.
+var KeyRegistry = keyRegistry
+
+// ForbiddenKeys is forbiddenKeys, exported for internal/legacytui.
+var ForbiddenKeys = forbiddenKeys
+
+// Binding is binding, exported for internal/legacytui.
+type BindingExport = Binding
+
+// ScopeGlobal is scopeGlobal, exported for internal/legacytui.
+var ScopeGlobal = scopeGlobal
+
+// ScopeComposer is scopeComposer, exported for internal/legacytui.
+var ScopeComposer = scopeComposer
+
+// ScopeSuggest is scopeSuggest, exported for internal/legacytui.
+var ScopeSuggest = scopeSuggest
+
+// ScopeScrollback is scopeScrollback, exported for internal/legacytui.
+var ScopeScrollback = scopeScrollback
+
+// ScopeDashboard is scopeDashboard, exported for internal/legacytui.
+var ScopeDashboard = scopeDashboard
+
+// ScopeOverlay is scopeOverlay, exported for internal/legacytui.
+var ScopeOverlay = scopeOverlay
+
+// ScopeSessions is scopeSessions, exported for internal/legacytui.
+var ScopeSessions = scopeSessions
+
+// ScopeWorkflows is scopeWorkflows, exported for internal/legacytui.
+var ScopeWorkflows = scopeWorkflows
+
+// ScopeWelcome is scopeWelcome, exported for internal/legacytui.
+var ScopeWelcome = scopeWelcome
+
+// ScopeHistory is scopeHistory, exported for internal/legacytui.
+var ScopeHistory = scopeHistory
+
+// ScopeQueue is scopeQueue, exported for internal/legacytui.
+var ScopeQueue = scopeQueue
+
+// KeyLabel is keyLabel, exported for internal/legacytui.
+func KeyLabel(b Binding) string { return keyLabel(b) }
+
 // SetupSessionContext is setupSessionContext, exported for internal/legacytui.
 func SetupSessionContext(sess *chat.Session, root string, res *config.Resolved) (*storage.SQLite, error) {
 	return setupSessionContext(sess, root, res)
@@ -63,6 +115,11 @@ func BindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 // HandleSlash is handleSlash, exported for internal/legacytui.
 func HandleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
 	return handleSlash(line, sess, res, toolsOn, term)
+}
+
+// ValidateKeyRegistry is validateKeyRegistry, exported for internal/legacytui.
+func ValidateKeyRegistry(rs []binding) []error {
+	return validateKeyRegistry(rs)
 }
 
 // SkillScopeFromAgent is cliagents.SkillScopeFromAgent, exported for internal/legacytui.
@@ -203,6 +260,11 @@ func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 // ApplyPrivacyPolicy is applyPrivacyPolicy, exported for internal/legacytui.
 func ApplyPrivacyPolicy(res *config.Resolved) {
 	applyPrivacyPolicy(res)
+}
+
+// TuiHelpCommands is tuiHelpCommands, exported for internal/legacytui.
+func TuiHelpCommands() []helpSection {
+	return tuiHelpCommands()
 }
 
 // SendLineMode is sendLineMode, exported for internal/legacytui.

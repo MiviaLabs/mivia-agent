@@ -4,24 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
-
-var chatANSI = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
-
-func SafeChatBlockText(text string, maxChars int) string {
-	text = chatANSI.ReplaceAllString(text, "")
-	text = strings.ReplaceAll(text, "\x00", "")
-	if maxChars > 0 && len([]rune(text)) > maxChars {
-		return string([]rune(text)[:maxChars]) + "…"
-	}
-	return text
-}
 
 // ToolRow is a live/completed tool invocation for the status panel. Relocated
 // from internal/legacytui/toolui.go: needed unqualified there (its own
@@ -259,6 +247,29 @@ func LifecycleStatusFailed(s string) bool {
 // search_replace, multi_edit). Shared by the classic-mode renderer.
 func IsEditTool(name string) bool {
 	return name == "write_file" || name == "search_replace" || name == "multi_edit"
+}
+
+// ColorDiffLine is a thin alias of RenderDiffLine for call-site compatibility
+// (tool preview / renderDiffBody). @@ hunks use magenta (unified with markdown
+// and highlight surfaces), not dim.
+func ColorDiffLine(l string) string {
+	return RenderDiffLine(l)
+}
+
+// ClipPreviewLine truncates a preview line for the terminal width without panicking
+// when width is 0 or very small (pre-WindowSizeMsg / narrow panes).
+func ClipPreviewLine(l string, width int) string {
+	// Budget for "    │ " prefix (~6) and ellipsis.
+	maxBody := width - 10
+	if maxBody < 8 {
+		maxBody = 8
+	}
+	if len(l) <= maxBody {
+		return l
+	}
+	// Keep at least 1 rune of content before "..." (maxBody is floored at
+	// 8 above, so cut = maxBody-3 is always >= 5 and always < len(l)).
+	return TruncatePreviewUTF8(l, maxBody-3) + "..."
 }
 
 // TruncatePreviewUTF8 cuts s to at most maxBytes bytes, backing off until the
