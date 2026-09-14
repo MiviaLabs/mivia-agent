@@ -258,7 +258,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}
 	// Rows split name from dimmed directory, with the kind glyph in
 	// front and the selection marker on the selected row.
-	if !strings.Contains(plain, "~ a.go") || !strings.Contains(plain, "internal/ui") {
+	if !strings.Contains(plain, "~ a.go") || !strings.Contains(plain, "internal/tui/view") {
 		t.Errorf("edited row does not show glyph + name + directory:\n%s", plain)
 	}
 	if !strings.Contains(plain, "+ b.go") {
