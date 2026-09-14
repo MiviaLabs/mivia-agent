@@ -1,6 +1,6 @@
 # Mivia terminal UI layout specification
 
-This is the visual specification for the terminal UI (`internal/ui/*`).
+This is the visual specification for the terminal UI (`internal/tui/view/*`).
 `research-panes.md` records the colour and contrast method and results behind
 the themes.
 

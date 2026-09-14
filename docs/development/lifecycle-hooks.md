@@ -394,7 +394,7 @@ shows its warning on the row. Those never reach the model - they are about your
 script, not about the tool call - and `/hooks` keeps the recent ones.
 
 `/hooks` and hook-run visibility work identically on the new TUI
-(`internal/newtui`) and the old `--plain` REPL: both read from
+(`internal/tui/run`) and the old `--plain` REPL: both read from
 `internal/hooksession`, the leaf package that owns hook-session state
 (discovery, arming, the `/hooks` listing text) so neither surface depends on
 the other's package. A hook's input and output are bounded and redacted

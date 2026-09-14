@@ -221,7 +221,7 @@ promoted to a load error.
   for `ErrorBody{Text:""}` is dishonest status: the kind says an
   error happened, the body says nothing did, and the user sees
   one line with no actionable content. The canonical guard is on
-  `TextEndBody` in `internal/ui/stream/stream.go:35-37`; mirror it
+  `TextEndBody` in `internal/tui/view/stream/stream.go:35-37`; mirror it
   for `ErrorBody` and any future Body type. Defensive guards on
   the renderer are NOT a fix for the producer — the producer is
   still wrong — but they prevent a noise line from reaching the
@@ -297,7 +297,7 @@ workflow engineers. `ed07bc9` scoped the registry before the dispatcher. `208953
 enforced the source boundary and root-scope denials. `101e3d1` routed session workflow
 deliver and cancel through the CLI paths instead of a parallel path. `0378ac65` found
 two independent implementations of `/model <name>` resolution - classic REPL
-(`internal/clichat`) and the new TUI (`internal/uiadapter`) - that had diverged: the
+(`internal/clichat`) and the new TUI (`internal/tui/adapter`) - that had diverged: the
 TUI's `resolveProviderAndModel` silently picked the first provider whose catalog
 happened to contain a requested model name, with no ambiguity check, while the REPL
 path never searched other providers at all. Neither path routed through a shared
@@ -437,9 +437,9 @@ first fix, still only one of two) actually fed it.
   sequence (turn.start -> text.delta -> text.end -> notices ->
   turn.end), with the test asserting per-kind event counts. The
   canonical shape is `TestSend_FullTurn_ExactlyOneOfEach` in
-  `internal/uiadapter/conversation_test.go` plus
+  `internal/tui/adapter/conversation_test.go` plus
   `TestRenderSmoke_RealisticOneUserInput` in
-  `internal/ui/stream/stream_test.go`. The two together cover both
+  `internal/tui/view/stream/stream_test.go`. The two together cover both
   halves of the channel-to-renderer pipeline.
 - A fix that adds publishing to one producer path is not complete until every other
   producer path feeding the same user-visible signal is checked against the same gap
@@ -742,7 +742,7 @@ paging budgets computed from the parsed rows are wrong by the same amount.
 
 **Evidence.** `internal/diff.FormatUnifiedAt` wrote an extra newline between
 hunks on top of `writeHunk`'s per-line newline, and kept the trailing newline
-after a final +/- line. `internal/uiadapter.parseDiffHunks` maps an empty
+after a final +/- line. `internal/tui/adapter.parseDiffHunks` maps an empty
 input line to an empty context row, so the TUI showed one empty row after
 every hunk. The parser's empty-line tolerance exists for external tools that
 trim trailing whitespace, which made the producer's own artifact parse as
@@ -778,7 +778,7 @@ consumer goroutines, holding references to enclosing session pools, and failing
 graceful shutdown deadlines.
 
 **Evidence.** `internal/chatsync.InputPoller.Stop` terminated `p.loop` but
-left `p.inputCh` unclosed. `internal/uiadapter.SessionPool.forwardRemoteInputs`
+left `p.inputCh` unclosed. `internal/tui/adapter.SessionPool.forwardRemoteInputs`
 blocked permanently on `range syncSess.Inputs()`, leaking a goroutine per
 pooled session. Caught by architectural bug review finding [AR-2] and fixed in
 commit `ac410387` (regression tests `TestInputPoller_ChannelClosedOnStop` and
@@ -889,9 +889,9 @@ problem, who reads the struct and the one call site their feature needs.
 Nothing points from the struct to its enumerations.
 
 **Evidence.** `ContextBreakdown` exists twice - `internal/chat` and
-`internal/uikit/ports` - and its fields are enumerated in five places:
+`internal/tui/kit/ports` - and its fields are enumerated in five places:
 `fields()`, `buckets()`, `conversationBuckets()`, two `countsOnly()`, and
-the field-by-field bridge in `internal/uiadapter/conversation.go`. An
+the field-by-field bridge in `internal/tui/adapter/conversation.go`. An
 adversarial review of the `Skills` field added by `818bba0a` mutated each
 of them in turn: **eight mutations passed the entire test suite**, three of
 which broke the sum invariant outright and one of which - dropping the
@@ -1173,7 +1173,7 @@ microseconds regardless of backlog size, so nothing in a fast test suite
 ever pays the real network cost that exposes the gap.
 
 **Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` detach
-closure and `internal/newtui/run.go`'s TUI shutdown both gave `Stop`'s final
+closure and `internal/tui/run/run.go`'s TUI shutdown both gave `Stop`'s final
 flush a 2-5 second ctx. `FlushOutbox` (`internal/chatsync/attach.go`) sends
 the ENTIRE unflushed backlog in one `AppendEvents` call - no size cap, no
 chunking. Once `[sync].stream_assistant = true` raised event volume 5-10x, a
@@ -1299,7 +1299,7 @@ unconditionally zeroes `chat.Session.SessionDir` (with `sessionStore`/
 `saveManager`) the instant context state is enabled - which every real
 `mivia chat` invocation does, CLI or TUI, before chat sync ever attaches.
 `internal/clichat/chat_sync.go`'s `cliSyncOptions` and
-`internal/uiadapter/session_pool.go`'s `poolSyncOptions` read
+`internal/tui/adapter/session_pool.go`'s `poolSyncOptions` read
 `sess.SessionDir` to anchor chat-sync's local identity file.
 `chatsync.LoadOrCreateIdentity` treats an empty anchor directory as "no
 identity directory available" and mints a fresh, NEVER-PERSISTED identity
@@ -1332,7 +1332,7 @@ path that clears it in production.
 - Gate: `TestCLISyncOptionsPersistsIdentityWithoutSessionDir`
   (`internal/clichat/chat_sync_opts_test.go`) and
   `TestPoolSyncOptionsPersistsIdentityWithoutSessionDir`
-  (`internal/uiadapter/session_pool_syncopts_test.go`) build a session with
+  (`internal/tui/adapter/session_pool_syncopts_test.go`) build a session with
   `SessionDir` explicitly empty - the real production shape - and assert
   identity still round-trips across a simulated resume.
 
@@ -1527,11 +1527,11 @@ then `"running"` from the dispatcher shim, carrying none - both under one
 `internal/agent/agentloop_maxconcurrent_test.go`: 3 calls, 6 events). Two
 consumers counted the events. `internal/subagents/multi_step.go`
 `stepOnEvent` incremented `toolCallCount` per event, so the subagent panel's
-`Tools: N` (`internal/ui/screen/conversation/filespanel_layout.go`, fed by the
+`Tools: N` (`internal/tui/view/screen/conversation/filespanel_layout.go`, fed by the
 heartbeat's `toolcalls=`) and `inspect_agents`' `progress.tool_calls` (fed by
 the same stream through `ToolCallSink` into
 `internal/coordinator/tool_call_buffer.go`) both read exactly double.
-`internal/uiadapter/subagent.go` appended a `ports.ToolCall` per event, so a
+`internal/tui/adapter/subagent.go` appended a `ports.ToolCall` per event, so a
 subagent thread listed every call twice, the second with null arguments and no
 output - and rendered both on reopen, because `LoadHistory` replays start/end
 per entry and `transcript.findLive` refuses a call id whose latest block is
@@ -1729,7 +1729,7 @@ leaked seam - that a fixture-built `config.Load` resolves MCP off - so the
 class is pinned at the mechanism, not at one of its nineteen symptoms. This is
 NOT yet a repo-wide gate: `internal/agents`, `internal/chat`,
 `internal/cliagents`, `internal/cliorchestrate`, `internal/provider`, and
-`internal/uiadapter` resolve user configuration in tests without
+`internal/tui/adapter` resolve user configuration in tests without
 `testenv.IsolateHome` (some isolate `HOME` per test, which protects those tests
 only). They pass today; they are unprotected, not proven clean.
 
@@ -1758,8 +1758,8 @@ with `workflow_run` from the TUI showed one tool call and then nothing for its
 entire lifetime, so a multi-hour run was indistinguishable from a hung one.
 Fixing it uncovered the same defect one layer down: `ports.Notices` - the
 declared out-of-band advisory port, with a full doc comment stating the UI
-"reads it once, at startup" - had a producer in `internal/uiadapter` and NO
-reader anywhere in `internal/ui` or `internal/newtui`. Chat-sync lifecycle
+"reads it once, at startup" - had a producer in `internal/tui/adapter` and NO
+reader anywhere in `internal/tui/view` or `internal/tui/run`. Chat-sync lifecycle
 advisories had been going into that channel unread for as long as it existed.
 Subscribing to the workflow kinds alone would have moved the silence one layer
 rather than ending it.
@@ -1778,7 +1778,7 @@ rather than ending it.
   once per pipeline, in a test that fails if any single hop is removed. Every
   per-layer test can pass while the pipeline delivers nothing.
 
-**Gate.** `internal/uiadapter/workflow_notices_test.go`'s
+**Gate.** `internal/tui/adapter/workflow_notices_test.go`'s
 `TestEveryWorkflowEventKindIsClassified` parses the `Kind` constants out of
 `internal/events/event.go` - the declaration site, not a hand-kept list - and
 fails when a workflow kind reaches it with no entry in
@@ -1792,7 +1792,7 @@ Two further AST gates protect the ends of this pipeline:
   `ProgressKind` maps to an event kind the notice policy renders.
   `internal/workflows/localengine/engine_progress_kind_test.go` mirrors this
   gate for the local engine.
-- `internal/newtui/app_streams_test.go`'s
+- `internal/tui/run/app_streams_test.go`'s
   `TestEveryPoolStreamIsWiredIntoTheScreen` proves every stream on
   `ports.SessionPool` connects to a consumption site on the screen.
 

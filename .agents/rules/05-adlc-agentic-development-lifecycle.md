@@ -71,12 +71,12 @@ than a recorded fixture.
   scripted fixture that mirrors a realistic event sequence.
 - The test asserts **per-kind event counts**, not just first/last.
   `TestSend_FullTurn_ExactlyOneOfEach` in
-  `internal/uiadapter/conversation_test.go` is the canonical shape.
+  `internal/tui/adapter/conversation_test.go` is the canonical shape.
 - If the plan touches a renderer, the test also asserts the rendered
   transcript shape: the user input appears once, each assistant
   message appears once, each notice line appears once, the terminal
   marker appears once. `TestRenderSmoke_RealisticOneUserInput` in
-  `internal/ui/stream/stream_test.go` is the canonical shape.
+  `internal/tui/view/stream/stream_test.go` is the canonical shape.
 - The test must reproduce the bug shape that the prior phase's
   manual acceptance surfaced. If the prior phase surfaced a doubled
   message, the test fails when given a doubled sequence. If the
@@ -88,7 +88,7 @@ than a recorded fixture.
 Any renderer that handles a Body type with a string payload
 (`TextEndBody`, `ErrorBody`, `NoticeBody`) must early-return when
 the string is empty and the event is non-fatal. The first such
-guard is on `TextEndBody` in `internal/ui/stream/stream.go:35-37`;
+guard is on `TextEndBody` in `internal/tui/view/stream/stream.go:35-37`;
 mirror it for `ErrorBody` and any future Body type that has the
 same empty-string-as-noise failure mode.
 

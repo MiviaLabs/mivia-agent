@@ -3,7 +3,7 @@
 What automated tests cannot prove about the TUI input layer, and how to check it
 by hand.
 
-The bindings themselves are **not** listed here. `internal/uikit/keymap` is the
+The bindings themselves are **not** listed here. `internal/tui/kit/keymap` is the
 single declaration, and `/help` renders from it. A second list in a document is
 the drift this rule prevents.
 
@@ -13,7 +13,7 @@ Do not re-test these by hand; they fail the build if they break.
 
 | Layer | Covers |
 |---|---|
-| Unit (`internal/uikit/keymap`) | Default bindings, reserved keys, collisions, and generated help |
+| Unit (`internal/tui/kit/keymap`) | Default bindings, reserved keys, collisions, and generated help |
 | PTY (`*_pty_test.go`, Linux) | Real CSI bytes for End/PgUp, SGR mouse wheel, bracketed paste (multi-line, >256-byte reassembly, no send from embedded newlines) |
 
 ## What needs a human, and why
@@ -36,7 +36,7 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 4. **Empty-draft `end`** - with an empty composer, `end` jumps to the latest
    message.
 5. **F2 opens Settings** (`IDSettingsDialog`, keys `f2`,
-   `internal/uikit/keymap/keymap.go` ~240). Some multiplexers swallow F2;
+   `internal/tui/kit/keymap/keymap.go` ~240). Some multiplexers swallow F2;
    use `/settings` or the command palette (`ctrl+p`).
 6. **`ctrl+c`** - mid-turn cancels; at rest with a message selected it copies;
    with a draft it clears the draft and prompts; twice in a row quits.
@@ -79,7 +79,7 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 
 16. **Local**: copy a message, paste into another application. Every release
     batches three things: the OSC 52 write, a best-effort local clipboard-tool
-    fallback (`internal/uikit/clipboardwrite`: `wl-copy`/`xclip`/`xsel` on
+    fallback (`internal/tui/kit/clipboardwrite`: `wl-copy`/`xclip`/`xsel` on
     Linux, `pbcopy` on macOS, `clip.exe` on Windows/WSL - whichever is on PATH
     for the detected display), and the status-line toast. No configuration is
     required for either path.
@@ -118,4 +118,4 @@ Cover at least one from each family; the failure modes cluster by engine.
 
 - An OSC 52 write can in principle interleave with a rendered frame; the write is
   a single call to keep the window minimal. See `tea.SetClipboard` usage in
-  `internal/ui/app/mouse_router.go`.
+  `internal/tui/view/app/mouse_router.go`.

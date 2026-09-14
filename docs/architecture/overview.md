@@ -9,7 +9,7 @@
 
 ## Layers
 
-1. **CLI** - chat REPL / one-shot; tool event tracing. Interactive TTY chat uses one compositor: `internal/newtui` composing `internal/ui` + `internal/uikit` + `internal/uiadapter`. `cmd/mivia` calls `cli.SetTUILauncher(newtui.RunTUI)`. `--plain` is a line-mode REPL, not a second compositor.
+1. **CLI** - chat REPL / one-shot; tool event tracing. Interactive TTY chat uses one compositor: `internal/tui/run` composing `internal/tui/view` + `internal/tui/kit` + `internal/tui/adapter`. `cmd/mivia` calls `cli.SetTUILauncher(tui.RunTUI)`. `--plain` is a line-mode REPL, not a second compositor.
 2. **Agent loop** - tool_calls until stop (`internal/agent`)
 3. **Tool gateway** - read/search/edit/run under workspace policy (`internal/tools`)
 4. **Workspace** - path confinement (`internal/workspace`)
@@ -224,8 +224,8 @@ flowchart TD
 | `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
 | `Diagnostics` | `internal/cliorchestrate` | ListRuns, ActiveHandles (privacy-safe operator views) |
-| `FormatToolOutput` / `FormatCommandOutput` / etc. | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
-| `Screen` (settings) | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
+| `FormatToolOutput` / `FormatCommandOutput` / etc. | `internal/tui/view/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
+| `Screen` (settings) | `internal/tui/view/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
 ### Lifecycle
 
@@ -293,9 +293,9 @@ missing credentials without exposing secret or provider payload details.
 
 ### Interactive TUI
 
-Interactive TTY chat uses one compositor: `internal/newtui` composing
-`internal/ui`, `internal/uikit`, and `internal/uiadapter`. `cmd/mivia` wires
-that path with `cli.SetTUILauncher(newtui.RunTUI)`. `--plain` is a line-mode
+Interactive TTY chat uses one compositor: `internal/tui/run` composing
+`internal/tui/view`, `internal/tui/kit`, and `internal/tui/adapter`. `cmd/mivia` wires
+that path with `cli.SetTUILauncher(tui.RunTUI)`. `--plain` is a line-mode
 REPL in `internal/clichat`; it is not a second interactive compositor.
 
 ### See also

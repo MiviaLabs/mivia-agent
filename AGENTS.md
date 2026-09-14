@@ -129,13 +129,13 @@ guessing.
 - Never claim a check passed unless it was executed
 - All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). See [90-writing-standard-ste100](.agents/rules/90-writing-standard-ste100.md).
 - Ship binary name is `mivia` only
-- **UI packages are self-contained:** `internal/ui/**` and
-  `internal/uikit/**` must not import `internal/cli*`, `internal/chat`,
-  `internal/agent`, `internal/coordinator`, or `internal/hub`. `internal/ui/**` and
-  `internal/uikit/**` connect only through `internal/uikit/ports` and the
-  `internal/uikit/uievent` vocabulary. `internal/uiadapter` is the sole integration
+- **UI packages are self-contained:** `internal/tui/view/**` and
+  `internal/tui/kit/**` must not import `internal/cli*`, `internal/chat`,
+  `internal/agent`, `internal/coordinator`, or `internal/hub`. `internal/tui/view/**` and
+  `internal/tui/kit/**` connect only through `internal/tui/kit/ports` and the
+  `internal/tui/kit/uievent` vocabulary. `internal/tui/adapter` is the sole integration
   bridge, isolated from UI packages and CLI entrypoints per INV-TUI-29. Enforced by Go tests in
-  `internal/uiadapter/` and `scripts/check_import_layers.py`; policy:
+  `internal/tui/adapter/` and `scripts/check_import_layers.py`; policy:
   [docs/design/ui-isolation.md](docs/design/ui-isolation.md).
 - **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md). Enforced by `internal/tools/generic_surface_test.go` and `internal/clichat/prompt_generic_test.go`.
 - **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.
@@ -172,8 +172,11 @@ Start every `feature-delivery` run with `scripts/run-delivery-workflow.sh <label
 ```text
 cmd/mivia/           CLI entrypoint -> binary mivia
 internal/            Go packages
-internal/ui/         New terminal UI: app, screens, components, render, theme
-internal/uikit/      UI data with no bubbletea import: config, keymap, ports
+internal/tui/            Interactive TUI grouping dir (no package)
+internal/tui/kit/        Ports, keymap, events (no bubbletea)
+internal/tui/view/       Screens, components, render, theme
+internal/tui/adapter/    Session-to-ports bridge
+internal/tui/run/        Composition root (cmd/mivia wires RunTUI)
 .agents/             Canonical agent control surface (rules, doctrines, skills, quality, templates, agents/*.md)
 .mivia/              Product runtime config/state: mivia.toml, workflows/, hooks/, policy/*
 .mivia/hooks/        This repo's own mivia lifecycle hook scripts (project-scoped)

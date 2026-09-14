@@ -1,7 +1,7 @@
 # Mivia terminal UI - UX rules
 
-Scope: these rules govern `internal/ui`, `internal/uikit` and the terminal
-entry path in `internal/newtui`. They bind implementation choices. A rule
+Scope: these rules govern `internal/tui/view`, `internal/tui/kit` and the terminal
+entry path in `internal/tui/run`. They bind implementation choices. A rule
 that only says "be consistent" is not a rule and is not listed here.
 
 `wireframes-panes.md` stays the visual specification. This file wins on
@@ -48,7 +48,7 @@ harmful. The pager keeps the modifier-free alternates `b` and `space`.
 
 `Ctrl-S`, `Ctrl-Q`, `Ctrl-C`, `Ctrl-Z`, `Ctrl-\`, `Ctrl-V` and `Ctrl-M`
 belong to the tty or the terminal in every context. No context escapes
-them. `internal/uikit/keymap` enforces this list mechanically.
+them. `internal/tui/kit/keymap` enforces this list mechanically.
 
 **Rule 1.1.** Bind actions to `Ctrl-G`, `Ctrl-O`, `Ctrl-T`, function keys,
 or a prefix. These are free in practice.
@@ -395,7 +395,7 @@ cannot distinguish thinking from hung.
 ## 10. Cross-reference: `wireframes-panes.md`
 
 That file stays the visual specification. This table maps its rows to the
-current interaction state. The keymap package (`internal/uikit/keymap`) is
+current interaction state. The keymap package (`internal/tui/kit/keymap`) is
 the authority for current bindings; read it, never this table.
 
 | `wireframes-panes.md` section | Current state |
@@ -412,7 +412,7 @@ the authority for current bindings; read it, never this table.
 
 ## 11. Transcript layout
 
-These rules govern `internal/ui/component/transcript`. They are
+These rules govern `internal/tui/view/component/transcript`. They are
 presentation rules: coalescing and grouping change only what renders.
 Blocks stay individual records, so focus, click-to-toggle, copy and
 `Dump()` keep per-block identity and full content.
@@ -491,7 +491,7 @@ expanded there is no run to coalesce.
 ## 12. Tool output framing
 
 These rules govern the recorded-result tool formatters
-(`internal/ui/render`): `ledger_read`, `read_output`,
+(`internal/tui/view/render`): `ledger_read`, `read_output`,
 `inspect_repository`, the `memory_*` family, and every formatter that
 prints a tool result into the transcript.
 

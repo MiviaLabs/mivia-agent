@@ -3,7 +3,7 @@
 This file is the colour and contrast reference for the mivia terminal UI themes. It
 records the contrast method, the colour-vision method, the degradation ladder, the
 status-palette search, and the measured results behind the shipped themes. The
-implementation lives in `internal/ui/theme`; `docs/development/ui-theme-system.md` is
+implementation lives in `internal/tui/view/theme`; `docs/development/ui-theme-system.md` is
 the developer guide.
 
 ---
@@ -15,7 +15,7 @@ Three rules bound every theme decision in this file:
 - The set that must stay mutually separable is `{success, warning, danger, info}`.
 - **`accent` is chrome and never a status.** It is the prompt marker, the focus ring
   and the selected row. It must pass contrast, but it is exempt from the separation
-  check that binds the status set (`internal/ui/theme/role.go`, `StatusRoles`).
+  check that binds the status set (`internal/tui/view/theme/role.go`, `StatusRoles`).
 - **Every state carries a word as well as a colour.** `ok`, `failed`, `pending` and
   `running` are text in the block header in every frame, so colour never carries a
   state alone.
@@ -24,7 +24,7 @@ The first-party accents are achromatic (section 8.3), so they cannot collide wit
 status hue under any dichromacy. The accent rule still binds third-party-derived
 themes, whose accents carry hue.
 
-The contrast gate is `ValidateContrast` (`internal/ui/theme/contrast.go`). It checks
+The contrast gate is `ValidateContrast` (`internal/tui/view/theme/contrast.go`). It checks
 every pair in `AllContrastChecks()` against the WCAG 2.1 ratio the pair must meet:
 4.5:1 for body text, 3:1 for large text and UI components.
 `TestFirstPartyContrastPasses` hard-fails the build when an embedded first-party
@@ -36,7 +36,7 @@ theme regresses.
 
 The degradation ladder is a library concern, not a hand-rolled one. The tiers come
 from the colour-profile package (section 2.1), and `Theme.Resolve(role, tier)`
-(`internal/ui/theme/degrade.go`) returns a tier-appropriate style. Truecolour and
+(`internal/tui/view/theme/degrade.go`) returns a tier-appropriate style. Truecolour and
 256-colour tiers use the theme's hex values; the 16-colour tier uses the theme's own
 `ansi16` map; the ASCII and no-TTY tiers use no colour, but the `Emphasis` bold and
 dim still apply. `docs/development/ui-theme-system.md` carries the full tier table.
@@ -151,7 +151,7 @@ normal vision and all three dichromacies.
 
 **Accessible palette selection is a constrained optimisation, and picking by eye does
 not work even when the objective is known.** `SearchStatusPalette`
-(`internal/ui/theme/search.go`) ships the search, so a new first-party theme is
+(`internal/tui/view/theme/search.go`) ships the search, so a new first-party theme is
 generated against the constraint rather than checked after the fact.
 
 Unconstrained, the search scores higher still - dE 42.9 for dark - but picks a cyan
@@ -178,7 +178,7 @@ set. `mivia-dark` trades part of its searched separation for vividness (section
 
 ## 4. Third-party-derived themes
 
-The embedded theme set (`internal/ui/theme/themes/`) ships two themes derived from
+The embedded theme set (`internal/tui/view/theme/themes/`) ships two themes derived from
 public palettes beside the three Mivia themes: `dracula-classic` and `nord-aurora`.
 Both are marked `first_party`, so the contrast and colour-vision gates test them
 exactly like the Mivia themes.
@@ -192,7 +192,7 @@ no upstream palette defines them. Present these themes with that qualification.
 ## 5. Implementation rules
 
 1. **Generate a status palette with the search, not by hand.** Section 3.2;
-   `SearchStatusPalette` in `internal/ui/theme/search.go`.
+   `SearchStatusPalette` in `internal/tui/view/theme/search.go`.
 2. **`accent` is chrome and never a status.** Section 3. This rule is what lets an
    accent share a hue family with `warning` without weakening the separation check.
 3. **Collapse state is decided at print time, not at toggle time.** Inline rendering
@@ -202,7 +202,7 @@ no upstream palette defines them. Present these themes with that qualification.
 4. **Dialog approvals default to deny; inline approvals default to once.** The
    promotion to a dialog is itself the signal that the call was not judged safe.
    (`ApprovalDefaultInline`, `ApprovalDefaultDialog` in
-   `internal/uikit/config/defaults.go`.)
+   `internal/tui/kit/config/defaults.go`.)
 5. **Saturated primaries survive CVD simulation better than muted pastels.** Section
    3.1. Let the search arbitrate any new status palette.
 
@@ -224,7 +224,7 @@ or hex (`"#C4C4C4"`), and elements also carry `bold`, `italic`, `underline`, mar
 and indent. Word wrap is a render option, `glamour.WithWordWrap(40)`, default 80.
 
 **The integration rule:** generate the glamour stylesheet from the mivia theme at
-render time (`styleConfigFor` in `internal/ui/render/markdown.go`). Do not ship a
+render time (`styleConfigFor` in `internal/tui/view/render/markdown.go`). Do not ship a
 static style asset. If the stylesheet were static, markdown would stop matching the
 UI the moment the user switched theme, and the theme would no longer be the single
 source of style. The mapping is mechanical - `h1`..`h3` to `accent`,

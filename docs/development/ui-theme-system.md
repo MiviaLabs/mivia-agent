@@ -1,7 +1,7 @@
 # New terminal UI theme system
 
-`internal/ui/theme` is the single source of style for the new terminal UI
-(`internal/uikit`, `internal/ui`). A view layer never
+`internal/tui/view/theme` is the single source of style for the new terminal UI
+(`internal/tui/kit`, `internal/tui/view`). A view layer never
 holds a literal colour. It holds a `theme.Role` and looks it up through a
 `theme.Theme`.
 
@@ -11,7 +11,7 @@ locked first-party hex values) and `docs/design/research-panes.md` sections
 
 ## Role reference
 
-32 roles, in four groups. `AllRoles()` in `internal/ui/theme/role.go` is the
+32 roles, in four groups. `AllRoles()` in `internal/tui/view/theme/role.go` is the
 canonical list; this table is a summary, not a second source of truth.
 
 | Group | Roles |
@@ -87,11 +87,11 @@ preserves text decoration.
 
 Adding a theme is a data change, never a code change.
 
-1. Write a JSON file matching `internal/ui/theme/themes/mivia-dark.json`'s
+1. Write a JSON file matching `internal/tui/view/theme/themes/mivia-dark.json`'s
    shape: `name`, `label`, `dark`, `first_party`, `cvd_budget`, a `colors`
    object with all 32 roles, and an `ansi16` object mapping every role to
    an explicit ANSI SGR index (0-15).
-2. First-party themes: drop the file in `internal/ui/theme/themes/` (picked
+2. First-party themes: drop the file in `internal/tui/view/theme/themes/` (picked
    up by `go:embed`, see `Embedded()` in `embed.go`). User themes: drop the
    file in `~/.mivia/themes/` (`config.UserThemesDir`, loaded by
    `LoadUserDir`). User themes are added after the embedded themes.
@@ -101,7 +101,7 @@ Adding a theme is a data change, never a code change.
    (`research-panes.md` section 3.2): search maximises worst-case
    colour-vision separation within conventional hue windows and a minimum
    contrast floor, instead of picking by eye and hoping.
-4. Run `go test ./internal/ui/theme/...`. `TestEmbeddedThemesLoad` checks
+4. Run `go test ./internal/tui/view/theme/...`. `TestEmbeddedThemesLoad` checks
    every role and every `ansi16` index is present; the contrast and CVD
    tests gate first-party themes automatically once the theme is
    `first_party: true`.
@@ -111,7 +111,7 @@ Adding a theme is a data change, never a code change.
 The in-app theme picker previews every loaded theme: press `ctrl+t`
 on the conversation screen, or run `/theme`. It renders role swatches,
 a diff pair, and the status set live. The degradation tiers are gated
-offline by `go test ./internal/ui/theme/...`; run the app under
+offline by `go test ./internal/tui/view/theme/...`; run the app under
 `NO_COLOR=1` or `TERM=dumb` to see the no-colour tier by hand. The saved
 `[tui].theme` value is selected at startup, and a picker selection is
 persisted through the settings save path.
