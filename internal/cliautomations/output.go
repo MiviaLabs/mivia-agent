@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // stdoutWriter/stderrWriter are indirections so tests can capture

@@ -3,7 +3,7 @@
 //
 // It is a leaf package deliberately: it imports only internal/config and
 // internal/hooks, never internal/cli, internal/clichat, internal/agent,
-// internal/coordinator, or internal/hub. That is what lets internal/uiadapter
+// internal/coordinator, or internal/hub. That is what lets internal/tui/adapter
 // (which may not import any of those) reach the same session state and
 // listing text the old CLI surface uses, without a seam indirection.
 package hooksession

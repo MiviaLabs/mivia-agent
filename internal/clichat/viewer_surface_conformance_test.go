@@ -15,7 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/hub"
-	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
 )
 
 // This file is a CONFORMANCE suite over the viewer surfaces, not another
@@ -98,7 +98,7 @@ func conformanceEvent(k agent.EventKind) agent.Event {
 
 // producesOnTUI reports whether the TUI translation yields any UI event.
 func producesOnTUI(ev agent.Event) bool {
-	return len(uiadapter.TranslateEventWithOptions(ev, uiadapter.TranslateOptions{})) > 0
+	return len(adapter.TranslateEventWithOptions(ev, adapter.TranslateOptions{})) > 0
 }
 
 // producesOnJSON reports whether --json line mode writes any NDJSON line.

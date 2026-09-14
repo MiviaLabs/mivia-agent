@@ -7,7 +7,7 @@ import (
 )
 
 // tuiLauncher runs the interactive TUI program. Wired by cmd/mivia to
-// newtui.RunTUI. Nil means unwired.
+// tui.RunTUI. Nil means unwired.
 var tuiLauncher func(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *AgentSessionState, resumeSessionName string) error
 
 // SetTUILauncher wires the TUI backend. Called once during process startup,

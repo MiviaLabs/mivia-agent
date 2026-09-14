@@ -199,7 +199,7 @@ func toolEndEventFor(outcome toolCallOutcome) Event {
 // served call emits the "(duplicate)" suffix (failed or completed),
 // failed takes precedence, the run_command body scan applies to the
 // ORIGINAL body the dedup cache served, and completed is the healthy
-// word the uiadapter derives status ok from.
+// word the adapter derives status ok from.
 func sdkToolEndDetail(o toolCallOutcome) string {
 	var call provider.ToolCall
 	call.ID = o.id

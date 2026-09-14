@@ -8,7 +8,7 @@ import (
 )
 
 // replHelpContent is the --plain REPL's help: catalog-driven Commands plus
-// hand-written key sections. newtui help lives in internal/uikit/keymap.
+// hand-written key sections. tui help lives in internal/tui/kit/keymap.
 func replHelpContent() []helpSection {
 	return append(replHelpCommands(), replHelpKeySections()...)
 }

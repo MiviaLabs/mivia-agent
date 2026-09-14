@@ -16,7 +16,7 @@ type classicAgentUI struct {
 	// showIterationNotices mirrors config chat.show_iteration_notices
 	// (default off): per-step "iteration N" notices are progress chrome,
 	// not conversation. The new cockpit UI gates the same event kind
-	// through uiadapter.TranslateOptions; this field is the classic
+	// through adapter.TranslateOptions; this field is the classic
 	// surface's copy of the same knob.
 	showIterationNotices bool
 

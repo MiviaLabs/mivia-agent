@@ -293,7 +293,7 @@ func TestSessionReleaseContextLeaseIsANoOpWhenNeverArmed(t *testing.T) {
 // session that never bound a context store (no heartbeat ever armed)
 // tolerates StopContextLeaseHeartbeat as a no-op rather than a nil-pointer
 // panic. This is the pool-adoption discard path in
-// internal/uiadapter/session_pool_worktree.go, which calls this on any
+// internal/tui/adapter/session_pool_worktree.go, which calls this on any
 // discarded twin session regardless of whether it ever armed a heartbeat.
 func TestSessionStopContextLeaseHeartbeatIsANoOpWhenNeverArmed(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})

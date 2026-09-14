@@ -20,7 +20,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // stubCompleter is resume_test.go's own minimal provider.Completer: every
@@ -230,7 +230,7 @@ func (i *instrumentedStore) SaveSession(ctx context.Context, principal contextst
 // spawnRunSession's own Save call happens strictly after
 // CreateFreshInDir returns (and after SetApprovalOverride), never
 // inside the bind closure itself - the same ordering
-// uiadapter.SetApprovalOverride's own doc comment already requires for
+// adapter.SetApprovalOverride's own doc comment already requires for
 // the approval override.
 func TestSpawnRunSessionSaveOrderingHappensAfterCreateFreshInDir(t *testing.T) {
 	root := t.TempDir()

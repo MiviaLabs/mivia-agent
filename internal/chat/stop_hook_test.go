@@ -23,7 +23,7 @@ import (
 // identical to a correctly wired one under any assertion that only checks
 // "did it run at all".
 //
-// This mirrors internal/uiadapter/runner_test.go's
+// This mirrors internal/tui/adapter/runner_test.go's
 // TestCommandRunner_HooksListsArmedHooks: write <ws>/.mivia/mivia.toml, then
 // hooksession.Load(ws) - the only cross-package way to install a real
 // *hooksession.Session, since its fields are unexported.
@@ -211,7 +211,7 @@ func TestSendUserFiresNoStopHookWhenTheTurnNeverBegan(t *testing.T) {
 // hook's output reaches the same OnAgentEvent channel Pre/PostToolUse hook
 // runs use (internal/agent/hook_events.go's emitHookRuns), with the same
 // EventHook shape a renderer already knows how to draw
-// (internal/uiadapter/event_kind.go's translateHook), rather than a bespoke
+// (internal/tui/adapter/event_kind.go's translateHook), rather than a bespoke
 // notice string a renderer would need a second code path to show.
 func TestFireRootTurnEndHookSurfacesOutputAsAnEventHook(t *testing.T) {
 	if runtime.GOOS == "windows" {

@@ -120,9 +120,9 @@ func TestSetSubagentTaskRouteSink_InstalledSinkReceivesEveryTask(t *testing.T) {
 // this seam: a REAL dispatch_tasks Execute, through the real coordinator
 // and pool, must publish one route per dispatched task keyed by
 // "<dispatch tool call id>:<raw model task id>". That key is the contract
-// with the UI - internal/ui/screen/conversation's dispatchTaskIDsAndNames
+// with the UI - internal/tui/view/screen/conversation's dispatchTaskIDsAndNames
 // builds a live row id exactly that way, and
-// internal/uiadapter/subagent_reconstruct.go rebuilds a resumed session's
+// internal/tui/adapter/subagent_reconstruct.go rebuilds a resumed session's
 // row id the same way - so a drift in either direction breaks the cancel
 // keys without breaking anything else.
 func TestDispatchTasks_PublishesRouteForEveryTask(t *testing.T) {

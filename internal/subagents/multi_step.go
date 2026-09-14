@@ -424,7 +424,7 @@ func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount, to
 
 // heartbeatDetail formats one heartbeat's Detail string. The sidebar panel
 // parses this (heartbeatStep/heartbeatToolCalls in
-// internal/uiadapter/event_kind.go) to drive its Step and Tool calls
+// internal/tui/adapter/event_kind.go) to drive its Step and Tool calls
 // counters, so the field order and key names are a contract with that
 // parser - elapsed is rounded to the second to match the pre-existing
 // "elapsed=Xs" shape.

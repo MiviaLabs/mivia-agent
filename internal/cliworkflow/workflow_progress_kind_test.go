@@ -49,7 +49,7 @@ func declaredProgressKinds(t *testing.T) []controller.ProgressKind {
 }
 
 // TestEveryProgressKindMapsToARenderedEventKind is the mirror of
-// TestEveryWorkflowEventKindIsClassified in internal/uiadapter.
+// TestEveryWorkflowEventKindIsClassified in internal/tui/adapter.
 //
 // That test gates the far end of the bridge: every events.Kind the workflow
 // publishes must have a notice-policy decision. It cannot see this end, where

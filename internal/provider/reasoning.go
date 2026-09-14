@@ -91,7 +91,7 @@ func anthropicAdaptiveFields(level reasoning.Level) map[string]any {
 	// display: "summarized" is required to get readable thinking text back at
 	// all - Anthropic's default ("omitted") streams thinking blocks with an
 	// empty text field. Without this, mivia's reasoning panel
-	// (internal/ui/component/transcript) has nothing to show regardless of how
+	// (internal/tui/view/component/transcript) has nothing to show regardless of how
 	// ReasoningContent is populated downstream.
 	fields := map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}}
 	// reasoning.Auto is the only active level with no entry in

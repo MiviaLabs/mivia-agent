@@ -3,7 +3,7 @@ package cliautomations
 import (
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // runShowCommand implements `mivia automations show <id> [--workspace

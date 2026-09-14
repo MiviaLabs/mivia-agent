@@ -1,6 +1,6 @@
 // Package worktreeroute resolves a repository's registered worktree launch
 // routes and binds chat sessions to them. It exists as a shared
-// leaf so internal/uiadapter can reach worktree-route state without
+// leaf so internal/tui/adapter can reach worktree-route state without
 // importing internal/cliworktree or internal/clichat - the UI isolation
 // policy (.mivia/policy/import-layers.json) forbids both edges.
 // internal/cliworktree imports this package one-way for the shared route

@@ -143,7 +143,7 @@ func (s *Session) SwapOnAgentEventToken(handler func(agent.Event)) (func(agent.E
 //
 // A bare SwapOnAgentEvent(previous) is correct only while the restoring
 // party still owns the slot, and two shipped paths break that ownership:
-// uiadapter's per-turn goroutine registers its restore defer BEFORE the
+// adapter's per-turn goroutine registers its restore defer BEFORE the
 // defer that unlocks the turn gate (defers run LIFO, so the gate opens
 // first and the next turn installs its own sink), and a TurnHandle may be
 // cancelled after its turn already ended. In both cases the finished turn
@@ -153,7 +153,7 @@ func (s *Session) SwapOnAgentEventToken(handler func(agent.Event)) (func(agent.E
 //
 // Ownership is a monotonic token, NOT function identity: Go forbids == on
 // funcs, and comparing code pointers cannot work here because every turn's
-// sink is created from the SAME closure literal in uiadapter's
+// sink is created from the SAME closure literal in adapter's
 // newTurnHandler, so all of them share one code pointer.
 func (s *Session) RestoreOnAgentEvent(token uint64, previous func(agent.Event)) bool {
 	s.mu.Lock()

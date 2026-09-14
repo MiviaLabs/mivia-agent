@@ -399,10 +399,10 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 // normalize case the way a user-facing search would.
 //
 // This is the single cross-provider model lookup for BOTH the classic REPL
-// (internal/clichat) and the new TUI (internal/uiadapter): those two
+// (internal/clichat) and the new TUI (internal/tui/adapter): those two
 // packages do not import each other, so the shared logic lives here, one
 // level below both, rather than being duplicated (or worse, silently
-// diverging - see the pre-existing bug this fixes: internal/uiadapter's
+// diverging - see the pre-existing bug this fixes: internal/tui/adapter's
 // resolveProviderAndModel used to return the FIRST provider whose catalog
 // happened to contain the name, in catalog order, with no check for a second
 // match - a silent, order-dependent provider switch on any name collision).

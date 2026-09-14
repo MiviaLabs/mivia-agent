@@ -21,7 +21,7 @@ import (
 //
 // This field is NOT provider-specific in the rest of the codebase:
 // internal/agent's emitReasoning (loop_step.go) and every downstream UI
-// consumer (internal/uiadapter, internal/ui/component/transcript) treat
+// consumer (internal/tui/adapter, internal/tui/view/component/transcript) treat
 // ReasoningContent as plain display text to render verbatim, with zero
 // parsing - the same assumption DeepSeek/z.ai's reasoning_content already
 // relies on. An earlier version of this code instead stored the raw

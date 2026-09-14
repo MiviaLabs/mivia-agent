@@ -12,7 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // sessionIDSpawner returns one fixed conversation from every spawn, so

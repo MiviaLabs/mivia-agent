@@ -24,7 +24,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -124,7 +124,7 @@ func unattendedGateFor(automationID string, policy UnattendedPolicy) (func(ctx c
 // CreateFreshInDir invokes it BEFORE wireEntryLocked's
 // inheritApprovalLocked call, so anything it does there runs before the
 // session's approval posture is even installed (see
-// uiadapter.SetApprovalOverride's own doc comment on this ordering).
+// adapter.SetApprovalOverride's own doc comment on this ordering).
 // SetApprovalOverride itself must also run strictly after
 // CreateFreshInDir returns for the same reason.
 //

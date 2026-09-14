@@ -10,7 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
 )

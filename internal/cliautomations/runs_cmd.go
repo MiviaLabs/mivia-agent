@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // defaultRunsLimit is `automations runs`'s own --limit default, applied

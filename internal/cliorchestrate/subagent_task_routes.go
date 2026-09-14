@@ -8,9 +8,9 @@ import (
 
 // subagentTaskRouteSink holds the process-wide sink SetSubagentTaskRouteSink
 // installs: the UI's route table, handed here by
-// uiadapter.SubagentTaskRouteRegistrar through cli.SetSubagentTaskRouteSink,
-// so nothing in this package imports internal/uiadapter and
-// internal/uiadapter never imports internal/cli* (INV-TUI-29,
+// adapter.SubagentTaskRouteRegistrar through cli.SetSubagentTaskRouteSink,
+// so nothing in this package imports internal/tui/adapter and
+// internal/tui/adapter never imports internal/cli* (INV-TUI-29,
 // docs/design/ui-isolation.md).
 //
 // An atomic pointer, not a plain var: dispatches publish routes from

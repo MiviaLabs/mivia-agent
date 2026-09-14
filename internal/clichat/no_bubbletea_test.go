@@ -10,7 +10,7 @@ import (
 
 // TestClichatDoesNotImportBubbletea pins that production clichat (the
 // --plain REPL and shared helpers) must not import bubbletea or bubbles.
-// Interactive TTY chat launches via newtui. Lipgloss is allowed: it styles
+// Interactive TTY chat launches via tui. Lipgloss is allowed: it styles
 // line-mode chrome, not a compositor.
 func TestClichatDoesNotImportBubbletea(t *testing.T) {
 	entries, err := os.ReadDir(".")

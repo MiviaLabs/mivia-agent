@@ -37,7 +37,7 @@ var globalDispatchFallback atomic.Uint64
 //     RunID/TaskID, and toolcallctx never propagates into nested execution.
 //  2. sdkagentloop.ToolCallFromContext(ctx): a top-level, model-made call -
 //     the UI derives the same namespaced id from the same ToolCallID (see
-//     dispatchTaskIDs, internal/ui/screen/conversation/events.go).
+//     dispatchTaskIDs, internal/tui/view/screen/conversation/events.go).
 //  3. globalDispatchFallback: neither value is present (a caller outside
 //     the SDK dispatch path, or a unit test constructing the tool
 //     directly).

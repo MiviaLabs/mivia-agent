@@ -19,9 +19,9 @@ import (
 // exercisable here and is out of scope for this test: the TUI - the one
 // surface that registers its buses through SessionBusRegistrar at all -
 // never joins the hub. internal/clichat/chat_hub.go's own package comment
-// states this outright ("THE TUI DOES NOT [join hub]... uiadapter/build.go
+// states this outright ("THE TUI DOES NOT [join hub]... adapter/build.go
 // constructs its session with EventBus: nil"), and
-// internal/uiadapter/build.go:204 sets EventBus: nil at construction for
+// internal/tui/adapter/build.go:204 sets EventBus: nil at construction for
 // exactly that reason. Only the classic REPL and line mode call JoinHub
 // (internal/clichat/chat_hub.go's startClassicReplHub/startLineModeHub),
 // and neither of those surfaces is what this plan routes subagent

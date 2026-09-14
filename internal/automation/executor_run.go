@@ -15,7 +15,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // errUserCancel is the cancel cause CancelRun sets on a run context.

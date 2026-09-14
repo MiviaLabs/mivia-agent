@@ -17,8 +17,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -26,7 +26,7 @@ import (
 // used by `mivia automations serve` and `mivia automations run <id>`.
 // Where the TUI wires the executor to its own live multi-session cache,
 // HeadlessSpawner builds a fresh *chat.Session directly (via
-// composition.BuildSession) and wraps it with uiadapter.NewConversation -
+// composition.BuildSession) and wraps it with adapter.NewConversation -
 // a small, cache-free constructor that implements the full
 // ports.Conversation surface with zero reference to any TUI cache type.
 // This package never imports or references the TUI's pooled cache type,
@@ -119,7 +119,7 @@ func storePathFor(root string, cfg config.SubagentConfig) string {
 // CreateFreshInDir satisfies automation.SessionSpawner: builds a fresh
 // session rooted at dir (empty means workspaceRoot) via
 // composition.BuildSession, invokes bind if non-nil, wraps the result
-// with uiadapter.NewConversation, records the opened store as `current`,
+// with adapter.NewConversation, records the opened store as `current`,
 // and returns the conversation.
 //
 // Defensive close-before-overwrite: if `current` is already non-nil on
@@ -210,7 +210,7 @@ func (h *HeadlessSpawner) createInDir(bind func(*chat.Session) (string, error), 
 		}
 	}
 
-	return uiadapter.NewConversation(sess), nil
+	return adapter.NewConversation(sess), nil
 }
 
 // GetOrResumeInDir satisfies automation.SessionSpawner: it reuses

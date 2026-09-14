@@ -26,8 +26,8 @@ func ActiveCoordinator() (OrchestrationCoordinator, bool) {
 
 // SetSubagentTaskRouteSink delegates to
 // cliorchestrate.SetSubagentTaskRouteSink. Its parameter is spelled as the
-// unnamed func type on purpose: internal/newtui assigns this function
-// itself to uiadapter.SubagentTaskRouteRegistrar, which requires identical
+// unnamed func type on purpose: internal/tui/run assigns this function
+// itself to adapter.SubagentTaskRouteRegistrar, which requires identical
 // function types.
 func SetSubagentTaskRouteSink(fn func(coord OrchestrationCoordinator, callID, runID, taskID string)) {
 	cliorchestrate.SetSubagentTaskRouteSink(fn)

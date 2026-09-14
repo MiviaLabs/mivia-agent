@@ -10,7 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // TestResumeCommandRequiresExactlyOneRunID proves `automations resume`

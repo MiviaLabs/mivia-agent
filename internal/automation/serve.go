@@ -17,7 +17,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // serveTickInterval is how often Serve wakes to reconcile deadlines and

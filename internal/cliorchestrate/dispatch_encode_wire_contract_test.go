@@ -1,17 +1,17 @@
 package cliorchestrate
 
 // AR-1: the per-task result envelope is the wire contract between this
-// package (producers dispatchTaskResult / modelTaskResult) and uiadapter
+// package (producers dispatchTaskResult / modelTaskResult) and adapter
 // (consumer, encodedTaskResult). INV-TUI-29 forbids the import, so golden
 // fixtures connect the two type sets:
 //
 //   - testdata/task_result_envelope_contract.json pins the CURRENT shape:
 //     the final report plus references (tool_calls_ref), with no inline
 //     tool_calls array. Produced here through the real encodeResults path;
-//     uiadapter's consumer test decodes the same bytes.
+//     adapter's consumer test decodes the same bytes.
 //   - testdata/tool_calls_contract.json is the FROZEN legacy inline
 //     tool_calls shape that old persisted sessions still carry. No producer
-//     emits it anymore; only uiadapter's legacy-decode test reads it.
+//     emits it anymore; only adapter's legacy-decode test reads it.
 //
 // If a tag name, tag option, or field type drifts on either side, one of
 // the two package's tests fails.

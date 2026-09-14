@@ -289,7 +289,7 @@ var _ runtime.Handler = (*agentTaskHandler)(nil)
 // subagents.MultiStepHandler from runtime.TaskIdentityFrom(ctx) - the
 // model-authored dispatch_tasks task id (or a workflow's wft-... attempt id).
 // That id is the CORRELATION KEY every downstream consumer looks work up by:
-// uiadapter.SubagentThreads files the live thread under it, the TUI sidebar
+// adapter.SubagentThreads files the live thread under it, the TUI sidebar
 // row is keyed by it, controller.NoteStepHeartbeat counts liveness against
 // it, and the event bus/NDJSON writer attribute to it. Overwriting it with a
 // freshly minted opaque runtime.NewSessionID() filed every live thread under

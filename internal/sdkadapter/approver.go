@@ -15,12 +15,12 @@ import (
 // when the ctx did not carry one (an SDK call outside the loop, or a
 // hand-built test fixture). The pending event must carry the id so the UI's
 // approval resolver can match a decision back to the gate blocked on it, and
-// uiadapter.approvalKey derives the waiting map's key the same way - the two
+// adapter.approvalKey derives the waiting map's key the same way - the two
 // have to agree or the prompt can never be answered.
 //
 // No name fallback here, deliberately: the name is not a per-call identity,
-// and uiadapter cannot key its waiting map on it without cross-wiring two
-// overlapping calls to the same tool. See uiadapter.approvalKey.
+// and adapter cannot key its waiting map on it without cross-wiring two
+// overlapping calls to the same tool. See adapter.approvalKey.
 func callIDFromContext(ctx context.Context) string {
 	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		return tc.ID

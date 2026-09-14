@@ -5,7 +5,7 @@
 // step's Ref into a skill name and its trailing argument text,
 // resolving that name against a live *skills.Registry using the same
 // matching semantics as the interactive TUI's own skill-slash
-// resolution (internal/uiadapter/runner.go's handleSkill), rendering
+// resolution (internal/tui/adapter/runner.go's handleSkill), rendering
 // the skill's full instructions, and sending them as one headless turn
 // whose PersistedText is the short slash command rather than the
 // rendered instructions. Before this file, StepSkill sent the literal
@@ -23,8 +23,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // parseSkillRef splits a StepSkill step's Ref into the skill name and
@@ -48,7 +48,7 @@ func parseSkillRef(ref string) (name, args string, err error) {
 }
 
 // resolveSkillDefinition looks up name in reg using the same matching
-// semantics as internal/uiadapter/runner.go's handleSkill: a match via
+// semantics as internal/tui/adapter/runner.go's handleSkill: a match via
 // skills.SlashToken(def.Name) OR a case-insensitive equality against
 // def.Name. A resolved definition that is not UserInvocable is refused
 // for the same reason handleSkill refuses one - a skill not meant for
@@ -94,7 +94,7 @@ func validateStepSkill(automationID string, stepIndex int, ref string, registry 
 // skillRegistryFor resolves the *skills.Registry a StepSkill dispatch
 // should resolve against: boundSess's own current binding first (the
 // live registry the spawned session started with - the same source
-// internal/uiadapter/runner.go's skillRegistry() reads via
+// internal/tui/adapter/runner.go's skillRegistry() reads via
 // sess.CurrentBinding().SkillRegistry), falling back to the Service's
 // configured registry source (Config.SkillRegistry) when the binding
 // carries none. Both may legitimately be nil - resolveSkillDefinition
@@ -122,7 +122,7 @@ func (s *Service) configSkillRegistry() *skills.Registry {
 
 // skillPersistedText is what a StepSkill dispatch persists into the
 // session's own history in place of the rendered instructions -
-// mirroring internal/uiadapter/runner.go's skillInvocationText: the
+// mirroring internal/tui/adapter/runner.go's skillInvocationText: the
 // short slash command an automation author actually wrote, not the
 // (typically much longer) expanded SKILL.md body every later turn would
 // otherwise replay.

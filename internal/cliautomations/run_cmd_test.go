@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // stubProviderServer starts a minimal OpenAI-wire SSE stub that always

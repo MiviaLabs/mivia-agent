@@ -24,7 +24,7 @@ func redactToolInput(raw string) string { return redactToolInputForTool("", raw)
 // mirroring redactToolOutputForTool below. dispatch_tasks gets the wider cap
 // for the identical reason that function documents: its input is the
 // model-authored task list, and the operator-facing UI's live per-task
-// fan-out (internal/ui/screen/conversation/events.go's dispatchTaskIDs)
+// fan-out (internal/tui/view/screen/conversation/events.go's dispatchTaskIDs)
 // re-parses that same preview as JSON - a cut mid-object silently breaks the
 // parse and collapses a multi-task batch back into one aggregate row.
 func redactToolInputForTool(name, raw string) string {
@@ -51,7 +51,7 @@ func redactToolInputForTool(name, raw string) string {
 // key names its agent - and drops everything else, above all the prompts.
 //
 // It exists because the preview has a SECOND consumer beyond display:
-// internal/ui/screen/conversation/events.go re-parses it to fan a batch out
+// internal/tui/view/screen/conversation/events.go re-parses it to fan a batch out
 // into one row per task. A real multi-task dispatch runs to tens of
 // kilobytes of prompts, so the previous byte cap (8 KiB, itself already
 // widened once for this reason) cut mid-object, the parse returned nothing,
@@ -109,7 +109,7 @@ func dispatchTasksPreview(raw string) (string, bool) {
 
 // foldedTaskArg reads key from a model-authored JSON map the way encoding/json
 // resolves a struct tag: exact match first, else a case-insensitive one.
-// Matches the deterministic behavior of foldedArg in internal/ui/screen/conversation/events.go.
+// Matches the deterministic behavior of foldedArg in internal/tui/view/screen/conversation/events.go.
 func foldedTaskArg(m map[string]any, key string) any {
 	if v, ok := m[key]; ok {
 		return v
@@ -227,7 +227,7 @@ func redactToolOutputForTool(name, output string) string {
 	case "write_file", "search_replace", "multi_edit",
 		// Structured JSON results: a 512-byte cut lands mid-string, which
 		// breaks the operator UI's JSON parse and forces a raw-envelope
-		// dump instead of a formatted preview (internal/ui/render).
+		// dump instead of a formatted preview (internal/tui/view/render).
 		"ledger_read", "read_output", "dispatch_tasks":
 		maxBytes = editToolPreviewMaxBytes
 	}
@@ -359,8 +359,8 @@ func reduceDispatchRows(rows []any) []any {
 // document.
 //
 // The output preview has consumers beyond display, and they need different
-// parts of it: internal/ui/screen/conversation re-parses it for each task's
-// own status (parseDispatchTaskStatuses), and internal/ui/render formats the
+// parts of it: internal/tui/view/screen/conversation re-parses it for each task's
+// own status (parseDispatchTaskStatuses), and internal/tui/view/render formats the
 // envelope. A byte cut serves neither - it lands mid-string, the parse
 // fails, and every task in the group is then labelled with the BATCH's
 // single verdict instead of its own, so a half-failed batch reads as

@@ -5,7 +5,7 @@ import "testing"
 // A structured-JSON tool result must survive the operator preview cut
 // whole: a truncation mid-string breaks the operator UI's JSON parse and
 // forces a raw-envelope dump instead of a formatted preview
-// (internal/ui/render.FormatLedgerOutput / FormatDispatchTasksOutput).
+// (internal/tui/view/render.FormatLedgerOutput / FormatDispatchTasksOutput).
 func TestRedactToolOutputForTool_StructuredJSONToolsGetEditTier(t *testing.T) {
 	body := `{"status":"ok","ref":"ref:output:deadbeef","content":"` + string(make([]byte, 1000)) + `"}`
 	for _, name := range []string{"ledger_read", "read_output", "dispatch_tasks"} {

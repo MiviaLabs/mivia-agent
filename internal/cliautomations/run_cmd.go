@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // runRunCommand implements `mivia automations run <id> [--wait]

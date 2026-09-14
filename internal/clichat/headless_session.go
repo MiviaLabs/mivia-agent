@@ -247,7 +247,7 @@ func buildHeadlessCore(in HeadlessSessionInput) (*headlessCore, error) {
 //
 // MCP is merged BEFORE the caller builds the session, so the dispatcher and
 // the advertised union both see the discovered tools - the same order
-// internal/uiadapter uses. A contained server outage does not fail the
+// internal/tui/adapter uses. A contained server outage does not fail the
 // merge (composition.MergeMCPTools continues without that server), so an
 // error here is a real configuration or startup fault and fails the run
 // rather than silently dropping every MCP tool.

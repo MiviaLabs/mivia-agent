@@ -21,7 +21,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // defaultSweepMaxAge is the crash-recovery sweep's staleness threshold
@@ -202,7 +202,7 @@ func resumeWorkDir(root, worktreePath string) (string, error) {
 // the spawner's GetOrResumeInDir: the implementor restores history
 // itself on the miss path, so there is no caller-side Load and no bind
 // closure (nothing durable ever runs before SetApprovalOverride - see
-// uiadapter.SetApprovalOverride's own documented ordering rule). The
+// adapter.SetApprovalOverride's own documented ordering rule). The
 // approval override still installs strictly after the spawn returns.
 func (s *Service) spawnAndLoadResumeSession(spec Spec, run Run, workDir string) (ports.Conversation, *chat.Session, error) {
 	conv, boundSess, err := s.spawn.GetOrResumeInDir(run.SessionName, workDir)

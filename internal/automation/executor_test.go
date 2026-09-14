@@ -25,9 +25,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/uievent"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -780,7 +780,7 @@ func TestRunStepUnknownKindRejected(t *testing.T) {
 // (ApplyPrivacyPolicyFunc, OpenContextStoreFunc) that
 // internal/cli/cliworkflow_wiring.go's init() assigns in the real binary
 // (cmd/mivia imports internal/cli directly, so that init() always runs
-// before internal/newtui's wireAutomationBackend ever constructs a live
+// before internal/tui/run's wireAutomationBackend ever constructs a live
 // automation.Service - see docs/design/automations.md D12/D4). This test
 // package imports internal/automation directly, bypassing that init()
 // chain entirely, so both seams are nil here and must be wired locally

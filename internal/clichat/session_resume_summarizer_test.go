@@ -18,7 +18,7 @@ import (
 // startup binding left every compaction for the rest of the process
 // summarizing through the pre-resume model/completer - runChat now calls
 // cliagents.RefreshSummarizerAfterModelSwitch right after sess.Load succeeds,
-// mirroring what uiadapter/session_pool.go already did for TUI resume.
+// mirroring what adapter/session_pool.go already did for TUI resume.
 func TestSessionResumeRefreshesTheSummarizer(t *testing.T) {
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {

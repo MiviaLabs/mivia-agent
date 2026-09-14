@@ -25,6 +25,6 @@ statusline.TickMsg is self-re-arming (each tick returns the next TickCmd), so an
 This defect class recurs: adding a plain statusline.TickCmd() at any new call site silently doubles the animation rate and the repaint load for the whole UI. The invariant (one surface, one clock, pointer-shared flag across Screen copies and the embedded thread screen) needs to be known before touching conversation-screen tick wiring.
 
 ## References
-- internal/ui/screen/conversation/conversation.go
-- internal/ui/screen/conversation/events.go
-- internal/ui/component/statusline/statusline.go
+- internal/tui/view/screen/conversation/conversation.go
+- internal/tui/view/screen/conversation/events.go
+- internal/tui/view/component/statusline/statusline.go

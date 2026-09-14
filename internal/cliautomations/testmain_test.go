@@ -31,7 +31,7 @@ import (
 //
 //   - WireWorkflowToolOptionsVar is called UNCONDITIONALLY by
 //     cliagents.BuildToolsForRoot, so a nil one panics. Stubbed to a no-op,
-//     the same way internal/uiadapter's own tests do; nothing here
+//     the same way internal/tui/adapter's own tests do; nothing here
 //     exercises real workflow tool wiring.
 //   - NewSessionDispatcherVar and RemainderSpoolFromRegistryVar are
 //     nil-GUARDED by cliagents.AttachRebuiltSurface, which returns
@@ -52,7 +52,7 @@ func wireProcessSeams() {
 	// clichat.NewSessionDispatcher reads both hook seams unconditionally
 	// (dispatcher.go's HooksConfigured/HookGroups fields), so a nil one
 	// panics rather than degrading. Stubbed to "no hooks configured",
-	// mirroring internal/clichat's own TestMain and internal/uiadapter's.
+	// mirroring internal/clichat's own TestMain and internal/tui/adapter's.
 	clichat.HookSessionConfiguredFunc = func() bool { return false }
 	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState { return stubHookSession{} }
 }

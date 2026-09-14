@@ -213,7 +213,7 @@ func TestOutputPreviewKeepsPerTaskStatusesParseable(t *testing.T) {
 		if want, ok := wantStatus[id]; !ok || status != want {
 			t.Fatalf("row %v lost the identity or status the panel reads (want %q for %q)", row, want, id)
 		}
-		// The envelope's other keys survive too - internal/ui/render formats
+		// The envelope's other keys survive too - internal/tui/view/render formats
 		// them - only their long text is shortened.
 		if _, ok := row["output_ref"]; !ok {
 			t.Fatalf("row %v dropped a key; the shrink must keep the shape", row)

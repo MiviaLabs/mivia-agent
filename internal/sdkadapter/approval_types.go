@@ -8,7 +8,7 @@
 // reference these types directly.
 //
 // The values produced by an Approver bridge flow from a real agent's
-// internal/uiadapter port through this package's type, so the wire
+// internal/tui/adapter port through this package's type, so the wire
 // shape is the same for the legacy and SDK paths.
 package sdkadapter
 

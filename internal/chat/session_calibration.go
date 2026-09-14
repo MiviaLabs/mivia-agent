@@ -81,7 +81,7 @@ func (s *Session) SeedCalibration(ctx context.Context, seeder CalibrationSeeder,
 // and re-seeds it from the durable usage ledger for the current (provider, model).
 //
 // This mirrors cliagents.RefreshSummarizerAfterModelSwitch at resumeChatSession
-// and uiadapter/session_pool.go resume. Construction runs enableSessionContext's
+// and adapter/session_pool.go resume. Construction runs enableSessionContext's
 // SeedCalibration with the startup model rather than the resumed model. Resumed
 // sessions usually have different bindings, so the initial seed carries wrong
 // bias or no observations (Samples=0, ratio 1.0). Uncorrected or wrongly corrected

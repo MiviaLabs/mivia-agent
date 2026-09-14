@@ -8,7 +8,7 @@ package clichat
 // (chatHubSink).
 //
 // The classic REPL joins and publishes, so a desktop app observing it sees its
-// turns. THE TUI DOES NOT. It never calls JoinHub, and uiadapter/build.go
+// turns. THE TUI DOES NOT. It never calls JoinHub, and adapter/build.go
 // constructs its session with EventBus: nil, so every publish on that surface
 // returns immediately and nothing is relayed. That is the real gap: not a
 // missing publish, but a missing bus. This comment previously claimed the TUI

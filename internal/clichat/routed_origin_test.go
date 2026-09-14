@@ -13,7 +13,7 @@ import (
 // subagents.MultiStepHandler with the COORDINATOR's canonical task id (the
 // model-authored "id" from the dispatch_tasks call, e.g. "core-architecture"),
 // taken from runtime.TaskIdentityFrom(ctx). That id is the correlation key
-// every consumer looks work up by: uiadapter.SubagentThreads registers a live
+// every consumer looks work up by: adapter.SubagentThreads registers a live
 // thread under it, the TUI sidebar row is keyed by it, and the workflow
 // liveness watchdog (controller.NoteStepHeartbeat) counts against it.
 //

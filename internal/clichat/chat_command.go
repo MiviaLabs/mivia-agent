@@ -241,7 +241,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 // against the session's startup binding - a resumed session may carry a
 // different saved provider/model, and without this refresh compaction for
 // the rest of the process keeps summarizing through the pre-resume
-// model/completer. Mirrors what uiadapter/session_pool.go does after its own
+// model/completer. Mirrors what adapter/session_pool.go does after its own
 // sess.Load.
 func resumeChatSession(sess *chat.Session, res *config.Resolved, session string) error {
 	if err := sess.Load(session); err != nil {

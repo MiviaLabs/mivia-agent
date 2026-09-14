@@ -28,10 +28,10 @@ const maxReceivedIDs = 50
 // (writeFileDurably) rather than an async/best-effort one, because the
 // guarantee this ledger is FOR - "this id definitely reached custody, even
 // across a crash" - requires it. Callers must never invoke this from the
-// bubbletea Update goroutine directly; internal/ui/screen/conversation's
+// bubbletea Update goroutine directly; internal/tui/view/screen/conversation's
 // ackCmd wraps it in a tea.Cmd instead.
 //
-// Serialized on p.mu: internal/ui/screen/conversation's mount.go batches
+// Serialized on p.mu: internal/tui/view/screen/conversation's mount.go batches
 // one ackCmd per buffered remote-input event for the SAME session into one
 // tea.Batch, and bubbletea's runtime executes every Cmd in a batch
 // concurrently (execBatchMsg). Without a lock, two concurrent calls on this

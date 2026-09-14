@@ -109,7 +109,7 @@ func TestBridgeEvents_ToolStartQueuedThenRunning(t *testing.T) {
 
 // TestBridgeEvents_ToolEndCarriesNameIDOutputStatus pins the tool_end
 // wire shape for both outcomes: the ok variant carries the legacy
-// "completed" Detail vocabulary (so uiadapter derives status ok) with
+// "completed" Detail vocabulary (so adapter derives status ok) with
 // the redacted output; the failed variant carries a "failed"-prefixed
 // Detail so the status derives as failed.
 func TestBridgeEvents_ToolEndCarriesNameIDOutputStatus(t *testing.T) {

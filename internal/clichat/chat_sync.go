@@ -78,8 +78,8 @@ func cliSyncOptions(sess *chat.Session, wsRoot string, res *config.Resolved, tok
 		Telemetry:       chatsync.NewSyncTelemetry(slog.Default()),
 		CreateTitle:     "CLI Session",
 		// Remote input (chat-sync "steering") is TUI-only, deliberately.
-		// internal/uiadapter/session_pool.go's poolSyncOptions enables it
-		// there because internal/ui/screen/conversation.Screen has an
+		// internal/tui/adapter/session_pool.go's poolSyncOptions enables it
+		// there because internal/tui/view/screen/conversation.Screen has an
 		// explicit turn-ownership seam - awaitSessionEvent - built for
 		// exactly this: starting a turn from something other than the
 		// composer's Enter key and draining its events without blocking the
@@ -161,7 +161,7 @@ func attachCLISync(sess *chat.Session, wsRoot string, res *config.Resolved) func
 // workspace root, so chat-sync's durable state (and, in the outbox, real
 // conversation transcript content queued for upload) does not scatter into
 // the project tree the user actually works in. Mirrors
-// internal/uiadapter/session_pool.go's chatSyncAnchor - kept as two small
+// internal/tui/adapter/session_pool.go's chatSyncAnchor - kept as two small
 // copies rather than a shared helper so neither host package grows a
 // dependency the other doesn't need for this alone.
 //

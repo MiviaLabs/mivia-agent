@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/uievent"
 )
 
 // sendTurnHeadless sends prompt as one turn on an ALREADY-SPAWNED
@@ -79,7 +79,7 @@ func sendIntentHeadless(parent context.Context, conv ports.Conversation, in inte
 				turnErr = fmt.Errorf("automation: turn failed")
 			}
 		case uievent.KindNotice:
-			// emitTurnEndIfWinner (internal/uiadapter/conversation.go)
+			// emitTurnEndIfWinner (internal/tui/adapter/conversation.go)
 			// sends the turn's error text as a KindNotice immediately
 			// before the terminal KindTurnEnd{Reason:"error"} - captured
 			// here so the TurnEnd branch below can report it verbatim

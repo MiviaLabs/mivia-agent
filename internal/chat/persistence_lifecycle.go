@@ -81,7 +81,7 @@ func (s *Session) DeleteSession(name string) error {
 // kind that exist in production, since SetContextManager is always called -
 // commit durably to the context catalog as each turn happens, with no
 // separate "save on exit" step. Kept as a stable, harmless call for its
-// existing callers (internal/uiadapter/runner.go, internal/clichat/chat_repl.go).
+// existing callers (internal/tui/adapter/runner.go, internal/clichat/chat_repl.go).
 func (s *Session) SaveLast() error {
 	return nil
 }

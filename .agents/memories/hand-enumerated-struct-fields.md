@@ -29,7 +29,7 @@ scaling list keeps its raw magnitude while its siblings shrink, so the
 displayed parts stop summing to the displayed whole. A field left out of a
 preserving copy is zeroed on every pass, so a surface reads `0` forever.
 
-`ContextBreakdown` (`internal/chat`, `internal/uikit/ports`) has five such
+`ContextBreakdown` (`internal/chat`, `internal/tui/kit/ports`) has five such
 enumerations across three packages. An adversarial review of one added
 field mutated each in turn: **eight mutations passed the whole test
 suite**, three of them breaking the sum invariant outright.
@@ -51,7 +51,7 @@ Gate over the **struct**, by reflection, and classify fields by
 
 Then assert every field is accounted for by every enumeration. A new field
 joins the table by existing, not by being remembered. See
-`internal/uikit/ports/breakdown_enumeration_test.go` and
+`internal/tui/kit/ports/breakdown_enumeration_test.go` and
 `internal/chat/breakdown_enumeration_test.go`; class DC-39; INV-TUI-30.
 
 Related: [[sibling-implementations-drift]] — same shape one level up, where

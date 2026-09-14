@@ -11,7 +11,7 @@ import (
 // closes a real coverage gap an adversarial review surfaced after
 // e58149f1 (skill-invocation history bloat fix): SendUserWithEventAndPersistedText
 // had zero test coverage anywhere in this repo, including through the
-// durable-context-manager path its production caller (uiadapter.Conversation.Send)
+// durable-context-manager path its production caller (adapter.Conversation.Send)
 // actually exercises. This pins that persistedText - not the full sent
 // text - is what lands in both the live session history and the durable
 // checkpoint's committed Active context.

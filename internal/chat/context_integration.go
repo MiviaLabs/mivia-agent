@@ -135,7 +135,7 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 // model/completer. Production callers rebuild against the new binding and
 // publish it here after every such change: cliagents.publishModelSwitch
 // (the /model command) and internal/clichat's chat_command.go /
-// internal/uiadapter's session_pool.go (both after sess.Load). nil clears a
+// internal/tui/adapter's session_pool.go (both after sess.Load). nil clears a
 // summarizer that setup could no longer configure for the new binding
 // rather than leaving a stale one in place.
 func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {

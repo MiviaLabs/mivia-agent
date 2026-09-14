@@ -11,7 +11,7 @@ updated: 2026-09-04
 # Every event kind must reach every viewer, or say why not
 
 An event kind is produced once and rendered on four surfaces: the TUI
-(`internal/uiadapter` translation), the subagent dialog
+(`internal/tui/adapter` translation), the subagent dialog
 (`SubagentTranscriptConversation.applyEvent`), the local `--json` NDJSON
 stream (`jsonTurnEventCallback`), and the cross-process relay
 (`renderExternalEvent`). The chat-sync wire is a fifth consumer with its own
@@ -64,7 +64,7 @@ of deciding for one and defaulting the rest to silence.
 
 **What it still cannot catch.** The subagent dialog is not in the table (its
 "did anything render" signal is a history diff rather than a byte count), and
-`internal/ui/stream` is not reachable from `cmd/mivia` at all, so its arms are
+`internal/tui/view/stream` is not reachable from `cmd/mivia` at all, so its arms are
 unexercised by any user path.
 
 **The table shipped one surface short.** The chat-sync wire - the one a REMOTE

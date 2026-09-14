@@ -10,8 +10,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // TestHeadlessDrainToCloseNoWedge is the wedge test D5's own text

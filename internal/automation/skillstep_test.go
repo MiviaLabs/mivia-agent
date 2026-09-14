@@ -49,7 +49,7 @@ func TestParseSkillRef(t *testing.T) {
 }
 
 // TestResolveSkillDefinition covers resolveSkillDefinition's matching
-// semantics (mirroring internal/uiadapter/runner.go's handleSkill): a
+// semantics (mirroring internal/tui/adapter/runner.go's handleSkill): a
 // slash-token or case-insensitive name match that IS UserInvocable
 // resolves; a non-invocable match, an unknown name, and a nil registry
 // are each rejected with a distinct named error.

@@ -28,7 +28,7 @@ var knownBaselinePackages = []string{
 	"internal/cliorchestrate",
 	"internal/cliworkflow",
 	"internal/provider",
-	"internal/uiadapter",
+	"internal/tui/adapter",
 }
 
 // exemptPackages lists packages that do not require TestMain home isolation.

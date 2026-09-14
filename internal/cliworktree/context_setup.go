@@ -41,7 +41,7 @@ var OpenRepositoryContextStoreFunc func(root string) (*storage.SQLite, error)
 
 // WorktreeRoutePrincipal implements worktree route principal.
 //
-// Delegates to internal/worktreeroute: uiadapter must reach route identity
+// Delegates to internal/worktreeroute: adapter must reach route identity
 // without importing cliworktree (UI isolation policy), so the shared leaf
 // owns the derivation. Its hash must stay byte-identical to internal/cli's
 // contextWorkspaceID or previously stored catalog rows strand.

@@ -312,14 +312,14 @@ func LogDiagnosticsCommandsOnce(w io.Writer, tc config.ToolsConfig, quiet bool) 
 
 // CreateManagedWorktreeForPool creates a managed worktree in the given
 // store. Bridge for the TUI pool's worktree-session creation path —
-// uiadapter cannot import internal/cliworktree directly (UI isolation).
+// adapter cannot import internal/cliworktree directly (UI isolation).
 func CreateManagedWorktreeForPool(store *storage.SQLite, root, name string) error {
 	return CreateManagedWorktreeForPoolFromRef(store, root, name, "")
 }
 
 // CreateManagedWorktreeForPoolFromRef creates a managed worktree in the given
 // store from baseRef. An empty ref preserves the existing default behavior.
-// This bridge keeps uiadapter independent from internal/cliworktree.
+// This bridge keeps adapter independent from internal/cliworktree.
 func CreateManagedWorktreeForPoolFromRef(store *storage.SQLite, root, name, baseRef string) error {
 	_, err := cliworktree.CreateManagedWorktreeInStore(store, root, name, baseRef, config.DefaultWorktreeBranchPrefix)
 	return err
@@ -330,7 +330,7 @@ func CreateManagedWorktreeForPoolFromRef(store *storage.SQLite, root, name, base
 // see a worktree removed and recreated out-of-band at the same path with
 // the state still active; the marker is the physical identity the REPL's
 // repository binding already checks (bindManagedWorktreeSessionExpected).
-// Bridge for the TUI bind path - uiadapter cannot import
+// Bridge for the TUI bind path - adapter cannot import
 // internal/cliworktree directly (UI isolation).
 func VerifyWorktreeMarker(root string, want contextstate.WorktreeInstance) error {
 	got, err := cliworktree.ReadWorktreeMarker(root)

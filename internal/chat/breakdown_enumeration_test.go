@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The sibling of internal/uikit/ports/breakdown_enumeration_test.go, for
+// The sibling of internal/tui/kit/ports/breakdown_enumeration_test.go, for
 // the same defect class: a struct's fields enumerated by hand in a
 // helper, drifting from the struct.
 //

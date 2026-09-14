@@ -1,7 +1,7 @@
 package chatsync
 
 // The three functions below exist ONLY to let external test packages
-// (uiadapter's SessionPool.ApplySyncOpts fan-out test) build a
+// (adapter's SessionPool.ApplySyncOpts fan-out test) build a
 // *SyncSession fixture and inspect its projector without a real
 // OpenSession round trip. They carry a `ForTest` name suffix so a
 // reader (or `go vet`'s unusedresult-style tooling) can tell at a

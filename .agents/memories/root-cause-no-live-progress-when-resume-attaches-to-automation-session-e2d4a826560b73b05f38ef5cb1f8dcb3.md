@@ -21,11 +21,11 @@ Automation sessions whose chat.Session lacks the tool surface (AgentTurnEnabled(
 - none
 
 ## Why
-Reproduced end to end with the production wiring (internal/newtui/repro_live_resume_test.go): the live tee (SubscribeLive fan-out) and the screen's live view are both correct when events exist. The divergence is upstream: sendPlain publishes only turn.start/turn.end; Conversation.Send passes io.Discard as the reply writer; and handleLiveEvent's turn.end path never reloads history (only handleLiveStale does). Also noted: SendUserWithTurnOptions returns the reply text, which Conversation stamps as the terminal event's TurnID - turn.end carries the full assistant reply as TurnID in both paths.
+Reproduced end to end with the production wiring (internal/tui/run/repro_live_resume_test.go): the live tee (SubscribeLive fan-out) and the screen's live view are both correct when events exist. The divergence is upstream: sendPlain publishes only turn.start/turn.end; Conversation.Send passes io.Discard as the reply writer; and handleLiveEvent's turn.end path never reloads history (only handleLiveStale does). Also noted: SendUserWithTurnOptions returns the reply text, which Conversation stamps as the terminal event's TurnID - turn.end carries the full assistant reply as TurnID in both paths.
 
 ## References
-- internal/newtui/repro_live_resume_test.go
+- internal/tui/run/repro_live_resume_test.go
 - internal/chat/session.go
-- internal/uiadapter/session_pool_worktree.go
-- internal/uiadapter/conversation.go
-- internal/ui/screen/conversation/live_view.go
+- internal/tui/adapter/session_pool_worktree.go
+- internal/tui/adapter/conversation.go
+- internal/tui/view/screen/conversation/live_view.go

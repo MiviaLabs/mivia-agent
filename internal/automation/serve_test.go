@@ -15,7 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // --- deadlineMap unit tests --------------------------------------------
@@ -446,7 +446,7 @@ func (f *nonClosingSpawner) GetOrResumeInDir(id string, dir string) (ports.Conve
 
 // TestServeToleratesSpawnerWithoutCloseLastRun proves Serve's tick
 // proceeds without panicking against a spawner without a CloseLastRun
-// method - the exact shape internal/newtui's automationSessionSpawner
+// method - the exact shape internal/tui/run's automationSessionSpawner
 // has.
 func TestServeToleratesSpawnerWithoutCloseLastRun(t *testing.T) {
 	root := t.TempDir()

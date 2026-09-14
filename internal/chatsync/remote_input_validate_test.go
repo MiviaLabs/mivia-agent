@@ -238,8 +238,8 @@ func TestInputPoller_RejectsBidiOverrideInBody(t *testing.T) {
 // authored by anyone other than the CLI's own verified principal must never
 // reach Inputs(), even though the server already consumed it. This replaces
 // TestSessionPool_DoesNotExecuteRemoteInput's blanket "polling never runs"
-// assertion (uiadapter no longer disables polling outright - see
-// internal/uiadapter/session_pool.go) with the actual safety property: an
+// assertion (adapter no longer disables polling outright - see
+// internal/tui/adapter/session_pool.go) with the actual safety property: an
 // unverified author's instruction is still refused at the source.
 func TestInputPoller_RejectsAuthorMismatch(t *testing.T) {
 	poller, rejections := newRejectionPoller(t, "sess-1", SessionInput{
