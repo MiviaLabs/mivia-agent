@@ -598,7 +598,7 @@ models ship a 1,000,000-token window as the GA default (no beta header, no price
 confirmed via Anthropic's own model documentation), and Google's Gemini 3.x family's real
 window is `1,048,576` (2^20), not the round `1,000,000` the catalog entries approximated.
 `internal/config.EffectivePromptTokens` derives the session's prompt budget directly from
-this declared number, and `internal/contextmgr.Plan` compacts at 80% of that budget - so
+this declared number, and `internal/context/manager.Plan` compacts at 80% of that budget - so
 the stale 200000 window on Claude 5-generation models capped the real prompt budget at
 roughly 1/5 of the model's actual capacity and made compaction fire five times earlier
 than the real service allows. A user watching the context gauge saw "31% used" after a

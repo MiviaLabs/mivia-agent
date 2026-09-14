@@ -184,6 +184,14 @@ internal/cli/orchestrate/ dispatch_tasks/join_run tool layer
 internal/cli/workflow/   Workflow engine, delivery, progress
 internal/cli/chat/       Chat REPL, slash commands, session tools
 internal/cli/automations/ Automation run/serve command surfaces
+internal/provider/      Provider clients, streaming, usage (package provider)
+internal/provider/registry/   Provider name -> client registry map
+internal/provider/reasoning/  Reasoning effort/budget mapping
+internal/context/       Context lifecycle grouping dir (no package)
+internal/context/manager/     Context manager (commit, planner, summaries)
+internal/context/state/       Turn/session state contracts
+internal/ledger/core/   Ledger engine primitives (package core)
+internal/hooks/session/ Running session hook state (package session)
 .agents/             Canonical agent control surface (rules, doctrines, skills, quality, templates, agents/*.md)
 .mivia/              Product runtime config/state: mivia.toml, workflows/, hooks/, policy/*
 .mivia/hooks/        This repo's own mivia lifecycle hook scripts (project-scoped)

@@ -153,7 +153,7 @@ the SDK path.
 
 - **Tool facts never reach a compaction summary's changed-surfaces
   list** — `contextmgr.TurnState.AddChangedSurface`
-  (`internal/contextmgr/turnstate.go`) has no production caller, so a
+  (`internal/context/manager/turnstate.go`) has no production caller, so a
   real tool call never lands in a compaction summary's
   `ChangedSurfaces`. `TestSummaryInjectionToolFactsReachLaterRequest`
   (`internal/agent/summary_inject_test.go`) pins this gap and is

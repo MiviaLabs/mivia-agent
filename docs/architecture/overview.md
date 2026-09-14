@@ -152,7 +152,7 @@ Two further layers catch what the transport cannot see:
 
 ## Context compaction and elision recoverability
 
-Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/contextmgr` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
+Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/context/manager` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
 
 When a spool is configured on the loop (`agent.Options.RemainderSpool`) plus a session principal, the elision notice includes a principal-scoped remainder ref:
 
@@ -217,7 +217,7 @@ flowchart TD
 |-----------|---------|------|
 | `Coordinator` | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
-| `Engine` / `ClaimsTracker` | `internal/ledgercore` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
+| `Engine` / `ClaimsTracker` | `internal/ledger/core` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
 | `LedgerRepository` interface | `internal/ledger` | Storage boundary: 20 methods for run/task/event CRUD with CAS, including run-claim leasing (`ClaimRun`, `ReleaseRun`, `ClearRunClaim`) |
 | `LeaseRepository` interface | `internal/ledger` | Separate, narrower storage boundary holding only `TakeoverExpiredRunClaim` |
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
