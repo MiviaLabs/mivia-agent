@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func applyContextSchemaV8(db *sql.DB) error {
@@ -28,7 +28,7 @@ func ensureContextSchemaV8(db *sql.DB) error {
 	return err
 }
 
-func worktreeCatalogKeyTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, instance contextstate.WorktreeInstance, entity, name string) (string, error) {
+func worktreeCatalogKeyTx(ctx context.Context, tx *sql.Tx, principal state.Principal, instance state.WorktreeInstance, entity, name string) (string, error) {
 	var key string
 	err := tx.QueryRowContext(ctx, `SELECT storage_key FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity=? AND name=?`, principal.WorkspaceID, principal.SubjectID, instance.ID, entity, name).Scan(&key)
 	if err == nil {
@@ -45,11 +45,11 @@ func worktreeCatalogKeyTx(ctx context.Context, tx *sql.Tx, principal contextstat
 	return key, err
 }
 
-func loadWorktreeCatalogKeyTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, instance contextstate.WorktreeInstance, entity, name string) (string, error) {
+func loadWorktreeCatalogKeyTx(ctx context.Context, tx *sql.Tx, principal state.Principal, instance state.WorktreeInstance, entity, name string) (string, error) {
 	var key string
 	err := tx.QueryRowContext(ctx, `SELECT storage_key FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity=? AND name=?`, principal.WorkspaceID, principal.SubjectID, instance.ID, entity, name).Scan(&key)
 	if err == sql.ErrNoRows {
-		return "", contextstate.ErrSessionNotFound
+		return "", state.ErrSessionNotFound
 	}
 	return key, err
 }

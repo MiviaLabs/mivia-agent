@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/gittest"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -28,25 +28,25 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
 		os.Exit(1)
 	}
-	clichat.FlagValueFunc = flagValue
-	clichat.FlagVarFunc = flagVar
-	clichat.InstallHookSessionFunc = installHookSession
+	chat.FlagValueFunc = flagValue
+	chat.FlagVarFunc = flagVar
+	chat.InstallHookSessionFunc = installHookSession
 	// CurrentHookSessionFunc stays as wired by clichat_wiring.go's init: the
 	// production closure has the same body the testmain used to install, and
 	// keeping the production one lets the wiring file's own lines run.
-	clichat.HookSessionConfiguredFunc = hookSessionConfigured
-	clichat.HandleSlashHooksFunc = handleSlashHooks
-	clichat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }
-	clichat.MemoryConfigOfFunc = func(state *AgentSessionState) config.MemoryConfig {
+	chat.HookSessionConfiguredFunc = hookSessionConfigured
+	chat.HandleSlashHooksFunc = handleSlashHooks
+	chat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }
+	chat.MemoryConfigOfFunc = func(state *AgentSessionState) config.MemoryConfig {
 		return memoryConfigOf(state)
 	}
-	clichat.OpenStackLedgerFunc = openStackLedger
-	clichat.ResolveStackIDFunc = resolveStackID
-	// The parseStackWorkflowArgs shim captures clichat.ParseStackWorkflowArgsFunc
+	chat.OpenStackLedgerFunc = openStackLedger
+	chat.ResolveStackIDFunc = resolveStackID
+	// The parseStackWorkflowArgs shim captures chat.ParseStackWorkflowArgsFunc
 	// before anything wires it (nil), so wire the real semantics here through
 	// the already-assigned FlagValueFunc instead of the shim.
-	clichat.ParseStackWorkflowArgsFunc = func(args []string) (name, stackFlag string, rest []string, err error) {
-		stackFlag, rest, _, err = clichat.FlagValueFunc(args, "--stack")
+	chat.ParseStackWorkflowArgsFunc = func(args []string) (name, stackFlag string, rest []string, err error) {
+		stackFlag, rest, _, err = chat.FlagValueFunc(args, "--stack")
 		if err != nil {
 			return "", "", nil, err
 		}

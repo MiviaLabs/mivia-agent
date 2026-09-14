@@ -81,7 +81,7 @@ observable:
   tick, every `min(bound/8, 30s)` (up to 30s; a 100ms floor guards tiny test
   bounds) → `internal/workflows/controller/agent_step_join.go`
   (`joinWatchdogTickInterval` / `watchJoinLiveness`), surfaced via
-  `internal/events/event.go` / `internal/cliworkflow/workflow_tool_engine.go`
+  `internal/events/event.go` / `internal/cli/workflow/workflow_tool_engine.go`
 
 **Gates are not on the heartbeat clock.** Evidence gates and human gates emit
 no `step_heartbeat`: they report `gate_started` (evidence gates) or

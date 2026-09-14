@@ -19,23 +19,23 @@ import (
 	"context"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // writePayloadRecord appends one source event carrying record, returning the
 // error so the caller can assert on it.
-func writePayloadRecord(t *testing.T, s *SQLite, principal contextstate.Principal, seq uint64, record contextstate.PayloadRecord, status string) error {
+func writePayloadRecord(t *testing.T, s *SQLite, principal state.Principal, seq uint64, record state.PayloadRecord, status string) error {
 	t.Helper()
-	eventID, err := contextstate.NewSourceID(principal.SessionID, seq)
+	eventID, err := state.NewSourceID(principal.SessionID, seq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := contextstate.SourceEvent{
+	event := state.SourceEvent{
 		ID: eventID, Kind: "message", Role: "user",
 		PayloadRef: record.Ref.Ref, Provenance: "host",
 		RedactionStatus: status, Size: record.Ref.Size,
 	}
-	return s.appendSourceEvents(context.Background(), principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{record})
+	return s.appendSourceEvents(context.Background(), principal, []state.SourceEvent{event}, []state.PayloadRecord{record})
 }
 
 // The exact ordering that wedged a live session: the ref is first recorded
@@ -46,21 +46,21 @@ func TestPayloadHashOnlyThenBytesDoesNotWedgeTheTurn(t *testing.T) {
 	seedContextSession(t, s, principal)
 
 	body := []byte("a finished turn's content")
-	payload, err := contextstate.SanitizeSourcePayload(context.Background(), principal, body,
-		contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(context.Background(), principal, body,
+		state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// First write: the ref, its digest and size, but no bytes - what an
 	// unconfigured or non-storable policy produces.
-	hashOnly := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention}
+	hashOnly := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention}
 	if err := writePayloadRecord(t, s, principal, 1, hashOnly, "hash-only"); err != nil {
 		t.Fatalf("hash-only write: %v", err)
 	}
 
 	// Second write: the same content, now storable.
-	withBytes := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
+	withBytes := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
 	if err := writePayloadRecord(t, s, principal, 2, withBytes, "sanitized"); err != nil {
 		t.Fatalf("a later write of the SAME content must not refuse the turn: %v", err)
 	}
@@ -81,16 +81,16 @@ func TestPayloadBytesThenHashOnlyStillAccepted(t *testing.T) {
 	defer s.Close()
 	seedContextSession(t, s, principal)
 
-	payload, err := contextstate.SanitizeSourcePayload(context.Background(), principal, []byte("bytes first"),
-		contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(context.Background(), principal, []byte("bytes first"),
+		state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	withBytes := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
+	withBytes := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
 	if err := writePayloadRecord(t, s, principal, 1, withBytes, "sanitized"); err != nil {
 		t.Fatalf("bytes write: %v", err)
 	}
-	hashOnly := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention}
+	hashOnly := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention}
 	if err := writePayloadRecord(t, s, principal, 2, hashOnly, "hash-only"); err != nil {
 		t.Fatalf("hash-only after bytes must stay accepted: %v", err)
 	}

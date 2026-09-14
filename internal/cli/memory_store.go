@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -47,7 +47,7 @@ func openMemoryStoreReadOnly(root string, mc config.MemoryConfig) (memory.Store,
 // openMemoryStoreWithReadOnly resolves the [memory] config to a memory store;
 // readOnly controls memory.Config.ReadOnly (see openMemoryStore).
 func openMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
-	return cliagents.OpenMemoryStoreWithReadOnly(root, mc, readOnly)
+	return agents.OpenMemoryStoreWithReadOnly(root, mc, readOnly)
 }
 
 // coreMemoryBlock builds the auto-injected system-prompt block (D1). It is a

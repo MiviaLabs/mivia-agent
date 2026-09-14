@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // The hash-only-to-bytes upgrade, on both storage layouts, and the
@@ -29,18 +29,18 @@ import (
 // smallChunks shrinks the chunk size so a modest body still chunks.
 func smallChunks(t *testing.T, size int) {
 	t.Helper()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: size})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: size})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 }
 
 // writeRecord commits one payload record on its own transaction.
-func writeRecord(t *testing.T, s *SQLite, principal contextstate.Principal, rec contextstate.PayloadRecord) error {
+func writeRecord(t *testing.T, s *SQLite, principal state.Principal, rec state.PayloadRecord) error {
 	t.Helper()
 	tx, err := s.beginWrite(context.Background())
 	if err != nil {
 		t.Fatalf("beginWrite: %v", err)
 	}
-	if _, err := insertContextPayloads(context.Background(), tx, principal, []contextstate.PayloadRecord{rec}); err != nil {
+	if _, err := insertContextPayloads(context.Background(), tx, principal, []state.PayloadRecord{rec}); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -76,8 +76,8 @@ func TestAChunkedPayloadUpgradesFromHashOnlyToBytes(t *testing.T) {
 
 	body := strings.Repeat("chunked-transcript-body-", 60) // comfortably several chunks
 	full := payloadFor(t, principal, body)
-	if len(full.Data) <= contextstate.PayloadChunkSize() {
-		t.Fatalf("fixture is not chunked: %d bytes at chunk size %d", len(full.Data), contextstate.PayloadChunkSize())
+	if len(full.Data) <= state.PayloadChunkSize() {
+		t.Fatalf("fixture is not chunked: %d bytes at chunk size %d", len(full.Data), state.PayloadChunkSize())
 	}
 
 	hashOnly := full
@@ -137,7 +137,7 @@ func TestTheUpgradeIsIdempotent(t *testing.T) {
 	hashOnly := full
 	hashOnly.Data = nil
 
-	for i, rec := range []contextstate.PayloadRecord{hashOnly, full, full, full} {
+	for i, rec := range []state.PayloadRecord{hashOnly, full, full, full} {
 		if err := writeRecord(t, s, principal, rec); err != nil {
 			t.Fatalf("write %d was refused: %v", i, err)
 		}
@@ -169,7 +169,7 @@ func TestAStoredBodyThatNoLongerMatchesItsRefIsRefused(t *testing.T) {
 	}
 
 	err := writeRecord(t, s, principal, rec)
-	if !errors.Is(err, contextstate.ErrCheckpointConflict) {
+	if !errors.Is(err, state.ErrCheckpointConflict) {
 		t.Errorf("a ref holding different bytes was accepted (err=%v), want ErrCheckpointConflict", err)
 	}
 }
@@ -201,7 +201,7 @@ func TestLoadingAnIncompleteChunkSequenceFails(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a sequence missing a chunk reassembled into %d bytes", len(got))
 	}
-	if !errors.Is(err, contextstate.ErrInvalidDTO) {
+	if !errors.Is(err, state.ErrInvalidDTO) {
 		t.Errorf("err = %v, want ErrInvalidDTO", err)
 	}
 }

@@ -68,7 +68,7 @@ var relayedKinds = []events.Kind{
 	//     can arrive with none of its predecessors. The receiver now drops a
 	//     terminal for a run it has never seen rather than minting a turn in
 	//     order to close it, and marks a finished run done instead of deleting
-	//     it, so a straggler cannot re-open it (internal/clichat, see
+	//     it, so a straggler cannot re-open it (internal/cli/chat, see
 	//     TestExternalTerminalForAnUnseenRunIsDropped).
 	//  3. Privacy. toWire classifies through chat.TurnErrorMessage, so
 	//     publishTurnEnd's Err never reaches the wire verbatim - a second

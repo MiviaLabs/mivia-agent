@@ -13,11 +13,11 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -114,7 +114,7 @@ type Session struct {
 	// Calibration is the rolling EWMA correction ratio carried across turns.
 	// Read into every agent turn snapshot; the zero value is safe (no
 	// correction).
-	Calibration contextmgr.Calibration
+	Calibration manager.Calibration
 	// ApprovalGate is the synchronous user-approval bridge for tool calls.
 	ApprovalGate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult
 	// ApprovalStanding is the per-session "always" cache consulted before ApprovalGate.
@@ -236,7 +236,7 @@ type Session struct {
 	liveTurnToken OperationToken
 	// contextManager is optional. When enabled, durable turns use the
 	// checkpoint publisher.
-	contextManager       *contextmgr.ContextManager
+	contextManager       *manager.ContextManager
 	contextPrincipal     contextstate.Principal
 	contextPolicy        contextstate.PolicySnapshot
 	contextRedaction     contextstate.RedactionPolicy

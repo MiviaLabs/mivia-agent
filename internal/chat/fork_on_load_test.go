@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -29,7 +29,7 @@ func TestLoadedContextSessionFalseAfterNamedSaveAndLoad(t *testing.T) {
 	defer store.Close()
 
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestLoadedContextSessionTrueAfterDurableSessionLoad(t *testing.T) {
 	defer store.Close()
 
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestLoadedContextSessionFlagSurvivesClear(t *testing.T) {
 	defer store.Close()
 
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

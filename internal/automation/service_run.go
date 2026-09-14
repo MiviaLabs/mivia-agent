@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // ErrRunNotActive is returned by CancelRun when runID names no run this

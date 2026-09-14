@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -18,8 +18,8 @@ import (
 // instance holds and never closes the borrowed store.
 type StorageRepository struct {
 	store        storage.Store
-	claims       *ledgercore.ClaimsTracker
-	engine       *ledgercore.Engine
+	claims       *core.ClaimsTracker
+	engine       *core.Engine
 	mu           sync.RWMutex
 	proj         map[string]Projection
 	deliverySeqs map[deliveryKey]int
@@ -27,7 +27,7 @@ type StorageRepository struct {
 
 // NewStorageRepository wraps a shared storage.Store (non-owning).
 func NewStorageRepository(store storage.Store) *StorageRepository {
-	engine := ledgercore.NewEngine(store, false, newHolderID())
+	engine := core.NewEngine(store, false, newHolderID())
 	return &StorageRepository{
 		store:        store,
 		claims:       engine.Claims(),
@@ -76,7 +76,7 @@ func (s *StorageRepository) ensureBuilt(ctx context.Context) error {
 
 // catchUp probes the store for runs that moved since this instance's cursor.
 func (s *StorageRepository) catchUp(ctx context.Context) error {
-	return s.engine.CatchUp(ctx, func(runID string, maxSeq int) ledgercore.FilterDecision {
+	return s.engine.CatchUp(ctx, func(runID string, maxSeq int) core.FilterDecision {
 		// Skip foreign runs on EVERY pass, not just the first. The old guard
 		// also required Applied(runID) == 0, but FilterAdvanceOnly itself
 		// calls SetApplied, so the watermark was non-zero forever after: the
@@ -87,9 +87,9 @@ func (s *StorageRepository) catchUp(ctx context.Context) error {
 		// for that session's whole history. The sibling tasks ledger tests the
 		// prefix alone, and is correct.
 		if !strings.HasPrefix(runID, "wfr-") {
-			return ledgercore.FilterAdvanceOnly
+			return core.FilterAdvanceOnly
 		}
-		return ledgercore.FilterApply
+		return core.FilterApply
 	}, func(ctx context.Context, runID string, events []storage.Event) error {
 		return s.applyRunEventsLocked(ctx, runID, events)
 	})
@@ -162,7 +162,7 @@ func (s *StorageRepository) nextSequence(runID string) uint64 {
 // appendEvent writes the event to the store and resolves the writer's bookkeeping.
 func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, rollback func()) error {
 	holder, _ := claimHolderFromContext(ctx)
-	return s.engine.AppendEvent(ctx, evt, ledgercore.AppendOptions{
+	return s.engine.AppendEvent(ctx, evt, core.AppendOptions{
 		BoundHolder: holder,
 		Rollback: func() {
 			if rollback != nil {

@@ -71,10 +71,10 @@ def test_policy_exists_and_thresholds() -> None:
     for rel_path in p["commentBlockLines"]["baseline"]:
         assert (root / rel_path).is_file(), f"comment baseline entry for missing file: {rel_path}"
     # Baselines are pinned to current file locations after the cli split:
-    # chat_json_writer moved from internal/cli to internal/clichat. The
+    # chat_json_writer moved from internal/cli to internal/cli/chat. The
     # legacytui god-file that used to be pinned here was deleted with the
     # package, so its baseline entry is gone and must stay gone.
-    assert "internal/clichat/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
+    assert "internal/cli/chat/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
     assert not any(f.startswith("internal/legacytui/") for f in p["baseline"]["files"])
 
 

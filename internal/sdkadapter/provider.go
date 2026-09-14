@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
@@ -80,10 +80,10 @@ func ChatStream(ctx context.Context, c provider.Completer, _ sdkshape.Request, w
 //
 // The mapping is product-specific: it encodes CLI's decisions about which
 // CLI configs survive the cutover to the SDK wire shape. It lives here
-// (not in internal/reasoning) because internal/sdkadapter is the only
+// (not in internal/provider/reasoning) because internal/sdkadapter is the only
 // package permitted to import both CLI and SDK shapes; placing the bridge
-// in internal/reasoning would force the SDK dependency onto every caller
-// of that package and would break internal/reasoning's deliberate
+// in internal/provider/reasoning would force the SDK dependency onto every caller
+// of that package and would break internal/provider/reasoning's deliberate
 // stdlib-only contract (reasoning.go:5-7).
 func LevelToReasoningEffort(l reasoning.Level) (sdkshape.ReasoningEffort, bool) {
 	switch l {

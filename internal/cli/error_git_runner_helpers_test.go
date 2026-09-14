@@ -1,7 +1,7 @@
 package cli
 
 // errorGitRunner fails every git invocation. Duplicated from
-// internal/cliworkflow (stack_drive_completed_test.go).
+// internal/cli/workflow (stack_drive_completed_test.go).
 
 import (
 	"context"

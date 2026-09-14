@@ -23,7 +23,7 @@ import (
 // reason - recordKeyFromContext exists to stop that.
 //
 // The PROMPT key does not fall back, and this test pins that too. A tool name
-// is not a per-call identity: uiadapter cannot register a waiting channel on
+// is not a per-call identity: adapter cannot register a waiting channel on
 // it without two overlapping calls to one tool colliding, and the operator's
 // single decision then authorizing the call they were never shown. The
 // accepted cost is that an ID-less call raises a prompt nothing can answer and
@@ -75,14 +75,14 @@ func TestIDLessCallIsRecordedByNameButNeverPrompted(t *testing.T) {
 			"under an empty id is dropped, and the refusal reaches the operator with "+
 			"no reason", deniedID, "deny_tool")
 	}
-	// The PROMPT key deliberately does not fall back. uiadapter cannot key its
+	// The PROMPT key deliberately does not fall back. adapter cannot key its
 	// waiting map on a name without cross-wiring two overlapping calls to the
 	// same tool, so an ID-less call still cannot raise an answerable prompt.
 	// Pinned so that a later "fix" to make these two symmetric has to read why
 	// they are not.
 	if pendingID != "" {
 		t.Errorf("EmitPending id = %q, want empty; a name published here would have to "+
-			"be registrable by uiadapter, and a tool name is not a per-call identity",
+			"be registrable by adapter, and a tool name is not a per-call identity",
 			pendingID)
 	}
 }

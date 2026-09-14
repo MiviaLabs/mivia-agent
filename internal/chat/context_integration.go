@@ -9,8 +9,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
@@ -21,11 +21,11 @@ import (
 type contextTurnConfig struct {
 	manager    *contextmgr.ContextManager
 	summarizer *contextmgr.Summarizer
-	principal  contextstate.Principal
-	policy     contextstate.PolicySnapshot
-	redaction  contextstate.RedactionPolicy
-	revision   contextstate.Revision
-	worktree   contextstate.WorktreeInstance
+	principal  state.Principal
+	policy     state.PolicySnapshot
+	redaction  state.RedactionPolicy
+	revision   state.Revision
+	worktree   state.WorktreeInstance
 }
 
 type plainTurnSnapshot struct {
@@ -82,25 +82,25 @@ type agentTurnSnapshot struct {
 	Calibration contextmgr.Calibration
 }
 
-func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principal contextstate.Principal, policies ...contextstate.PolicySnapshot) error {
+func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principal state.Principal, policies ...state.PolicySnapshot) error {
 	if manager != nil {
 		if err := principal.Validate(); err != nil {
 			return err
 		}
 		if !principal.IsBound() {
-			return fmt.Errorf("%w: owner capability is not bound", contextstate.ErrPrincipalMismatch)
+			return fmt.Errorf("%w: owner capability is not bound", state.ErrPrincipalMismatch)
 		}
 	}
 	s.mu.Lock()
 	if manager != nil && principal.SessionID != s.SessionID {
 		s.mu.Unlock()
-		return fmt.Errorf("%w: context principal session differs", contextstate.ErrPrincipalMismatch)
+		return fmt.Errorf("%w: context principal session differs", state.ErrPrincipalMismatch)
 	}
 	store := s.contextStore
 	if manager == nil || !manager.Enabled {
-		s.contextManager, s.contextPrincipal = nil, contextstate.Principal{}
-		s.contextPolicy, s.contextStore = contextstate.PolicySnapshot{}, nil
-		s.contextHead = contextstate.Revision{}
+		s.contextManager, s.contextPrincipal = nil, state.Principal{}
+		s.contextPolicy, s.contextStore = state.PolicySnapshot{}, nil
+		s.contextHead = state.Revision{}
 	} else {
 		copyManager := *manager
 		s.contextManager, s.contextPrincipal = &copyManager, principal
@@ -130,12 +130,12 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 // principal/revision/store untouched. A mid-session binding change
 // (SwitchBinding, or a resumed session's Load publishing a different saved
 // provider/model) does not rebuild the summarizer on its own - the
-// summarizer was captured once at session setup (see internal/clichat's
+// summarizer was captured once at session setup (see internal/cli/chat's
 // summaryWiring) and otherwise keeps summarizing through the pre-switch
 // model/completer. Production callers rebuild against the new binding and
 // publish it here after every such change: cliagents.publishModelSwitch
-// (the /model command) and internal/clichat's chat_command.go /
-// internal/uiadapter's session_pool.go (both after sess.Load). nil clears a
+// (the /model command) and internal/cli/chat's chat_command.go /
+// internal/tui/adapter's session_pool.go (both after sess.Load). nil clears a
 // summarizer that setup could no longer configure for the new binding
 // rather than leaving a stale one in place.
 func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
@@ -158,36 +158,36 @@ func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
 // refresh contract - a caller that wants to confirm a mid-session model
 // switch actually rebuilt the summarizer (rather than leaving one bound to
 // the pre-switch model) reads this after the switch.
-func (s *Session) CurrentSummarizerBinding() (contextstate.BindingRevision, bool) {
+func (s *Session) CurrentSummarizerBinding() (state.BindingRevision, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.contextManager == nil || s.contextManager.Summarizer == nil {
-		return contextstate.BindingRevision{}, false
+		return state.BindingRevision{}, false
 	}
 	return s.contextManager.Summarizer.Binding, true
 }
 
 // ContextPolicy returns the session's active context policy snapshot.
-func (s *Session) ContextPolicy() contextstate.PolicySnapshot {
+func (s *Session) ContextPolicy() state.PolicySnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.contextPolicy
 }
 
 // ContextRedactionPolicy returns the session's active context redaction policy.
-func (s *Session) ContextRedactionPolicy() contextstate.RedactionPolicy {
+func (s *Session) ContextRedactionPolicy() state.RedactionPolicy {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.contextRedaction
 }
 
-func (s *Session) SetContextRedactionPolicy(policy contextstate.RedactionPolicy) {
+func (s *Session) SetContextRedactionPolicy(policy state.RedactionPolicy) {
 	s.mu.Lock()
 	s.contextRedaction = policy
 	s.mu.Unlock()
 }
 
-func (s *Session) SetContextStore(store contextstate.Store) error {
+func (s *Session) SetContextStore(store state.Store) error {
 	s.mu.Lock()
 	s.contextStore = store
 	principal := s.contextPrincipal
@@ -229,11 +229,11 @@ func (s *Session) loadContextSnapshot(operationName string) error {
 		return err
 	}
 	if snapshot.Binding != binding {
-		return fmt.Errorf("%w: durable context binding differs", contextstate.ErrStaleBinding)
+		return fmt.Errorf("%w: durable context binding differs", state.ErrStaleBinding)
 	}
 	messages := []provider.Message{}
 	if len(snapshot.Active.ActiveContext) > 0 {
-		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
+		if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
 			return fmt.Errorf("decode active context: %w", err)
 		}
 		if err := validateRestoredMessages(messages); err != nil {
@@ -276,11 +276,11 @@ func (s *Session) resyncContextHead() error {
 		return err
 	}
 	if snapshot.Binding != binding {
-		return fmt.Errorf("%w: durable context binding differs", contextstate.ErrStaleBinding)
+		return fmt.Errorf("%w: durable context binding differs", state.ErrStaleBinding)
 	}
 	messages := []provider.Message{}
 	if len(snapshot.Active.ActiveContext) > 0 {
-		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
+		if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
 			return fmt.Errorf("decode active context: %w", err)
 		}
 	}
@@ -295,24 +295,24 @@ func (s *Session) resyncContextHead() error {
 	return nil
 }
 
-func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision, instance contextstate.WorktreeInstance, retainedDir string) (contextstate.Snapshot, error) {
+func ensureAndLoadContextStore(store state.Store, principal state.Principal, binding state.BindingRevision, instance state.WorktreeInstance, retainedDir string) (state.Snapshot, error) {
 	dir, worktree := currentDirContext()
 	if !instance.IsZero() {
 		dir = retainedDir
 		worktree = instance.Worktree
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: dir, Worktree: worktree, WorktreeInstance: instance}); err != nil {
-		return contextstate.Snapshot{}, err
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: dir, Worktree: worktree, WorktreeInstance: instance}); err != nil {
+		return state.Snapshot{}, err
 	}
 	return loadBoundContextStore(context.Background(), store, principal, principal.SessionID, instance)
 }
 
-func loadBoundContextStore(ctx context.Context, store contextstate.Store, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+func loadBoundContextStore(ctx context.Context, store state.Store, principal state.Principal, sessionID string, instance state.WorktreeInstance) (state.Snapshot, error) {
 	if !instance.IsZero() {
-		if scoped, ok := store.(contextstate.WorktreeStore); ok {
+		if scoped, ok := store.(state.WorktreeStore); ok {
 			return scoped.LoadWorktree(ctx, principal, sessionID, instance)
 		}
-		return contextstate.Snapshot{}, contextstate.ErrWorktreeDeleted
+		return state.Snapshot{}, state.ErrWorktreeDeleted
 	}
 	return store.Load(ctx, principal, sessionID)
 }
@@ -347,13 +347,13 @@ func (s *Session) captureContextLocked() contextTurnConfig {
 
 // SetContextWorktreeBinding retains the physical worktree identity for every
 // later context mutation. Call it before installing a context store.
-func (s *Session) SetContextWorktreeBinding(instance contextstate.WorktreeInstance) error {
+func (s *Session) SetContextWorktreeBinding(instance state.WorktreeInstance) error {
 	dir, _ := currentDirContext()
 	return s.SetContextWorktreeBindingAt(instance, dir, dir)
 }
 
 // SetContextWorktreeBindingAt retains the exact managed worktree paths.
-func (s *Session) SetContextWorktreeBindingAt(instance contextstate.WorktreeInstance, root, dir string) error {
+func (s *Session) SetContextWorktreeBindingAt(instance state.WorktreeInstance, root, dir string) error {
 	if err := instance.Validate(); err != nil {
 		return err
 	}

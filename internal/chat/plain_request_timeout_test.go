@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -106,15 +106,15 @@ func TestPlainContextTurnRequestCarriesConfiguredTimeout(t *testing.T) {
 		SystemPrompt:       "sys",
 		ChatRequestTimeout: 1200 * time.Second,
 	}, rec)
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{
@@ -156,15 +156,15 @@ func TestPlainContextTurnDeadlineKeepsPartialAndSucceeds(t *testing.T) {
 	}
 	defer store.Close()
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, rec)
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{

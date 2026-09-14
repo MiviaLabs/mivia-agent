@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -142,17 +142,17 @@ func TestSummaryInjectionSecondCompactionResummarizesOnce(t *testing.T) {
 }
 
 type sequenceSummaryProvider struct {
-	requests []contextmgr.SummaryRequest
+	requests []manager.SummaryRequest
 	errs     []error
 }
 
-func (p *sequenceSummaryProvider) Summarize(_ context.Context, request contextmgr.SummaryRequest) (contextmgr.Summary, error) {
+func (p *sequenceSummaryProvider) Summarize(_ context.Context, request manager.SummaryRequest) (manager.Summary, error) {
 	idx := len(p.requests)
 	p.requests = append(p.requests, request)
 	if idx < len(p.errs) && p.errs[idx] != nil {
-		return contextmgr.Summary{}, p.errs[idx]
+		return manager.Summary{}, p.errs[idx]
 	}
-	return contextmgr.Summary{
+	return manager.Summary{
 		Version:     request.Input.Version,
 		Objective:   "summarized objective",
 		State:       request.Input.State,
@@ -181,8 +181,8 @@ func TestSummaryTransientFailureRetriesAcrossStepsThenStopsAtTheCap(t *testing.T
 	if anyRequestCarriesSummary(completer.requests) {
 		t.Fatal("transient-failed compaction still injected a summary")
 	}
-	if loop.SummaryFailureReason() != contextmgr.SummaryReasonTransport {
-		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), contextmgr.SummaryReasonTransport)
+	if loop.SummaryFailureReason() != manager.SummaryReasonTransport {
+		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), manager.SummaryReasonTransport)
 	}
 }
 
@@ -237,7 +237,7 @@ func TestSummaryTransientFailureRecoversOnTheNextStep(t *testing.T) {
 }
 
 func TestSummaryNonRetryableFailureIsNotReattemptedAcrossSteps(t *testing.T) {
-	malformed := fmt.Errorf("%w: bad json", contextmgr.ErrSummaryReplyMalformed)
+	malformed := fmt.Errorf("%w: bad json", manager.ErrSummaryReplyMalformed)
 	summ := &capturingSummaryProvider{err: malformed}
 	summarizer := summaryInjectSummarizer(t, summ)
 	completer := &nToolStepsCompleter{n: 3}
@@ -254,8 +254,8 @@ func TestSummaryNonRetryableFailureIsNotReattemptedAcrossSteps(t *testing.T) {
 	if len(summ.requests) != 1 {
 		t.Fatalf("Summarize calls=%d, want exactly 1 for non-retryable error", len(summ.requests))
 	}
-	if loop.SummaryFailureReason() != contextmgr.SummaryReasonReplyMalformed {
-		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), contextmgr.SummaryReasonReplyMalformed)
+	if loop.SummaryFailureReason() != manager.SummaryReasonReplyMalformed {
+		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), manager.SummaryReasonReplyMalformed)
 	}
 }
 
@@ -270,13 +270,13 @@ func TestSummaryOverBudgetDropReportsItsOwnReason(t *testing.T) {
 	if anyRequestCarriesSummary(completer.requests) {
 		t.Fatal("over-budget summary was injected")
 	}
-	if loop.SummaryFailureReason() != contextmgr.SummaryReasonOverBudget {
-		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), contextmgr.SummaryReasonOverBudget)
+	if loop.SummaryFailureReason() != manager.SummaryReasonOverBudget {
+		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), manager.SummaryReasonOverBudget)
 	}
 }
 
 func TestSummaryFailureReasonClearsAfterALaterSuccessfulCompaction(t *testing.T) {
-	malformed := fmt.Errorf("%w: bad json", contextmgr.ErrSummaryReplyMalformed)
+	malformed := fmt.Errorf("%w: bad json", manager.ErrSummaryReplyMalformed)
 	summ := &sequenceSummaryProvider{
 		errs: []error{malformed},
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/clichat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
@@ -22,12 +22,12 @@ func slashSpec(ref string, registry *skills.Registry) (Spec, error) {
 }
 
 // TestSlashAllowlistExhaustive is D15's exhaustiveness test obligation:
-// every entry of clichat.builtInSlashCommands() must have a
+// every entry of chat.builtInSlashCommands() must have a
 // classification in builtinSlashClass, so a builtin added later without
 // classifying it fails the build rather than silently defaulting to
 // allowed or rejected.
 func TestSlashAllowlistExhaustive(t *testing.T) {
-	for _, cmd := range clichat.BuiltInSlashCommands() {
+	for _, cmd := range chat.BuiltInSlashCommands() {
 		if _, ok := builtinSlashClass[cmd.Name]; !ok {
 			t.Errorf("builtin %q has no entry in builtinSlashClass: D15 requires every builtin be classified", cmd.Name)
 		}
@@ -147,7 +147,7 @@ func TestSlashAllowlistAliasInheritsCanonicalClass(t *testing.T) {
 }
 
 // TestSlashAllowlistSurfaceIsTUI proves the executor's D15-mandated
-// choice of clichat.SlashSurfaceTUI is what makes a skill-backed
+// choice of chat.SlashSurfaceTUI is what makes a skill-backed
 // StepSlash resolvable at all: a registry with a registered
 // user-invocable skill only produces a SlashKindSkill entry for
 // SlashSurfaceTUI (slash_catalog.go's own guard), so this indirectly
@@ -163,7 +163,7 @@ func TestSlashAllowlistSurfaceIsTUI(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if _, ok := clichat.FindSlashCommand("/release-checklist", clichat.SlashSurfaceTUI, reg); !ok {
+	if _, ok := chat.FindSlashCommand("/release-checklist", chat.SlashSurfaceTUI, reg); !ok {
 		t.Fatal("FindSlashCommand with SlashSurfaceTUI did not resolve a registered skill command")
 	}
 }

@@ -3,15 +3,15 @@ package cli
 
 import (
 	"fmt"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"os"
 	"strings"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	cliautomations "github.com/MiviaLabs/mivia-agent/internal/cliautomations"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	cliautomations "github.com/MiviaLabs/mivia-agent/internal/cli/automations"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 
@@ -35,7 +35,7 @@ func Execute(args []string) error {
 	case "config":
 		return runConfig(args[1:])
 	case "doctor":
-		return cliorchestrate.RunDoctor(args[1:])
+		return orchestrate.RunDoctor(args[1:])
 	case "agents":
 		return cliagents.RunAgents(args[1:])
 	case "sessions":
@@ -147,7 +147,7 @@ Agent tools: read_file list_dir grep glob write_file search_replace multi_edit r
   --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.agents/agents/.
   --session resumes a saved session by the name/id "mivia sessions list" reports; fails if it does not exist.
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
-  --plain uses classic terminal UI (if Bubble Tea misbehaves).
+  --plain uses the line-mode REPL (when the interactive TUI is not wanted).
   --quiet suppresses the startup notices (limits/hooks/diagnostics lines).
   --allow-program  add program to run_command allowlist (repeatable)
   --deny-program   remove program from run_command allowlist (repeatable)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -76,11 +76,11 @@ func TestCatalogMessagesRedactsReasoning(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session-1", "local-user")
+	principal, err := state.NewPrincipal("workspace", "session-1", "local-user")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(context.Background(), principal, "s1", data, "model", "provider", 1, 10, 1, contextstate.SessionSaveOptions{}); err != nil {
+	if err := store.SaveSession(context.Background(), principal, "s1", data, "model", "provider", 1, 10, 1, state.SessionSaveOptions{}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
 	raw, _, err := store.LoadSession(context.Background(), principal, "s1")
@@ -88,7 +88,7 @@ func TestCatalogMessagesRedactsReasoning(t *testing.T) {
 		t.Fatalf("LoadSession: %v", err)
 	}
 	var persisted []provider.Message
-	if err := contextstate.UnmarshalCanonical(raw, &persisted); err != nil {
+	if err := state.UnmarshalCanonical(raw, &persisted); err != nil {
 		t.Fatalf("decode persisted catalog record: %v", err)
 	}
 	assertRedactedReasoningPersisted(t, persisted)

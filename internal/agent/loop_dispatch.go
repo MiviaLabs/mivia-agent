@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -51,7 +51,7 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	// closure then re-records preparation on every Completer call.
 	l.discardPreparation(opts)
 	l.resetTurnCompaction()
-	l.TurnState = contextmgr.NewTurnState()
+	l.TurnState = manager.NewTurnState()
 	// Pre-append the user message to the carried history BEFORE the run,
 	// mirroring runOnceLegacy's append (loop.go): a turn that fails
 	// before any SDK iteration completes must still keep the user

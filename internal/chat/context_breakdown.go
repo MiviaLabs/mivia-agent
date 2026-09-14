@@ -83,7 +83,7 @@ type ContextBreakdown struct {
 	//
 	// It is mostly an IN-FLIGHT figure, and deliberately so. The session
 	// persists "/skill args" in place of the expanded body at commit
-	// (uiadapter.runner's SubmitPersistedText, chat.replaceNewestUserText),
+	// (adapter.runner's SubmitPersistedText, chat.replaceNewestUserText),
 	// so a skill costs thousands of tokens in the one request that needs
 	// it and nothing afterwards. The row therefore reads non-zero while
 	// that turn is in flight - which is exactly when a large skill is

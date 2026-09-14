@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 

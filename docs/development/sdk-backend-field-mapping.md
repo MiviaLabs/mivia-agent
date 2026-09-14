@@ -153,7 +153,7 @@ the SDK path.
 
 - **Tool facts never reach a compaction summary's changed-surfaces
   list** — `contextmgr.TurnState.AddChangedSurface`
-  (`internal/contextmgr/turnstate.go`) has no production caller, so a
+  (`internal/context/manager/turnstate.go`) has no production caller, so a
   real tool call never lands in a compaction summary's
   `ChangedSurfaces`. `TestSummaryInjectionToolFactsReachLaterRequest`
   (`internal/agent/summary_inject_test.go`) pins this gap and is
@@ -249,7 +249,7 @@ these SDK loop knobs; `TestBuildAgentLoopOptions_AdoptionRows`
   site wires one
   (`contextmgr.StructuralPreparationManager{}`, set in
   `internal/composition/session.go` and
-  `internal/clichat/context_setup_session.go`), and
+  `internal/cli/chat/context_setup_session.go`), and
   `sdkCompactionAdopted` requires `Options.PreferSDKCompaction` in
   that case (default false, so no production call site adopts this
   row until it sets that field). With no PreparationManager wired,

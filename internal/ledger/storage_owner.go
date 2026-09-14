@@ -1,7 +1,7 @@
 package ledger
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -20,7 +20,7 @@ func NewBorrowedStorageLedgerRepository(store storage.Store) *StorageLedgerRepos
 }
 
 func newStorageLedgerRepository(store storage.Store, ownsStore bool) *StorageLedgerRepository {
-	engine := ledgercore.NewEngine(store, ownsStore, "")
+	engine := core.NewEngine(store, ownsStore, "")
 	return &StorageLedgerRepository{
 		store:     store,
 		mem:       NewMemoryLedgerRepository(),

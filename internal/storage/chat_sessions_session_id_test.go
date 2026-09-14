@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // readCatalogSessionID returns the stored chat_sessions.session_id for name,
 // empty when the column is NULL.
-func readCatalogSessionID(t *testing.T, store *SQLite, principal contextstate.Principal, name string) string {
+func readCatalogSessionID(t *testing.T, store *SQLite, principal state.Principal, name string) string {
 	t.Helper()
 	var sessionID sql.NullString
 	if err := store.db.QueryRow(`SELECT session_id FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&sessionID); err != nil {
@@ -32,18 +32,18 @@ func TestSaveSessionStampsProjectionSessionID(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "live-session-123", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-session-123", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := contextTestBinding(t)
-	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(ctx, state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	payload := []byte(`[{"role":"user","content":"hi"}]`)
 
 	// (a) opts.SessionID == name with a live row: stamped with the live id.
-	if err := store.SaveSession(ctx, principal, principal.SessionID, payload, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, payload, "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 	if got := readCatalogSessionID(t, store, principal, principal.SessionID); got != principal.SessionID {
@@ -51,7 +51,7 @@ func TestSaveSessionStampsProjectionSessionID(t *testing.T) {
 	}
 
 	// (b) opts.SessionID == name but no live row: NULL.
-	if err := store.SaveSession(ctx, principal, "no-live", payload, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: "no-live"}); err != nil {
+	if err := store.SaveSession(ctx, principal, "no-live", payload, "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: "no-live"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := readCatalogSessionID(t, store, principal, "no-live"); got != "" {
@@ -59,7 +59,7 @@ func TestSaveSessionStampsProjectionSessionID(t *testing.T) {
 	}
 
 	// (c) opts.SessionID != name: NULL even though the live row exists.
-	if err := store.SaveSession(ctx, principal, "copy", payload, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, "copy", payload, "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 	if got := readCatalogSessionID(t, store, principal, "copy"); got != "" {
@@ -68,7 +68,7 @@ func TestSaveSessionStampsProjectionSessionID(t *testing.T) {
 
 	// (d) WorktreeInstance non-zero: always NULL, regardless of opts.SessionID.
 	// The save needs an active managed worktree to be admitted.
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
 	if err := store.BeginWorktreeCreation(ctx, principal, instance, worktreeDir); err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestSaveSessionStampsProjectionSessionID(t *testing.T) {
 	if err := store.RegisterWorktreeInstance(ctx, principal, instance, worktreeDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(ctx, principal, "wt-snap", payload, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance, SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, "wt-snap", payload, "model", "provider", 1, 1, 2, state.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance, SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 	var wtSessionID sql.NullString
@@ -89,7 +89,7 @@ func TestSaveSessionStampsProjectionSessionID(t *testing.T) {
 
 	// (e) Re-save (upsert) of a stamped row, still declaring the projection,
 	// keeps the stamp.
-	if err := store.SaveSession(ctx, principal, principal.SessionID, []byte(`[{"role":"user","content":"second"}]`), "model", "provider", 2, 2, 4, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, []byte(`[{"role":"user","content":"second"}]`), "model", "provider", 2, 2, 4, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 	if got := readCatalogSessionID(t, store, principal, principal.SessionID); got != principal.SessionID {
@@ -107,14 +107,14 @@ func TestLoadSessionProjectionResolvesLivePayload(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "live-1", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-1", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := contextTestBinding(t)
 	commitFirstMessageCheckpoint(t, store, principal, binding, "hello")
 	snapshot := []byte(`[{"role":"user","content":"stale snapshot"}]`)
-	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,17 +141,17 @@ func TestLoadSessionProjectionWithoutCheckpointKeepsIdentity(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "live-2", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-2", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := contextTestBinding(t)
 	ensureContextSession(t, store, principal, binding)
-	if err := store.SetSessionTitle(ctx, principal, principal.SessionID, "my title", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(ctx, principal, principal.SessionID, "my title", state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := []byte(`[{"role":"user","content":"snap"}]`)
-	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestLoadSessionProjectionAfterClearAndShrink(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "live-shrink-1", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-shrink-1", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestLoadSessionProjectionAfterClearAndShrink(t *testing.T) {
 
 	// Snapshot carries 3 messages (pre-clear)
 	snapshot := []byte(`[{"role":"user","content":"msg1"},{"role":"assistant","content":"msg2"},{"role":"user","content":"msg3"}]`)
-	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 3, 3, 3, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 3, 3, 3, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,7 +198,7 @@ func TestLoadSessionProjectionAfterClearAndShrink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Advance(ctx, contextstate.AdvanceRequest{
+	if err := store.Advance(ctx, state.AdvanceRequest{
 		Principal:         principal,
 		SessionID:         principal.SessionID,
 		OperationID:       "op-clear-1",
@@ -243,47 +243,47 @@ func TestLoadSessionProjectionAfterClearAndShrink(t *testing.T) {
 	}
 }
 
-func commitPostClearSingleMessage(t *testing.T, store *SQLite, principal contextstate.Principal, binding contextstate.BindingRevision, content string) {
+func commitPostClearSingleMessage(t *testing.T, store *SQLite, principal state.Principal, binding state.BindingRevision, content string) {
 	t.Helper()
 	ctx := context.Background()
 	snapAfterClear, err := store.Load(ctx, principal, principal.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	newTurnPayload, err := contextstate.MarshalCanonical([]map[string]string{
+	newTurnPayload, err := state.MarshalCanonical([]map[string]string{
 		{"role": "user", "content": content},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sequence := snapAfterClear.Revision.Source + 1
-	sourceID, err := contextstate.NewSourceID(principal.SessionID, sequence)
+	sourceID, err := state.NewSourceID(principal.SessionID, sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rng, err := contextstate.NewSourceRange(sourceID, sourceID)
+	rng, err := state.NewSourceRange(sourceID, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpointID, err := contextstate.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "post-clear-turn")
+	checkpointID, err := state.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "post-clear-turn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint := contextstate.CheckpointRecord{
+	checkpoint := state.CheckpointRecord{
 		ID:              checkpointID,
-		Revision:        contextstate.Revision{Session: snapAfterClear.Revision.Session + 1, Durable: snapAfterClear.Revision.Durable + 1, Source: sequence},
+		Revision:        state.Revision{Session: snapAfterClear.Revision.Session + 1, Durable: snapAfterClear.Revision.Durable + 1, Source: sequence},
 		Binding:         snapAfterClear.Binding,
 		SourceRange:     rng,
 		ActiveContext:   newTurnPayload,
 		SummaryMetadata: []byte(`{"version":1}`),
 		TurnID:          2,
 	}
-	event := contextstate.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(content)}
-	req, err := contextstate.NewCommitRequest(principal, principal.SessionID, snapAfterClear.Revision, snapAfterClear.Binding, []contextstate.SourceEvent{event}, checkpoint, newTurnPayload, snapAfterClear.Binding, sequence)
+	event := state.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(content)}
+	req, err := state.NewCommitRequest(principal, principal.SessionID, snapAfterClear.Revision, snapAfterClear.Binding, []state.SourceEvent{event}, checkpoint, newTurnPayload, snapAfterClear.Binding, sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Fingerprint, err = contextstate.FingerprintCommitRequest(req)
+	req.Fingerprint, err = state.FingerprintCommitRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,14 +302,14 @@ func TestLoadSessionProjectionWithTombstonedLiveRowIsPlainCopy(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "live-3", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-3", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := contextTestBinding(t)
 	ensureContextSession(t, store, principal, binding)
 	snapshot := []byte(`[{"role":"user","content":"snap"}]`)
-	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`UPDATE context_sessions SET tombstoned=1 WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID); err != nil {
@@ -339,17 +339,17 @@ func TestLoadSessionNamedCopyNeverTakesOverLiveSession(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "foo", "subject")
+	principal, err := state.NewPrincipal("workspace", "foo", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := contextTestBinding(t)
 	ensureContextSession(t, store, principal, binding)
-	if err := store.SetSessionTitle(ctx, principal, principal.SessionID, "live title", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(ctx, principal, principal.SessionID, "live title", state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := []byte(`[{"role":"user","content":"copy"}]`)
-	if err := store.SaveSession(ctx, principal, "foo", snapshot, "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{}); err != nil {
+	if err := store.SaveSession(ctx, principal, "foo", snapshot, "model", "provider", 1, 1, 2, state.SessionSaveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -376,7 +376,7 @@ func TestLoadSessionFallsBackToLiveRowWithoutSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "live-4", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-4", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,19 +407,19 @@ func TestListSessionsProjectionAndNamedCopyStayDistinct(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "live-session-456", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-session-456", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding := contextTestBinding(t)
 	ensureContextSession(t, store, principal, binding)
-	if err := store.SetSessionTitle(ctx, principal, principal.SessionID, "projection title", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(ctx, principal, principal.SessionID, "projection title", state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(ctx, principal, principal.SessionID, []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(ctx, principal, principal.SessionID, []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(ctx, principal, "foo", []byte(`[{"role":"user","content":"copy"}]`), "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{}); err != nil {
+	if err := store.SaveSession(ctx, principal, "foo", []byte(`[{"role":"user","content":"copy"}]`), "model", "provider", 1, 1, 2, state.SessionSaveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -430,7 +430,7 @@ func TestListSessionsProjectionAndNamedCopyStayDistinct(t *testing.T) {
 	if len(infos) != 2 {
 		t.Fatalf("listing = %d entries, want 2 (one per distinct session_id)", len(infos))
 	}
-	var projection, copy contextstate.SessionCatalogInfo
+	var projection, copy state.SessionCatalogInfo
 	for _, info := range infos {
 		switch info.Name {
 		case principal.SessionID:

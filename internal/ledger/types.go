@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -70,7 +70,7 @@ type RunSnapshot struct {
 }
 
 // RunPolicy describes fixed recovery behaviour for one admitted run.
-type RunPolicy = ledgercore.RunPolicy
+type RunPolicy = core.RunPolicy
 
 // SingleTaskAdmission is the complete durable tuple for one child run.
 type SingleTaskAdmission struct {

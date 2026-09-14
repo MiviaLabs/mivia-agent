@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // firstMessageBusyRetryDelays mirrors the desktop app's own busy-retry
@@ -21,7 +21,7 @@ var firstMessageBusyRetryDelays = []time.Duration{150 * time.Millisecond, 400 * 
 // this clears up) from a real failure a retry can't fix (corrupt row,
 // unmounted drive). Duplicated from storage.isSQLiteBusy rather than
 // imported: this package intentionally depends only on the
-// contextstate.SessionFirstMessageSource interface, not the concrete SQLite
+// state.SessionFirstMessageSource interface, not the concrete SQLite
 // store, so any implementation's own busy-shaped error is caught the same
 // way store-agnostically.
 func isTransientBusyError(err error) bool {
@@ -38,7 +38,7 @@ func isTransientBusyError(err error) bool {
 // same as "no checkpoint yet" - the difference between a title that fills in
 // on the next sidebar refresh and one that silently never does, even once
 // the lock clears.
-func firstUserMessageWithRetry(ctx context.Context, src contextstate.SessionFirstMessageSource, principal contextstate.Principal, sessionID string) (string, error) {
+func firstUserMessageWithRetry(ctx context.Context, src state.SessionFirstMessageSource, principal state.Principal, sessionID string) (string, error) {
 	opener, err := src.FirstUserMessage(ctx, principal, sessionID)
 	for _, delay := range firstMessageBusyRetryDelays {
 		if !isTransientBusyError(err) {
@@ -88,8 +88,8 @@ func (s *Session) markFirstUserTurn(userText string) {
 // snapshots (no SessionID) and already-titled rows keep their existing name.
 // Row identity and order are untouched, so internal consumers of ListSessions
 // (auto-save detection, pruning, restore) see no change.
-func fillSessionTitles(ctx context.Context, catalog contextstate.SessionCatalog, principal contextstate.Principal, out []SessionInfo) {
-	src, ok := catalog.(contextstate.SessionFirstMessageSource)
+func fillSessionTitles(ctx context.Context, catalog state.SessionCatalog, principal state.Principal, out []SessionInfo) {
+	src, ok := catalog.(state.SessionFirstMessageSource)
 	if !ok {
 		return
 	}

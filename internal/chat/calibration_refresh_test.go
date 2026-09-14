@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-// stubCalibrationStore implements both contextstate.Store (so it can be
+// stubCalibrationStore implements both state.Store (so it can be
 // installed via Session.SetContextStore) and CalibrationSeeder (so
 // RefreshCalibrationAfterModelSwitch's type assertion succeeds), with every
 // Store method left unused - these tests never enable durable context, only
@@ -16,15 +16,15 @@ type stubCalibrationStore struct {
 	stubCalibrationSeeder
 }
 
-func (stubCalibrationStore) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
+func (stubCalibrationStore) EnsureSession(context.Context, state.EnsureSessionRequest) error {
 	return nil
 }
-func (stubCalibrationStore) Commit(context.Context, contextstate.CommitRequest) error { return nil }
-func (stubCalibrationStore) Advance(context.Context, contextstate.AdvanceRequest) error {
+func (stubCalibrationStore) Commit(context.Context, state.CommitRequest) error { return nil }
+func (stubCalibrationStore) Advance(context.Context, state.AdvanceRequest) error {
 	return nil
 }
-func (stubCalibrationStore) Load(context.Context, contextstate.Principal, string) (contextstate.Snapshot, error) {
-	return contextstate.Snapshot{}, nil
+func (stubCalibrationStore) Load(context.Context, state.Principal, string) (state.Snapshot, error) {
+	return state.Snapshot{}, nil
 }
 
 // TestRefreshCalibrationAfterModelSwitchReseedsForTheNewBinding pins the fix

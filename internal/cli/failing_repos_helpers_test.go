@@ -1,7 +1,7 @@
 package cli
 
 // failingCASRepository and failingGetRunRepository force ledger fault paths.
-// Duplicated from internal/cliworkflow (workflow_stack_settle_test.go).
+// Duplicated from internal/cli/workflow (workflow_stack_settle_test.go).
 
 import (
 	"context"

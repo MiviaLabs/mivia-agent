@@ -19,12 +19,12 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -124,7 +124,7 @@ func unattendedGateFor(automationID string, policy UnattendedPolicy) (func(ctx c
 // CreateFreshInDir invokes it BEFORE wireEntryLocked's
 // inheritApprovalLocked call, so anything it does there runs before the
 // session's approval posture is even installed (see
-// uiadapter.SetApprovalOverride's own doc comment on this ordering).
+// adapter.SetApprovalOverride's own doc comment on this ordering).
 // SetApprovalOverride itself must also run strictly after
 // CreateFreshInDir returns for the same reason.
 //
@@ -289,7 +289,7 @@ func (s *Service) runStep(ctx context.Context, automationID, runID string, stepI
 		// KNOWN GAP (documented deviation, not silently dropped): ports.
 		// Conversation exposes no *chat.Session accessor, and
 		// automation.Service carries no *config.Resolved or
-		// *cliagents.AgentSessionState to select a NAMED agent by
+		// *agents.AgentSessionState to select a NAMED agent by
 		// registry lookup - that wiring does not exist in this chunk.
 		// boundSess (captured from the bind closure CreateFreshInDir
 		// invokes) is the real underlying session, so ApplySessionAgent
@@ -300,7 +300,7 @@ func (s *Service) runStep(ctx context.Context, automationID, runID string, stepI
 		// config.RootAgentName at load time, so step.Ref here is
 		// already guaranteed to be config.RootAgentName by the time a
 		// validated spec reaches this dispatch.
-		if err := cliagents.ApplySessionAgent(boundSess, nil, &cliagents.AgentSessionState{}, step.Ref, false); err != nil {
+		if err := agents.ApplySessionAgent(boundSess, nil, &agents.AgentSessionState{}, step.Ref, false); err != nil {
 			return fmt.Errorf("automation %q: step %d: agent %q: %w", automationID, stepIndex, step.Ref, err)
 		}
 		_, err := sendTurnHeadless(ctx, conv, step.Prompt, timeout)

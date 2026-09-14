@@ -11,13 +11,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // ListWorktreeSessions lists snapshots for one active worktree instance.
-func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance) ([]contextstate.SessionCatalogInfo, error) {
+func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal state.Principal, instance state.WorktreeInstance) ([]state.SessionCatalogInfo, error) {
 	if err := instance.Validate(); err != nil || instance.IsZero() {
-		return nil, fmt.Errorf("%w: invalid worktree instance", contextstate.ErrInvalidDTO)
+		return nil, fmt.Errorf("%w: invalid worktree instance", state.ErrInvalidDTO)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -32,9 +32,9 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 		return nil, err
 	}
 	defer rows.Close()
-	var out []contextstate.SessionCatalogInfo
+	var out []state.SessionCatalogInfo
 	for rows.Next() {
-		var info contextstate.SessionCatalogInfo
+		var info state.SessionCatalogInfo
 		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree); err != nil {
 			return nil, err
 		}
@@ -54,7 +54,7 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 	}
 	defer liveRows.Close()
 	for liveRows.Next() {
-		var info contextstate.SessionCatalogInfo
+		var info state.SessionCatalogInfo
 		var title sql.NullString
 		if err := liveRows.Scan(&info.Name, &title, &info.Model, &info.Provider, &info.CreatedAt, &info.UpdatedAt, &info.MessageCount, &info.Dir, &info.Worktree); err != nil {
 			return nil, err
@@ -78,7 +78,7 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 	return out, tx.Commit()
 }
 
-func hideCoveredWorktreeRoutes(infos []contextstate.SessionCatalogInfo) []contextstate.SessionCatalogInfo {
+func hideCoveredWorktreeRoutes(infos []state.SessionCatalogInfo) []state.SessionCatalogInfo {
 	type routeKey struct {
 		worktree string
 		dir      string
@@ -95,7 +95,7 @@ func hideCoveredWorktreeRoutes(infos []contextstate.SessionCatalogInfo) []contex
 			covered[routeKey{worktree: info.Worktree, dir: info.Dir}] = true
 		}
 	}
-	filtered := make([]contextstate.SessionCatalogInfo, 0, len(infos))
+	filtered := make([]state.SessionCatalogInfo, 0, len(infos))
 	for _, info := range infos {
 		if info.WorktreeRoute && covered[routeKey{worktree: info.Worktree, dir: info.Dir}] {
 			continue
@@ -105,15 +105,15 @@ func hideCoveredWorktreeRoutes(infos []contextstate.SessionCatalogInfo) []contex
 	return filtered
 }
 
-var _ contextstate.WorktreeRouteCatalog = (*SQLite)(nil)
+var _ state.WorktreeRouteCatalog = (*SQLite)(nil)
 
 // SaveWorktreeRoute upserts the launch route for one mivia-managed worktree.
-func (s *SQLite) SaveWorktreeRoute(ctx context.Context, principal contextstate.Principal, worktree, dir string) error {
+func (s *SQLite) SaveWorktreeRoute(ctx context.Context, principal state.Principal, worktree, dir string) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}
-	if err := validateSessionCatalogName(worktree); err != nil || dir == "" || !contextstate.ValidSessionDir(dir) {
-		return fmt.Errorf("%w: invalid worktree route", contextstate.ErrInvalidDTO)
+	if err := validateSessionCatalogName(worktree); err != nil || dir == "" || !state.ValidSessionDir(dir) {
+		return fmt.Errorf("%w: invalid worktree route", state.ErrInvalidDTO)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s.writeMu.Lock()
@@ -134,7 +134,7 @@ func (s *SQLite) SaveWorktreeRoute(ctx context.Context, principal contextstate.P
 
 // DeleteWorktreeRoute removes a launch route after its Git worktree is gone.
 // It reports how many rows it removed.
-func (s *SQLite) DeleteWorktreeRoute(ctx context.Context, principal contextstate.Principal, worktree string) (int64, error) {
+func (s *SQLite) DeleteWorktreeRoute(ctx context.Context, principal state.Principal, worktree string) (int64, error) {
 	if err := principal.Validate(); err != nil {
 		return 0, err
 	}
@@ -154,7 +154,7 @@ func (s *SQLite) DeleteWorktreeRoute(ctx context.Context, principal contextstate
 // name, whether bound to an instance or legacy. It reports how many rows it
 // removed. Call it only when no live instance owns the name, so no active
 // route can be affected.
-func (s *SQLite) DeleteWorktreeRoutesByName(ctx context.Context, principal contextstate.Principal, worktree string) (int64, error) {
+func (s *SQLite) DeleteWorktreeRoutesByName(ctx context.Context, principal state.Principal, worktree string) (int64, error) {
 	if err := principal.Validate(); err != nil {
 		return 0, err
 	}

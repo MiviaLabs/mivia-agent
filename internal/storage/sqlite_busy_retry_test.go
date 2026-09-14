@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestCommitSiblingSessionsConcurrent reproduces the lost-turn failure of

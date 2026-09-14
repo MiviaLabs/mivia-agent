@@ -150,7 +150,7 @@ func TestRunAgentLoopOnce_DuplicateOfFailedRunCommandMarksFailedDuplicate(t *tes
 	if second.Detail != "failed (duplicate)" {
 		t.Fatalf("second tool_end Detail = %q, want failed (duplicate)", second.Detail)
 	}
-	// Regression guard: uiadapter's ok derivation treats any Detail that
+	// Regression guard: adapter's ok derivation treats any Detail that
 	// does NOT start with "failed" as success. Confirm the
 	// "(duplicate)" suffix preserves that property.
 	if strings.HasPrefix(second.Detail, "failed") == strings.HasPrefix(second.Detail, "failed (duplicate)") {

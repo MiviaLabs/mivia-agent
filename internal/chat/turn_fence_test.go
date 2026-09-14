@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -92,7 +92,7 @@ func TestTurnStartAdmissionPublicationDoesNotFenceOwnTurn(t *testing.T) {
 		t.Fatalf("LoadSession: %v", err)
 	}
 	var loaded []provider.Message
-	if err := contextstate.UnmarshalCanonical(raw, &loaded); err != nil {
+	if err := state.UnmarshalCanonical(raw, &loaded); err != nil {
 		t.Fatalf("decode persisted catalog record: %v", err)
 	}
 	var parts []string

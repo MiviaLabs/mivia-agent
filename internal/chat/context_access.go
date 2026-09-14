@@ -1,11 +1,11 @@
 package chat
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-func (s *Session) ContextStore() contextstate.Store {
+func (s *Session) ContextStore() state.Store {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.contextStore
@@ -15,7 +15,7 @@ func (s *Session) ContextEnabled() bool {
 	defer s.mu.RUnlock()
 	return s.contextEnabledLocked()
 }
-func (s *Session) ContextManager() *contextmgr.ContextManager {
+func (s *Session) ContextManager() *manager.ContextManager {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.contextManager == nil {
@@ -24,7 +24,7 @@ func (s *Session) ContextManager() *contextmgr.ContextManager {
 	copyManager := *s.contextManager
 	return &copyManager
 }
-func (s *Session) ContextPrincipal() contextstate.Principal {
+func (s *Session) ContextPrincipal() state.Principal {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.contextPrincipal
@@ -34,7 +34,7 @@ func (s *Session) ContextPrincipal() contextstate.Principal {
 // for this session - a copy under RLock; zero when the session is unbound.
 // Read-only mirror of the Context* accessors above: chat stays the single
 // holder of binding truth, callers only observe it (click-time fencing).
-func (s *Session) ContextWorktreeBinding() contextstate.WorktreeInstance {
+func (s *Session) ContextWorktreeBinding() state.WorktreeInstance {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.contextWorktree

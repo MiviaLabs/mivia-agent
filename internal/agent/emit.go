@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	usagepkg "github.com/MiviaLabs/mivia-agent/internal/usage"
@@ -162,7 +162,7 @@ func EmitTokenUsage(ctx context.Context, opts Options, providerName, model strin
 // repo wires in production (storage.usageWriter) dispatches its own write off
 // this call's goroutine and tracks it against the store's own WaitGroup, so
 // Record returns immediately without this function needing to know that.
-func EmitCompaction(ctx context.Context, opts Options, preparation contextmgr.Preparation, summarized bool, reason string) {
+func EmitCompaction(ctx context.Context, opts Options, preparation manager.Preparation, summarized bool, reason string) {
 	if !preparation.Compacted {
 		return
 	}

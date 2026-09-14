@@ -1,7 +1,7 @@
 package subagents
 
 // heartbeatDetail format tests. The sidebar panel parses this string
-// (heartbeatStep/heartbeatToolCalls in internal/uiadapter/event_kind.go) to
+// (heartbeatStep/heartbeatToolCalls in internal/tui/adapter/event_kind.go) to
 // drive the per-subagent Step and Tool calls counters, so its shape is a
 // contract between this package and the UI translation layer.
 
@@ -86,7 +86,7 @@ func TestStepOnEventNoLiveHeartbeatWithoutProgress(t *testing.T) {
 
 // TestStepOnEventCountsQueuedAndRunningStartOnce pins the fix for the
 // subagent panel reporting exactly twice the tools that ran ("Tools: N" in
-// internal/ui/screen/conversation/filespanel_layout.go, fed by this
+// internal/tui/view/screen/conversation/filespanel_layout.go, fed by this
 // heartbeat's toolcalls= field), and for inspect_agents'
 // progress.tool_calls, fed by the same stream through the ToolCallSink.
 //

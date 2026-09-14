@@ -5,35 +5,35 @@ package cli
 // the authoritative definitions.
 
 import (
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// HandlerDelegate re-exports cliorchestrate.HandlerDelegate.
-const HandlerDelegate = cliorchestrate.HandlerDelegate
+// HandlerDelegate re-exports orchestrate.HandlerDelegate.
+const HandlerDelegate = orchestrate.HandlerDelegate
 
-// ToolDispatchTasks re-exports cliorchestrate.ToolDispatchTasks.
-const ToolDispatchTasks = cliorchestrate.ToolDispatchTasks
+// ToolDispatchTasks re-exports orchestrate.ToolDispatchTasks.
+const ToolDispatchTasks = orchestrate.ToolDispatchTasks
 
 // OrchestrationCoordinator re-exports the cliorchestrate narrow coordinator
 // interface so callers that import cli can name it.
-type OrchestrationCoordinator = cliorchestrate.OrchestrationCoordinator
+type OrchestrationCoordinator = orchestrate.OrchestrationCoordinator
 
-// ActiveCoordinator delegates to cliorchestrate.ActiveCoordinator.
+// ActiveCoordinator delegates to orchestrate.ActiveCoordinator.
 func ActiveCoordinator() (OrchestrationCoordinator, bool) {
-	return cliorchestrate.ActiveCoordinator()
+	return orchestrate.ActiveCoordinator()
 }
 
 // SetSubagentTaskRouteSink delegates to
-// cliorchestrate.SetSubagentTaskRouteSink. Its parameter is spelled as the
-// unnamed func type on purpose: internal/newtui assigns this function
-// itself to uiadapter.SubagentTaskRouteRegistrar, which requires identical
+// orchestrate.SetSubagentTaskRouteSink. Its parameter is spelled as the
+// unnamed func type on purpose: internal/tui/run assigns this function
+// itself to adapter.SubagentTaskRouteRegistrar, which requires identical
 // function types.
 func SetSubagentTaskRouteSink(fn func(coord OrchestrationCoordinator, callID, runID, taskID string)) {
-	cliorchestrate.SetSubagentTaskRouteSink(fn)
+	orchestrate.SetSubagentTaskRouteSink(fn)
 }
 
-// SetActiveSessionCaller delegates to cliorchestrate.SetActiveSessionCaller.
+// SetActiveSessionCaller delegates to orchestrate.SetActiveSessionCaller.
 func SetActiveSessionCaller(caller runtime.Caller) {
-	cliorchestrate.SetActiveSessionCaller(caller)
+	orchestrate.SetActiveSessionCaller(caller)
 }

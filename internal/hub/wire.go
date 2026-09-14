@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -62,13 +62,13 @@ type WireEvent struct {
 // SourceRange fails the payload's own Validate, and a reconstructed event
 // that cannot pass its own validation is a latent trap for later consumers).
 type WireCompaction struct {
-	Trigger        string                   `json:"trigger"`
-	BeforeTokens   int                      `json:"before_tokens"`
-	AfterTokens    int                      `json:"after_tokens"`
-	ElidedMessages int                      `json:"elided_messages"`
-	ElidedBytes    int                      `json:"elided_bytes"`
-	SourceRange    contextstate.SourceRange `json:"source_range"`
-	SummaryVersion uint32                   `json:"summary_version"`
+	Trigger        string            `json:"trigger"`
+	BeforeTokens   int               `json:"before_tokens"`
+	AfterTokens    int               `json:"after_tokens"`
+	ElidedMessages int               `json:"elided_messages"`
+	ElidedBytes    int               `json:"elided_bytes"`
+	SourceRange    state.SourceRange `json:"source_range"`
+	SummaryVersion uint32            `json:"summary_version"`
 	// Summarized must cross the wire. It defaults to false, so omitting it
 	// does not lose information - it asserts "structural only, no summary"
 	// for every relayed compaction, including summarized ones, and a second

@@ -3,11 +3,11 @@ package cli
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 )
 
 // Pure hook-session logic (discovery, listing, notices) is tested in
-// internal/hooksession now, which owns that logic. This file keeps only the
+// internal/hooks/session now, which owns that logic. This file keeps only the
 // tests that exercise the cli-layer wiring: the /hooks route through the
 // classic slash dispatcher, and unrelated chat-flag parsing.
 

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -23,7 +23,7 @@ import (
 // user of the store: it never closes it.
 type Store struct {
 	store  storage.Store
-	engine *ledgercore.Engine
+	engine *core.Engine
 
 	mu sync.Mutex
 	// plans holds the derived projection, keyed by plan ref.
@@ -47,7 +47,7 @@ type planState struct {
 func NewStore(store storage.Store) *Store {
 	return &Store{
 		store:  store,
-		engine: ledgercore.NewEngine(store, false, ""),
+		engine: core.NewEngine(store, false, ""),
 		plans:  make(map[string]*planState),
 		now:    time.Now,
 	}

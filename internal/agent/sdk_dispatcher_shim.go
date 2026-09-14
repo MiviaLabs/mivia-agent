@@ -127,7 +127,7 @@ func armDispatcherTimeout(ctx context.Context, opts Options, args []byte, capabi
 // deferred-tool path (internal/chat) needs the same number and must NOT
 // narrow its own ctx. Its approval decision is inline and happens before the
 // dispatcher call, so a narrowed ctx there would put this deadline around the
-// operator reading the prompt: uiadapter's gate selects on ctx.Done() and
+// operator reading the prompt: adapter's gate selects on ctx.Done() and
 // answers "canceled", which would auto-deny a prompt mid-read and report a
 // refusal nobody made. That path passes the duration as Request.Timeout
 // instead, and the dispatcher arms it around the handler alone - which is

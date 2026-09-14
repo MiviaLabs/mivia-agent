@@ -23,12 +23,12 @@ var knownBaselinePackages = []string{
 	"internal/agents",
 	"internal/chat",
 	"internal/cli",
-	"internal/cliagents",
-	"internal/clichat",
-	"internal/cliorchestrate",
-	"internal/cliworkflow",
+	"internal/cli/agents",
+	"internal/cli/chat",
+	"internal/cli/orchestrate",
+	"internal/cli/workflow",
 	"internal/provider",
-	"internal/uiadapter",
+	"internal/tui/adapter",
 }
 
 // exemptPackages lists packages that do not require TestMain home isolation.

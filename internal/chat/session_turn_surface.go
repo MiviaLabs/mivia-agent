@@ -190,7 +190,7 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 // "this path has no in-flight SDK call id to match a prompt back to" and that
 // the result was a deny "rather than hang". BOTH claims were false. The SDK
 // stamps the call id into the ctx it hands this handler
-// (sdkagentloop.WithToolCall), and uiadapter's gate already keys its waiter off
+// (sdkagentloop.WithToolCall), and adapter's gate already keys its waiter off
 // exactly that id - while the missing prompt meant an interactive policy
 // called the gate, blocked on a channel nobody could resolve, and drew
 // nothing until the operator cancelled the turn.

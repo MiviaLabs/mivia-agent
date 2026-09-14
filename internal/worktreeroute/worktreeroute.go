@@ -1,9 +1,9 @@
 // Package worktreeroute resolves a repository's registered worktree launch
 // routes and binds chat sessions to them. It exists as a shared
-// leaf so internal/uiadapter can reach worktree-route state without
-// importing internal/cliworktree or internal/clichat - the UI isolation
+// leaf so internal/tui/adapter can reach worktree-route state without
+// importing internal/cli/worktree or internal/cli/chat - the UI isolation
 // policy (.mivia/policy/import-layers.json) forbids both edges.
-// internal/cliworktree imports this package one-way for the shared route
+// internal/cli/worktree imports this package one-way for the shared route
 // principal; this package never imports it back, and it carries no CLI
 // surface of its own.
 package worktreeroute
@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
@@ -30,14 +30,14 @@ type Route struct {
 	// Dir is the worktree's canonical absolute directory.
 	Dir string
 	// Instance is the managed worktree instance when storage tracks one.
-	Instance contextstate.WorktreeInstance
+	Instance state.WorktreeInstance
 }
 
 // WorkspaceID is a repository's durable catalog identity, derived from the
 // canonicalized root directory. Keep it byte-identical to internal/cli's
 // contextWorkspaceID: chat_sessions rows are keyed by this digest, and any
 // drift strands previously stored sessions. A drift-guard test lives in
-// internal/clichat.
+// internal/cli/chat.
 func WorkspaceID(root string) string {
 	resolved, err := filepath.Abs(root)
 	if err != nil {
@@ -52,8 +52,8 @@ func WorkspaceID(root string) string {
 
 // Principal derives the repository-level identity every worktree-route row
 // is stored and listed under.
-func Principal(root string) (contextstate.Principal, error) {
-	return contextstate.NewPrincipal(WorkspaceID(root), "worktree-routes", "local-user")
+func Principal(root string) (state.Principal, error) {
+	return state.NewPrincipal(WorkspaceID(root), "worktree-routes", "local-user")
 }
 
 // Root resolves dir (default ".") to the main repository root, matching how
@@ -106,7 +106,7 @@ func StartInRoute(ctx context.Context, sess *chat.Session, store *storage.SQLite
 	if rt.Worktree == "" || rt.Dir == "" {
 		return Route{}, fmt.Errorf("route requires a worktree name and directory")
 	}
-	// Same fixed-valid-input guarantee internal/cliworktree documents on
+	// Same fixed-valid-input guarantee internal/cli/worktree documents on
 	// removeWorktreeRouteInStore: Principal cannot fail for a
 	// caller-supplied root (bounded digest, fixed literal fields), so the
 	// error is discarded rather than threaded through every caller.

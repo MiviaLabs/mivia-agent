@@ -1,11 +1,11 @@
 package cli
 
 // clichat_test_shims_test.go supplies test-scope shims for symbols that
-// moved to internal/clichat, so characterization_test.go stays byte-identical.
+// moved to internal/cli/chat, so characterization_test.go stays byte-identical.
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"os"
@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// chatInvocation mirrors the moved clichat.chatInvocation fields the
+// chatInvocation mirrors the moved chat.chatInvocation fields the
 // characterization suite sets.
 type chatInvocation struct {
 	workspacePath     string
@@ -24,14 +24,14 @@ type chatInvocation struct {
 
 // runConfiguredChat delegates to the moved entry point for tests.
 var runConfiguredChat = func(inv chatInvocation, res *config.Resolved) error {
-	return clichat.RunChatCharacterization(inv.workspacePath, inv.jsonMode, inv.plainUI, inv.quiet, res)
+	return chat.RunChatCharacterization(inv.workspacePath, inv.jsonMode, inv.plainUI, inv.quiet, res)
 }
 
-// loadChatSkills delegates to clichat.LoadChatSkills for tests.
-var loadChatSkills = func(wsRoot string) (*skills.Registry, error) { return clichat.LoadChatSkills(wsRoot) }
+// loadChatSkills delegates to chat.LoadChatSkills for tests.
+var loadChatSkills = func(wsRoot string) (*skills.Registry, error) { return chat.LoadChatSkills(wsRoot) }
 
-// runAgentsWithIO delegates to cliagents.RunAgentsWithIO for tests.
-var runAgentsWithIO = cliagents.RunAgentsWithIO
+// runAgentsWithIO delegates to agents.RunAgentsWithIO for tests.
+var runAgentsWithIO = agents.RunAgentsWithIO
 
 func writeCatalogAgent(t *testing.T, dir, name, body string) {
 	t.Helper()
@@ -47,26 +47,26 @@ func writeCatalogAgent(t *testing.T, dir, name, body string) {
 	}
 }
 
-// loadAgentDefinitions delegates to cliagents.LoadAgentDefinitions for tests.
-var loadAgentDefinitions = cliagents.LoadAgentDefinitions
+// loadAgentDefinitions delegates to agents.LoadAgentDefinitions for tests.
+var loadAgentDefinitions = agents.LoadAgentDefinitions
 
 // chatFlags delegates to the moved clichat flag parser for tests.
-var chatFlags = clichat.ChatFlags
+var chatFlags = chat.ChatFlags
 
 // handleSlash delegates to the moved clichat slash dispatcher for tests.
-var handleSlash = clichat.HandleSlashCommand
+var handleSlash = chat.HandleSlashCommand
 
 // slashSurfaceBoth delegates to the moved clichat surface constant.
-var slashSurfaceBoth = clichat.SlashSurfaceBoth
+var slashSurfaceBoth = chat.SlashSurfaceBoth
 
 // builtInSlashCommands delegates to the moved clichat catalog for tests.
-var builtInSlashCommands = clichat.BuiltInSlashCommands
+var builtInSlashCommands = chat.BuiltInSlashCommands
 
 // parseStackWorkflowArgs delegates to the moved clichat helper for tests.
-var parseStackWorkflowArgs = clichat.ParseStackWorkflowArgsFunc
+var parseStackWorkflowArgs = chat.ParseStackWorkflowArgsFunc
 
 // resolveStackID delegates to the moved clichat helper for tests.
-var resolveStackID = clichat.ResolveStackIDFunc
+var resolveStackID = chat.ResolveStackIDFunc
 
 // openStackLedger delegates to the moved clichat helper for tests.
-var openStackLedger = clichat.OpenStackLedgerFunc
+var openStackLedger = chat.OpenStackLedgerFunc

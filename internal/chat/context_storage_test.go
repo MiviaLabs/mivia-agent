@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -22,15 +22,15 @@ func TestContextEnabledTurnCommitsSQLite(t *testing.T) {
 	}
 	defer store.Close()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{
@@ -77,11 +77,11 @@ func TestManagedEnsureAndRotationUseRetainedDirectory(t *testing.T) {
 	}
 	defer store.Close()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, worktreeRoot); err != nil {
 		t.Fatal(err)
 	}
@@ -144,15 +144,15 @@ func TestSaveAfterTurnPromotesContextSessionToCatalog(t *testing.T) {
 	}
 	defer store.Close()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{PreparationManager: contextmgr.StructuralPreparationManager{}, CheckpointPublisher: contextmgr.PreparationCommitter{Store: store}, Enabled: true}
@@ -214,7 +214,7 @@ func TestContextEnabledAgentTurnsCommitEveryTurn(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestContextClearAdvancesDurableHeadWithoutResurrectingCheckpoint(t *testing
 	}
 	defer store.Close()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestContextClearAdvancesDurableHeadWithoutResurrectingCheckpoint(t *testing
 	if snapshot.Active.ID.SessionID != "" {
 		t.Fatalf("clear left active checkpoint: %+v", snapshot.Active)
 	}
-	if snapshot.Revision != (contextstate.Revision{Session: 2, Durable: 2, Source: 2}) {
+	if snapshot.Revision != (state.Revision{Session: 2, Durable: 2, Source: 2}) {
 		t.Fatalf("clear revision = %+v", snapshot.Revision)
 	}
 }
@@ -287,7 +287,7 @@ func TestContextModelSelectionAdvancesBindingFence(t *testing.T) {
 	}
 	defer store.Close()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model", "next-model"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestContextModelSelectionAdvancesBindingFence(t *testing.T) {
 	if snapshot.Binding.Model != "next-model" || snapshot.Binding.Generation != 2 {
 		t.Fatalf("binding after selection = %+v", snapshot.Binding)
 	}
-	if snapshot.Revision != (contextstate.Revision{Session: 2, Durable: 2, Source: 2}) {
+	if snapshot.Revision != (state.Revision{Session: 2, Durable: 2, Source: 2}) {
 		t.Fatalf("selection revision = %+v", snapshot.Revision)
 	}
 }
@@ -382,14 +382,14 @@ func TestManagedWorktreeAdvanceAPIsRejectDeletingInstance(t *testing.T) {
 				}
 				return
 			}
-			if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+			if !errors.Is(err, state.ErrWorktreeDeleted) {
 				t.Fatalf("deleting managed worktree action error = %v, want ErrWorktreeDeleted", err)
 			}
 		})
 	}
 }
 
-func managedWorktreeContextSession(t *testing.T) (*Session, *storage.SQLite, contextstate.Principal, contextstate.WorktreeInstance) {
+func managedWorktreeContextSession(t *testing.T) (*Session, *storage.SQLite, state.Principal, state.WorktreeInstance) {
 	t.Helper()
 	root := t.TempDir()
 	store, err := storage.OpenSQLite(filepath.Join(root, "context.db"))
@@ -398,11 +398,11 @@ func managedWorktreeContextSession(t *testing.T) (*Session, *storage.SQLite, con
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model", "next-model"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	worktreePath := filepath.Join(root, "wt-a")
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, worktreePath); err != nil {
 		t.Fatalf("begin worktree creation: %v", err)

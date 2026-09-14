@@ -321,7 +321,7 @@ func finalizeSDKTurn(opts Options, res sdkagentloop.Result, turnUserText string)
 	if opts.RequireFinalText && strings.TrimSpace(text) == "" && res.Stop != sdkagentloop.StopSteered {
 		return fmt.Errorf("agent: turn produced no assistant text")
 	}
-	// Publish the terminal EventAssistant so uiadapter sees text.end
+	// Publish the terminal EventAssistant so adapter sees text.end
 	// even when no FinalWriter was wired. The StreamingWriter tee
 	// publishes DELTAS (Detail: "delta"); this one publishes the
 	// committed text.end, mirroring legacy commitFinalAnswer's

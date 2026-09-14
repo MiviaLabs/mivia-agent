@@ -3,7 +3,7 @@ package provider
 import (
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // NewDeepSeek returns a DeepSeek OpenAI-compatible completer.
@@ -16,7 +16,7 @@ import (
 func NewDeepSeek(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("deepseek")
+		descriptor, ok := registry.Lookup("deepseek")
 		if !ok {
 			return nil, fmt.Errorf("provider %q has no built-in descriptor", "deepseek")
 		}

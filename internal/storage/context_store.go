@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // EnsureSession creates the zero-revision context head and binds it to the

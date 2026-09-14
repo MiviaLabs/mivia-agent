@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
@@ -91,7 +91,7 @@ func anthropicAdaptiveFields(level reasoning.Level) map[string]any {
 	// display: "summarized" is required to get readable thinking text back at
 	// all - Anthropic's default ("omitted") streams thinking blocks with an
 	// empty text field. Without this, mivia's reasoning panel
-	// (internal/ui/component/transcript) has nothing to show regardless of how
+	// (internal/tui/view/component/transcript) has nothing to show regardless of how
 	// ReasoningContent is populated downstream.
 	fields := map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}}
 	// reasoning.Auto is the only active level with no entry in
@@ -141,7 +141,7 @@ func thinkingObject(level reasoning.Level, preserved bool) map[string]any {
 }
 
 // defaultReasoningDialect is how a provider factory states its wire dialect:
-// by reading the vetted table in internal/reasoning that config validates
+// by reading the vetted table in internal/provider/reasoning that config validates
 // model entries against. A provider absent from that table gets the empty
 // dialect, so only a request naming its own shape sends anything.
 func defaultReasoningDialect(provider string) reasoning.Dialect {

@@ -13,7 +13,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 )
 
 // installMarkerStopHook arms a Stop hook, at the given workspace, that reads
@@ -23,14 +23,14 @@ import (
 // identical to a correctly wired one under any assertion that only checks
 // "did it run at all".
 //
-// This mirrors internal/uiadapter/runner_test.go's
+// This mirrors internal/tui/adapter/runner_test.go's
 // TestCommandRunner_HooksListsArmedHooks: write <ws>/.mivia/mivia.toml, then
 // hooksession.Load(ws) - the only cross-package way to install a real
 // *hooksession.Session, since its fields are unexported.
 func installMarkerStopHook(t *testing.T) (marker string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("shell-script hook fixture is POSIX-only; see internal/hooksession/stop_test.go for the Windows translation this package does not duplicate")
+		t.Skip("shell-script hook fixture is POSIX-only; see internal/hooks/session/stop_test.go for the Windows translation this package does not duplicate")
 	}
 	ws := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(ws, ".mivia"), 0o755); err != nil {
@@ -144,7 +144,7 @@ func TestSendUserFiresStopHookOnAgentPath(t *testing.T) {
 // TestSendUserFiresStopHookOnCanceledContext pins the required firing
 // contract from the Wave 2 plan review: a turn that already began fires
 // Stop on EVERY outcome, including a canceled ctx, and the run is recorded
-// (not silently skipped) exactly like internal/hooksession's own
+// (not silently skipped) exactly like internal/hooks/session's own
 // TestStopHookOnACanceledTurnIsRecordedNotSilent. This test pins the same
 // contract one layer up, at the sendPlain call site that wraps done().
 func TestSendUserFiresStopHookOnCanceledContext(t *testing.T) {
@@ -211,7 +211,7 @@ func TestSendUserFiresNoStopHookWhenTheTurnNeverBegan(t *testing.T) {
 // hook's output reaches the same OnAgentEvent channel Pre/PostToolUse hook
 // runs use (internal/agent/hook_events.go's emitHookRuns), with the same
 // EventHook shape a renderer already knows how to draw
-// (internal/uiadapter/event_kind.go's translateHook), rather than a bespoke
+// (internal/tui/adapter/event_kind.go's translateHook), rather than a bespoke
 // notice string a renderer would need a second code path to show.
 func TestFireRootTurnEndHookSurfacesOutputAsAnEventHook(t *testing.T) {
 	if runtime.GOOS == "windows" {

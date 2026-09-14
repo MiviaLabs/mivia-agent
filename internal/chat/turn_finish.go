@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -86,9 +86,9 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		s.clearLiveTurnToken()
 		return ErrStaleOperation
 	}
-	outcome := contextmgr.OutcomeComplete
+	outcome := manager.OutcomeComplete
 	if interrupted {
-		outcome = contextmgr.OutcomeCancelled
+		outcome = manager.OutcomeCancelled
 	}
 	err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, outcome)
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *Session) finishErroredContextTurn(ctx context.Context, loop *agent.Loop
 		s.dropPendingAdmissionForTurn(token.TurnID)
 		return ErrStaleOperation
 	}
-	if err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, contextmgr.OutcomeUpstreamErr); err != nil {
+	if err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, manager.OutcomeUpstreamErr); err != nil {
 		// The commit itself failed - most commonly BuildCommitRequest's
 		// message-shape validation rejecting a turn that died mid-tool-call
 		// (a dangling tool_use with no paired result). Fall back to the
@@ -198,14 +198,14 @@ func (s *Session) adoptFailedTurnSnapshot(loop *agent.Loop, token OperationToken
 
 // commitContextTurn performs the durable publication for one context turn and
 // adopts its result in memory. The caller holds contextPublishMu. outcome is
-// the checkpoint's contextmgr.Outcome* tag - OutcomeComplete for an ordinary
+// the checkpoint's manager.Outcome* tag - OutcomeComplete for an ordinary
 // successful turn, OutcomeCancelled for an interrupted one, OutcomeUpstreamErr
 // for a non-interrupted error the caller still wants committed.
 func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userText string, token OperationToken, contextCfg contextTurnConfig, outcome string) error {
 	ordered := contextTurnMessages(loop.Messages, userText)
 	preparation := loop.LastPreparation
 	commitCtx := ctx
-	if outcome == contextmgr.OutcomeCancelled {
+	if outcome == manager.OutcomeCancelled {
 		// The provider context is canceled by force-send, but the durable
 		// history publication must still complete before the next turn starts.
 		commitCtx = context.Background()

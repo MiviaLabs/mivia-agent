@@ -276,9 +276,9 @@ if command -v go >/dev/null 2>&1; then
   # kind gets added on one side and forgotten on the others. It is the gate for
   # a class that has shipped four times here (a kind reaching one viewer of
   # four, an arm with no allowlist entry, an allowlist entry with no arm).
-  if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|uiadapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
+  if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|tui/adapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
     echo " → Running viewer-surface conformance tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/cli/chat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The tool-execution conformance table. Two code paths execute a model's
@@ -288,7 +288,7 @@ if command -v go >/dev/null 2>&1; then
   # policy recording their declared divergences is touched.
   if echo "$STAGED" | grep -qE '^(internal/(chat|agent|clichat)/|\.mivia/policy/tool-execution-conformance\.json$)'; then
     echo " → Running tool-execution conformance tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/cli/chat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestNoToolReachesTheModelUngoverned' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The wire-field source check: every string leaving this machine must pass
@@ -307,11 +307,11 @@ if command -v go >/dev/null 2>&1; then
   # and a result-producer lookup keyed by the wrong one compiles and misses
   # silently (DC-11) - the recovered path shipped that twice. The conformance
   # suite is the gate that holds EVERY producer to the same attachment
-  # contract; the wire-contract test pins the envelope bytes uiadapter
+  # contract; the wire-contract test pins the envelope bytes adapter
   # mirrors by hand (INV-TUI-29 forbids the import).
-  if echo "$STAGED" | grep -qE '^internal/cliorchestrate/'; then
+  if echo "$STAGED" | grep -qE '^internal/cli/orchestrate/'; then
     echo " → Running orchestration result-envelope invariant tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTaskResultProducerConformance|TestTaskResultEnvelopeWireContract' ./internal/cliorchestrate/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTaskResultProducerConformance|TestTaskResultEnvelopeWireContract' ./internal/cli/orchestrate/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # Any staged Go change can add an exec; the gate walks internal/ whole, so
   # it is keyed on Go files rather than one directory.
@@ -332,9 +332,9 @@ if command -v go >/dev/null 2>&1; then
   # (DC-14); the marker publish absorbs that with a bounded retry that only
   # Windows CI would otherwise exercise, intermittently. The gate proves the
   # retry deterministically on every platform.
-  if echo "$STAGED" | grep -qE '^internal/cliworktree/'; then
+  if echo "$STAGED" | grep -qE '^internal/cli/worktree/'; then
     echo " → Running worktree marker publish invariant tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestMarkerPublishRetriesTransientRenameContention' ./internal/cliworktree/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestMarkerPublishRetriesTransientRenameContention' ./internal/cli/worktree/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."
@@ -358,11 +358,11 @@ if command -v go >/dev/null 2>&1; then
   # them, or it reads "(0)" on screen forever. An adversarial review found
   # eight such mutations surviving the whole suite. Keyed on all three
   # packages, because the drift is between them.
-  if echo "$STAGED" | grep -qE '^internal/(chat/|uikit/ports/|uiadapter/)'; then
+  if echo "$STAGED" | grep -qE '^internal/(chat/|tui/kit/ports/|tui/adapter/)'; then
     echo " → Running context-breakdown enumeration invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryCostFieldIsRescaled|TestChatCountsOnlyKeepsEveryCount|TestFloorAndConversationPartitionEveryCost' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/uikit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/uiadapter/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/tui/kit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/tui/adapter/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The session catalog has two namespaces - plain and managed-worktree - and
   # every behaviour implemented for one and missed by the other in the

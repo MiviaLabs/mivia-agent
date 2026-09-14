@@ -27,7 +27,7 @@ const DefaultSubagentRequestTimeoutSec = 1800 // 30 minutes
 // subagent turn: a positive default_request_timeout_seconds is the deadline;
 // anything else resolves to DefaultSubagentRequestTimeoutSec. Both the
 // derived provider HTTP wall (resolveProviderHTTPTimeout in load.go) and
-// internal/clichat resolve through this one helper so the two cannot drift.
+// internal/cli/chat resolve through this one helper so the two cannot drift.
 func ResolvedSubagentRequestTimeout(cfg SubagentConfig) time.Duration {
 	if cfg.DefaultRequestTimeoutSec > 0 {
 		return SaturatingSeconds(cfg.DefaultRequestTimeoutSec)

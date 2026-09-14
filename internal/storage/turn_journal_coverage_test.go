@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestTurnJournalStorageCoverageGaps(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
-	entry := contextstate.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
+	entry := state.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
 
 	// 1. AppendTurnJournalEntry with empty sessionID or turnID
 	if err := store.AppendTurnJournalEntry(ctx, principal, "", "turn:1", entry); err == nil {
@@ -47,15 +47,15 @@ func TestTurnJournalValidationAndQueryErrors(t *testing.T) {
 	ctx := context.Background()
 
 	// LoadTurnJournal invalid principal
-	if _, err := store.LoadTurnJournal(ctx, contextstate.Principal{}, "s", "t"); err == nil {
+	if _, err := store.LoadTurnJournal(ctx, state.Principal{}, "s", "t"); err == nil {
 		t.Fatal("expected LoadTurnJournal error on invalid principal, got nil")
 	}
 	// ClearTurnJournal invalid principal
-	if err := store.ClearTurnJournal(ctx, contextstate.Principal{}, "s", "t"); err == nil {
+	if err := store.ClearTurnJournal(ctx, state.Principal{}, "s", "t"); err == nil {
 		t.Fatal("expected ClearTurnJournal error on invalid principal, got nil")
 	}
 	// ListJournaledTurns invalid principal
-	if _, err := store.ListJournaledTurns(ctx, contextstate.Principal{}, "s"); err == nil {
+	if _, err := store.ListJournaledTurns(ctx, state.Principal{}, "s"); err == nil {
 		t.Fatal("expected ListJournaledTurns error on invalid principal, got nil")
 	}
 

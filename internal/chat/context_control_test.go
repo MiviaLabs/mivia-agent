@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -98,7 +98,7 @@ func TestCompactRejectsEmptyHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestCompactAfterResumeCompactsAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", first.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", first.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestCompactAfterResumeCompactsAgain(t *testing.T) {
 	// "Process 2": a fresh Session with its own principal, as
 	// `mivia chat --session` mints, resumes the compacted session.
 	second := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
-	secondPrincipal, err := contextstate.NewPrincipal("workspace", second.SessionID, "subject")
+	secondPrincipal, err := state.NewPrincipal("workspace", second.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestCompactWithResultReturnsPreparationNumbers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestCompactWithResultMatchesCompactErrorBehavior(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+		principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -356,11 +356,11 @@ func TestCompactRejectsDeletingManagedWorktreeBeforePreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	canonicalPath := t.TempDir()
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonicalPath); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestCompactRejectsDeletingManagedWorktreeBeforePreparation(t *testing.T) {
 	}
 	prepareCalls := preparation.calls
 	err = session.Compact(context.Background(), "")
-	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Errorf("Compact error = %v, want ErrWorktreeDeleted", err)
 	}
 	if preparation.calls != prepareCalls {

@@ -6,52 +6,52 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestUnboundAPIsRejectManagedLiveContext(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(context.Context, *SQLite, contextstate.Principal) error
+		mutate func(context.Context, *SQLite, state.Principal) error
 	}{
-		{"load", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
+		{"load", func(ctx context.Context, store *SQLite, principal state.Principal) error {
 			_, err := store.Load(ctx, principal, principal.SessionID)
 			return err
 		}},
-		{"catalog delete", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
+		{"catalog delete", func(ctx context.Context, store *SQLite, principal state.Principal) error {
 			return store.DeleteSessionSnapshot(ctx, principal, principal.SessionID)
 		}},
-		{"lifecycle delete", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
+		{"lifecycle delete", func(ctx context.Context, store *SQLite, principal state.Principal) error {
 			_, err := store.DeleteSession(ctx, principal, principal.SessionID)
 			return err
 		}},
-		{"export", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
+		{"export", func(ctx context.Context, store *SQLite, principal state.Principal) error {
 			_, err := store.ExportSession(ctx, principal, principal.SessionID)
 			return err
 		}},
-		{"import", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
+		{"import", func(ctx context.Context, store *SQLite, principal state.Principal) error {
 			payload, event := contextSourceFixture(t, principal, "import")
-			_, err := store.ImportSource(ctx, principal, "legacy", "operation", []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}})
+			_, err := store.ImportSource(ctx, principal, "legacy", "operation", []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}})
 			return err
 		}},
-		{"append source", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
+		{"append source", func(ctx context.Context, store *SQLite, principal state.Principal) error {
 			payload, event := contextSourceFixture(t, principal, "append")
-			return store.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}})
+			return store.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}})
 		}},
-		{"read range", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
-			id, err := contextstate.NewSourceID(principal.SessionID, 1)
+		{"read range", func(ctx context.Context, store *SQLite, principal state.Principal) error {
+			id, err := state.NewSourceID(principal.SessionID, 1)
 			if err != nil {
 				return err
 			}
-			sourceRange, err := contextstate.NewSourceRange(id, id)
+			sourceRange, err := state.NewSourceRange(id, id)
 			if err != nil {
 				return err
 			}
 			_, err = store.ReadRange(ctx, principal, sourceRange)
 			return err
 		}},
-		{"read payload", func(ctx context.Context, store *SQLite, principal contextstate.Principal) error {
-			ref := contextstate.ContentRef{Ref: "ctxp_missing", Namespace: contextstate.Namespace, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID, SubjectID: principal.SubjectID, Size: 1}
+		{"read payload", func(ctx context.Context, store *SQLite, principal state.Principal) error {
+			ref := state.ContentRef{Ref: "ctxp_missing", Namespace: state.Namespace, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID, SubjectID: principal.SubjectID, Size: 1}
 			_, err := store.ReadPayload(ctx, principal, ref)
 			return err
 		}},
@@ -61,10 +61,10 @@ func TestUnboundAPIsRejectManagedLiveContext(t *testing.T) {
 			store, principal, instance := seedDeletingManagedContext(t)
 			defer store.Close()
 			ctx := context.Background()
-			if _, err := store.LoadWorktree(ctx, principal, principal.SessionID, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+			if _, err := store.LoadWorktree(ctx, principal, principal.SessionID, instance); !errors.Is(err, state.ErrWorktreeDeleted) {
 				t.Fatalf("scoped stale load = %v, want ErrWorktreeDeleted", err)
 			}
-			if err := test.mutate(ctx, store, principal); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+			if err := test.mutate(ctx, store, principal); !errors.Is(err, state.ErrWorktreeDeleted) {
 				t.Errorf("unbound operation = %v, want ErrWorktreeDeleted", err)
 			}
 			assertManagedContextUnchanged(t, store, principal)
@@ -72,20 +72,20 @@ func TestUnboundAPIsRejectManagedLiveContext(t *testing.T) {
 	}
 }
 
-func seedDeletingManagedContext(t *testing.T) (*SQLite, contextstate.Principal, contextstate.WorktreeInstance) {
+func seedDeletingManagedContext(t *testing.T) (*SQLite, state.Principal, state.WorktreeInstance) {
 	t.Helper()
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal := mustCleanupPrincipal(t, "session", "subject")
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
 	worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
 	if err := registerCleanupInstance(context.Background(), store, principal, instance, worktreeDir); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t), WorktreeInstance: instance}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t), WorktreeInstance: instance}); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func seedDeletingManagedContext(t *testing.T) (*SQLite, contextstate.Principal, 
 	return store, principal, instance
 }
 
-func assertManagedContextUnchanged(t *testing.T, store *SQLite, principal contextstate.Principal) {
+func assertManagedContextUnchanged(t *testing.T, store *SQLite, principal state.Principal) {
 	t.Helper()
 	var revision, durable, source, tombstoned int
 	if err := store.db.QueryRow(`SELECT session_revision,durable_revision,source_sequence,tombstoned FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=?`, principal.WorkspaceID, principal.SubjectID, principal.SessionID).Scan(&revision, &durable, &source, &tombstoned); err != nil {

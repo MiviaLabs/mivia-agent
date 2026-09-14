@@ -9,32 +9,32 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-// heartbeatFakeStore is a minimal contextstate.Store + SessionLeaseRenewer
+// heartbeatFakeStore is a minimal state.Store + SessionLeaseRenewer
 // double that records every RenewLease call, for asserting the ticking
 // goroutine's behavior without a real SQLite store.
 type heartbeatFakeStore struct {
 	mu            sync.Mutex
 	renewCount    int
-	lastPrincipal contextstate.Principal
+	lastPrincipal state.Principal
 	renewErr      error
 	releaseCount  int
-	releasePrinc  contextstate.Principal
+	releasePrinc  state.Principal
 	releaseErr    error
 }
 
-func (s *heartbeatFakeStore) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
+func (s *heartbeatFakeStore) EnsureSession(context.Context, state.EnsureSessionRequest) error {
 	return nil
 }
-func (s *heartbeatFakeStore) Commit(context.Context, contextstate.CommitRequest) error   { return nil }
-func (s *heartbeatFakeStore) Advance(context.Context, contextstate.AdvanceRequest) error { return nil }
-func (s *heartbeatFakeStore) Load(context.Context, contextstate.Principal, string) (contextstate.Snapshot, error) {
-	return contextstate.Snapshot{}, nil
+func (s *heartbeatFakeStore) Commit(context.Context, state.CommitRequest) error   { return nil }
+func (s *heartbeatFakeStore) Advance(context.Context, state.AdvanceRequest) error { return nil }
+func (s *heartbeatFakeStore) Load(context.Context, state.Principal, string) (state.Snapshot, error) {
+	return state.Snapshot{}, nil
 }
 
-func (s *heartbeatFakeStore) RenewLease(_ context.Context, principal contextstate.Principal, _ string) error {
+func (s *heartbeatFakeStore) RenewLease(_ context.Context, principal state.Principal, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.renewCount++
@@ -42,7 +42,7 @@ func (s *heartbeatFakeStore) RenewLease(_ context.Context, principal contextstat
 	return s.renewErr
 }
 
-func (s *heartbeatFakeStore) ReleaseLease(_ context.Context, principal contextstate.Principal, _ string) error {
+func (s *heartbeatFakeStore) ReleaseLease(_ context.Context, principal state.Principal, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.releaseCount++
@@ -50,26 +50,26 @@ func (s *heartbeatFakeStore) ReleaseLease(_ context.Context, principal contextst
 	return s.releaseErr
 }
 
-func (s *heartbeatFakeStore) counts() (int, contextstate.Principal) {
+func (s *heartbeatFakeStore) counts() (int, state.Principal) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.renewCount, s.lastPrincipal
 }
 
-func (s *heartbeatFakeStore) releases() (int, contextstate.Principal) {
+func (s *heartbeatFakeStore) releases() (int, state.Principal) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.releaseCount, s.releasePrinc
 }
 
 var (
-	_ contextstate.Store               = (*heartbeatFakeStore)(nil)
-	_ contextstate.SessionLeaseRenewer = (*heartbeatFakeStore)(nil)
+	_ state.Store               = (*heartbeatFakeStore)(nil)
+	_ state.SessionLeaseRenewer = (*heartbeatFakeStore)(nil)
 )
 
-func heartbeatTestPrincipal(t *testing.T, sessionID, subjectID string) contextstate.Principal {
+func heartbeatTestPrincipal(t *testing.T, sessionID, subjectID string) state.Principal {
 	t.Helper()
-	p, err := contextstate.NewPrincipal("workspace", sessionID, subjectID)
+	p, err := state.NewPrincipal("workspace", sessionID, subjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +95,13 @@ func waitForCondition(t *testing.T, timeout time.Duration, msg string, cond func
 // TestContextHeartbeat_RepeatedArmSamePrincipalNoDuplicateGoroutine confirms
 // arm() called twice with the same store leaves the first ticking goroutine
 // running rather than starting a second one. Goroutine-count delta follows
-// the same band-based pattern internal/cliorchestrate's
+// the same band-based pattern internal/cli/orchestrate's
 // nested_dispatch_integration_test.go uses (goleak is not vendored in this
 // repo).
 func TestContextHeartbeat_RepeatedArmSamePrincipalNoDuplicateGoroutine(t *testing.T) {
 	store := &heartbeatFakeStore{}
 	principal := heartbeatTestPrincipal(t, "sess-1", "subj-1")
-	h := newContextHeartbeat(5*time.Millisecond, func() contextstate.Principal { return principal })
+	h := newContextHeartbeat(5*time.Millisecond, func() state.Principal { return principal })
 	t.Cleanup(h.stop)
 
 	runtime.GC()
@@ -141,8 +141,8 @@ func TestContextHeartbeat_SurvivesPrincipalRotation(t *testing.T) {
 	first := heartbeatTestPrincipal(t, "sess-1", "subj-1")
 	var current atomic.Value
 	current.Store(first)
-	h := newContextHeartbeat(5*time.Millisecond, func() contextstate.Principal {
-		return current.Load().(contextstate.Principal)
+	h := newContextHeartbeat(5*time.Millisecond, func() state.Principal {
+		return current.Load().(state.Principal)
 	})
 	t.Cleanup(h.stop)
 
@@ -168,7 +168,7 @@ func TestContextHeartbeat_SurvivesPrincipalRotation(t *testing.T) {
 func TestContextHeartbeat_TeardownRacesCloseAndReclaim(t *testing.T) {
 	store := &heartbeatFakeStore{}
 	principal := heartbeatTestPrincipal(t, "sess-1", "subj-1")
-	h := newContextHeartbeat(time.Millisecond, func() contextstate.Principal { return principal })
+	h := newContextHeartbeat(time.Millisecond, func() state.Principal { return principal })
 	h.arm(store, principal)
 	waitForCondition(t, time.Second, "ticking goroutine never started", func() bool {
 		count, _ := store.counts()
@@ -253,7 +253,7 @@ func TestSessionReleaseContextLeaseCallsThroughToTheStore(t *testing.T) {
 	// would return an unbound zero-value Principal here, since this test
 	// never binds a real context store on session).
 	session.contextHeartbeatOnce.Do(func() {})
-	session.contextHeartbeat = newContextHeartbeat(5*time.Millisecond, func() contextstate.Principal { return principal })
+	session.contextHeartbeat = newContextHeartbeat(5*time.Millisecond, func() state.Principal { return principal })
 	session.contextHeartbeat.arm(store, principal)
 	waitForCondition(t, time.Second, "heartbeat never renewed before release", func() bool {
 		count, _ := store.counts()
@@ -293,7 +293,7 @@ func TestSessionReleaseContextLeaseIsANoOpWhenNeverArmed(t *testing.T) {
 // session that never bound a context store (no heartbeat ever armed)
 // tolerates StopContextLeaseHeartbeat as a no-op rather than a nil-pointer
 // panic. This is the pool-adoption discard path in
-// internal/uiadapter/session_pool_worktree.go, which calls this on any
+// internal/tui/adapter/session_pool_worktree.go, which calls this on any
 // discarded twin session regardless of whether it ever armed a heartbeat.
 func TestSessionStopContextLeaseHeartbeatIsANoOpWhenNeverArmed(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
@@ -310,7 +310,7 @@ func TestSessionStopContextLeaseHeartbeatStopsTickingWithoutReleasing(t *testing
 	principal := heartbeatTestPrincipal(t, "sess-1", "subj-1")
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	session.contextHeartbeatOnce.Do(func() {})
-	session.contextHeartbeat = newContextHeartbeat(5*time.Millisecond, func() contextstate.Principal { return principal })
+	session.contextHeartbeat = newContextHeartbeat(5*time.Millisecond, func() state.Principal { return principal })
 	session.contextHeartbeat.arm(store, principal)
 	waitForCondition(t, time.Second, "heartbeat never renewed before stop", func() bool {
 		count, _ := store.counts()

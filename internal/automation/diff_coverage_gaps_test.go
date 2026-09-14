@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/uievent"
 )
 
 func TestDiffCoverageScheduleSaturatingNegativeSeconds(t *testing.T) {
@@ -511,11 +511,11 @@ func TestDiffCoverageCreateRunWorktreeSuccess(t *testing.T) {
 	repo := newGitRepo(t)
 	db := newTestDB(t)
 
-	orig := cliworktree.OpenRepositoryContextStoreFunc
-	cliworktree.OpenRepositoryContextStoreFunc = func(root string) (*storage.SQLite, error) {
+	orig := worktree.OpenRepositoryContextStoreFunc
+	worktree.OpenRepositoryContextStoreFunc = func(root string) (*storage.SQLite, error) {
 		return storage.OpenSQLite(filepath.Join(root, ".mivia", "context.db"))
 	}
-	t.Cleanup(func() { cliworktree.OpenRepositoryContextStoreFunc = orig })
+	t.Cleanup(func() { worktree.OpenRepositoryContextStoreFunc = orig })
 
 	seedEnabledAutomation(t, repo, func(s *Spec) {
 		s.ID = "auto-wt"

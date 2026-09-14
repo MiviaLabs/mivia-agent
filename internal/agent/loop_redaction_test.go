@@ -263,7 +263,7 @@ func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
 }
 
 // TestRedactToolInputForTool_DispatchTasksStaysParseable guards
-// dispatch_tasks' live per-task fan-out in the TUI (internal/ui/screen/
+// dispatch_tasks' live per-task fan-out in the TUI (internal/tui/view/screen/
 // conversation/events.go's dispatchTaskIDs): that logic parses the task list
 // back out of agent.Event.Input, and a preview cut mid-JSON makes the parse
 // fail so the fan-out silently falls back to one aggregate row.

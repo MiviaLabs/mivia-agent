@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// setWorkflowAgentTools is duplicated from internal/clichat for the
+// setWorkflowAgentTools is duplicated from internal/cli/chat for the
 // workflow hook integration test that stayed in this package.
 
 // setWorkflowAgentTools writes both workflow agents with the given tool.

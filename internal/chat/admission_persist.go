@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // SetAdmissionBinding records the identity a persisted admitted set is keyed
@@ -19,10 +19,10 @@ func (s *Session) SetAdmissionBinding(agentName, digest string) {
 }
 
 // admissionRecord snapshots what should be persisted with the session.
-func (s *Session) admissionRecord() contextstate.SessionAdmission {
+func (s *Session) admissionRecord() state.SessionAdmission {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return contextstate.SessionAdmission{
+	return state.SessionAdmission{
 		Agent:  s.admissionAgent,
 		Digest: s.admissionDigest,
 		Names:  slices.Clone(s.admittedTools),
@@ -42,36 +42,36 @@ func (s *Session) persistAdmission(name string) error {
 	instance := s.contextWorktree
 	s.mu.RUnlock()
 	if !instance.IsZero() {
-		if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
+		if scoped, ok := catalog.(state.WorktreeAdmissionCatalog); ok {
 			return scoped.SaveWorktreeSessionAdmission(context.Background(), principal, name, record, instance)
 		}
-		return contextstate.ErrWorktreeDeleted
+		return state.ErrWorktreeDeleted
 	}
 	return catalog.SaveSessionAdmission(context.Background(), principal, name, record)
 }
 
 // loadAdmission reads back the persisted set from the durable context catalog.
-func (s *Session) loadAdmission(name string) (contextstate.SessionAdmission, error) {
+func (s *Session) loadAdmission(name string) (state.SessionAdmission, error) {
 	catalog, principal, ok := s.admissionCatalog()
 	if !ok {
-		return contextstate.SessionAdmission{}, nil
+		return state.SessionAdmission{}, nil
 	}
 	s.mu.RLock()
 	instance := s.contextWorktree
 	s.mu.RUnlock()
 	if !instance.IsZero() {
-		if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
+		if scoped, ok := catalog.(state.WorktreeAdmissionCatalog); ok {
 			return scoped.LoadWorktreeSessionAdmission(context.Background(), principal, name, instance)
 		}
-		return contextstate.SessionAdmission{}, contextstate.ErrWorktreeDeleted
+		return state.SessionAdmission{}, state.ErrWorktreeDeleted
 	}
 	return catalog.LoadSessionAdmission(context.Background(), principal, name)
 }
 
-func (s *Session) admissionCatalog() (contextstate.SessionAdmissionCatalog, contextstate.Principal, bool) {
+func (s *Session) admissionCatalog() (state.SessionAdmissionCatalog, state.Principal, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	catalog, ok := s.contextStore.(contextstate.SessionAdmissionCatalog)
+	catalog, ok := s.contextStore.(state.SessionAdmissionCatalog)
 	return catalog, s.contextPrincipal, ok && s.contextEnabledLocked()
 }
 

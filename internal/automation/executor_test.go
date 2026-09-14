@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -25,9 +25,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/uievent"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -780,11 +780,11 @@ func TestRunStepUnknownKindRejected(t *testing.T) {
 // (ApplyPrivacyPolicyFunc, OpenContextStoreFunc) that
 // internal/cli/cliworkflow_wiring.go's init() assigns in the real binary
 // (cmd/mivia imports internal/cli directly, so that init() always runs
-// before internal/newtui's wireAutomationBackend ever constructs a live
+// before internal/tui/run's wireAutomationBackend ever constructs a live
 // automation.Service - see docs/design/automations.md D12/D4). This test
 // package imports internal/automation directly, bypassing that init()
 // chain entirely, so both seams are nil here and must be wired locally
-// exactly as internal/cliworkflow's own testmain_test.go does, or the
+// exactly as internal/cli/workflow's own testmain_test.go does, or the
 // call panics on a nil func value rather than exercising the intended
 // error path.
 func TestRunStepWorkflowPropagatesEngineStartError(t *testing.T) {
@@ -879,7 +879,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	cliworkflow.WorkflowBuildLoadSkills = func(string) (*skills.Registry, error) {
 		return skills.NewRegistry(), nil
 	}
-	cliworkflow.WorkflowBuildDispatcher = func(opts cliagents.SessionDispatcherOpts) (*runtime.Dispatcher, error) {
+	cliworkflow.WorkflowBuildDispatcher = func(opts agents.SessionDispatcherOpts) (*runtime.Dispatcher, error) {
 		d := runtime.New(runtime.Policy{})
 		if opts.AgentRegistry != nil {
 			for _, agent := range opts.AgentRegistry.List() {
@@ -900,7 +900,17 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 		cliworkflow.WorkflowBuildDispatcher = prevDispatcher
 		cliworkflow.SliceErrorsFunc = prevSliceErrors
 		cliworkflow.InitCoordinatorFunc = prevInitCoordinator
-		cliworkflow.SessionAutoDeliveryRepairLoopFunc = prevAutoDeliveryLoop
+		// This test binary never runs internal/cli's wiring init, so the
+		// seam var's unwired value here is nil. Restoring nil would let a
+		// LaunchStartedWorkflow goroutine leaked from an earlier test call
+		// a nil func and panic the whole binary (seen as a SIGSEGV at
+		// workflow_tool_engine.go in full-suite runs). Leave the no-op
+		// stub in place instead: the goroutine outlives the test, and no
+		// automation test can use the real loop because it is only wired
+		// by internal/cli's own wiring.
+		if prevAutoDeliveryLoop != nil {
+			cliworkflow.SessionAutoDeliveryRepairLoopFunc = prevAutoDeliveryLoop
+		}
 	})
 }
 

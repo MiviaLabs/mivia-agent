@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -17,9 +17,9 @@ func TestWireCompactionRoundTripsSummarized(t *testing.T) {
 	for _, summarized := range []bool{true, false} {
 		typed, err := events.NewCompactionEvent(events.CompactionEventParams{
 			Trigger: "threshold", BeforeTokens: 900, AfterTokens: 400,
-			SourceRange: contextstate.SourceRange{
-				Start: contextstate.SourceID{SessionID: "s", Sequence: 1},
-				End:   contextstate.SourceID{SessionID: "s", Sequence: 2},
+			SourceRange: state.SourceRange{
+				Start: state.SourceID{SessionID: "s", Sequence: 1},
+				End:   state.SourceID{SessionID: "s", Sequence: 2},
 			},
 			SummaryVersion: 1, Summarized: summarized,
 		})

@@ -8,7 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -274,9 +274,9 @@ func TestCompactionRelayRoundTrip(t *testing.T) {
 	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
 		Trigger: "threshold", BeforeTokens: 10_000, AfterTokens: 3_000,
 		ElidedMessages: 5, ElidedBytes: 4_200,
-		SourceRange: contextstate.SourceRange{
-			Start: contextstate.SourceID{SessionID: "s1", Sequence: 1},
-			End:   contextstate.SourceID{SessionID: "s1", Sequence: 40},
+		SourceRange: state.SourceRange{
+			Start: state.SourceID{SessionID: "s1", Sequence: 1},
+			End:   state.SourceID{SessionID: "s1", Sequence: 40},
 		},
 		SummaryVersion: 1,
 	})

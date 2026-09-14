@@ -1,7 +1,7 @@
 # StreamRenderer boundary rules
 
 Owner: quality. Implementation:
-[internal/ui/render/stream_markdown.go](../../internal/ui/render/stream_markdown.go).
+[internal/tui/view/render/stream_markdown.go](../../internal/tui/view/render/stream_markdown.go).
 Tests: `stream_markdown_test.go`, fuzz target
 `FuzzStreamedMarkdownMatchesOneShot` in `stream_markdown_fuzz_test.go`.
 
@@ -126,14 +126,14 @@ Correct and occasionally slow beats fast and occasionally wrong;
 
 The boundary rules above are pinned by
 `FuzzStreamedMarkdownMatchesOneShot`.
-The corpus under `internal/ui/render/testdata/fuzz/
+The corpus under `internal/tui/view/render/testdata/fuzz/
 FuzzStreamedMarkdownMatchesOneShot/` records each case; the
 corresponding `TestStreamRenderer*` case in `stream_markdown_test.go`
 pins the fix without needing the fuzz corpus. Re-run the fuzz target
 after any change to the boundary predicate:
 
 ```bash
-go test ./internal/ui/render/ -run XXX -fuzz FuzzStreamedMarkdownMatchesOneShot -parallel 2 -fuzztime 60s
+go test ./internal/tui/view/render/ -run XXX -fuzz FuzzStreamedMarkdownMatchesOneShot -parallel 2 -fuzztime 60s
 ```
 
 Never the default parallelism — see AGENTS.md's fuzzing guard.

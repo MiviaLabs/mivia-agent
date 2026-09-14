@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // NewLLMGateway returns an LLM Gateway OpenAI-compatible completer.
@@ -14,7 +14,7 @@ func NewLLMGateway(opts Options) (Completer, error) {
 	if base == "" {
 		// "llmgateway" is a compile-time-registered descriptor key
 		// (providerregistry/registry.go), so Lookup here always succeeds.
-		descriptor, _ := providerregistry.Lookup("llmgateway")
+		descriptor, _ := registry.Lookup("llmgateway")
 		base = descriptor.DefaultURL
 	}
 	dialect := opts.ReasoningDialect

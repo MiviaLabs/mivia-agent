@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestTwoSessionsPersistIdenticalContent is the durable regression for the
@@ -22,25 +22,25 @@ func TestTwoSessionsPersistIdenticalContent(t *testing.T) {
 	defer store.Close()
 
 	appendTurn := func(sessionID string) error {
-		principal, err := contextstate.NewPrincipal("workspace", sessionID, "local-user")
+		principal, err := state.NewPrincipal("workspace", sessionID, "local-user")
 		if err != nil {
 			t.Fatal(err)
 		}
 		seedContextSession(t, store, principal)
-		payload, err := contextstate.SanitizeSourcePayload(ctx, principal, []byte("hello"), contextstate.RedactionPolicy{})
+		payload, err := state.SanitizeSourcePayload(ctx, principal, []byte("hello"), state.RedactionPolicy{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		id, err := contextstate.NewSourceID(sessionID, 1)
+		id, err := state.NewSourceID(sessionID, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		event := contextstate.SourceEvent{
+		event := state.SourceEvent{
 			ID: id, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
 			Provenance: "host-turn", RedactionStatus: "metadata", Size: payload.Ref.Size,
 		}
-		record := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention}
-		return store.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{record})
+		record := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention}
+		return store.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{record})
 	}
 
 	if err := appendTurn("session-one"); err != nil {
@@ -74,13 +74,13 @@ func TestLegacyPayloadRowStillResolves(t *testing.T) {
 	const legacyDigest = "5f4b8f1a8f5c9e7e6f47e2ad38a1d1c1a5c0a1d0f4bbf5e2a29bd7c6a53c1c95"
 	if _, err := store.db.Exec(
 		`INSERT INTO context_payloads(ref,namespace,workspace_id,session_id,subject_id,sha256,size,redaction_status,retention_class,revoked,data) VALUES(?,?,?,?,?,?,?,?,?,0,NULL)`,
-		legacyRef, contextstate.Namespace, principal.WorkspaceID, principal.SessionID, principal.SubjectID,
-		legacyDigest, 12, "metadata", string(contextstate.RetentionSession),
+		legacyRef, state.Namespace, principal.WorkspaceID, principal.SessionID, principal.SubjectID,
+		legacyDigest, 12, "metadata", string(state.RetentionSession),
 	); err != nil {
 		t.Fatal(err)
 	}
-	ref := contextstate.ContentRef{
-		Ref: legacyRef, Namespace: contextstate.Namespace, SHA256: legacyDigest,
+	ref := state.ContentRef{
+		Ref: legacyRef, Namespace: state.Namespace, SHA256: legacyDigest,
 		WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID,
 		SubjectID: principal.SubjectID, Size: 12,
 	}

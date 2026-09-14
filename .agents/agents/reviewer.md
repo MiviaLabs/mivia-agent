@@ -55,7 +55,7 @@ contract (`<mivia_output>` around `{verdict, findings, inspected}`),
 mirroring `.mivia/workflows/schemas/review-v1.json` exactly. It is a
 FALLBACK: a caller that supplies its own task-level `output_schema` (the
 `/review` workflow always does) is unaffected - task-level schemas win over
-this one (`internal/cliorchestrate/schema_resolve.go`). It exists to close
+this one (`internal/cli/orchestrate/schema_resolve.go`). It exists to close
 a real gap: an ad-hoc `dispatch_tasks` call naming this role directly
 supplied no schema anywhere in that resolution chain, so
 `runValidatedReply`'s `compiled == nil` short-circuit

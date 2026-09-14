@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
@@ -42,7 +42,7 @@ type LoadOptions struct {
 	// Defaults to false (zero value) for every existing caller; wire it to
 	// true only where a config-file-writing side effect on a missing config
 	// is actually wanted (currently: `mivia chat` only - see
-	// internal/clichat/chat_command.go's runChat). Every read-only/internal/
+	// internal/cli/chat/chat_command.go's runChat). Every read-only/internal/
 	// test caller of config.Load keeps today's found=false behavior
 	// unchanged.
 	AutoBootstrapUserConfig bool
@@ -369,9 +369,9 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, strin
 		name = strings.TrimSpace(opts.ProviderOverride)
 	}
 	name = strings.ToLower(name)
-	descriptor, ok := providerregistry.Lookup(name)
+	descriptor, ok := registry.Lookup(name)
 	if !ok {
-		return "", ProviderConfig{}, "", fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
+		return "", ProviderConfig{}, "", fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(registry.Names(), ", "))
 	}
 	pc, ok := file.Providers[name]
 	if !ok {
@@ -427,7 +427,7 @@ func normalizeProviderConfigs(file *File, maxTokens int) error {
 		if previous, ok := seen[name]; ok && previous != rawName {
 			return fmt.Errorf("provider names %q and %q collide by case", previous, rawName)
 		}
-		if _, ok := providerregistry.Lookup(name); !ok {
+		if _, ok := registry.Lookup(name); !ok {
 			return fmt.Errorf("unknown provider %q", name)
 		}
 		if pc.LegacyModel != nil {
@@ -439,11 +439,11 @@ func normalizeProviderConfigs(file *File, maxTokens int) error {
 		}
 		pc.Models = models
 		if pc.BaseURL == "" {
-			d, _ := providerregistry.Lookup(name)
+			d, _ := registry.Lookup(name)
 			pc.BaseURL = d.DefaultURL
 		}
 		if pc.APIKeyEnv == "" {
-			d, _ := providerregistry.Lookup(name)
+			d, _ := registry.Lookup(name)
 			pc.APIKeyEnv = d.DefaultAPIKeyEnv
 		}
 		normalized[name] = pc

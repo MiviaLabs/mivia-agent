@@ -200,7 +200,7 @@ func TestTheDeferredHandlerRunsWhenApproved(t *testing.T) {
 	// The handler ADMITS; the loop executes, through the same shim an
 	// admitted call uses. So the contract here is that an approved call comes
 	// back with the tool to run - what that execution then does is held by
-	// the two-path conformance table in internal/clichat.
+	// the two-path conformance table in internal/cli/chat.
 	if result.Execute == nil {
 		t.Fatal("an approved call was not handed back for execution")
 	}
@@ -214,7 +214,7 @@ func TestTheDeferredHandlerRunsWhenApproved(t *testing.T) {
 }
 
 // unclassifiedTool declares no Capability at all. Several real tools have this
-// shape - post_message and run_messages in internal/clichat, every workflow_*
+// shape - post_message and run_messages in internal/cli/chat, every workflow_*
 // tool in internal/workflows/ledger - so the "unclassified is ExecutionExternal"
 // default is production-reachable, not a defensive branch.
 type unclassifiedTool struct{ ran bool }
@@ -307,7 +307,7 @@ func TestTheDeferredPathStampsThePolicyOnTheContext(t *testing.T) {
 // It did not. decideDeferredApproval passed no EmitPending, and the shipped
 // TUI arms its approval prompt exclusively from the tool.pending event that
 // EmitPending produces (nothing drains Approver.Pending() in live mode - its
-// own comment says so). So DecideApproval called the gate, uiadapter's gate
+// own comment says so). So DecideApproval called the gate, adapter's gate
 // registered a waiter and blocked on its channel, and no prompt was ever
 // drawn: the turn hung until the operator cancelled it, with nothing on
 // screen explaining why. The doc comment on decideDeferredApproval asserted
@@ -315,7 +315,7 @@ func TestTheDeferredPathStampsThePolicyOnTheContext(t *testing.T) {
 //
 // Its stated premise, "this path has no in-flight SDK call id", was also
 // wrong: the SDK stamps one into the ctx it hands this handler, and
-// uiadapter's gate already keys its waiter off that same id.
+// adapter's gate already keys its waiter off that same id.
 func TestAnInteractiveDeferredCallRaisesAPromptTheOperatorCanAnswer(t *testing.T) {
 	tool := &writingTool{}
 	reg := tools.NewRegistry()
@@ -327,7 +327,7 @@ func TestAnInteractiveDeferredCallRaisesAPromptTheOperatorCanAnswer(t *testing.T
 	var pending []agent.Event
 	s := &Session{
 		ApprovalPolicy: config.ApprovalPolicyWriteOnly,
-		// The gate blocks exactly as uiadapter's does: it answers only when
+		// The gate blocks exactly as adapter's does: it answers only when
 		// something resolves the prompt. A synchronous fake gate is what let
 		// every existing test on this path miss the hang.
 		ApprovalGate: func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
@@ -477,7 +477,7 @@ func (t *slowTool) Execute(ctx context.Context, _ json.RawMessage) (string, erro
 // This is the trap in fixing the above. On the admitted path the approval
 // wrapper sits OUTSIDE the dispatcher shim, so the clock starts only after the
 // operator has answered. Arming it around the inline approval here would put a
-// 60s default deadline around a human reading a prompt: uiadapter's gate
+// 60s default deadline around a human reading a prompt: adapter's gate
 // selects on ctx.Done() and answers "canceled", so the prompt would silently
 // auto-deny mid-read and report a refusal the operator never made. That is a
 // worse bug than the unbounded call.

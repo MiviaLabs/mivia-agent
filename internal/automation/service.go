@@ -24,17 +24,17 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // SessionSpawner is the capability set the executor needs from the
 // session pool. The parameter types are PLAIN funcs, never
-// uiadapter.BindFunc: a composition-root adapter in internal/newtui
+// adapter.BindFunc: a composition-root adapter in internal/tui/run
 // converts. A named func type is not assignable to a plain func
-// parameter, and this package must never import internal/uiadapter.
+// parameter, and this package must never import internal/tui/adapter.
 //
 // SetApprovalOverride runs after CreateFreshInDir returns (never inside
-// the bind closure - see uiadapter.SetApprovalOverride's own doc
+// the bind closure - see adapter.SetApprovalOverride's own doc
 // comment on the clobber ordering). The executor installs the
 // automation's unattended approval posture (DenyGate/AutoApproveGate)
 // directly on the spawned session, keyed by its conversation id.
@@ -292,7 +292,7 @@ func (s *Service) setEnabled(id string, on bool) error {
 // saveHandle is a synchronous ports.SaveHandle: apply runs immediately
 // and the whole event sequence (Pending -> Validating -> Saved|Failed)
 // is queued onto a small buffered channel before returning, mirroring
-// internal/uiadapter's own saveHandle shape (settings.go's
+// internal/tui/adapter's own saveHandle shape (settings.go's
 // newSaveHandle) without importing that package.
 type saveHandle struct {
 	id     string

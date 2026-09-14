@@ -273,8 +273,8 @@ rules:
       Use a plain string field, or a *strings.Builder.
     paths:
       include:
-        - /internal/ui/**/*.go
-        - /internal/uikit/**/*.go
+        - /internal/tui/view/**/*.go
+        - /internal/tui/kit/**/*.go
       exclude:
         - /**/*_test.go
     pattern: |
@@ -364,7 +364,7 @@ rules:
         - /**/*_test.go
     pattern: $REG.Execute(...)
 
-  # --- New terminal UI: internal/uikit and internal/ui boundary rules ---
+  # --- New terminal UI: internal/tui/kit and internal/ui boundary rules ---
   # docs/design/wireframes-panes.md and the mivia-ui build spec require
   # these mechanically, not just by convention.
 
@@ -372,10 +372,10 @@ rules:
     languages:
       - go
     severity: ERROR
-    message: internal/uikit/** is UI-agnostic and must not import bubbletea or lipgloss.
+    message: internal/tui/kit/** is UI-agnostic and must not import bubbletea or lipgloss.
     paths:
       include:
-        - /internal/uikit/**/*.go
+        - /internal/tui/kit/**/*.go
     pattern-regex: '"(charm\.land/(bubbletea|lipgloss)(/v2)?|github\.com/charmbracelet/(bubbletea|lipgloss)(/v2)?)"'
 
   - id: mivia.go.ui-no-harness-imports
@@ -385,18 +385,18 @@ rules:
     message: UI packages are self-contained and must not import the CLI or the real harness. See docs/design/ui-isolation.md.
     paths:
       include:
-        - /internal/ui/**/*.go
-        - /internal/uikit/**/*.go
+        - /internal/tui/view/**/*.go
+        - /internal/tui/kit/**/*.go
     pattern-regex: '"github\.com/MiviaLabs/mivia-agent/internal/(cli.*|chat|agent|coordinator|hub)"'
 
   - id: mivia.go.ui-no-raw-print
     languages:
       - go
     severity: ERROR
-    message: internal/ui/** must not call fmt.Print*; one stray print corrupts the frame. Write to the given io.Writer, or log to a file.
+    message: internal/tui/view/** must not call fmt.Print*; one stray print corrupts the frame. Write to the given io.Writer, or log to a file.
     paths:
       include:
-        - /internal/ui/**/*.go
+        - /internal/tui/view/**/*.go
       exclude:
         - /**/*_test.go
     pattern-either:
@@ -408,12 +408,12 @@ rules:
     languages:
       - go
     severity: ERROR
-    message: internal/uikit/**, internal/ui/**, and internal/newtui/** must not use init(); wire dependencies explicitly.
+    message: internal/tui/kit/**, internal/tui/view/**, and internal/tui/run/** must not use init(); wire dependencies explicitly.
     paths:
       include:
-        - /internal/uikit/**/*.go
-        - /internal/ui/**/*.go
-        - /internal/newtui/**/*.go
+        - /internal/tui/kit/**/*.go
+        - /internal/tui/view/**/*.go
+        - /internal/tui/run/**/*.go
       exclude:
         - /**/*_test.go
     pattern: func init() { ... }
@@ -423,7 +423,7 @@ rules:
       - go
     severity: ERROR
     message: >-
-      internal/uikit/**, internal/ui/**, and internal/newtui/** must not hold
+      internal/tui/kit/**, internal/tui/view/**, and internal/tui/run/** must not hold
       package-level mutable singleton state (sync.Mutex/RWMutex/Map, atomic.*).
       This is the exact god-object pattern (subagent_progress.go's globalBusState,
       orchestration_state.go's coordinators sync.Map) the new UI tree exists to
@@ -432,9 +432,9 @@ rules:
       flagged by this rule.
     paths:
       include:
-        - /internal/uikit/**/*.go
-        - /internal/ui/**/*.go
-        - /internal/newtui/**/*.go
+        - /internal/tui/kit/**/*.go
+        - /internal/tui/view/**/*.go
+        - /internal/tui/run/**/*.go
       exclude:
         - /**/*_test.go
     pattern-either:

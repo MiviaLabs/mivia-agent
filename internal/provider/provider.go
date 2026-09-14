@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
@@ -277,7 +277,7 @@ func newFactoryRegistry() *factoryRegistry {
 
 func (r *factoryRegistry) register(name string, factory providerFactory) error {
 	name = strings.ToLower(strings.TrimSpace(name))
-	if _, ok := providerregistry.Lookup(name); !ok {
+	if _, ok := registry.Lookup(name); !ok {
 		return fmt.Errorf("provider factory %q has no descriptor", name)
 	}
 	if factory == nil {

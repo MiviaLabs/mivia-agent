@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -20,7 +20,7 @@ func decodeActiveContextMessages(t *testing.T, body []byte) []provider.Message {
 		return nil
 	}
 	var messages []provider.Message
-	if err := contextstate.UnmarshalCanonical(body, &messages); err != nil {
+	if err := state.UnmarshalCanonical(body, &messages); err != nil {
 		t.Fatalf("decode active context: %v", err)
 	}
 	return messages
@@ -42,7 +42,7 @@ func TestCompactionKeepsMemoryFrameInCommittedAndRestoredContext(t *testing.T) {
 	sess.mu.Lock()
 	setMemoryMessageLocked(sess, memoryBlock)
 	sess.mu.Unlock()
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestCompactionKeepsMemoryFrameInCommittedAndRestoredContext(t *testing.T) {
 // leaves behind - the durable checkpoint, the in-memory session, and a fresh
 // restore from that checkpoint - each carrying exactly one core-memory frame
 // with the promoted block.
-func assertMemoryFrameSurvivedCompaction(t *testing.T, sess *Session, store contextstate.Store, principal contextstate.Principal, memoryBlock string) {
+func assertMemoryFrameSurvivedCompaction(t *testing.T, sess *Session, store state.Store, principal state.Principal, memoryBlock string) {
 	t.Helper()
 
 	// Durable checkpoint: the committed Active context carries the frame.

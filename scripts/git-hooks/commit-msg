@@ -274,6 +274,7 @@ def main() -> int:
     if (
         subject.startswith("Merge ")
         or subject.startswith('Revert "')
+        or subject.startswith('Reapply "')
         or subject.startswith("fixup! ")
         or subject.startswith("squash! ")
     ):

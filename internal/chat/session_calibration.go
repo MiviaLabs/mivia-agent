@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 )
 
 // adoptCalibration copies a finished turn's rolling token calibration back
@@ -15,7 +15,7 @@ import (
 // exactly on the long turns that drift most. Concurrent turns each start from
 // the same seed, so the one with the most samples is the most informed; the
 // count only ever grows on top of what the turn was seeded with.
-func (s *Session) adoptCalibration(turnCalibration contextmgr.Calibration) {
+func (s *Session) adoptCalibration(turnCalibration manager.Calibration) {
 	if turnCalibration.Samples == 0 {
 		return
 	}
@@ -81,7 +81,7 @@ func (s *Session) SeedCalibration(ctx context.Context, seeder CalibrationSeeder,
 // and re-seeds it from the durable usage ledger for the current (provider, model).
 //
 // This mirrors cliagents.RefreshSummarizerAfterModelSwitch at resumeChatSession
-// and uiadapter/session_pool.go resume. Construction runs enableSessionContext's
+// and adapter/session_pool.go resume. Construction runs enableSessionContext's
 // SeedCalibration with the startup model rather than the resumed model. Resumed
 // sessions usually have different bindings, so the initial seed carries wrong
 // bias or no observations (Samples=0, ratio 1.0). Uncorrected or wrongly corrected
@@ -97,7 +97,7 @@ func (s *Session) RefreshCalibrationAfterModelSwitch(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	s.Calibration = contextmgr.Calibration{}
+	s.Calibration = manager.Calibration{}
 	s.mu.Unlock()
 	s.SeedCalibration(ctx, seeder, s.ContextPrincipal().WorkspaceID)
 }

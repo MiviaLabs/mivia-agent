@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
@@ -284,9 +284,9 @@ func validateAgentProvider(spec AgentFileSpec) error {
 	if name == "" {
 		return fmt.Errorf("provider must not be empty when set")
 	}
-	if _, known := providerregistry.Lookup(name); !known {
+	if _, known := registry.Lookup(name); !known {
 		return fmt.Errorf("provider %q is not a known provider (available: %s)",
-			name, strings.Join(providerregistry.Names(), ", "))
+			name, strings.Join(registry.Names(), ", "))
 	}
 	// A provider with no model would pair a foreign endpoint with whatever
 	// model the session happens to hold - the exact ambiguity an explicit

@@ -7,21 +7,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // checkpointGCFixture seeds one session with n complete checkpoints, all aged
 // past any retention window, and returns the store plus the session's
 // identifiers. Rows are inserted directly: this test is about the retention
 // predicate, not about the commit path that normally produces them.
-func checkpointGCFixture(t *testing.T, n int) (*SQLite, contextstate.Principal, string) {
+func checkpointGCFixture(t *testing.T, n int) (*SQLite, state.Principal, string) {
 	t.Helper()
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

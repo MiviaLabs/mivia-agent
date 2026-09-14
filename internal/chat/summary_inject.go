@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -21,16 +21,16 @@ import (
 // unless that message joins the turn's committed active context the account of
 // them dies with this request and every later turn sees a truncated history
 // explaining nothing.
-func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, preparation contextmgr.Preparation, prepared []provider.Message) ([]provider.Message, injectedSummary) {
+func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, preparation manager.Preparation, prepared []provider.Message) ([]provider.Message, injectedSummary) {
 	summarizer := snapshot.context.summarizer
 	if summarizer == nil || !preparation.Compacted {
 		return prepared, injectedSummary{}
 	}
-	request, err := contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
-		Version:           contextmgr.SummarySchemaVersion,
+	request, err := manager.BuildSummaryRequest(manager.SummaryBuildInput{
+		Version:           manager.SummarySchemaVersion,
 		Objective:         agent.SummaryFieldText(latestUserMessage(snapshot.messages)),
-		Evidence:          contextmgr.OmittedEvidence(snapshot.messages, preparation.Messages),
-		SourceExcerpts:    contextmgr.SourceExcerpts(snapshot.messages, preparation.Messages),
+		Evidence:          manager.OmittedEvidence(snapshot.messages, preparation.Messages),
+		SourceExcerpts:    manager.SourceExcerpts(snapshot.messages, preparation.Messages),
 		SourceRange:       preparation.Token.Range,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,
@@ -41,17 +41,17 @@ func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, prepara
 		OutputLimit:       agent.SummaryOutputLimitTokens,
 	})
 	if err != nil {
-		return prepared, injectedSummary{reason: contextmgr.SummaryReasonRequestInvalid}
+		return prepared, injectedSummary{reason: manager.SummaryReasonRequestInvalid}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return prepared, injectedSummary{reason: contextmgr.ClassifySummaryFailure(err)}
+		return prepared, injectedSummary{reason: manager.ClassifySummaryFailure(err)}
 	}
 	// Render the sealed summary together with the host-side omitted-evidence
 	// diff (request.Input.Evidence), mirroring the agent-loop path.
 	injected := agent.RenderSummaryMessage(summary, request.Input.Evidence)
 	if agent.SummaryOverBudget(preparation.AfterTokens, injected, snapshot.budget) {
-		return prepared, injectedSummary{reason: contextmgr.SummaryReasonOverBudget}
+		return prepared, injectedSummary{reason: manager.SummaryReasonOverBudget}
 	}
 	return agent.InjectSummaryMessage(prepared, injected), injectedSummary{message: injected, present: true}
 }

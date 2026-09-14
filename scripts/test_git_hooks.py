@@ -673,7 +673,7 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert "internal/agent/" in pre
     assert "internal/chat/" in pre
     assert "internal/config/" in pre
-    assert "internal/cliorchestrate/" in pre
+    assert "internal/cli/orchestrate/" in pre
     assert "internal/storage/" in pre
     assert "TestTaskResultProducerConformance" in pre
     # The session-catalog namespaces are two implementations of one contract;

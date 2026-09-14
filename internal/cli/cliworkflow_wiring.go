@@ -1,64 +1,64 @@
 package cli
 
 // cliworkflow_wiring.go breaks the cli <-> cliworkflow import cycle.
-// internal/cliworkflow owns the workflow domain but needs helpers that still
+// internal/cli/workflow owns the workflow domain but needs helpers that still
 // live in internal/cli (stack drivers, privacy and hook plumbing, the context
 // store path, skill loading). Each var below assigns the cliworkflow seam
-// declared in internal/cliworkflow/seams.go. The real fix is to move the
+// declared in internal/cli/workflow/seams.go. The real fix is to move the
 // stack helpers into a future internal/clistack package both sides import,
 // and to lift the chat/config helpers into the packages that own them.
 
 import (
 	"context"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 func init() {
-	cliworkflow.ContextStorePath = clichat.ContextStorePath
-	cliworkflow.ApplyPrivacyPolicyFunc = clichat.ApplyPrivacyPolicy
-	cliworkflow.LogMCPWarningsFunc = clichat.LogMCPWarnings
-	cliworkflow.SliceErrorsFunc = sliceErrors
-	cliworkflow.FlagValueFunc = flagValue
-	cliworkflow.FlagVarFunc = flagVar
-	cliworkflow.InstallHookSessionFunc = installHookSession
-	cliworkflow.LoadChatSkillsFunc = clichat.LoadChatSkills
-	cliworkflow.NewSessionDispatcherFunc = clichat.NewSessionDispatcher
-	cliworkflow.InitCoordinatorFunc = cliorchestrate.InitCoordinator
-	cliworkflow.InjectBaselineMessagingFunc = clichat.InjectBaselineMessaging
-	cliworkflow.MessagingDisallowedFunc = clichat.MessagingDisallowed
-	cliworkflow.SessionAutoDeliveryRepairLoopFunc = clichat.SessionAutoDeliveryRepairLoop
-	cliworkflow.ErrStackAwaitsGrant = clichat.ErrStackAwaitsGrant
-	cliworkflow.StackingDriveAllowPublishFunc = clichat.StackingDriveAllowPublish
-	cliworkflow.ClassifyStackPlanRunDeliveryFunc = func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, oracle bool) cliworkflow.StackPlanRunGate {
-		return cliworkflow.StackPlanRunGate(int(clichat.ClassifyStackPlanRunDelivery(ctx, root, store, repo, runID, oracle)))
+	workflow.ContextStorePath = chat.ContextStorePath
+	workflow.ApplyPrivacyPolicyFunc = chat.ApplyPrivacyPolicy
+	workflow.LogMCPWarningsFunc = chat.LogMCPWarnings
+	workflow.SliceErrorsFunc = sliceErrors
+	workflow.FlagValueFunc = flagValue
+	workflow.FlagVarFunc = flagVar
+	workflow.InstallHookSessionFunc = installHookSession
+	workflow.LoadChatSkillsFunc = chat.LoadChatSkills
+	workflow.NewSessionDispatcherFunc = chat.NewSessionDispatcher
+	workflow.InitCoordinatorFunc = orchestrate.InitCoordinator
+	workflow.InjectBaselineMessagingFunc = chat.InjectBaselineMessaging
+	workflow.MessagingDisallowedFunc = chat.MessagingDisallowed
+	workflow.SessionAutoDeliveryRepairLoopFunc = chat.SessionAutoDeliveryRepairLoop
+	workflow.ErrStackAwaitsGrant = chat.ErrStackAwaitsGrant
+	workflow.StackingDriveAllowPublishFunc = chat.StackingDriveAllowPublish
+	workflow.ClassifyStackPlanRunDeliveryFunc = func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, oracle bool) workflow.StackPlanRunGate {
+		return workflow.StackPlanRunGate(int(chat.ClassifyStackPlanRunDelivery(ctx, root, store, repo, runID, oracle)))
 	}
-	cliworkflow.StackPlanRunFailureReasonFunc = clichat.StackPlanRunFailureReason
-	cliworkflow.ErrFailedStackPlanRunFunc = clichat.ErrFailedStackPlanRun
-	cliworkflow.ErrUndrivenStackPlanRunFunc = clichat.ErrUndrivenStackPlanRun
-	cliworkflow.LoadStackPlanOutputFunc = clichat.LoadStackPlanOutput
-	cliworkflow.ParseStackPlanOutputFunc = clichat.ParseStackPlanOutput
-	cliworkflow.StackPlanInputsFunc = clichat.StackPlanInputs
-	cliworkflow.LoadAllStackChunksForDriveFunc = clichat.LoadAllStackChunksForDrive
-	cliworkflow.SeedStackLedgerFunc = clichat.SeedStackLedger
-	cliworkflow.DriveStackToCompletionFunc = clichat.DriveStackToCompletion
-	cliworkflow.LoadAllStackChunksFunc = clichat.LoadAllStackChunks
-	cliworkflow.StackTaskMapFunc = clichat.StackTaskMap
-	cliworkflow.StackMergedSetFunc = clichat.StackMergedSet
-	cliworkflow.AllChunksMergedFunc = clichat.AllChunksMerged
-	cliworkflow.StackRunRefFunc = clichat.StackRunRef
-	cliworkflow.StackHeadBranchFunc = clichat.StackHeadBranch
-	cliworkflow.StackRunHeadCommitFunc = clichat.StackRunHeadCommit
-	cliworkflow.StackRunPushedFunc = clichat.StackRunPushed
-	cliworkflow.StackRunPublishWithheldFunc = clichat.StackRunPublishWithheld
-	cliworkflow.StackDecomposedChunksFunc = clichat.StackDecomposedChunks
-	cliworkflow.OpenContextStoreFunc = clichat.OpenContextStore
-	cliworkflow.InjectSkillResourceToolFunc = clichat.InjectSkillResourceTool
-	cliworkflow.GitMergeCheckFunc = clichat.GitMergeCheck
-	cliworkflow.SettleStackPlanRunIfCompleteFn = clichat.SettleStackPlanRunIfComplete
-	cliworkflow.InitCLIDefaults()
+	workflow.StackPlanRunFailureReasonFunc = chat.StackPlanRunFailureReason
+	workflow.ErrFailedStackPlanRunFunc = chat.ErrFailedStackPlanRun
+	workflow.ErrUndrivenStackPlanRunFunc = chat.ErrUndrivenStackPlanRun
+	workflow.LoadStackPlanOutputFunc = chat.LoadStackPlanOutput
+	workflow.ParseStackPlanOutputFunc = chat.ParseStackPlanOutput
+	workflow.StackPlanInputsFunc = chat.StackPlanInputs
+	workflow.LoadAllStackChunksForDriveFunc = chat.LoadAllStackChunksForDrive
+	workflow.SeedStackLedgerFunc = chat.SeedStackLedger
+	workflow.DriveStackToCompletionFunc = chat.DriveStackToCompletion
+	workflow.LoadAllStackChunksFunc = chat.LoadAllStackChunks
+	workflow.StackTaskMapFunc = chat.StackTaskMap
+	workflow.StackMergedSetFunc = chat.StackMergedSet
+	workflow.AllChunksMergedFunc = chat.AllChunksMerged
+	workflow.StackRunRefFunc = chat.StackRunRef
+	workflow.StackHeadBranchFunc = chat.StackHeadBranch
+	workflow.StackRunHeadCommitFunc = chat.StackRunHeadCommit
+	workflow.StackRunPushedFunc = chat.StackRunPushed
+	workflow.StackRunPublishWithheldFunc = chat.StackRunPublishWithheld
+	workflow.StackDecomposedChunksFunc = chat.StackDecomposedChunks
+	workflow.OpenContextStoreFunc = chat.OpenContextStore
+	workflow.InjectSkillResourceToolFunc = chat.InjectSkillResourceTool
+	workflow.GitMergeCheckFunc = chat.GitMergeCheck
+	workflow.SettleStackPlanRunIfCompleteFn = chat.SettleStackPlanRunIfComplete
+	workflow.InitCLIDefaults()
 }

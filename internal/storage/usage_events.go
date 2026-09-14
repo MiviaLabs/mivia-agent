@@ -96,7 +96,7 @@ const calibrationSeedRows = 50
 // calibrationSeedMinRatio and calibrationSeedMaxRatio mirror the bounds
 // contextmgr.Calibration.Update enforces on live observations. They are
 // duplicated rather than imported because internal/storage must not depend on
-// internal/contextmgr; TestCalibrationSeedClampsToCalibrationBounds pins that
+// internal/context/manager; TestCalibrationSeedClampsToCalibrationBounds pins that
 // they agree.
 const (
 	calibrationSeedMinRatio = 0.2

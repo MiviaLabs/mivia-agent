@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestAppendTurnJournalEntryRollsBackWhenTheSequenceLookupFails covers the
@@ -21,7 +21,7 @@ import (
 func TestAppendTurnJournalEntryRollsBackWhenTheSequenceLookupFails(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
-	entry := contextstate.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
+	entry := state.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
 
 	if _, err := store.db.Exec(`DROP TABLE events`); err != nil {
 		t.Fatalf("drop events table: %v", err)
@@ -91,7 +91,7 @@ func TestListJournaledTurnsReturnsTheTurnAfterASuccessfulAppend(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
 
-	entry := contextstate.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
+	entry := state.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
 	if err := store.AppendTurnJournalEntry(ctx, principal, "sess-list-scan", "turn:1", entry); err != nil {
 		t.Fatalf("AppendTurnJournalEntry: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestListJournaledTurnsReturnsTheTurnAfterASuccessfulAppend(t *testing.T) {
 func TestLoadTurnJournalRejectsAnInvalidPrincipal(t *testing.T) {
 	store, _ := newTurnJournalTestStore(t)
 
-	if _, err := store.LoadTurnJournal(context.Background(), contextstate.Principal{}, "s", "t"); err == nil {
+	if _, err := store.LoadTurnJournal(context.Background(), state.Principal{}, "s", "t"); err == nil {
 		t.Fatal("LoadTurnJournal with an invalid principal succeeded, want an error")
 	}
 }

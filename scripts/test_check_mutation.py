@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -462,7 +464,7 @@ def test_run_mutant_journals_the_file_while_it_is_mutated() -> None:
                     "true", "false", "bool")
 
         seen = {}
-        real_run = cm.subprocess.run
+        real_run = cm.run_process_group
 
         def spy(cmd, *args, **kwargs):
             if cmd and cmd[0] == "go":
@@ -474,11 +476,11 @@ def test_run_mutant_journals_the_file_while_it_is_mutated() -> None:
                 return subprocess.CompletedProcess(cmd, 1, "", "")
             return real_run(cmd, *args, **kwargs)
 
-        cm.subprocess.run = spy
+        cm.run_process_group = spy
         try:
             cm.run_mutant(site, original, "internal/x", str(tmp))
         finally:
-            cm.subprocess.run = real_run
+            cm.run_process_group = real_run
 
         assert seen.get("mutated"), "the file was not mutated when the tests ran"
         assert seen.get("entries"), "run_mutant did not journal the file before mutating it"
@@ -486,6 +488,56 @@ def test_run_mutant_journals_the_file_while_it_is_mutated() -> None:
         assert target.read_bytes() == original, "run_mutant did not restore the file"
         leftover = cm.inflight_dir()
         assert not sorted(leftover.glob("*.json")), "run_mutant did not clear its journal entry"
+
+
+def test_run_process_group_timeout_kills_descendants() -> None:
+    """A timeout must kill the session, including children of go test.
+
+    subprocess.run(timeout=...) only signals the leader pid. go test
+    leaves a .test binary (and the linker) running after that. This
+    process tree is the same shape: leader + child sleep."""
+    marker = f"mivia-mut-pg-{os.getpid()}-{time.time_ns()}"
+    child = "import time; time.sleep(30)"
+    leader = (
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]])\n"
+        "time.sleep(30)\n"
+    )
+    try:
+        cm.run_process_group(
+            [sys.executable, "-c", leader, child, marker],
+            timeout=0.4,
+        )
+        raise AssertionError("run_process_group returned before timeout")
+    except subprocess.TimeoutExpired:
+        pass
+    deadline = time.time() + 2
+    leftover = []
+    while time.time() < deadline:
+        leftover = subprocess.run(
+            ["pgrep", "-f", marker], capture_output=True, text=True
+        ).stdout.strip().split()
+        leftover = [p for p in leftover if p]
+        if not leftover:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"descendant still alive after timeout: pids {leftover}")
+
+
+def test_kill_live_subprocesses_clears_tracked_groups() -> None:
+    """SIGTERM's handler calls kill_live_subprocesses; prove the set
+    is emptied after a tracked timeout so a later sweep does not
+    SIGKILL a reused pid."""
+    try:
+        cm.run_process_group(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            timeout=0.3,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    assert not cm._live_pgids, f"live pgids leftover: {cm._live_pgids}"
+    cm.kill_live_subprocesses()
+    assert not cm._live_pgids
 
 
 def main() -> int:

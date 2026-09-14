@@ -3,7 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 
@@ -34,7 +34,7 @@ func TestFormatConfigShowIncludesCatalogCapacityAndBudget(t *testing.T) {
 }
 
 func TestFormatDoctorModelInfo(t *testing.T) {
-	got := cliorchestrate.FormatDoctorModelInfo(&config.Resolved{ProviderName: "deepseek", Model: "A", Models: []string{"A", "B"}})
+	got := orchestrate.FormatDoctorModelInfo(&config.Resolved{ProviderName: "deepseek", Model: "A", Models: []string{"A", "B"}})
 	if !strings.Contains(got, "  models:     A, B\n") || strings.Contains(got, "note:") {
 		t.Fatalf("doctor info = %q", got)
 	}
@@ -42,7 +42,7 @@ func TestFormatDoctorModelInfo(t *testing.T) {
 
 func TestFormatDoctorModelInfoIncludesCatalogCapacity(t *testing.T) {
 	res := loadPickerConfig(t)
-	got := cliorchestrate.FormatDoctorModelInfo(res)
+	got := orchestrate.FormatDoctorModelInfo(res)
 	if !strings.Contains(got, "deepseek/deepseek/one:128000") || !strings.Contains(got, "openrouter/openai/gpt-4o-mini:128000") {
 		t.Fatalf("doctor catalog = %q", got)
 	}

@@ -4,15 +4,15 @@
   "allow": {
     "cmd/mivia": [
       "internal/cli",
-      "internal/newtui",
+      "internal/tui/run",
       "internal/version"
     ],
     "internal/agent": [
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -25,25 +25,25 @@
     ],
     "internal/automation": [
       "internal/chat",
-      "internal/cliagents",
-      "internal/contextstate",
-      "internal/clichat",
-      "internal/cliworkflow",
-      "internal/cliworktree",
+      "internal/cli/agents",
+      "internal/context/state",
+      "internal/cli/chat",
+      "internal/cli/workflow",
+      "internal/cli/worktree",
       "internal/config",
       "internal/cronschedule",
       "internal/sdkadapter",
       "internal/skills",
       "internal/storage",
-      "internal/uikit/intent",
-      "internal/uikit/ports",
-      "internal/uikit/uievent",
+      "internal/tui/kit/intent",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent",
       "internal/workflows/ledger",
       "internal/workspace"
     ],
     "internal/agents": [
       "internal/config",
-      "internal/providerregistry",
+      "internal/provider/registry",
       "internal/skills",
       "internal/subagents",
       "internal/tools"
@@ -51,13 +51,13 @@
     "internal/chat": [
       "internal/agent",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
-      "internal/hooksession",
+      "internal/hooks/session",
       "internal/orchestrationnotify",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -74,17 +74,17 @@
     ],
     "internal/cli": [
       "internal/chat",
-      "internal/cliagents",
-      "internal/clichat",
-      "internal/cliautomations",
-      "internal/cliorchestrate",
-      "internal/cliworkflow",
-      "internal/cliworktree",
+      "internal/cli/agents",
+      "internal/cli/chat",
+      "internal/cli/automations",
+      "internal/cli/orchestrate",
+      "internal/cli/workflow",
+      "internal/cli/worktree",
       "internal/composition",
       "internal/config",
       "internal/coordinator",
       "internal/hooks",
-      "internal/hooksession",
+      "internal/hooks/session",
       "internal/ledger",
       "internal/memory",
       "internal/miviaauth",
@@ -94,21 +94,21 @@
       "internal/version",
       "internal/workflows/ledger"
     ],
-    "internal/cliagents": [
+    "internal/cli/agents": [
       "internal/agent",
       "internal/agents",
       "internal/chat",
-      "internal/cliworktree",
+      "internal/cli/worktree",
       "internal/composition",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/ledger",
       "internal/mcp",
       "internal/memory",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -120,34 +120,34 @@
       "internal/workflows/ledger",
       "internal/workspace"
     ],
-    "internal/cliautomations": [
+    "internal/cli/automations": [
       "internal/automation",
       "internal/chat",
-      "internal/cliagents",
-      "internal/clichat",
+      "internal/cli/agents",
+      "internal/cli/chat",
       "internal/config",
       "internal/provider",
       "internal/sdkadapter",
       "internal/skills",
       "internal/storage",
-      "internal/uiadapter",
-      "internal/uikit/ports",
+      "internal/tui/adapter",
+      "internal/tui/kit/ports",
       "internal/workspace"
     ],
-    "internal/clichat": [
+    "internal/cli/chat": [
       "internal/agent",
       "internal/agentmsg",
       "internal/agents",
       "internal/chat",
       "internal/chatsync",
-      "internal/cliagents",
-      "internal/cliorchestrate",
-      "internal/cliworkflow",
-      "internal/cliworktree",
+      "internal/cli/agents",
+      "internal/cli/orchestrate",
+      "internal/cli/workflow",
+      "internal/cli/worktree",
       "internal/composition",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/coordinator",
       "internal/events",
       "internal/hooks",
@@ -157,7 +157,7 @@
       "internal/mcp",
       "internal/memory",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -174,11 +174,11 @@
       "internal/workflows/localengine",
       "internal/workspace"
     ],
-    "internal/cliorchestrate": [
+    "internal/cli/orchestrate": [
       "internal/agent",
       "internal/agents",
       "internal/chatsync",
-      "internal/cliagents",
+      "internal/cli/agents",
       "internal/config",
       "internal/coordinator",
       "internal/jschema",
@@ -190,18 +190,18 @@
       "internal/subagents",
       "internal/tools"
     ],
-    "internal/cliworkflow": [
+    "internal/cli/workflow": [
       "internal/agents",
-      "internal/cliagents",
-      "internal/cliorchestrate",
-      "internal/cliworktree",
+      "internal/cli/agents",
+      "internal/cli/orchestrate",
+      "internal/cli/worktree",
       "internal/composition",
       "internal/config",
       "internal/coordinator",
       "internal/events",
       "internal/ledger",
       "internal/provider",
-      "internal/providerregistry",
+      "internal/provider/registry",
       "internal/runtime",
       "internal/sdkadapter",
       "internal/secretpath",
@@ -217,10 +217,10 @@
       "internal/workflows/localengine",
       "internal/workspace"
     ],
-    "internal/cliworktree": [
+    "internal/cli/worktree": [
       "internal/chat",
       "internal/config",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/storage",
       "internal/vcs",
       "internal/workspace",
@@ -229,8 +229,8 @@
     "internal/composition": [
       "internal/chat",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/hooks",
       "internal/mcp",
@@ -244,15 +244,15 @@
     ],
     "internal/config": [
       "internal/memory",
-      "internal/providerregistry",
-      "internal/reasoning",
+      "internal/provider/registry",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/secretpath",
       "internal/tools",
       "internal/workspace"
     ],
-    "internal/contextmgr": [
-      "internal/contextstate",
+    "internal/context/manager": [
+      "internal/context/state",
       "internal/provider",
       "internal/redact",
       "internal/remainder",
@@ -270,27 +270,27 @@
       "internal/subagents"
     ],
     "internal/events": [
-      "internal/contextstate"
+      "internal/context/state"
     ],
-    "internal/hooksession": [
+    "internal/hooks/session": [
       "internal/config",
       "internal/hooks"
     ],
     "internal/hub": [
       "internal/chat",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/events"
     ],
     "internal/jschema": [
       "internal/textutil"
     ],
     "internal/ledger": [
-      "internal/ledgercore",
+      "internal/ledger/core",
       "internal/runtime",
       "internal/sdkadapter",
       "internal/storage"
     ],
-    "internal/ledgercore": [
+    "internal/ledger/core": [
       "internal/storage"
     ],
     "internal/mcp": [
@@ -301,7 +301,7 @@
     "internal/miviaauth": [
       "internal/config"
     ],
-    "internal/newtui": [
+    "internal/tui/run": [
       "internal/agent",
       "internal/automation",
       "internal/chat",
@@ -310,17 +310,17 @@
       "internal/config",
       "internal/sdkadapter",
       "internal/storage",
-      "internal/ui/app",
-      "internal/ui/screen/conversation",
-      "internal/ui/theme",
-      "internal/uiadapter",
-      "internal/uikit/ports",
-      "internal/uikit/termprobe"
+      "internal/tui/view/app",
+      "internal/tui/view/screen/conversation",
+      "internal/tui/view/theme",
+      "internal/tui/adapter",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/termprobe"
     ],
     "internal/provider": [
       "internal/config",
-      "internal/providerregistry",
-      "internal/reasoning"
+      "internal/provider/registry",
+      "internal/provider/reasoning"
     ],
     "internal/remainder": [
       "internal/sdkadapter"
@@ -333,7 +333,7 @@
     "internal/sdkadapter": [
       "internal/hooks",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/skills",
       "internal/tools"
     ],
@@ -342,18 +342,18 @@
       "internal/tools"
     ],
     "internal/storage": [
-      "internal/contextstate",
+      "internal/context/state",
       "internal/usage",
       "internal/workspace"
     ],
     "internal/subagents": [
       "internal/agent",
       "internal/chat",
-      "internal/contextmgr",
+      "internal/context/manager",
       "internal/jschema",
       "internal/prompts",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -370,176 +370,176 @@
       "internal/textutil",
       "internal/workspace"
     ],
-    "internal/ui/app": [
-      "internal/ui/select",
-      "internal/ui/theme",
-      "internal/uikit/clipboardwrite"
+    "internal/tui/view/app": [
+      "internal/tui/view/select",
+      "internal/tui/view/theme",
+      "internal/tui/kit/clipboardwrite"
     ],
-    "internal/ui/component/approval": [
-      "internal/ui/render",
-      "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/uikit/ports",
-      "internal/uikit/uievent"
+    "internal/tui/view/component/approval": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/component/blackboard": [
-      "internal/ui/render",
-      "internal/ui/theme"
+    "internal/tui/view/component/blackboard": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
     ],
-    "internal/ui/component/composer": [
-      "internal/ui/render",
-      "internal/ui/select",
-      "internal/ui/theme",
-      "internal/uikit/config"
+    "internal/tui/view/component/composer": [
+      "internal/tui/view/render",
+      "internal/tui/view/select",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config"
     ],
-    "internal/ui/component/field": [
-      "internal/ui/render",
-      "internal/ui/theme"
+    "internal/tui/view/component/field": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
     ],
-    "internal/ui/component/history": [
-      "internal/ui/render",
-      "internal/ui/theme"
+    "internal/tui/view/component/history": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
     ],
-    "internal/ui/component/mark": [
-      "internal/ui/render",
-      "internal/ui/theme",
-      "internal/uikit/config"
+    "internal/tui/view/component/mark": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config"
     ],
-    "internal/ui/component/picker": [
-      "internal/ui/render",
-      "internal/ui/theme"
+    "internal/tui/view/component/picker": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
     ],
-    "internal/ui/component/queue": [
-      "internal/ui/render",
-      "internal/ui/theme"
+    "internal/tui/view/component/queue": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
     ],
-    "internal/ui/component/statusline": [
-      "internal/ui/component/mark",
-      "internal/ui/render",
-      "internal/ui/theme",
-      "internal/uikit/config"
+    "internal/tui/view/component/statusline": [
+      "internal/tui/view/component/mark",
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config"
     ],
-    "internal/ui/component/topbar": [
-      "internal/ui/component/mark",
-      "internal/ui/render",
-      "internal/ui/theme",
-      "internal/uikit/ports"
+    "internal/tui/view/component/topbar": [
+      "internal/tui/view/component/mark",
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/tui/kit/ports"
     ],
-    "internal/ui/component/transcript": [
+    "internal/tui/view/component/transcript": [
       "internal/remainder",
-      "internal/ui/render",
-      "internal/ui/select",
-      "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/uikit/uievent"
+      "internal/tui/view/render",
+      "internal/tui/view/select",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config",
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/component/welcome": [
-      "internal/ui/render",
-      "internal/ui/theme",
+    "internal/tui/view/component/welcome": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
       "internal/vcs"
     ],
-    "internal/ui/jsonout": [
-      "internal/uikit/uievent"
+    "internal/tui/view/jsonout": [
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/render": [
-      "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/uikit/keymap",
-      "internal/uikit/uievent"
+    "internal/tui/view/render": [
+      "internal/tui/view/theme",
+      "internal/tui/kit/config",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/screen/conversation": [
-      "internal/ui/app",
-      "internal/ui/component/approval",
-      "internal/ui/component/blackboard",
-      "internal/ui/component/composer",
-      "internal/ui/component/field",
-      "internal/ui/component/history",
-      "internal/ui/component/mark",
-      "internal/ui/component/picker",
-      "internal/ui/component/queue",
-      "internal/ui/component/statusline",
-      "internal/ui/component/topbar",
-      "internal/ui/component/transcript",
-      "internal/ui/component/welcome",
-      "internal/ui/render",
-      "internal/ui/screen/settings",
-      "internal/ui/screen/themepicker",
-      "internal/ui/screen/transcript",
-      "internal/ui/select",
-      "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/uikit/intent",
-      "internal/uikit/keymap",
-      "internal/uikit/ports",
-      "internal/uikit/uievent"
+    "internal/tui/view/screen/conversation": [
+      "internal/tui/view/app",
+      "internal/tui/view/component/approval",
+      "internal/tui/view/component/blackboard",
+      "internal/tui/view/component/composer",
+      "internal/tui/view/component/field",
+      "internal/tui/view/component/history",
+      "internal/tui/view/component/mark",
+      "internal/tui/view/component/picker",
+      "internal/tui/view/component/queue",
+      "internal/tui/view/component/statusline",
+      "internal/tui/view/component/topbar",
+      "internal/tui/view/component/transcript",
+      "internal/tui/view/component/welcome",
+      "internal/tui/view/render",
+      "internal/tui/view/screen/settings",
+      "internal/tui/view/screen/themepicker",
+      "internal/tui/view/screen/transcript",
+      "internal/tui/view/select",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config",
+      "internal/tui/kit/intent",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/screen/settings": [
-      "internal/ui/app",
-      "internal/ui/component/field",
-      "internal/ui/component/topbar",
-      "internal/ui/render",
-      "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/uikit/keymap",
-      "internal/uikit/ports"
+    "internal/tui/view/screen/settings": [
+      "internal/tui/view/app",
+      "internal/tui/view/component/field",
+      "internal/tui/view/component/topbar",
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/ports"
     ],
-    "internal/ui/screen/themepicker": [
-      "internal/ui/app",
-      "internal/ui/component/picker",
-      "internal/ui/render",
-      "internal/ui/theme",
-      "internal/uikit/uievent"
+    "internal/tui/view/screen/themepicker": [
+      "internal/tui/view/app",
+      "internal/tui/view/component/picker",
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/screen/transcript": [
-      "internal/ui/app",
-      "internal/ui/component/transcript",
-      "internal/ui/render",
-      "internal/ui/select",
-      "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/uikit/keymap",
-      "internal/uikit/uievent"
+    "internal/tui/view/screen/transcript": [
+      "internal/tui/view/app",
+      "internal/tui/view/component/transcript",
+      "internal/tui/view/render",
+      "internal/tui/view/select",
+      "internal/tui/view/theme",
+      "internal/tui/kit/config",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/uievent"
     ],
-    "internal/ui/stream": [
-      "internal/uikit/uievent"
+    "internal/tui/view/stream": [
+      "internal/tui/kit/uievent"
     ],
-    "internal/uiadapter": [
+    "internal/tui/adapter": [
       "internal/agent",
       "internal/chat",
       "internal/chatsync",
-      "internal/cliagents",
+      "internal/cli/agents",
       "internal/composition",
       "internal/config",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/coordinator",
       "internal/events",
       "internal/hooks",
-      "internal/hooksession",
+      "internal/hooks/session",
       "internal/mcp",
       "internal/miviaauth",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/sdkadapter",
       "internal/skills",
       "internal/storage",
       "internal/tools",
-      "internal/ui/component/composer",
-      "internal/uikit/intent",
-      "internal/uikit/ports",
-      "internal/uikit/uievent",
+      "internal/tui/view/component/composer",
+      "internal/tui/kit/intent",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent",
       "internal/vcs",
       "internal/workspace",
       "internal/worktreeroute"
     ],
-    "internal/uikit/ports": [
-      "internal/uikit/intent",
-      "internal/uikit/uievent"
+    "internal/tui/kit/ports": [
+      "internal/tui/kit/intent",
+      "internal/tui/kit/uievent"
     ],
-    "internal/uikit/replay": [
-      "internal/uikit/intent",
-      "internal/uikit/ports",
-      "internal/uikit/uievent"
+    "internal/tui/kit/replay": [
+      "internal/tui/kit/intent",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent"
     ],
     "internal/vcs": [
       "internal/workspace"
@@ -581,7 +581,7 @@
       "internal/coordinator",
       "internal/jschema",
       "internal/ledger",
-      "internal/ledgercore",
+      "internal/ledger/core",
       "internal/redact",
       "internal/runtime",
       "internal/storage",
@@ -604,7 +604,7 @@
     ],
     "internal/worktreeroute": [
       "internal/chat",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/storage",
       "internal/vcs"
     ],
@@ -626,9 +626,9 @@
     },
     {
       "from": "internal/storage",
-      "to": "internal/contextmgr",
+      "to": "internal/context/manager",
       "reason": "persistence package importing a domain policy package; the shared usage types moved to internal/usage (see internal/storage -> internal/usage)"
     }
   ],
-  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle; the discovered-during-implementation edges (provider, uikit/intent, uikit/ports) took 400 -> 404. Phase 3 added 10 edges for the build constructor: 7 from internal/uiadapter to composition-root packages (composition, config, hooks, mcp, redact, storage, workspace), plus 2 from internal/uiadapter extracted as helper signatures during the gate-driven refactor (contextstate, tools), plus 3 from cmd/mivia-ui (uiadapter, config, provider) for the --demo=false real-harness path. Measured count 404 -> 416, edge cap 405 -> 420 leaving 4 edges of headroom for the Phase 4+ wiring (settings ports, approver, MCP server selection from config). B.0.5 added internal/sdkadapter with 7 edges to bridge package-shape mismatches between the CLI types and the SDK types (provider, tools, skills, hooks, contentref, reasoning, ledger); measured count 416 -> 420 baseline, edge cap 420 -> 430 leaving 10 edges of headroom for Phase 4+ sdkadapter edges plus the Phase 5+ bundle and pipeline work. B.2 #3 dropped internal/contentref (the migration moved every caller to internal/sdkadapter); the 7 contentref edges from sdkadapter, ledger, agent, agentmsg, clichat, coordinator, remainder vanish, measured count 420 -> 413, cap stays at 430. C.1 added internal/hooksession, a leaf package (config, hooks) that owns lifecycle-hook session state so internal/uiadapter can reach /hooks listing without depending on internal/cli: 4 edges (cli -> hooksession, hooksession -> config, hooksession -> hooks, uiadapter -> hooksession); measured count 407 -> 411 (scripts/check_import_layers.py is authoritative for the running count; this note may drift from it), cap stays at 430. D.1 moved run_command's built-in DefaultRunAllowlist from internal/config to internal/tools (its true enforcer, and the direction .agents/rules/60-tools-project-language-generic.md requires - a tool implementation must not depend on the app's own config system): removes the undeclared tools -> config edge and adds the legitimate reverse, config -> tools, for effectiveDiagnosticsAllowlist's validation use. Net edge count unchanged, cap stays at 430. The splash redesign added internal/ui/component/welcome -> internal/vcs: welcome reuses internal/vcs's existing no-exec gitdir-pointer resolver to detect the workspace repo/branch for the banner's workspace line, instead of reimplementing that resolver locally. Measured count 413 -> 414, cap stays at 430. The workflow child-run registration seam (Delivery 2) added internal/cliworkflow -> internal/cliorchestrate: newWorkflowController's register hook closes over the host dispatcher/coordinator/repo and calls cliorchestrate.RegisterChildRunHandle so the standard tools resolve workflow child runs. Measured count 414 -> 415, cap stays at 430. The mouse-selection rewrite added internal/ui/select (a leaf under internal/ui: types + highlight engine) with 5 inbound edges (ui/app, ui/component/composer, ui/component/transcript, ui/screen/conversation, ui/screen/transcript), and one newtui -> uikit/termprobe edge for the startup probe. Measured count 415 -> 421, cap stays at 430. The release/v0.2.0 merge unioned this table with the release line's declarations: the internal/chatsync package (edges to events, miviaauth, redact; denied from chat and tools), its consumers (clichat, cliorchestrate, newtui, uiadapter), sdkadapter consumers (cliagents, cliworkflow, subagents), coordinator -> agent, ui/screen/conversation -> ui/component/field; edge cap 430 -> 452."
+  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/tui/adapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/tui/kit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle; the discovered-during-implementation edges (provider, uikit/intent, uikit/ports) took 400 -> 404. Phase 3 added 10 edges for the build constructor: 7 from internal/tui/adapter to composition-root packages (composition, config, hooks, mcp, redact, storage, workspace), plus 2 from internal/tui/adapter extracted as helper signatures during the gate-driven refactor (contextstate, tools), plus 3 from cmd/mivia-ui (uiadapter, config, provider) for the --demo=false real-harness path. Measured count 404 -> 416, edge cap 405 -> 420 leaving 4 edges of headroom for the Phase 4+ wiring (settings ports, approver, MCP server selection from config). B.0.5 added internal/sdkadapter with 7 edges to bridge package-shape mismatches between the CLI types and the SDK types (provider, tools, skills, hooks, contentref, reasoning, ledger); measured count 416 -> 420 baseline, edge cap 420 -> 430 leaving 10 edges of headroom for Phase 4+ sdkadapter edges plus the Phase 5+ bundle and pipeline work. B.2 #3 dropped internal/contentref (the migration moved every caller to internal/sdkadapter); the 7 contentref edges from sdkadapter, ledger, agent, agentmsg, clichat, coordinator, remainder vanish, measured count 420 -> 413, cap stays at 430. C.1 added internal/hooks/session, a leaf package (config, hooks) that owns lifecycle-hook session state so internal/tui/adapter can reach /hooks listing without depending on internal/cli: 4 edges (cli -> hooksession, hooksession -> config, hooksession -> hooks, uiadapter -> hooksession); measured count 407 -> 411 (scripts/check_import_layers.py is authoritative for the running count; this note may drift from it), cap stays at 430. D.1 moved run_command's built-in DefaultRunAllowlist from internal/config to internal/tools (its true enforcer, and the direction .agents/rules/60-tools-project-language-generic.md requires - a tool implementation must not depend on the app's own config system): removes the undeclared tools -> config edge and adds the legitimate reverse, config -> tools, for effectiveDiagnosticsAllowlist's validation use. Net edge count unchanged, cap stays at 430. The splash redesign added internal/tui/view/component/welcome -> internal/vcs: welcome reuses internal/vcs's existing no-exec gitdir-pointer resolver to detect the workspace repo/branch for the banner's workspace line, instead of reimplementing that resolver locally. Measured count 413 -> 414, cap stays at 430. The workflow child-run registration seam (Delivery 2) added internal/cli/workflow -> internal/cli/orchestrate: newWorkflowController's register hook closes over the host dispatcher/coordinator/repo and calls cliorchestrate.RegisterChildRunHandle so the standard tools resolve workflow child runs. Measured count 414 -> 415, cap stays at 430. The mouse-selection rewrite added internal/tui/view/select (a leaf under internal/ui: types + highlight engine) with 5 inbound edges (ui/app, ui/component/composer, ui/component/transcript, ui/screen/conversation, ui/screen/transcript), and one newtui -> uikit/termprobe edge for the startup probe. Measured count 415 -> 421, cap stays at 430. The release/v0.2.0 merge unioned this table with the release line's declarations: the internal/chatsync package (edges to events, miviaauth, redact; denied from chat and tools), its consumers (clichat, cliorchestrate, newtui, uiadapter), sdkadapter consumers (cliagents, cliworkflow, subagents), coordinator -> agent, ui/screen/conversation -> ui/component/field; edge cap 430 -> 452."
 }

@@ -1,7 +1,7 @@
 package cli
 
 // writeWorkflowRunFixture writes a complete stacking workflow run fixture.
-// Duplicated from internal/cliworkflow (workflow_run_integration_test.go).
+// Duplicated from internal/cli/workflow (workflow_run_integration_test.go).
 
 import (
 	"os"

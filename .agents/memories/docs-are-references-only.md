@@ -26,7 +26,7 @@ deleted):
 - Docs drift from code. Theme docs still described a palette the code had
   replaced (mivia-dark hexes changed in commit 583559ff without a doc
   update). Reconcile against the shipped artifact
-  (internal/ui/theme/themes/*.json), not against an older doc revision.
+  (internal/tui/view/theme/themes/*.json), not against an older doc revision.
 
 Ownership mechanics (one canonical path per topic, no ADRs) are rule
 40-docs-ownership and scripts/check_docs_ownership.py; the prose policy

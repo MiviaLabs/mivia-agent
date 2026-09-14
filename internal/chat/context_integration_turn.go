@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -110,7 +110,7 @@ func plainPersistenceError(err error) error {
 // context path as a persistence failure while keeping the original cause
 // matchable: errors.Is(err, ErrPersistence) and errors.Is(err, <cause>) both
 // hold (multi-%w). Returns nil for a nil cause. This is what makes
-// shouldPrintOneShotOutput (internal/clichat/chat.go) print the answer that
+// shouldPrintOneShotOutput (internal/cli/chat/chat.go) print the answer that
 // already streamed to the caller's writer instead of suppressing it - the
 // returned error string/value itself is not what reaches the terminal, the
 // ErrPersistence tag on it is what flips that decision.
@@ -154,7 +154,7 @@ func (s *Session) adoptUncommittedPlainTurn(candidate []provider.Message, snapsh
 // plainTurnCurrent/token fence as the success path, then return the partial
 // instead of the error. Non-interrupted errors keep today's
 // discard-and-drop behavior.
-func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation contextmgr.Preparation, summary injectedSummary) (string, error) {
+func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation manager.Preparation, summary injectedSummary) (string, error) {
 	if isInterruptedTurn(ctx, err) && s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
 		s.contextPublishMu.Lock()
 		if s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
@@ -170,7 +170,7 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 			if commitErr == nil {
 				result.Active = summary.appendCommitted(result.Active)
 				candidate = summary.appendCommitted(candidate)
-				result.Outcome = contextmgr.OutcomeCancelled
+				result.Outcome = manager.OutcomeCancelled
 				commitErr = snapshot.context.manager.Commit(commitCtx, preparation, result)
 			}
 			if commitErr == nil {
@@ -220,7 +220,7 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 // only so the user's question (and any already-streamed partial reply)
 // survive on resume instead of vanishing, mirroring
 // finishErroredContextTurn on the agent/tools path (turn_finish.go).
-func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation contextmgr.Preparation, summary injectedSummary) (string, error) {
+func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation manager.Preparation, summary injectedSummary) (string, error) {
 	if errors.Is(err, agent.ErrPromptBudgetExceeded) {
 		// Defense-in-depth: an over-budget history must never be committed.
 		// Unreachable today via this call site (Prepare's own budget check
@@ -250,7 +250,7 @@ func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snap
 	if commitErr == nil {
 		result.Active = summary.appendCommitted(result.Active)
 		candidate = summary.appendCommitted(candidate)
-		result.Outcome = contextmgr.OutcomeUpstreamErr
+		result.Outcome = manager.OutcomeUpstreamErr
 		commitErr = snapshot.context.manager.Commit(ctx, preparation, result)
 	}
 	snapshot.context.manager.PreparationManager.Discard(preparation)
@@ -267,7 +267,7 @@ func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snap
 		// buffered/partial text is incomplete and untrustworthy, and tagging
 		// it ErrPersistence would wrongly signal "the answer is fine, only
 		// the save failed" when the answer itself never finished streaming.
-		// shouldPrintOneShotOutput (internal/clichat/chat.go) must stay false
+		// shouldPrintOneShotOutput (internal/cli/chat/chat.go) must stay false
 		// for this case.
 		s.adoptUncommittedPlainTurn(candidate, snapshot)
 		return "", err
@@ -294,7 +294,7 @@ func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snap
 // contextPublishMu fence, then adopt it into the session when the operation
 // token is still current. Stale turns, commit failures, and token drift keep
 // today's exact return semantics (reply/no-op, error, or ErrStaleOperation).
-func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText string, preparation contextmgr.Preparation, summary injectedSummary) (string, error) {
+func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText string, preparation manager.Preparation, summary injectedSummary) (string, error) {
 	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
 		snapshot.context.manager.PreparationManager.Discard(preparation)
 		return reply, nil

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -142,8 +142,8 @@ type MultiStepHandler struct {
 	OnEvent func(agent.Event)
 	// ContextPreparationManager is deliberately the preparation-only capability.
 	// A nested handler never receives a context store or checkpoint publisher.
-	ContextPreparationManager contextmgr.PreparationManager
-	ContextPreparationInput   contextmgr.PrepareInput
+	ContextPreparationManager manager.PreparationManager
+	ContextPreparationInput   manager.PrepareInput
 	// OnToolCancelReady, when set, is forwarded as this invocation's nested
 	// agent.Options.OnToolCancelReady: the SDK backend calls it once, as
 	// soon as the run's per-turn cancel registry exists, with a
@@ -424,7 +424,7 @@ func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount, to
 
 // heartbeatDetail formats one heartbeat's Detail string. The sidebar panel
 // parses this (heartbeatStep/heartbeatToolCalls in
-// internal/uiadapter/event_kind.go) to drive its Step and Tool calls
+// internal/tui/adapter/event_kind.go) to drive its Step and Tool calls
 // counters, so the field order and key names are a contract with that
 // parser - elapsed is rounded to the second to match the pre-existing
 // "elapsed=Xs" shape.

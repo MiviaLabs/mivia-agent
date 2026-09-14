@@ -59,8 +59,8 @@ non-TTY stdout gives the plain stream.
 **Rule 6.2.** Transcript mode ships with the cockpit. It is the
 replacement for terminal find, so a cockpit without it removes a
 capability with nothing in its place. `Ctrl-O` opens it; the pager is
-`internal/ui/screen/transcript`, pushed onto the router stack, and its
-keys live in the `ContextPager` table of `internal/uikit/keymap`. Keys
+`internal/tui/view/screen/transcript`, pushed onto the router stack, and its
+keys live in the `ContextPager` table of `internal/tui/kit/keymap`. Keys
 follow `less`: `/` search, `n` and `N` for matches, `g` and `G` for the
 ends, `j` and `k` for one row, `Ctrl-U` and `Ctrl-D` for a half page,
 `Ctrl-B`/`b` and `Ctrl-F`/`space` for a full page, `{` and `}` to jump
@@ -89,8 +89,8 @@ selection can reach the transcript in scrollback.
 **Rule 6.4.** Never enter the cockpit in screen-reader mode. An alternate
 screen with a virtualized viewport is unreadable to a screen reader, and
 rule 9.1 of `ux-rules.md` forbids it. `termprobe.ScreenReader` in
-`internal/uikit/termprobe` detects `MIVIA_SCREEN_READER`; on a hit the
-plain stream from `internal/ui/stream` renders instead, with one line that
+`internal/tui/kit/termprobe` detects `MIVIA_SCREEN_READER`; on a hit the
+plain stream from `internal/tui/view/stream` renders instead, with one line that
 says why. `TERM=dumb` (`termprobe.DumbTerminal`) takes the same path
 (rule 9.6 of `ux-rules.md`).
 
@@ -98,7 +98,7 @@ says why. `TERM=dumb` (`termprobe.DumbTerminal`) takes the same path
 drag-select and wheel scrolling work from the first frame, and drag-select
 copies through OSC 52 with a status-line toast. Capture resolves at
 startup as `MIVIA_MOUSE` env > `[tui] mouse` config > default true
-(`internal/newtui` `mouseEnabled`). Settings → General "mouse capture"
+(`internal/tui/run` `mouseEnabled`). Settings → General "mouse capture"
 takes effect live: it sends `app.MouseCaptureMsg`, which flips
 `View().MouseMode`, and the renderer writes `?1002`/`?1006` on or off.
 The help overlay names the detected terminal's own override key for native
@@ -107,7 +107,7 @@ released while a `[` handover holds the surface (rule 6.3).
 
 **Rule 6.6.** Wheel speed is not portable. Some terminals send one event
 per notch and some amplify. The wheel scrolls `CockpitScrollLines` rows
-per event - a settable var in `internal/uikit/config/defaults.go`, default
+per event - a settable var in `internal/tui/kit/config/defaults.go`, default
 3 to match `vim` - and `[tui] scroll_lines` is the config key for it.
 While an approval prompt is active the wheel scrolls the diff preview,
 because the prompt is modal; a panel dialog scrolls its own content.
@@ -125,7 +125,7 @@ pause and scroll into view.
 ## 4. Terminal hazards
 
 These are known failures, not speculation. Each has a probe or a
-documented refusal in `internal/uikit/termprobe`.
+documented refusal in `internal/tui/kit/termprobe`.
 
 | Hazard | Effect | Response |
 |---|---|---|
@@ -135,7 +135,7 @@ documented refusal in `internal/uikit/termprobe`.
 | iTerm2 default profile | Mouse reporting is off, so the wheel and clicks do nothing | `Probe` adds a warning to `Report.Warnings` |
 | tmux without `mouse on` | Wheel events go to tmux | `Probe` adds a warning to `Report.Warnings`, worded as a condition: tmux's own option cannot be read without running tmux, so the hint says "if the wheel does not scroll" rather than claiming the state |
 
-Every row of this table has a probe in `internal/uikit/termprobe`, and the
+Every row of this table has a probe in `internal/tui/kit/termprobe`, and the
 package doc cites this section. `Report.Warnings` and `Report.RefuseReason`
 are the surfaces that carry the responses to the caller.
 
@@ -144,7 +144,7 @@ are the surfaces that carry the responses to the caller.
 ## 5. Renderer mechanisms
 
 Every mechanism the cockpit needs is declarative on the `tea.View` the
-router already returns (`internal/ui/app` `Model.View`). No new dependency
+router already returns (`internal/tui/view/app` `Model.View`). No new dependency
 is required.
 
 | Need | Mechanism |

@@ -11,7 +11,7 @@ The analysis tool resolves the database path through two steps (`.agents/skills/
 
 Every query enforces principal scoping to isolate workspace data:
 
-- `workspace_id`: `"workspace-"` prefix followed by the 16-character hex encoding of the first 8 bytes of the workspace root's SHA-256 digest (`internal/clichat/context_setup_session.go:93`).
+- `workspace_id`: `"workspace-"` prefix followed by the 16-character hex encoding of the first 8 bytes of the workspace root's SHA-256 digest (`internal/cli/chat/context_setup_session.go:93`).
 - `subject_id`: Fixed to `"local-user"`.
 
 Ledger execution stops with a `NOT_RUN` status if Python is older than version 3.11, the ledger file is missing, opening the database fails, or `user_version` is below 11.
@@ -45,7 +45,7 @@ The skill enforces strict data isolation boundaries:
 ## Analysis metrics
 
 - **Stalled live sessions**: Identifies live sessions with zero completed checkpoints (`session_type='live' AND checkpoint_count=0`).
-- **Staleness markers**: Treats `token_count` and `turn_count` from `chat_sessions` as save-time estimates invalidated by compaction (`internal/clichat/sessions_command.go:321`). It treats `payload_bytes` as current post-compaction size.
+- **Staleness markers**: Treats `token_count` and `turn_count` from `chat_sessions` as save-time estimates invalidated by compaction (`internal/cli/chat/sessions_command.go:321`). It treats `payload_bytes` as current post-compaction size.
 - **Timestamp span**: Measures elapsed time between first and last saves (`updated_at - created_at`), rather than active interaction duration.
 - **Outlier calculation**: Applies Tukey Interquartile Range (IQR) filtering when sample size $n \ge 5$, and adds standard score thresholds ($z > 2$, $z > 3$) when $n \ge 10$.
 - **Measured absence**: Reports an empty session window as a valid finding with store calibration metrics rather than an error.

@@ -29,7 +29,7 @@ Context payloads support explicit retention controls:
 
 - **Session deletion**: Writes a tombstone, increments the session revision, revokes payload rows, and inserts an audit record.
 - **Audit and tombstone retention**: Compliance records in `context_audits` and `context_tombstones` persist across payload garbage collection cycles.
-- **Context export**: Exports enforce principal scoping and size limits (`max_export_bytes` in `internal/config`, `ExportBytes` in `internal/contextstate/limits.go`). Exports fail without truncation when output exceeds the configured limit.
+- **Context export**: Exports enforce principal scoping and size limits (`max_export_bytes` in `internal/config`, `ExportBytes` in `internal/context/state/limits.go`). Exports fail without truncation when output exceeds the configured limit.
 
 ## Data model
 

@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -19,7 +19,7 @@ import (
 )
 
 // writeWorkflowFixture creates a .mivia/workflows/<name>.toml file in dir.
-// Duplicated from internal/cliworkflow (Go forbids cross-package _test.go
+// Duplicated from internal/cli/workflow (Go forbids cross-package _test.go
 // sharing); characterization_test.go depends on it and must not change.
 func writeWorkflowFixture(t *testing.T, dir, name, body string) {
 	t.Helper()
@@ -104,14 +104,14 @@ func compileWorkflowFile(t *testing.T, path string) *definition.CompiledWorkflow
 
 // multiChunkPlanOutput is a decompose step output that satisfies
 // schemas/chunk-plan-v1.json and routes stack_mode=multi with two chunks.
-// Duplicated from internal/cliworkflow (workflow_stack_drive_order_test.go).
+// Duplicated from internal/cli/workflow (workflow_stack_drive_order_test.go).
 const multiChunkPlanOutput = `{"stack_mode":"multi","chunk_plan":{"chunks":[
 	{"id":"c1","title":"chunk one","files":["a.go"],"est_diff_lines":20,"tests":true,"depends_on":[]},
 	{"id":"c2","title":"chunk two","files":["b.go"],"est_diff_lines":30,"tests":true,"depends_on":["c1"]}
 ]}}`
 
 // scriptedMiniStackRuntimes builds per-step runtimes for the mini-stack
-// fixture. Duplicated from internal/cliworkflow (workflow_stack_drive_order_test.go).
+// fixture. Duplicated from internal/cli/workflow (workflow_stack_drive_order_test.go).
 func scriptedMiniStackRuntimes(t *testing.T, synth *definition.CompiledWorkflow) map[string]controller.StepRuntime {
 	t.Helper()
 	cwd, err := os.Getwd()
@@ -139,7 +139,7 @@ func scriptedMiniStackRuntimes(t *testing.T, synth *definition.CompiledWorkflow)
 }
 
 // miniStackSnapshot builds the admitted snapshot for the mini-stack fixture.
-// Duplicated from internal/cliworkflow (workflow_stack_drive_order_test.go).
+// Duplicated from internal/cli/workflow (workflow_stack_drive_order_test.go).
 func miniStackSnapshot(t *testing.T, root string, compiled *definition.CompiledWorkflow, rawDefinition []byte) workflowledger.Snapshot {
 	t.Helper()
 	skills, err := loadChatSkills(root)
@@ -173,14 +173,14 @@ func miniStackSnapshot(t *testing.T, root string, compiled *definition.CompiledW
 }
 
 // workflowTestDispatcher is a no-op dispatcher stand-in for workflow tests.
-// Duplicated from internal/cliworkflow (workflow_helpers_pass4_test.go).
+// Duplicated from internal/cli/workflow (workflow_helpers_pass4_test.go).
 type workflowTestDispatcher struct{}
 
 // Close closes the test dispatcher.
 func (workflowTestDispatcher) Close() {}
 
 // newWorkflowBuildFixture builds the standard two-step workflow build
-// fixture. Duplicated from internal/cliworkflow (workflow_helpers_pass4_test.go).
+// fixture. Duplicated from internal/cli/workflow (workflow_helpers_pass4_test.go).
 func newWorkflowBuildFixture(t *testing.T) (string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow) {
 	t.Helper()
 	root := t.TempDir()
@@ -211,7 +211,7 @@ func newWorkflowBuildFixture(t *testing.T) (string, *config.Resolved, *storage.S
 }
 
 // seedSucceededDecomposeAttempt records a succeeded decompose attempt whose
-// output is the given plan JSON. Duplicated from internal/cliworkflow.
+// output is the given plan JSON. Duplicated from internal/cli/workflow.
 func seedSucceededDecomposeAttempt(t *testing.T, repo workflowledger.Repository, runID string, output []byte) {
 	t.Helper()
 	ctx := context.Background()

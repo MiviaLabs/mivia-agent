@@ -6,10 +6,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-var _ contextstate.SessionFirstMessageSource = (*SQLite)(nil)
+var _ state.SessionFirstMessageSource = (*SQLite)(nil)
 
 // FirstUserMessage returns the first user message of a live context session,
 // derived from the oldest complete checkpoint's active context. It is used to
@@ -22,7 +22,7 @@ var _ contextstate.SessionFirstMessageSource = (*SQLite)(nil)
 // byte-sliced prefix would break the JSON parse and void the title. A session
 // with no complete checkpoint or no user message yields an empty string,
 // never an error.
-func (s *SQLite) FirstUserMessage(ctx context.Context, principal contextstate.Principal, sessionID string) (string, error) {
+func (s *SQLite) FirstUserMessage(ctx context.Context, principal state.Principal, sessionID string) (string, error) {
 	if err := principal.Validate(); err != nil {
 		return "", err
 	}
@@ -35,7 +35,7 @@ func (s *SQLite) FirstUserMessage(ctx context.Context, principal contextstate.Pr
 		return "", err
 	}
 	var msgs []map[string]any
-	if err := contextstate.UnmarshalCanonical(raw, &msgs); err != nil {
+	if err := state.UnmarshalCanonical(raw, &msgs); err != nil {
 		return "", nil
 	}
 	for _, msg := range msgs {

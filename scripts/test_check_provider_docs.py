@@ -97,7 +97,7 @@ def expect_fail(registry: str, readme: str, arch: str) -> str:
 
 def test_real_repo_files_pass() -> None:
     """The committed README/overview must agree with the committed registry."""
-    reg_text = (ROOT / "internal/providerregistry/registry.go").read_text(encoding="utf-8")
+    reg_text = (ROOT / "internal/provider/registry/registry.go").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     arch = (ROOT / "docs/architecture/overview.md").read_text(encoding="utf-8")
     expect_ok(reg_text, readme, arch)

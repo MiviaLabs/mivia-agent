@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // newRequest builds one /chat/completions HTTP request. It never mutates req.

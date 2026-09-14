@@ -1,16 +1,16 @@
 package cli
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 )
 
 // currentHookSession, hookSessionConfigured, handleSlashHooks, and
-// installHookSession are thin wrappers over internal/hooksession, which owns
+// installHookSession are thin wrappers over internal/hooks/session, which owns
 // the actual session state and listing logic. They exist so the clichat and
-// cliworkflow seam signatures (internal/clichat/seams.go,
-// internal/cliworkflow/seams.go) do not have to change: both still wire to a
+// cliworkflow seam signatures (internal/cli/chat/seams.go,
+// internal/cli/workflow/seams.go) do not have to change: both still wire to a
 // cli-owned func with the same shape they always had.
 
 func currentHookSession() *hooksession.Session { return hooksession.Current() }
@@ -18,13 +18,13 @@ func currentHookSession() *hooksession.Session { return hooksession.Current() }
 func hookSessionConfigured() bool { return hooksession.Configured() }
 
 // handleSlashHooks serves /hooks on the old clichat surface.
-func handleSlashHooks(fields []string, term *clichat.Terminal) (bool, bool, error) {
+func handleSlashHooks(fields []string, term *chat.Terminal) (bool, bool, error) {
 	term.WriteString("\n" + hooksession.SlashOutput(fields))
 	return true, false, nil
 }
 
 // installHookSession resolves this session's lifecycle hooks and prints the
-// startup notices hooksession.Install returns. cliagents.WarnHookLoad is the
+// startup notices hooksession.Install returns. agents.WarnHookLoad is the
 // print step; hooksession stays free of any cli dependency by not doing it
 // itself.
 func installHookSession(workspaceRoot string, staleBypass, quiet bool) (func(), error) {
@@ -32,6 +32,6 @@ func installHookSession(workspaceRoot string, staleBypass, quiet bool) (func(), 
 	if err != nil {
 		return nil, err
 	}
-	cliagents.WarnHookLoad(notices)
+	agents.WarnHookLoad(notices)
 	return release, nil
 }

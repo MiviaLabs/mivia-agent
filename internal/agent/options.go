@@ -6,11 +6,11 @@ import (
 	"io"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -115,7 +115,7 @@ type Options struct {
 	// nested turn open. See provider.Request.StreamTransport.
 	WireStreamTransport bool
 	// MaxContextTokens sets the approximate token limit for the prompt context.
-	// Pruning is hysteretic, mirroring contextmgr.Plan: history is left
+	// Pruning is hysteretic, mirroring manager.Plan: history is left
 	// untouched below 80% of the budget, and once that trigger is crossed old
 	// turns are dropped (keeping system prompt and recent turns) down to ~50%,
 	// so one provider prompt-cache miss buys many cache hits before the next.
@@ -249,8 +249,8 @@ type Options struct {
 	MaxUnactedContinuations int
 	// PreparationManager is an optional root-owned preparation capability. It
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.
-	PreparationManager contextmgr.PreparationManager
-	PreparationInput   contextmgr.PrepareInput
+	PreparationManager manager.PreparationManager
+	PreparationInput   manager.PrepareInput
 	// SummaryConfig wires the optional LLM summarizer into the request path. A
 	// nil Summarizer keeps the loop structural-only: no summary provider call,
 	// no injected message, byte-identical requests. Redaction is the host's
@@ -354,7 +354,7 @@ type Surface struct {
 type SummaryConfig struct {
 	// Summarizer is the captured provider/model/policy binding. Nil disables
 	// summary injection entirely.
-	Summarizer *contextmgr.Summarizer
+	Summarizer *manager.Summarizer
 	// UnavailableReason names the setup-time failure that prevented a Summarizer
 	// from being wired, when Summarizer is nil.
 	UnavailableReason string

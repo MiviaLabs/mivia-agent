@@ -3,7 +3,7 @@ package chat
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
 )
 
 func TestSummaryUnavailableReasonWhenSummarized(t *testing.T) {

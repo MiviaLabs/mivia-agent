@@ -57,7 +57,7 @@ the delta first. Do not guess. Do this, in order:
    match. A statement the code no longer supports is drift.
 3. For provider docs specifically, cross-check the README provider table
    and `docs/architecture/overview.md` against
-   `internal/providerregistry/registry.go` — `check_provider_docs.py`
+   `internal/provider/registry/registry.go` — `check_provider_docs.py`
    enforces this pairing.
 4. `git diff` since the last doc commit to see what the code change was,
    then map it onto the right doc under `docs/architecture/`.

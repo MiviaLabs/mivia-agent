@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-// busyThenOkCatalog implements contextstate.SessionCatalog and
-// contextstate.SessionFirstMessageSource, failing FirstUserMessage with a
+// busyThenOkCatalog implements state.SessionCatalog and
+// state.SessionFirstMessageSource, failing FirstUserMessage with a
 // SQLITE_BUSY-shaped error a fixed number of times before returning opener.
 // Mirrors the desktop app's own real-world shape: mivia's chat sidecar keeps
 // a long-lived writer connection open on the same context.db a concurrent
@@ -22,7 +22,7 @@ type busyThenOkCatalog struct {
 	calls        int
 }
 
-func (c *busyThenOkCatalog) FirstUserMessage(context.Context, contextstate.Principal, string) (string, error) {
+func (c *busyThenOkCatalog) FirstUserMessage(context.Context, state.Principal, string) (string, error) {
 	c.calls++
 	if c.failuresLeft > 0 {
 		c.failuresLeft--
@@ -31,29 +31,29 @@ func (c *busyThenOkCatalog) FirstUserMessage(context.Context, contextstate.Princ
 	return c.opener, nil
 }
 
-func (c *busyThenOkCatalog) SaveSession(context.Context, contextstate.Principal, string, []byte, string, string, int, int, int, contextstate.SessionSaveOptions) error {
+func (c *busyThenOkCatalog) SaveSession(context.Context, state.Principal, string, []byte, string, string, int, int, int, state.SessionSaveOptions) error {
 	return nil
 }
 
-func (c *busyThenOkCatalog) LoadSession(context.Context, contextstate.Principal, string) ([]byte, contextstate.SessionCatalogInfo, error) {
-	return nil, contextstate.SessionCatalogInfo{}, nil
+func (c *busyThenOkCatalog) LoadSession(context.Context, state.Principal, string) ([]byte, state.SessionCatalogInfo, error) {
+	return nil, state.SessionCatalogInfo{}, nil
 }
 
-func (c *busyThenOkCatalog) ListSessions(context.Context, contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {
+func (c *busyThenOkCatalog) ListSessions(context.Context, state.Principal) ([]state.SessionCatalogInfo, error) {
 	return nil, nil
 }
 
-func (c *busyThenOkCatalog) DeleteSessionSnapshot(context.Context, contextstate.Principal, string) error {
+func (c *busyThenOkCatalog) DeleteSessionSnapshot(context.Context, state.Principal, string) error {
 	return nil
 }
 
-func (c *busyThenOkCatalog) PruneSessionSnapshots(context.Context, contextstate.Principal, []string) error {
+func (c *busyThenOkCatalog) PruneSessionSnapshots(context.Context, state.Principal, []string) error {
 	return nil
 }
 
-func testPrincipal(t *testing.T) contextstate.Principal {
+func testPrincipal(t *testing.T) state.Principal {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal("workspace", "sess", "subject")
+	principal, err := state.NewPrincipal("workspace", "sess", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ type erroringCatalog struct {
 	calls int
 }
 
-func (c *erroringCatalog) FirstUserMessage(context.Context, contextstate.Principal, string) (string, error) {
+func (c *erroringCatalog) FirstUserMessage(context.Context, state.Principal, string) (string, error) {
 	c.calls++
 	return "", c.err
 }

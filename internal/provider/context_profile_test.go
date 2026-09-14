@@ -100,7 +100,7 @@ func TestUnknownProviderDefaultsToConservativeBilling(t *testing.T) {
 // (EstimateMessagesPromptCost, fed a pre-hoisted schema cost) and the
 // request-style estimator (EstimateRequestCost/EstimatePromptCost, called
 // directly with the tool list) price the SAME messages/tools/profile to the
-// exact same token count. internal/contextmgr's planner uses the former;
+// exact same token count. internal/context/manager's planner uses the former;
 // the agent loop's calibration estimate (loop_request.go) uses the latter -
 // a mismatch between the two would mean calibration corrects against a
 // different notion of "cost" than the trigger that used the calibration.

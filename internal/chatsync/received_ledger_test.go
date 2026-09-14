@@ -11,7 +11,7 @@ import (
 
 // TestInputPoller_MarkReceived_ConcurrentCallsDoNotLoseIDs drives two
 // concurrent MarkReceived calls for distinct ids against the SAME poller
-// instance - exactly the shape internal/ui/screen/conversation/mount.go's
+// instance - exactly the shape internal/tui/view/screen/conversation/mount.go's
 // handleSessionMountedMsg produces when it batches one ackCmd per buffered
 // remote-input event for one background session into a single tea.Batch:
 // bubbletea's runtime (charm.land/bubbletea/v2's execBatchMsg) runs every

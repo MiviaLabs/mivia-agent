@@ -2,7 +2,7 @@
 // clauses in tool_cancel.go (registerSubagentToolCanceler,
 // RegisterSubagentToolCanceler, CancelSubagentToolCall), one at a time,
 // beyond what cancel_subagent_tool_call_test.go's end-to-end isolation
-// test already proves. Mirrors internal/uiadapter's
+// test already proves. Mirrors internal/tui/adapter's
 // turnhandle_cancel_tool_call_internal_test.go: store a nil func value
 // directly to prove the nil-canceler branch, not just the
 // never-registered branch.
@@ -123,7 +123,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing
 // this stores a nil agent.ToolCanceler value directly under a known
 // taskID/callID pairing (bypassing registerSubagentToolCanceler, which
 // itself refuses to store a nil canceler), so `ok` is true but the stored
-// value is nil. Mirrors internal/uiadapter's
+// value is nil. Mirrors internal/tui/adapter's
 // TestTurnHandleCancelToolCall_StoredNilCancelerIsNoop.
 func TestCancelSubagentToolCall_RegisteredNilCancelerIsSafeNoop(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()

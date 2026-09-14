@@ -233,7 +233,7 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 // package is a leaf (settled decision 7): it has no visibility past its own
 // channel into whether a reader ever pulls the value out and acts on it. A
 // crash after this select's send succeeds but before some downstream reader
-// (internal/uiadapter's pumpRemoteInputs, then the UI's own conv.Send) has
+// (internal/tui/adapter's pumpRemoteInputs, then the UI's own conv.Send) has
 // actually consumed and executed it loses the instruction silently - the
 // durable record is already cleared and the delivered-ids ledger already
 // prevents a restart from replaying it. This mirrors the same

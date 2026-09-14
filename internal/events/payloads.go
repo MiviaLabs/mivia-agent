@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // HookEvent is the structured payload for one lifecycle hook run.

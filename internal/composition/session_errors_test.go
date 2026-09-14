@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestBuildSessionRequiresConfig(t *testing.T) {
@@ -74,7 +74,7 @@ func TestBuildSessionBoundPrincipalSessionMismatch(t *testing.T) {
 	// A bound principal whose session id differs from the freshly minted
 	// session's id must fail SetContextManager inside
 	// buildSessionCheckpointStore.
-	principal, err := contextstate.NewPrincipal("ws", "fixed-session-id", "fixed-session-id")
+	principal, err := state.NewPrincipal("ws", "fixed-session-id", "fixed-session-id")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestBuildSessionContextStoreCapabilityMismatch(t *testing.T) {
 	}
 	// Detach the store from the session and close it so the second call
 	// opens a fresh handle against the same file.
-	if err := sess.SetContextManager(nil, contextstate.Principal{}); err != nil {
+	if err := sess.SetContextManager(nil, state.Principal{}); err != nil {
 		t.Fatalf("clear context manager: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -111,7 +111,7 @@ func TestBuildSessionContextStoreCapabilityMismatch(t *testing.T) {
 	// A second principal with the same tuple but a different random
 	// capability must be rejected when SetContextStore loads the session
 	// the first principal wrote.
-	second, err := contextstate.NewPrincipal("ws", first.SessionID, first.SubjectID)
+	second, err := state.NewPrincipal("ws", first.SessionID, first.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}

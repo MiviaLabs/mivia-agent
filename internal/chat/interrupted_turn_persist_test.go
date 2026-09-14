@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -100,15 +100,15 @@ func TestNoMessageLossInterruptedPlainContextTurnIsPersisted(t *testing.T) {
 	}
 	defer store.Close()
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, plainInterruptedCompleter{partial: partial})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{
@@ -137,7 +137,7 @@ func TestNoMessageLossInterruptedPlainContextTurnIsPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var loaded []provider.Message
-	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
+	if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
 		t.Fatal(err)
 	}
 	assertInterruptedPlainPersisted(t, loaded, partial, question)
@@ -191,7 +191,7 @@ func (p plainCommitFailurePublisher) Commit(context.Context, contextmgr.Preparat
 // non-empty reply/partial, and tag the error so errors.Is(err,
 // ErrPersistence) holds alongside errors.Is(err, <cause>). One-shot (-p)
 // mode's user-visible fix comes entirely from that ErrPersistence tag
-// flipping shouldPrintOneShotOutput (internal/clichat/chat.go) so the
+// flipping shouldPrintOneShotOutput (internal/cli/chat/chat.go) so the
 // already-streamed answer buffer prints instead of being suppressed - NOT
 // from the returned reply string itself, which shipped one-shot callers
 // discard.
@@ -204,15 +204,15 @@ func TestCompletedPlainContextTurnCommitFailureKeepsTheTurn(t *testing.T) {
 	}
 	defer store.Close()
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, plainStreamingCompleter{answer: answer})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	want := errors.New("disk full")
@@ -260,7 +260,7 @@ func TestCompletedPlainContextTurnCommitFailureKeepsTheTurn(t *testing.T) {
 	}
 	var loaded []provider.Message
 	if len(snapshot.Active.ActiveContext) > 0 {
-		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
+		if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -280,15 +280,15 @@ func TestInterruptedPlainContextTurnCommitFailureKeepsTheTurn(t *testing.T) {
 	}
 	defer store.Close()
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, plainInterruptedCompleter{partial: partial})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	want := errors.New("disk full")
@@ -336,7 +336,7 @@ func TestInterruptedPlainContextTurnCommitFailureKeepsTheTurn(t *testing.T) {
 	}
 	var loaded []provider.Message
 	if len(snapshot.Active.ActiveContext) > 0 {
-		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
+		if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
 			t.Fatal(err)
 		}
 	}

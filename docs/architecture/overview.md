@@ -9,7 +9,7 @@
 
 ## Layers
 
-1. **CLI** - chat REPL / one-shot; tool event tracing; TUI rendering
+1. **CLI** - chat REPL / one-shot; tool event tracing. Interactive TTY chat uses one compositor: `internal/tui/run` composing `internal/tui/view` + `internal/tui/kit` + `internal/tui/adapter`. `cmd/mivia` calls `cli.SetTUILauncher(tui.RunTUI)`. `--plain` is a line-mode REPL, not a second compositor.
 2. **Agent loop** - tool_calls until stop (`internal/agent`)
 3. **Tool gateway** - read/search/edit/run under workspace policy (`internal/tools`)
 4. **Workspace** - path confinement (`internal/workspace`)
@@ -152,7 +152,7 @@ Two further layers catch what the transport cannot see:
 
 ## Context compaction and elision recoverability
 
-Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/contextmgr` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
+Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/context/manager` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
 
 When a spool is configured on the loop (`agent.Options.RemainderSpool`) plus a session principal, the elision notice includes a principal-scoped remainder ref:
 
@@ -217,15 +217,15 @@ flowchart TD
 |-----------|---------|------|
 | `Coordinator` | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
-| `Engine` / `ClaimsTracker` | `internal/ledgercore` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
+| `Engine` / `ClaimsTracker` | `internal/ledger/core` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
 | `LedgerRepository` interface | `internal/ledger` | Storage boundary: 20 methods for run/task/event CRUD with CAS, including run-claim leasing (`ClaimRun`, `ReleaseRun`, `ClearRunClaim`) |
 | `LeaseRepository` interface | `internal/ledger` | Separate, narrower storage boundary holding only `TakeoverExpiredRunClaim` |
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
 | `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
-| `Diagnostics` | `internal/cliorchestrate` | ListRuns, ActiveHandles (privacy-safe operator views) |
-| `FormatToolOutput` / `FormatCommandOutput` / etc. | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
-| `Screen` (settings) | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
+| `Diagnostics` | `internal/cli/orchestrate` | ListRuns, ActiveHandles (privacy-safe operator views) |
+| `FormatToolOutput` / `FormatCommandOutput` / etc. | `internal/tui/view/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
+| `Screen` (settings) | `internal/tui/view/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
 ### Lifecycle
 
@@ -278,7 +278,7 @@ A workflow run that reaches its success terminal is not necessarily done: `deliv
 
 The Coordinator supports `SubscribeLifecycle(fn)` which returns an `unsubscribe()` function.
 Subscribers receive `LifecycleEvent` values synchronously as tasks transition.
-The orchestration state layer in `internal/cliorchestrate` uses it.
+The orchestration state layer in `internal/cli/orchestrate` uses it.
 
 ### Provider/model generations and TUI dialogs
 
@@ -291,17 +291,12 @@ The model picker is a base-plus-modal surface: it renders the explicit catalog,
 keeps providers and slash-containing model IDs distinct, and disables rows with
 missing credentials without exposing secret or provider payload details.
 
-### TUI base-plus-modal rendering
+### Interactive TUI
 
-The chat TUI always renders its base frame first. Help, status, tools, sessions,
-and block/fleet detail are modal producers rendered into a bounded, centered
-cell rectangle over that base; they do not replace the transcript canvas.
-`internal/cli` computes one `dialogLayout` per render, including the exact inner
-width and page height, and uses that geometry for wrapping, paging, wheel input,
-and resize clamping. The compositor normalizes both canvases to the raw terminal
-dimensions and carries ANSI SGR state across panel seams. Modal input owns mouse
-and paste messages before transcript hit testing or viewport fallback. Status
-and fleet detail are snapshots captured at open; reopening refreshes them.
+Interactive TTY chat uses one compositor: `internal/tui/run` composing
+`internal/tui/view`, `internal/tui/kit`, and `internal/tui/adapter`. `cmd/mivia` wires
+that path with `cli.SetTUILauncher(tui.RunTUI)`. `--plain` is a line-mode
+REPL in `internal/cli/chat`; it is not a second interactive compositor.
 
 ### See also
 

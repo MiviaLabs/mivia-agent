@@ -185,7 +185,7 @@ def test_committed_policy_loads_and_validates() -> None:
     mod = load_mod()
     policy = mod.load_policy()
     assert isinstance(policy["edgeCap"], int)
-    assert ("internal/storage", "internal/contextmgr") in policy["deny"]
+    assert ("internal/storage", "internal/context/manager") in policy["deny"]
 
 
 def main() -> None:

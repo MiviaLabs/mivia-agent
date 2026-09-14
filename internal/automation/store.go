@@ -10,7 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -170,7 +170,7 @@ func firstRegistry(registry []*skills.Registry) *skills.Registry {
 // workspaceRoot, validating every spec first so a bad in-memory Spec
 // never reaches disk. Follows the exact "Atomic Writes" sequence -
 // internal/chatsync/delivered_ledger.go:30-37's open-tmp/write/fsync/
-// close/rename, not internal/cliworktree/worktree_marker.go:81's
+// close/rename, not internal/cli/worktree/worktree_marker.go:81's
 // (which omits the fsync): os.CreateTemp in the target directory,
 // Chmod(0600), write, Sync, Close, then os.Rename over the destination.
 //

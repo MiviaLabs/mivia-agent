@@ -4,15 +4,15 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-var _ contextstate.SessionTitleCatalog = (*SQLite)(nil)
+var _ state.SessionTitleCatalog = (*SQLite)(nil)
 
 // SetSessionTitle updates display metadata for an authorized context session.
-func (s *SQLite) SetSessionTitle(ctx context.Context, principal contextstate.Principal, sessionID, title string, instance contextstate.WorktreeInstance) error {
+func (s *SQLite) SetSessionTitle(ctx context.Context, principal state.Principal, sessionID, title string, instance state.WorktreeInstance) error {
 	var err error
-	title, err = contextstate.NormalizeSessionTitle(title)
+	title, err = state.NormalizeSessionTitle(title)
 	if err != nil {
 		return err
 	}
@@ -44,12 +44,12 @@ func (s *SQLite) SetSessionTitle(ctx context.Context, principal contextstate.Pri
 	})
 }
 
-func authorizeContextSessionTitleTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string) (contextSessionRow, error) {
+func authorizeContextSessionTitleTx(ctx context.Context, tx *sql.Tx, principal state.Principal, sessionID string) (contextSessionRow, error) {
 	if err := principal.Validate(); err != nil {
 		return contextSessionRow{}, err
 	}
 	if !principal.IsBound() || sessionID == "" {
-		return contextSessionRow{}, contextstate.ErrPrincipalMismatch
+		return contextSessionRow{}, state.ErrPrincipalMismatch
 	}
 	var row contextSessionRow
 	var subjectID string
@@ -57,17 +57,17 @@ func authorizeContextSessionTitleTx(ctx context.Context, tx *sql.Tx, principal c
 	var tombstoned int
 	err := tx.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,tombstoned,instance_id FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &capability, &row.SessionRevision, &row.DurableRevision, &row.SourceSequence, &row.Provider, &row.Model, &row.BindingGeneration, &tombstoned, &row.InstanceID)
 	if err == sql.ErrNoRows {
-		return contextSessionRow{}, contextstate.ErrSessionNotFound
+		return contextSessionRow{}, state.ErrSessionNotFound
 	}
 	if err != nil {
 		return contextSessionRow{}, err
 	}
 	if subjectID != principal.SubjectID {
-		return contextSessionRow{}, contextstate.ErrPrincipalMismatch
+		return contextSessionRow{}, state.ErrPrincipalMismatch
 	}
 	row.Tombstoned = tombstoned != 0
 	if row.Tombstoned {
-		return row, contextstate.ErrSessionTombstoned
+		return row, state.ErrSessionTombstoned
 	}
 	return row, nil
 }

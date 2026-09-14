@@ -138,7 +138,7 @@ func TestResolveGitDirAbsoluteAndNonGitdir(t *testing.T) {
 
 // TestResolveGitDirExported pins that the exported ResolveGitDir wrapper
 // delegates to the unexported resolveGitDir unchanged, so external
-// no-exec callers (internal/ui/component/welcome) get the identical
+// no-exec callers (internal/tui/view/component/welcome) get the identical
 // gitdir-pointer resolution this package uses internally.
 func TestResolveGitDirExported(t *testing.T) {
 	dir := t.TempDir()

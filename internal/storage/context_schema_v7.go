@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 const liveWorktreeIndexSQL = `CREATE UNIQUE INDEX worktree_instances_live_name_idx ON worktree_instances(workspace_id,worktree) WHERE state != 'deleted'`

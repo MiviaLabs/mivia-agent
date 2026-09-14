@@ -59,7 +59,7 @@ const (
 )
 
 // Open returns a process-local Store. Durable storage uses the Markdown
-// adapter in internal/cliagents.
+// adapter in internal/cli/agents.
 func Open(cfg Config) (Store, error) {
 	cfg = normalizeConfig(cfg)
 	if cfg.OrgID != "" {

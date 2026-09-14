@@ -12,7 +12,7 @@ import (
 // attributedAtDepth builds an event carrying a task id at an explicit depth.
 // Depth 0 is the shape the root loop takes whenever anything upstream of the
 // projector stamps an attribution key without a dispatch depth - the workflow
-// progress sinks in internal/cliworkflow and internal/workflows/localengine
+// progress sinks in internal/cli/workflow and internal/workflows/localengine
 // publish exactly that.
 func attributedAtDepth(kind events.Kind, task string, depth int, content, detail string) events.Event {
 	ev := events.Event{

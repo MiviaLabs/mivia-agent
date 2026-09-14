@@ -4,7 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 )
 
 // newHolderID generates a random per-process identifier for run execution
@@ -14,7 +14,7 @@ import (
 // crashing the program itself if the operating system's source fails, so
 // there is no error to handle.
 func newHolderID() string {
-	return "wf" + ledgercore.NewHolderID()
+	return "wf" + core.NewHolderID()
 }
 
 // Recover brings the projection up to date, classifies every run, and

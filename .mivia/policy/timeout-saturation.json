@@ -50,31 +50,31 @@
       "reason": "range-checked against MinTimeout/MaxTimeout seconds before the multiply, with a comment naming this exact wrap"
     },
     {
-      "file": "internal/cliorchestrate/orchestrate.go",
+      "file": "internal/cli/orchestrate/orchestrate.go",
       "operand": "config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)",
       "unit": "Second",
       "reason": "EffectiveTimeoutSec clamps at MaxTimeoutSeconds (10 years)"
     },
     {
-      "file": "internal/cliorchestrate/orchestrate_lifecycle.go",
+      "file": "internal/cli/orchestrate/orchestrate_lifecycle.go",
       "operand": "config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)",
       "unit": "Second",
       "reason": "EffectiveTimeoutSec clamps at MaxTimeoutSeconds (10 years)"
     },
     {
-      "file": "internal/cliorchestrate/dispatch.go",
+      "file": "internal/cli/orchestrate/dispatch.go",
       "operand": "DispatchOrchestrationSecForWorkers(t.cfg.DefaultTimeout, t.cfg.MaxWorkers, args)",
       "unit": "Second",
       "reason": "derived from EffectiveTimeoutSec, clamped at MaxTimeoutSeconds on every path; the wave multiply carries an overflow guard and the +15s slack re-clamps at the ceiling"
     },
     {
-      "file": "internal/cliorchestrate/dispatch.go",
+      "file": "internal/cli/orchestrate/dispatch.go",
       "operand": "taskTimeout",
       "unit": "Second",
       "reason": "assigned from config.EffectiveTimeoutSec above the multiply, clamped at MaxTimeoutSeconds"
     },
     {
-      "file": "internal/cliorchestrate/orchestration_state.go",
+      "file": "internal/cli/orchestrate/orchestration_state.go",
       "operand": "config.DefaultOrchestrationTimeoutSec+DispatchOrchestrationSlackSec",
       "unit": "Second",
       "reason": "compile-time constant expression"
@@ -98,7 +98,7 @@
       "reason": "the body of SaturatingSeconds itself, after its own clamp"
     },
     {
-      "file": "internal/cliorchestrate/orchestrate_lifecycle.go",
+      "file": "internal/cli/orchestrate/orchestrate_lifecycle.go",
       "operand": "eff",
       "unit": "Second",
       "reason": "joinBudget clamps the value to 3600 seconds before the multiply"
@@ -122,7 +122,7 @@
       "reason": "bounded retry-loop counter, single digits"
     },
     {
-      "file": "internal/cliorchestrate/orchestration_state.go",
+      "file": "internal/cli/orchestrate/orchestration_state.go",
       "operand": "cfg.SpawnStaggerMs",
       "unit": "Millisecond",
       "reason": "clamped to maxSpawnStaggerMs (1000) at config load"

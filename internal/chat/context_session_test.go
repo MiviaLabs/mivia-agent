@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -23,11 +23,11 @@ type contextPreparationProbe struct {
 
 func (p *contextPreparationProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
 	p.prepares++
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
-		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
-	active, err := contextstate.MarshalCanonical(input.Messages)
+	active, err := state.MarshalCanonical(input.Messages)
 	if err != nil {
 		return contextmgr.Preparation{}, err
 	}
@@ -61,7 +61,7 @@ func (p *contextPublisherProbe) Commit(_ context.Context, _ contextmgr.Preparati
 
 func contextSessionManager(t *testing.T, session *Session, publisherErr error) (*contextPreparationProbe, *contextPublisherProbe) {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestPlainTurnUsesPreparationTransaction(t *testing.T) {
 
 func TestContextPreparationRetainsWorktreeInstance(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := session.SetContextWorktreeBinding(instance); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestBoundSessionSaveOptionsRetainSetupDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := session.SetContextWorktreeBinding(instance); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestInterruptedPreparationFailureIsNotReportedAsCheckpointConflict(t *testi
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestInterruptedPreparationFailureIsNotReportedAsCheckpointConflict(t *testi
 	if !errors.Is(err, want) {
 		t.Fatalf("error=%v, want recovery error", err)
 	}
-	if errors.Is(err, contextstate.ErrCheckpointConflict) {
+	if errors.Is(err, state.ErrCheckpointConflict) {
 		t.Fatalf("recovery error was misreported as checkpoint conflict: %v", err)
 	}
 }
@@ -179,7 +179,7 @@ func TestContextSessionCatalogSaveLoadRestoresHistory(t *testing.T) {
 	}
 	defer store.Close()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model", "other"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +226,11 @@ func TestContextSessionCatalogSaveLoadRestoresHistory(t *testing.T) {
 
 func TestContextManagerLoadsStoreHeadWhenAttachedSecond(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &contextHeadProbeStore{revision: contextstate.Revision{Session: 4, Durable: 3, Source: 8}}
+	store := &contextHeadProbeStore{revision: state.Revision{Session: 4, Durable: 3, Source: 8}}
 	if err := session.SetContextStore(store); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestContextManagerLoadsStoreHeadWhenAttachedSecond(t *testing.T) {
 
 func TestLoadContextSnapshotReturnsStoreError(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,8 +265,8 @@ func TestLoadContextSnapshotReturnsStoreError(t *testing.T) {
 
 func TestContextWorktreeBindingRejectsInvalidPaths(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	if err := session.SetContextWorktreeBindingAt(contextstate.WorktreeInstance{}, "/repo", "/repo"); err == nil {
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := session.SetContextWorktreeBindingAt(state.WorktreeInstance{}, "/repo", "/repo"); err == nil {
 		t.Fatal("zero worktree instance accepted")
 	}
 	if err := session.SetContextWorktreeBindingAt(instance, "relative", "relative"); err == nil {
@@ -278,8 +278,8 @@ func TestContextWorktreeBindingRejectsInvalidPaths(t *testing.T) {
 }
 
 type contextHeadProbeStore struct {
-	revision contextstate.Revision
-	loaded   contextstate.Principal
+	revision state.Revision
+	loaded   state.Principal
 }
 
 type contextLoadFailureStore struct {
@@ -287,28 +287,28 @@ type contextLoadFailureStore struct {
 	err error
 }
 
-func (s *contextLoadFailureStore) Load(ctx context.Context, principal contextstate.Principal, sessionID string) (contextstate.Snapshot, error) {
+func (s *contextLoadFailureStore) Load(ctx context.Context, principal state.Principal, sessionID string) (state.Snapshot, error) {
 	if s.err != nil {
-		return contextstate.Snapshot{}, s.err
+		return state.Snapshot{}, s.err
 	}
 	return s.contextHeadProbeStore.Load(ctx, principal, sessionID)
 }
 
-func (s *contextHeadProbeStore) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
+func (s *contextHeadProbeStore) EnsureSession(context.Context, state.EnsureSessionRequest) error {
 	return nil
 }
 
-func (s *contextHeadProbeStore) Commit(context.Context, contextstate.CommitRequest) error { return nil }
+func (s *contextHeadProbeStore) Commit(context.Context, state.CommitRequest) error { return nil }
 
-func (s *contextHeadProbeStore) Advance(context.Context, contextstate.AdvanceRequest) error {
+func (s *contextHeadProbeStore) Advance(context.Context, state.AdvanceRequest) error {
 	return nil
 }
 
-func (s *contextHeadProbeStore) Load(_ context.Context, principal contextstate.Principal, _ string) (contextstate.Snapshot, error) {
+func (s *contextHeadProbeStore) Load(_ context.Context, principal state.Principal, _ string) (state.Snapshot, error) {
 	s.loaded = principal
-	return contextstate.Snapshot{Revision: s.revision}, nil
+	return state.Snapshot{Revision: s.revision}, nil
 }
 
 // Keep the probe tied to the provider-facing contract used by the session.
 var _ provider.Completer = (*fakeCompleter)(nil)
-var _ contextstate.Store = (*contextHeadProbeStore)(nil)
+var _ state.Store = (*contextHeadProbeStore)(nil)

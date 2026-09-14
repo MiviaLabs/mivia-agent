@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // var _ ports.AutomationSettings = (*Service)(nil) already lives in
@@ -263,7 +263,7 @@ func TestApplyUnknownEditType(t *testing.T) {
 // fakeAutomationEdit embeds a real edit purely to inherit the
 // unexported isAutomationEdit() marker (only ports itself can
 // implement it directly); as its own concrete type it matches none of
-// Apply's named cases, mirroring internal/uiadapter's own
+// Apply's named cases, mirroring internal/tui/adapter's own
 // settings_test.go fixture of the same name and shape.
 type fakeAutomationEdit struct{ ports.UpsertAutomation }
 

@@ -9,7 +9,7 @@ package automation
 import (
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
 // stepKindToPorts maps automation.StepKind to ports.ActionStepKind.

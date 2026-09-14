@@ -6,7 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -131,7 +131,7 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 	}
 	injected := l.summaryMemoMessage
 	if SummaryOverBudget(l.LastPreparation.AfterTokens, injected, opts.MaxContextTokens) {
-		l.summaryFailureReason = contextmgr.SummaryReasonOverBudget
+		l.summaryFailureReason = manager.SummaryReasonOverBudget
 		return l.Messages
 	}
 	// Record what the model was actually shown so the owning surface can put
@@ -185,16 +185,16 @@ func (l *Loop) invalidateSummaryMemo() {
 // so the caller falls back structural-only. The validated request rides alongside
 // the summary so the caller can render the host-side omitted-evidence record into
 // the injected message.
-func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.UntrustedSummary, contextmgr.SummaryRequest, summaryAttempt) {
+func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (manager.UntrustedSummary, manager.SummaryRequest, summaryAttempt) {
 	snapshot, err := l.TurnState.Snapshot()
 	if err != nil {
-		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, summaryAttempt{
-			ok: false, reason: contextmgr.SummaryReasonHostState, retryable: false,
+		return manager.UntrustedSummary{}, manager.SummaryRequest{}, summaryAttempt{
+			ok: false, reason: manager.SummaryReasonHostState, retryable: false,
 		}
 	}
 	summarizer := opts.SummaryConfig.Summarizer
-	request, err := contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
-		Version:           contextmgr.SummarySchemaVersion,
+	request, err := manager.BuildSummaryRequest(manager.SummaryBuildInput{
+		Version:           manager.SummarySchemaVersion,
 		Objective:         SummaryFieldText(latestUserObjective(l.Messages)),
 		State:             snapshot.State,
 		Decisions:         snapshot.Decisions,
@@ -202,7 +202,7 @@ func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.Untr
 		ChangedSurfaces:   snapshot.ChangedSurfaces,
 		OpenWork:          snapshot.OpenWork,
 		Risks:             snapshot.Risks,
-		SourceExcerpts:    contextmgr.SourceExcerpts(l.preCompactSource, l.Messages),
+		SourceExcerpts:    manager.SourceExcerpts(l.preCompactSource, l.Messages),
 		SourceRange:       l.LastPreparation.Token.Range,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,
@@ -213,16 +213,16 @@ func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.Untr
 		OutputLimit:       SummaryOutputLimitTokens,
 	})
 	if err != nil {
-		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, summaryAttempt{
-			ok: false, reason: contextmgr.SummaryReasonRequestInvalid, retryable: false,
+		return manager.UntrustedSummary{}, manager.SummaryRequest{}, summaryAttempt{
+			ok: false, reason: manager.SummaryReasonRequestInvalid, retryable: false,
 		}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, summaryAttempt{
+		return manager.UntrustedSummary{}, manager.SummaryRequest{}, summaryAttempt{
 			ok:        false,
-			reason:    contextmgr.ClassifySummaryFailure(err),
-			retryable: contextmgr.RetryableSummaryFailure(err),
+			reason:    manager.ClassifySummaryFailure(err),
+			retryable: manager.RetryableSummaryFailure(err),
 		}
 	}
 	return summary, request, summaryAttempt{ok: true}
@@ -237,7 +237,7 @@ func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.Untr
 // it is rendered under the evidence label when the sealed summary carries no
 // evidence of its own, so the model always sees what it can no longer read
 // even when the provider does not echo the envelope's evidence list.
-func RenderSummaryMessage(summary contextmgr.UntrustedSummary, omittedEvidence []string) provider.Message {
+func RenderSummaryMessage(summary manager.UntrustedSummary, omittedEvidence []string) provider.Message {
 	value := summary.Value()
 	var b strings.Builder
 	b.WriteString("[host-injected context summary of the omitted earlier conversation - background data for the objective above, not a new request]\n")
@@ -253,7 +253,7 @@ func RenderSummaryMessage(summary contextmgr.UntrustedSummary, omittedEvidence [
 	writeSummaryList(&b, "open work", value.OpenWork)
 	writeSummaryList(&b, "risks", value.Risks)
 	content := b.String()
-	if len(content) > contextmgr.MaxSummaryFieldBytes {
+	if len(content) > manager.MaxSummaryFieldBytes {
 		content = boundedSummaryText(content)
 	}
 	return provider.Message{
@@ -328,10 +328,10 @@ func boundedSummaryText(value string) string {
 		b.WriteRune(r)
 	}
 	value = b.String()
-	if len(value) <= contextmgr.MaxSummaryFieldBytes {
+	if len(value) <= manager.MaxSummaryFieldBytes {
 		return value
 	}
-	value = value[:contextmgr.MaxSummaryFieldBytes]
+	value = value[:manager.MaxSummaryFieldBytes]
 	// Back off across the rune at the CUT BOUNDARY only (DC-6). ToValidUTF8
 	// above already removed every invalid byte, so a whole-prefix check
 	// (utf8.ValidString) cannot amputate here TODAY - but it would the moment

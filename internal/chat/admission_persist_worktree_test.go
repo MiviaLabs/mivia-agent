@@ -5,22 +5,22 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-// plainAdmissionCatalog implements only contextstate.SessionAdmissionCatalog,
+// plainAdmissionCatalog implements only state.SessionAdmissionCatalog,
 // deliberately not WorktreeAdmissionCatalog, so saveAdmission/loadAdmission's
 // own scoped-catalog guard fails for a worktree-bound session.
 type plainAdmissionCatalog struct {
 	heartbeatFakeStore
 }
 
-func (*plainAdmissionCatalog) SaveSessionAdmission(context.Context, contextstate.Principal, string, contextstate.SessionAdmission) error {
+func (*plainAdmissionCatalog) SaveSessionAdmission(context.Context, state.Principal, string, state.SessionAdmission) error {
 	return nil
 }
-func (*plainAdmissionCatalog) LoadSessionAdmission(context.Context, contextstate.Principal, string) (contextstate.SessionAdmission, error) {
-	return contextstate.SessionAdmission{}, nil
+func (*plainAdmissionCatalog) LoadSessionAdmission(context.Context, state.Principal, string) (state.SessionAdmission, error) {
+	return state.SessionAdmission{}, nil
 }
 
 // TestSaveLoadAdmission_WorktreeBoundRequiresScopedCatalog pins both
@@ -29,7 +29,7 @@ func (*plainAdmissionCatalog) LoadSessionAdmission(context.Context, contextstate
 func TestSaveLoadAdmission_WorktreeBoundRequiresScopedCatalog(t *testing.T) {
 	res := &config.Resolved{ProviderName: "fake", Model: "model"}
 	sess := NewSession(res, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,14 +46,14 @@ func TestSaveLoadAdmission_WorktreeBoundRequiresScopedCatalog(t *testing.T) {
 		t.Fatalf("SetContextStore: %v", err)
 	}
 	sess.mu.Lock()
-	sess.contextWorktree = contextstate.WorktreeInstance{Worktree: "wt", ID: "wt_1111111111111111"}
+	sess.contextWorktree = state.WorktreeInstance{Worktree: "wt", ID: "wt_1111111111111111"}
 	sess.mu.Unlock()
 
 	sess.admissionAgent = "agent-x"
-	if err := sess.persistAdmission("agent-x"); err != contextstate.ErrWorktreeDeleted {
+	if err := sess.persistAdmission("agent-x"); err != state.ErrWorktreeDeleted {
 		t.Fatalf("persistAdmission err = %v, want ErrWorktreeDeleted", err)
 	}
-	if _, err := sess.loadAdmission("agent-x"); err != contextstate.ErrWorktreeDeleted {
+	if _, err := sess.loadAdmission("agent-x"); err != state.ErrWorktreeDeleted {
 		t.Fatalf("loadAdmission err = %v, want ErrWorktreeDeleted", err)
 	}
 }

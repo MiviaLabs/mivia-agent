@@ -293,7 +293,7 @@ func (p *Projector) resolveTurnID(rawTurnID string, kind events.Kind) (string, b
 // AgentDepth > 0. The four lane decisions used to ask "does it have a task
 // id?" instead, and the two answers are not the same question: a task id is
 // an attribution key that non-dispatch producers also set (the workflow
-// progress sinks in internal/cliworkflow and internal/workflows/localengine
+// progress sinks in internal/cli/workflow and internal/workflows/localengine
 // publish AgentTask with no depth at all), so the type could say "subagent"
 // on an event whose envelope carried no agent origin. A consumer splitting
 // the main transcript from the subagent lanes on the type then files that

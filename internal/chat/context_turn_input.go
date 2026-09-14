@@ -3,8 +3,8 @@ package chat
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -21,12 +21,12 @@ func cloneContextMessages(messages []provider.Message) []provider.Message {
 	return output
 }
 
-func prepareInputForContext(messages []provider.Message, budget int, maxTokens *int, binding ModelBinding, principal contextstate.Principal, policy contextstate.PolicySnapshot, instance contextstate.WorktreeInstance) contextmgr.PrepareInput {
-	return contextmgr.PrepareInput{
+func prepareInputForContext(messages []provider.Message, budget int, maxTokens *int, binding ModelBinding, principal state.Principal, policy state.PolicySnapshot, instance state.WorktreeInstance) manager.PrepareInput {
+	return manager.PrepareInput{
 		Messages: messages, Budget: budget, OutputReserve: outputReserve(maxTokens, config.ModelReasoning(binding.Profile).Level),
 		CurrentObjective: latestUserMessage(messages), Principal: principal,
 		ContextAccounting: provider.ContextAccountingFor(binding.Completer),
-		Revision:          contextstate.Revision{}, Binding: captureBindingRevision(binding), WorktreeInstance: instance, Policy: policy,
+		Revision:          state.Revision{}, Binding: captureBindingRevision(binding), WorktreeInstance: instance, Policy: policy,
 		// The session-owned core-memory frame rides on a named user message
 		// right after the system prompt; compaction must keep it whole, so
 		// every planner invocation preserves that Name (BUG 3).

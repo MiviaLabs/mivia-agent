@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -25,13 +25,13 @@ func TestLoopRealPrepKeepsElisionAcrossNonCompactingStep(t *testing.T) {
 	cost := forceElisionBudget(t, history, nextUser, reg)
 
 	prepCalls := 0
-	counting := &countingStructuralPrep{inner: contextmgr.StructuralPreparationManager{}, calls: &prepCalls}
+	counting := &countingStructuralPrep{inner: manager.StructuralPreparationManager{}, calls: &prepCalls}
 	loop := &Loop{Completer: &twoStepCompleter{}, Tools: reg, Messages: history}
 	_, err := loop.Run(context.Background(), nextUser, Options{Model: "model", MaxContextTokens: cost, MaxSteps: 5,
 		PreparationManager: counting,
-		PreparationInput: contextmgr.PrepareInput{
+		PreparationInput: manager.PrepareInput{
 			Budget: cost, Principal: principal, Binding: binding,
-			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+			Revision: state.Revision{Session: 1, Durable: 1, Source: 1},
 		},
 	})
 	if err != nil {
@@ -61,13 +61,13 @@ func elisionToolRegistry() *tools.Registry {
 	return reg
 }
 
-func elisionPrincipalBinding(t *testing.T) (contextstate.Principal, contextstate.BindingRevision) {
+func elisionPrincipalBinding(t *testing.T) (state.Principal, state.BindingRevision) {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("two-step", "model", 1)
+	binding, err := state.NewBindingRevision("two-step", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,15 +135,15 @@ func (t *fixedElisionTool) Execute(context.Context, json.RawMessage) (string, er
 
 // countingStructuralPrep wraps StructuralPreparationManager to count Prepare calls.
 type countingStructuralPrep struct {
-	inner contextmgr.StructuralPreparationManager
+	inner manager.StructuralPreparationManager
 	calls *int
 }
 
-func (c *countingStructuralPrep) Prepare(ctx context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (c *countingStructuralPrep) Prepare(ctx context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	*c.calls++
 	return c.inner.Prepare(ctx, input)
 }
-func (c *countingStructuralPrep) Discard(p contextmgr.Preparation) { c.inner.Discard(p) }
+func (c *countingStructuralPrep) Discard(p manager.Preparation) { c.inner.Discard(p) }
 
 func trunc(s string, n int) string {
 	if len(s) <= n {

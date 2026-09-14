@@ -7,60 +7,60 @@ package cli
 import (
 	"context"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// ResumeConfirmationInfo is the type alias for cliorchestrate.ResumeConfirmationInfo.
-type ResumeConfirmationInfo = cliorchestrate.ResumeConfirmationInfo
+// ResumeConfirmationInfo is the type alias for orchestrate.ResumeConfirmationInfo.
+type ResumeConfirmationInfo = orchestrate.ResumeConfirmationInfo
 
 // ErrOrchestrationSwitchActive re-exports the sentinel from cliorchestrate so
 // callers that import cli can use errors.Is without an extra import.
 // Invariant: both values are the same pointer; errors.Is works across the alias.
-var ErrOrchestrationSwitchActive = cliorchestrate.ErrOrchestrationSwitchActive
+var ErrOrchestrationSwitchActive = orchestrate.ErrOrchestrationSwitchActive
 
 // ResumeCoordinator re-exports the cliorchestrate narrow resume coordinator
 // interface so callers that import cli can name it.
-type ResumeCoordinator = cliorchestrate.ResumeCoordinator
+type ResumeCoordinator = orchestrate.ResumeCoordinator
 
-// FindCoordinator delegates to cliorchestrate.FindCoordinator.
+// FindCoordinator delegates to orchestrate.FindCoordinator.
 func FindCoordinator() ResumeCoordinator {
-	return cliorchestrate.FindCoordinator()
+	return orchestrate.FindCoordinator()
 }
 
-// FindDispatcher delegates to cliorchestrate.FindDispatcher.
+// FindDispatcher delegates to orchestrate.FindDispatcher.
 func FindDispatcher() *runtime.Dispatcher {
-	return cliorchestrate.FindDispatcher()
+	return orchestrate.FindDispatcher()
 }
 
-// ListInterruptedRuns delegates to cliorchestrate.ListInterruptedRuns.
+// ListInterruptedRuns delegates to orchestrate.ListInterruptedRuns.
 func ListInterruptedRuns(ctx context.Context, c ResumeCoordinator) ([]coordinator.RecoveredRun, error) {
-	return cliorchestrate.ListInterruptedRuns(ctx, c)
+	return orchestrate.ListInterruptedRuns(ctx, c)
 }
 
-// FormatListedRuns delegates to cliorchestrate.FormatListedRuns.
+// FormatListedRuns delegates to orchestrate.FormatListedRuns.
 func FormatListedRuns(runs []coordinator.RecoveredRun) string {
-	return cliorchestrate.FormatListedRuns(runs)
+	return orchestrate.FormatListedRuns(runs)
 }
 
-// FormatResumeConfirmation delegates to cliorchestrate.FormatResumeConfirmation.
+// FormatResumeConfirmation delegates to orchestrate.FormatResumeConfirmation.
 func FormatResumeConfirmation(info ResumeConfirmationInfo) string {
-	return cliorchestrate.FormatResumeConfirmation(info)
+	return orchestrate.FormatResumeConfirmation(info)
 }
 
-// ResumeRun delegates to cliorchestrate.ResumeRun.
-func ResumeRun(ctx context.Context, c OrchestrationCoordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*cliorchestrate.OrchestrationHandleForTest, error) {
-	return cliorchestrate.ResumeRun(ctx, c, d, runID, repo)
+// ResumeRun delegates to orchestrate.ResumeRun.
+func ResumeRun(ctx context.Context, c OrchestrationCoordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrate.OrchestrationHandleForTest, error) {
+	return orchestrate.ResumeRun(ctx, c, d, runID, repo)
 }
 
-// FormatResumeError delegates to cliorchestrate.FormatResumeError.
+// FormatResumeError delegates to orchestrate.FormatResumeError.
 func FormatResumeError(err error, runID string) string {
-	return cliorchestrate.FormatResumeError(err, runID)
+	return orchestrate.FormatResumeError(err, runID)
 }
 
-// ParseConfirmResponse delegates to cliorchestrate.ParseConfirmResponse.
+// ParseConfirmResponse delegates to orchestrate.ParseConfirmResponse.
 func ParseConfirmResponse(response string) bool {
-	return cliorchestrate.ParseConfirmResponse(response)
+	return orchestrate.ParseConfirmResponse(response)
 }

@@ -5,15 +5,15 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-func authorizeUnboundContextSessionTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string) (contextSessionRow, error) {
+func authorizeUnboundContextSessionTx(ctx context.Context, tx *sql.Tx, principal state.Principal, sessionID string) (contextSessionRow, error) {
 	row, err := authorizeContextSessionTx(ctx, tx, principal, sessionID)
-	if err != nil && !errors.Is(err, contextstate.ErrSessionTombstoned) {
+	if err != nil && !errors.Is(err, state.ErrSessionTombstoned) {
 		return row, err
 	}
-	if bindingErr := requireWorktreeSessionBinding(row, contextstate.WorktreeInstance{}); bindingErr != nil {
+	if bindingErr := requireWorktreeSessionBinding(row, state.WorktreeInstance{}); bindingErr != nil {
 		return row, bindingErr
 	}
 	return row, err

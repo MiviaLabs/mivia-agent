@@ -108,7 +108,7 @@ func (h *RunHandle) getAttempt(taskID string) string {
 //
 // That cannot happen, and NOT because retries are off: [subagents.retry]
 // max_retries is a user-facing setting that merely DEFAULTS to 0, and
-// internal/cliorchestrate wires whatever it is set to
+// internal/cli/orchestrate wires whatever it is set to
 // (TaskRetryPolicyFromConfig in orchestration_state.go). The real fence is
 // ORDERING plus processResults (dag.go). requestSingleTaskCancel durably
 // CASes the task to cancel_requested BEFORE CancelTask reads taskCancelFunc,

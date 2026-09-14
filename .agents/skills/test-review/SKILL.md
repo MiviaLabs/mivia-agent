@@ -60,10 +60,10 @@ their public API. It exercises the real architecture boundaries declared in
 Check for cross-package coverage explicitly. In this repository, key boundaries include:
 
 - `cmd/mivia` connects CLI entrypoints to `internal/agent`, `internal/cli*`, and `internal/workflows`.
-- `internal/newtui` connects `internal/ui` to `internal/uiadapter` and `internal/uikit` without importing CLI or coordinator packages.
+- `internal/tui/run` connects `internal/tui/view` to `internal/tui/adapter` and `internal/tui/kit` without importing CLI or coordinator packages.
 - `internal/workflows` connects `controller`, `compiler`, `ledger`, and `storage`.
 - `internal/hooks` executes lifecycle gates independently and never imports `internal/runtime` or `internal/tools`.
-- `internal/ui` and `internal/uikit` connect through `internal/uikit/ports` and `internal/uikit/uievent`.
+- `internal/tui/view` and `internal/tui/kit` connect through `internal/tui/kit/ports` and `internal/tui/kit/uievent`.
 
 If a critical package boundary has no cross-package test, that is a gap. Flag it.
 

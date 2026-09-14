@@ -394,8 +394,8 @@ shows its warning on the row. Those never reach the model - they are about your
 script, not about the tool call - and `/hooks` keeps the recent ones.
 
 `/hooks` and hook-run visibility work identically on the new TUI
-(`internal/newtui`) and the old `--plain` REPL: both read from
-`internal/hooksession`, the leaf package that owns hook-session state
+(`internal/tui/run`) and the old `--plain` REPL: both read from
+`internal/hooks/session`, the leaf package that owns hook-session state
 (discovery, arming, the `/hooks` listing text) so neither surface depends on
 the other's package. A hook's input and output are bounded and redacted
 before display, the same as a tool's own input/output preview - a hook script
@@ -550,7 +550,7 @@ script above stores the payload whole rather than picking fields out of it.
 
 `Stop` fires once per completed root turn on every surface - `-p`, `--plain`,
 line mode, and the TUI - because all four funnel through
-`internal/chat.Session.sendUserWithTurn` (`internal/hooksession.RunStopForTurn`
+`internal/chat.Session.sendUserWithTurn` (`internal/hooks/session.RunStopForTurn`
 is its one call site). The turn identifier is the same `turn:N` value
 `PreToolUse`/`PostToolUse` carry, not the assistant's reply text. A turn that
 began fires `Stop` on every outcome - success, a provider error, or a canceled
@@ -602,7 +602,7 @@ silently dropping the call.
   `run_command` cannot dispatch `run_command` and recurse.
 - `Stop`, `PreToolUse`, and `PostToolUse` all fire on every surface (`-p`,
   `--plain`, line mode, the TUI). `Stop` fires once per root turn only, never
-  for a subagent turn or a workflow run - no `internal/cliworkflow` path
+  for a subagent turn or a workflow run - no `internal/cli/workflow` path
   drives an `internal/chat.Session` turn, so a workflow's own tool calls still
   fire `PreToolUse`/`PostToolUse` but never `Stop`.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler

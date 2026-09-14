@@ -5,48 +5,48 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // commitFirstMessageCheckpoint commits one turn whose active context carries a
 // canonical user message with the given opener, then returns the store.
-func commitFirstMessageCheckpoint(t *testing.T, store *SQLite, principal contextstate.Principal, binding contextstate.BindingRevision, opener string) {
+func commitFirstMessageCheckpoint(t *testing.T, store *SQLite, principal state.Principal, binding state.BindingRevision, opener string) {
 	t.Helper()
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
-	active, err := contextstate.MarshalCanonical([]map[string]string{
+	active, err := state.MarshalCanonical([]map[string]string{
 		{"role": "user", "content": opener},
 		{"role": "assistant", "content": "ok"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := contextstate.Revision{Session: 0, Durable: 0, Source: 0}
+	expected := state.Revision{Session: 0, Durable: 0, Source: 0}
 	sequence := expected.Source + 1
-	sourceID, err := contextstate.NewSourceID(principal.SessionID, sequence)
+	sourceID, err := state.NewSourceID(principal.SessionID, sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rng, err := contextstate.NewSourceRange(sourceID, sourceID)
+	rng, err := state.NewSourceRange(sourceID, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpointID, err := contextstate.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "first-message-test")
+	checkpointID, err := state.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "first-message-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint := contextstate.CheckpointRecord{
-		ID: checkpointID, Revision: contextstate.Revision{Session: 1, Durable: 1, Source: sequence},
+	checkpoint := state.CheckpointRecord{
+		ID: checkpointID, Revision: state.Revision{Session: 1, Durable: 1, Source: sequence},
 		Binding: binding, SourceRange: rng, ActiveContext: active,
 		SummaryMetadata: []byte(`{"version":1}`), TurnID: 1,
 	}
-	event := contextstate.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(opener)}
-	req, err := contextstate.NewCommitRequest(principal, principal.SessionID, expected, binding, []contextstate.SourceEvent{event}, checkpoint, active, binding, sequence)
+	event := state.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(opener)}
+	req, err := state.NewCommitRequest(principal, principal.SessionID, expected, binding, []state.SourceEvent{event}, checkpoint, active, binding, sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Fingerprint, err = contextstate.FingerprintCommitRequest(req)
+	req.Fingerprint, err = state.FingerprintCommitRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,11 +64,11 @@ func TestSQLiteFirstUserMessageFromOldestCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "sess", "subject")
+	principal, err := state.NewPrincipal("workspace", "sess", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	binding, err := state.NewBindingRevision("provider", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,17 +89,17 @@ func TestSQLiteFirstUserMessageScopedToSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	owner, err := contextstate.NewPrincipal("workspace", "sess", "owner-subject")
+	owner, err := state.NewPrincipal("workspace", "sess", "owner-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	binding, err := state.NewBindingRevision("provider", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	commitFirstMessageCheckpoint(t, store, owner, binding, "private opener")
 
-	other, err := contextstate.NewPrincipal("workspace", "sess", "other-subject")
+	other, err := state.NewPrincipal("workspace", "sess", "other-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +118,11 @@ func TestSQLiteFirstUserMessageEmptyWithoutUserMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "sess", "subject")
+	principal, err := state.NewPrincipal("workspace", "sess", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.FirstUserMessage(context.Background(), principal, principal.SessionID)
@@ -163,18 +163,18 @@ func TestSQLiteFirstUserMessageSkipsMemoryContextFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "sess", "subject")
+	principal, err := state.NewPrincipal("workspace", "sess", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	binding, err := state.NewBindingRevision("provider", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
-	active, err := contextstate.MarshalCanonical([]map[string]string{
+	active, err := state.MarshalCanonical([]map[string]string{
 		{"role": "system", "content": "prompt"},
 		{"role": "user", "name": "core-memory-context", "content": "<core-memory-context>\nadvisory\nfacts\n</core-memory-context>"},
 		{"role": "user", "content": "real opener question"},
@@ -196,33 +196,33 @@ func TestSQLiteFirstUserMessageSkipsMemoryContextFrame(t *testing.T) {
 
 // commitActiveContext commits one turn with the given canonical active
 // context bytes, so tests can shape the message list freely.
-func commitActiveContext(t *testing.T, store *SQLite, principal contextstate.Principal, binding contextstate.BindingRevision, active []byte) {
+func commitActiveContext(t *testing.T, store *SQLite, principal state.Principal, binding state.BindingRevision, active []byte) {
 	t.Helper()
-	expected := contextstate.Revision{Session: 0, Durable: 0, Source: 0}
+	expected := state.Revision{Session: 0, Durable: 0, Source: 0}
 	sequence := expected.Source + 1
-	sourceID, err := contextstate.NewSourceID(principal.SessionID, sequence)
+	sourceID, err := state.NewSourceID(principal.SessionID, sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rng, err := contextstate.NewSourceRange(sourceID, sourceID)
+	rng, err := state.NewSourceRange(sourceID, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpointID, err := contextstate.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "frame-skip-test")
+	checkpointID, err := state.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "frame-skip-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint := contextstate.CheckpointRecord{
-		ID: checkpointID, Revision: contextstate.Revision{Session: 1, Durable: 1, Source: sequence},
+	checkpoint := state.CheckpointRecord{
+		ID: checkpointID, Revision: state.Revision{Session: 1, Durable: 1, Source: sequence},
 		Binding: binding, SourceRange: rng, ActiveContext: active,
 		SummaryMetadata: []byte(`{"version":1}`), TurnID: 1,
 	}
-	event := contextstate.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(active)}
-	req, err := contextstate.NewCommitRequest(principal, principal.SessionID, expected, binding, []contextstate.SourceEvent{event}, checkpoint, active, binding, sequence)
+	event := state.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(active)}
+	req, err := state.NewCommitRequest(principal, principal.SessionID, expected, binding, []state.SourceEvent{event}, checkpoint, active, binding, sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Fingerprint, err = contextstate.FingerprintCommitRequest(req)
+	req.Fingerprint, err = state.FingerprintCommitRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
@@ -18,8 +18,8 @@ import (
 // sdkplan.Summary matches field for field.
 type fullSummaryProvider struct{}
 
-func (fullSummaryProvider) Summarize(_ context.Context, request contextmgr.SummaryRequest) (contextmgr.Summary, error) {
-	return contextmgr.Summary{
+func (fullSummaryProvider) Summarize(_ context.Context, request manager.SummaryRequest) (manager.Summary, error) {
+	return manager.Summary{
 		Version:         request.Input.Version,
 		Objective:       "objective text",
 		State:           "state text",
@@ -35,11 +35,11 @@ func (fullSummaryProvider) Summarize(_ context.Context, request contextmgr.Summa
 // failingSummaryProvider always returns err.
 type failingSummaryProvider struct{ err error }
 
-func (f failingSummaryProvider) Summarize(context.Context, contextmgr.SummaryRequest) (contextmgr.Summary, error) {
-	return contextmgr.Summary{}, f.err
+func (f failingSummaryProvider) Summarize(context.Context, manager.SummaryRequest) (manager.Summary, error) {
+	return manager.Summary{}, f.err
 }
 
-func newAdapterFixture(t *testing.T, summaryProvider contextmgr.SummaryProvider) (*sdkSummarizerAdapter, *Loop) {
+func newAdapterFixture(t *testing.T, summaryProvider manager.SummaryProvider) (*sdkSummarizerAdapter, *Loop) {
 	t.Helper()
 	sourceRange, err := contextstate.NewSourceRange(
 		contextstate.SourceID{SessionID: "sess", Sequence: 1},
@@ -49,7 +49,7 @@ func newAdapterFixture(t *testing.T, summaryProvider contextmgr.SummaryProvider)
 		t.Fatalf("NewSourceRange: %v", err)
 	}
 	l := &Loop{
-		TurnState: contextmgr.NewTurnState(),
+		TurnState: manager.NewTurnState(),
 		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "the user's objective"}},
 	}
 	l.LastPreparation.Token.Range = sourceRange
@@ -63,7 +63,7 @@ func newAdapterFixture(t *testing.T, summaryProvider contextmgr.SummaryProvider)
 	return &sdkSummarizerAdapter{l: l, opts: opts}, l
 }
 
-func ptrSummarizer(s contextmgr.Summarizer) *contextmgr.Summarizer { return &s }
+func ptrSummarizer(s manager.Summarizer) *manager.Summarizer { return &s }
 
 func sdkTestMessages() []sdkshape.Message {
 	return []sdkshape.Message{
@@ -115,7 +115,7 @@ func TestSDKSummarizerAdapterMapsSevenFields(t *testing.T) {
 // SummaryConfig.Summarizer returns a wrapped ErrSummarySkipped
 // without touching TurnState.
 func TestSDKSummarizerAdapterNoSummarizerSkips(t *testing.T) {
-	l := &Loop{TurnState: contextmgr.NewTurnState()}
+	l := &Loop{TurnState: manager.NewTurnState()}
 	a := &sdkSummarizerAdapter{l: l, opts: Options{MaxContextTokens: 1000}}
 	_, err := a.Summarize(context.Background(), sdkTestMessages())
 	if !errors.Is(err, sdkplan.ErrSummarySkipped) {
@@ -130,7 +130,7 @@ func TestSDKSummarizerAdapterNoSummarizerSkips(t *testing.T) {
 // non-retryable provider failure (redaction refusal) wraps
 // ErrSummarySkipped with the classified reason text.
 func TestSDKSummarizerAdapterNonRetryableFailureSkipsWithReason(t *testing.T) {
-	a, l := newAdapterFixture(t, failingSummaryProvider{err: contextmgr.ErrSummaryRedactionRefused})
+	a, l := newAdapterFixture(t, failingSummaryProvider{err: manager.ErrSummaryRedactionRefused})
 	_, err := a.Summarize(context.Background(), sdkTestMessages())
 	if !errors.Is(err, sdkplan.ErrSummarySkipped) {
 		t.Fatalf("err = %v, want errors.Is ErrSummarySkipped", err)
@@ -138,8 +138,8 @@ func TestSDKSummarizerAdapterNonRetryableFailureSkipsWithReason(t *testing.T) {
 	if err.Error() == sdkplan.ErrSummarySkipped.Error() {
 		t.Fatalf("err = %v, want the classified reason appended, not the bare sentinel", err)
 	}
-	if l.summaryFailureReason != contextmgr.SummaryReasonRedactionRefused {
-		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, contextmgr.SummaryReasonRedactionRefused)
+	if l.summaryFailureReason != manager.SummaryReasonRedactionRefused {
+		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, manager.SummaryReasonRedactionRefused)
 	}
 }
 
@@ -308,7 +308,7 @@ func TestAdoptSDKCompactionEffectiveThresholds(t *testing.T) {
 		PreparationManager:  &stubPreparationManager{keep: 3},
 		PreferSDKCompaction: true,
 		SummaryConfig:       SummaryConfig{Summarizer: ptrSummarizer(summaryInjectSummarizer(t, fullSummaryProvider{}))},
-		PreparationInput:    contextmgr.PrepareInput{PreserveNames: []string{"core-memory-context"}},
+		PreparationInput:    manager.PrepareInput{PreserveNames: []string{"core-memory-context"}},
 	}
 	var out sdkagentloop.Options
 	if err := adoptSDKCompaction(l, &out, completer, opts, newSDKTurnState()); err != nil {
@@ -346,7 +346,7 @@ func TestAdoptSDKCompactionEffectiveThresholds(t *testing.T) {
 // sdkCompactionAdopted deliberately keeps reachable ("that row
 // already adopted before this field existed... stays automatic").
 func TestSDKCompactionObserverNoPreparationManagerDoesNotPanic(t *testing.T) {
-	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: nil, TurnState: contextmgr.NewTurnState()}
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: nil, TurnState: manager.NewTurnState()}
 	completer, err := newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{}, nil, nil, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)

@@ -8,23 +8,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-func admissionStore(t *testing.T) (*SQLite, contextstate.Principal) {
+func admissionStore(t *testing.T) (*SQLite, state.Principal) {
 	t.Helper()
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return store, contextstate.Principal{WorkspaceID: "ws1", SubjectID: "subj1", SessionID: "sess1"}
+	return store, state.Principal{WorkspaceID: "ws1", SubjectID: "subj1", SessionID: "sess1"}
 }
 
 func TestSessionAdmissionRoundTrip(t *testing.T) {
 	store, principal := admissionStore(t)
 	ctx := context.Background()
-	want := contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep", "glob"}}
+	want := state.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep", "glob"}}
 	if err := store.SaveSessionAdmission(ctx, principal, "snap", want); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -42,11 +42,11 @@ func TestSessionAdmissionOverwritesInPlace(t *testing.T) {
 	store, principal := admissionStore(t)
 	ctx := context.Background()
 	if err := store.SaveSessionAdmission(ctx, principal, "snap",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
 		t.Fatalf("save 1: %v", err)
 	}
 	if err := store.SaveSessionAdmission(ctx, principal, "snap",
-		contextstate.SessionAdmission{Agent: "writer", Digest: "d2", Names: []string{"glob"}}); err != nil {
+		state.SessionAdmission{Agent: "writer", Digest: "d2", Names: []string{"glob"}}); err != nil {
 		t.Fatalf("save 2: %v", err)
 	}
 	got, err := store.LoadSessionAdmission(ctx, principal, "snap")
@@ -64,11 +64,11 @@ func TestSessionAdmissionEmptySetDeletesTheRow(t *testing.T) {
 	store, principal := admissionStore(t)
 	ctx := context.Background()
 	if err := store.SaveSessionAdmission(ctx, principal, "snap",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	if err := store.SaveSessionAdmission(ctx, principal, "snap",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d1"}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d1"}); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	got, err := store.LoadSessionAdmission(ctx, principal, "snap")
@@ -95,10 +95,10 @@ func TestSessionAdmissionIsScopedToItsOwner(t *testing.T) {
 	store, principal := admissionStore(t)
 	ctx := context.Background()
 	if err := store.SaveSessionAdmission(ctx, principal, "snap",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	other := contextstate.Principal{WorkspaceID: "ws1", SubjectID: "other", SessionID: "sess2"}
+	other := state.Principal{WorkspaceID: "ws1", SubjectID: "other", SessionID: "sess2"}
 	got, err := store.LoadSessionAdmission(ctx, other, "snap")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -111,14 +111,14 @@ func TestSessionAdmissionIsScopedToItsOwner(t *testing.T) {
 func TestSessionAdmissionRejectsInvalidInput(t *testing.T) {
 	store, principal := admissionStore(t)
 	ctx := context.Background()
-	record := contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}
-	if err := store.SaveSessionAdmission(ctx, contextstate.Principal{}, "snap", record); err == nil {
+	record := state.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}
+	if err := store.SaveSessionAdmission(ctx, state.Principal{}, "snap", record); err == nil {
 		t.Fatal("save accepted an invalid principal")
 	}
 	if err := store.SaveSessionAdmission(ctx, principal, "bad/name", record); err == nil {
 		t.Fatal("save accepted a path-shaped session name")
 	}
-	if _, err := store.LoadSessionAdmission(ctx, contextstate.Principal{}, "snap"); err == nil {
+	if _, err := store.LoadSessionAdmission(ctx, state.Principal{}, "snap"); err == nil {
 		t.Fatal("load accepted an invalid principal")
 	}
 	if _, err := store.LoadSessionAdmission(ctx, principal, "bad/name"); err == nil {
@@ -128,18 +128,18 @@ func TestSessionAdmissionRejectsInvalidInput(t *testing.T) {
 
 func TestSessionAdmissionRejectsAnOversizedSet(t *testing.T) {
 	store, principal := admissionStore(t)
-	previous := contextstate.CurrentLimits()
-	t.Cleanup(func() { contextstate.SetLimits(previous) })
+	previous := state.CurrentLimits()
+	t.Cleanup(func() { state.SetLimits(previous) })
 	bounded := previous
 	bounded.SessionStateBytes = 64
-	contextstate.SetLimits(bounded)
+	state.SetLimits(bounded)
 	names := make([]string, 0, 32)
 	for i := 0; i < 32; i++ {
 		names = append(names, "aaaaaa")
 	}
 	err := store.SaveSessionAdmission(context.Background(), principal, "snap",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: names})
-	if !errors.Is(err, contextstate.ErrInvalidDTO) {
+		state.SessionAdmission{Agent: "reader", Digest: "d1", Names: names})
+	if !errors.Is(err, state.ErrInvalidDTO) {
 		t.Fatalf("error = %v, want ErrInvalidDTO for an oversized set", err)
 	}
 }
@@ -184,7 +184,7 @@ func TestLoadSessionAdmissionRejectsACorruptedRow(t *testing.T) {
 		principal.WorkspaceID, principal.SubjectID, "snap", "reader", "d1", "not json", "now"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.LoadSessionAdmission(ctx, principal, "snap"); !errors.Is(err, contextstate.ErrInvalidDTO) {
+	if _, err := store.LoadSessionAdmission(ctx, principal, "snap"); !errors.Is(err, state.ErrInvalidDTO) {
 		t.Fatalf("error = %v, want ErrInvalidDTO for a corrupted row", err)
 	}
 }

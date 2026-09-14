@@ -7,14 +7,14 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // NewOllama returns an Ollama OpenAI-compatible completer.
 func NewOllama(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("ollama")
+		descriptor, ok := registry.Lookup("ollama")
 		if !ok {
 			return nil, fmt.Errorf("provider %q has no built-in descriptor", "ollama")
 		}

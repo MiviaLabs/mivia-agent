@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -41,7 +41,7 @@ func (s *StorageLedgerRepository) catchUp(ctx context.Context) error {
 // was read starting at a watermark snapshot, skipping already-applied prefixes
 // cannot open a gap.
 func (s *StorageLedgerRepository) applyTail(ctx context.Context, events []storage.Event) error {
-	ledgercore.SortEventsStable(events)
+	core.SortEventsStable(events)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -271,7 +271,7 @@ func (s *StorageLedgerRepository) rebuildRunProjection(ctx context.Context, runI
 	if err != nil {
 		return fmt.Errorf("read events for %s: %w", runID, err)
 	}
-	ledgercore.SortEventsStable(events)
+	core.SortEventsStable(events)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -363,5 +363,5 @@ func (s *StorageLedgerRepository) appendStoreEvent(ctx context.Context, evt stor
 		s.releaseInflightLocked(evt.RunID, uint64(evt.Sequence))
 		s.mu.Unlock()
 	}()
-	return s.engine.AppendEvent(ctx, evt, ledgercore.AppendOptions{})
+	return s.engine.AppendEvent(ctx, evt, core.AppendOptions{})
 }

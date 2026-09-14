@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -23,16 +23,16 @@ import (
 // validated summary (never echoing oversized host fields back, so the token
 // estimate stays inside the request OutputLimit).
 type capturingSummaryProvider struct {
-	requests []contextmgr.SummaryRequest
+	requests []manager.SummaryRequest
 	err      error
 }
 
-func (p *capturingSummaryProvider) Summarize(_ context.Context, request contextmgr.SummaryRequest) (contextmgr.Summary, error) {
+func (p *capturingSummaryProvider) Summarize(_ context.Context, request manager.SummaryRequest) (manager.Summary, error) {
 	p.requests = append(p.requests, request)
 	if p.err != nil {
-		return contextmgr.Summary{}, p.err
+		return manager.Summary{}, p.err
 	}
-	return contextmgr.Summary{
+	return manager.Summary{
 		Version:     request.Input.Version,
 		Objective:   "summarized objective",
 		State:       request.Input.State,
@@ -52,13 +52,13 @@ func summaryInjectPolicy() contextstate.PolicySnapshot {
 	}
 }
 
-func summaryInjectSummarizer(t *testing.T, provider contextmgr.SummaryProvider) contextmgr.Summarizer {
+func summaryInjectSummarizer(t *testing.T, provider manager.SummaryProvider) manager.Summarizer {
 	t.Helper()
 	binding, err := contextstate.NewBindingRevision("summary-test", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	summarizer, err := contextmgr.NewSummarizer(provider, binding, summaryInjectPolicy())
+	summarizer, err := manager.NewSummarizer(provider, binding, summaryInjectPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,26 +77,26 @@ type compactingPreparationProbe struct {
 	calls     int
 }
 
-func (p *compactingPreparationProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *compactingPreparationProbe) Prepare(_ context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	p.calls++
 	rangeValue := contextstate.SourceRange{
 		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
-	prep, err := contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	prep, err := manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, input.Messages, p.compacted, "summary-inject-test")
 	if err != nil {
-		return contextmgr.Preparation{}, err
+		return manager.Preparation{}, err
 	}
 	prep.BeforeTokens = 1000
 	prep.AfterTokens = 400
 	return prep, nil
 }
 
-func (p *compactingPreparationProbe) Discard(contextmgr.Preparation) {}
+func (p *compactingPreparationProbe) Discard(manager.Preparation) {}
 
-func summaryProbeOptions(t *testing.T, summarizer *contextmgr.Summarizer, probe contextmgr.PreparationManager, maxContextTokens int) Options {
+func summaryProbeOptions(t *testing.T, summarizer *manager.Summarizer, probe manager.PreparationManager, maxContextTokens int) Options {
 	t.Helper()
 	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
@@ -108,7 +108,7 @@ func summaryProbeOptions(t *testing.T, summarizer *contextmgr.Summarizer, probe 
 	}
 	return Options{Model: "model", MaxContextTokens: maxContextTokens, MaxSteps: 5,
 		PreparationManager: probe,
-		PreparationInput: contextmgr.PrepareInput{
+		PreparationInput: manager.PrepareInput{
 			Budget: maxContextTokens, Principal: principal, Binding: binding,
 			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
 		},
@@ -228,7 +228,7 @@ func TestSummaryInjectionSentRequestCarriesSummary(t *testing.T) {
 // idempotency key, and the committed request bytes identical.
 func TestSummaryInjectionDoesNotTouchDurableState(t *testing.T) {
 	run := func(withSummary bool) (*Loop, contextstate.CommitRequest) {
-		var summarizer *contextmgr.Summarizer
+		var summarizer *manager.Summarizer
 		if withSummary {
 			s := summaryInjectSummarizer(t, &capturingSummaryProvider{})
 			summarizer = &s
@@ -243,9 +243,9 @@ func TestSummaryInjectionDoesNotTouchDurableState(t *testing.T) {
 		zeroMessageTimestamps(loop.Messages)
 		zeroMessageTimestamps(loop.LastPreparation.Messages)
 		principal := opts.PreparationInput.Principal
-		result := contextmgr.TurnResult{
+		result := manager.TurnResult{
 			Active: loop.Messages, Ordered: loop.Messages,
-			TurnID: 1, Outcome: contextmgr.OutcomeComplete,
+			TurnID: 1, Outcome: manager.OutcomeComplete,
 			// Events start at Token.Revision.Source+1 (the preparation sits at
 			// Source 1, so the turn's first event is Sequence 2), mirroring
 			// ProjectSource; a non-contiguous event would be rejected by
@@ -255,7 +255,7 @@ func TestSummaryInjectionDoesNotTouchDurableState(t *testing.T) {
 				Kind: "message", Role: "user", Provenance: "host", RedactionStatus: "metadata", Size: 8,
 			}},
 		}
-		request, err := contextmgr.BuildCommitRequest(context.Background(), loop.LastPreparation, result, principal, loop.LastPreparation.Token.Revision, loop.LastPreparation.Token.Binding)
+		request, err := manager.BuildCommitRequest(context.Background(), loop.LastPreparation, result, principal, loop.LastPreparation.Token.Revision, loop.LastPreparation.Token.Binding)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -316,8 +316,8 @@ func TestSummaryInjectionIdempotencyKeyStableAcrossRuns(t *testing.T) {
 		revision := contextstate.Revision{Session: 1, Durable: 1, Source: 1}
 		opts := Options{
 			Model: "model", MaxContextTokens: 10_000, MaxSteps: 3,
-			PreparationManager: contextmgr.StructuralPreparationManager{},
-			PreparationInput: contextmgr.PrepareInput{
+			PreparationManager: manager.StructuralPreparationManager{},
+			PreparationInput: manager.PrepareInput{
 				Budget: 10_000, Principal: principal, Binding: binding, Revision: revision,
 				SourceRange: contextstate.SourceRange{
 					Start: contextstate.SourceID{SessionID: principal.SessionID, Sequence: revision.Source},
@@ -432,7 +432,7 @@ func TestSummaryInjectionNonCompactedNeverInjects(t *testing.T) {
 func TestSummaryInjectionTurnStateFactsReachProvider(t *testing.T) {
 	provider := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, provider)
-	facts := contextmgr.NewTurnState()
+	facts := manager.NewTurnState()
 	if err := facts.AddEvidence("user message (~1 KiB)"); err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestSummaryInjectionTurnStateFactsReachProvider(t *testing.T) {
 
 // summaryInjectedLoopFixture builds a Loop that already holds a compacted
 // preparation and a populated tracker, ready for injectSummary.
-func summaryInjectedLoopFixture(t *testing.T, facts *contextmgr.TurnState) *Loop {
+func summaryInjectedLoopFixture(t *testing.T, facts *manager.TurnState) *Loop {
 	t.Helper()
 	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
@@ -499,9 +499,9 @@ func summaryInjectedLoopFixture(t *testing.T, facts *contextmgr.TurnState) *Loop
 		Start: contextstate.SourceID{SessionID: principal.SessionID, Sequence: revision.Source},
 		End:   contextstate.SourceID{SessionID: principal.SessionID, Sequence: revision.Source},
 	}
-	prep, err := contextmgr.CapturePreparation(
-		contextmgr.PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Budget: 100_000, Principal: principal, Binding: binding, Revision: revision},
-		contextmgr.CheckpointCandidate{SourceRange: rangeValue, ActiveContext: []byte("active")},
+	prep, err := manager.CapturePreparation(
+		manager.PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Budget: 100_000, Principal: principal, Binding: binding, Revision: revision},
+		manager.CheckpointCandidate{SourceRange: rangeValue, ActiveContext: []byte("active")},
 		[]provider.Message{{Role: provider.RoleUser, Content: "question"}}, true, "summary-facts-test",
 	)
 	if err != nil {
@@ -555,24 +555,24 @@ type stepKeyedCompactingProbe struct {
 	calls     int
 }
 
-func (p *stepKeyedCompactingProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *stepKeyedCompactingProbe) Prepare(_ context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	p.calls++
 	rangeValue := contextstate.SourceRange{
 		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
-	prep, err := contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	prep, err := manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, input.Messages, p.compactOn[p.calls], fmt.Sprintf("summary-keyed-%d", p.calls))
 	if err != nil {
-		return contextmgr.Preparation{}, err
+		return manager.Preparation{}, err
 	}
 	prep.BeforeTokens = 1000
 	prep.AfterTokens = 400
 	return prep, nil
 }
 
-func (p *stepKeyedCompactingProbe) Discard(contextmgr.Preparation) {}
+func (p *stepKeyedCompactingProbe) Discard(manager.Preparation) {}
 
 // TestSummaryInjectionToolFactsReachLaterRequest drives the recording seam
 // through a real tool call: the write_file execution on step 1 lands in the
@@ -581,7 +581,7 @@ func (p *stepKeyedCompactingProbe) Discard(contextmgr.Preparation) {}
 // sees the accumulated facts (a repeat of the SAME compaction event would be
 // served from the memo instead).
 func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
-	t.Skip("separate, newly-found gap, not the SDK Trim/write-back leak this test was originally skipped for (that part now passes): contextmgr.TurnState.AddChangedSurface has no production caller anywhere outside its own file, so a real tool call never lands in a compaction summary's ChangedSurfaces - the write-class-tool tracking this test exercises does not exist yet. Wiring it requires threading TurnState into the tool-dispatch path, a separate feature-sized change, not a one-line fix.")
+	t.Skip("separate, newly-found gap, not the SDK Trim/write-back leak this test was originally skipped for (that part now passes): manager.TurnState.AddChangedSurface has no production caller anywhere outside its own file, so a real tool call never lands in a compaction summary's ChangedSurfaces - the write-class-tool tracking this test exercises does not exist yet. Wiring it requires threading TurnState into the tool-dispatch path, a separate feature-sized change, not a one-line fix.")
 	provider := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, provider)
 	completer := &capturingRequestCompleter{toolStep: true}
@@ -674,7 +674,7 @@ type droppingPreparationProbe struct {
 	drop int
 }
 
-func (p *droppingPreparationProbe) Prepare(ctx context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *droppingPreparationProbe) Prepare(ctx context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	rangeValue := contextstate.SourceRange{
 		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
@@ -683,11 +683,11 @@ func (p *droppingPreparationProbe) Prepare(ctx context.Context, input contextmgr
 	if p.drop <= len(retained) {
 		retained = retained[p.drop:]
 	}
-	prep, err := contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	prep, err := manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, retained, true, "summary-excerpt-test")
 	if err != nil {
-		return contextmgr.Preparation{}, err
+		return manager.Preparation{}, err
 	}
 	prep.BeforeTokens = 1000
 	prep.AfterTokens = 400

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // These tests drive the failure branches of the session-directory metadata
@@ -39,8 +39,8 @@ func TestSaveSessionSnapshotInsertFailure(t *testing.T) {
 		t.Fatalf("create failing insert trigger: %v", err)
 	}
 
-	catalog := contextstate.SessionCatalog(store)
-	if err := catalog.SaveSession(ctx, principal, "snap", []byte(`[{"role":"user"}]`), "model", "provider", 1, 2, 1, contextstate.SessionSaveOptions{Dir: "/repo", Worktree: "wt"}); err == nil {
+	catalog := state.SessionCatalog(store)
+	if err := catalog.SaveSession(ctx, principal, "snap", []byte(`[{"role":"user"}]`), "model", "provider", 1, 2, 1, state.SessionSaveOptions{Dir: "/repo", Worktree: "wt"}); err == nil {
 		t.Fatal("SaveSession with failing snapshot INSERT unexpectedly succeeded")
 	}
 
@@ -73,7 +73,7 @@ func TestDeleteSnapshotOrphanDirSweepError(t *testing.T) {
 	}
 	dropSessionDirsTable(t, store)
 
-	catalog := contextstate.SessionCatalog(store)
+	catalog := state.SessionCatalog(store)
 	if err := catalog.DeleteSessionSnapshot(ctx, principal, "ghost"); err == nil {
 		t.Fatal("DeleteSessionSnapshot with failing dir sweep unexpectedly succeeded")
 	}
@@ -103,7 +103,7 @@ func TestDeleteContextSessionDirDeleteError(t *testing.T) {
 	ensureContextSession(t, store, principal, binding)
 	dropSessionDirsTable(t, store)
 
-	catalog := contextstate.SessionCatalog(store)
+	catalog := state.SessionCatalog(store)
 	if err := catalog.DeleteSessionSnapshot(ctx, principal, principal.SessionID); err == nil {
 		t.Fatal("DeleteSessionSnapshot with failing context dir delete unexpectedly succeeded")
 	}
@@ -126,8 +126,8 @@ func TestPruneSessionSnapshotsDirDeleteError(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 
-	catalog := contextstate.SessionCatalog(store)
-	if err := catalog.SaveSession(ctx, principal, "snap", []byte(`[{"role":"user"}]`), "model", "provider", 1, 2, 1, contextstate.SessionSaveOptions{Dir: "/repo", Worktree: "wt"}); err != nil {
+	catalog := state.SessionCatalog(store)
+	if err := catalog.SaveSession(ctx, principal, "snap", []byte(`[{"role":"user"}]`), "model", "provider", 1, 2, 1, state.SessionSaveOptions{Dir: "/repo", Worktree: "wt"}); err != nil {
 		t.Fatal(err)
 	}
 	dropSessionDirsTable(t, store)
@@ -157,7 +157,7 @@ func TestEnsureSessionDirUpsertError(t *testing.T) {
 	binding := contextTestBinding(t)
 	dropSessionDirsTable(t, store)
 
-	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: "/repo", Worktree: "wt"}); err == nil {
+	if err := store.EnsureSession(ctx, state.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: "/repo", Worktree: "wt"}); err == nil {
 		t.Fatal("EnsureSession with failing dir upsert unexpectedly succeeded")
 	}
 
@@ -180,14 +180,14 @@ func TestEnsureSessionRejectsInvalidDirMetadata(t *testing.T) {
 	ctx := context.Background()
 	binding := contextTestBinding(t)
 
-	invalid := []contextstate.EnsureSessionRequest{
+	invalid := []state.EnsureSessionRequest{
 		{Principal: principal, Binding: binding, Dir: "bad\x00dir"},
 		{Principal: principal, Binding: binding, Worktree: "bad\x00wt"},
-		{Principal: principal, Binding: binding, Dir: strings.Repeat("x", contextstate.MaxSessionDirBytes+1)},
-		{Principal: principal, Binding: binding, Worktree: strings.Repeat("y", contextstate.MaxSessionDirBytes+1)},
+		{Principal: principal, Binding: binding, Dir: strings.Repeat("x", state.MaxSessionDirBytes+1)},
+		{Principal: principal, Binding: binding, Worktree: strings.Repeat("y", state.MaxSessionDirBytes+1)},
 	}
 	for i, request := range invalid {
-		if err := store.EnsureSession(ctx, request); !errors.Is(err, contextstate.ErrInvalidDTO) {
+		if err := store.EnsureSession(ctx, request); !errors.Is(err, state.ErrInvalidDTO) {
 			t.Fatalf("EnsureSession invalid metadata case %d error = %v, want ErrInvalidDTO", i, err)
 		}
 	}
