@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lint every commit subject in a PR range against the repo commit-message policy.
 # Skips Git-generated subjects the commit-msg hook also exempts (merge, revert,
-# fixup!, squash!).
+# reapply, fixup!, squash!).
 set -euo pipefail
 
 BASE="${1:?base sha required}"
@@ -25,7 +25,7 @@ while IFS= read -r sha; do
   esac
   subject="$(git log -1 --format='%s' "$sha")"
   case "$subject" in
-    Merge\ *|Revert\ *|fixup!\ *|squash!\ *) continue ;;
+    Merge\ *|Revert\ *|Reapply\ *|fixup!\ *|squash!\ *) continue ;;
   esac
   # Strip a trailing GitHub squash-merge PR reference (e.g. " (#231)"). GitHub
   # appends this to the subject after the commit-msg hook already validated

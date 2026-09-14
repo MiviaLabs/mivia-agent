@@ -367,16 +367,9 @@ func TestRenderCursorAtStart(t *testing.T) {
 	if ib.prevLines != 2 {
 		t.Fatalf("expected prevLines=2, got %d", ib.prevLines)
 	}
-	// Check that ANSI sequence positions cursor at col 2
-	if !strings.Contains(rendered, "\033[2C") && !strings.Contains(rendered, "\033[2C") {
-		// ANSI: after writing, we need to check cursor column positioning.
-		// The render moves from end position back to (0,2).
-		// endLine=1 (17/10), endCol=7 (17%10).
-		// curLine=0 (2/10), curCol=2 (2%10).
-		// Move up 1, then right 2.
-		if !strings.Contains(rendered, "\033[1A") || !strings.Contains(rendered, "\033[2C") {
-			t.Fatalf("expected cursor repositioning (up 1, right 2) in render, got %q", rendered)
-		}
+	// Cursor at col 2 after wrapping: move up 1, then right 2.
+	if !strings.Contains(rendered, "\033[1A") || !strings.Contains(rendered, "\033[2C") {
+		t.Fatalf("expected cursor repositioning (up 1, right 2) in render, got %q", rendered)
 	}
 }
 
