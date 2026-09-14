@@ -33,11 +33,93 @@ from pathlib import Path
 
 from mutation_tokenize import MutationError, sites_for_file, sites_from_tokens
 
-# Python's default SIGTERM handling kills the process without running
-# `finally` blocks, unlike SIGINT. A killed sweep would then leave a
-# mutated file on disk. Re-raising SIGTERM as KeyboardInterrupt routes
-# it through the same finally-guaranteed restore path as Ctrl-C.
-signal.signal(signal.SIGTERM, signal.default_int_handler)
+# Live go-test sessions (pgid == pid because start_new_session=True).
+# Timeout and signal handlers kill the group, not just the go test pid:
+# `go test` spawns a `.test` binary (and the linker) that otherwise
+# survive when the parent is SIGKILL'd or times out.
+_live_pgids: set[int] = set()
+
+
+def kill_live_subprocesses() -> None:
+    """kill_live_subprocesses SIGKILLs every tracked process group."""
+    for pgid in list(_live_pgids):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
+        _live_pgids.discard(pgid)
+
+
+def _term_as_interrupt(signum, frame) -> None:
+    """_term_as_interrupt kills child groups, then raises KeyboardInterrupt.
+
+    Python's default SIGTERM handling exits without running `finally`,
+    unlike SIGINT. Re-raising as KeyboardInterrupt keeps the restore
+    path. Child groups must die first or `go test` descendants keep
+    running after this process is gone (reparented to systemd)."""
+    kill_live_subprocesses()
+    raise KeyboardInterrupt
+
+
+signal.signal(signal.SIGTERM, _term_as_interrupt)
+atexit.register(kill_live_subprocesses)
+
+
+def install_parent_death_signal() -> None:
+    """install_parent_death_signal asks Linux to SIGTERM this process
+    when its parent dies, so an agent session teardown cannot leave a
+    mutation sweep (and its go test children) running under systemd."""
+    if sys.platform != "linux":
+        return
+    parent = os.getppid()
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        pr_set_pdeathsig = 1
+        if libc.prctl(pr_set_pdeathsig, signal.SIGTERM) != 0:
+            return
+    except (OSError, AttributeError):
+        return
+    if os.getppid() != parent:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+def run_process_group(
+    argv: list[str],
+    *,
+    timeout: float,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess:
+    """run_process_group runs argv in a new session and kills the whole
+    group on timeout. subprocess.run's timeout only signals the leader
+    pid; `go test` would leave `.test` and `link` running."""
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd or ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    pgid = proc.pid
+    _live_pgids.add(pgid)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        proc.wait()
+        raise
+    finally:
+        _live_pgids.discard(pgid)
 
 ROOT = Path(__file__).resolve().parent.parent
 POLICY_MUTATION_DIR = ROOT / ".mivia" / "policy" / "mutation"
@@ -256,7 +338,7 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
     try:
         target = test_target(Path(pkg_dir), pkg)
         try:
-            test = subprocess.run(
+            test = run_process_group(
                 # -failfast: a mutant is KILLED the moment one test fails, so
                 # running the rest of the package's suite after that proves
                 # nothing and costs a full suite per mutant. On a package whose
@@ -265,9 +347,6 @@ def run_mutant(site, original: bytes, pkg: str, pkg_dir: str) -> str:
                 # not change a verdict: the exit code still says pass or fail,
                 # and a SURVIVED mutant runs every test either way.
                 ["go", "test", "-failfast", target],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
                 timeout=TEST_TIMEOUT_SECONDS,
             )
             if test.returncode != 0 and any(
@@ -367,11 +446,8 @@ def compute_coverage_blocks(pkg: str, pkg_dir: Path) -> dict[str, list[tuple[int
     cov_path = Path(tmp.name)
     tmp.close()
     try:
-        result = subprocess.run(
+        result = run_process_group(
             ["go", "test", f"-coverpkg=./{pkg}", f"-coverprofile={cov_path}", target],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
             timeout=TEST_TIMEOUT_SECONDS * 4,
         )
         if result.returncode != 0 or not cov_path.exists():
@@ -1127,6 +1203,7 @@ def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
 
 
 def main() -> int:
+    install_parent_death_signal()
     # Heal a previous run that was killed mid-mutation before doing anything
     # else. A stranded mutant is not a stale file: the pre-commit hook's
     # gofmt step re-stages the working tree, so it gets committed silently.
