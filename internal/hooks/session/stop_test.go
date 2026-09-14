@@ -1,4 +1,4 @@
-package hooksession
+package session
 
 import (
 	"context"
@@ -138,7 +138,7 @@ func TestStopHookWithNoConfiguredHooksReturnsNothing(t *testing.T) {
 // site is covered separately by internal/chat's own tests.
 func TestStopEventIsFiredFromExactlyOneProductionSite(t *testing.T) {
 	var sites []string
-	for _, dir := range []string{".", "../cli", "../agent", "../subagents", "../runtime", "../coordinator"} {
+	for _, dir := range []string{".", "../../cli", "../../agent", "../../subagents", "../../runtime", "../../coordinator"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue

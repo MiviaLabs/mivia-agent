@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -25,8 +25,8 @@ import (
 type StorageLedgerRepository struct {
 	store     storage.Store
 	mem       *MemoryLedgerRepository
-	engine    *ledgercore.Engine
-	claims    *ledgercore.ClaimsTracker
+	engine    *core.Engine
+	claims    *core.ClaimsTracker
 	ownsStore bool
 	mu        sync.RWMutex
 	inflight  map[inflightKey]struct{}

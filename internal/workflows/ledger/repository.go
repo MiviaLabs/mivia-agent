@@ -4,19 +4,19 @@ import (
 	"context"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 )
 
 // Sentinel errors returned by Repository methods.
 var (
-	ErrDuplicate         = ledgercore.ErrDuplicate
-	ErrNotFound          = ledgercore.ErrNotFound
-	ErrConflict          = ledgercore.ErrConflict
-	ErrInvalidTransition = ledgercore.ErrInvalidTransition
-	ErrClaimHeld         = ledgercore.ErrClaimHeld
-	ErrClaimNotHeld      = ledgercore.ErrClaimNotHeld
-	ErrClosed            = ledgercore.ErrClosed
-	ErrContentNotFound   = ledgercore.ErrContentNotFound
+	ErrDuplicate         = core.ErrDuplicate
+	ErrNotFound          = core.ErrNotFound
+	ErrConflict          = core.ErrConflict
+	ErrInvalidTransition = core.ErrInvalidTransition
+	ErrClaimHeld         = core.ErrClaimHeld
+	ErrClaimNotHeld      = core.ErrClaimNotHeld
+	ErrClosed            = core.ErrClosed
+	ErrContentNotFound   = core.ErrContentNotFound
 )
 
 // RecoveredRun summarises one workflow run for the startup recovery report.

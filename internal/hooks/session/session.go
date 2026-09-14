@@ -6,7 +6,7 @@
 // internal/coordinator, or internal/hub. That is what lets internal/tui/adapter
 // (which may not import any of those) reach the same session state and
 // listing text the old CLI surface uses, without a seam indirection.
-package hooksession
+package session
 
 import (
 	"fmt"

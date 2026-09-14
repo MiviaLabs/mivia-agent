@@ -1,6 +1,6 @@
 // Package ledgercore provides shared primitives and infrastructure for event-sourced
 // ledger implementations in the mivia agent.
-package ledgercore
+package core
 
 import (
 	"errors"

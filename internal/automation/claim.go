@@ -23,11 +23,11 @@ import (
 
 // newHolderToken generates a fresh, unpredictable per-claim identifier.
 //
-// Correction from the plan's suggested convention: internal/ledgercore's
+// Correction from the plan's suggested convention: internal/ledger/core's
 // NewHolderID (crypto/rand + base32, "h-" prefix) is the closest existing
 // precedent for this shape, but internal/automation's import-policy allow
 // list (.mivia/policy/import-layers.json) does not grant it an edge to
-// internal/ledgercore. Rather
+// internal/ledger/core. Rather
 // than widen the edge for a four-line helper, this reimplements the same
 // crypto/rand-backed approach locally (hex instead of base32 - no
 // external behavioral difference, both are opaque unique tokens).

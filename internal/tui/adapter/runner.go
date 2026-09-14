@@ -13,7 +13,7 @@ import (
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -364,7 +364,7 @@ func (r *CommandRunner) handleCompact(ctx context.Context, focus string) ports.C
 	return ports.CommandOutcome{Notice: notice}
 }
 
-// handleHooks serves /hooks on the new TUI. It reaches internal/hooksession
+// handleHooks serves /hooks on the new TUI. It reaches internal/hooks/session
 // directly rather than through internal/cli: hooksession is a leaf package
 // (imports only internal/config and internal/hooks), so this does not
 // reintroduce the CLI dependency internal/tui/adapter must stay free of.

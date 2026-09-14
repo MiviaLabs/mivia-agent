@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -20,11 +20,11 @@ import (
 // coordinator run-, ...) and are never read; advancing the cursor past their
 // appends keeps the probe constant-time.
 func (s *Store) catchUp(ctx context.Context) error {
-	return s.engine.CatchUp(ctx, func(runID string, maxSeq int) ledgercore.FilterDecision {
+	return s.engine.CatchUp(ctx, func(runID string, maxSeq int) core.FilterDecision {
 		if !strings.HasPrefix(runID, runIDPrefix) {
-			return ledgercore.FilterAdvanceOnly
+			return core.FilterAdvanceOnly
 		}
-		return ledgercore.FilterApply
+		return core.FilterApply
 	}, func(ctx context.Context, runID string, events []storage.Event) error {
 		return s.rebuildRun(runID, events)
 	})
@@ -45,7 +45,7 @@ func (s *Store) rebuildRunFromStore(ctx context.Context, runID string) error {
 // an undecodable KNOWN kind fails loudly, mirroring the workflow ledger.
 func (s *Store) rebuildRun(runID string, events []storage.Event) error {
 	sorted := append([]storage.Event(nil), events...)
-	ledgercore.SortEventsStable(sorted)
+	core.SortEventsStable(sorted)
 
 	planRef := strings.TrimPrefix(runID, runIDPrefix)
 	state := &planState{tasks: make(map[string]Task)}

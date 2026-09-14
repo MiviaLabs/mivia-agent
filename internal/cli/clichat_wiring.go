@@ -8,7 +8,7 @@ package cli
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	"github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
 
@@ -16,9 +16,9 @@ func init() {
 	chat.FlagValueFunc = flagValue
 	chat.FlagVarFunc = flagVar
 	chat.InstallHookSessionFunc = installHookSession
-	// hooksession.Session already implements chat.HookSessionState
+	// session.Session already implements chat.HookSessionState
 	// (RunnableGroups, NoteRunWarnings), so no adapter type is needed here.
-	chat.CurrentHookSessionFunc = func() chat.HookSessionState { return hooksession.Current() }
+	chat.CurrentHookSessionFunc = func() chat.HookSessionState { return session.Current() }
 	chat.HookSessionConfiguredFunc = hookSessionConfigured
 	chat.HandleSlashHooksFunc = handleSlashHooks
 	chat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }

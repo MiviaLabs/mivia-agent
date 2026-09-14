@@ -5,7 +5,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 

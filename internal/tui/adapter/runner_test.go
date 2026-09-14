@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"

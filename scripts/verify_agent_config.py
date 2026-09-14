@@ -177,7 +177,7 @@ def check_workflow_self_protection() -> None:
                 fail(
                     f"{rel}: PreToolUse matcher must be a string; "
                     f"internal/hooks/config.go refuses {matcher!r}, and "
-                    f"internal/hooksession downgrades that to a warning, "
+                    f"internal/hooks/session downgrades that to a warning, "
                     f"which drops every lifecycle hook in this config."
                 )
             # Only nil and "" are match-all in parseMatcher. A

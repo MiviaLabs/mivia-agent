@@ -1,4 +1,4 @@
-package hooksession
+package session
 
 import (
 	"context"

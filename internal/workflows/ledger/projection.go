@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -83,7 +83,7 @@ type rebuildState struct {
 func RebuildProjection(events []storage.Event) (Projection, error) {
 	ordered := make([]storage.Event, len(events))
 	copy(ordered, events)
-	ledgercore.SortEvents(ordered)
+	core.SortEvents(ordered)
 
 	var proj Projection
 	st := &rebuildState{

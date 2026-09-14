@@ -1,4 +1,4 @@
-package ledgercore
+package core
 
 import "time"
 

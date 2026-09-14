@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 )
 
 // fireRootTurnEndHook executes the Stop hook for one completed root turn. It
@@ -24,7 +24,7 @@ import (
 // turn ctx so cancellations record properly (hooksession.RunStopForTurn).
 // Detached goroutines cannot honor this contract without external synchronization.
 //
-// This uses a direct internal/hooksession import without an injected seam.
+// This uses a direct internal/hooks/session import without an injected seam.
 // sessionID and turnID are parameters, making calls multi-session safe.
 // hooksession is a leaf package with no import cycle risk.
 func (s *Session) fireRootTurnEndHook(ctx context.Context, sessionID string, myTurn uint64) {

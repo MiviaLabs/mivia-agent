@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger/core"
 )
 
 // ClaimRun acquires the exclusive execution claim on a run. Returns
@@ -65,7 +65,7 @@ func (s *StorageRepository) LoadContent(ctx context.Context, ref string) ([]byte
 }
 
 // parseClaimAcquiredAt parses a claim's acquired_at timestamp.
-var parseClaimAcquiredAt = ledgercore.ParseClaimAcquiredAt
+var parseClaimAcquiredAt = core.ParseClaimAcquiredAt
 
 // Ensure StorageRepository implements Repository at compile time.
 var _ Repository = (*StorageRepository)(nil)

@@ -3,11 +3,11 @@ package cli
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	hooksession "github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 )
 
 // currentHookSession, hookSessionConfigured, handleSlashHooks, and
-// installHookSession are thin wrappers over internal/hooksession, which owns
+// installHookSession are thin wrappers over internal/hooks/session, which owns
 // the actual session state and listing logic. They exist so the clichat and
 // cliworkflow seam signatures (internal/cli/chat/seams.go,
 // internal/cli/workflow/seams.go) do not have to change: both still wire to a
