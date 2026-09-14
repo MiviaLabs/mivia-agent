@@ -10,8 +10,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -64,11 +64,11 @@ type SessionInput struct {
 	SubjectID string
 	// Principal, when bound (IsBound() true), is used as-is instead of
 	// minting a fresh one from WorkspaceID/SubjectID. A caller that needs to
-	// read its own checkpoint back later (contextstate.Principal's capability
-	// is random per mint - see contextstate.NewPrincipal - and store.Load
+	// read its own checkpoint back later (state.Principal's capability
+	// is random per mint - see state.NewPrincipal - and store.Load
 	// rejects a principal whose capability does not match what was written)
 	// must supply the same Principal value it will read with.
-	Principal contextstate.Principal
+	Principal state.Principal
 }
 
 // BuildSession wires a chat.Session end to end: the completer chat.NewSession
@@ -78,9 +78,9 @@ type SessionInput struct {
 // or a freshly minted one), so a caller can read its own checkpoint back
 // through the returned store. The caller owns the store's Close; the session
 // holds no reference that outlives it.
-func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, contextstate.Principal, error) {
+func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, state.Principal, error) {
 	if in.Config == nil {
-		return nil, nil, contextstate.Principal{}, fmt.Errorf("build session: config is required")
+		return nil, nil, state.Principal{}, fmt.Errorf("build session: config is required")
 	}
 	sess := chat.NewSession(in.Config, in.Completer)
 	sess.UseTools = true
@@ -92,7 +92,7 @@ func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, contextstate
 	} else {
 		registry, err = BuildRegistry(in.Registry)
 		if err != nil {
-			return nil, nil, contextstate.Principal{}, fmt.Errorf("build session: %w", err)
+			return nil, nil, state.Principal{}, fmt.Errorf("build session: %w", err)
 		}
 	}
 	sess.Tools = registry
@@ -101,7 +101,7 @@ func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, contextstate
 	dispatcherInput.Registry = registry
 	dispatcher, err := BuildDispatcher(dispatcherInput)
 	if err != nil {
-		return nil, nil, contextstate.Principal{}, fmt.Errorf("build session: %w", err)
+		return nil, nil, state.Principal{}, fmt.Errorf("build session: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
 
@@ -113,7 +113,7 @@ func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, contextstate
 
 	store, principal, err := buildSessionCheckpointStore(sess, in)
 	if err != nil {
-		return nil, nil, contextstate.Principal{}, fmt.Errorf("build session: %w", err)
+		return nil, nil, state.Principal{}, fmt.Errorf("build session: %w", err)
 	}
 	return sess, store, principal, nil
 }
@@ -124,13 +124,13 @@ func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, contextstate
 // internal/cli/context_setup_session.go's enableSessionContext installs (no
 // LLM summarizer: BuildSession stays structural-only, matching an
 // unconfigured [context.summary] workspace).
-func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.SQLite, contextstate.Principal, error) {
+func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.SQLite, state.Principal, error) {
 	if in.StorePath == "" {
-		return nil, contextstate.Principal{}, fmt.Errorf("store path is required")
+		return nil, state.Principal{}, fmt.Errorf("store path is required")
 	}
 	store, err := storage.OpenSQLite(in.StorePath)
 	if err != nil {
-		return nil, contextstate.Principal{}, fmt.Errorf("open checkpoint store: %w", err)
+		return nil, state.Principal{}, fmt.Errorf("open checkpoint store: %w", err)
 	}
 	principal := in.Principal
 	if !principal.IsBound() {
@@ -138,10 +138,10 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 		if subjectID == "" {
 			subjectID = sess.SessionID
 		}
-		principal, err = contextstate.NewPrincipal(in.WorkspaceID, sess.SessionID, subjectID)
+		principal, err = state.NewPrincipal(in.WorkspaceID, sess.SessionID, subjectID)
 		if err != nil {
 			_ = store.Close()
-			return nil, contextstate.Principal{}, fmt.Errorf("mint checkpoint principal: %w", err)
+			return nil, state.Principal{}, fmt.Errorf("mint checkpoint principal: %w", err)
 		}
 	}
 	manager := &contextmgr.ContextManager{
@@ -150,19 +150,19 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 		Enabled:             true,
 		UsageWriter:         storage.NewUsageWriter(store, principal.WorkspaceID),
 	}
-	policy := contextstate.PolicySnapshot{}
+	policy := state.PolicySnapshot{}
 	if summarizer, snapshot, ok := buildSessionSummarizer(sess, in); ok {
 		manager.Summarizer = summarizer
 		policy = snapshot
 	}
 	if err := sess.SetContextManager(manager, principal, policy); err != nil {
 		_ = store.Close()
-		return nil, contextstate.Principal{}, fmt.Errorf("set context manager: %w", err)
+		return nil, state.Principal{}, fmt.Errorf("set context manager: %w", err)
 	}
 	sess.SetContextRedactionPolicy(contextRedactionPolicy(in.Config))
 	if err := sess.SetContextStore(store); err != nil {
 		_ = store.Close()
-		return nil, contextstate.Principal{}, fmt.Errorf("set context store: %w", err)
+		return nil, state.Principal{}, fmt.Errorf("set context store: %w", err)
 	}
 	// Prime the token-estimate correction from what this workspace already
 	// measured for this binding, so the first request is not planned blind.
@@ -171,25 +171,25 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 	return store, principal, nil
 }
 
-func buildSessionSummarizer(sess *chat.Session, in SessionInput) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+func buildSessionSummarizer(sess *chat.Session, in SessionInput) (*contextmgr.Summarizer, state.PolicySnapshot, bool) {
 	if sess == nil || in.Config == nil {
-		return nil, contextstate.PolicySnapshot{}, false
+		return nil, state.PolicySnapshot{}, false
 	}
 	endpoint := strings.TrimSpace(in.Config.BaseURL)
 	if endpoint == "" {
-		return nil, contextstate.PolicySnapshot{}, false
+		return nil, state.PolicySnapshot{}, false
 	}
 	completer := in.Completer
 	if completer == nil {
-		return nil, contextstate.PolicySnapshot{}, false
+		return nil, state.PolicySnapshot{}, false
 	}
 	providerName := in.Config.ProviderName
 	model := in.Config.Model
 	if providerName == "" || model == "" {
-		return nil, contextstate.PolicySnapshot{}, false
+		return nil, state.PolicySnapshot{}, false
 	}
 	redaction := contextRedactionPolicy(in.Config)
-	policy := contextstate.PolicySnapshot{
+	policy := state.PolicySnapshot{
 		SummaryEnabled: true, RedactionConfigured: redaction.Configured, NetworkEnabled: true,
 		Provider: providerName, Model: model,
 		CredentialScope:   "env-api-key",
@@ -199,32 +199,32 @@ func buildSessionSummarizer(sess *chat.Session, in SessionInput) (*contextmgr.Su
 	}
 	adapter, err := contextmgr.NewLLMSummaryProvider(completer, sess.SessionID)
 	if err != nil {
-		return nil, contextstate.PolicySnapshot{}, false
+		return nil, state.PolicySnapshot{}, false
 	}
 	generation := uint64(1)
 	if binding := sess.CurrentBinding(); binding.ModelGeneration > 0 {
 		generation = binding.ModelGeneration
 	}
-	summarizer, err := contextmgr.NewSummarizer(adapter, contextstate.BindingRevision{
+	summarizer, err := contextmgr.NewSummarizer(adapter, state.BindingRevision{
 		Provider: providerName, Model: model, Generation: generation,
 	}, policy)
 	if err != nil {
-		return nil, contextstate.PolicySnapshot{}, false
+		return nil, state.PolicySnapshot{}, false
 	}
 	return &summarizer, policy, true
 }
 
-func contextRedactionPolicy(res *config.Resolved) contextstate.RedactionPolicy {
+func contextRedactionPolicy(res *config.Resolved) state.RedactionPolicy {
 	if res == nil || res.RedactionPolicy == nil {
-		return contextstate.RedactionPolicy{}
+		return state.RedactionPolicy{}
 	}
 	patterns := res.Privacy.RedactionPatterns
 	keyNames := res.Privacy.RedactionKeyNames
 	if len(patterns) == 0 && len(keyNames) == 0 {
-		return contextstate.RedactionPolicy{}
+		return state.RedactionPolicy{}
 	}
 	policy := res.RedactionPolicy
-	return contextstate.RedactionPolicy{
+	return state.RedactionPolicy{
 		Configured: true, Patterns: patterns, KeyNames: keyNames,
 		Redactor: func(data []byte) []byte { return []byte(policy.Text(string(data))) },
 	}

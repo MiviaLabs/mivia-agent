@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 func TestContextCompactionInvariants(t *testing.T) {
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,13 +24,13 @@ func TestContextCompactionInvariants(t *testing.T) {
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}},
 		{Role: provider.RoleTool, ToolCallID: "call-1", Name: "read_file", Content: "tool-secret-sentinel"},
 	}
-	events, payloads, err := contextmgr.ProjectSource(context.Background(), principal, messages, 1, contextstate.RedactionPolicy{})
+	events, payloads, err := manager.ProjectSource(context.Background(), principal, messages, 1, state.RedactionPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := contextstate.MarshalCanonical(struct {
-		Events   []contextstate.SourceEvent
-		Payloads []contextstate.PayloadRecord
+	raw, err := state.MarshalCanonical(struct {
+		Events   []state.SourceEvent
+		Payloads []state.PayloadRecord
 	}{events, payloads})
 	if err != nil {
 		t.Fatal(err)
@@ -45,19 +45,19 @@ func TestContextCompactionInvariants(t *testing.T) {
 	// survives: refusing here failed the whole commit and wedged the session
 	// (INV-AG-35). With no redactor supplied the flagged payload degrades to
 	// metadata, so the sentinel still never reaches storage.
-	policy := contextstate.RedactionPolicy{Configured: true, Classifier: func(data []byte) error {
+	policy := state.RedactionPolicy{Configured: true, Classifier: func(data []byte) error {
 		if strings.Contains(string(data), "tool-secret-sentinel") {
-			return contextstate.ErrInvalidDTO
+			return state.ErrInvalidDTO
 		}
 		return nil
 	}}
-	classified, classifiedPayloads, err := contextmgr.ProjectSource(context.Background(), principal, messages, 1, policy)
+	classified, classifiedPayloads, err := manager.ProjectSource(context.Background(), principal, messages, 1, policy)
 	if err != nil {
 		t.Fatalf("configured source classifier destroyed the turn: %v", err)
 	}
-	raw, err = contextstate.MarshalCanonical(struct {
-		Events   []contextstate.SourceEvent
-		Payloads []contextstate.PayloadRecord
+	raw, err = state.MarshalCanonical(struct {
+		Events   []state.SourceEvent
+		Payloads []state.PayloadRecord
 	}{classified, classifiedPayloads})
 	if err != nil {
 		t.Fatal(err)

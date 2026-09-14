@@ -5,18 +5,18 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 type catalogKeyQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func rejectManagedCatalogKey(ctx context.Context, queryer catalogKeyQueryer, principal contextstate.Principal, name string) error {
+func rejectManagedCatalogKey(ctx context.Context, queryer catalogKeyQueryer, principal state.Principal, name string) error {
 	var found int
 	err := queryer.QueryRowContext(ctx, `SELECT 1 FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND storage_key=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&found)
 	if err == nil {
-		return contextstate.ErrWorktreeDeleted
+		return state.ErrWorktreeDeleted
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -30,7 +30,7 @@ func requireCatalogMutation(result sql.Result) error {
 		return err
 	}
 	if rows == 0 {
-		return contextstate.ErrWorktreeDeleted
+		return state.ErrWorktreeDeleted
 	}
 	return nil
 }

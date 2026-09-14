@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -54,15 +54,15 @@ func TestNoMessageLossErroredPlainContextTurnIsPersisted(t *testing.T) {
 	}
 	defer store.Close()
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, erroringPlainCompleter{partial: partial, err: upstream})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{
@@ -88,7 +88,7 @@ func TestNoMessageLossErroredPlainContextTurnIsPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var loaded []provider.Message
-	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
+	if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &loaded); err != nil {
 		t.Fatal(err)
 	}
 	assertInterruptedPlainPersisted(t, loaded, partial, question)
@@ -116,15 +116,15 @@ func TestErroredPlainContextTurnCommitFailureKeepsTheTurnUnwrapped(t *testing.T)
 	}
 	defer store.Close()
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, erroringPlainCompleter{partial: partial, err: upstream})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &contextmgr.ContextManager{

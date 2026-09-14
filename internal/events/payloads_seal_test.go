@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // The constructor seal, and the control-character screens.
@@ -17,18 +17,18 @@ import (
 
 func validCompaction(t *testing.T) CompactionEventParams {
 	t.Helper()
-	start, err := contextstate.NewSourceID("session", 1)
+	start, err := state.NewSourceID("session", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	end, err := contextstate.NewSourceID("session", 4)
+	end, err := state.NewSourceID("session", 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return CompactionEventParams{
 		Trigger: "threshold", BeforeTokens: 1000, AfterTokens: 400,
 		ElidedMessages: 6, ElidedBytes: 2048,
-		SourceRange:    contextstate.SourceRange{Start: start, End: end},
+		SourceRange:    state.SourceRange{Start: start, End: end},
 		SummaryVersion: 1, Summarized: true, Reason: "over budget",
 	}
 }

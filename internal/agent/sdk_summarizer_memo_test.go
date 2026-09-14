@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -23,27 +23,27 @@ import (
 // succeeds.
 //
 // Call counting is at the PROVIDER, one layer below the adapter.
-// contextmgr.Summarizer.Summarize already retries a retryable failure
+// manager.Summarizer.Summarize already retries a retryable failure
 // once inline (summaryMaxAttempts), so one adapter attempt that fails
 // retryably costs TWO provider calls.
 type echoingSummaryProvider struct {
 	calls    int
 	errs     []error
-	requests []contextmgr.SummaryRequest
+	requests []manager.SummaryRequest
 }
 
-func (p *echoingSummaryProvider) Summarize(_ context.Context, request contextmgr.SummaryRequest) (contextmgr.Summary, error) {
+func (p *echoingSummaryProvider) Summarize(_ context.Context, request manager.SummaryRequest) (manager.Summary, error) {
 	index := p.calls
 	p.calls++
 	p.requests = append(p.requests, request)
 	if index < len(p.errs) && p.errs[index] != nil {
-		return contextmgr.Summary{}, p.errs[index]
+		return manager.Summary{}, p.errs[index]
 	}
 	texts := make([]string, 0, len(request.SourceExcerpts))
 	for _, excerpt := range request.SourceExcerpts {
 		texts = append(texts, excerpt.Text)
 	}
-	return contextmgr.Summary{
+	return manager.Summary{
 		Version:     request.Input.Version,
 		Objective:   "objective of " + strings.Join(texts, "|"),
 		State:       request.Input.State,
@@ -57,9 +57,9 @@ type alwaysFailingSummaryProvider struct {
 	err   error
 }
 
-func (p *alwaysFailingSummaryProvider) Summarize(context.Context, contextmgr.SummaryRequest) (contextmgr.Summary, error) {
+func (p *alwaysFailingSummaryProvider) Summarize(context.Context, manager.SummaryRequest) (manager.Summary, error) {
 	p.calls++
-	return contextmgr.Summary{}, p.err
+	return manager.Summary{}, p.err
 }
 
 func sdkMessagesOf(contents ...string) []sdkshape.Message {
@@ -177,8 +177,8 @@ func TestSDKSummarizerAdapterRetryableFailureTwiceFailsClosed(t *testing.T) {
 	if summaryProvider.calls != 4 {
 		t.Fatalf("provider calls = %d, want exactly 4 (2 adapter attempts x 2 inline calls), never a third attempt", summaryProvider.calls)
 	}
-	if l.summaryFailureReason != contextmgr.SummaryReasonTransport {
-		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, contextmgr.SummaryReasonTransport)
+	if l.summaryFailureReason != manager.SummaryReasonTransport {
+		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, manager.SummaryReasonTransport)
 	}
 	if l.sdkPendingCompaction != nil {
 		t.Fatalf("pending = %+v, want nil: a retryable failure records no outcome to confirm", l.sdkPendingCompaction)
@@ -200,7 +200,7 @@ func TestSDKSummarizerAdapterRetryableFailureTwiceFailsClosed(t *testing.T) {
 // retried, by the inner Summarizer or by the adapter, and still
 // skips.
 func TestSDKSummarizerAdapterNonRetryableFailureIssuesOneCall(t *testing.T) {
-	malformed := fmt.Errorf("%w: bad json", contextmgr.ErrSummaryReplyMalformed)
+	malformed := fmt.Errorf("%w: bad json", manager.ErrSummaryReplyMalformed)
 	summaryProvider := &alwaysFailingSummaryProvider{err: malformed}
 	a, _ := newAdapterFixture(t, summaryProvider)
 
@@ -354,8 +354,8 @@ func TestSDKSummarizerAdapterRequestInvalidSkips(t *testing.T) {
 	if summaryProvider.calls != 0 {
 		t.Fatalf("provider calls = %d, want 0: an invalid request never reaches the provider", summaryProvider.calls)
 	}
-	if l.summaryFailureReason != contextmgr.SummaryReasonRequestInvalid {
-		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, contextmgr.SummaryReasonRequestInvalid)
+	if l.summaryFailureReason != manager.SummaryReasonRequestInvalid {
+		t.Fatalf("summaryFailureReason = %q, want %q", l.summaryFailureReason, manager.SummaryReasonRequestInvalid)
 	}
 }
 

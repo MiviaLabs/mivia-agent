@@ -6,24 +6,24 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // seedAdmittedSession writes a snapshot and its admission record so a delete
 // path has both rows to reclaim.
-func seedAdmittedSession(t *testing.T, store *SQLite, principal contextstate.Principal, name string) {
+func seedAdmittedSession(t *testing.T, store *SQLite, principal state.Principal, name string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := store.SaveSession(ctx, principal, name, []byte(`[{"role":"user"}]`), "m", "p", 1, 1, 1, contextstate.SessionSaveOptions{}); err != nil {
+	if err := store.SaveSession(ctx, principal, name, []byte(`[{"role":"user"}]`), "m", "p", 1, 1, 1, state.SessionSaveOptions{}); err != nil {
 		t.Fatalf("save session %s: %v", name, err)
 	}
 	if err := store.SaveSessionAdmission(ctx, principal, name,
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d1", Names: []string{"grep"}}); err != nil {
 		t.Fatalf("save admission %s: %v", name, err)
 	}
 }
 
-func assertNoAdmission(t *testing.T, store *SQLite, principal contextstate.Principal, name string) {
+func assertNoAdmission(t *testing.T, store *SQLite, principal state.Principal, name string) {
 	t.Helper()
 	got, err := store.LoadSessionAdmission(context.Background(), principal, name)
 	if err != nil {
@@ -97,14 +97,14 @@ func blockDeleteOn(t *testing.T, store *SQLite, table string) {
 	}
 }
 
-func seedAdmission(t *testing.T, store *SQLite, principal contextstate.Principal, name string) {
+func seedAdmission(t *testing.T, store *SQLite, principal state.Principal, name string) {
 	t.Helper()
 	if _, err := store.db.Exec(`INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		principal.WorkspaceID, principal.SubjectID, name, "m", "p", []byte("[]"), "now", "now", 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SaveSessionAdmission(context.Background(), principal, name,
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -167,14 +167,14 @@ func blockInsertOn(t *testing.T, store *SQLite, table string) {
 	}
 }
 
-func seedContextBackedSession(t *testing.T, store *SQLite, principal contextstate.Principal, sessionID string) {
+func seedContextBackedSession(t *testing.T, store *SQLite, principal state.Principal, sessionID string) {
 	t.Helper()
 	if _, err := store.db.Exec(`INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		principal.WorkspaceID, principal.SubjectID, sessionID, "cap", 1, 1, 1, "p", "m", 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SaveSessionAdmission(context.Background(), principal, sessionID,
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -268,11 +268,11 @@ func TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow(t *testing.T) {
 func TestDeleteReclaimsAnOrphanedAdmissionRow(t *testing.T) {
 	store, principal := admissionStore(t)
 	if err := store.SaveSessionAdmission(context.Background(), principal, "gone",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
 		t.Fatal(err)
 	}
 	err := store.DeleteSessionSnapshot(context.Background(), principal, "gone")
-	if !errors.Is(err, contextstate.ErrSessionNotFound) {
+	if !errors.Is(err, state.ErrSessionNotFound) {
 		t.Fatalf("delete err = %v, want ErrSessionNotFound", err)
 	}
 	if rows := countAdmissionRows(t, store, "gone"); rows != 0 {
@@ -286,12 +286,12 @@ func TestDeleteReclaimsAnOrphanedAdmissionRow(t *testing.T) {
 func TestDeleteReportsAnUnreclaimableOrphanedAdmissionRow(t *testing.T) {
 	store, principal := admissionStore(t)
 	if err := store.SaveSessionAdmission(context.Background(), principal, "gone",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
+		state.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
 		t.Fatal(err)
 	}
 	blockDeleteOn(t, store, "chat_session_admissions")
 	err := store.DeleteSessionSnapshot(context.Background(), principal, "gone")
-	if err == nil || errors.Is(err, contextstate.ErrSessionNotFound) {
+	if err == nil || errors.Is(err, state.ErrSessionNotFound) {
 		t.Fatalf("delete err = %v, want the failed orphan reclaim reported", err)
 	}
 }

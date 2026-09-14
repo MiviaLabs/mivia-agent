@@ -24,7 +24,7 @@ import (
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
 

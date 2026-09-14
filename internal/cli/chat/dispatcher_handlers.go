@@ -9,7 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -47,7 +47,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps, onToolCancelReady func(context.Context, agent.ToolCanceler)) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation manager.PreparationManager, preparationInput manager.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps, onToolCancelReady func(context.Context, agent.ToolCanceler)) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -120,8 +120,8 @@ type skillHandlerDeps struct {
 	maxContextTokens int
 	maxTokens        *int
 	budget           func() int
-	preparation      contextmgr.PreparationManager
-	preparationInput contextmgr.PrepareInput
+	preparation      manager.PreparationManager
+	preparationInput manager.PrepareInput
 	spool            *remainder.Spool
 }
 
@@ -187,7 +187,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 	return h
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation manager.PreparationManager, preparationInput manager.PrepareInput, spool *remainder.Spool, approval func() sdkadapter.ApprovalDeps) error {
 	if skillReg == nil {
 		return nil
 	}

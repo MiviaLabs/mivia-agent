@@ -7,8 +7,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -26,7 +26,7 @@ func newContextBoundSession(t *testing.T, res *config.Resolved, store *storage.S
 	t.Helper()
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = sessionID
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestSessionPool_CreateFresh_InheritsRedactionPolicy(t *testing.T) {
 	res := &config.Resolved{Model: "test-model"}
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "initial-session"
-	policy := contextstate.RedactionPolicy{Configured: true, KeyNames: []string{"token"}}
+	policy := state.RedactionPolicy{Configured: true, KeyNames: []string{"token"}}
 	sess.SetContextRedactionPolicy(policy)
 
 	pool := adapter.NewSessionPool(sess, res, nil, false)

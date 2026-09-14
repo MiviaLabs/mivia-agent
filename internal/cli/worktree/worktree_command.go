@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -130,7 +130,7 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func WriteWorktreeList(stdout io.Writer, worktrees []vcs.WorktreeInfo, deleting []contextstate.WorktreeInstanceInfo) {
+func WriteWorktreeList(stdout io.Writer, worktrees []vcs.WorktreeInfo, deleting []state.WorktreeInstanceInfo) {
 	written := make([]bool, len(deleting))
 	for _, worktree := range worktrees {
 		matched := -1

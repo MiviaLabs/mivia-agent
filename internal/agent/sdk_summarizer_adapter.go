@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"hash/fnv"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // sdkSummarizerAdapter implements sdkagentloop.Summarizer over the
-// host's governed contextmgr.Summarizer, so an SDK mid-run compaction
+// host's governed manager.Summarizer, so an SDK mid-run compaction
 // gets the same redaction, policy binding, and evidence tracking a
 // host-triggered compaction gets. Constructed once per turn in
 // adoptSDKCompaction; never nil once constructed, so it is never the
@@ -54,7 +54,7 @@ type sdkCompactionOutcome struct {
 const noSummarizerReason = "no summarizer is configured for this session"
 
 // Summarize maps the SDK's Summarizer interface onto the host's
-// governed contextmgr.Summarizer. msgs is the SDK's held-aside prior
+// governed manager.Summarizer. msgs is the SDK's held-aside prior
 // summary (if any, first element, Name == sdkplan.SummaryMessageName)
 // followed by the dropped turns (agentloop's summarizeDropped
 // contract). Success maps the host's 7 overlapping Summary fields
@@ -88,19 +88,19 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 
 	snapshot, err := a.l.TurnState.Snapshot()
 	if err != nil {
-		return sdkplan.Summary{}, a.skip(cliDropped, contextmgr.SummaryReasonHostState, key)
+		return sdkplan.Summary{}, a.skip(cliDropped, manager.SummaryReasonHostState, key)
 	}
 
 	summarizer := a.opts.SummaryConfig.Summarizer
 	request, err := a.buildRequest(snapshot, cliDropped)
 	if err != nil {
-		return sdkplan.Summary{}, a.skip(cliDropped, contextmgr.SummaryReasonRequestInvalid, key)
+		return sdkplan.Summary{}, a.skip(cliDropped, manager.SummaryReasonRequestInvalid, key)
 	}
 
 	summary, err := summarizeWithOneRetry(ctx, summarizer, request)
 	if err != nil {
-		reason := contextmgr.ClassifySummaryFailure(err)
-		if !contextmgr.RetryableSummaryFailure(err) {
+		reason := manager.ClassifySummaryFailure(err)
+		if !manager.RetryableSummaryFailure(err) {
 			return sdkplan.Summary{}, a.skip(cliDropped, reason, key)
 		}
 		a.l.summaryFailureReason = reason
@@ -115,10 +115,10 @@ func (a *sdkSummarizerAdapter) Summarize(ctx context.Context, msgs []sdkshape.Me
 // compaction removed. SourceExcerpts come from the dropped messages
 // themselves. The two carry different data from different sources.
 // See TestSDKSummarizerAdapterEvidenceProvenance, which pins both.
-func (a *sdkSummarizerAdapter) buildRequest(snapshot contextmgr.TurnStateSnapshot, cliDropped []provider.Message) (contextmgr.SummaryRequest, error) {
+func (a *sdkSummarizerAdapter) buildRequest(snapshot manager.TurnStateSnapshot, cliDropped []provider.Message) (manager.SummaryRequest, error) {
 	summarizer := a.opts.SummaryConfig.Summarizer
-	return contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
-		Version:           contextmgr.SummarySchemaVersion,
+	return manager.BuildSummaryRequest(manager.SummaryBuildInput{
+		Version:           manager.SummarySchemaVersion,
 		Objective:         SummaryFieldText(latestUserObjective(a.l.Messages)),
 		State:             snapshot.State,
 		Decisions:         snapshot.Decisions,
@@ -126,7 +126,7 @@ func (a *sdkSummarizerAdapter) buildRequest(snapshot contextmgr.TurnStateSnapsho
 		ChangedSurfaces:   snapshot.ChangedSurfaces,
 		OpenWork:          snapshot.OpenWork,
 		Risks:             snapshot.Risks,
-		SourceExcerpts:    contextmgr.SourceExcerpts(cliDropped, nil),
+		SourceExcerpts:    manager.SourceExcerpts(cliDropped, nil),
 		SourceRange:       a.summarySourceRange(),
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,
@@ -227,9 +227,9 @@ func applyLoopCalibration(l *Loop, estimate int) int {
 // on a retryable failure. The bound is exactly one retry: no loop and
 // no backoff. A cancelled context stops the retry, because a retry
 // would fail the same way at once.
-func summarizeWithOneRetry(ctx context.Context, summarizer *contextmgr.Summarizer, request contextmgr.SummaryRequest) (contextmgr.UntrustedSummary, error) {
+func summarizeWithOneRetry(ctx context.Context, summarizer *manager.Summarizer, request manager.SummaryRequest) (manager.UntrustedSummary, error) {
 	summary, err := summarizer.Summarize(ctx, request)
-	if err == nil || !contextmgr.RetryableSummaryFailure(err) {
+	if err == nil || !manager.RetryableSummaryFailure(err) {
 		return summary, err
 	}
 	if ctx != nil && ctx.Err() != nil {
@@ -241,7 +241,7 @@ func summarizeWithOneRetry(ctx context.Context, summarizer *contextmgr.Summarize
 // succeed records the pending outcome of a successful compaction,
 // memoizes the call under key, and maps the host summary onto the SDK
 // shape.
-func (a *sdkSummarizerAdapter) succeed(cliDropped, cliPrior []provider.Message, summary contextmgr.UntrustedSummary, request contextmgr.SummaryRequest, key string) sdkplan.Summary {
+func (a *sdkSummarizerAdapter) succeed(cliDropped, cliPrior []provider.Message, summary manager.UntrustedSummary, request manager.SummaryRequest, key string) sdkplan.Summary {
 	value := summary.Value()
 	rendered := RenderSummaryMessage(summary, request.Input.Evidence)
 	before, after := a.compactionTokens(cliDropped, cliPrior, rendered)
@@ -319,7 +319,7 @@ func splitSDKPriorSummary(msgs []sdkshape.Message) (prior *sdkshape.Message, dro
 // distinct compactions in the same turn ground and emit independently
 // while a re-observed (already-confirmed) outcome does not re-emit.
 // Mirrors compactionIdentity's role for the PM-driven path, which
-// keys off a contextmgr.CommitToken that does not exist at this call
+// keys off a manager.CommitToken that does not exist at this call
 // site. salt is always non-empty at both call sites (the rendered
 // summary content on success, the classified reason on a skip), so
 // the returned key is empty only when dropped is also empty AND salt

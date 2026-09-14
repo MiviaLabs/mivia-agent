@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
@@ -142,8 +142,8 @@ type MultiStepHandler struct {
 	OnEvent func(agent.Event)
 	// ContextPreparationManager is deliberately the preparation-only capability.
 	// A nested handler never receives a context store or checkpoint publisher.
-	ContextPreparationManager contextmgr.PreparationManager
-	ContextPreparationInput   contextmgr.PrepareInput
+	ContextPreparationManager manager.PreparationManager
+	ContextPreparationInput   manager.PrepareInput
 	// OnToolCancelReady, when set, is forwarded as this invocation's nested
 	// agent.Options.OnToolCancelReady: the SDK backend calls it once, as
 	// soon as the run's per-turn cancel registry exists, with a

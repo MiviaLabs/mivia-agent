@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // deleteSessionAdmissionSQL reclaims a named session's admission record.
@@ -19,7 +19,7 @@ const deleteSessionAdmissionSQL = `DELETE FROM chat_session_admissions WHERE wor
 // every delete path names it explicitly or the row outlives the session.
 const deleteSessionDirSQL = `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`
 
-func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextstate.Principal, name string) error {
+func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal state.Principal, name string) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 // resolveSnapshotNameBySessionID looks up a chat_sessions snapshot's catalog
 // name from its stored session_id column, for callers that identify a
 // session by session_id rather than by name. See DeleteSessionSnapshot.
-func (s *SQLite) resolveSnapshotNameBySessionID(ctx context.Context, principal contextstate.Principal, sessionID string) (string, bool, error) {
+func (s *SQLite) resolveSnapshotNameBySessionID(ctx context.Context, principal state.Principal, sessionID string) (string, bool, error) {
 	var name string
 	err := s.db.QueryRowContext(ctx, `SELECT name FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -79,9 +79,9 @@ func (s *SQLite) resolveSnapshotNameBySessionID(ctx context.Context, principal c
 // transaction owns reclaiming its admission record atomically with the
 // tombstone - or nothing owns the name at all, in which case any admission row
 // left behind is an orphan that no other path will ever reclaim.
-func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, principal contextstate.Principal, name string) error {
+func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, principal state.Principal, name string) error {
 	err := s.deleteCatalogContextSession(ctx, principal, name)
-	if !errors.Is(err, contextstate.ErrSessionNotFound) {
+	if !errors.Is(err, state.ErrSessionNotFound) {
 		return err
 	}
 	if _, sweepErr := s.db.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); sweepErr != nil {
@@ -103,7 +103,7 @@ func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, pr
 // separate commit: reclaiming the record here would durably destroy it before
 // the retention work is known to have landed, leaving a live session with no
 // admitted tool set.
-func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, error) {
+func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal state.Principal, name string) (int64, error) {
 	var count int64
 	var liveID string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
@@ -129,7 +129,7 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		// unrevoked and no retention audit. A snapshot with no live row
 		// behind it is already fully deleted.
 		if liveID != "" {
-			if err := tombstoneContextSessionTx(ctx, tx, principal, liveID, contextstate.WorktreeInstance{}); err != nil && !errors.Is(err, contextstate.ErrSessionNotFound) {
+			if err := tombstoneContextSessionTx(ctx, tx, principal, liveID, state.WorktreeInstance{}); err != nil && !errors.Is(err, state.ErrSessionNotFound) {
 				return err
 			}
 		}
@@ -149,12 +149,12 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 // context-backed session exposed through the catalog. Catalog callers may
 // select another session owned by the same subject, so the operation is
 // scoped by the owner tuple rather than the current principal's session ID.
-func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal contextstate.Principal, sessionID string) error {
+func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal state.Principal, sessionID string) error {
 	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	if err := tombstoneContextSessionTx(ctx, tx, principal, sessionID, contextstate.WorktreeInstance{}); err != nil {
+	if err := tombstoneContextSessionTx(ctx, tx, principal, sessionID, state.WorktreeInstance{}); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -170,7 +170,7 @@ func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal cont
 // plain (NULL-instance) row, and a bound row is refused there exactly as
 // before; a non-zero instance requires the row to carry that same instance.
 // Callers own the transaction and roll back on error.
-func tombstoneContextSessionTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) error {
+func tombstoneContextSessionTx(ctx context.Context, tx *sql.Tx, principal state.Principal, sessionID string, instance state.WorktreeInstance) error {
 	var revision int
 	var instanceID sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT session_revision,instance_id FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&revision, &instanceID)
@@ -178,7 +178,7 @@ func tombstoneContextSessionTx(ctx context.Context, tx *sql.Tx, principal contex
 		// Absent live row. The caller decides: the no-snapshot path treats it
 		// as "nothing by that name", while a path that already removed a
 		// snapshot treats it as "nothing more to retire" and ignores it.
-		return contextstate.ErrSessionNotFound
+		return state.ErrSessionNotFound
 	}
 	if err != nil {
 		return err
@@ -197,10 +197,10 @@ func tombstoneContextSessionTx(ctx context.Context, tx *sql.Tx, principal contex
 	if _, err = tx.ExecContext(ctx, `UPDATE context_payloads SET revoked=1,expires_at=? WHERE workspace_id=? AND subject_id=? AND session_id=? AND revoked=0`, expires, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO context_audits(audit_id,action,workspace_id,session_id,subject_id,revision,size,retention_class,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, auditID, string(contextstate.AuditDelete), principal.WorkspaceID, sessionID, principal.SubjectID, revision+1, 0, string(contextstate.RetentionCompliance), expires, created); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO context_audits(audit_id,action,workspace_id,session_id,subject_id,revision,size,retention_class,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, auditID, string(state.AuditDelete), principal.WorkspaceID, sessionID, principal.SubjectID, revision+1, 0, string(state.RetentionCompliance), expires, created); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO context_tombstones(session_id,workspace_id,subject_id,revision,retention_class,expires_at,audit_id,created_at) VALUES(?,?,?,?,?,?,?,?)`, sessionID, principal.WorkspaceID, principal.SubjectID, revision+1, string(contextstate.RetentionCompliance), expires, auditID, created); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO context_tombstones(session_id,workspace_id,subject_id,revision,retention_class,expires_at,audit_id,created_at) VALUES(?,?,?,?,?,?,?,?)`, sessionID, principal.WorkspaceID, principal.SubjectID, revision+1, string(state.RetentionCompliance), expires, auditID, created); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
@@ -210,7 +210,7 @@ func tombstoneContextSessionTx(ctx context.Context, tx *sql.Tx, principal contex
 	return err
 }
 
-func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextstate.Principal, names []string) error {
+func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal state.Principal, names []string) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}

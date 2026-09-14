@@ -11,8 +11,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -114,7 +114,7 @@ func noticeFixture(t *testing.T) (*storage.SQLite, string, string, string) {
 	if perr != nil {
 		t.Fatal(perr)
 	}
-	instWt1 := contextstate.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
+	instWt1 := state.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instWt1, canonWt1); err != nil {
 		t.Fatalf("begin wt1: %v", err)
 	}
@@ -122,7 +122,7 @@ func noticeFixture(t *testing.T) (*storage.SQLite, string, string, string) {
 		t.Fatalf("register wt1: %v", err)
 	}
 	writeNoticeMarker(t, canonWt1, instWt1)
-	instWtB := contextstate.WorktreeInstance{Worktree: "wtB", ID: "wt_00000000000000ff"}
+	instWtB := state.WorktreeInstance{Worktree: "wtB", ID: "wt_00000000000000ff"}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instWtB, canonWtB); err != nil {
 		t.Fatalf("begin wtB: %v", err)
 	}
@@ -133,7 +133,7 @@ func noticeFixture(t *testing.T) (*storage.SQLite, string, string, string) {
 	return store, mainDir, canonWt1, canonWtB
 }
 
-func writeNoticeMarker(t *testing.T, root string, instance contextstate.WorktreeInstance) {
+func writeNoticeMarker(t *testing.T, root string, instance state.WorktreeInstance) {
 	t.Helper()
 	dir := filepath.Join(root, ".mivia")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -147,7 +147,7 @@ func writeNoticeMarker(t *testing.T, root string, instance contextstate.Worktree
 
 func noticeEnableCtx(t *testing.T, sess *chat.Session, store *storage.SQLite, mainDir string) {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal(worktreeroute.WorkspaceID(mainDir), sess.SessionID, "local-user")
+	principal, err := state.NewPrincipal(worktreeroute.WorkspaceID(mainDir), sess.SessionID, "local-user")
 	if err != nil {
 		t.Fatal(err)
 	}

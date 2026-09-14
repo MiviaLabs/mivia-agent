@@ -11,8 +11,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -34,11 +34,11 @@ func (p *cliSummaryProvider) Summarize(_ context.Context, request contextmgr.Sum
 
 func cliSummarySummarizer(t *testing.T, provider contextmgr.SummaryProvider) *contextmgr.Summarizer {
 	t.Helper()
-	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	binding, err := state.NewBindingRevision("fake", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	summarizer, err := contextmgr.NewSummarizer(provider, binding, contextstate.PolicySnapshot{
+	summarizer, err := contextmgr.NewSummarizer(provider, binding, state.PolicySnapshot{
 		SummaryEnabled: true, RedactionConfigured: true, Provider: "fake", Model: "model",
 		CredentialScope: "scope", NetworkEnabled: true,
 		EndpointAllowlist: []string{"https://summary.invalid"},
@@ -69,7 +69,7 @@ func cliSummaryBuilder(summarizer *contextmgr.Summarizer) contextmgr.SummaryRequ
 			Provider:          summarizer.Binding.Provider,
 			Model:             summarizer.Binding.Model,
 			EndpointAllowlist: summarizer.Policy.EndpointAllowlist,
-			RedactionPolicy:   contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+			RedactionPolicy:   state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
 			Budget:            4096,
 			OutputLimit:       agent.SummaryOutputLimitTokens,
 		})
@@ -89,7 +89,7 @@ func TestContextSetupSummarySeamStructuralDefault(t *testing.T) {
 	defer store.Close()
 	var captured *contextmgr.ContextManager
 	original := setContextManagerForSetup
-	setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal contextstate.Principal, _ ...contextstate.PolicySnapshot) error {
+	setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal state.Principal, _ ...state.PolicySnapshot) error {
 		captured = manager
 		return session.SetContextManager(manager, principal)
 	}
@@ -143,7 +143,7 @@ func TestContextSetupSummarySeamPersistsMetadata(t *testing.T) {
 	fakeProvider := &cliSummaryProvider{}
 	summarizer := cliSummarySummarizer(t, fakeProvider)
 	original := setContextManagerForSetup
-	setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal contextstate.Principal, _ ...contextstate.PolicySnapshot) error {
+	setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal state.Principal, _ ...state.PolicySnapshot) error {
 		committer, ok := manager.CheckpointPublisher.(contextmgr.PreparationCommitter)
 		if !ok {
 			return fmt.Errorf("checkpoint publisher = %T, want PreparationCommitter", manager.CheckpointPublisher)

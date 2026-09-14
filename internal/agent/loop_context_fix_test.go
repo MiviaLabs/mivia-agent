@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -123,7 +123,7 @@ func cappedResultLoop(t *testing.T) (loop *Loop, spool *remainder.Spool, store *
 		PreparationManager: contextmgr.StructuralPreparationManager{},
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: 8000, Principal: principal, Binding: binding,
-			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+			Revision: state.Revision{Session: 1, Durable: 1, Source: 1},
 		},
 	})
 	if err != nil {
@@ -195,9 +195,9 @@ type recordingPrep struct {
 
 func (p *recordingPrep) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
 	p.inputs = append(p.inputs, input)
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
-		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
 	return contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
@@ -226,7 +226,7 @@ func TestPromptTooLongRetryRefreshesPreparation(t *testing.T) {
 		PreparationManager: prep,
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: 100_000, Principal: principal, Binding: binding,
-			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+			Revision: state.Revision{Session: 1, Durable: 1, Source: 1},
 		},
 	})
 	if err != nil {

@@ -19,7 +19,7 @@ import (
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 	sdktrace "github.com/MiviaLabs/mivia-ai-sdk/trace"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -42,20 +42,20 @@ func (plainSDKCompleter) ChatStream(context.Context, sdkshape.Request) (<-chan s
 // returns a fixed outcome, so a test can assert what the caller
 // priced.
 type recordingPreparationManager struct {
-	inputs []contextmgr.PrepareInput
-	out    contextmgr.Preparation
+	inputs []manager.PrepareInput
+	out    manager.Preparation
 	err    error
 }
 
-func (m *recordingPreparationManager) Prepare(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (m *recordingPreparationManager) Prepare(_ context.Context, in manager.PrepareInput) (manager.Preparation, error) {
 	m.inputs = append(m.inputs, in)
 	if m.err != nil {
-		return contextmgr.Preparation{}, m.err
+		return manager.Preparation{}, m.err
 	}
 	return m.out, nil
 }
 
-func (m *recordingPreparationManager) Discard(contextmgr.Preparation) {}
+func (m *recordingPreparationManager) Discard(manager.Preparation) {}
 
 // TestAdoptSDKRowsWrapsCompactionError pins the one error path of the
 // adoption table: a turn that adopts the SDK compaction triple over a
@@ -65,7 +65,7 @@ func TestAdoptSDKRowsWrapsCompactionError(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}}
 	opts := Options{
 		MaxContextTokens: 1000,
-		SummaryConfig:    SummaryConfig{Summarizer: &contextmgr.Summarizer{}},
+		SummaryConfig:    SummaryConfig{Summarizer: &manager.Summarizer{}},
 	}
 	var out sdkagentloop.Options
 	err := adoptSDKRows(l, &out, opts, plainSDKCompleter{}, newSDKTurnState())
@@ -146,7 +146,7 @@ func TestAdoptSDKAuditForwardsRecordToSink(t *testing.T) {
 // and report the exact per-iteration history.
 func TestSDKCompactionObserverRunsBookkeepingPrepare(t *testing.T) {
 	kept := []provider.Message{{Role: provider.RoleUser, Content: "kept"}}
-	pm := &recordingPreparationManager{out: contextmgr.Preparation{
+	pm := &recordingPreparationManager{out: manager.Preparation{
 		Messages:       kept,
 		Compacted:      true,
 		ElidedMessages: 2,
@@ -154,7 +154,7 @@ func TestSDKCompactionObserverRunsBookkeepingPrepare(t *testing.T) {
 	}}
 	l := &Loop{
 		Completer: &fakeCompleter{name: "test"},
-		TurnState: contextmgr.NewTurnState(),
+		TurnState: manager.NewTurnState(),
 	}
 	advertised := []provider.ToolSpec{{"type": "function", "function": map[string]any{"name": "advertised_tool"}}}
 	turn := newSDKTurnState()
@@ -206,7 +206,7 @@ func TestSDKCompactionObserverRunsBookkeepingPrepare(t *testing.T) {
 func TestSDKCompactionObserverPropagatesPrepareError(t *testing.T) {
 	want := errors.New("prepare exploded")
 	pm := &recordingPreparationManager{err: want}
-	l := &Loop{Completer: &fakeCompleter{name: "test"}, TurnState: contextmgr.NewTurnState()}
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, TurnState: manager.NewTurnState()}
 	var historyCalls int
 	opts := Options{
 		MaxContextTokens:      1000,

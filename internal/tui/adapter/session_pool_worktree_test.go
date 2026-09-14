@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestCreateFreshInDir_NilConfigErrors covers the "no config provided"
@@ -192,7 +192,7 @@ func TestGetOrCreateInDir_NoRepositoryFallsBackToPlainSession(t *testing.T) {
 	if strings.Contains(err.Error(), "resolve repository root") {
 		t.Fatalf("err = %v, want Root's not-a-repository failure swallowed, not propagated", err)
 	}
-	if !errors.Is(err, contextstate.ErrSessionNotFound) {
-		t.Fatalf("err = %v, want contextstate.ErrSessionNotFound (proves the plain load path ran)", err)
+	if !errors.Is(err, state.ErrSessionNotFound) {
+		t.Fatalf("err = %v, want state.ErrSessionNotFound (proves the plain load path ran)", err)
 	}
 }

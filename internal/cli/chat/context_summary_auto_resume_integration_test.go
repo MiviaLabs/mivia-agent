@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -106,7 +106,7 @@ func checkpointActiveContext(t *testing.T, store *storage.SQLite, session *chat.
 		t.Fatal(err)
 	}
 	var active []provider.Message
-	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &active); err != nil {
+	if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &active); err != nil {
 		t.Fatalf("decode active context: %v", err)
 	}
 	return active

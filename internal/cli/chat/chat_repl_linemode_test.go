@@ -12,7 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -157,7 +157,7 @@ func (c cancelingLineCompleter) ChatTurn(_ context.Context, req provider.Request
 // end through oneShotContext.
 type alwaysFailingPublisher struct{}
 
-func (alwaysFailingPublisher) Commit(context.Context, contextmgr.Preparation, contextmgr.TurnResult) error {
+func (alwaysFailingPublisher) Commit(context.Context, manager.Preparation, manager.TurnResult) error {
 	return errors.New("checkpoint commit failed")
 }
 
@@ -212,7 +212,7 @@ func TestOneShotHidesUpstreamFailureOnContextPath(t *testing.T) {
 	}
 	defer store.Close()
 	res := &config.Resolved{ProviderName: "test", Model: "model", SystemPrompt: "sys"}
-	sess := wireTestContextSessionWith(t, store, res, streamingLineCompleter{output: "uncommitted partial", err: upstream}, contextmgr.PreparationCommitter{Store: store})
+	sess := wireTestContextSessionWith(t, store, res, streamingLineCompleter{output: "uncommitted partial", err: upstream}, manager.PreparationCommitter{Store: store})
 	stdout := captureStdout(t)
 	err = oneShotContext(context.Background(), sess, "question", false, res, false)
 	gotOut := stdout()

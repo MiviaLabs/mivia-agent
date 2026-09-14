@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkplan "github.com/MiviaLabs/mivia-ai-sdk/context/plan"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -17,10 +17,10 @@ import (
 // runOnceSDK calls discardPreparation before the SDK loop runs, and the
 // bookkeeping Prepare that would populate the range only happens later, in
 // ObserveRequest - after compactHistory has already called Summarize.
-func newUnseededAdapterFixture(t *testing.T, summaryProvider contextmgr.SummaryProvider) (*sdkSummarizerAdapter, *Loop) {
+func newUnseededAdapterFixture(t *testing.T, summaryProvider manager.SummaryProvider) (*sdkSummarizerAdapter, *Loop) {
 	t.Helper()
 	l := &Loop{
-		TurnState: contextmgr.NewTurnState(),
+		TurnState: manager.NewTurnState(),
 		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "the user's objective"}},
 	}
 	opts := Options{
@@ -65,7 +65,7 @@ func TestSDKSummarizerSummarizesWithoutSeededPreparation(t *testing.T) {
 func TestSDKSummarizerMintsValidSourceRange(t *testing.T) {
 	a, _ := newUnseededAdapterFixture(t, fullSummaryProvider{})
 
-	request, err := a.buildRequest(contextmgr.TurnStateSnapshot{}, sdkMessagesToCLI(sdkTestMessages()))
+	request, err := a.buildRequest(manager.TurnStateSnapshot{}, sdkMessagesToCLI(sdkTestMessages()))
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestSDKSummarizerPrefersRecordedPreparationRange(t *testing.T) {
 	a, l := newAdapterFixture(t, fullSummaryProvider{})
 	want := l.LastPreparation.Token.Range
 
-	request, err := a.buildRequest(contextmgr.TurnStateSnapshot{}, sdkMessagesToCLI(sdkTestMessages()))
+	request, err := a.buildRequest(manager.TurnStateSnapshot{}, sdkMessagesToCLI(sdkTestMessages()))
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}

@@ -20,8 +20,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
@@ -88,7 +88,7 @@ func smokeWorktreeFixture(t *testing.T) smokeWorktreeCatalog {
 	if err != nil {
 		t.Fatalf("derive principal: %v", err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
+	instance := state.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonicalWt); err != nil {
 		t.Fatalf("begin creation: %v", err)
 	}
@@ -112,7 +112,7 @@ func smokeWorktreeFixture(t *testing.T) smokeWorktreeCatalog {
 // mirroring catalogSession in adapter_test.
 func smokeEnableCtx(t *testing.T, sess *chat.Session, store *storage.SQLite, mainDir string) {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal(worktreeroute.WorkspaceID(mainDir), sess.SessionID, "local-user")
+	principal, err := state.NewPrincipal(worktreeroute.WorkspaceID(mainDir), sess.SessionID, "local-user")
 	if err != nil {
 		t.Fatalf("mint principal: %v", err)
 	}

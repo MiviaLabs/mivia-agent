@@ -16,7 +16,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -26,7 +26,7 @@ func TestContextSetupCoverageRemovalGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mismatchedMarker := contextstate.WorktreeInstance{Worktree: "other", ID: "wt_1111111111111111"}
+	mismatchedMarker := state.WorktreeInstance{Worktree: "other", ID: "wt_1111111111111111"}
 	if err := WriteWorktreeMarker(mismatchedWorktree.Path, mismatchedMarker); err != nil {
 		t.Fatal(err)
 	}
@@ -37,11 +37,11 @@ func TestContextSetupCoverageRemovalGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrong := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_0000000000000000"}
+	wrong := state.WorktreeInstance{Worktree: worktree.Name, ID: "wt_0000000000000000"}
 	if _, err := BeginManagedWorktreeRemovalInStoreExpected(nil, repo, nil, wrong, true); err == nil {
 		t.Fatal("nil worktree removal succeeded")
 	}
-	if _, err := BeginManagedWorktreeRemovalInStoreExpected(nil, repo, worktree, wrong, true); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := BeginManagedWorktreeRemovalInStoreExpected(nil, repo, worktree, wrong, true); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("wrong expected instance error = %v", err)
 	}
 	if err := FinishManagedWorktreeRemoval(blockedContextRoot(t), instance); err == nil {
@@ -55,7 +55,7 @@ func TestContextSetupCoverageRemovalGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := ReactivateManagedWorktreeInStore(store, repo, wrong); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ReactivateManagedWorktreeInStore(store, repo, wrong); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("unknown reactivation error = %v", err)
 	}
 }
@@ -81,7 +81,7 @@ func TestContextSetupCoverageMarkerClassification(t *testing.T) {
 	if _, legacy, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", path); err != nil || !legacy {
 		t.Fatalf("legacy classification = %v, %v", legacy, err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-b", ID: "wt_1234567890abcdef"}
 	pathB := filepath.Join(repo, ".mivia", "worktrees", "wt-b")
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, pathB); err != nil {
 		t.Fatal(err)
@@ -103,14 +103,14 @@ func TestContextSetupCoverageExpectedInstanceValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, worktree.Path, contextstate.WorktreeInstance{}); err != nil {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, worktree.Path, state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
-	missing := contextstate.WorktreeInstance{Worktree: "missing", ID: "wt_1234567890abcdef"}
-	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, repo, missing); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	missing := state.WorktreeInstance{Worktree: "missing", ID: "wt_1234567890abcdef"}
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, repo, missing); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("missing expected instance error = %v", err)
 	}
-	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, repo, instance); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("outside worktree error = %v", err)
 	}
 	child := filepath.Join(worktree.Path, "child")
@@ -136,8 +136,8 @@ func TestContextSetupCoverageRoutePrincipalErrors(t *testing.T) {
 
 	original := contextSetupRoutePrincipal
 	injected := errors.New("route principal failure")
-	contextSetupRoutePrincipal = func(string) (contextstate.Principal, error) {
-		return contextstate.Principal{}, injected
+	contextSetupRoutePrincipal = func(string) (state.Principal, error) {
+		return state.Principal{}, injected
 	}
 	t.Cleanup(func() { contextSetupRoutePrincipal = original })
 
@@ -162,7 +162,7 @@ func TestContextSetupCoverageCreationAbandonError(t *testing.T) {
 
 	original := abandonContextWorktreeCreation
 	injected := errors.New("abandon failure")
-	abandonContextWorktreeCreation = func(*storage.SQLite, contextstate.Principal, contextstate.WorktreeInstance) error {
+	abandonContextWorktreeCreation = func(*storage.SQLite, state.Principal, state.WorktreeInstance) error {
 		return injected
 	}
 	t.Cleanup(func() { abandonContextWorktreeCreation = original })

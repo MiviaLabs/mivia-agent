@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // v4Store builds a store at schema v4 with no chat_session_dirs table: the

@@ -7,8 +7,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -18,7 +18,7 @@ import (
 func newIdentityTestSession(t *testing.T, store *storage.SQLite) *Session {
 	t.Helper()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestDecodeCatalogMessagesToleratesNamedSummaryFromOlderCheckpoints(t *testi
 		{Role: provider.RoleUser, Name: agent.SummaryMessageName, Content: "[host-injected context summary of the omitted earlier conversation]"},
 		{Role: provider.RoleUser, Content: "next question"},
 	}
-	data, err := contextstate.MarshalCanonical(msgs)
+	data, err := state.MarshalCanonical(msgs)
 	if err != nil {
 		t.Fatal(err)
 	}

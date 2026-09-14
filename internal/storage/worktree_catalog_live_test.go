@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // seedLiveWorktreeSession registers an active worktree instance, binds the

@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -22,7 +22,7 @@ type Loop struct {
 	Messages  []provider.Message
 	// LastPreparation is retained only after the final provider request
 	// succeeds. The owning chat surface commits it; the loop never publishes.
-	LastPreparation contextmgr.Preparation
+	LastPreparation manager.Preparation
 	HasPreparation  bool
 	// preCompactSource holds the pre-compaction history of the CURRENT
 	// compacted preparation, so the summary request can quote the dropped
@@ -73,7 +73,7 @@ type Loop struct {
 	// provider response that reports usage, and its Ratio is passed to
 	// context planning and token usage events. The zero value (Ratio=0) is
 	// safe: applyCalibration treats 0 as 1.0 (no correction).
-	Calibration contextmgr.Calibration
+	Calibration manager.Calibration
 	// Turn-level compaction accounting. A mid-turn step may elide enough to
 	// fit before the final step that commits; emit uses the first compacting
 	// BeforeTokens, the last compacting AfterTokens, and summed elision.
@@ -94,7 +94,7 @@ type Loop struct {
 	// for the summary envelope of the current run. Reset at Run start; it
 	// never leaves the loop and is never consulted by planning, commit, or
 	// checkpoint fingerprinting.
-	TurnState *contextmgr.TurnState
+	TurnState *manager.TurnState
 	// sdkPendingCompaction holds one SDK-driven compaction's outcome
 	// between sdkSummarizerAdapter.Summarize (which sets it) and the
 	// next Options.ObserveRequest call (which drains and grounds it

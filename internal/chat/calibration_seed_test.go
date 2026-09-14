@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 )
 
 type stubCalibrationSeeder struct {
@@ -77,7 +77,7 @@ func TestSeedCalibrationLeavesUncorrectedOnMiss(t *testing.T) {
 // that measurement - live evidence always beats history.
 func TestSeedCalibrationNeverOverwritesLiveObservations(t *testing.T) {
 	sess := seedTestSession(t)
-	live := contextmgr.Calibration{}
+	live := manager.Calibration{}
 	live.Update(1000, 1100)
 	sess.adoptCalibration(live)
 

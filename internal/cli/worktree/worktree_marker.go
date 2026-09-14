@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -54,13 +54,13 @@ func WorktreeMarkerPath(root string) string {
 	return workspace.NamespacePath(root, worktreeMarkerName)
 }
 
-func WriteWorktreeMarker(root string, instance contextstate.WorktreeInstance) error {
+func WriteWorktreeMarker(root string, instance state.WorktreeInstance) error {
 	canonical, err := CanonicalMarkerRoot(root)
 	if err != nil {
 		return err
 	}
 	if err := instance.Validate(); err != nil || instance.IsZero() {
-		return fmt.Errorf("invalid worktree marker instance: %w", contextstate.ErrInvalidDTO)
+		return fmt.Errorf("invalid worktree marker instance: %w", state.ErrInvalidDTO)
 	}
 	dir := workspace.NamespacePath(canonical)
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -305,53 +305,53 @@ func createWorktreeMarkerExcludeTemp(root *os.Root, dir string, mode os.FileMode
 }
 
 // ReadWorktreeMarker implements read worktree marker.
-func ReadWorktreeMarker(root string) (contextstate.WorktreeInstance, error) {
+func ReadWorktreeMarker(root string) (state.WorktreeInstance, error) {
 	canonical, err := CanonicalMarkerRoot(root)
 	if err != nil {
-		return contextstate.WorktreeInstance{}, err
+		return state.WorktreeInstance{}, err
 	}
 	markerRoot, err := os.OpenRoot(canonical)
 	if err != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("open worktree marker root: %w", err)
+		return state.WorktreeInstance{}, fmt.Errorf("open worktree marker root: %w", err)
 	}
 	defer markerRoot.Close()
 	if info, statErr := markerRoot.Lstat(workspace.Namespace); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker directory is a symlink")
+		return state.WorktreeInstance{}, fmt.Errorf("worktree marker directory is a symlink")
 	} else if statErr != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("inspect worktree marker directory: %w", statErr)
+		return state.WorktreeInstance{}, fmt.Errorf("inspect worktree marker directory: %w", statErr)
 	}
 	markerPath := filepath.Join(workspace.Namespace, worktreeMarkerName)
 	if info, statErr := markerRoot.Lstat(markerPath); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is not a regular file")
+		return state.WorktreeInstance{}, fmt.Errorf("worktree marker is not a regular file")
 	} else if statErr != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("inspect worktree marker: %w", statErr)
+		return state.WorktreeInstance{}, fmt.Errorf("inspect worktree marker: %w", statErr)
 	}
 	file, err := openWorktreeMarkerFile(markerRoot, markerPath)
 	if err != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("read worktree marker: %w", err)
+		return state.WorktreeInstance{}, fmt.Errorf("read worktree marker: %w", err)
 	}
 	defer file.Close()
 	info, err := statWorktreeMarkerFile(file)
 	if err != nil || !info.Mode().IsRegular() {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is not a regular file")
+		return state.WorktreeInstance{}, fmt.Errorf("worktree marker is not a regular file")
 	}
 	if info.Size() > maxWorktreeMarkerBytes {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is too large")
+		return state.WorktreeInstance{}, fmt.Errorf("worktree marker is too large")
 	}
 	data, err := readWorktreeMarkerFile(io.LimitReader(file, maxWorktreeMarkerBytes+1))
 	if err != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("read worktree marker: %w", err)
+		return state.WorktreeInstance{}, fmt.Errorf("read worktree marker: %w", err)
 	}
 	if len(data) > maxWorktreeMarkerBytes {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is too large")
+		return state.WorktreeInstance{}, fmt.Errorf("worktree marker is too large")
 	}
 	var marker worktreeMarker
 	if err := json.Unmarshal(data, &marker); err != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("decode worktree marker: %w", err)
+		return state.WorktreeInstance{}, fmt.Errorf("decode worktree marker: %w", err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: marker.Worktree, ID: marker.ID}
+	instance := state.WorktreeInstance{Worktree: marker.Worktree, ID: marker.ID}
 	if marker.Version != 1 || instance.IsZero() || instance.Validate() != nil {
-		return contextstate.WorktreeInstance{}, fmt.Errorf("invalid worktree marker: %w", contextstate.ErrInvalidDTO)
+		return state.WorktreeInstance{}, fmt.Errorf("invalid worktree marker: %w", state.ErrInvalidDTO)
 	}
 	return instance, nil
 }

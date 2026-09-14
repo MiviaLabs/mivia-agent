@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -13,7 +13,7 @@ import (
 // history with ONE ruler.
 //
 // The planner scores a CALIBRATED cost against 80% of the budget
-// (contextmgr.Plan). While ContextUsage reported the RAW estimate, a session
+// (manager.Plan). While ContextUsage reported the RAW estimate, a session
 // whose estimator over-counted showed a percentage inflated by 1/ratio - up to
 // 5x at the calibration floor - so the badge could sit far above 100% while
 // the planner correctly measured the same messages below the trigger and never
@@ -41,12 +41,12 @@ func TestContextUsageAppliesTheSameCalibrationAsTheTrigger(t *testing.T) {
 	// relative to what the provider actually bills, which is exactly when the
 	// raw gauge ran ahead of the trigger.
 	corrected := newSession()
-	corrected.Calibration = contextmgr.Calibration{Ratio: 0.5, Samples: 4}
+	corrected.Calibration = manager.Calibration{Ratio: 0.5, Samples: 4}
 	got := corrected.ContextUsage()
 
 	want := corrected.Calibration.Apply(uncalibrated.UsedTokens)
 	if got.UsedTokens != want {
-		t.Errorf("calibrated used tokens = %d, want %d (the same contextmgr.Calibration.Apply the planner uses)",
+		t.Errorf("calibrated used tokens = %d, want %d (the same manager.Calibration.Apply the planner uses)",
 			got.UsedTokens, want)
 	}
 	if got.UsedTokens >= uncalibrated.UsedTokens {
@@ -65,15 +65,15 @@ func TestContextUsageAppliesTheSameCalibrationAsTheTrigger(t *testing.T) {
 // until the first observation lands), and one with samples scales by its
 // ratio.
 func TestCalibrationApplyMatchesThePlannerConvention(t *testing.T) {
-	if got := (contextmgr.Calibration{}).Apply(1000); got != 1000 {
+	if got := (manager.Calibration{}).Apply(1000); got != 1000 {
 		t.Errorf("zero-value calibration applied a correction: got %d, want 1000", got)
 	}
 	// A ratio is only meaningful alongside samples; a stray ratio with no
 	// samples must still be inert, matching buildPrepareInput's own guard.
-	if got := (contextmgr.Calibration{Ratio: 0.5}).Apply(1000); got != 1000 {
+	if got := (manager.Calibration{Ratio: 0.5}).Apply(1000); got != 1000 {
 		t.Errorf("sample-less calibration applied its ratio: got %d, want 1000", got)
 	}
-	if got := (contextmgr.Calibration{Ratio: 0.5, Samples: 3}).Apply(1000); got != 500 {
+	if got := (manager.Calibration{Ratio: 0.5, Samples: 3}).Apply(1000); got != 500 {
 		t.Errorf("calibrated estimate = %d, want 500", got)
 	}
 }

@@ -1,7 +1,7 @@
 package worktree
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // CanonicalWorktreeDialogRoot is the canonical worktree dialog root value.

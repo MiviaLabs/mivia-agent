@@ -15,7 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -46,22 +46,22 @@ func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocatio
 }
 
 func bindManagedWorktreeSession(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string) error {
-	return bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, storePath, contextstate.WorktreeInstance{})
+	return bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, storePath, state.WorktreeInstance{})
 }
 
-func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string, expected contextstate.WorktreeInstance) error {
+func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string, expected state.WorktreeInstance) error {
 	name, err := vcs.CurrentWorktreeName(context.Background(), workspaceRoot)
 	if err != nil {
 		return err
 	}
 	if name == "" {
 		if !expected.IsZero() {
-			return contextstate.ErrWorktreeDeleted
+			return state.ErrWorktreeDeleted
 		}
 		return nil
 	}
 	if !expected.IsZero() && expected.Worktree != name {
-		return contextstate.ErrWorktreeDeleted
+		return state.ErrWorktreeDeleted
 	}
 	worktree, err := vcs.Resolve(context.Background(), repositoryRoot, name)
 	if err != nil {
@@ -89,14 +89,14 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 	instance, markerErr := cliworktree.ReadWorktreeMarker(worktree.Path)
 	if errors.Is(markerErr, os.ErrNotExist) {
 		if !expected.IsZero() {
-			return contextstate.ErrWorktreeDeleted
+			return state.ErrWorktreeDeleted
 		}
 		info, legacy, err := classifyMissingMarkerForBind(store, principal, name, canonicalPath)
 		if err != nil {
 			return err
 		}
 		if !info.Instance.IsZero() {
-			return fmt.Errorf("managed worktree %q has state %q but no marker: %w", name, info.State, contextstate.ErrWorktreeDeleted)
+			return fmt.Errorf("managed worktree %q has state %q but no marker: %w", name, info.State, state.ErrWorktreeDeleted)
 		}
 		if legacy {
 			return fmt.Errorf("worktree %q requires adoption; run mivia worktree adopt %s", name, name)
@@ -110,7 +110,7 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 		return fmt.Errorf("worktree session marker does not match %q", name)
 	}
 	if !expected.IsZero() && instance != expected {
-		return contextstate.ErrWorktreeDeleted
+		return state.ErrWorktreeDeleted
 	}
 	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
 		return fmt.Errorf("validate worktree session binding: %w", err)

@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestMarkerCoverageInjectedPublishFailures(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	originalWrite := writeWorktreeMarkerTemp
 	originalClose := closeWorktreeMarkerTemp
 	originalRename := renameWorktreeMarker

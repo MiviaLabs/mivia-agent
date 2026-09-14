@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // MarshalCompactionEvent serializes only the typed compaction shape. Generic
@@ -11,24 +11,24 @@ func MarshalCompactionEvent(event CompactionEvent) ([]byte, error) {
 	if err := event.Validate(); err != nil {
 		return nil, err
 	}
-	return contextstate.MarshalCanonical(event)
+	return state.MarshalCanonical(event)
 }
 
 // UnmarshalCompactionEvent restores the constructor seal only after all wire
 // fields have been decoded and validated.
 func UnmarshalCompactionEvent(data []byte) (CompactionEvent, error) {
 	var wire struct {
-		Trigger        string                   `json:"trigger"`
-		BeforeTokens   int                      `json:"before_tokens"`
-		AfterTokens    int                      `json:"after_tokens"`
-		ElidedMessages int                      `json:"elided_messages"`
-		ElidedBytes    int                      `json:"elided_bytes"`
-		SourceRange    contextstate.SourceRange `json:"source_range"`
-		SummaryVersion uint32                   `json:"summary_version"`
-		Summarized     bool                     `json:"summarized"`
-		Reason         string                   `json:"reason,omitempty"`
+		Trigger        string            `json:"trigger"`
+		BeforeTokens   int               `json:"before_tokens"`
+		AfterTokens    int               `json:"after_tokens"`
+		ElidedMessages int               `json:"elided_messages"`
+		ElidedBytes    int               `json:"elided_bytes"`
+		SourceRange    state.SourceRange `json:"source_range"`
+		SummaryVersion uint32            `json:"summary_version"`
+		Summarized     bool              `json:"summarized"`
+		Reason         string            `json:"reason,omitempty"`
 	}
-	if err := contextstate.UnmarshalCanonical(data, &wire); err != nil {
+	if err := state.UnmarshalCanonical(data, &wire); err != nil {
 		return CompactionEvent{}, err
 	}
 	return NewCompactionEvent(CompactionEventParams{
@@ -46,7 +46,7 @@ func MarshalPrefixResetEvent(event PrefixResetEvent) ([]byte, error) {
 	if err := event.Validate(); err != nil {
 		return nil, err
 	}
-	return contextstate.MarshalCanonical(event)
+	return state.MarshalCanonical(event)
 }
 
 // UnmarshalPrefixResetEvent restores the constructor seal only after all wire
@@ -61,7 +61,7 @@ func UnmarshalPrefixResetEvent(data []byte) (PrefixResetEvent, error) {
 		OutgoingSurfaceGeneration uint64   `json:"outgoing_surface_generation"`
 		IncomingSurfaceGeneration uint64   `json:"incoming_surface_generation"`
 	}
-	if err := contextstate.UnmarshalCanonical(data, &wire); err != nil {
+	if err := state.UnmarshalCanonical(data, &wire); err != nil {
 		return PrefixResetEvent{}, err
 	}
 	return NewPrefixResetEvent(PrefixResetEventParams{Categories: wire.Categories, OutgoingModelGeneration: wire.OutgoingModelGeneration, IncomingModelGeneration: wire.IncomingModelGeneration, OutgoingSurfaceGeneration: wire.OutgoingSurfaceGeneration, IncomingSurfaceGeneration: wire.IncomingSurfaceGeneration})

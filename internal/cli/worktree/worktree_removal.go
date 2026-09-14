@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
@@ -70,25 +70,25 @@ func cleanupStaleWorktreeStorage(root, name string) (bool, error) {
 // worktree name, tombstoning its sessions. It reports whether any row
 // existed. Call it only when the physical worktree is gone: the name owns at
 // most one non-deleted instance, so a same-name replacement is never touched.
-func CleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Principal, name string) (bool, error) {
+func CleanupStaleWorktreeRows(store *storage.SQLite, principal state.Principal, name string) (bool, error) {
 	cleaned := false
 	live, err := store.LiveWorktreeInstance(context.Background(), principal, name)
 	switch {
 	case err == nil:
 		cleaned = true
 		switch live.State {
-		case contextstate.WorktreeActive:
+		case state.WorktreeActive:
 			if err := store.BeginWorktreeDeletion(context.Background(), principal, live.Instance); err != nil {
 				return cleaned, err
 			}
 			if _, err := store.DeleteWorktreeSessions(context.Background(), principal, live.Instance); err != nil {
 				return cleaned, err
 			}
-		case contextstate.WorktreeCreating:
+		case state.WorktreeCreating:
 			if err := store.AbandonWorktreeCreation(context.Background(), principal, live.Instance); err != nil {
 				return cleaned, err
 			}
-		case contextstate.WorktreeDeleting:
+		case state.WorktreeDeleting:
 			if _, err := store.DeleteWorktreeSessions(context.Background(), principal, live.Instance); err != nil {
 				return cleaned, err
 			}
@@ -102,7 +102,7 @@ func CleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Prin
 		if removed > 0 {
 			cleaned = true
 		}
-	case errors.Is(err, contextstate.ErrWorktreeDeleted):
+	case errors.Is(err, state.ErrWorktreeDeleted):
 		// No live instance row for the name. Remove every route row, bound or
 		// legacy: a bound route of a dead instance would otherwise stay in
 		// storage forever and resurface as a zombie row.
@@ -120,12 +120,12 @@ func CleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Prin
 }
 
 // FinishManagedWorktreeRemoval implements finish managed worktree removal.
-func FinishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
+func FinishManagedWorktreeRemoval(root string, instance state.WorktreeInstance) error {
 	return FinishManagedWorktreeRemovalInStore(nil, root, instance)
 }
 
 // FinishManagedWorktreeRemovalInStore implements finish managed worktree removal in store.
-func FinishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
+func FinishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance state.WorktreeInstance) error {
 	ownedStore := false
 	if store == nil {
 		var err error

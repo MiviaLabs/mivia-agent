@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // boundaryCompactionSession wires a durable-context agent session against a

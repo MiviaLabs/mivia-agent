@@ -5,17 +5,17 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-func newTurnJournalTestStore(t *testing.T) (*SQLite, contextstate.Principal) {
+func newTurnJournalTestStore(t *testing.T) (*SQLite, state.Principal) {
 	t.Helper()
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	principal, err := contextstate.NewPrincipal("workspace", "session-1", "subject")
+	principal, err := state.NewPrincipal("workspace", "session-1", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestAppendTurnJournalEntryRoundTrips(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
 
-	entries := []contextstate.TurnJournalEntry{
+	entries := []state.TurnJournalEntry{
 		{Kind: "tool_start", Payload: []byte(`{"name":"read_file"}`)},
 		{Kind: "tool_end", Payload: []byte(`{"name":"read_file","output":"ok"}`)},
 	}
@@ -74,7 +74,7 @@ func TestLoadTurnJournalEmptyForUnknownTurn(t *testing.T) {
 func TestClearTurnJournalRemovesOnlyThatTurn(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
-	entry := contextstate.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
+	entry := state.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
 
 	must := func(sessionID, turnID string) {
 		t.Helper()
@@ -106,7 +106,7 @@ func TestClearTurnJournalRemovesOnlyThatTurn(t *testing.T) {
 func TestListJournaledTurnsReturnsOnlyNonEmptyTurns(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
-	entry := contextstate.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
+	entry := state.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
 
 	for _, turnID := range []string{"turn:1", "turn:2", "turn:3"} {
 		if err := store.AppendTurnJournalEntry(ctx, principal, "sess-A", turnID, entry); err != nil {
@@ -136,7 +136,7 @@ func TestListJournaledTurnsReturnsOnlyNonEmptyTurns(t *testing.T) {
 // fail-closed contract every other catalog method in this package has.
 func TestAppendTurnJournalEntryRejectsInvalidPrincipal(t *testing.T) {
 	store, _ := newTurnJournalTestStore(t)
-	err := store.AppendTurnJournalEntry(context.Background(), contextstate.Principal{}, "sess-A", "turn:1", contextstate.TurnJournalEntry{Kind: "k", Payload: []byte("{}")})
+	err := store.AppendTurnJournalEntry(context.Background(), state.Principal{}, "sess-A", "turn:1", state.TurnJournalEntry{Kind: "k", Payload: []byte("{}")})
 	if err == nil {
 		t.Fatal("want an error for an invalid (zero) principal, got nil")
 	}

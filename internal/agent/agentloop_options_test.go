@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -523,9 +523,9 @@ func (c *captureCompleter) ChatTurn(_ context.Context, req provider.Request) (*p
 type compactAndSummarizeManager struct{}
 
 func (c *compactAndSummarizeManager) Prepare(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: in.Principal.SessionID, Sequence: in.Revision.Source},
-		End:   contextstate.SourceID{SessionID: in.Principal.SessionID, Sequence: in.Revision.Source},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: in.Principal.SessionID, Sequence: in.Revision.Source},
+		End:   state.SourceID{SessionID: in.Principal.SessionID, Sequence: in.Revision.Source},
 	}
 	return contextmgr.CapturePreparation(in, contextmgr.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
@@ -573,7 +573,7 @@ func TestPrepareSDKHistoryInjectsSummary(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "a2"},
 		{Role: provider.RoleUser, Content: "m3"},
 	}
-	principal, perr := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, perr := state.NewPrincipal("workspace", "session", "subject")
 	if perr != nil {
 		t.Fatalf("NewPrincipal: %v", perr)
 	}
@@ -583,11 +583,11 @@ func TestPrepareSDKHistoryInjectsSummary(t *testing.T) {
 		PreparationManager: &compactAndSummarizeManager{},
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: 100, Principal: principal, Binding: binding,
-			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+			Revision: state.Revision{Session: 1, Durable: 1, Source: 1},
 		},
 		SummaryConfig: SummaryConfig{
 			Summarizer: &summ,
-			Redaction:  contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+			Redaction:  state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
 		},
 	}
 	_, err := RunAgentLoopOnce(context.Background(), l, opts, in)
@@ -613,7 +613,7 @@ func TestPrepareSDKHistoryNoSummarizerCompactsOnly(t *testing.T) {
 		},
 	}
 	l := &Loop{Completer: cap, Tools: tools.NewRegistry()}
-	principal, perr := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, perr := state.NewPrincipal("workspace", "session", "subject")
 	if perr != nil {
 		t.Fatalf("NewPrincipal: %v", perr)
 	}
@@ -630,7 +630,7 @@ func TestPrepareSDKHistoryNoSummarizerCompactsOnly(t *testing.T) {
 		PreparationManager: &compactAndSummarizeManager{},
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: 100, Principal: principal, Binding: binding,
-			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+			Revision: state.Revision{Session: 1, Durable: 1, Source: 1},
 		},
 		// SummaryConfig.Summarizer left nil.
 	}
@@ -642,9 +642,9 @@ func TestPrepareSDKHistoryNoSummarizerCompactsOnly(t *testing.T) {
 	}
 }
 
-func mustBinding(t *testing.T) contextstate.BindingRevision {
+func mustBinding(t *testing.T) state.BindingRevision {
 	t.Helper()
-	b, err := contextstate.NewBindingRevision("summary-test", "model", 1)
+	b, err := state.NewBindingRevision("summary-test", "model", 1)
 	if err != nil {
 		t.Fatalf("NewBindingRevision: %v", err)
 	}

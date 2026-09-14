@@ -128,7 +128,7 @@
       ],
       "reason": "Compile's compilePartial error wrap, and the code's own preceding comment already states why: 'The same parse regexp.Compile just ran, so this cannot fail where that succeeded.' Independently confirmed via internal/redact/partial.go's own accepted entry: compilePartial's only fallible step, syntax.Compile, never actually returns a non-nil error in the standard library's current implementation."
     },
-    "internal/contextmgr/planner_idempotency.go": {
+    "internal/context/manager/planner_idempotency.go": {
       "lines": [
         64,
         65

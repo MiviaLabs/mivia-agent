@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -19,25 +19,25 @@ import (
 
 type dispatcherPreparationProbe struct{ prepares int }
 
-func (p *dispatcherPreparationProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *dispatcherPreparationProbe) Prepare(_ context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	p.prepares++
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
-		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
-	return contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	return manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, input.Messages, false, "dispatcher-prep-test")
 }
 
-func (*dispatcherPreparationProbe) Discard(contextmgr.Preparation) {}
+func (*dispatcherPreparationProbe) Discard(manager.Preparation) {}
 
 func TestDispatcherInjectsIsolatedContextManager(t *testing.T) {
-	principal, err := contextstate.NewPrincipal("workspace", "nested-session", "subject")
+	principal, err := state.NewPrincipal("workspace", "nested-session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("null", "model", 1)
+	binding, err := state.NewBindingRevision("null", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestDispatcherInjectsIsolatedContextManager(t *testing.T) {
 	d, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry: tools.NewRegistry(), Completer: nullCompleter{}, Model: "model",
 		Config: config.DefaultSubagentConfig, ContextPreparationManager: probe,
-		ContextPreparationInput: contextmgr.PrepareInput{Principal: principal, Binding: binding, Budget: 100},
+		ContextPreparationInput: manager.PrepareInput{Principal: principal, Binding: binding, Budget: 100},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -82,15 +82,15 @@ func TestSharedSQLiteInjectedIntoChatAndLedger(t *testing.T) {
 		t.Fatalf("ledger store = %T/%p, want shared %p", repo.UnderlyingStore(), repo.UnderlyingStore(), store)
 	}
 	d.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "shared-session", "subject")
+	principal, err := state.NewPrincipal("workspace", "shared-session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("null", "model", 1)
+	binding, err := state.NewBindingRevision("null", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatalf("borrowed ledger closed the shared store: %v", err)
 	}
 }

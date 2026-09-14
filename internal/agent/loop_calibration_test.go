@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -84,31 +84,31 @@ func TestLoopCalibrationUsesReserveFreePromptEstimate(t *testing.T) {
 // calibrationProbe records the PrepareInput it was handed so tests can assert
 // the loop wired its rolling calibration into context planning.
 type calibrationProbe struct {
-	lastInput contextmgr.PrepareInput
+	lastInput manager.PrepareInput
 }
 
-func (p *calibrationProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *calibrationProbe) Prepare(_ context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	p.lastInput = input
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
-		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
-	return contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	return manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, input.Messages, false, "calibration-probe")
 }
 
-func (p *calibrationProbe) Discard(contextmgr.Preparation) {}
+func (p *calibrationProbe) Discard(manager.Preparation) {}
 
 // A loop that has accumulated calibration samples must pass its correction
 // ratio into context planning; a zero-sample loop must leave the input's
 // CalibrationRatio untouched (the caller's own value wins).
 func TestPrepareStepWiresCalibrationRatio(t *testing.T) {
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("context-test", "model", 1)
+	binding, err := state.NewBindingRevision("context-test", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +116,11 @@ func TestPrepareStepWiresCalibrationRatio(t *testing.T) {
 	loop := &Loop{
 		Completer:   preparationSuccessCompleter{},
 		Tools:       tools.NewRegistry(),
-		Calibration: contextmgr.Calibration{Ratio: 1.7, Samples: 3},
+		Calibration: manager.Calibration{Ratio: 1.7, Samples: 3},
 	}
 	if _, err := loop.Run(context.Background(), "question", Options{
 		Model: "model", MaxContextTokens: 100, PreparationManager: probe,
-		PreparationInput: contextmgr.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
+		PreparationInput: manager.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestPrepareStepWiresCalibrationRatio(t *testing.T) {
 	loop = &Loop{Completer: preparationSuccessCompleter{}, Tools: tools.NewRegistry()}
 	if _, err := loop.Run(context.Background(), "question", Options{
 		Model: "model", MaxContextTokens: 100, PreparationManager: probe,
-		PreparationInput: contextmgr.PrepareInput{
+		PreparationInput: manager.PrepareInput{
 			Budget: 100, Principal: principal, Binding: binding, CalibrationRatio: 1.3,
 		},
 	}); err != nil {

@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestCoverageWriteMarkerRejectsMissingRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := WriteWorktreeMarker(root, instance); err == nil {
 		t.Fatal("marker write to missing root succeeded")
 	}
@@ -209,7 +209,7 @@ func TestLifecycleLockCoverageBusyAndClose(t *testing.T) {
 
 func TestMarkerCoverageInvalidWriteInstance(t *testing.T) {
 	root := t.TempDir()
-	if err := WriteWorktreeMarker(root, contextstate.WorktreeInstance{}); err == nil {
+	if err := WriteWorktreeMarker(root, state.WorktreeInstance{}); err == nil {
 		t.Fatal("zero marker instance succeeded")
 	}
 }

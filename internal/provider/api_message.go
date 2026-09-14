@@ -4,7 +4,7 @@ import "strings"
 
 // ReasoningElisionMarker is the host-authored placeholder that replaces a
 // prior turn's assistant chain-of-thought when context compaction elides it
-// (internal/contextmgr owns the elision; this package owns the constant
+// (internal/context/manager owns the elision; this package owns the constant
 // because this package decides what reaches the wire).
 //
 // It exists as a non-empty string for exactly one reason: a provider with

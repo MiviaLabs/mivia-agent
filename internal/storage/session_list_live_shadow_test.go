@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // The desktop app's "sessions list" adapter reads each entry's session_id
@@ -19,13 +19,13 @@ import (
 
 // listedEntry returns the single listing entry for name, failing the test
 // if it is absent or duplicated.
-func listedEntry(t *testing.T, store *SQLite, principal contextstate.Principal, name string) contextstate.SessionCatalogInfo {
+func listedEntry(t *testing.T, store *SQLite, principal state.Principal, name string) state.SessionCatalogInfo {
 	t.Helper()
 	infos, err := store.ListSessions(context.Background(), principal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found []contextstate.SessionCatalogInfo
+	var found []state.SessionCatalogInfo
 	for _, info := range infos {
 		if info.Name == name {
 			found = append(found, info)
@@ -50,17 +50,17 @@ func TestListSessionsSurfacesLiveRowBehindTurnSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "LIVESESSIONIDXXXXXXXXXXX", "subject")
+	principal, err := state.NewPrincipal("workspace", "LIVESESSIONIDXXXXXXXXXXX", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(context.Background(), principal, principal.SessionID, []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+	if err := store.SaveSession(context.Background(), principal, principal.SessionID, []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, state.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "my title", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "my title", state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,11 +82,11 @@ func TestListSessionsKeepsPlainSnapshotUntitled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(context.Background(), principal, "named-snapshot", []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{}); err != nil {
+	if err := store.SaveSession(context.Background(), principal, "named-snapshot", []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, state.SessionSaveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 

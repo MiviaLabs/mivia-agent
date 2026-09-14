@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -131,7 +131,7 @@ func (p *capturingContextPublisher) committed() []contextmgr.TurnResult {
 // (and therefore commitContextTurn) now runs on the post-publication history.
 func TestTurnStartMemoryPublicationSurvivesContextCommit(t *testing.T) {
 	sess := agentTurnSession(t, &fakeCompleter{out: "turn answer"})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

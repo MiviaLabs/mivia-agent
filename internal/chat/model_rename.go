@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // RenameModel points a binding at a different model name without resolving a
@@ -95,7 +95,7 @@ func (s *Session) SelectModel(name string) bool {
 	s.binding.ModelGeneration = newBinding.ModelGeneration
 	s.invalidateLocked()
 	if contextEnabled {
-		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
+		s.contextHead = state.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
 	}
 	// The selected model is wire-affecting: recapture and emit exactly one
 	// reset so the model change is observable and the cache stays fresh

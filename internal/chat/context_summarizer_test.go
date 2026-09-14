@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -19,7 +19,7 @@ func TestSetSummarizerReplacesOnlyTheSummarizer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

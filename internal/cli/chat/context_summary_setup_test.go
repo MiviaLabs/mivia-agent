@@ -8,8 +8,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -313,9 +313,9 @@ func TestEnableSessionContextWiresSummary(t *testing.T) {
 	defer store.Close()
 	res := summaryWiringResolved(t)
 	var captured *contextmgr.ContextManager
-	var capturedPolicy contextstate.PolicySnapshot
+	var capturedPolicy state.PolicySnapshot
 	original := setContextManagerForSetup
-	setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal contextstate.Principal, policies ...contextstate.PolicySnapshot) error {
+	setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal state.Principal, policies ...state.PolicySnapshot) error {
 		captured = manager
 		if len(policies) > 0 {
 			capturedPolicy = policies[0]

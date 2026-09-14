@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -113,19 +113,19 @@ func TestAdoptCalibrationKeepsTheMostInformedValue(t *testing.T) {
 	// samples, so the larger sample count is the more informed one. A turn
 	// that observed nothing must never overwrite one that did.
 	s := calibrationSession(&calibrationCompleter{})
-	s.Calibration = contextmgr.Calibration{Ratio: 1.4, Samples: 5}
+	s.Calibration = manager.Calibration{Ratio: 1.4, Samples: 5}
 
-	s.adoptCalibration(contextmgr.Calibration{})
+	s.adoptCalibration(manager.Calibration{})
 	if s.Calibration.Samples != 5 || s.Calibration.Ratio != 1.4 {
 		t.Fatalf("a turn with no observations clobbered the calibrator: %+v", s.Calibration)
 	}
 
-	s.adoptCalibration(contextmgr.Calibration{Ratio: 2.0, Samples: 3})
+	s.adoptCalibration(manager.Calibration{Ratio: 2.0, Samples: 3})
 	if s.Calibration.Samples != 5 || s.Calibration.Ratio != 1.4 {
 		t.Fatalf("a less-informed turn won: %+v", s.Calibration)
 	}
 
-	s.adoptCalibration(contextmgr.Calibration{Ratio: 2.0, Samples: 7})
+	s.adoptCalibration(manager.Calibration{Ratio: 2.0, Samples: 7})
 	if s.Calibration.Samples != 7 || s.Calibration.Ratio != 2.0 {
 		t.Fatalf("a more-informed turn was dropped: %+v", s.Calibration)
 	}

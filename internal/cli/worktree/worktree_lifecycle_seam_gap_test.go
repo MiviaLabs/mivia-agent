@@ -11,7 +11,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
@@ -33,7 +33,7 @@ func TestLifecycleRegisterAdoptedFaultRemovesMarker(t *testing.T) {
 
 	sentinel := errors.New("scripted register fault")
 	original := lifecycleRegisterAdoptedInstance
-	lifecycleRegisterAdoptedInstance = func(context.Context, *storage.SQLite, contextstate.Principal, contextstate.WorktreeInstance, string) error {
+	lifecycleRegisterAdoptedInstance = func(context.Context, *storage.SQLite, state.Principal, state.WorktreeInstance, string) error {
 		return sentinel
 	}
 	t.Cleanup(func() { lifecycleRegisterAdoptedInstance = original })

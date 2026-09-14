@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestSessionTitlePersistsAndClears(t *testing.T) {
@@ -14,14 +14,14 @@ func TestSessionTitlePersistsAndClears(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session-title", "subject")
+	principal, err := state.NewPrincipal("workspace", "session-title", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "  A title  ", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "  A title  ", state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	// A titled session is listed immediately, even with zero committed turns
@@ -45,7 +45,7 @@ func TestSessionTitlePersistsAndClears(t *testing.T) {
 	if len(infos) != 1 || infos[0].SessionID != principal.SessionID || infos[0].Title != "A title" {
 		t.Fatalf("infos = %+v", infos)
 	}
-	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, " ", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, " ", state.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	infos, err = store.ListSessions(context.Background(), principal)
@@ -63,18 +63,18 @@ func TestSessionTitleRejectsOtherSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	owner, err := contextstate.NewPrincipal("workspace", "session-owner", "subject")
+	owner, err := state.NewPrincipal("workspace", "session-owner", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: owner, Binding: mustBinding(t)}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: owner, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
-	other, err := contextstate.NewPrincipal("workspace", "session-other", "other-subject")
+	other, err := state.NewPrincipal("workspace", "session-other", "other-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetSessionTitle(context.Background(), other, owner.SessionID, "blocked", contextstate.WorktreeInstance{}); err == nil {
+	if err := store.SetSessionTitle(context.Background(), other, owner.SessionID, "blocked", state.WorktreeInstance{}); err == nil {
 		t.Fatal("other subject updated a title")
 	}
 }
@@ -85,20 +85,20 @@ func TestSessionTitleUpdatesLoadedSessionForSameSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	current, err := contextstate.NewPrincipal("workspace", "current", "subject")
+	current, err := state.NewPrincipal("workspace", "current", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := contextstate.NewPrincipal("workspace", "loaded", "subject")
+	loaded, err := state.NewPrincipal("workspace", "loaded", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, principal := range []contextstate.Principal{current, loaded} {
-		if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
+	for _, principal := range []state.Principal{current, loaded} {
+		if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := store.SetSessionTitle(context.Background(), current, loaded.SessionID, "Loaded title", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(context.Background(), current, loaded.SessionID, "Loaded title", state.WorktreeInstance{}); err != nil {
 		t.Fatalf("SetSessionTitle loaded session: %v", err)
 	}
 	var title string

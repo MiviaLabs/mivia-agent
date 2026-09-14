@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // The payload writer's refusals, and the one path where the same content
@@ -20,14 +20,14 @@ import (
 // content-addressed store must never do.
 
 // payloadFor sanitizes body into a record owned by principal.
-func payloadFor(t *testing.T, principal contextstate.Principal, body string) contextstate.PayloadRecord {
+func payloadFor(t *testing.T, principal state.Principal, body string) state.PayloadRecord {
 	t.Helper()
-	san, err := contextstate.SanitizeSourcePayload(context.Background(), principal, []byte(body),
-		contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	san, err := state.SanitizeSourcePayload(context.Background(), principal, []byte(body),
+		state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatalf("sanitize: %v", err)
 	}
-	return contextstate.PayloadRecord{
+	return state.PayloadRecord{
 		Ref:       san.Ref,
 		Retention: san.Retention,
 		Revoked:   san.Revoked,
@@ -57,17 +57,17 @@ func TestInsertContextPayloadsRefusesAForeignOwner(t *testing.T) {
 	defer s.Close()
 	seedContextSession(t, s, principal)
 
-	other, err := contextstate.NewPrincipal("other-workspace", "other-session", "other-subject")
+	other, err := state.NewPrincipal("other-workspace", "other-session", "other-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	foreign := payloadFor(t, other, "someone else's body")
 
 	err = inTx(t, s, func(tx *sql.Tx) error {
-		_, err := insertContextPayloads(context.Background(), tx, principal, []contextstate.PayloadRecord{foreign})
+		_, err := insertContextPayloads(context.Background(), tx, principal, []state.PayloadRecord{foreign})
 		return err
 	})
-	if !errors.Is(err, contextstate.ErrPrincipalMismatch) {
+	if !errors.Is(err, state.ErrPrincipalMismatch) {
 		t.Errorf("a foreign payload was accepted (err=%v), want ErrPrincipalMismatch", err)
 	}
 }
@@ -84,10 +84,10 @@ func TestInsertContextPayloadsRefusesARevokedRecord(t *testing.T) {
 	rec.Revoked = true
 
 	err := inTx(t, s, func(tx *sql.Tx) error {
-		_, err := insertContextPayloads(context.Background(), tx, principal, []contextstate.PayloadRecord{rec})
+		_, err := insertContextPayloads(context.Background(), tx, principal, []state.PayloadRecord{rec})
 		return err
 	})
-	if !errors.Is(err, contextstate.ErrPayloadRevoked) {
+	if !errors.Is(err, state.ErrPayloadRevoked) {
 		t.Errorf("a revoked record was written (err=%v), want ErrPayloadRevoked", err)
 	}
 }
@@ -107,13 +107,13 @@ func TestInsertContextPayloadsRefusesTwoRecordsClaimingOneRef(t *testing.T) {
 
 	err := inTx(t, s, func(tx *sql.Tx) error {
 		_, err := insertContextPayloads(context.Background(), tx, principal,
-			[]contextstate.PayloadRecord{first, second})
+			[]state.PayloadRecord{first, second})
 		return err
 	})
 	if err == nil {
 		t.Fatal("two different references under one ref key were accepted")
 	}
-	if !errors.Is(err, contextstate.ErrInvalidDTO) && !errors.Is(err, contextstate.ErrCheckpointConflict) {
+	if !errors.Is(err, state.ErrInvalidDTO) && !errors.Is(err, state.ErrCheckpointConflict) {
 		t.Errorf("err = %v, want the duplicate-reference refusal", err)
 	}
 }
@@ -129,7 +129,7 @@ func TestInsertContextPayloadsRefusesARefAlreadyHeldByOtherContent(t *testing.T)
 
 	rec := payloadFor(t, principal, "the original body")
 	if err := inTx(t, s, func(tx *sql.Tx) error {
-		if _, err := insertContextPayloads(context.Background(), tx, principal, []contextstate.PayloadRecord{rec}); err != nil {
+		if _, err := insertContextPayloads(context.Background(), tx, principal, []state.PayloadRecord{rec}); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -142,17 +142,17 @@ func TestInsertContextPayloadsRefusesARefAlreadyHeldByOtherContent(t *testing.T)
 	// the body - so the refusal has to come from the STORED row, which is
 	// the arm under test.
 	impostor := rec
-	if impostor.Retention == contextstate.RetentionCompliance {
-		impostor.Retention = contextstate.RetentionSession
+	if impostor.Retention == state.RetentionCompliance {
+		impostor.Retention = state.RetentionSession
 	} else {
-		impostor.Retention = contextstate.RetentionCompliance
+		impostor.Retention = state.RetentionCompliance
 	}
 
 	err := inTx(t, s, func(tx *sql.Tx) error {
-		_, err := insertContextPayloads(context.Background(), tx, principal, []contextstate.PayloadRecord{impostor})
+		_, err := insertContextPayloads(context.Background(), tx, principal, []state.PayloadRecord{impostor})
 		return err
 	})
-	if !errors.Is(err, contextstate.ErrCheckpointConflict) {
+	if !errors.Is(err, state.ErrCheckpointConflict) {
 		t.Errorf("a ref held by other content was accepted (err=%v), want ErrCheckpointConflict", err)
 	}
 }
@@ -169,7 +169,7 @@ func TestInsertContextPayloadsSurfacesAFailedWrite(t *testing.T) {
 
 	rec := payloadFor(t, principal, "body")
 	err := inTx(t, s, func(tx *sql.Tx) error {
-		_, err := insertContextPayloads(context.Background(), tx, principal, []contextstate.PayloadRecord{rec})
+		_, err := insertContextPayloads(context.Background(), tx, principal, []state.PayloadRecord{rec})
 		return err
 	})
 	if err == nil {

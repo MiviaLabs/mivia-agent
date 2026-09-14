@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // worktreeGCFixture seeds one instance per lifecycle state, all aged well past

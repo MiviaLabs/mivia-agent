@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -36,7 +36,7 @@ func noteSession(t *testing.T) *chat.Session {
 	if err := sess.Save("snap"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSessionAdmission(context.Background(), sess.ContextPrincipal(), "snap", contextstate.SessionAdmission{
+	if err := store.SaveSessionAdmission(context.Background(), sess.ContextPrincipal(), "snap", state.SessionAdmission{
 		Agent: "reader", Digest: "a-stale-digest", Names: []string{"grep"},
 	}); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestReplRestorePrintsAdmissionNotes(t *testing.T) {
 	if err := sess.Save(chat.AutoSaveName); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSessionAdmission(context.Background(), sess.ContextPrincipal(), chat.AutoSaveName, contextstate.SessionAdmission{
+	if err := store.SaveSessionAdmission(context.Background(), sess.ContextPrincipal(), chat.AutoSaveName, state.SessionAdmission{
 		Agent: "reader", Digest: "a-stale-digest", Names: []string{"grep"},
 	}); err != nil {
 		t.Fatal(err)

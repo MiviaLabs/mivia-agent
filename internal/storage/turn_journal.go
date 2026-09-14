@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // turnJournalRunID composes the shared events table's run_id for one turn's
@@ -17,7 +17,7 @@ func turnJournalRunID(sessionID, turnID string) string {
 	return "turnjournal:" + sessionID + ":" + turnID
 }
 
-// AppendTurnJournalEntry implements contextstate.TurnJournal. It assigns the
+// AppendTurnJournalEntry implements state.TurnJournal. It assigns the
 // next sequence number for (sessionID, turnID) inside the same write
 // transaction as the insert, reusing the store's existing events table and
 // writeMu-guarded write pool rather than a second table or connection.
@@ -28,12 +28,12 @@ func turnJournalRunID(sessionID, turnID string) string {
 // causal order. That is acceptable: each row is self-contained (its own
 // kind/payload), so the journal's forensic value does not depend on strict
 // cross-kind ordering.
-func (s *SQLite) AppendTurnJournalEntry(ctx context.Context, principal contextstate.Principal, sessionID, turnID string, entry contextstate.TurnJournalEntry) error {
+func (s *SQLite) AppendTurnJournalEntry(ctx context.Context, principal state.Principal, sessionID, turnID string, entry state.TurnJournalEntry) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}
 	if sessionID == "" || turnID == "" {
-		return fmt.Errorf("%w: turn journal requires session and turn id", contextstate.ErrInvalidDTO)
+		return fmt.Errorf("%w: turn journal requires session and turn id", state.ErrInvalidDTO)
 	}
 	id, err := newContextID("tj-")
 	if err != nil {
@@ -58,8 +58,8 @@ func (s *SQLite) AppendTurnJournalEntry(ctx context.Context, principal contextst
 	return tx.Commit()
 }
 
-// LoadTurnJournal implements contextstate.TurnJournal.
-func (s *SQLite) LoadTurnJournal(ctx context.Context, principal contextstate.Principal, sessionID, turnID string) ([]contextstate.TurnJournalEntry, error) {
+// LoadTurnJournal implements state.TurnJournal.
+func (s *SQLite) LoadTurnJournal(ctx context.Context, principal state.Principal, sessionID, turnID string) ([]state.TurnJournalEntry, error) {
 	if err := principal.Validate(); err != nil {
 		return nil, err
 	}
@@ -68,30 +68,30 @@ func (s *SQLite) LoadTurnJournal(ctx context.Context, principal contextstate.Pri
 		return nil, err
 	}
 	defer rows.Close()
-	var out []contextstate.TurnJournalEntry
+	var out []state.TurnJournalEntry
 	for rows.Next() {
-		var e contextstate.TurnJournalEntry
+		var e state.TurnJournalEntry
 		var createdAt string
 		if err := rows.Scan(&e.Kind, &e.Payload, &createdAt); err != nil {
 			return nil, err
 		}
-		e.CreatedAt = contextstate.ParseCatalogTimestamp(createdAt)
+		e.CreatedAt = state.ParseCatalogTimestamp(createdAt)
 		out = append(out, e)
 	}
 	return out, rows.Err()
 }
 
-// ClearTurnJournal implements contextstate.TurnJournal. Callers must call it
+// ClearTurnJournal implements state.TurnJournal. Callers must call it
 // only once a turn's fate is settled - see the interface doc.
-func (s *SQLite) ClearTurnJournal(ctx context.Context, principal contextstate.Principal, sessionID, turnID string) error {
+func (s *SQLite) ClearTurnJournal(ctx context.Context, principal state.Principal, sessionID, turnID string) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}
 	return s.DeleteRun(ctx, turnJournalRunID(sessionID, turnID), math.MaxInt)
 }
 
-// ListJournaledTurns implements contextstate.TurnJournal.
-func (s *SQLite) ListJournaledTurns(ctx context.Context, principal contextstate.Principal, sessionID string) ([]string, error) {
+// ListJournaledTurns implements state.TurnJournal.
+func (s *SQLite) ListJournaledTurns(ctx context.Context, principal state.Principal, sessionID string) ([]string, error) {
 	if err := principal.Validate(); err != nil {
 		return nil, err
 	}

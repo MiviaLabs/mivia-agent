@@ -9,15 +9,15 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 // resyncSessionContext wires a real SQLite context store onto the session,
 // mirroring the setup used across the context integration tests.
-func resyncSessionContext(t *testing.T, name string) (*Session, *storage.SQLite, contextstate.Principal) {
+func resyncSessionContext(t *testing.T, name string) (*Session, *storage.SQLite, state.Principal) {
 	t.Helper()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), name))
 	if err != nil {
@@ -25,7 +25,7 @@ func resyncSessionContext(t *testing.T, name string) (*Session, *storage.SQLite,
 	}
 	t.Cleanup(func() { store.Close() })
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestResyncContextHeadRestoresFromStore(t *testing.T) {
 	session.contextPublishMu.Lock()
 	defer session.contextPublishMu.Unlock()
 	session.mu.Lock()
-	session.contextHead = contextstate.Revision{}
+	session.contextHead = state.Revision{}
 	session.mu.Unlock()
 
 	if err := session.resyncContextHead(); err != nil {
@@ -75,7 +75,7 @@ func TestResyncContextHeadRestoresFromStore(t *testing.T) {
 		t.Fatalf("resynced context head = %+v, want %+v", session.contextHead, snapshot.Revision)
 	}
 	var want []provider.Message
-	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &want); err != nil {
+	if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &want); err != nil {
 		t.Fatalf("decode durable active context: %v", err)
 	}
 	if got := session.MessagesCopy(); !reflect.DeepEqual(got, want) {
@@ -106,7 +106,7 @@ func TestResyncContextHeadErrorsOnBindingMismatch(t *testing.T) {
 	session.mu.Unlock()
 
 	err := session.resyncContextHead()
-	if !errors.Is(err, contextstate.ErrStaleBinding) {
-		t.Fatalf("resyncContextHead error = %v, want wrapped %v", err, contextstate.ErrStaleBinding)
+	if !errors.Is(err, state.ErrStaleBinding) {
+		t.Fatalf("resyncContextHead error = %v, want wrapped %v", err, state.ErrStaleBinding)
 	}
 }

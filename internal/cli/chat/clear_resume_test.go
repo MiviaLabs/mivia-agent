@@ -9,8 +9,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -22,7 +22,7 @@ import (
 func wireTestContextSessionWith(t *testing.T, store *storage.SQLite, res *config.Resolved, completer provider.Completer, publisher contextmgr.CheckpointPublisher) *chat.Session {
 	t.Helper()
 	sess := chat.NewSession(res, completer)
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

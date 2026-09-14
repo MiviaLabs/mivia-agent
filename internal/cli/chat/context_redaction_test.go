@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
@@ -71,11 +71,11 @@ func TestUnconfiguredWorkspaceKeepsMetadataOnlyPayloads(t *testing.T) {
 // the projection boundary the session actually uses.
 func TestConfiguredSessionStoresRedactedPayloads(t *testing.T) {
 	res := resolvedWithPatterns(t, []string{`(?i)token\s*=\s*\S+`}, nil)
-	principal, err := contextstate.NewPrincipal("workspace", "session", "local-user")
+	principal, err := state.NewPrincipal("workspace", "session", "local-user")
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := contextstate.SanitizeSourcePayload(t.Context(), principal, []byte("here is token=hunter2 ok"), contextRedactionPolicy(res))
+	payload, err := state.SanitizeSourcePayload(t.Context(), principal, []byte("here is token=hunter2 ok"), contextRedactionPolicy(res))
 	if err != nil {
 		t.Fatalf("a secret-bearing message refused the turn: %v", err)
 	}

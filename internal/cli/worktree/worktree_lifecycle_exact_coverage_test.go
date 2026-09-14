@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -32,7 +32,7 @@ func TestLifecycleExactRecoverySkipsOtherDeletingName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "other", ID: "wt_5555555555555555"}
+	instance := state.WorktreeInstance{Worktree: "other", ID: "wt_5555555555555555"}
 	path := filepath.Join(repo, ".mivia", "worktrees", "other")
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestLifecycleExactClosedStoreAndResolveErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}, State: contextstate.WorktreeDeleting}
+	info := state.WorktreeInstanceInfo{Instance: state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}, State: state.WorktreeDeleting}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestLifecycleExactRemovalAndCreationFailures(t *testing.T) {
 	if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 		t.Fatal(err)
 	}
-	info := contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: worktree.Path, State: contextstate.WorktreeDeleting}
+	info := state.WorktreeInstanceInfo{Instance: instance, CanonicalPath: worktree.Path, State: state.WorktreeDeleting}
 	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "bad-prefix", nil); err == nil {
 		t.Fatal("invalid removal prefix succeeded")
 	}
@@ -123,8 +123,8 @@ func TestLifecycleExactRemovalAndCreationFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	createInstance := contextstate.WorktreeInstance{Worktree: created.Name, ID: "wt_2222222222222222"}
-	createInfo := contextstate.WorktreeInstanceInfo{Instance: createInstance, CanonicalPath: created.Path, State: contextstate.WorktreeCreating}
+	createInstance := state.WorktreeInstance{Worktree: created.Name, ID: "wt_2222222222222222"}
+	createInfo := state.WorktreeInstanceInfo{Instance: createInstance, CanonicalPath: created.Path, State: state.WorktreeCreating}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, createInstance, created.Path); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestLifecycleExactRemovalAndCreationFailures(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(markerDir, worktreeMarkerName), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, createInfo); err == nil || errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, createInfo); err == nil || errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("malformed creation marker error = %v", err)
 	}
 }
@@ -149,16 +149,16 @@ func TestLifecycleFaultSeamsRecoveryPrincipalErrors(t *testing.T) {
 	defer store.Close()
 	sentinel := errors.New("principal fault")
 	original := lifecycleRoutePrincipal
-	lifecycleRoutePrincipal = func(string) (contextstate.Principal, error) {
-		return contextstate.Principal{}, sentinel
+	lifecycleRoutePrincipal = func(string) (state.Principal, error) {
+		return state.Principal{}, sentinel
 	}
 	t.Cleanup(func() { lifecycleRoutePrincipal = original })
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
-	deleting := contextstate.WorktreeInstanceInfo{Instance: instance, State: contextstate.WorktreeDeleting}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
+	deleting := state.WorktreeInstanceInfo{Instance: instance, State: state.WorktreeDeleting}
 	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, sentinel) {
 		t.Fatalf("removal principal error = %v", err)
 	}
-	creating := contextstate.WorktreeInstanceInfo{Instance: instance, State: contextstate.WorktreeCreating}
+	creating := state.WorktreeInstanceInfo{Instance: instance, State: state.WorktreeCreating}
 	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, creating); !errors.Is(err, sentinel) {
 		t.Fatalf("creation principal error = %v", err)
 	}
@@ -181,7 +181,7 @@ func TestLifecycleFaultSeamsRecoveryPathAndResolveErrors(t *testing.T) {
 		t.Fatalf("canonical path error = %v", err)
 	}
 
-	creating := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "new", ID: "wt_2222222222222222"}, State: contextstate.WorktreeCreating}
+	creating := state.WorktreeInstanceInfo{Instance: state.WorktreeInstance{Worktree: "new", ID: "wt_2222222222222222"}, State: state.WorktreeCreating}
 	creating.CanonicalPath = filepath.Join(repo, ".mivia", "worktrees", "new")
 	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
@@ -196,7 +196,7 @@ func TestLifecycleFaultSeamsRecoveryPathAndResolveErrors(t *testing.T) {
 	}
 }
 
-func prepareDeletingLifecycleInfo(t *testing.T, repo string) (*storage.SQLite, contextstate.WorktreeInstanceInfo) {
+func prepareDeletingLifecycleInfo(t *testing.T, repo string) (*storage.SQLite, state.WorktreeInstanceInfo) {
 	t.Helper()
 	store, err := openRepositoryContextStore(repo)
 	if err != nil {
@@ -207,7 +207,7 @@ func prepareDeletingLifecycleInfo(t *testing.T, repo string) (*storage.SQLite, c
 		store.Close()
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "delete", ID: "wt_3333333333333333"}
+	instance := state.WorktreeInstance{Worktree: "delete", ID: "wt_3333333333333333"}
 	path := filepath.Join(repo, ".mivia", "worktrees", instance.Worktree)
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
 		store.Close()
@@ -221,7 +221,7 @@ func prepareDeletingLifecycleInfo(t *testing.T, repo string) (*storage.SQLite, c
 		store.Close()
 		t.Fatal(err)
 	}
-	return store, contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: path, State: contextstate.WorktreeDeleting}
+	return store, state.WorktreeInstanceInfo{Instance: instance, CanonicalPath: path, State: state.WorktreeDeleting}
 }
 func TestLifecycleExactLockErrors(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
@@ -238,7 +238,7 @@ func TestLifecycleExactLockErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	info := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "busy", ID: "wt_1111111111111111"}, State: contextstate.WorktreeDeleting}
+	info := state.WorktreeInstanceInfo{Instance: state.WorktreeInstance{Worktree: "busy", ID: "wt_1111111111111111"}, State: state.WorktreeDeleting}
 	if err := recoverManagedWorktreeRemovalInfoInStore(store, repo, info, "mivia/"); err == nil {
 		t.Fatal("busy recovery lock succeeded")
 	}
@@ -254,7 +254,7 @@ func TestLifecycleFaultSeamCreationRecoveryLockError(t *testing.T) {
 	restoreLifecycleRoot := vcs.SetLifecycleGitRootOpenerForTest(
 		func(string) (*os.Root, error) { return nil, sentinel })
 	t.Cleanup(restoreLifecycleRoot)
-	info := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}, State: contextstate.WorktreeCreating}
+	info := state.WorktreeInstanceInfo{Instance: state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}, State: state.WorktreeCreating}
 	if _, err := RecoverManagedWorktreeCreationInStore(store, repo, info); !errors.Is(err, sentinel) {
 		t.Fatalf("creation recovery lock error = %v", err)
 	}

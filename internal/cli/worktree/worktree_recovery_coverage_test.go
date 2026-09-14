@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -48,14 +48,14 @@ func TestRecoveryCoverageRejectsStaleRemovalRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	active := contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "wt-a"), State: contextstate.WorktreeActive}
-	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, active, "mivia/", nil); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	active := state.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "wt-a"), State: state.WorktreeActive}
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, active, "mivia/", nil); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("active recovery error = %v", err)
 	}
 	deleting := active
-	deleting.State = contextstate.WorktreeDeleting
-	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	deleting.State = state.WorktreeDeleting
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("missing deleting row error = %v", err)
 	}
 }
@@ -71,14 +71,14 @@ func TestRecoveryCoverageCreationFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "create-missing", ID: "wt_1234567890abcdef"}
-	active := contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "missing"), State: contextstate.WorktreeActive}
-	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, active); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	instance := state.WorktreeInstance{Worktree: "create-missing", ID: "wt_1234567890abcdef"}
+	active := state.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "missing"), State: state.WorktreeActive}
+	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, active); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("active creation recovery error = %v", err)
 	}
 	creating := active
-	creating.State = contextstate.WorktreeCreating
-	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, creating); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	creating.State = state.WorktreeCreating
+	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, creating); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("missing creation row error = %v", err)
 	}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, creating.CanonicalPath); err != nil {
@@ -104,12 +104,12 @@ func TestRecoveryCoverageCreationPathMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
-	info := contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "wrong"), State: contextstate.WorktreeCreating}
+	instance := state.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
+	info := state.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "wrong"), State: state.WorktreeCreating}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, info.CanonicalPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, info); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := recoverManagedWorktreeCreationInStoreLocked(store, repo, info); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("mismatched path error = %v", err)
 	}
 }

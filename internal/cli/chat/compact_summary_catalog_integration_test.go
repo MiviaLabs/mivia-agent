@@ -29,7 +29,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -161,7 +161,7 @@ func durableActiveContext(t *testing.T, ws, storePath, sessionID string) []provi
 	if err != nil {
 		t.Fatalf("chatWorkspaceRoot(%s): %v", ws, err)
 	}
-	principal, err := contextstate.NewPrincipal(contextWorkspaceID(root), sessionID, "local-user")
+	principal, err := state.NewPrincipal(contextWorkspaceID(root), sessionID, "local-user")
 	if err != nil {
 		t.Fatalf("principal for %s: %v", sessionID, err)
 	}
@@ -170,7 +170,7 @@ func durableActiveContext(t *testing.T, ws, storePath, sessionID string) []provi
 		t.Fatalf("reclaim session %s: %v", sessionID, err)
 	}
 	var messages []provider.Message
-	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
+	if err := state.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
 		t.Fatalf("decode active_context: %v", err)
 	}
 	return messages

@@ -19,7 +19,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
@@ -39,20 +39,20 @@ func tomlPathLiteral(path string) string {
 // createManagedWorktreeWithInstance is a package-local copy of internal/cli's
 // helper of the same name (session_test_helpers_test.go), itself a copy of
 // internal/legacytui's worktree-dialog creation flow helper.
-func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, contextstate.WorktreeInstance, error) {
+func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, state.WorktreeInstance, error) {
 	store, err := openRepositoryContextStore(root)
 	if err != nil {
-		return nil, contextstate.WorktreeInstance{}, err
+		return nil, state.WorktreeInstance{}, err
 	}
 	defer store.Close()
-	var instance contextstate.WorktreeInstance
+	var instance state.WorktreeInstance
 	worktree, err := CreateManagedWorktreeInStoreWithInstance(store, root, name, baseRef, branchPrefix, &instance)
 	return worktree, instance, err
 }
 
 // recoverManagedWorktreeRemovalInfoInStore is a package-local copy of
 // internal/cli's helper of the same name (session_test_helpers_test.go).
-func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string) error {
+func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info state.WorktreeInstanceInfo, branchPrefix string) error {
 	lock, err := LockWorktreeLifecycle(root, info.Instance.Worktree)
 	if err != nil {
 		return err
@@ -63,7 +63,7 @@ func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string
 
 // reactivateManagedWorktreeForSession is a package-local copy of internal/cli's
 // helper of the same name (session_test_helpers_test.go).
-func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
+func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance state.WorktreeInstance) error {
 	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
 		return ReactivateManagedWorktreeInStore(store, root, instance)
 	}

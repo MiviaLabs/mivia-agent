@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -91,7 +91,7 @@ func TestApplySDKTrimStandsDownOnAdoptedCompaction(t *testing.T) {
 	adopted := Options{
 		Model:            "m",
 		MaxContextTokens: 1000,
-		SummaryConfig:    SummaryConfig{Summarizer: &contextmgr.Summarizer{}},
+		SummaryConfig:    SummaryConfig{Summarizer: &manager.Summarizer{}},
 	}
 	var out sdkagentloop.Options
 	applySDKTrim(l, adopted, turn, &out)
@@ -118,7 +118,7 @@ func TestBuildAgentLoopOptions_NoWindowWithPreparationManager(t *testing.T) {
 	got, _, err := buildAgentLoopOptions(l, Options{
 		Model:              "m",
 		MaxContextTokens:   1000,
-		SummaryConfig:      SummaryConfig{Summarizer: &contextmgr.Summarizer{}},
+		SummaryConfig:      SummaryConfig{Summarizer: &manager.Summarizer{}},
 		PreparationManager: &stubPreparationManager{keep: 3},
 	}, "hi")
 	if err != nil {
@@ -136,7 +136,7 @@ func TestBuildAgentLoopOptions_NoWindowWithPreparationManager(t *testing.T) {
 // Window on top of the host's own per-iteration Trim (Window and Trim
 // are mutually exclusive by contract).
 func TestContextWindowForwardedOnlyOnAdoptedCompaction(t *testing.T) {
-	adopted := Options{MaxContextTokens: 1000, SummaryConfig: SummaryConfig{Summarizer: &contextmgr.Summarizer{}}}
+	adopted := Options{MaxContextTokens: 1000, SummaryConfig: SummaryConfig{Summarizer: &manager.Summarizer{}}}
 	if got := sdkContextWindowForwarded(adopted); got != 1000 {
 		t.Fatalf("sdkContextWindowForwarded(adopted) = %d, want 1000", got)
 	}
@@ -313,7 +313,7 @@ func TestBuildAgentLoopOptions_SDKCompactionAdopted(t *testing.T) {
 		SessionID:        "sess-compact",
 		MaxContextTokens: 10000,
 	}
-	opts.SummaryConfig.Summarizer = &contextmgr.Summarizer{}
+	opts.SummaryConfig.Summarizer = &manager.Summarizer{}
 	got, _, err := buildAgentLoopOptions(l, opts, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)

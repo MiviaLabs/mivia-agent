@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
 // SnapshotWorktreeDialogBindings implements snapshot worktree dialog bindings.
-func SnapshotWorktreeDialogBindings(store *storage.SQLite, principal contextstate.Principal, worktrees []vcs.WorktreeInfo, recoveries []contextstate.WorktreeInstanceInfo) map[string]WorktreeDialogBinding {
+func SnapshotWorktreeDialogBindings(store *storage.SQLite, principal state.Principal, worktrees []vcs.WorktreeInfo, recoveries []state.WorktreeInstanceInfo) map[string]WorktreeDialogBinding {
 	recoveryNames := make(map[string]bool, len(recoveries))
 	for _, info := range recoveries {
 		recoveryNames[info.Instance.Worktree] = true
@@ -27,7 +27,7 @@ func SnapshotWorktreeDialogBindings(store *storage.SQLite, principal contextstat
 	return bindings
 }
 
-func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal contextstate.Principal, worktree vcs.WorktreeInfo) WorktreeDialogBinding {
+func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal state.Principal, worktree vcs.WorktreeInfo) WorktreeDialogBinding {
 	canonicalPath, err := CanonicalMarkerRoot(worktree.Path)
 	if err != nil {
 		return WorktreeDialogBinding{Err: err}
@@ -35,7 +35,7 @@ func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal contextstate
 	instance, markerErr := ReadWorktreeMarker(worktree.Path)
 	if markerErr == nil {
 		if instance.Worktree != worktree.Name {
-			return WorktreeDialogBinding{Err: contextstate.ErrWorktreeDeleted}
+			return WorktreeDialogBinding{Err: state.ErrWorktreeDeleted}
 		}
 		if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
 			return WorktreeDialogBinding{Err: err}
@@ -50,7 +50,7 @@ func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal contextstate
 		return WorktreeDialogBinding{Err: err}
 	}
 	if !info.Instance.IsZero() {
-		return WorktreeDialogBinding{Err: contextstate.ErrWorktreeDeleted}
+		return WorktreeDialogBinding{Err: state.ErrWorktreeDeleted}
 	}
 	if legacy {
 		return WorktreeDialogBinding{Err: fmt.Errorf("worktree %q requires adoption; run mivia worktree adopt %s", worktree.Name, worktree.Name)}
@@ -59,7 +59,7 @@ func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal contextstate
 }
 
 // AddWorktreeRecoveryRows implements add worktree recovery rows.
-func AddWorktreeRecoveryRows(list []vcs.WorktreeInfo, infos []contextstate.WorktreeInstanceInfo) []vcs.WorktreeInfo {
+func AddWorktreeRecoveryRows(list []vcs.WorktreeInfo, infos []state.WorktreeInstanceInfo) []vcs.WorktreeInfo {
 	for _, info := range infos {
 		found := false
 		for _, worktree := range list {

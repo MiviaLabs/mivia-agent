@@ -7,19 +7,19 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-func compactSummaryRange(t *testing.T) contextstate.SourceRange {
+func compactSummaryRange(t *testing.T) state.SourceRange {
 	t.Helper()
-	start := contextstate.SourceID{SessionID: "sess-compact", Sequence: 4}
-	end := contextstate.SourceID{SessionID: "sess-compact", Sequence: 9}
-	sourceRange, err := contextstate.NewSourceRange(start, end)
+	start := state.SourceID{SessionID: "sess-compact", Sequence: 4}
+	end := state.SourceID{SessionID: "sess-compact", Sequence: 9}
+	sourceRange, err := state.NewSourceRange(start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func compactSummaryRange(t *testing.T) contextstate.SourceRange {
 // captured summarizer policy.
 func TestBuildCompactSummaryRequestFields(t *testing.T) {
 	summarizer := plainSummarySummarizer(t, &chatSummaryProvider{})
-	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
+	redaction := state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
 	pre := []provider.Message{
 		{Role: provider.RoleUser, Content: "old question"},
 		{Role: provider.RoleAssistant, Content: "old answer"},
@@ -74,7 +74,7 @@ func TestBuildCompactSummaryRequestFields(t *testing.T) {
 // repeat identical evidence items the envelope validator refuses.
 func TestBuildCompactSummaryRequestDedupesEvidence(t *testing.T) {
 	summarizer := plainSummarySummarizer(t, &chatSummaryProvider{})
-	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
+	redaction := state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
 	body := strings.Repeat("same size body ", 10)
 	pre := []provider.Message{
 		{Role: provider.RoleUser, Content: body},
@@ -94,14 +94,14 @@ func TestBuildCompactSummaryRequestDedupesEvidence(t *testing.T) {
 
 // TestBuildCompactSummaryRequestSurvivesOversizedToolName pins the fix for a
 // bug where a dropped tool-result message's Name over
-// contextstate.MaxIdentifierBytes (128B, but under the 2048B field-truncation
+// state.MaxIdentifierBytes (128B, but under the 2048B field-truncation
 // bound) made BuildSummaryRequest's validation reject the whole request -
 // silently discarding the entire manual-compact summary (applyCompactSummary
 // swallows the error) instead of just truncating the one oversized name.
 func TestBuildCompactSummaryRequestSurvivesOversizedToolName(t *testing.T) {
 	summarizer := plainSummarySummarizer(t, &chatSummaryProvider{})
-	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
-	oversizedName := strings.Repeat("n", contextstate.MaxIdentifierBytes+200)
+	redaction := state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
+	oversizedName := strings.Repeat("n", state.MaxIdentifierBytes+200)
 	pre := []provider.Message{
 		{Role: provider.RoleUser, Content: "old question"},
 		{Role: provider.RoleTool, ToolCallID: "call-1", Name: oversizedName, Content: "tool result body"},
@@ -125,7 +125,7 @@ func TestManualCompactSummaryStaysLoadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestManualCompactSummaryStaysLoadable(t *testing.T) {
 	// (configureSessionContext). It is not a precondition for the summary:
 	// it governs what the checkpoint may persist. It is installed here so
 	// this test drives the same shape production does.
-	session.SetContextRedactionPolicy(contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}})
+	session.SetContextRedactionPolicy(state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}})
 	if _, err := session.SendUser(context.Background(), "first", io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestManualCompactSummarySurvivesRestartWithoutFurtherTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestManualCompactSummarySurvivesRestartWithoutFurtherTurns(t *testing.T) {
 	if err := session.SetContextStore(store); err != nil {
 		t.Fatal(err)
 	}
-	session.SetContextRedactionPolicy(contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}})
+	session.SetContextRedactionPolicy(state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}})
 	if _, err := session.SendUser(context.Background(), "first", io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestManualCompactSummarySurvivesRestartWithoutFurtherTurns(t *testing.T) {
 func TestApplyCompactSummarySuccess(t *testing.T) {
 	fake := &chatSummaryProvider{}
 	summarizer := plainSummarySummarizer(t, fake)
-	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
+	redaction := state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
 	pre := []provider.Message{
 		{Role: provider.RoleUser, Content: "old question"},
 		{Role: provider.RoleUser, Content: "latest objective"},
@@ -275,7 +275,7 @@ func TestApplyCompactSummarySuccess(t *testing.T) {
 func TestApplyCompactSummaryDegradesOnProviderError(t *testing.T) {
 	fake := &chatSummaryProvider{err: context.Canceled}
 	summarizer := plainSummarySummarizer(t, fake)
-	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
+	redaction := state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
 	pre := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
 	metadata, injected := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre, compactSummaryRange(t), "")
 	if injected.present || metadata != nil || injected.message.Name != "" {
@@ -291,7 +291,7 @@ func TestSummarizeManualCompactReportsAClassifiedFailureReason(t *testing.T) {
 	summarizer := plainSummarySummarizer(t, fake)
 	cfg := contextTurnConfig{
 		summarizer: summarizer,
-		redaction:  contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+		redaction:  state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
 	}
 	pre := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
 	preparation := &contextmgr.Preparation{
@@ -312,7 +312,7 @@ func TestInjectPlainSummaryReportsAClassifiedFailureReason(t *testing.T) {
 	snapshot := plainTurnSnapshot{
 		context: contextTurnConfig{
 			summarizer: summarizer,
-			redaction:  contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+			redaction:  state.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
 		},
 		messages: []provider.Message{{Role: provider.RoleUser, Content: "user message"}},
 		budget:   1000,

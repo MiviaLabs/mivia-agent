@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -16,12 +16,12 @@ import (
 // OmittedEvidence owns the distinctness rule (many omitted messages share one
 // size bucket, and the envelope validator refuses duplicate evidence items),
 // so this path no longer dedupes a second time.
-func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) (contextmgr.SummaryRequest, error) {
-	return contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
-		Version:           contextmgr.SummarySchemaVersion,
+func buildCompactSummaryRequest(summarizer *manager.Summarizer, redaction state.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange state.SourceRange, focus string) (manager.SummaryRequest, error) {
+	return manager.BuildSummaryRequest(manager.SummaryBuildInput{
+		Version:           manager.SummarySchemaVersion,
 		Objective:         agent.SummaryFieldText(latestUserMessage(pre)),
-		Evidence:          contextmgr.OmittedEvidence(pre, retained),
-		SourceExcerpts:    contextmgr.SourceExcerpts(pre, retained),
+		Evidence:          manager.OmittedEvidence(pre, retained),
+		SourceExcerpts:    manager.SourceExcerpts(pre, retained),
 		SourceRange:       sourceRange,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,
@@ -40,21 +40,21 @@ func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction con
 // - builder error, summarizer error, policy refusal, metadata bound - returns
 // an injectedSummary with present=false and the classified failure reason so the
 // structural compact proceeds unchanged. A summary must never fail a manual compact.
-func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) ([]byte, injectedSummary) {
+func applyCompactSummary(ctx context.Context, summarizer *manager.Summarizer, redaction state.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange state.SourceRange, focus string) ([]byte, injectedSummary) {
 	if summarizer == nil {
 		return nil, injectedSummary{}
 	}
 	request, err := buildCompactSummaryRequest(summarizer, redaction, budget, pre, retained, sourceRange, focus)
 	if err != nil {
-		return nil, injectedSummary{reason: contextmgr.SummaryReasonRequestInvalid}
+		return nil, injectedSummary{reason: manager.SummaryReasonRequestInvalid}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return nil, injectedSummary{reason: contextmgr.ClassifySummaryFailure(err)}
+		return nil, injectedSummary{reason: manager.ClassifySummaryFailure(err)}
 	}
 	metadata, err := summary.Metadata(summarizer.Policy.RedactionConfigured)
 	if err != nil {
-		return nil, injectedSummary{reason: contextmgr.SummaryReasonMetadataTooLarge}
+		return nil, injectedSummary{reason: manager.SummaryReasonMetadataTooLarge}
 	}
 	return metadata, injectedSummary{
 		message: agent.RenderSummaryMessage(summary, request.Input.Evidence),
@@ -70,7 +70,7 @@ func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer,
 // a named summary made the session unresumable after one more turn. A nil
 // summarizer or any summary failure changes nothing and reports present=false with
 // the classified failure reason.
-func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input contextmgr.PrepareInput, pre []provider.Message, preparation *contextmgr.Preparation, focus string) injectedSummary {
+func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input manager.PrepareInput, pre []provider.Message, preparation *manager.Preparation, focus string) injectedSummary {
 	if cfg.summarizer == nil {
 		return injectedSummary{}
 	}

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // This file proves two invariants hold across a real OS process boundary, not
@@ -207,11 +207,11 @@ func TestCrossProcessWorktreeFenceInterleavingSaveSession(t *testing.T) {
 	path := filepath.Join(dir, "context.db")
 	markerDir := t.TempDir()
 
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 
 	seed, err := OpenSQLite(path)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestCrossProcessWorktreeFenceInterleavingSaveSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := seed.SaveSession(ctx, principal, "snap", []byte(`[{"role":"user","content":"original"}]`), "model", "provider", 1, 1, 1,
-		contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+		state.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
 		t.Fatal(err)
 	}
 	seed.Close()
@@ -288,11 +288,11 @@ func runCrossProcFenceStaleChild() {
 	}
 	defer store.Close()
 
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		os.Exit(31)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 
 	pauseAfterWorktreeFenceCheck = func() {
 		if err := writeMarker(filepath.Join(markerDir, "child-paused"), []byte("1")); err != nil {
@@ -305,11 +305,11 @@ func runCrossProcFenceStaleChild() {
 
 	attempt := func() string {
 		err := store.SaveSession(context.Background(), principal, "snap", []byte(`[{"role":"user","content":"stale-overwrite"}]`), "model", "provider", 1, 1, 1,
-			contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance})
+			state.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance})
 		switch {
 		case err == nil:
 			return "NIL"
-		case errors.Is(err, contextstate.ErrWorktreeDeleted):
+		case errors.Is(err, state.ErrWorktreeDeleted):
 			return "ERR_WORKTREE_DELETED"
 		default:
 			return "OTHER:" + err.Error()

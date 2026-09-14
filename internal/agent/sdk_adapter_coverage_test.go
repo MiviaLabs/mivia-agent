@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -569,10 +569,10 @@ func TestBuildAgentLoopOptionsBadParamsToolFailsClosed(t *testing.T) {
 // prepareSDKHistory error return in RunAgentLoopOnce.
 type failingPrepManager struct{}
 
-func (failingPrepManager) Prepare(context.Context, contextmgr.PrepareInput) (contextmgr.Preparation, error) {
-	return contextmgr.Preparation{}, errors.New("prep exploded")
+func (failingPrepManager) Prepare(context.Context, manager.PrepareInput) (manager.Preparation, error) {
+	return manager.Preparation{}, errors.New("prep exploded")
 }
-func (failingPrepManager) Discard(contextmgr.Preparation) {}
+func (failingPrepManager) Discard(manager.Preparation) {}
 
 // TestRunAgentLoopOncePreparationFailureSurfaces covers the
 // prepareSDKHistory error return: a PreparationManager failure fails

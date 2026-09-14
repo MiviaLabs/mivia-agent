@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -17,18 +17,18 @@ type multiStepElisionPrep struct {
 	calls int
 }
 
-func (p *multiStepElisionPrep) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *multiStepElisionPrep) Prepare(_ context.Context, input manager.PrepareInput) (manager.Preparation, error) {
 	p.calls++
 	rangeValue := contextstate.SourceRange{
 		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
 	compacted := p.calls == 1
-	prep, err := contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	prep, err := manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, input.Messages, compacted, "elision-accum-test")
 	if err != nil {
-		return contextmgr.Preparation{}, err
+		return manager.Preparation{}, err
 	}
 	if compacted {
 		prep.BeforeTokens = 1000
@@ -42,7 +42,7 @@ func (p *multiStepElisionPrep) Prepare(_ context.Context, input contextmgr.Prepa
 	return prep, nil
 }
 
-func (p *multiStepElisionPrep) Discard(contextmgr.Preparation) {}
+func (p *multiStepElisionPrep) Discard(manager.Preparation) {}
 
 // twoStepCompleter returns a tool call on step 1 and a final answer on step 2.
 type twoStepCompleter struct{ step int }
@@ -85,7 +85,7 @@ func TestLoopAccumulatesElisionAcrossSteps(t *testing.T) {
 	loop := &Loop{Completer: &twoStepCompleter{}, Tools: reg}
 	_, err = loop.Run(context.Background(), "question", Options{Model: "model", MaxContextTokens: 100_000, MaxSteps: 5,
 		PreparationManager: prep,
-		PreparationInput: contextmgr.PrepareInput{
+		PreparationInput: manager.PrepareInput{
 			Budget: 100_000, Principal: principal, Binding: binding,
 			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
 		},
@@ -128,7 +128,7 @@ func TestLoopResetsTurnCompactionOnNewRun(t *testing.T) {
 	}
 	probe := &agentPreparationProbe{}
 	_, err = loop.Run(context.Background(), "question", Options{Model: "model", MaxContextTokens: 100, PreparationManager: probe,
-		PreparationInput: contextmgr.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
+		PreparationInput: manager.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
 	})
 	if err != nil {
 		t.Fatal(err)

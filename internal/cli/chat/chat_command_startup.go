@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"golang.org/x/term"
@@ -28,7 +28,7 @@ func applyPrivacyPolicy(res *config.Resolved) {
 // this binary must not invent, and a process that configures neither runs
 // uncapped and unredacted rather than under a compiled-in guess.
 func applyContextLimits(res *config.Resolved) {
-	contextstate.SetLimits(contextstate.Limits{
+	state.SetLimits(state.Limits{
 		SourceEventBytes:        res.Context.MaxSourceEventBytes,
 		CheckpointBytes:         res.Context.MaxCheckpointBytes,
 		CommitEvents:            res.Context.MaxCommitEvents,
@@ -51,7 +51,7 @@ type chatInvocation struct {
 	// sessions always mint a fresh id via RotateSessionID); --session only
 	// resumes an id/name that already exists.
 	session                  string
-	expectedWorktreeInstance contextstate.WorktreeInstance
+	expectedWorktreeInstance state.WorktreeInstance
 	// staleBypass records that the removed --bypass-hook-trust flag was passed,
 	// so the session can say the flag no longer does anything.
 	staleBypass                            bool

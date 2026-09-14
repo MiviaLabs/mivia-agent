@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
@@ -30,7 +30,7 @@ type Route struct {
 	// Dir is the worktree's canonical absolute directory.
 	Dir string
 	// Instance is the managed worktree instance when storage tracks one.
-	Instance contextstate.WorktreeInstance
+	Instance state.WorktreeInstance
 }
 
 // WorkspaceID is a repository's durable catalog identity, derived from the
@@ -52,8 +52,8 @@ func WorkspaceID(root string) string {
 
 // Principal derives the repository-level identity every worktree-route row
 // is stored and listed under.
-func Principal(root string) (contextstate.Principal, error) {
-	return contextstate.NewPrincipal(WorkspaceID(root), "worktree-routes", "local-user")
+func Principal(root string) (state.Principal, error) {
+	return state.NewPrincipal(WorkspaceID(root), "worktree-routes", "local-user")
 }
 
 // Root resolves dir (default ".") to the main repository root, matching how

@@ -9,8 +9,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -68,7 +68,7 @@ func SummaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 // The summarizer captures the binding once, here. A model switch later in the
 // session does not rebuild it; summaries keep the startup binding until a new
 // session starts.
-func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+func summaryWiring(sess *chat.Session, res *config.Resolved) (*manager.Summarizer, contextstate.PolicySnapshot, bool) {
 	if sess == nil || res == nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
@@ -96,7 +96,7 @@ func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summar
 // is fail-closed: an unknown provider, a provider with no configured runtime,
 // or a provider with no usable credential all refuse here, so the override
 // never silently falls back to the session binding and its (expensive) model.
-func summaryWiringOverride(sess *chat.Session, res *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+func summaryWiringOverride(sess *chat.Session, res *config.Resolved) (*manager.Summarizer, contextstate.PolicySnapshot, bool) {
 	provider := strings.ToLower(strings.TrimSpace(*res.Context.Summary.Provider))
 	model, err := config.NormalizeModelName(*res.Context.Summary.Model)
 	if err != nil {
@@ -123,7 +123,7 @@ func summaryWiringOverride(sess *chat.Session, res *config.Resolved) (*contextmg
 // allowlist, and the policy digest that makes a later policy change refuse
 // requests minted under the old capture.
 func buildSummaryWiring(sess *chat.Session, res *config.Resolved, completer provider.Completer,
-	providerName, model string, generation uint64, endpoint string) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+	providerName, model string, generation uint64, endpoint string) (*manager.Summarizer, contextstate.PolicySnapshot, bool) {
 	// [privacy] is no longer a precondition. It governs what the checkpoint
 	// may persist (see PolicySnapshot.RedactionConfigured below, which stays
 	// honest), not whether the summary may run at all - requiring it meant a
@@ -138,11 +138,11 @@ func buildSummaryWiring(sess *chat.Session, res *config.Resolved, completer prov
 		PolicyDigest: summaryPolicyDigest(providerName, model, endpoint,
 			res.Privacy.RedactionPatterns, res.Privacy.RedactionKeyNames),
 	}
-	adapter, err := contextmgr.NewLLMSummaryProvider(completer, sess.SessionID)
+	adapter, err := manager.NewLLMSummaryProvider(completer, sess.SessionID)
 	if err != nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
-	summarizer, err := contextmgr.NewSummarizer(adapter, contextstate.BindingRevision{
+	summarizer, err := manager.NewSummarizer(adapter, contextstate.BindingRevision{
 		Provider: providerName, Model: model, Generation: generation,
 	}, policy)
 	if err != nil {

@@ -39,7 +39,7 @@
   ],
   "scopeGuide": {
     "cli": "cmd/mivia, flags, TUI, user-facing CLI behavior",
-    "agent": "orchestrator, agent loop, subagents, runtime concurrency; also internal/agentmsg, internal/agents, internal/chat, internal/coordinator, internal/hub, internal/memory, internal/prompts, internal/contextmgr, internal/contextstate, internal/contentref, internal/codeintel, internal/config",
+    "agent": "orchestrator, agent loop, subagents, runtime concurrency; also internal/agentmsg, internal/agents, internal/chat, internal/coordinator, internal/hub, internal/memory, internal/prompts, internal/context/manager, internal/context/state, internal/contentref, internal/codeintel, internal/config",
     "mcp": "MCP client/server, tool gateway, capability servers",
     "hooks": "Git hooks (.githooks, scripts/git-hooks) and agent tool hooks (internal/hooks)",
     "ai": ".agents/ control surface: rules, skills, doctrines; .mivia/ policy JSON and workflow config; also internal/skills",

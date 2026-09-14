@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // sqliteTimestampLayout is the shape CURRENT_TIMESTAMP writes into every
@@ -70,13 +70,13 @@ const pruneSessionCheckpointsSQL = `DELETE FROM context_checkpoints WHERE checkp
 // fully swept loops until the result is below limit.
 func (s *SQLite) PruneSessionCheckpoints(ctx context.Context, now time.Time, retention time.Duration, keep, limit int) (int, error) {
 	if retention < 0 {
-		return 0, fmt.Errorf("%w: negative checkpoint retention", contextstate.ErrInvalidDTO)
+		return 0, fmt.Errorf("%w: negative checkpoint retention", state.ErrInvalidDTO)
 	}
 	if keep < 0 {
-		return 0, fmt.Errorf("%w: negative checkpoint keep floor", contextstate.ErrInvalidDTO)
+		return 0, fmt.Errorf("%w: negative checkpoint keep floor", state.ErrInvalidDTO)
 	}
 	if limit <= 0 || limit > maxCheckpointGCLimit {
-		return 0, fmt.Errorf("%w: invalid checkpoint GC limit", contextstate.ErrInvalidDTO)
+		return 0, fmt.Errorf("%w: invalid checkpoint GC limit", state.ErrInvalidDTO)
 	}
 	cutoff := now.UTC().Add(-retention).Format(sqliteTimestampLayout)
 	s.writeMu.Lock()

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestSQLiteChatSessionCatalogRoundTripAndPrune(t *testing.T) {
@@ -15,13 +15,13 @@ func TestSQLiteChatSessionCatalogRoundTripAndPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := contextstate.SessionCatalog(store)
+	catalog := state.SessionCatalog(store)
 	ctx := context.Background()
-	if err := catalog.SaveSession(ctx, principal, "named", []byte(`[{}]`), "model", "provider", 1, 2, 1, contextstate.SessionSaveOptions{}); err != nil {
+	if err := catalog.SaveSession(ctx, principal, "named", []byte(`[{}]`), "model", "provider", 1, 2, 1, state.SessionSaveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	data, info, err := catalog.LoadSession(ctx, principal, "named")
@@ -38,7 +38,7 @@ func TestSQLiteChatSessionCatalogRoundTripAndPrune(t *testing.T) {
 	if err := catalog.PruneSessionSnapshots(ctx, principal, []string{"named"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := catalog.LoadSession(ctx, principal, "named"); err != contextstate.ErrSessionNotFound {
+	if _, _, err := catalog.LoadSession(ctx, principal, "named"); err != state.ErrSessionNotFound {
 		t.Fatalf("load after prune error = %v", err)
 	}
 }
@@ -49,18 +49,18 @@ func TestSQLiteChatSessionCatalogDeleteTombstonesContextSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	binding, err := state.NewBindingRevision("provider", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	if err := store.EnsureSession(context.Background(), state.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
-	if err := contextstate.SessionCatalog(store).DeleteSessionSnapshot(context.Background(), principal, principal.SessionID); err != nil {
+	if err := state.SessionCatalog(store).DeleteSessionSnapshot(context.Background(), principal, principal.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	var tombstoned, audits, tombstones int
@@ -94,13 +94,13 @@ func TestSQLiteChatSessionCatalogDeleteFindsSnapshotByStoredSessionID(t *testing
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
 	const name = "snapshot-name"
 	const divergedSessionID = "original-live-session-id"
-	if err := store.SaveSession(context.Background(), principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
+	if err := store.SaveSession(context.Background(), principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, state.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
 	// Simulate a row whose session_id column diverges from its name - e.g.
@@ -109,7 +109,7 @@ func TestSQLiteChatSessionCatalogDeleteFindsSnapshotByStoredSessionID(t *testing
 		t.Fatal(err)
 	}
 
-	if err := contextstate.SessionCatalog(store).DeleteSessionSnapshot(context.Background(), principal, divergedSessionID); err != nil {
+	if err := state.SessionCatalog(store).DeleteSessionSnapshot(context.Background(), principal, divergedSessionID); err != nil {
 		t.Fatalf("DeleteSessionSnapshot(session_id) = %v, want nil", err)
 	}
 
@@ -130,11 +130,11 @@ func TestSQLiteChatSessionCatalogListsWorktreeRoutesOnlyForTheirOwner(t *testing
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := contextstate.NewPrincipal("other-workspace", "session", "subject")
+	other, err := state.NewPrincipal("other-workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,11 @@ func TestSQLiteChatSessionCatalogHidesDeletedBoundRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	owner, err := contextstate.NewPrincipal("workspace", "owner", "owner-subject")
+	owner, err := state.NewPrincipal("workspace", "owner", "owner-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := contextstate.NewPrincipal("workspace", "other", "other-subject")
+	other, err := state.NewPrincipal("workspace", "other", "other-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestSQLiteChatSessionCatalogHidesDeletedBoundRoute(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := store.BeginWorktreeCreation(context.Background(), owner, instance, path); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestSQLiteChatSessionCatalogKeepsRouteNextToInstancelessSession(t *testing.
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestSQLiteChatSessionCatalogKeepsRouteNextToInstancelessSession(t *testing.
 	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", worktreeDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(context.Background(), principal, "real-session", []byte(`[{}]`), "model", "provider", 2, 3, 5, contextstate.SessionSaveOptions{Dir: worktreeDir, Worktree: "wt-a"}); err != nil {
+	if err := store.SaveSession(context.Background(), principal, "real-session", []byte(`[{}]`), "model", "provider", 2, 3, 5, state.SessionSaveOptions{Dir: worktreeDir, Worktree: "wt-a"}); err != nil {
 		t.Fatal(err)
 	}
 

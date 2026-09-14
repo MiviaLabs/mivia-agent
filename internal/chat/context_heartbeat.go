@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // defaultContextHeartbeatInterval is how often a live process renews its

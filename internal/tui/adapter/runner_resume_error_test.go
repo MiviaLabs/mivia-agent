@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestResumeErrorTextLiveSessionIsActionable pins the honest-refusal
@@ -15,7 +15,7 @@ import (
 // must see who has it and how long until retry succeeds - not a doubled-id
 // wrapped error chain whose cause the header renderer then clips to "~".
 func TestResumeErrorTextLiveSessionIsActionable(t *testing.T) {
-	live := &contextstate.SessionLiveError{
+	live := &state.SessionLiveError{
 		LeaseAge:   36 * time.Second,
 		RetryAfter: 84 * time.Second,
 	}

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func (s *SQLite) LoadWorktreeSession(ctx context.Context, p contextstate.Principal, n string, i contextstate.WorktreeInstance) ([]byte, contextstate.SessionCatalogInfo, error) {

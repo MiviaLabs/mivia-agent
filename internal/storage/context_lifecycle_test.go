@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestDeleteExportAuditAndRevocation(t *testing.T) {
@@ -17,7 +17,7 @@ func TestDeleteExportAuditAndRevocation(t *testing.T) {
 	defer s.Close()
 	seedContextSession(t, s, principal)
 	payload, event := contextSourceFixture(t, principal, "delete-safe")
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := s.DeleteSession(ctx, principal, principal.SessionID)
@@ -27,7 +27,7 @@ func TestDeleteExportAuditAndRevocation(t *testing.T) {
 	if first.RevokedRefs != 1 || first.AuditID == "" || first.TombstoneRevision.Session != 1 {
 		t.Fatalf("delete result = %+v", first)
 	}
-	if _, err := s.ReadPayload(ctx, principal, payload.Ref); !errors.Is(err, contextstate.ErrSessionTombstoned) {
+	if _, err := s.ReadPayload(ctx, principal, payload.Ref); !errors.Is(err, state.ErrSessionTombstoned) {
 		t.Fatalf("read after delete = %v, want ErrSessionTombstoned", err)
 	}
 	second, err := s.DeleteSession(ctx, principal, principal.SessionID)
@@ -45,7 +45,7 @@ func TestExportSessionIsSanitizedAndAudited(t *testing.T) {
 	defer s.Close()
 	seedContextSession(t, s, principal)
 	payload, event := contextSourceFixture(t, principal, "export-safe")
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
 		t.Fatal(err)
 	}
 	export, err := s.ExportSession(ctx, principal, principal.SessionID)
@@ -69,30 +69,30 @@ func TestExportSessionIsSanitizedAndAudited(t *testing.T) {
 // NULL parent data; export must reassemble bytes (not HashOnly-drop content).
 func TestExportSessionReassemblesMultiChunkPayload(t *testing.T) {
 	ctx := context.Background()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
 	seedContextSession(t, s, principal)
 
 	body := []byte(strings.Repeat("export-chunk-body-", 200))
-	if len(body) <= contextstate.PayloadChunkSize() {
+	if len(body) <= state.PayloadChunkSize() {
 		t.Fatalf("fixture too small to force chunking: %d", len(body))
 	}
-	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(ctx, principal, body, state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID, err := contextstate.NewSourceID(principal.SessionID, 1)
+	eventID, err := state.NewSourceID(principal.SessionID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := contextstate.SourceEvent{
+	event := state.SourceEvent{
 		ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
 		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
 	}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
 		t.Fatalf("append chunked source: %v", err)
 	}
 
@@ -118,14 +118,14 @@ func TestExportSessionReassemblesMultiChunkPayload(t *testing.T) {
 	}
 }
 
-func contextSourceFixture(t *testing.T, principal contextstate.Principal, value string) (contextstate.SanitizedPayload, contextstate.SourceEvent) {
+func contextSourceFixture(t *testing.T, principal state.Principal, value string) (state.SanitizedPayload, state.SourceEvent) {
 	t.Helper()
-	payload, err := contextstate.SanitizeSourcePayload(context.Background(), principal, []byte(value), contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(context.Background(), principal, []byte(value), state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _ := contextstate.NewSourceID(principal.SessionID, 1)
-	event := contextstate.SourceEvent{ID: id, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: len(payload.Bytes)}
+	id, _ := state.NewSourceID(principal.SessionID, 1)
+	event := state.SourceEvent{ID: id, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: len(payload.Bytes)}
 	return payload, event
 }
 
@@ -137,27 +137,27 @@ func contextSourceFixture(t *testing.T, principal contextstate.Principal, value 
 // permanently blocked.
 func TestPruneContextPayloadsRemovesExpiredChunkedPayload(t *testing.T) {
 	ctx := context.Background()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
 	seedContextSession(t, s, principal)
 
 	body := []byte(strings.Repeat("prune-chunk-body-", 200))
-	if len(body) <= contextstate.PayloadChunkSize() {
+	if len(body) <= state.PayloadChunkSize() {
 		t.Fatalf("fixture too small to force chunking: %d", len(body))
 	}
-	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(ctx, principal, body, state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID, err := contextstate.NewSourceID(principal.SessionID, 1)
+	eventID, err := state.NewSourceID(principal.SessionID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := contextstate.SourceEvent{ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+	event := state.SourceEvent{ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size}
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
 		t.Fatalf("append chunked source: %v", err)
 	}
 	var chunkRows int
@@ -207,8 +207,8 @@ func TestPruneContextPayloadsRemovesExpiredChunkedPayload(t *testing.T) {
 // pruned, for both a multi-chunk and an inline layout.
 func TestPruneContextPayloadsSkipsNotYetExpiredRevoked(t *testing.T) {
 	ctx := context.Background()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
@@ -216,27 +216,27 @@ func TestPruneContextPayloadsSkipsNotYetExpiredRevoked(t *testing.T) {
 
 	// Chunked payload (revoked, future expiry).
 	big := []byte(strings.Repeat("prune-future-chunk-", 200))
-	if len(big) <= contextstate.PayloadChunkSize() {
+	if len(big) <= state.PayloadChunkSize() {
 		t.Fatalf("fixture too small to force chunking: %d", len(big))
 	}
-	bigPayload, err := contextstate.SanitizeSourcePayload(ctx, principal, big, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	bigPayload, err := state.SanitizeSourcePayload(ctx, principal, big, state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bigID, _ := contextstate.NewSourceID(principal.SessionID, 1)
-	bigEvent := contextstate.SourceEvent{ID: bigID, Kind: "message", Role: "user", PayloadRef: bigPayload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: bigPayload.Ref.Size}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{bigEvent}, []contextstate.PayloadRecord{{Ref: bigPayload.Ref, Retention: bigPayload.Retention, Data: bigPayload.Bytes}}); err != nil {
+	bigID, _ := state.NewSourceID(principal.SessionID, 1)
+	bigEvent := state.SourceEvent{ID: bigID, Kind: "message", Role: "user", PayloadRef: bigPayload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: bigPayload.Ref.Size}
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{bigEvent}, []state.PayloadRecord{{Ref: bigPayload.Ref, Retention: bigPayload.Retention, Data: bigPayload.Bytes}}); err != nil {
 		t.Fatalf("append chunked source: %v", err)
 	}
 
 	// Inline payload (revoked, future expiry).
-	smallPayload, err := contextstate.SanitizeSourcePayload(ctx, principal, []byte("prune-future-inline"), contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	smallPayload, err := state.SanitizeSourcePayload(ctx, principal, []byte("prune-future-inline"), state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	smallID, _ := contextstate.NewSourceID(principal.SessionID, 2)
-	smallEvent := contextstate.SourceEvent{ID: smallID, Kind: "message", Role: "user", PayloadRef: smallPayload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: smallPayload.Ref.Size}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{smallEvent}, []contextstate.PayloadRecord{{Ref: smallPayload.Ref, Retention: smallPayload.Retention, Data: smallPayload.Bytes}}); err != nil {
+	smallID, _ := state.NewSourceID(principal.SessionID, 2)
+	smallEvent := state.SourceEvent{ID: smallID, Kind: "message", Role: "user", PayloadRef: smallPayload.Ref.Ref, Provenance: "host", RedactionStatus: "sanitized", Size: smallPayload.Ref.Size}
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{smallEvent}, []state.PayloadRecord{{Ref: smallPayload.Ref, Retention: smallPayload.Retention, Data: smallPayload.Bytes}}); err != nil {
 		t.Fatalf("append inline source: %v", err)
 	}
 

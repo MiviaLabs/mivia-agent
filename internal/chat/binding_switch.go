@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -56,7 +56,7 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 	old := s.publishBindingLocked(binding)
 	s.invalidateLocked()
 	if contextEnabled {
-		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
+		s.contextHead = state.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
 	}
 	// SwitchBinding is one of the four identity-capture triggers (INV-68-8).
 	// The incoming identity reflects the newly published binding; when the

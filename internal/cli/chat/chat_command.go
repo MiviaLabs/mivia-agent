@@ -13,7 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -106,7 +106,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 // a same-package concrete type.
 type workspaceRestartError interface {
 	error
-	WorkspaceRestartInfo() (dir, resumeSessionName string, wt contextstate.WorktreeInstance)
+	WorkspaceRestartInfo() (dir, resumeSessionName string, wt state.WorktreeInstance)
 }
 
 func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvocation) error {
@@ -116,7 +116,7 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 	}
 	root, err := chatRepositoryRoot(dir)
 	if err != nil {
-		return contextstate.ErrWorktreeDeleted
+		return state.ErrWorktreeDeleted
 	}
 	storePath := invocation.repositorySessionStorePath
 	if storePath == "" {

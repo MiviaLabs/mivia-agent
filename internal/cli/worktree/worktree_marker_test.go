@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func markerGitOutput(t *testing.T, dir string, args ...string) string {
@@ -49,7 +49,7 @@ func markerCommonExcludePath(t *testing.T, linked string) string {
 func TestWorktreeMarkerRoundTripAndRejectsWrongRoot(t *testing.T) {
 	root := t.TempDir()
 	markerGitOutput(t, root, "init", "-q")
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := WriteWorktreeMarker(root, instance); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestWorktreeMarkerRejectsSymlinkDirectory(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, ".mivia")); err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := WriteWorktreeMarker(root, instance); err == nil {
 		t.Fatal("write through symlink directory succeeded")
 	}
@@ -98,7 +98,7 @@ func TestWorktreeMarkerRejectsSymlinkGitInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := WriteWorktreeMarker(root, instance); err == nil {
 		t.Errorf("write with symlinked Git info directory succeeds")
 	}
@@ -116,7 +116,7 @@ func TestWorktreeMarkerRejectsSymlinkGitInfo(t *testing.T) {
 
 func TestWorktreeMarkerIsExcludedFromLinkedWorktree(t *testing.T) {
 	_, linked := markerLinkedWorktree(t)
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	if err := WriteWorktreeMarker(linked, instance); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestWorktreeMarkerExcludePreservesContentAndIsIdempotent(t *testing.T) {
 	if err := os.WriteFile(excludePath, []byte(initial), 0600); err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	for range 2 {
 		if err := WriteWorktreeMarker(linked, instance); err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func TestWorktreeMarkerExcludePreservesContentAndIsIdempotent(t *testing.T) {
 func TestWorktreeMarkerExcludeIsConcurrentAndIdempotent(t *testing.T) {
 	_, linked := markerLinkedWorktree(t)
 	excludePath := markerCommonExcludePath(t, linked)
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	errorsCh := make(chan error, 8)
 	var group sync.WaitGroup
 	for range 8 {
@@ -192,7 +192,7 @@ func TestWorktreeMarkerRecoversFromUnownedExcludeLock(t *testing.T) {
 	if err := os.WriteFile(excludePath+".lock", nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	firstErr := WriteWorktreeMarker(linked, instance)
 	secondErr := WriteWorktreeMarker(linked, instance)
 	if firstErr != nil || secondErr != nil {

@@ -17,7 +17,7 @@ import (
 // summarySystemMarker identifies the summarize prompt's system message, so a
 // scripted completer can answer summary requests with a valid echo reply and
 // every other request with plain text. The marker is the first sentence of
-// summarySystemPrompt in internal/contextmgr.
+// summarySystemPrompt in internal/context/manager.
 const summarySystemMarker = "You summarize an earlier part of a conversation."
 
 // summaryScriptedCompleter answers every completer method. Summary requests

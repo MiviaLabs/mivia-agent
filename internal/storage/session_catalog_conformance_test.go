@@ -38,7 +38,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // catalogNamespace is one implementation of the catalog contract. Everything
@@ -46,22 +46,22 @@ import (
 // adding a row here.
 type catalogNamespace struct {
 	name     string
-	instance contextstate.WorktreeInstance
+	instance state.WorktreeInstance
 }
 
 var catalogNamespaces = []catalogNamespace{
 	{name: "plain"},
-	{name: "worktree", instance: contextstate.WorktreeInstance{Worktree: "wt-conf", ID: "wt_00000000000000ff"}},
+	{name: "worktree", instance: state.WorktreeInstance{Worktree: "wt-conf", ID: "wt_00000000000000ff"}},
 }
 
 // open prepares a store with this namespace's session live and bound.
-func (ns catalogNamespace) open(t *testing.T) (*SQLite, contextstate.Principal, contextstate.BindingRevision) {
+func (ns catalogNamespace) open(t *testing.T) (*SQLite, state.Principal, state.BindingRevision) {
 	t.Helper()
 	store, principal := openContextTestStore(t)
 	t.Cleanup(func() { store.Close() })
 	ctx := context.Background()
 	if !ns.instance.IsZero() {
-		catalog := any(store).(contextstate.WorktreeSessionCatalog)
+		catalog := any(store).(state.WorktreeSessionCatalog)
 		dir := filepath.Join(t.TempDir(), "worktrees", ns.instance.Worktree)
 		if err := catalog.BeginWorktreeCreation(ctx, principal, ns.instance, dir); err != nil {
 			t.Fatalf("%s: BeginWorktreeCreation: %v", ns.name, err)
@@ -71,7 +71,7 @@ func (ns catalogNamespace) open(t *testing.T) (*SQLite, contextstate.Principal, 
 		}
 	}
 	binding := contextTestBinding(t)
-	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{
+	if err := store.EnsureSession(ctx, state.EnsureSessionRequest{
 		Principal: principal, Binding: binding, WorktreeInstance: ns.instance,
 	}); err != nil {
 		t.Fatalf("%s: EnsureSession: %v", ns.name, err)
@@ -79,7 +79,7 @@ func (ns catalogNamespace) open(t *testing.T) (*SQLite, contextstate.Principal, 
 	return store, principal, binding
 }
 
-func (ns catalogNamespace) commitTurn(t *testing.T, store *SQLite, p contextstate.Principal, b contextstate.BindingRevision, key, content string, expected contextstate.Revision) {
+func (ns catalogNamespace) commitTurn(t *testing.T, store *SQLite, p state.Principal, b state.BindingRevision, key, content string, expected state.Revision) {
 	t.Helper()
 	req, err := interleaveCommitRequest(p, ns.instance, expected, b, key, content)
 	if err != nil {
@@ -93,10 +93,10 @@ func (ns catalogNamespace) commitTurn(t *testing.T, store *SQLite, p contextstat
 // saveSnapshot writes a projection of the live session - the shape a failed
 // turn leaves behind (adoptFailedTurnSnapshot), which is the only copy that
 // turn's history has.
-func (ns catalogNamespace) saveSnapshot(t *testing.T, store *SQLite, p contextstate.Principal, b contextstate.BindingRevision, payload string, revision uint64) {
+func (ns catalogNamespace) saveSnapshot(t *testing.T, store *SQLite, p state.Principal, b state.BindingRevision, payload string, revision uint64) {
 	t.Helper()
 	if err := store.SaveSession(context.Background(), p, p.SessionID, []byte(payload), b.Model, b.Provider, 1, 1, 1,
-		contextstate.SessionSaveOptions{
+		state.SessionSaveOptions{
 			SessionID: p.SessionID, SessionRevision: &revision,
 			Worktree: ns.instance.Worktree, WorktreeInstance: ns.instance,
 		}); err != nil {
@@ -104,9 +104,9 @@ func (ns catalogNamespace) saveSnapshot(t *testing.T, store *SQLite, p contextst
 	}
 }
 
-func (ns catalogNamespace) advance(t *testing.T, store *SQLite, p contextstate.Principal, b contextstate.BindingRevision, expected contextstate.Revision, reason string, clear bool) {
+func (ns catalogNamespace) advance(t *testing.T, store *SQLite, p state.Principal, b state.BindingRevision, expected state.Revision, reason string, clear bool) {
 	t.Helper()
-	req := contextstate.AdvanceRequest{
+	req := state.AdvanceRequest{
 		OperationID: "advance-" + reason, Principal: p, SessionID: p.SessionID,
 		Expected: expected, ExpectedBinding: b, NewBinding: b,
 		NewSession: expected.Session + 1, NewDurable: expected.Durable + 1, NewSourceSequence: expected.Source,
@@ -117,7 +117,7 @@ func (ns catalogNamespace) advance(t *testing.T, store *SQLite, p contextstate.P
 	}
 }
 
-func (ns catalogNamespace) load(store *SQLite, p contextstate.Principal) ([]byte, contextstate.SessionCatalogInfo, error) {
+func (ns catalogNamespace) load(store *SQLite, p state.Principal) ([]byte, state.SessionCatalogInfo, error) {
 	ctx := context.Background()
 	if ns.instance.IsZero() {
 		return store.LoadSession(ctx, p, p.SessionID)
@@ -125,7 +125,7 @@ func (ns catalogNamespace) load(store *SQLite, p contextstate.Principal) ([]byte
 	return store.LoadWorktreeSession(ctx, p, p.SessionID, ns.instance)
 }
 
-func (ns catalogNamespace) deleteSnapshot(store *SQLite, p contextstate.Principal) error {
+func (ns catalogNamespace) deleteSnapshot(store *SQLite, p state.Principal) error {
 	ctx := context.Background()
 	if ns.instance.IsZero() {
 		return store.DeleteSessionSnapshot(ctx, p, p.SessionID)
@@ -133,7 +133,7 @@ func (ns catalogNamespace) deleteSnapshot(store *SQLite, p contextstate.Principa
 	return store.DeleteWorktreeSessionSnapshot(ctx, p, p.SessionID, ns.instance)
 }
 
-func (ns catalogNamespace) tombstoned(t *testing.T, store *SQLite, p contextstate.Principal) int {
+func (ns catalogNamespace) tombstoned(t *testing.T, store *SQLite, p state.Principal) int {
 	t.Helper()
 	var tombstoned int
 	if err := store.db.QueryRow(`SELECT tombstoned FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=?`,
@@ -152,7 +152,7 @@ func TestCatalogNamespaces_ServeTurnOnlyLiveSession(t *testing.T) {
 	for _, ns := range catalogNamespaces {
 		t.Run(ns.name, func(t *testing.T) {
 			store, p, b := ns.open(t)
-			ns.commitTurn(t, store, p, b, "turn-1", "only-in-the-checkpoint", contextstate.Revision{})
+			ns.commitTurn(t, store, p, b, "turn-1", "only-in-the-checkpoint", state.Revision{})
 
 			payload, info, err := ns.load(store, p)
 			if err != nil {
@@ -176,9 +176,9 @@ func TestCatalogNamespaces_DoNotResurrectClearedConversation(t *testing.T) {
 	for _, ns := range catalogNamespaces {
 		t.Run(ns.name, func(t *testing.T) {
 			store, p, b := ns.open(t)
-			ns.commitTurn(t, store, p, b, "turn-1", "sensitive-pre-clear", contextstate.Revision{})
+			ns.commitTurn(t, store, p, b, "turn-1", "sensitive-pre-clear", state.Revision{})
 			ns.saveSnapshot(t, store, p, b, `[{"role":"user","content":"sensitive-pre-clear"}]`, 1)
-			ns.advance(t, store, p, b, contextstate.Revision{Session: 1, Durable: 1, Source: 1}, "clear", true)
+			ns.advance(t, store, p, b, state.Revision{Session: 1, Durable: 1, Source: 1}, "clear", true)
 
 			payload, _, err := ns.load(store, p)
 			if err != nil {
@@ -200,7 +200,7 @@ func TestCatalogNamespaces_KeepSnapshotAcrossBindingAdvance(t *testing.T) {
 		t.Run(ns.name, func(t *testing.T) {
 			store, p, b := ns.open(t)
 			ns.saveSnapshot(t, store, p, b, `[{"role":"user","content":"only-copy-of-this-turn"}]`, 0)
-			ns.advance(t, store, p, b, contextstate.Revision{}, "select", false)
+			ns.advance(t, store, p, b, state.Revision{}, "select", false)
 
 			payload, _, err := ns.load(store, p)
 			if err != nil {
@@ -223,7 +223,7 @@ func TestCatalogNamespaces_DeleteLeavesNothingLoadable(t *testing.T) {
 		for _, shape := range []string{"with snapshot", "turn only"} {
 			t.Run(ns.name+"/"+shape, func(t *testing.T) {
 				store, p, b := ns.open(t)
-				ns.commitTurn(t, store, p, b, "turn-1", "deleted-content", contextstate.Revision{})
+				ns.commitTurn(t, store, p, b, "turn-1", "deleted-content", state.Revision{})
 				if shape == "with snapshot" {
 					ns.saveSnapshot(t, store, p, b, `[{"role":"user","content":"deleted-content"}]`, 1)
 				}
@@ -231,7 +231,7 @@ func TestCatalogNamespaces_DeleteLeavesNothingLoadable(t *testing.T) {
 				if err := ns.deleteSnapshot(store, p); err != nil {
 					t.Fatalf("delete: %v", err)
 				}
-				if _, _, err := ns.load(store, p); !errors.Is(err, contextstate.ErrSessionNotFound) {
+				if _, _, err := ns.load(store, p); !errors.Is(err, state.ErrSessionNotFound) {
 					t.Fatalf("load after delete = %v, want ErrSessionNotFound", err)
 				}
 				if got := ns.tombstoned(t, store, p); got != 1 {

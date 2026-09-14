@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -48,42 +48,42 @@ type agentPreparationProbe struct {
 
 type deadlinePreparationProbe struct{ calls int }
 
-func (p *deadlinePreparationProbe) Prepare(ctx context.Context, _ contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (p *deadlinePreparationProbe) Prepare(ctx context.Context, _ manager.PrepareInput) (manager.Preparation, error) {
 	p.calls++
 	if ctx.Done() == nil {
-		return contextmgr.Preparation{}, errors.New("unexpected background prepare")
+		return manager.Preparation{}, errors.New("unexpected background prepare")
 	}
 	<-ctx.Done()
-	return contextmgr.Preparation{}, ctx.Err()
+	return manager.Preparation{}, ctx.Err()
 }
 
-func (p *deadlinePreparationProbe) Discard(contextmgr.Preparation) {}
+func (p *deadlinePreparationProbe) Discard(manager.Preparation) {}
 
-func (p *agentPreparationProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
-		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+func (p *agentPreparationProbe) Prepare(_ context.Context, input manager.PrepareInput) (manager.Preparation, error) {
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   state.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
 	}
-	return contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+	return manager.CapturePreparation(input, manager.CheckpointCandidate{
 		SourceRange: rangeValue, ActiveContext: []byte("active"),
 	}, input.Messages, false, "agent-prep-test")
 }
 
-func (p *agentPreparationProbe) Discard(contextmgr.Preparation) { p.discards++ }
+func (p *agentPreparationProbe) Discard(manager.Preparation) { p.discards++ }
 
 func TestAgentTurnDiscardsFailedPreparation(t *testing.T) {
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("context-test", "model", 1)
+	binding, err := state.NewBindingRevision("context-test", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	probe := &agentPreparationProbe{}
 	loop := &Loop{Completer: &preparationFailureCompleter{err: errPreparationProvider}, Tools: tools.NewRegistry()}
 	_, err = loop.Run(context.Background(), "question", Options{Model: "model", MaxContextTokens: 100, PreparationManager: probe,
-		PreparationInput: contextmgr.PrepareInput{
+		PreparationInput: manager.PrepareInput{
 			Budget: 100, Principal: principal, Binding: binding,
 		},
 	})
@@ -98,11 +98,11 @@ func TestAgentTurnDiscardsFailedPreparation(t *testing.T) {
 }
 
 func TestAgentTurnRetainsSuccessfulPreparationForSessionCommit(t *testing.T) {
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("context-success", "model", 1)
+	binding, err := state.NewBindingRevision("context-success", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestAgentTurnRetainsSuccessfulPreparationForSessionCommit(t *testing.T) {
 	loop := &Loop{Completer: preparationSuccessCompleter{}, Tools: tools.NewRegistry()}
 	_, err = loop.Run(context.Background(), "question", Options{
 		Model: "model", MaxContextTokens: 100, PreparationManager: probe,
-		PreparationInput: contextmgr.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
+		PreparationInput: manager.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
 	})
 	if err != nil {
 		t.Fatal(err)

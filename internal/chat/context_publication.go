@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
@@ -14,7 +14,7 @@ import (
 
 func buildContextTurnResult(ctx context.Context, cfg contextTurnConfig, preparation *contextmgr.Preparation, active []provider.Message, ordered []provider.Message, turnID uint64) (contextmgr.TurnResult, error) {
 	if cfg.manager == nil {
-		return contextmgr.TurnResult{}, fmt.Errorf("%w: context manager is missing", contextstate.ErrCheckpointConflict)
+		return contextmgr.TurnResult{}, fmt.Errorf("%w: context manager is missing", state.ErrCheckpointConflict)
 	}
 	result := contextmgr.TurnResult{
 		Active: cloneContextMessages(active), Ordered: cloneContextMessages(ordered),
@@ -32,7 +32,7 @@ func buildContextTurnResult(ctx context.Context, cfg contextTurnConfig, preparat
 		}
 	}
 	if preparation == nil {
-		return contextmgr.TurnResult{}, fmt.Errorf("%w: preparation is missing", contextstate.ErrCheckpointConflict)
+		return contextmgr.TurnResult{}, fmt.Errorf("%w: preparation is missing", state.ErrCheckpointConflict)
 	}
 	events, payloads, err := contextmgr.ProjectSource(ctx, cfg.principal, ordered, preparation.Token.Revision.Source+1, cfg.redaction)
 	if err != nil {
@@ -40,7 +40,7 @@ func buildContextTurnResult(ctx context.Context, cfg contextTurnConfig, preparat
 	}
 	result.SourceEvents = events
 	if len(events) > 0 {
-		rangeValue, err := contextstate.NewSourceRange(events[0].ID, events[len(events)-1].ID)
+		rangeValue, err := state.NewSourceRange(events[0].ID, events[len(events)-1].ID)
 		if err != nil {
 			return contextmgr.TurnResult{}, err
 		}
@@ -51,8 +51,8 @@ func buildContextTurnResult(ctx context.Context, cfg contextTurnConfig, preparat
 	return result, nil
 }
 
-func nextContextRevision(preparation contextmgr.Preparation, result contextmgr.TurnResult) contextstate.Revision {
-	return contextstate.Revision{
+func nextContextRevision(preparation contextmgr.Preparation, result contextmgr.TurnResult) state.Revision {
+	return state.Revision{
 		Session: preparation.Token.Revision.Session + 1,
 		Durable: preparation.Token.Revision.Durable + 1,
 		Source:  preparation.Token.Revision.Source + uint64(len(result.SourceEvents)),
@@ -105,8 +105,8 @@ func summaryUnavailableReason(cfg contextTurnConfig, summarized bool, failureRea
 	return "the summary call failed or produced nothing usable for this compaction"
 }
 
-func (s *Session) advanceContextHead(store contextstate.Store, principal contextstate.Principal, instance contextstate.WorktreeInstance, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string, clearActive bool) error {
-	request := contextstate.AdvanceRequest{
+func (s *Session) advanceContextHead(store state.Store, principal state.Principal, instance state.WorktreeInstance, expected state.Revision, expectedBinding, newBinding state.BindingRevision, reason string, clearActive bool) error {
+	request := state.AdvanceRequest{
 		OperationID: fmt.Sprintf("%s-%s-%d-%d-%d", reason, principal.SessionID, expected.Session, expected.Durable, newBinding.Generation),
 		Principal:   principal, SessionID: principal.SessionID, Expected: expected,
 		WorktreeInstance: instance,
@@ -120,7 +120,7 @@ func (s *Session) advanceContextHead(store contextstate.Store, principal context
 // advanceBindingIfNeeded temporarily releases the session mutex for the
 // durable CAS and returns with it reacquired so the caller can publish the
 // already-validated binding atomically with the in-memory head.
-func (s *Session) advanceBindingIfNeeded(enabled bool, store contextstate.Store, principal contextstate.Principal, instance contextstate.WorktreeInstance, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string) error {
+func (s *Session) advanceBindingIfNeeded(enabled bool, store state.Store, principal state.Principal, instance state.WorktreeInstance, expected state.Revision, expectedBinding, newBinding state.BindingRevision, reason string) error {
 	if !enabled {
 		return nil
 	}

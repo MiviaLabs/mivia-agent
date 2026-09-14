@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestPayloadChunkRoundTripMultiMB: multi-chunk source payloads commit and
@@ -16,8 +16,8 @@ import (
 func TestPayloadChunkRoundTripMultiMB(t *testing.T) {
 	ctx := context.Background()
 	// Small chunk size forces multi-chunk path without multi-MB of RSS in CI.
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
@@ -25,23 +25,23 @@ func TestPayloadChunkRoundTripMultiMB(t *testing.T) {
 
 	// ~3.5 KiB → 4 chunks at 1024-byte chunk size.
 	body := []byte(strings.Repeat("chunk-payload-body-", 200))
-	if len(body) <= contextstate.PayloadChunkSize() {
+	if len(body) <= state.PayloadChunkSize() {
 		t.Fatalf("fixture too small to force chunking: %d", len(body))
 	}
-	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(ctx, principal, body, state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID, err := contextstate.NewSourceID(principal.SessionID, 1)
+	eventID, err := state.NewSourceID(principal.SessionID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := contextstate.SourceEvent{
+	event := state.SourceEvent{
 		ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
 		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
 	}
-	record := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{record}); err != nil {
+	record := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{record}); err != nil {
 		t.Fatalf("append chunked source: %v", err)
 	}
 
@@ -79,24 +79,24 @@ func TestPayloadChunkRoundTripMultiMB(t *testing.T) {
 // with digest mismatch (never return partial/wrong bytes).
 func TestPayloadChunkSHAFailClosed(t *testing.T) {
 	ctx := context.Background()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 64})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 64})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
 	seedContextSession(t, s, principal)
 
 	body := []byte(strings.Repeat("Z", 200))
-	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"nope"}})
+	payload, err := state.SanitizeSourcePayload(ctx, principal, body, state.RedactionPolicy{Configured: true, Patterns: []string{"nope"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID, _ := contextstate.NewSourceID(principal.SessionID, 1)
-	event := contextstate.SourceEvent{
+	eventID, _ := state.NewSourceID(principal.SessionID, 1)
+	event := state.SourceEvent{
 		ID: eventID, Kind: "message", Role: "assistant", PayloadRef: payload.Ref.Ref,
 		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
 	}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,10 +117,10 @@ func TestPayloadChunkSHAFailClosed(t *testing.T) {
 // TestPayloadChunkSizeZeroUsesDefault: SourceEventBytes=0 maps to the built-in
 // default chunk size (not whole-payload reject).
 func TestPayloadChunkSizeZeroUsesDefault(t *testing.T) {
-	contextstate.SetLimits(contextstate.Limits{})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
-	if got := contextstate.PayloadChunkSize(); got != contextstate.DefaultPayloadChunkBytes {
-		t.Fatalf("PayloadChunkSize() = %d, want default %d", got, contextstate.DefaultPayloadChunkBytes)
+	state.SetLimits(state.Limits{})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
+	if got := state.PayloadChunkSize(); got != state.DefaultPayloadChunkBytes {
+		t.Fatalf("PayloadChunkSize() = %d, want default %d", got, state.DefaultPayloadChunkBytes)
 	}
 }
 
@@ -129,8 +129,8 @@ func TestPayloadChunkSizeZeroUsesDefault(t *testing.T) {
 // differ, but the reassembled body is identical, so the old layout is kept.
 func TestInsertPayloadIdempotentAcrossChunkSizeChange(t *testing.T) {
 	ctx := context.Background()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
@@ -140,20 +140,20 @@ func TestInsertPayloadIdempotentAcrossChunkSizeChange(t *testing.T) {
 	if len(body) <= 1024 {
 		t.Fatalf("fixture too small to force multi-chunk: %d", len(body))
 	}
-	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	payload, err := state.SanitizeSourcePayload(ctx, principal, body, state.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID, err := contextstate.NewSourceID(principal.SessionID, 1)
+	eventID, err := state.NewSourceID(principal.SessionID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := contextstate.SourceEvent{
+	event := state.SourceEvent{
 		ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
 		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
 	}
-	record := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{record}); err != nil {
+	record := state.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{record}); err != nil {
 		t.Fatalf("initial chunked insert: %v", err)
 	}
 	var firstChunkRows int
@@ -165,16 +165,16 @@ func TestInsertPayloadIdempotentAcrossChunkSizeChange(t *testing.T) {
 	}
 
 	// Same content, smaller chunk size → different layout (more chunks / different chunk_count).
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 256})
-	eventID2, err := contextstate.NewSourceID(principal.SessionID, 2)
+	state.SetLimits(state.Limits{SourceEventBytes: 256})
+	eventID2, err := state.NewSourceID(principal.SessionID, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event2 := contextstate.SourceEvent{
+	event2 := state.SourceEvent{
 		ID: eventID2, Kind: "message", Role: "assistant", PayloadRef: payload.Ref.Ref,
 		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
 	}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event2}, []contextstate.PayloadRecord{record}); err != nil {
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event2}, []state.PayloadRecord{record}); err != nil {
 		t.Fatalf("re-insert same payload with new chunk size: %v", err)
 	}
 
@@ -199,24 +199,24 @@ func TestInsertPayloadIdempotentAcrossChunkSizeChange(t *testing.T) {
 // TestSmallPayloadStaysInlineBLOB: under chunk size, data stays on the parent row.
 func TestSmallPayloadStaysInlineBLOB(t *testing.T) {
 	ctx := context.Background()
-	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 4096})
-	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+	state.SetLimits(state.Limits{SourceEventBytes: 4096})
+	t.Cleanup(func() { state.SetLimits(state.DefaultLimits()) })
 
 	s, principal := openContextTestStore(t)
 	defer s.Close()
 	seedContextSession(t, s, principal)
 
 	body := []byte("small-inline")
-	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"nope"}})
+	payload, err := state.SanitizeSourcePayload(ctx, principal, body, state.RedactionPolicy{Configured: true, Patterns: []string{"nope"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID, _ := contextstate.NewSourceID(principal.SessionID, 1)
-	event := contextstate.SourceEvent{
+	eventID, _ := state.NewSourceID(principal.SessionID, 1)
+	event := state.SourceEvent{
 		ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
 		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
 	}
-	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+	if err := s.appendSourceEvents(ctx, principal, []state.SourceEvent{event}, []state.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
 		t.Fatal(err)
 	}
 	var inline []byte

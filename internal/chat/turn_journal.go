@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -92,7 +92,7 @@ func (s *Session) journalBusEvent(ctx context.Context, ev events.Event) {
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, journalWriteTimeout)
 	defer cancel()
-	entry := contextstate.TurnJournalEntry{Kind: string(ev.Kind), Payload: payload, CreatedAt: time.Now()}
+	entry := state.TurnJournalEntry{Kind: string(ev.Kind), Payload: payload, CreatedAt: time.Now()}
 	if err := journal.AppendTurnJournalEntry(writeCtx, principal, ev.SessionID, ev.TurnID, entry); err != nil {
 		fmt.Fprintf(os.Stderr, "\n⚠ turn journal append failed (turn history may be incomplete on crash recovery): %v\n", err)
 	}

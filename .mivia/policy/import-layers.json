@@ -8,8 +8,8 @@
       "internal/version"
     ],
     "internal/agent": [
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/provider",
       "internal/provider/reasoning",
@@ -26,7 +26,7 @@
     "internal/automation": [
       "internal/chat",
       "internal/cli/agents",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/cli/chat",
       "internal/cli/workflow",
       "internal/cli/worktree",
@@ -51,8 +51,8 @@
     "internal/chat": [
       "internal/agent",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/hooksession",
       "internal/orchestrationnotify",
@@ -101,8 +101,8 @@
       "internal/cli/worktree",
       "internal/composition",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/ledger",
       "internal/mcp",
@@ -146,8 +146,8 @@
       "internal/cli/worktree",
       "internal/composition",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/coordinator",
       "internal/events",
       "internal/hooks",
@@ -220,7 +220,7 @@
     "internal/cli/worktree": [
       "internal/chat",
       "internal/config",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/storage",
       "internal/vcs",
       "internal/workspace",
@@ -229,8 +229,8 @@
     "internal/composition": [
       "internal/chat",
       "internal/config",
-      "internal/contextmgr",
-      "internal/contextstate",
+      "internal/context/manager",
+      "internal/context/state",
       "internal/events",
       "internal/hooks",
       "internal/mcp",
@@ -251,8 +251,8 @@
       "internal/tools",
       "internal/workspace"
     ],
-    "internal/contextmgr": [
-      "internal/contextstate",
+    "internal/context/manager": [
+      "internal/context/state",
       "internal/provider",
       "internal/redact",
       "internal/remainder",
@@ -270,7 +270,7 @@
       "internal/subagents"
     ],
     "internal/events": [
-      "internal/contextstate"
+      "internal/context/state"
     ],
     "internal/hooksession": [
       "internal/config",
@@ -278,7 +278,7 @@
     ],
     "internal/hub": [
       "internal/chat",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/events"
     ],
     "internal/jschema": [
@@ -342,14 +342,14 @@
       "internal/tools"
     ],
     "internal/storage": [
-      "internal/contextstate",
+      "internal/context/state",
       "internal/usage",
       "internal/workspace"
     ],
     "internal/subagents": [
       "internal/agent",
       "internal/chat",
-      "internal/contextmgr",
+      "internal/context/manager",
       "internal/jschema",
       "internal/prompts",
       "internal/provider",
@@ -510,7 +510,7 @@
       "internal/cli/agents",
       "internal/composition",
       "internal/config",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/coordinator",
       "internal/events",
       "internal/hooks",
@@ -604,7 +604,7 @@
     ],
     "internal/worktreeroute": [
       "internal/chat",
-      "internal/contextstate",
+      "internal/context/state",
       "internal/storage",
       "internal/vcs"
     ],
@@ -626,7 +626,7 @@
     },
     {
       "from": "internal/storage",
-      "to": "internal/contextmgr",
+      "to": "internal/context/manager",
       "reason": "persistence package importing a domain policy package; the shared usage types moved to internal/usage (see internal/storage -> internal/usage)"
     }
   ],

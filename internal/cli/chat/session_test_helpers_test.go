@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -21,13 +21,13 @@ func newTestSessionForModel(model string) *chat.Session {
 // internal/legacytui's helper of the same name: the TUI worktree-dialog
 // creation flow owns the real implementation now, but cli-only tests still
 // need a worktree plus its instance metadata for fixture setup.
-func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, contextstate.WorktreeInstance, error) {
+func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, state.WorktreeInstance, error) {
 	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
-		return nil, contextstate.WorktreeInstance{}, err
+		return nil, state.WorktreeInstance{}, err
 	}
 	defer store.Close()
-	var instance contextstate.WorktreeInstance
+	var instance state.WorktreeInstance
 	worktree, err := cliworktree.CreateManagedWorktreeInStoreWithInstance(store, root, name, baseRef, branchPrefix, &instance)
 	return worktree, instance, err
 }
@@ -36,7 +36,7 @@ func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string)
 // are package-local copies of internal/legacytui's helpers of the same name
 // (worktree_dialog.go): both are thin wrappers over already-exported
 // worktree-lifecycle functions, duplicated here for cli-only tests.
-func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string) error {
+func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info state.WorktreeInstanceInfo, branchPrefix string) error {
 	lock, err := cliworktree.LockWorktreeLifecycle(root, info.Instance.Worktree)
 	if err != nil {
 		return err
@@ -45,7 +45,7 @@ func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string
 	return cliworktree.RecoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
 }
 
-func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
+func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance state.WorktreeInstance) error {
 	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
 		return cliworktree.ReactivateManagedWorktreeInStore(store, root, instance)
 	}
@@ -76,11 +76,11 @@ func (stubAgentCompleter) ChatTurn(context.Context, provider.Request) (*provider
 // stay buildable once WorkspaceRestart moves to package legacytui.
 type stubWorkspaceRestart struct {
 	dir, resumeSessionName string
-	wt                     contextstate.WorktreeInstance
+	wt                     state.WorktreeInstance
 }
 
 func (s stubWorkspaceRestart) Error() string { return "restart chat in workspace " + s.dir }
 
-func (s stubWorkspaceRestart) WorkspaceRestartInfo() (string, string, contextstate.WorktreeInstance) {
+func (s stubWorkspaceRestart) WorkspaceRestartInfo() (string, string, state.WorktreeInstance) {
 	return s.dir, s.resumeSessionName, s.wt
 }

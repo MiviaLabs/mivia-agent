@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // The delete path's refusals and its rollback arms.
@@ -44,7 +44,7 @@ func TestDeleteSessionSnapshotValidatesBeforeTouchingTheStore(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	if err := s.DeleteSessionSnapshot(ctx, contextstate.Principal{}, "snap"); err == nil {
+	if err := s.DeleteSessionSnapshot(ctx, state.Principal{}, "snap"); err == nil {
 		t.Error("an empty principal was accepted")
 	}
 	for _, bad := range []string{"", strings.Repeat("x", 4096), "has/slash"} {
@@ -63,7 +63,7 @@ func TestDeletingAContextSessionThatDoesNotExistReportsNotFound(t *testing.T) {
 	defer s.Close()
 
 	err := s.DeleteSessionSnapshot(context.Background(), principal, "never-existed")
-	if !errors.Is(err, contextstate.ErrSessionNotFound) {
+	if !errors.Is(err, state.ErrSessionNotFound) {
 		t.Errorf("deleting an unknown session returned %v, want ErrSessionNotFound", err)
 	}
 }
@@ -149,7 +149,7 @@ func TestPruneSessionSnapshotsValidatesEveryNameBeforeCommitting(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	if err := s.PruneSessionSnapshots(ctx, contextstate.Principal{}, []string{"a"}); err == nil {
+	if err := s.PruneSessionSnapshots(ctx, state.Principal{}, []string{"a"}); err == nil {
 		t.Error("an empty principal was accepted")
 	}
 	// No names is not an error: there is nothing to prune.
@@ -157,10 +157,10 @@ func TestPruneSessionSnapshotsValidatesEveryNameBeforeCommitting(t *testing.T) {
 		t.Errorf("pruning an empty list errored: %v", err)
 	}
 
-	catalog := contextstate.SessionCatalog(s)
+	catalog := state.SessionCatalog(s)
 	for _, name := range []string{"keep-me", "also-keep"} {
 		if err := catalog.SaveSession(ctx, principal, name, []byte(`[{"role":"user"}]`),
-			"model", "provider", 1, 2, 1, contextstate.SessionSaveOptions{}); err != nil {
+			"model", "provider", 1, 2, 1, state.SessionSaveOptions{}); err != nil {
 			t.Fatalf("seed %s: %v", name, err)
 		}
 	}

@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // setLeaseAt stamps context_sessions.lease_at directly, bypassing RenewLease,
 // so tests can construct a fresh or stale lease deterministically instead of
 // racing a real ticker.
-func setLeaseAt(t *testing.T, s *SQLite, principal contextstate.Principal, at *time.Time) {
+func setLeaseAt(t *testing.T, s *SQLite, principal state.Principal, at *time.Time) {
 	t.Helper()
 	var value any
 	if at != nil {
@@ -37,12 +37,12 @@ func TestReclaimSessionRejectsLiveSession(t *testing.T) {
 	fresh := time.Now()
 	setLeaseAt(t, s, owner, &fresh)
 
-	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.ReclaimSession(ctx, rival, owner.SessionID)
-	if !errors.Is(err, contextstate.ErrSessionLiveElsewhere) {
+	if !errors.Is(err, state.ErrSessionLiveElsewhere) {
 		t.Fatalf("ReclaimSession error = %v, want ErrSessionLiveElsewhere", err)
 	}
 
@@ -79,7 +79,7 @@ func TestReclaimSessionAllowsStaleTakeover(t *testing.T) {
 			seedContextSession(t, s, owner)
 			setLeaseAt(t, s, owner, test.lease)
 
-			rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+			rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestReclaimSessionAllowsStaleTakeover(t *testing.T) {
 			// The new owner must be immediately re-reclaimable by yet another
 			// process too (e.g. a rapid succession of one-shot commands): a
 			// takeover must not itself create a fresh-lease window.
-			another, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+			another, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,11 +134,11 @@ func TestReclaimSessionConcurrentTakeoversBothSucceedCleanly(t *testing.T) {
 	stale := time.Now().Add(-sessionLeaseTTL - time.Minute)
 	setLeaseAt(t, s, owner, &stale)
 
-	rivalA, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rivalA, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rivalB, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rivalB, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestReclaimSessionRefusesConcurrentTakeoverOnceLeaseIsFresh(t *testing.T) {
 	fresh := time.Now()
 	setLeaseAt(t, s, owner, &fresh)
 
-	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestReclaimSessionRefusesConcurrentTakeoverOnceLeaseIsFresh(t *testing.T) {
 	if renewErr != nil {
 		t.Fatalf("RenewLease: %v", renewErr)
 	}
-	if !errors.Is(reclaimErr, contextstate.ErrSessionLiveElsewhere) {
+	if !errors.Is(reclaimErr, state.ErrSessionLiveElsewhere) {
 		t.Fatalf("ReclaimSession racing a fresh renewal: err = %v, want ErrSessionLiveElsewhere", reclaimErr)
 	}
 
@@ -244,11 +244,11 @@ func TestReleaseLeaseLetsAnOrdinaryQuitThenResumeSucceedImmediately(t *testing.T
 	// Confirm the bug this test guards against: without a release, a resume
 	// attempted moments later is refused, not because anything is still
 	// live, but because the lease simply hasn't aged past the TTL yet.
-	rivalWithoutRelease, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rivalWithoutRelease, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReclaimSession(ctx, rivalWithoutRelease, owner.SessionID); !errors.Is(err, contextstate.ErrSessionLiveElsewhere) {
+	if _, err := s.ReclaimSession(ctx, rivalWithoutRelease, owner.SessionID); !errors.Is(err, state.ErrSessionLiveElsewhere) {
 		t.Fatalf("pre-condition failed: ReclaimSession error = %v, want ErrSessionLiveElsewhere (a fresh, unreleased lease must still block a reclaim)", err)
 	}
 
@@ -260,7 +260,7 @@ func TestReleaseLeaseLetsAnOrdinaryQuitThenResumeSucceedImmediately(t *testing.T
 	// The resumed process's reclaim must now succeed immediately - no TTL
 	// wait required, because the lease was explicitly released, not merely
 	// aged out.
-	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestReleaseLeaseIsANoOpForACapabilityAlreadyReclaimedAway(t *testing.T) {
 	stale := time.Now().Add(-sessionLeaseTTL - time.Minute)
 	setLeaseAt(t, s, owner, &stale)
 
-	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,17 +319,17 @@ func TestReclaimSessionLiveErrorReportsRetryAfter(t *testing.T) {
 	heartbeat := time.Now().Add(-30 * time.Second)
 	setLeaseAt(t, s, owner, &heartbeat)
 
-	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.ReclaimSession(ctx, rival, owner.SessionID)
-	if !errors.Is(err, contextstate.ErrSessionLiveElsewhere) {
+	if !errors.Is(err, state.ErrSessionLiveElsewhere) {
 		t.Fatalf("ReclaimSession error = %v, want to wrap ErrSessionLiveElsewhere", err)
 	}
-	var live *contextstate.SessionLiveError
+	var live *state.SessionLiveError
 	if !errors.As(err, &live) {
-		t.Fatalf("ReclaimSession error = %v (%T), want *contextstate.SessionLiveError", err, err)
+		t.Fatalf("ReclaimSession error = %v (%T), want *state.SessionLiveError", err, err)
 	}
 	if live.LeaseAge < 30*time.Second || live.LeaseAge > 40*time.Second {
 		t.Fatalf("LeaseAge = %s, want ~30s", live.LeaseAge)
@@ -352,11 +352,11 @@ func TestReleaseLeaseUnblocksImmediateReclaim(t *testing.T) {
 	fresh := time.Now()
 	setLeaseAt(t, s, owner, &fresh)
 
-	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	rival, err := state.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReclaimSession(ctx, rival, owner.SessionID); !errors.Is(err, contextstate.ErrSessionLiveElsewhere) {
+	if _, err := s.ReclaimSession(ctx, rival, owner.SessionID); !errors.Is(err, state.ErrSessionLiveElsewhere) {
 		t.Fatalf("pre-release ReclaimSession error = %v, want ErrSessionLiveElsewhere", err)
 	}
 	if err := s.ReleaseLease(ctx, owner, owner.SessionID); err != nil {
@@ -372,7 +372,7 @@ func TestReclaimWorktreeSessionRejectsAZeroInstance(t *testing.T) {
 	defer s.Close()
 	seedContextSession(t, s, owner)
 
-	if _, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, contextstate.WorktreeInstance{}); err == nil {
+	if _, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, state.WorktreeInstance{}); err == nil {
 		t.Fatal("ReclaimWorktreeSession accepted a zero worktree instance")
 	}
 }
@@ -384,9 +384,9 @@ func TestReclaimWorktreeSessionPropagatesInactiveInstance(t *testing.T) {
 
 	// No worktree_instances row exists for this instance at all, so
 	// requireActiveWorktreeTx's own SELECT finds nothing.
-	unregistered := contextstate.WorktreeInstance{Worktree: "wt-unregistered", ID: "wt_0000000000000000"}
+	unregistered := state.WorktreeInstance{Worktree: "wt-unregistered", ID: "wt_0000000000000000"}
 	_, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, unregistered)
-	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("ReclaimWorktreeSession with no matching worktree_instances row = %v, want ErrWorktreeDeleted", err)
 	}
 }
@@ -395,8 +395,8 @@ func TestReclaimWorktreeSessionRejectsCrossInstanceBinding(t *testing.T) {
 	s, owner := openContextTestStore(t)
 	defer s.Close()
 
-	instanceA := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
-	instanceB := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_2222222222222222"}
+	instanceA := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
+	instanceB := state.WorktreeInstance{Worktree: "wt-b", ID: "wt_2222222222222222"}
 	seedLiveWorktreeSession(t, s, owner, instanceA, "opener")
 
 	worktreeDirB := filepath.Join(t.TempDir(), "worktrees", instanceB.Worktree)
@@ -407,7 +407,7 @@ func TestReclaimWorktreeSessionRejectsCrossInstanceBinding(t *testing.T) {
 	// The session is bound to instanceA; reclaiming it as instanceB must hit
 	// reclaimRowState's own instance-mismatch guard.
 	_, err := s.ReclaimWorktreeSession(context.Background(), owner, owner.SessionID, instanceB)
-	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("ReclaimWorktreeSession cross-instance binding = %v, want ErrWorktreeDeleted", err)
 	}
 }

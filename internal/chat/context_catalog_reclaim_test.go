@@ -4,20 +4,20 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestReclaimContextSessionRequiresAReclaimerCapableStore covers
 // reclaimContextSession's two "store does not support resuming" branches:
-// heartbeatFakeStore implements the base contextstate.Store plus
+// heartbeatFakeStore implements the base state.Store plus
 // SessionLeaseRenewer, but neither SessionReclaimer nor
 // WorktreeSessionReclaimer, matching a store that predates that capability.
 func TestReclaimContextSessionRequiresAReclaimerCapableStore(t *testing.T) {
 	res := &config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}
 	sess := NewSession(res, &fakeCompleter{out: "answer"})
 
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestReclaimContextSessionRequiresAReclaimerCapableStore(t *testing.T) {
 
 	t.Run("worktree-bound session", func(t *testing.T) {
 		sess.mu.Lock()
-		sess.contextWorktree = contextstate.WorktreeInstance{Worktree: "wt", ID: "wt_1111111111111111"}
+		sess.contextWorktree = state.WorktreeInstance{Worktree: "wt", ID: "wt_1111111111111111"}
 		sess.mu.Unlock()
 		if _, err := sess.reclaimContextSession("some-session"); err == nil {
 			t.Fatal("reclaimContextSession accepted a store with no WorktreeSessionReclaimer support")

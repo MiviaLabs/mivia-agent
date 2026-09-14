@@ -9,15 +9,15 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 // clearFailureSession wires a real SQLite context store onto a session,
 // mirroring the construction pattern used across the context integration
 // tests (context_storage_test.go, resync_test.go).
-func clearFailureSession(t *testing.T, name string) (*Session, *storage.SQLite, contextstate.Principal) {
+func clearFailureSession(t *testing.T, name string) (*Session, *storage.SQLite, state.Principal) {
 	t.Helper()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), name))
 	if err != nil {
@@ -25,7 +25,7 @@ func clearFailureSession(t *testing.T, name string) (*Session, *storage.SQLite, 
 	}
 	t.Cleanup(func() { store.Close() })
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestClearPreservesConversationOnStaleRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if durableHead.Revision != (contextstate.Revision{Session: 1, Durable: 1, Source: 2}) {
+	if durableHead.Revision != (state.Revision{Session: 1, Durable: 1, Source: 2}) {
 		t.Fatalf("durable head after one turn = %+v, want {1 1 2}", durableHead.Revision)
 	}
 	preClear := session.MessagesCopy()
@@ -74,8 +74,8 @@ func TestClearPreservesConversationOnStaleRevision(t *testing.T) {
 
 	if err := session.Clear(); err == nil {
 		t.Fatal("Clear with a stale context head succeeded, want CAS failure")
-	} else if !errors.Is(err, contextstate.ErrStaleRevision) {
-		t.Fatalf("Clear error = %v, want wrapped %v", err, contextstate.ErrStaleRevision)
+	} else if !errors.Is(err, state.ErrStaleRevision) {
+		t.Fatalf("Clear error = %v, want wrapped %v", err, state.ErrStaleRevision)
 	}
 
 	// A refused clear must not touch the in-memory conversation...
@@ -109,18 +109,18 @@ func TestClearPreservesConversationOnStaleRevision(t *testing.T) {
 // into Advance (the durable CAS used by Clear). All other operations delegate
 // to the underlying store.
 type advanceFailStore struct {
-	contextstate.Store
+	state.Store
 	fail bool
 }
 
-func (s *advanceFailStore) Advance(ctx context.Context, request contextstate.AdvanceRequest) error {
+func (s *advanceFailStore) Advance(ctx context.Context, request state.AdvanceRequest) error {
 	if s.fail {
 		return errors.New("injected advance failure")
 	}
 	return s.Store.Advance(ctx, request)
 }
 
-var _ contextstate.Store = (*advanceFailStore)(nil)
+var _ state.Store = (*advanceFailStore)(nil)
 
 // INV-AG-35: a refused Advance must never destroy in-memory state. Clear
 // returns the store error and the conversation stays intact; once the store
@@ -133,7 +133,7 @@ func TestClearPreservesMessagesWhenAdvanceFails(t *testing.T) {
 	defer store.Close()
 	wrapped := &advanceFailStore{Store: store}
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestClearPreservesMessagesWhenAdvanceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if final.Revision != (contextstate.Revision{Session: 2, Durable: 2, Source: 2}) {
+	if final.Revision != (state.Revision{Session: 2, Durable: 2, Source: 2}) {
 		t.Fatalf("revision after real Clear = %+v, want {2 2 2}", final.Revision)
 	}
 	if final.Active.ID.SessionID != "" {

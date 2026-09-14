@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -17,12 +17,12 @@ type trimPrepManager struct {
 	calls int
 }
 
-func (m *trimPrepManager) Prepare(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (m *trimPrepManager) Prepare(_ context.Context, in manager.PrepareInput) (manager.Preparation, error) {
 	m.calls++
-	return contextmgr.Preparation{Messages: in.Messages}, nil
+	return manager.Preparation{Messages: in.Messages}, nil
 }
 
-func (m *trimPrepManager) Discard(contextmgr.Preparation) {}
+func (m *trimPrepManager) Discard(manager.Preparation) {}
 
 // TestSDKTrimRunsPreparationEachIteration pins the per-iteration
 // contract: a two-step SDK turn (one tool-call step, one final step)
@@ -92,9 +92,9 @@ func TestSDKTrimPreparationUsesRotatedToolSpecs(t *testing.T) {
 
 	var recordedTools [][]provider.ToolSpec
 	mgr := &customPrepManager{
-		prep: func(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+		prep: func(_ context.Context, in manager.PrepareInput) (manager.Preparation, error) {
 			recordedTools = append(recordedTools, in.Tools)
-			return contextmgr.Preparation{Messages: in.Messages}, nil
+			return manager.Preparation{Messages: in.Messages}, nil
 		},
 	}
 
@@ -130,11 +130,11 @@ func TestSDKTrimPreparationUsesRotatedToolSpecs(t *testing.T) {
 }
 
 type customPrepManager struct {
-	prep func(context.Context, contextmgr.PrepareInput) (contextmgr.Preparation, error)
+	prep func(context.Context, manager.PrepareInput) (manager.Preparation, error)
 }
 
-func (m *customPrepManager) Prepare(ctx context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+func (m *customPrepManager) Prepare(ctx context.Context, in manager.PrepareInput) (manager.Preparation, error) {
 	return m.prep(ctx, in)
 }
 
-func (m *customPrepManager) Discard(contextmgr.Preparation) {}
+func (m *customPrepManager) Discard(manager.Preparation) {}

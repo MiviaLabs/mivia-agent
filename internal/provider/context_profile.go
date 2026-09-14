@@ -34,7 +34,7 @@ const (
 // provider that declares nothing behaves exactly as before this type
 // existed.
 //
-// internal/contextmgr and the agent loop carry this value opaquely from
+// internal/context/manager and the agent loop carry this value opaquely from
 // Completer.ContextAccounting() to the estimators in context.go, which are
 // the only code that interprets its fields. Add a field here (not a second,
 // parallel plumbing path) when a provider needs another context-billing

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
@@ -140,7 +140,7 @@ func (l *Loop) discardPreparation(opts Options) {
 // openai_compat_request.go). This does NOT shrink the prompt budget the
 // planner packs history against - PlanInput.OutputReserve is deliberately
 // never subtracted from Budget (see the doc comment on that field in
-// internal/contextmgr/planner.go: Budget already excludes the reserve,
+// internal/context/manager/planner.go: Budget already excludes the reserve,
 // applied once upstream by config.EffectiveOutputTokens, which independently
 // reads the same reasoning.OutputReserveFloor). Passing an accurate value
 // here only keeps the plan's idempotency-key fingerprint honest about what

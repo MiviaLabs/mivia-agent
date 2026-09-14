@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -19,8 +19,8 @@ func TestChatWorktreeCoverageRestartValidationErrors(t *testing.T) {
 	if err := validateWorkspaceRestart(stubWorkspaceRestart{dir: t.TempDir()}, chatInvocation{}); err != nil {
 		t.Fatal(err)
 	}
-	expected := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	if err := validateWorkspaceRestart(stubWorkspaceRestart{dir: t.TempDir(), wt: expected}, chatInvocation{}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	expected := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := validateWorkspaceRestart(stubWorkspaceRestart{dir: t.TempDir(), wt: expected}, chatInvocation{}); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("non-repository restart error = %v", err)
 	}
 	repo := newWorktreeCommandRepo(t)
@@ -36,7 +36,7 @@ func TestChatWorktreeCoverageRestartValidationErrors(t *testing.T) {
 func TestChatWorktreeCoverageRunRejectsStaleRestart(t *testing.T) {
 	original := runConfiguredChatOnceImpl
 	t.Cleanup(func() { runConfiguredChatOnceImpl = original })
-	expected := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	expected := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	runConfiguredChatOnceImpl = func(chatInvocation, *config.Resolved) error {
 		return stubWorkspaceRestart{dir: t.TempDir(), wt: expected}
 	}
@@ -44,7 +44,7 @@ func TestChatWorktreeCoverageRunRejectsStaleRestart(t *testing.T) {
 	// real .mivia/mivia.toml (see the note in
 	// TestRunConfiguredChatCarriesResumeSessionAcrossRestart).
 	err := runConfiguredChat(chatInvocation{workspacePath: t.TempDir()}, &config.Resolved{})
-	if !errors.Is(err, contextstate.ErrWorktreeDeleted) || !strings.Contains(err.Error(), "validate workspace restart") {
+	if !errors.Is(err, state.ErrWorktreeDeleted) || !strings.Contains(err.Error(), "validate workspace restart") {
 		t.Fatalf("stale restart error = %v", err)
 	}
 }
@@ -52,8 +52,8 @@ func TestChatWorktreeCoverageRunRejectsStaleRestart(t *testing.T) {
 func TestChatWorktreeCoverageExpectedBindingOnMainTree(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	expected := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	if err := bindManagedWorktreeSessionExpected(session, repo, repo, "", expected); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	expected := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := bindManagedWorktreeSessionExpected(session, repo, repo, "", expected); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("main-tree expected binding error = %v", err)
 	}
 }
@@ -65,18 +65,18 @@ func TestChatWorktreeCoverageExpectedNameAndMarkerMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	wrongName := contextstate.WorktreeInstance{Worktree: "other", ID: instance.ID}
-	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", wrongName); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	wrongName := state.WorktreeInstance{Worktree: "other", ID: instance.ID}
+	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", wrongName); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("wrong expected name error = %v", err)
 	}
-	wrongID := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_0000000000000000"}
-	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", wrongID); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	wrongID := state.WorktreeInstance{Worktree: worktree.Name, ID: "wt_0000000000000000"}
+	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", wrongID); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("wrong expected ID error = %v", err)
 	}
 	if err := os.Remove(cliworktree.WorktreeMarkerPath(worktree.Path)); err != nil {
 		t.Fatal(err)
 	}
-	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", instance); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("missing expected marker error = %v", err)
 	}
 }

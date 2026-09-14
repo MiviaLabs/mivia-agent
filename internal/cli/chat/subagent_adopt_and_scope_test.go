@@ -17,7 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -71,7 +71,7 @@ func TestRegisterSkillHandlersSkipsDeniedSkills(t *testing.T) {
 
 	err = registerSkillHandlers(d, tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}),
 		nullCompleter{}, "test-model", sessionDial{}, config.SubagentConfig{}, resultBudgets{},
-		0, nil, nil, skillReg, scope, nil, contextmgr.PrepareInput{}, nil, nil)
+		0, nil, nil, skillReg, scope, nil, manager.PrepareInput{}, nil, nil)
 	if err != nil {
 		t.Fatalf("registerSkillHandlers: %v", err)
 	}

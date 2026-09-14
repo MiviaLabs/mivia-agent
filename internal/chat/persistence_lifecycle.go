@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // ListSessions returns metadata for all saved sessions, sorted by most recently updated.
@@ -16,10 +16,10 @@ func (s *Session) ListSessions() ([]SessionInfo, error) {
 	s.mu.RLock()
 	instance := s.contextWorktree
 	s.mu.RUnlock()
-	var infos []contextstate.SessionCatalogInfo
+	var infos []state.SessionCatalogInfo
 	var err error
 	if !instance.IsZero() {
-		scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
+		scoped, scopedOK := catalog.(state.WorktreeSessionCatalog)
 		if !scopedOK {
 			return nil, fmt.Errorf("worktree session catalog is not configured")
 		}
@@ -67,7 +67,7 @@ func (s *Session) DeleteSession(name string) error {
 	instance := s.contextWorktree
 	s.mu.RUnlock()
 	if !instance.IsZero() {
-		scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
+		scoped, scopedOK := catalog.(state.WorktreeSessionCatalog)
 		if !scopedOK {
 			return fmt.Errorf("worktree session catalog is not configured")
 		}

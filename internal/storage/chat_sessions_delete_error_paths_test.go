@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // The delete path's read failures and its last rollback arms.
@@ -23,10 +23,10 @@ import (
 // seedSnapshotWithDivergedSessionID writes a snapshot whose session_id
 // column does not equal its catalog name, the legacy shape the desktop
 // app's delete-by-session_id path exists for.
-func seedSnapshotWithDivergedSessionID(t *testing.T, s *SQLite, principal contextstate.Principal, name, sessionID string) {
+func seedSnapshotWithDivergedSessionID(t *testing.T, s *SQLite, principal state.Principal, name, sessionID string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := s.SaveSession(ctx, principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
+	if err := s.SaveSession(ctx, principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, state.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE chat_sessions SET session_id=? WHERE workspace_id=? AND subject_id=? AND name=?`,
@@ -35,7 +35,7 @@ func seedSnapshotWithDivergedSessionID(t *testing.T, s *SQLite, principal contex
 	}
 }
 
-func countSnapshots(t *testing.T, s *SQLite, principal contextstate.Principal) int {
+func countSnapshots(t *testing.T, s *SQLite, principal state.Principal) int {
 	t.Helper()
 	var n int
 	if err := s.db.QueryRow(`SELECT count(*) FROM chat_sessions WHERE workspace_id=? AND subject_id=?`,
@@ -64,7 +64,7 @@ func TestDeleteSessionSnapshotStopsWhenTheSessionIDLookupFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("the delete reported success with an unreadable session_id column")
 	}
-	if errors.Is(err, contextstate.ErrSessionNotFound) {
+	if errors.Is(err, state.ErrSessionNotFound) {
 		t.Errorf("err = %v, want the read failure, not 'not found' - the snapshot is still there", err)
 	}
 	if !strings.Contains(err.Error(), "session_id") {
@@ -158,7 +158,7 @@ func TestDeleteCatalogContextSessionReportsAnUnreadableSessionRow(t *testing.T) 
 	if err == nil {
 		t.Fatal("a session with an unreadable revision was reported deleted")
 	}
-	if errors.Is(err, contextstate.ErrSessionNotFound) {
+	if errors.Is(err, state.ErrSessionNotFound) {
 		t.Errorf("err = %v, want the read failure, not 'not found'", err)
 	}
 	var tombstoned int
@@ -266,14 +266,14 @@ func TestDeleteSessionSnapshotRowPropagatesANonNotFoundTombstoneError(t *testing
 	defer s.Close()
 	ctx := context.Background()
 
-	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
+	instance := state.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
 	seedLiveWorktreeSession(t, s, principal, instance, "opener")
 
 	// A plain (instance_id NULL) snapshot row whose session_id points at the
 	// worktree-bound live session above - the legacy/diverged shape this
 	// whole file's helper (seedSnapshotWithDivergedSessionID) already models,
 	// just pointed at a worktree-bound row instead of a missing one.
-	if err := s.SaveSession(ctx, principal, "plain-snapshot", []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
+	if err := s.SaveSession(ctx, principal, "plain-snapshot", []byte(`[{}]`), "model", "provider", 1, 1, 1, state.SessionSaveOptions{Dir: "/tmp/project"}); err != nil {
 		t.Fatalf("seed plain snapshot: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE chat_sessions SET session_id=? WHERE workspace_id=? AND subject_id=? AND name=?`,
@@ -282,7 +282,7 @@ func TestDeleteSessionSnapshotRowPropagatesANonNotFoundTombstoneError(t *testing
 	}
 
 	_, err := s.deleteSessionSnapshotRow(ctx, principal, "plain-snapshot")
-	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("deleteSessionSnapshotRow = %v, want ErrWorktreeDeleted from the binding mismatch", err)
 	}
 	if n := countSnapshots(t, s, principal); n != 1 {

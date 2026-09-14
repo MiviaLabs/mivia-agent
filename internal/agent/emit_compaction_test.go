@@ -6,28 +6,28 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 func TestEmitCompactionAfterCommitOnly(t *testing.T) {
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	binding, err := state.NewBindingRevision("provider", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: principal.SessionID, Sequence: 1},
-		End:   contextstate.SourceID{SessionID: principal.SessionID, Sequence: 2},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: principal.SessionID, Sequence: 1},
+		End:   state.SourceID{SessionID: principal.SessionID, Sequence: 2},
 	}
-	preparation, err := contextmgr.CapturePreparation(
-		contextmgr.PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Budget: 100, Principal: principal, Binding: binding},
-		contextmgr.CheckpointCandidate{SourceRange: rangeValue},
+	preparation, err := manager.CapturePreparation(
+		manager.PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Budget: 100, Principal: principal, Binding: binding},
+		manager.CheckpointCandidate{SourceRange: rangeValue},
 		[]provider.Message{{Role: provider.RoleUser, Content: "question"}}, true, "compact-test",
 	)
 	if err != nil {
@@ -58,23 +58,23 @@ func TestEmitCompactionAfterCommitOnly(t *testing.T) {
 	}
 }
 
-func compactedPreparationForTest(t *testing.T) contextmgr.Preparation {
+func compactedPreparationForTest(t *testing.T) manager.Preparation {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	binding, err := state.NewBindingRevision("provider", "model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rangeValue := contextstate.SourceRange{
-		Start: contextstate.SourceID{SessionID: principal.SessionID, Sequence: 1},
-		End:   contextstate.SourceID{SessionID: principal.SessionID, Sequence: 2},
+	rangeValue := state.SourceRange{
+		Start: state.SourceID{SessionID: principal.SessionID, Sequence: 1},
+		End:   state.SourceID{SessionID: principal.SessionID, Sequence: 2},
 	}
-	preparation, err := contextmgr.CapturePreparation(
-		contextmgr.PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Budget: 100, Principal: principal, Binding: binding},
-		contextmgr.CheckpointCandidate{SourceRange: rangeValue},
+	preparation, err := manager.CapturePreparation(
+		manager.PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Budget: 100, Principal: principal, Binding: binding},
+		manager.CheckpointCandidate{SourceRange: rangeValue},
 		[]provider.Message{{Role: provider.RoleUser, Content: "question"}}, true, "compact-test",
 	)
 	if err != nil {

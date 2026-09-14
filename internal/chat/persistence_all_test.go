@@ -6,59 +6,59 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 type allSessionsCatalog struct {
-	contextstate.Store
-	all     []contextstate.SessionCatalogInfo
-	scoped  []contextstate.SessionCatalogInfo
+	state.Store
+	all     []state.SessionCatalogInfo
+	scoped  []state.SessionCatalogInfo
 	listErr error
 }
 
-func (c *allSessionsCatalog) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
+func (c *allSessionsCatalog) EnsureSession(context.Context, state.EnsureSessionRequest) error {
 	return nil
 }
-func (c *allSessionsCatalog) Load(context.Context, contextstate.Principal, string) (contextstate.Snapshot, error) {
-	return contextstate.Snapshot{}, nil
+func (c *allSessionsCatalog) Load(context.Context, state.Principal, string) (state.Snapshot, error) {
+	return state.Snapshot{}, nil
 }
-func (c *allSessionsCatalog) LoadWorktree(context.Context, contextstate.Principal, string, contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
-	return contextstate.Snapshot{}, nil
+func (c *allSessionsCatalog) LoadWorktree(context.Context, state.Principal, string, state.WorktreeInstance) (state.Snapshot, error) {
+	return state.Snapshot{}, nil
 }
-func (c *allSessionsCatalog) SaveSession(context.Context, contextstate.Principal, string, []byte, string, string, int, int, int, contextstate.SessionSaveOptions) error {
+func (c *allSessionsCatalog) SaveSession(context.Context, state.Principal, string, []byte, string, string, int, int, int, state.SessionSaveOptions) error {
 	return nil
 }
-func (c *allSessionsCatalog) LoadSession(context.Context, contextstate.Principal, string) ([]byte, contextstate.SessionCatalogInfo, error) {
-	return nil, contextstate.SessionCatalogInfo{}, nil
+func (c *allSessionsCatalog) LoadSession(context.Context, state.Principal, string) ([]byte, state.SessionCatalogInfo, error) {
+	return nil, state.SessionCatalogInfo{}, nil
 }
-func (c *allSessionsCatalog) ListSessions(context.Context, contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {
+func (c *allSessionsCatalog) ListSessions(context.Context, state.Principal) ([]state.SessionCatalogInfo, error) {
 	if c.listErr != nil {
 		return nil, c.listErr
 	}
 	return c.all, nil
 }
-func (c *allSessionsCatalog) ListWorktreeSessions(context.Context, contextstate.Principal, contextstate.WorktreeInstance) ([]contextstate.SessionCatalogInfo, error) {
+func (c *allSessionsCatalog) ListWorktreeSessions(context.Context, state.Principal, state.WorktreeInstance) ([]state.SessionCatalogInfo, error) {
 	return c.scoped, nil
 }
-func (c *allSessionsCatalog) DeleteSessionSnapshot(context.Context, contextstate.Principal, string) error {
+func (c *allSessionsCatalog) DeleteSessionSnapshot(context.Context, state.Principal, string) error {
 	return nil
 }
-func (c *allSessionsCatalog) PruneSessionSnapshots(context.Context, contextstate.Principal, []string) error {
+func (c *allSessionsCatalog) PruneSessionSnapshots(context.Context, state.Principal, []string) error {
 	return nil
 }
 
 func TestListAllSessionsIncludesOtherWorktrees(t *testing.T) {
-	instance := contextstate.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
 	catalog := &allSessionsCatalog{
-		all: []contextstate.SessionCatalogInfo{
+		all: []state.SessionCatalogInfo{
 			{Name: "session-current", Worktree: "wt-current", WorktreeInstance: instance},
-			{Name: "session-other", Worktree: "wt-other", WorktreeInstance: contextstate.WorktreeInstance{Worktree: "wt-other", ID: "wt_fedcba0987654321"}},
+			{Name: "session-other", Worktree: "wt-other", WorktreeInstance: state.WorktreeInstance{Worktree: "wt-other", ID: "wt_fedcba0987654321"}},
 		},
-		scoped: []contextstate.SessionCatalogInfo{{Name: "session-current", Worktree: "wt-current", WorktreeInstance: instance}},
+		scoped: []state.SessionCatalogInfo{{Name: "session-current", Worktree: "wt-current", WorktreeInstance: instance}},
 	}
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestListAllSessionsPropagatesCatalogError(t *testing.T) {
 	wantErr := errors.New("catalog unavailable")
 	catalog := &allSessionsCatalog{listErr: wantErr}
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +124,10 @@ func TestListAllSessionsPropagatesCatalogError(t *testing.T) {
 // defines ListWorktreeSessions, not the rest of that interface) must
 // refuse rather than silently falling back to the unscoped list.
 func TestListSessions_WorktreeScopedRequiresCapableCatalog(t *testing.T) {
-	instance := contextstate.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
 	catalog := &allSessionsCatalog{}
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +155,10 @@ func TestListSessions_WorktreeScopedRequiresCapableCatalog(t *testing.T) {
 // success path scoping to the bound worktree (as opposed to the unscoped
 // ListSessions ListAllSessions uses).
 func TestListSessions_WorktreeScopedPropagatesCatalogError(t *testing.T) {
-	instance := contextstate.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
 	catalog := &scopedErrCatalog{err: errors.New("scoped catalog unavailable")}
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,10 +185,10 @@ func TestListSessions_WorktreeScopedPropagatesCatalogError(t *testing.T) {
 // propagation sibling mirror the ListSessions pair above for
 // DeleteSession's own worktree-scoping branches.
 func TestDeleteSession_WorktreeScopedRequiresCapableCatalog(t *testing.T) {
-	instance := contextstate.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
 	catalog := &allSessionsCatalog{}
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,10 +212,10 @@ func TestDeleteSession_WorktreeScopedRequiresCapableCatalog(t *testing.T) {
 }
 
 func TestDeleteSession_WorktreeScopedSucceeds(t *testing.T) {
-	instance := contextstate.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "wt-current", ID: "wt_1234567890abcdef"}
 	catalog := &scopedErrCatalog{}
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{})
-	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,69 +241,69 @@ func TestDeleteSession_WorktreeScopedSucceeds(t *testing.T) {
 	}
 }
 
-// scopedErrCatalog implements the full contextstate.WorktreeSessionCatalog
+// scopedErrCatalog implements the full state.WorktreeSessionCatalog
 // surface (unlike allSessionsCatalog, which only defines ListWorktreeSessions
 // and so deliberately fails the interface assertion), so ListSessions' and
 // DeleteSession's scoped SUCCESS and error-propagation branches can be
 // driven independently of the "catalog cannot scope" guard.
 type scopedErrCatalog struct {
-	contextstate.Store
+	state.Store
 	err           error
 	deletedScoped bool
 }
 
-func (c *scopedErrCatalog) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
+func (c *scopedErrCatalog) EnsureSession(context.Context, state.EnsureSessionRequest) error {
 	return nil
 }
-func (c *scopedErrCatalog) Load(context.Context, contextstate.Principal, string) (contextstate.Snapshot, error) {
-	return contextstate.Snapshot{}, nil
+func (c *scopedErrCatalog) Load(context.Context, state.Principal, string) (state.Snapshot, error) {
+	return state.Snapshot{}, nil
 }
-func (c *scopedErrCatalog) LoadWorktree(context.Context, contextstate.Principal, string, contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
-	return contextstate.Snapshot{}, nil
+func (c *scopedErrCatalog) LoadWorktree(context.Context, state.Principal, string, state.WorktreeInstance) (state.Snapshot, error) {
+	return state.Snapshot{}, nil
 }
-func (c *scopedErrCatalog) SaveSession(context.Context, contextstate.Principal, string, []byte, string, string, int, int, int, contextstate.SessionSaveOptions) error {
+func (c *scopedErrCatalog) SaveSession(context.Context, state.Principal, string, []byte, string, string, int, int, int, state.SessionSaveOptions) error {
 	return nil
 }
-func (c *scopedErrCatalog) LoadSession(context.Context, contextstate.Principal, string) ([]byte, contextstate.SessionCatalogInfo, error) {
-	return nil, contextstate.SessionCatalogInfo{}, nil
+func (c *scopedErrCatalog) LoadSession(context.Context, state.Principal, string) ([]byte, state.SessionCatalogInfo, error) {
+	return nil, state.SessionCatalogInfo{}, nil
 }
-func (c *scopedErrCatalog) ListSessions(context.Context, contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {
+func (c *scopedErrCatalog) ListSessions(context.Context, state.Principal) ([]state.SessionCatalogInfo, error) {
 	return nil, nil
 }
-func (c *scopedErrCatalog) ListWorktreeSessions(context.Context, contextstate.Principal, contextstate.WorktreeInstance) ([]contextstate.SessionCatalogInfo, error) {
+func (c *scopedErrCatalog) ListWorktreeSessions(context.Context, state.Principal, state.WorktreeInstance) ([]state.SessionCatalogInfo, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
 	return nil, nil
 }
-func (c *scopedErrCatalog) DeleteSessionSnapshot(context.Context, contextstate.Principal, string) error {
+func (c *scopedErrCatalog) DeleteSessionSnapshot(context.Context, state.Principal, string) error {
 	return nil
 }
-func (c *scopedErrCatalog) DeleteWorktreeSessionSnapshot(context.Context, contextstate.Principal, string, contextstate.WorktreeInstance) error {
+func (c *scopedErrCatalog) DeleteWorktreeSessionSnapshot(context.Context, state.Principal, string, state.WorktreeInstance) error {
 	c.deletedScoped = true
 	return c.err
 }
-func (c *scopedErrCatalog) PruneSessionSnapshots(context.Context, contextstate.Principal, []string) error {
+func (c *scopedErrCatalog) PruneSessionSnapshots(context.Context, state.Principal, []string) error {
 	return nil
 }
-func (c *scopedErrCatalog) BeginWorktreeCreation(context.Context, contextstate.Principal, contextstate.WorktreeInstance, string) error {
+func (c *scopedErrCatalog) BeginWorktreeCreation(context.Context, state.Principal, state.WorktreeInstance, string) error {
 	return nil
 }
-func (c *scopedErrCatalog) RegisterWorktreeInstance(context.Context, contextstate.Principal, contextstate.WorktreeInstance, string) error {
+func (c *scopedErrCatalog) RegisterWorktreeInstance(context.Context, state.Principal, state.WorktreeInstance, string) error {
 	return nil
 }
-func (c *scopedErrCatalog) AbandonWorktreeCreation(context.Context, contextstate.Principal, contextstate.WorktreeInstance) error {
+func (c *scopedErrCatalog) AbandonWorktreeCreation(context.Context, state.Principal, state.WorktreeInstance) error {
 	return nil
 }
-func (c *scopedErrCatalog) BeginWorktreeDeletion(context.Context, contextstate.Principal, contextstate.WorktreeInstance) error {
+func (c *scopedErrCatalog) BeginWorktreeDeletion(context.Context, state.Principal, state.WorktreeInstance) error {
 	return nil
 }
-func (c *scopedErrCatalog) DeleteWorktreeSessions(context.Context, contextstate.Principal, contextstate.WorktreeInstance) (int, error) {
+func (c *scopedErrCatalog) DeleteWorktreeSessions(context.Context, state.Principal, state.WorktreeInstance) (int, error) {
 	return 0, nil
 }
-func (c *scopedErrCatalog) LoadWorktreeSession(context.Context, contextstate.Principal, string, contextstate.WorktreeInstance) ([]byte, contextstate.SessionCatalogInfo, error) {
-	return nil, contextstate.SessionCatalogInfo{}, nil
+func (c *scopedErrCatalog) LoadWorktreeSession(context.Context, state.Principal, string, state.WorktreeInstance) ([]byte, state.SessionCatalogInfo, error) {
+	return nil, state.SessionCatalogInfo{}, nil
 }
-func (c *scopedErrCatalog) PruneWorktreeSessionSnapshots(context.Context, contextstate.Principal, []string, contextstate.WorktreeInstance) error {
+func (c *scopedErrCatalog) PruneWorktreeSessionSnapshots(context.Context, state.Principal, []string, state.WorktreeInstance) error {
 	return nil
 }

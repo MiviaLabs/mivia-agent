@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -172,11 +172,11 @@ func TestSubagentParentSteerCompactsWithoutDTOError(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&steerSignalTool{mailbox: mailbox})
 	comp := &steerSinkCompleter{}
-	principal, err := contextstate.NewPrincipal("workspace", "session", "agent")
+	principal, err := state.NewPrincipal("workspace", "session", "agent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := contextstate.NewBindingRevision("test-provider", "test-model", 1)
+	binding, err := state.NewBindingRevision("test-provider", "test-model", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,13 +186,13 @@ func TestSubagentParentSteerCompactsWithoutDTOError(t *testing.T) {
 		Model:                     "test-model",
 		MaxSteps:                  4,
 		MaxContextTokens:          500,
-		ContextPreparationManager: contextmgr.StructuralPreparationManager{},
-		ContextPreparationInput: contextmgr.PrepareInput{
+		ContextPreparationManager: manager.StructuralPreparationManager{},
+		ContextPreparationInput: manager.PrepareInput{
 			Budget:    500,
 			Force:     true, // force compaction on each step to exercise compaction with steer
 			Principal: principal,
 			Binding:   binding,
-			Revision:  contextstate.NewRevision(1, 1, 1),
+			Revision:  state.NewRevision(1, 1, 1),
 		},
 	}
 	ctx := runtime.ContextWithMailboxAccess(context.Background(), runtime.MailboxAccess{

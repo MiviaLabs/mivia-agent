@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -193,10 +193,10 @@ func TestBuildSession_EndToEndTurn(t *testing.T) {
 // context_sessions head.
 //
 // principal must be the exact value BuildSession installed
-// (contextstate.Principal's capability is random per mint, and store.Load
+// (state.Principal's capability is random per mint, and store.Load
 // rejects a principal whose capability does not match what was written) -
 // see BuildSession's returned principal.
-func assertCheckpointRowExists(t *testing.T, store *storage.SQLite, principal contextstate.Principal, sessionID string) {
+func assertCheckpointRowExists(t *testing.T, store *storage.SQLite, principal state.Principal, sessionID string) {
 	t.Helper()
 	snapshot, err := store.Load(context.Background(), principal, sessionID)
 	if err != nil {

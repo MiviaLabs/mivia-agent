@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -477,9 +477,9 @@ func TestJSONTurnEventCallbackOmitsOriginForRootLoopToolCalls(t *testing.T) {
 // cache_usage/token_usage so a no-elision compaction's legitimate zero
 // values don't vanish.
 func TestJSONTurnEventCallbackEmitsCompaction(t *testing.T) {
-	start := contextstate.SourceID{SessionID: "session-1", Sequence: 1}
-	end := contextstate.SourceID{SessionID: "session-1", Sequence: 5}
-	rng, err := contextstate.NewSourceRange(start, end)
+	start := state.SourceID{SessionID: "session-1", Sequence: 1}
+	end := state.SourceID{SessionID: "session-1", Sequence: 5}
+	rng, err := state.NewSourceRange(start, end)
 	if err != nil {
 		t.Fatalf("NewSourceRange: %v", err)
 	}

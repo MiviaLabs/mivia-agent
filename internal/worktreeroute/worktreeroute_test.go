@@ -11,13 +11,13 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 // routeFixture registers one active managed worktree ("wt1") with a launch
 // route in a fresh repository store rooted at mainDir.
-func routeFixture(t *testing.T) (store *storage.SQLite, principal contextstate.Principal, mainDir, wtDir string) {
+func routeFixture(t *testing.T) (store *storage.SQLite, principal state.Principal, mainDir, wtDir string) {
 	t.Helper()
 	mainDir = filepath.Join(t.TempDir(), "main")
 	wtDir = filepath.Join(filepath.Dir(mainDir), ".mivia", "worktrees", "wt1")
@@ -39,7 +39,7 @@ func routeFixture(t *testing.T) (store *storage.SQLite, principal contextstate.P
 	if err != nil {
 		t.Fatalf("derive principal: %v", err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
+	instance := state.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
 	// Mirror the managed lifecycle: reserve creation, then activate - the
 	// activation also upserts the launch route row.
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonical); err != nil {
@@ -75,7 +75,7 @@ func TestStartInRoute_BindsBeforeContextSetup_WithoutUpsertingRoute(t *testing.T
 
 // storeListRouteCount lists the catalog under repo root and returns how
 // many synthesized route pseudo-rows storage surfaces.
-func storeListRouteCount(t *testing.T, store *storage.SQLite, mainDir string) (int, contextstate.Principal) {
+func storeListRouteCount(t *testing.T, store *storage.SQLite, mainDir string) (int, state.Principal) {
 	t.Helper()
 	principal, err := Principal(mainDir)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestStartInRoute_FailsClosedOnUnknownOrStaleRoute(t *testing.T) {
 	if _, err := StartInRoute(ctx, newSess(), store, mainDir, Route{Worktree: "ghost", Dir: wtDir}); err == nil {
 		t.Fatal("StartInRoute bound an unmanaged worktree name")
 	}
-	stale := contextstate.WorktreeInstance{Worktree: "wt1", ID: "wt_stale"}
+	stale := state.WorktreeInstance{Worktree: "wt1", ID: "wt_stale"}
 	if _, err := StartInRoute(ctx, newSess(), store, mainDir, Route{Worktree: "wt1", Dir: wtDir, Instance: stale}); err == nil {
 		t.Fatal("StartInRoute accepted a stale instance over the live one")
 	}
@@ -296,7 +296,7 @@ func TestStartInRoute_RefusesInstanceStillCreating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
-	creating := contextstate.WorktreeInstance{Worktree: "wt-half", ID: "wt_00000000000000aa"}
+	creating := state.WorktreeInstance{Worktree: "wt-half", ID: "wt_00000000000000aa"}
 	if err := store.BeginWorktreeCreation(ctx, principal, creating, canonical); err != nil {
 		t.Fatalf("begin creation: %v", err)
 	}

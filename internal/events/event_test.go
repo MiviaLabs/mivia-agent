@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 func TestCompactionEventIsSealedAndContentFree(t *testing.T) {
@@ -54,10 +54,10 @@ func TestCompactionEventRejectsNegativeElisionCounters(t *testing.T) {
 	}
 }
 
-func compactionTestRange(t *testing.T) contextstate.SourceRange {
+func compactionTestRange(t *testing.T) state.SourceRange {
 	t.Helper()
-	id := contextstate.SourceID{SessionID: "event-session", Sequence: 2}
-	rangeValue, err := contextstate.NewSourceRange(id, id)
+	id := state.SourceID{SessionID: "event-session", Sequence: 2}
+	rangeValue, err := state.NewSourceRange(id, id)
 	if err != nil {
 		t.Fatal(err)
 	}

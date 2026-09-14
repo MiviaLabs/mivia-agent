@@ -15,8 +15,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -251,7 +251,7 @@ func backfillTestRes(apiURL string) *config.Resolved {
 // so a real SendUser is what actually makes a candidate discoverable.
 func newRealCatalogSession(t *testing.T, store *storage.SQLite, sessionID string) *chat.Session {
 	t.Helper()
-	principal, err := contextstate.NewPrincipal("ws", sessionID, "subject")
+	principal, err := state.NewPrincipal("ws", sessionID, "subject")
 	if err != nil {
 		t.Fatalf("NewPrincipal(%s): %v", sessionID, err)
 	}
@@ -538,7 +538,7 @@ func TestRemoteInputWatcher_BackfillStopsAtMaxMidLoop(t *testing.T) {
 func TestRemoteInputWatcher_CandidatesSkipsWorktreeRoutePseudoSessions(t *testing.T) {
 	sess, wsRoot := newBackfillFixture(t)
 	store := sess.ContextStore().(*storage.SQLite)
-	principal, err := contextstate.NewPrincipal("ws", "cand-1", "subject")
+	principal, err := state.NewPrincipal("ws", "cand-1", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

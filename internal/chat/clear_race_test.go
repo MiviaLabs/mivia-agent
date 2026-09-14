@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -16,13 +16,13 @@ import (
 // LoadWithInfo block, for proving a stale in-flight Load cannot resurrect
 // history a concurrent /clear already purged.
 type blockingCatalogStore struct {
-	contextstate.Store
-	contextstate.SessionCatalog
+	state.Store
+	state.SessionCatalog
 	started chan struct{}
 	release chan struct{}
 }
 
-func (s blockingCatalogStore) LoadSession(ctx context.Context, principal contextstate.Principal, name string) ([]byte, contextstate.SessionCatalogInfo, error) {
+func (s blockingCatalogStore) LoadSession(ctx context.Context, principal state.Principal, name string) ([]byte, state.SessionCatalogInfo, error) {
 	close(s.started)
 	<-s.release
 	return s.SessionCatalog.LoadSession(ctx, principal, name)

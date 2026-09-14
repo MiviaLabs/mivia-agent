@@ -10,8 +10,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -97,14 +97,14 @@ func toolCallResponse(id, name string) *provider.Response {
 	return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}
 }
 
-func newElisionSession(t *testing.T, store contextstate.Store, completer provider.Completer, marker string, multiStepTurn2 bool) (*Session, contextstate.Principal) {
+func newElisionSession(t *testing.T, store state.Store, completer provider.Completer, marker string, multiStepTurn2 bool) (*Session, state.Principal) {
 	t.Helper()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, completer)
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()
 	session.Tools.Register(fixedBodyTool{name: "elision_probe_tool", body: marker})
 	session.Tools.Register(fixedBodyTool{name: "elision_small_tool", body: "ok"})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "local-user")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "local-user")
 	if err != nil {
 		t.Fatal(err)
 	}

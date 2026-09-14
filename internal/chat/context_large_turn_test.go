@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -67,13 +67,13 @@ func (toolOnThirdTurnCompleter) ChatTurn(ctx context.Context, req provider.Reque
 	return &provider.Response{Content: "answer", FinishReason: "stop"}, nil
 }
 
-func newLargeTurnSession(t *testing.T, store contextstate.Store, resultSize int) (*Session, contextstate.Principal) {
+func newLargeTurnSession(t *testing.T, store state.Store, resultSize int) (*Session, state.Principal) {
 	t.Helper()
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "sys"}, toolOnThirdTurnCompleter{})
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()
 	session.Tools.Register(largeResultTool{size: resultSize})
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "local-user")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "local-user")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +138,8 @@ func TestIntegrationLargeToolTurnStillCommits(t *testing.T) {
 // durable size bound is opt-in configuration, never a compiled-in ceiling that
 // silently destroys a turn the agent already completed.
 func TestDurableLimitsAreUncappedByDefault(t *testing.T) {
-	limits := contextstate.DefaultLimits()
-	if limits != (contextstate.Limits{}) {
+	limits := state.DefaultLimits()
+	if limits != (state.Limits{}) {
 		t.Fatalf("default durable limits = %+v, want every bound uncapped", limits)
 	}
 }

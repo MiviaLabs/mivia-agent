@@ -13,8 +13,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -27,7 +27,7 @@ import (
 // worktreeCatalogFixture registers one active managed worktree with a
 // launch route in a fresh repository store, mirroring the lifecycle the
 // CLI runs at worktree creation time.
-func worktreeCatalogFixture(t *testing.T) (store *storage.SQLite, principal contextstate.Principal, mainDir, wtDir string) {
+func worktreeCatalogFixture(t *testing.T) (store *storage.SQLite, principal state.Principal, mainDir, wtDir string) {
 	t.Helper()
 	mainDir = filepath.Join(t.TempDir(), "main")
 	wtDir = filepath.Join(filepath.Dir(mainDir), ".mivia", "worktrees", "wt1")
@@ -49,7 +49,7 @@ func worktreeCatalogFixture(t *testing.T) (store *storage.SQLite, principal cont
 	if err != nil {
 		t.Fatalf("derive principal: %v", err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
+	instance := state.WorktreeInstance{Worktree: "wt1", ID: "wt_0001020304050607"}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonical); err != nil {
 		t.Fatalf("begin creation: %v", err)
 	}
@@ -62,12 +62,12 @@ func worktreeCatalogFixture(t *testing.T) (store *storage.SQLite, principal cont
 
 // catalogSession is a context-enabled session over the fixture store, the
 // shape a CLI-launched session carries when /resume lists its catalog.
-func catalogSession(t *testing.T, store *storage.SQLite, mainDir string) (*chat.Session, contextstate.Principal) {
+func catalogSession(t *testing.T, store *storage.SQLite, mainDir string) (*chat.Session, state.Principal) {
 	t.Helper()
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
 	sess := chat.NewSession(res, &nullCompleter{})
 	sess.SessionID = "session-main"
-	principal, err := contextstate.NewPrincipal(worktreeroute.WorkspaceID(mainDir), sess.SessionID, "local-user")
+	principal, err := state.NewPrincipal(worktreeroute.WorkspaceID(mainDir), sess.SessionID, "local-user")
 	if err != nil {
 		t.Fatalf("mint session principal: %v", err)
 	}
@@ -155,7 +155,7 @@ func startInRouteBind(ctx context.Context, store *storage.SQLite, root string, r
 // cliworktree.WriteWorktreeMarker, which needs a real git checkout the
 // plain-tempdir fixtures here do not have). Format pinned by
 // cliworktree's worktreeMarker JSON schema, version 1.
-func writeTestWorktreeMarker(t *testing.T, dir string, instance contextstate.WorktreeInstance) {
+func writeTestWorktreeMarker(t *testing.T, dir string, instance state.WorktreeInstance) {
 	t.Helper()
 	markerDir := filepath.Join(dir, ".mivia")
 	if err := os.MkdirAll(markerDir, 0o700); err != nil {

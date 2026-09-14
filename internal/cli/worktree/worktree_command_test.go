@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -69,7 +69,7 @@ func TestWorktreeCommandAdoptRecoversAfterMarkerWriteCrash(t *testing.T) {
 		store.Close()
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
 	if err := store.BeginWorktreeAdoption(context.Background(), principal, instance, worktree.Path); err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestWorktreeCommandRemoveRecoversAfterGitRemovalBeforeCleanup(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, worktree.Name); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, worktree.Name); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("deleting record = %v, want ErrWorktreeDeleted", err)
 	}
 }
@@ -185,7 +185,7 @@ func TestWorktreeCommandRemoveRecoveryKeepsSameNameReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, oldInstance.Worktree); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, oldInstance.Worktree); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("old deleting record = %v, want ErrWorktreeDeleted", err)
 	}
 }
@@ -219,7 +219,7 @@ func TestWorktreeCommandRemoveRecoverySanitizesOriginalName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, instance.Worktree); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, instance.Worktree); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("deleting record = %v, want ErrWorktreeDeleted", err)
 	}
 	db, err := sql.Open("sqlite", storePath)
@@ -352,7 +352,7 @@ func TestCreateManagedWorktreeRecoversAfterGitCreateBeforeMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance := contextstate.WorktreeInstance{Worktree: "crash-create", ID: "wt_1234567890abcdef"}
+	instance := state.WorktreeInstance{Worktree: "crash-create", ID: "wt_1234567890abcdef"}
 	expectedPath := filepath.Join(workspace.WorktreesDir(repoRoot), instance.Worktree)
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, expectedPath); err != nil {
 		t.Fatal(err)
@@ -364,7 +364,7 @@ func TestCreateManagedWorktreeRecoversAfterGitCreateBeforeMarker(t *testing.T) {
 	if _, err := os.Stat(WorktreeMarkerPath(created.Path)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("marker before recovery = %v, want not exist", err)
 	}
-	if err := RunWorktreeWithIO([]string{"adopt", instance.Worktree, "--workspace", repoRoot}, &bytes.Buffer{}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := RunWorktreeWithIO([]string{"adopt", instance.Worktree, "--workspace", repoRoot}, &bytes.Buffer{}); !errors.Is(err, state.ErrWorktreeDeleted) {
 		t.Fatalf("adopt interrupted creation = %v, want ErrWorktreeDeleted", err)
 	}
 	recovered, err := CreateManagedWorktreeInStore(store, repoRoot, instance.Worktree, "HEAD", "mivia/")

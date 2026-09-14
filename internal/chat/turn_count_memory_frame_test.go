@@ -10,7 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -157,7 +157,7 @@ func TestSaveContextCatalogTurnCountExcludesMemoryFrame(t *testing.T) {
 	if err := session.Save("named-save"); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestTurnCountCountsUserTurnWithSummaryHeaderContent(t *testing.T) {
 	if err := session.Save("header-turn"); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestTurnCountUnchangedWithoutMemoryFrame(t *testing.T) {
 	if err := session.Save("named-save"); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestConcurrentSaveLoadWithFrameTurnCount(t *testing.T) {
 	if err := session.Save("race-frame"); err != nil {
 		t.Fatal(err)
 	}
-	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	principal, err := state.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

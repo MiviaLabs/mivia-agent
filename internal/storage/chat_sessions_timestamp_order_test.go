@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestListSessionsOrdersAcrossMixedTimestampLayouts pins the fix for
@@ -23,7 +23,7 @@ func TestListSessionsOrdersAcrossMixedTimestampLayouts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal("workspace", "live-session", "subject")
+	principal, err := state.NewPrincipal("workspace", "live-session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

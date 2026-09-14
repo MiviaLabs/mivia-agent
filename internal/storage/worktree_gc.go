@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // reapableWorktreeStates are the two lifecycle states a sweep may remove.

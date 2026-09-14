@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	_ "modernc.org/sqlite"
 )

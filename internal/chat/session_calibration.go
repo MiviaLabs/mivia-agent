@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 )
 
 // adoptCalibration copies a finished turn's rolling token calibration back
@@ -15,7 +15,7 @@ import (
 // exactly on the long turns that drift most. Concurrent turns each start from
 // the same seed, so the one with the most samples is the most informed; the
 // count only ever grows on top of what the turn was seeded with.
-func (s *Session) adoptCalibration(turnCalibration contextmgr.Calibration) {
+func (s *Session) adoptCalibration(turnCalibration manager.Calibration) {
 	if turnCalibration.Samples == 0 {
 		return
 	}
@@ -97,7 +97,7 @@ func (s *Session) RefreshCalibrationAfterModelSwitch(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	s.Calibration = contextmgr.Calibration{}
+	s.Calibration = manager.Calibration{}
 	s.mu.Unlock()
 	s.SeedCalibration(ctx, seeder, s.ContextPrincipal().WorkspaceID)
 }

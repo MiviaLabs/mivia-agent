@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -24,11 +24,11 @@ type failingJournalStore struct {
 	err error
 }
 
-func (f failingJournalStore) AppendTurnJournalEntry(ctx context.Context, p contextstate.Principal, sessionID, turnID string, e contextstate.TurnJournalEntry) error {
+func (f failingJournalStore) AppendTurnJournalEntry(ctx context.Context, p state.Principal, sessionID, turnID string, e state.TurnJournalEntry) error {
 	return f.err
 }
 
-func (f failingJournalStore) ClearTurnJournal(ctx context.Context, p contextstate.Principal, sessionID, turnID string) error {
+func (f failingJournalStore) ClearTurnJournal(ctx context.Context, p state.Principal, sessionID, turnID string) error {
 	return f.err
 }
 

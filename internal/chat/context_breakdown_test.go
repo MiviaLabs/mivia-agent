@@ -6,7 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
@@ -156,11 +156,11 @@ func TestContextUsageBreakdownSumsToUsedTokens(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name        string
-		calibration contextmgr.Calibration
+		calibration manager.Calibration
 	}{
-		{"uncalibrated", contextmgr.Calibration{}},
-		{"over-counting corrected down", contextmgr.Calibration{Ratio: 0.5, Samples: 4}},
-		{"under-counting corrected up", contextmgr.Calibration{Ratio: 1.7, Samples: 4}},
+		{"uncalibrated", manager.Calibration{}},
+		{"over-counting corrected down", manager.Calibration{Ratio: 0.5, Samples: 4}},
+		{"under-counting corrected up", manager.Calibration{Ratio: 1.7, Samples: 4}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newSession()

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // seedForReset writes one row into a representative spread of tables -
@@ -15,10 +15,10 @@ import (
 // dependents context_checkpoints/context_payloads/context_source_events) -
 // so a wipe that gets delete order or FK handling wrong fails loudly instead
 // of passing on an empty store.
-func seedForReset(t *testing.T, store *SQLite) contextstate.Principal {
+func seedForReset(t *testing.T, store *SQLite) state.Principal {
 	t.Helper()
 	ctx := context.Background()
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestWipeAllExceptSchemaRestoresForeignKeyEnforcement(t *testing.T) {
 	}
 	// Insert a context_checkpoints row referencing a context_sessions row
 	// that does not exist - must fail if foreign_keys enforcement survived.
-	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	principal, err := state.NewPrincipal("workspace", "session", "subject")
 	if err != nil {
 		t.Fatal(err)
 	}

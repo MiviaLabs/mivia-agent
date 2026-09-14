@@ -7,8 +7,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -48,7 +48,7 @@ var BuiltInSlashTokensVar func() map[string]struct{}
 
 // SummaryWiringVar is wired by internal/cli/cliagents_wiring.go to cli's
 // summaryWiring. Used by refreshSummarizerAfterModelSwitch in model_binding.go.
-var SummaryWiringVar func(*chat.Session, *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool)
+var SummaryWiringVar func(*chat.Session, *config.Resolved) (*manager.Summarizer, state.PolicySnapshot, bool)
 
 // AdvertisedSessionToolSpecsVar is wired by internal/cli/cliagents_wiring.go to
 // cli's advertisedSessionToolSpecs. Used by advertisedToolSpecs in tool_tiers.go

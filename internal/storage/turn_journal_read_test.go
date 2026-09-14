@@ -9,7 +9,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // TestTurnJournalRoundTripsEntriesInOrder pins the scan loop of
@@ -19,7 +19,7 @@ func TestTurnJournalRoundTripsEntriesInOrder(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
 
-	want := []contextstate.TurnJournalEntry{
+	want := []state.TurnJournalEntry{
 		{Kind: "tool_start", Payload: []byte(`{"n":1}`)},
 		{Kind: "tool_end", Payload: []byte(`{"n":2}`)},
 		{Kind: "message", Payload: []byte(`{"n":3}`)},
@@ -53,7 +53,7 @@ func TestTurnJournalRoundTripsEntriesInOrder(t *testing.T) {
 func TestListJournaledTurnsReturnsTurnIDsForTheSession(t *testing.T) {
 	store, principal := newTurnJournalTestStore(t)
 	ctx := context.Background()
-	entry := contextstate.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
+	entry := state.TurnJournalEntry{Kind: "tool_start", Payload: []byte("{}")}
 
 	for _, turn := range []string{"turn:1", "turn:2"} {
 		if err := store.AppendTurnJournalEntry(ctx, principal, "sess-list", turn, entry); err != nil {

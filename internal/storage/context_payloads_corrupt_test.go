@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
 // What the payload readers do with a chunk table that does not say what the
@@ -108,7 +108,7 @@ func TestReadPayloadChunksRefusesAMalformedChunkSet(t *testing.T) {
 			if got != nil {
 				t.Errorf("a malformed chunk set returned %d bytes; it must return none", len(got))
 			}
-			if !errors.Is(err, contextstate.ErrInvalidDTO) {
+			if !errors.Is(err, state.ErrInvalidDTO) {
 				t.Fatalf("err = %v, want it to wrap ErrInvalidDTO", err)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
@@ -229,7 +229,7 @@ func TestLoadPayloadBytesTxRefusesABadChunkSequence(t *testing.T) {
 			if body != nil {
 				t.Errorf("a bad chunk sequence returned %q", body)
 			}
-			if !errors.Is(err, contextstate.ErrInvalidDTO) {
+			if !errors.Is(err, state.ErrInvalidDTO) {
 				t.Fatalf("err = %v, want it to wrap ErrInvalidDTO", err)
 			}
 			if !strings.Contains(err.Error(), "bad chunk sequence") {
@@ -254,7 +254,7 @@ func TestLoadPayloadBytesTxReportsAnUnreadableRow(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an unreadable chunk row was accepted, returning %d bytes", len(body))
 	}
-	if errors.Is(err, contextstate.ErrInvalidDTO) {
+	if errors.Is(err, state.ErrInvalidDTO) {
 		t.Errorf("err = %v, want the row read failure, not a DTO refusal", err)
 	}
 	if !strings.Contains(err.Error(), "not-a-number") && !strings.Contains(err.Error(), "converting") {

@@ -3,7 +3,7 @@ package agents
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -13,8 +13,8 @@ import (
 // ContextDispatcherForVar so the import direction stays inward. See
 // internal/cli/cliagents_wiring.go for the wiring init.
 type ContextDispatcherWiring struct {
-	Preparation      contextmgr.PreparationManager
-	PreparationInput contextmgr.PrepareInput
+	Preparation      manager.PreparationManager
+	PreparationInput manager.PrepareInput
 	SharedSQLite     *storage.SQLite
 }
 
