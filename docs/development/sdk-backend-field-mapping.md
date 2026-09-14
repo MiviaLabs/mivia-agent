@@ -249,7 +249,7 @@ these SDK loop knobs; `TestBuildAgentLoopOptions_AdoptionRows`
   site wires one
   (`contextmgr.StructuralPreparationManager{}`, set in
   `internal/composition/session.go` and
-  `internal/clichat/context_setup_session.go`), and
+  `internal/cli/chat/context_setup_session.go`), and
   `sdkCompactionAdopted` requires `Options.PreferSDKCompaction` in
   that case (default false, so no production call site adopts this
   row until it sets that field). With no PreparationManager wired,

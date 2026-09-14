@@ -602,7 +602,7 @@ silently dropping the call.
   `run_command` cannot dispatch `run_command` and recurse.
 - `Stop`, `PreToolUse`, and `PostToolUse` all fire on every surface (`-p`,
   `--plain`, line mode, the TUI). `Stop` fires once per root turn only, never
-  for a subagent turn or a workflow run - no `internal/cliworkflow` path
+  for a subagent turn or a workflow run - no `internal/cli/workflow` path
   drives an `internal/chat.Session` turn, so a workflow's own tool calls still
   fire `PreToolUse`/`PostToolUse` but never `Stop`.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler

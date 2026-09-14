@@ -297,7 +297,7 @@ workflow engineers. `ed07bc9` scoped the registry before the dispatcher. `208953
 enforced the source boundary and root-scope denials. `101e3d1` routed session workflow
 deliver and cancel through the CLI paths instead of a parallel path. `0378ac65` found
 two independent implementations of `/model <name>` resolution - classic REPL
-(`internal/clichat`) and the new TUI (`internal/tui/adapter`) - that had diverged: the
+(`internal/cli/chat`) and the new TUI (`internal/tui/adapter`) - that had diverged: the
 TUI's `resolveProviderAndModel` silently picked the first provider whose catalog
 happened to contain a requested model name, with no ambiguity check, while the REPL
 path never searched other providers at all. Neither path routed through a shared
@@ -640,7 +640,7 @@ the escape, not the symbol: any per-GOOS API reached from an untagged file
 qualifies.
 
 **Evidence.** Two commits four days apart each introduced an unguarded pty test
-helper in `internal/clichat` calling `unix.TIOCSPTLCK`/`TIOCGPTN` (Linux-only):
+helper in `internal/cli/chat` calling `unix.TIOCSPTLCK`/`TIOCGPTN` (Linux-only):
 `db580256` (`withPtyStdin`) and `6daa46ae` (`openTestPTY`). The darwin job went
 red on both (`verify-macos`, run 33040674276); windows showed the same compile
 errors yet concluded green because its multi-line pwsh run block only fails on
@@ -854,7 +854,7 @@ the interface-having variant in `provider.Completer`.
 - Prefer deleting the second implementation to gating it. A gate makes drift
   visible; delegation makes it impossible.
 
-**Gate.** `internal/clichat/tool_execution_conformance_test.go` +
+**Gate.** `internal/cli/chat/tool_execution_conformance_test.go` +
 `.mivia/policy/tool-execution-conformance.json`.
 
 
@@ -1092,7 +1092,7 @@ before a human can even reach for the next command, so the gap is invisible
 until real load (many small events instead of a few big ones) inflates the
 queue's drain time closer to - or past - the teardown's own budget.
 
-**Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` (fixed
+**Evidence.** `internal/cli/chat/chat_sync.go`'s `attachCLISync` (fixed
 alongside the regression test below) called `syncSess.Stop(ctx)` directly from
 the detach closure. `Stop` only drains `SyncSession`'s own `eventCh` via a
 non-blocking `drainAndFlushFinal`; it has no visibility into
@@ -1108,7 +1108,7 @@ process exited moments later. Reproduced live against a real staging session
 surfaced together while dogfooding), then pinned by
 `TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping`.
 
-**Second instance.** `internal/cliworkflow/workflow_resume_lock.go`'s
+**Second instance.** `internal/cli/workflow/workflow_resume_lock.go`'s
 `acquireWorkflowExecutionLockBounded` races a contended
 `AcquireWorkflowExecutionLock` attempt (blocking up to ~1s inside a
 non-context-aware flock retry loop) against `ctx.Done()`. When ctx wins, the
@@ -1172,7 +1172,7 @@ easy to miss under test: an in-process httptest server answers in
 microseconds regardless of backlog size, so nothing in a fast test suite
 ever pays the real network cost that exposes the gap.
 
-**Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` detach
+**Evidence.** `internal/cli/chat/chat_sync.go`'s `attachCLISync` detach
 closure and `internal/tui/run/run.go`'s TUI shutdown both gave `Stop`'s final
 flush a 2-5 second ctx. `FlushOutbox` (`internal/chatsync/attach.go`) sends
 the ENTIRE unflushed backlog in one `AppendEvents` call - no size cap, no
@@ -1298,7 +1298,7 @@ just silently does the wrong (ephemeral, unpersisted) thing every time.
 unconditionally zeroes `chat.Session.SessionDir` (with `sessionStore`/
 `saveManager`) the instant context state is enabled - which every real
 `mivia chat` invocation does, CLI or TUI, before chat sync ever attaches.
-`internal/clichat/chat_sync.go`'s `cliSyncOptions` and
+`internal/cli/chat/chat_sync.go`'s `cliSyncOptions` and
 `internal/tui/adapter/session_pool.go`'s `poolSyncOptions` read
 `sess.SessionDir` to anchor chat-sync's local identity file.
 `chatsync.LoadOrCreateIdentity` treats an empty anchor directory as "no
@@ -1330,7 +1330,7 @@ path that clears it in production.
   intended to depend on its lifecycle. Grep every reader before repurposing
   or clearing such a field.
 - Gate: `TestCLISyncOptionsPersistsIdentityWithoutSessionDir`
-  (`internal/clichat/chat_sync_opts_test.go`) and
+  (`internal/cli/chat/chat_sync_opts_test.go`) and
   `TestPoolSyncOptionsPersistsIdentityWithoutSessionDir`
   (`internal/tui/adapter/session_pool_syncopts_test.go`) build a session with
   `SessionDir` explicitly empty - the real production shape - and assert
@@ -1695,7 +1695,7 @@ because CI is clean, the suite is green in the only place anyone checks, so the
 failures read as "pre-existing and unrelated" and get routed around instead of
 diagnosed.
 
-**Evidence.** 2026-09-05: nineteen `internal/cliworkflow` tests failed on a
+**Evidence.** 2026-09-05: nineteen `internal/cli/workflow` tests failed on a
 developer machine with `~/.mivia/mivia.toml` declaring MCP servers, and passed
 under any other home. `config.Load` calls `LoadTrustedMCPConfig`, which reads
 `config.UserConfigPath()` regardless of `LoadOptions.ConfigPath`, so every
@@ -1703,7 +1703,7 @@ fixture resolved `res.MCP.Enabled = true` while the ledger rows those same
 fixtures wrote pinned no `MCPConfigDigest`.
 `validateWorkflowMCPConfigDigest` then refused the resumes - correctly. The
 product check was right, the fixtures were right, and the whole defect was the
-shared environment. `internal/clichat` had already hit the destructive half of
+shared environment. `internal/cli/chat` had already hit the destructive half of
 this class (tests writing into the real `~/.mivia/context.db`, leaving 57,077
 workspace ids behind) and had grown `testenv.IsolateHome` for it; the packages
 that had not adopted it were still exposed to the verdict half.
@@ -1722,13 +1722,13 @@ that had not adopted it were still exposed to the verdict half.
   converts a test-harness defect into a production hole.
 
 **Gate.** `testenv.HomeIsolated()` plus a per-package assertion that calls it:
-`internal/cliworkflow/home_isolation_test.go` fails when `TestMain` stops
+`internal/cli/workflow/home_isolation_test.go` fails when `TestMain` stops
 isolating, and does so identically on every machine, because it asserts the
 isolation rather than any consequence of it. Its sibling test asserts the exact
 leaked seam - that a fixture-built `config.Load` resolves MCP off - so the
 class is pinned at the mechanism, not at one of its nineteen symptoms. This is
 NOT yet a repo-wide gate: `internal/agents`, `internal/chat`,
-`internal/cliagents`, `internal/cliorchestrate`, `internal/provider`, and
+`internal/cli/agents`, `internal/cli/orchestrate`, `internal/provider`, and
 `internal/tui/adapter` resolve user configuration in tests without
 `testenv.IsolateHome` (some isolate `HOME` per test, which protects those tests
 only). They pass today; they are unprotected, not proven clean.
@@ -1749,7 +1749,7 @@ never renders, and the layer-by-layer tests all agree the plumbing is right.
 It is DC-16's mirror image - there, a live path had consumers and only some
 producers fed it; here every producer feeds a path that ends nowhere.
 
-**Evidence.** 2026-09-05. `internal/cliworkflow` published a lifecycle event
+**Evidence.** 2026-09-05. `internal/cli/workflow` published a lifecycle event
 onto the session bus for every workflow transition, and `internal/events`
 delivered them, and `events.MetricsAdapter` even listed the kinds - but the
 only `SubscribeAcross` call sites outside `internal/events` were the hub relay
@@ -1786,7 +1786,7 @@ fails when a workflow kind reaches it with no entry in
 decision with a reason.
 
 Two further AST gates protect the ends of this pipeline:
-- `internal/cliworkflow/workflow_progress_kind_test.go`'s
+- `internal/cli/workflow/workflow_progress_kind_test.go`'s
   `TestEveryProgressKindMapsToARenderedEventKind` parses
   `internal/workflows/controller/progress.go` and proves every declared
   `ProgressKind` maps to an event kind the notice policy renders.

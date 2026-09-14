@@ -223,7 +223,7 @@ flowchart TD
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
 | `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
-| `Diagnostics` | `internal/cliorchestrate` | ListRuns, ActiveHandles (privacy-safe operator views) |
+| `Diagnostics` | `internal/cli/orchestrate` | ListRuns, ActiveHandles (privacy-safe operator views) |
 | `FormatToolOutput` / `FormatCommandOutput` / etc. | `internal/tui/view/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
 | `Screen` (settings) | `internal/tui/view/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
@@ -278,7 +278,7 @@ A workflow run that reaches its success terminal is not necessarily done: `deliv
 
 The Coordinator supports `SubscribeLifecycle(fn)` which returns an `unsubscribe()` function.
 Subscribers receive `LifecycleEvent` values synchronously as tasks transition.
-The orchestration state layer in `internal/cliorchestrate` uses it.
+The orchestration state layer in `internal/cli/orchestrate` uses it.
 
 ### Provider/model generations and TUI dialogs
 
@@ -296,7 +296,7 @@ missing credentials without exposing secret or provider payload details.
 Interactive TTY chat uses one compositor: `internal/tui/run` composing
 `internal/tui/view`, `internal/tui/kit`, and `internal/tui/adapter`. `cmd/mivia` wires
 that path with `cli.SetTUILauncher(tui.RunTUI)`. `--plain` is a line-mode
-REPL in `internal/clichat`; it is not a second interactive compositor.
+REPL in `internal/cli/chat`; it is not a second interactive compositor.
 
 ### See also
 

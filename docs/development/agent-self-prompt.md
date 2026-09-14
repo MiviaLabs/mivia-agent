@@ -57,7 +57,7 @@ with `write_file`); the next launch picks them up.
 
 | Workspace | Content |
 |-----------|---------|
-| **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.md`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/clichat/agent_prompt_repo_test.go`. |
+| **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.md`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/cli/chat/agent_prompt_repo_test.go`. |
 | **Any other project** | That project’s stable conventions in agent `system_prompt` fields. |
 
 ### Optional fields
@@ -107,10 +107,10 @@ project skill cannot shadow then remove a user skill of the same name.
 
 ## Compiled-in default
 
-`internal/clichat/prompt.go` → `defaultAgentPrompt`.
+`internal/cli/chat/prompt.go` → `defaultAgentPrompt`.
 
 - Project/language-generic for any user workspace
-- Guards: `internal/clichat/prompt_generic_test.go`, rule 60
+- Guards: `internal/cli/chat/prompt_generic_test.go`, rule 60
 
 ## Related
 
