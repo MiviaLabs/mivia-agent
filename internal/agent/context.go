@@ -7,7 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // captureOmittedEvidence folds the content-free diff of the pre-compaction

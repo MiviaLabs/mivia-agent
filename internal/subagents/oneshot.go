@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/prompts"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 

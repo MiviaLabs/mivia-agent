@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // maxTokensIncidentEnvelope is the rejection a tighter upstream route returns

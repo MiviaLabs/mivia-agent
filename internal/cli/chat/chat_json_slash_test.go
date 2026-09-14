@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // TestJSONSlashSinkInfoAndError pins the generic fallback shape used by every

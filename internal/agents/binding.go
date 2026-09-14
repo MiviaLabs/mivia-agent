@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // An agent's execution target is one explicit (provider, model) binding. A
@@ -56,9 +56,9 @@ func checkResolvedBinding(in ResolveInput, fields inheritedFields) error {
 		return fmt.Errorf("agent %q: provider %q requires a model (a provider with no model would pair a foreign endpoint with the session's model)",
 			in.Name, fields.provider)
 	}
-	if _, known := providerregistry.Lookup(fields.provider); !known {
+	if _, known := registry.Lookup(fields.provider); !known {
 		return fmt.Errorf("agent %q: provider %q is not a known provider (available: %s)",
-			in.Name, fields.provider, strings.Join(providerregistry.Names(), ", "))
+			in.Name, fields.provider, strings.Join(registry.Names(), ", "))
 	}
 	return nil
 }

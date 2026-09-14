@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
@@ -141,7 +141,7 @@ func thinkingObject(level reasoning.Level, preserved bool) map[string]any {
 }
 
 // defaultReasoningDialect is how a provider factory states its wire dialect:
-// by reading the vetted table in internal/reasoning that config validates
+// by reading the vetted table in internal/provider/reasoning that config validates
 // model entries against. A provider absent from that table gets the empty
 // dialect, so only a request naming its own shape sends anything.
 func defaultReasoningDialect(provider string) reasoning.Dialect {

@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // Republishing the SAME provider/model is not a model change. The picker's

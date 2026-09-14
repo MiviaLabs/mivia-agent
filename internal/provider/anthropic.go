@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // anthropicAPIVersion is the fixed anthropic-version header value. Anthropic
@@ -48,7 +48,7 @@ type AnthropicCompleter struct {
 	httpClient *http.Client
 	// reasoning is this client's resolved default wire dialect (normally
 	// reasoning.DialectAnthropicAdaptive, read from the vetted table in
-	// internal/reasoning so config validation and this client agree on the
+	// internal/provider/reasoning so config validation and this client agree on the
 	// same value). A request naming its own ReasoningDialect overrides it.
 	reasoning reasoning.Dialect
 	// cacheMarkers enables explicit cache_control breakpoints on the stable
@@ -68,7 +68,7 @@ type AnthropicCompleter struct {
 func NewAnthropic(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("anthropic")
+		descriptor, ok := registry.Lookup("anthropic")
 		if !ok {
 			return nil, fmt.Errorf("provider %q has no built-in descriptor", "anthropic")
 		}

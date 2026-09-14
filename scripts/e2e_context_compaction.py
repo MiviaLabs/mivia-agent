@@ -46,7 +46,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BINARY = REPO / "mivia"
 
-# The first sentence of summarySystemPrompt in internal/contextmgr. The stub
+# The first sentence of summarySystemPrompt in internal/context/manager. The stub
 # answers a summarize request only when it sees this, so a scenario cannot
 # pass by mistaking an ordinary turn for a summary call.
 SUMMARY_MARKER = "You summarize an earlier part of a conversation."

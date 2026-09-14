@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // NewLLMProxyCLI returns a completer for a local LLM proxy (such as
@@ -25,7 +25,7 @@ import (
 func NewLLMProxyCLI(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("llmproxycli")
+		descriptor, ok := registry.Lookup("llmproxycli")
 		if !ok {
 			return nil, fmt.Errorf("provider %q has no built-in descriptor", "llmproxycli")
 		}

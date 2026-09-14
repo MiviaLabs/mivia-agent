@@ -52,7 +52,7 @@
     "deps": "dependency version bumps only",
     "release": "versioning, release notes, tag/release process; also internal/version",
     "events": "event bus, subscriptions, adapters, event serialization",
-    "provider": "provider clients, streaming, usage and calibration capture; also internal/providerregistry, internal/reasoning",
+    "provider": "provider clients, streaming, usage and calibration capture; also internal/provider/registry, internal/provider/reasoning",
     "workflows": "internal/workflows/** (controller, delivery, compiler, localengine, stacking, ledger, definition, tasks, template, verifier, matcher, agenttools, presentation), and its infra: internal/ledger, internal/storage, internal/durablefence, internal/remainder, internal/jschema, internal/vcs, internal/workspace",
     "tools": "internal/tools - model-facing tool implementations (write, edit, search_replace, delete, find_symbol_context, etc.), distinct from the agent orchestrator loop and the CLI/TUI"
   },

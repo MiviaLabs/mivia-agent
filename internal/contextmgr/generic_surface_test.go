@@ -22,7 +22,7 @@ import (
 
 // providerNamePatterns are the builtin provider identifiers that must never
 // appear in contextmgr's own source. Keep this list in sync with
-// internal/providerregistry's builtin set.
+// internal/provider/registry's builtin set.
 var providerNamePatterns = []struct {
 	name string
 	re   *regexp.Regexp

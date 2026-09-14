@@ -12,7 +12,7 @@
       "internal/contextstate",
       "internal/events",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -43,7 +43,7 @@
     ],
     "internal/agents": [
       "internal/config",
-      "internal/providerregistry",
+      "internal/provider/registry",
       "internal/skills",
       "internal/subagents",
       "internal/tools"
@@ -57,7 +57,7 @@
       "internal/hooksession",
       "internal/orchestrationnotify",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -108,7 +108,7 @@
       "internal/mcp",
       "internal/memory",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -157,7 +157,7 @@
       "internal/mcp",
       "internal/memory",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -201,7 +201,7 @@
       "internal/events",
       "internal/ledger",
       "internal/provider",
-      "internal/providerregistry",
+      "internal/provider/registry",
       "internal/runtime",
       "internal/sdkadapter",
       "internal/secretpath",
@@ -244,8 +244,8 @@
     ],
     "internal/config": [
       "internal/memory",
-      "internal/providerregistry",
-      "internal/reasoning",
+      "internal/provider/registry",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/secretpath",
       "internal/tools",
@@ -319,8 +319,8 @@
     ],
     "internal/provider": [
       "internal/config",
-      "internal/providerregistry",
-      "internal/reasoning"
+      "internal/provider/registry",
+      "internal/provider/reasoning"
     ],
     "internal/remainder": [
       "internal/sdkadapter"
@@ -333,7 +333,7 @@
     "internal/sdkadapter": [
       "internal/hooks",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/skills",
       "internal/tools"
     ],
@@ -353,7 +353,7 @@
       "internal/jschema",
       "internal/prompts",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
@@ -518,7 +518,7 @@
       "internal/mcp",
       "internal/miviaauth",
       "internal/provider",
-      "internal/reasoning",
+      "internal/provider/reasoning",
       "internal/redact",
       "internal/sdkadapter",
       "internal/skills",

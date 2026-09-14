@@ -1,4 +1,4 @@
-package providerregistry
+package registry
 
 import (
 	"sort"

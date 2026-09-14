@@ -3,7 +3,7 @@ package provider
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 func TestNewLLMGatewayAppliesDefaultsAndOverrides(t *testing.T) {

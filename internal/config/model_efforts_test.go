@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 func TestModelSpecDecodesDeclaredEfforts(t *testing.T) {

@@ -3,14 +3,14 @@ package provider
 import (
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // NewOpenRouter returns an OpenRouter OpenAI-compatible completer.
 func NewOpenRouter(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("openrouter")
+		descriptor, ok := registry.Lookup("openrouter")
 		if !ok {
 			return nil, fmt.Errorf("provider %q has no built-in descriptor", "openrouter")
 		}

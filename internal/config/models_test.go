@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // A model name reaches terminal output and the provider URL path, so every
@@ -80,7 +80,7 @@ func TestNormalizeModelsAcceptsAnEmptyCatalog(t *testing.T) {
 // more completion tokens than the operator's own config permits for this
 // model.
 func TestCheckOutputReserveFloorRejectsAConfiguredCeilingBelowTheFloor(t *testing.T) {
-	// reasoning.High's floor is 32768 (internal/reasoning.OutputReserveFloor).
+	// reasoning.High's floor is 32768 (internal/provider/reasoning.OutputReserveFloor).
 	// 16384 sits strictly below it.
 	in := []ModelSpec{{
 		Name:                "m",

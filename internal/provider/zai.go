@@ -3,7 +3,7 @@ package provider
 import (
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/registry"
 )
 
 // NewZAI returns a ZAI GLM OpenAI-compatible completer for the standard PaaS endpoint.
@@ -14,7 +14,7 @@ import (
 func NewZAI(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("zai")
+		descriptor, ok := registry.Lookup("zai")
 		if !ok {
 			return nil, fmt.Errorf("provider %q has no built-in descriptor", "zai")
 		}

@@ -1,6 +1,6 @@
 package config
 
-import "github.com/MiviaLabs/mivia-agent/internal/reasoning"
+import "github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 
 // EffectiveOutputTokens returns the response allowance for one request: the
 // completion size asked for on the wire, and the reserve subtracted from the

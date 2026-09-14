@@ -3,7 +3,7 @@ package chat
 import (
 	"io"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // JSONSlashSink adapts slashSink to --json line-mode: /model and /effort

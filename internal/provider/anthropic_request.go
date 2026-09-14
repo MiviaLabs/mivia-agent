@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // buildRequestBody translates req into Anthropic's wire shape: system pulled

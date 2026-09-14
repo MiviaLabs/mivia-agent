@@ -2,7 +2,7 @@ package chat
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 func (s *Session) plainTurnCurrent(token OperationToken, turn uint64) bool {

@@ -1,5 +1,5 @@
 // Package providerregistry owns dependency-neutral built-in provider metadata.
-package providerregistry
+package registry
 
 import (
 	"sort"

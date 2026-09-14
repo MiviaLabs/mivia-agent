@@ -2,7 +2,7 @@
 """Check that provider docs stay in step with the provider registry (mivia).
 
 The single source of truth for built-in providers is the `descriptors` map in
-internal/providerregistry/registry.go. This script parses that map (a small,
+internal/provider/registry/registry.go. This script parses that map (a small,
 stable, one-block-per-entry format - the same philosophy as
 check_docs_ownership.py's minimal YAML subset) and verifies that the docs that
 name providers agree with it:
@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REGISTRY = ROOT / "internal" / "providerregistry" / "registry.go"
+REGISTRY = ROOT / "internal" / "provider" / "registry" / "registry.go"
 README = ROOT / "README.md"
 ARCH_OVERVIEW = ROOT / "docs" / "architecture" / "overview.md"
 
@@ -328,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     if problems:
-        fail("provider docs drift from internal/providerregistry/registry.go:\n  "
+        fail("provider docs drift from internal/provider/registry/registry.go:\n  "
              + "\n  ".join(problems))
     print(
         f"check_provider_docs: ok ({len(registry)} providers: "

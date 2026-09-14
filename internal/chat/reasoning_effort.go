@@ -6,7 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
 // ReasoningChoices is the ordered set of efforts the active model offers, in
@@ -80,7 +80,7 @@ func (s *Session) ReasoningOverride() (reasoning.Level, bool) {
 //
 // The clear is spelled as the empty level rather than as its own method
 // because the empty level already means "unset" everywhere in
-// internal/reasoning, and a model that declares efforts with no configured
+// internal/provider/reasoning, and a model that declares efforts with no configured
 // default ships in exactly that state. A second verb would be a second
 // vocabulary for a value the dial already holds.
 func (s *Session) SetReasoningEffort(level reasoning.Level) error {
