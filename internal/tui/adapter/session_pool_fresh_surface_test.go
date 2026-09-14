@@ -27,7 +27,7 @@ func TestCreateFreshPublishesSessionSurface(t *testing.T) {
 	pool, launch, _ := newPoolWithAgentState(t, root)
 	t.Cleanup(pool.CloseAll)
 	// Production parity: the launch attach captures the pre-scope base on the
-	// shared agent state (internal/clichat/chat_repl.go), which is what every
+	// shared agent state (internal/cli/chat/chat_repl.go), which is what every
 	// later surface rebuild re-scopes from.
 	pool.agentState.ToolBase = launch.Tools.Clone()
 

@@ -69,7 +69,7 @@ func TestToolEndDetailBodyHeuristicIsScopedToRunCommand(t *testing.T) {
 // a pre-flight rejection (malformed wait value, expired caller context,
 // coordinator/spawn failure) with {"error":...,"status":...} and a nil Go
 // error, so the caller keeps the run_id/hint fields it needs to recover
-// (internal/cliorchestrate/dispatch.go). Without a body check scoped to
+// (internal/cli/orchestrate/dispatch.go). Without a body check scoped to
 // this tool, that envelope reads "completed" - the same class of bug
 // run_command's own exit-code check exists to prevent, just for a
 // different tool and a different signal shape. This is what left two

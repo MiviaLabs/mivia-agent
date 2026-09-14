@@ -10,7 +10,7 @@ import (
 )
 
 // dispatchTasksToolName mirrors cliorchestrate.ToolDispatchTasks. Not
-// imported: internal/cliorchestrate depends on internal/subagents, which
+// imported: internal/cli/orchestrate depends on internal/subagents, which
 // depends on this package, so importing it here would cycle. Keep this
 // literal in sync with that constant.
 const dispatchTasksToolName = "dispatch_tasks"
@@ -104,7 +104,7 @@ func runCommandBodyFailed(body string) bool {
 
 // dispatchTasksBodyFailed detects the whole-batch-rejection envelope
 // dispatch_tasks.Execute answers with a nil Go error on purpose
-// (internal/cliorchestrate/dispatch.go: a pre-flight wait/schema
+// (internal/cli/orchestrate/dispatch.go: a pre-flight wait/schema
 // rejection, an expired caller context, or a coordinator/spawn failure
 // that never dispatched a single task) - so the caller keeps the
 // run_id/hint fields a hard Go error would discard. Every one of those

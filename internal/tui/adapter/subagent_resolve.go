@@ -12,7 +12,7 @@ import (
 // (INV-TUI-29's import-layers allow-list) - the same reason
 // toolCallContentResolver mirrors a ledger method set structurally instead
 // of importing internal/ledger, and namespacedTaskID in
-// subagent_reconstruct.go duplicates internal/cliorchestrate's function of
+// subagent_reconstruct.go duplicates internal/cli/orchestrate's function of
 // the same name.
 //
 // No json tags: the real producer (internal/coordinator/record_results.go)

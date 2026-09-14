@@ -8,15 +8,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// intPtr is duplicated from internal/clichat.
+// intPtr is duplicated from internal/cli/chat.
 func intPtr(n int) *int { return &n }
 
-// loadPickerConfig is duplicated from internal/clichat.
+// loadPickerConfig is duplicated from internal/cli/chat.
 func loadPickerConfig(t *testing.T) *config.Resolved {
 	return loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\n")
 }
 
-// loadPickerConfigWithEnv is duplicated from internal/clichat.
+// loadPickerConfigWithEnv is duplicated from internal/cli/chat.
 func loadPickerConfigWithEnv(t *testing.T, envContents string) *config.Resolved {
 	t.Helper()
 	dir := t.TempDir()

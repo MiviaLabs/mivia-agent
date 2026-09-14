@@ -13,7 +13,7 @@ package transcript
 // prove each of its checks has an independent effect.
 //
 // Precedent: internal/workflows/localengine/test_helpers_export.go,
-// internal/cliorchestrate/test_exports.go.
+// internal/cli/orchestrate/test_exports.go.
 func PushBlockForTest(m Model, b Block) Model {
 	m, _ = m.pushBlock(b)
 	return m

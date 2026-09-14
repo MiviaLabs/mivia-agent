@@ -15,7 +15,7 @@ import (
 )
 
 // workflowNoticePool builds a pool over a session that already has a bus, the
-// production shape: internal/clichat.attachSessionEventBus runs in
+// production shape: internal/cli/chat.attachSessionEventBus runs in
 // dispatchChatSurface before the TUI launcher reaches NewCommandRunner.
 func workflowNoticePool(t *testing.T) (*SessionPool, *events.Bus) {
 	t.Helper()
@@ -200,7 +200,7 @@ func TestEveryWorkflowEventKindIsClassified(t *testing.T) {
 func workflowKindsDeclaredInSource(t *testing.T) []events.Kind {
 	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "../events/event.go", nil, 0)
+	file, err := parser.ParseFile(fset, "../../events/event.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parse internal/events/event.go: %v", err)
 	}

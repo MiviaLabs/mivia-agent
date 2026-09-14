@@ -200,7 +200,7 @@ func TestTheDeferredHandlerRunsWhenApproved(t *testing.T) {
 	// The handler ADMITS; the loop executes, through the same shim an
 	// admitted call uses. So the contract here is that an approved call comes
 	// back with the tool to run - what that execution then does is held by
-	// the two-path conformance table in internal/clichat.
+	// the two-path conformance table in internal/cli/chat.
 	if result.Execute == nil {
 		t.Fatal("an approved call was not handed back for execution")
 	}
@@ -214,7 +214,7 @@ func TestTheDeferredHandlerRunsWhenApproved(t *testing.T) {
 }
 
 // unclassifiedTool declares no Capability at all. Several real tools have this
-// shape - post_message and run_messages in internal/clichat, every workflow_*
+// shape - post_message and run_messages in internal/cli/chat, every workflow_*
 // tool in internal/workflows/ledger - so the "unclassified is ExecutionExternal"
 // default is production-reachable, not a defensive branch.
 type unclassifiedTool struct{ ran bool }

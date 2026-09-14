@@ -95,7 +95,7 @@ func waitForCondition(t *testing.T, timeout time.Duration, msg string, cond func
 // TestContextHeartbeat_RepeatedArmSamePrincipalNoDuplicateGoroutine confirms
 // arm() called twice with the same store leaves the first ticking goroutine
 // running rather than starting a second one. Goroutine-count delta follows
-// the same band-based pattern internal/cliorchestrate's
+// the same band-based pattern internal/cli/orchestrate's
 // nested_dispatch_integration_test.go uses (goleak is not vendored in this
 // repo).
 func TestContextHeartbeat_RepeatedArmSamePrincipalNoDuplicateGoroutine(t *testing.T) {

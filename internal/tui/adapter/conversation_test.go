@@ -671,10 +671,10 @@ func TestConversation_DoesNotImportCLIFamily(t *testing.T) {
 	for _, l := range lines {
 		for _, banned := range []string{
 			"github.com/MiviaLabs/mivia-agent/internal/cli",
-			"github.com/MiviaLabs/mivia-agent/internal/clichat",
-			"github.com/MiviaLabs/mivia-agent/internal/cliworkflow",
-			"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate",
-			"github.com/MiviaLabs/mivia-agent/internal/cliworktree",
+			"github.com/MiviaLabs/mivia-agent/internal/cli/chat",
+			"github.com/MiviaLabs/mivia-agent/internal/cli/workflow",
+			"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate",
+			"github.com/MiviaLabs/mivia-agent/internal/cli/worktree",
 		} {
 			if l == banned {
 				t.Fatalf("adapter transitively imports %s", banned)

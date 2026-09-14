@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/clichat"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 

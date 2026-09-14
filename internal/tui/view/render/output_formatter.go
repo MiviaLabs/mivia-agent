@@ -602,7 +602,7 @@ func humanBytes(n int64) string {
 }
 
 // dispatchTaskResultView is the subset of dispatch_tasks' per-task result
-// envelope (internal/cliorchestrate/dispatch.go's dispatchTaskResult) this
+// envelope (internal/cli/orchestrate/dispatch.go's dispatchTaskResult) this
 // renderer needs. Kept narrow and independent of that package - the UI
 // layer must not import the orchestration package (mivia-ui isolation,
 // INV-TUI-29) - and tolerant of fields it doesn't recognize.

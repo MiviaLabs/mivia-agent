@@ -387,7 +387,7 @@ func statusBadgeRole(status string) theme.Role {
 
 // formatElapsed renders a duration as the sidebar's compact elapsed label
 // ("10m 40s", "45s", "1h 05m"). internal/tui/view/** may not import
-// internal/clichat (UI isolation, docs/design/ui-isolation.md), so this
+// internal/cli/chat (UI isolation, docs/design/ui-isolation.md), so this
 // does not reuse clichat.FormatDuration's tighter "10m40s" shape.
 func formatElapsed(d time.Duration) string {
 	if d < 0 {

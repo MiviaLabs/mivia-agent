@@ -27,7 +27,7 @@ func TestDispatchTaskIDsMissingIDFallbackIsFriendly(t *testing.T) {
 		t.Fatalf("got %d ids, want 2: %v", len(got), got)
 	}
 	// Namespaced with the call id (matching what a live dispatch_tasks call
-	// actually mints - internal/cliorchestrate/dispatch.go's
+	// actually mints - internal/cli/orchestrate/dispatch.go's
 	// dispatchNamespace), not the model-supplied id verbatim.
 	if want := "call_95bcae0ca204bc76:quality"; got[0] != want {
 		t.Errorf("id[0] = %q, want %q", got[0], want)

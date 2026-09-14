@@ -9,7 +9,7 @@ import (
 )
 
 // orchestrationRunEnvelope mirrors the common result shape shared by
-// inspect_agents, spawn_agent, and join_run (internal/cliorchestrate).
+// inspect_agents, spawn_agent, and join_run (internal/cli/orchestrate).
 // inspect_agents populates Tasks+Parks; spawn_agent/join_run populate
 // Tasks+TaskResults and an optional RunError. Kept narrow and independent
 // of that package - the UI layer must not import orchestration packages

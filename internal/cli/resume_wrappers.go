@@ -7,7 +7,7 @@ package cli
 import (
 	"context"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"

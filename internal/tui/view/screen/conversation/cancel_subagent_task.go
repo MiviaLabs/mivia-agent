@@ -19,7 +19,7 @@ import (
 // the coordinator task itself.
 //
 // The live route table behind that call is populated at dispatch time by
-// internal/cliorchestrate, which publishes each spawned task's
+// internal/cli/orchestrate, which publishes each spawned task's
 // (coordinator, runID, taskID) into internal/tui/adapter through
 // adapter.SubagentTaskRouteRegistrar (wired in internal/tui/run). The row
 // id this passes as callID is the namespaced "<tool call id>:<task id>"

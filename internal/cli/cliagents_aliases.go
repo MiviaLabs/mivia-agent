@@ -1,13 +1,13 @@
 package cli
 
-// cliagents_aliases.go re-exports types that moved to internal/cliagents so
+// cliagents_aliases.go re-exports types that moved to internal/cli/agents so
 // staying cli files compile without per-file import updates. Use the
 // cliagents-qualified form in new code. These aliases are intentional shims
 // while the extraction stabilises; remove them when cli has been updated fully.
 
-import cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+import cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 
-// Type aliases for types moved to internal/cliagents.
+// Type aliases for types moved to internal/cli/agents.
 type (
 	AgentBinding            = cliagents.AgentBinding
 	AgentCatalogView        = cliagents.AgentCatalogView

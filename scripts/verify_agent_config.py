@@ -216,7 +216,7 @@ def check_workflow_self_protection() -> None:
     )
 
 
-# The session-tool catalog in internal/clichat/session_tool_catalog.go is the
+# The session-tool catalog in internal/cli/chat/session_tool_catalog.go is the
 # single source of truth for the dispatcher-owned tools every root binding
 # advertises: the pinned wire tools[] array (advertisedToolSpecs) ships the
 # catalog as a tail after the core block, with load_tools gated on the binding
@@ -230,13 +230,13 @@ def check_workflow_self_protection() -> None:
 
 
 def session_tool_catalog_names() -> set[str]:
-    path = ROOT / "internal" / "clichat" / "session_tool_catalog.go"
+    path = ROOT / "internal" / "cli" / "chat" / "session_tool_catalog.go"
     if not path.is_file():
-        fail("missing internal/clichat/session_tool_catalog.go")
+        fail("missing internal/cli/chat/session_tool_catalog.go")
     body = path.read_text(encoding="utf-8")
     block = re.search(r"sessionToolCatalog\s*=\s*\[\]sessionToolSpec\{(.*?)\n\}", body, re.S)
     if not block:
-        fail("could not parse sessionToolCatalog in internal/clichat/session_tool_catalog.go")
+        fail("could not parse sessionToolCatalog in internal/cli/chat/session_tool_catalog.go")
     names = set(re.findall(r'Name:\s*"([a-z_]+)"', block.group(1)))
     if not names:
         fail("sessionToolCatalog parsed to an empty name set")
@@ -245,7 +245,7 @@ def session_tool_catalog_names() -> set[str]:
 
 # read_skill_resource is exempt alongside the catalog: it is injected per
 # skill activation (injectSkillResourceTool in
-# internal/clichat/skill_resource_tool.go) into a skill-scoped clone, outside any
+# internal/cli/chat/skill_resource_tool.go) into a skill-scoped clone, outside any
 # core/deferred decision the tier split makes, so no root binding can defer it
 # either.
 NON_DEFERRABLE_TOOLS = session_tool_catalog_names() | {"read_skill_resource"}
@@ -353,8 +353,8 @@ def model_facing_prompts() -> list[tuple[str, str]]:
     supersedes the compiled default for the session it binds.
     """
     out = []
-    for literal in re.findall(r"`([^`]*)`", text("internal/clichat/prompt.go")):
-        out.append(("internal/clichat/prompt.go", literal))
+    for literal in re.findall(r"`([^`]*)`", text("internal/cli/chat/prompt.go")):
+        out.append(("internal/cli/chat/prompt.go", literal))
     agent_files = check_agents_directory()
     for agent in agent_files:
         body = agent.read_text(encoding="utf-8")

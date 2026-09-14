@@ -11,7 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"

@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,12 +13,11 @@ import (
 // in internal/cli/.
 const maxFileLines = 800
 
-// TestStructure_Baseline checks structural invariants for internal/cli/:
+// TestStructure_Baseline checks structural invariants for the internal/cli/
+// tree (root package plus the worktree/agents/orchestrate/workflow/chat/
+// automations subpackages regrouped here):
 //   - Package compiles without errors (via go/parser)
-//   - No .go file exceeds 800 lines
-//
-// tui.go and its line-count ceiling moved to internal/legacytui/ with the
-// rest of the TUI: this package no longer has a tui.go to check.
+//   - No .go file anywhere in the tree exceeds 800 lines
 func TestStructure_Baseline(t *testing.T) {
 	t.Run("package compiles (go/parser)", func(t *testing.T) {
 		fset := token.NewFileSet()
@@ -29,40 +29,47 @@ func TestStructure_Baseline(t *testing.T) {
 			t.Fatal("package cli not found after parsing")
 		}
 		// Also parse each .go file individually for granular error reporting.
-		entries, err := os.ReadDir(".")
-		if err != nil {
-			t.Fatalf("read dir: %v", err)
-		}
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-				continue
-			}
-			_, err := parser.ParseFile(fset, e.Name(), nil, parser.AllErrors)
+		for _, name := range goFilesInTree(t, ".") {
+			_, err := parser.ParseFile(fset, name, nil, parser.AllErrors)
 			if err != nil {
-				t.Errorf("parse error in %s: %v", e.Name(), err)
+				t.Errorf("parse error in %s: %v", name, err)
 			}
 		}
 	})
 
 	t.Run("no file exceeds max lines", func(t *testing.T) {
-		entries, err := os.ReadDir(".")
-		if err != nil {
-			t.Fatalf("read dir: %v", err)
-		}
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-				continue
-			}
-			lines, err := countLines(e.Name())
+		for _, name := range goFilesInTree(t, ".") {
+			lines, err := countLines(name)
 			if err != nil {
-				t.Errorf("reading %s: %v", e.Name(), err)
+				t.Errorf("reading %s: %v", name, err)
 				continue
 			}
 			if lines > maxFileLines {
-				t.Errorf("%s has %d lines, exceeds maximum of %d", e.Name(), lines, maxFileLines)
+				t.Errorf("%s has %d lines, exceeds maximum of %d", name, lines, maxFileLines)
 			}
 		}
 	})
+}
+
+// goFilesInTree returns every .go file under root, recursively, so the
+// invariants cover the subpackages grouped under internal/cli/ and not just
+// the root command-wiring package.
+func goFilesInTree(t *testing.T, root string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".go") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	return files
 }
 
 // countLines returns the number of lines in a file within the current directory.

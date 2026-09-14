@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
+	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/intent"

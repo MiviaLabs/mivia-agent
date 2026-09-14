@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/gittest"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"

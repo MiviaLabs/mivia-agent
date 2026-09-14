@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 

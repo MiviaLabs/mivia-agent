@@ -42,7 +42,7 @@ type LoadOptions struct {
 	// Defaults to false (zero value) for every existing caller; wire it to
 	// true only where a config-file-writing side effect on a missing config
 	// is actually wanted (currently: `mivia chat` only - see
-	// internal/clichat/chat_command.go's runChat). Every read-only/internal/
+	// internal/cli/chat/chat_command.go's runChat). Every read-only/internal/
 	// test caller of config.Load keeps today's found=false behavior
 	// unchanged.
 	AutoBootstrapUserConfig bool

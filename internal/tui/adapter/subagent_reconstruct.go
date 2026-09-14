@@ -52,7 +52,7 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 	lower := strings.ToLower(tc.Name)
 	if lower == "dispatch_tasks" || lower == "spawn_agent" {
 		// namespaceTasks is dispatch_tasks-only: spawn_agent has no live
-		// backend implementation left (internal/cliorchestrate/dispatch.go's
+		// backend implementation left (internal/cli/orchestrate/dispatch.go's
 		// own doc history: "dispatch_tasks absorbed spawn_agent's
 		// idempotency_key dedup") - its name survives only in OLD sessions'
 		// persisted tool calls, which were never minted with a namespaced
@@ -100,8 +100,8 @@ type parsedDispatchTask struct {
 }
 
 // encodedTaskResult is one dispatched task's persisted result, matching both
-// dispatchTaskResult (internal/cliorchestrate/dispatch_encode.go) and
-// modelTaskResult (internal/cliorchestrate/orchestrate_lifecycle.go) - the
+// dispatchTaskResult (internal/cli/orchestrate/dispatch_encode.go) and
+// modelTaskResult (internal/cli/orchestrate/orchestrate_lifecycle.go) - the
 // two producers share this wire shape, keyed "task_id" (not "id"), with
 // Output as raw JSON since a subagent's own output may itself be a JSON
 // object rather than a plain string.
@@ -202,7 +202,7 @@ const toolCallsRecordedNotice = "(tool calls recorded)"
 // resultText renders one task's display text: the real inline Output when
 // present, else the synopsis dispatch_tasks reports for an above-threshold
 // result that went by-reference (setOutputFields in
-// internal/cliorchestrate/dispatch_encode.go), else the task's error. A
+// internal/cli/orchestrate/dispatch_encode.go), else the task's error. A
 // result whose only content is a recorded trace reference still gets a
 // visible notice - never a silent empty thread - but the raw ref stays out
 // of display text (a reconstructed-thread reader has no ledger_read).
@@ -372,7 +372,7 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	// (wait="none" or wait="task", and legacy spawn_agent output). Both the
 	// persisted args and the persisted result carry each task's RAW
 	// model-supplied id, not a namespaced one - dispatch_tasks strips its
-	// own internal namespace prefix (internal/cliorchestrate/dispatch.go's
+	// own internal namespace prefix (internal/cli/orchestrate/dispatch.go's
 	// stripNamespace) from every model-visible output before returning, so
 	// what got PERSISTED, and therefore what matchTaskOutputs/
 	// matchTaskToolCalls must match by, is always the raw id.
@@ -539,7 +539,7 @@ func extractToolOutput(outputJSON string) string {
 	return outputJSON
 }
 
-// namespacedTaskID mirrors internal/cliorchestrate's function of the same
+// namespacedTaskID mirrors internal/cli/orchestrate's function of the same
 // name. Duplicated, not imported: internal/tui/adapter is the sole
 // integration bridge and deliberately does not import the cli-family
 // orchestration package (INV-TUI-29), so the two copies are kept in sync

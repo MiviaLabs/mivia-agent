@@ -1,19 +1,19 @@
 package cli
 
 // cliworkflow_wiring.go breaks the cli <-> cliworkflow import cycle.
-// internal/cliworkflow owns the workflow domain but needs helpers that still
+// internal/cli/workflow owns the workflow domain but needs helpers that still
 // live in internal/cli (stack drivers, privacy and hook plumbing, the context
 // store path, skill loading). Each var below assigns the cliworkflow seam
-// declared in internal/cliworkflow/seams.go. The real fix is to move the
+// declared in internal/cli/workflow/seams.go. The real fix is to move the
 // stack helpers into a future internal/clistack package both sides import,
 // and to lift the chat/config helpers into the packages that own them.
 
 import (
 	"context"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )

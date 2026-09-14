@@ -12,7 +12,7 @@ import (
 // Turn lifecycle events are published from here, at the session layer, rather
 // than from each surface.
 //
-// They used to be published by the caller: internal/clichat announced a turn
+// They used to be published by the caller: internal/cli/chat announced a turn
 // start before calling SendUser, and nothing announced a turn end at all. That
 // had two consequences.
 //
@@ -47,7 +47,7 @@ const (
 // this" instead of "this failed".
 //
 // It lives here because the turn-end classification and the surfaces' own
-// reporting must agree: internal/clichat delegates to this function rather than
+// reporting must agree: internal/cli/chat delegates to this function rather than
 // keeping a second copy, so a change to what counts as a cancellation cannot
 // make the event stream and the terminal output disagree.
 func CancellationCanReplaceTurnError(err error) bool {
@@ -84,7 +84,7 @@ func (s *Session) publishTurnStart(sessionID string, turn uint64, text string) {
 // publishTurnEnd announces the turn's terminal event: exactly one KindTurnEnd
 // or one KindError, never both.
 //
-// A consumer treats them as equivalent terminals (see internal/clichat's hub
+// A consumer treats them as equivalent terminals (see internal/cli/chat's hub
 // sink), so emitting both would close the turn twice. The split exists so a
 // viewer can tell a failure from a completion without matching on a message
 // string.

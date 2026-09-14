@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/view/app"

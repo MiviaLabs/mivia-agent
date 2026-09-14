@@ -59,9 +59,9 @@ const (
 	unlimitedBatchBudget = 0
 
 	// readOutputToolName is the model-facing reader for remainder refs
-	// (internal/clichat.readOutputTool). It is already a bounded, paginated
+	// (internal/cli/chat.readOutputTool). It is already a bounded, paginated
 	// reader over content the batch/turn shaper itself spooled (32 KiB page /
-	// 256 KiB result cap - see internal/clichat/read_output.go), so it is
+	// 256 KiB result cap - see internal/cli/chat/read_output.go), so it is
 	// exempt from the degrade tiers below: re-truncating it into ANOTHER
 	// remainder ref would send the model chasing a ref through its own
 	// recovery tool, which is the "ref-to-ref" failure this constant exists

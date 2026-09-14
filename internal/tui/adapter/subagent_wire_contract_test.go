@@ -1,7 +1,7 @@
 package adapter_test
 
 // AR-1 consumer half: this file decodes the golden fixtures under
-// internal/cliorchestrate/testdata/ through the real reconstruction entry
+// internal/cli/orchestrate/testdata/ through the real reconstruction entry
 // point, PopulateFromToolCalls.
 //
 //   - task_result_envelope_contract.json is the CURRENT shape (final
@@ -25,16 +25,16 @@ import (
 )
 
 // contractFixturePath anchors on the module root, the pattern
-// internal/clichat/feature_delivery_contract_test.go (committedWorkflowRoot)
+// internal/cli/chat/feature_delivery_contract_test.go (committedWorkflowRoot)
 // already uses for cross-package file reads from tests: go test runs with
-// the package directory as working directory, so "../.." is the module root.
+// the package directory as working directory, so "../../.." is the module root.
 func contractFixturePath(t *testing.T, name string) string {
 	t.Helper()
-	root, err := filepath.Abs("../..")
+	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatalf("resolve module root: %v", err)
 	}
-	path := filepath.Join(root, "internal", "cliorchestrate", "testdata", name)
+	path := filepath.Join(root, "internal", "cli", "orchestrate", "testdata", name)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("golden fixture not found at %s: %v", path, err)
 	}

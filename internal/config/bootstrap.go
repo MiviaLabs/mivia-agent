@@ -99,7 +99,7 @@ func autoBootstrapUserConfig() (string, error) {
 // WriteUserEnvKey writes key=value into the env file at path, preserving any
 // existing keys, atomically and with 0600 permissions so the key never
 // appears in a world-readable file. Shared by `mivia setup` and the
-// mivia-chat first-run key prompt (internal/clichat) so there is one place
+// mivia-chat first-run key prompt (internal/cli/chat) so there is one place
 // that knows how a key gets persisted to disk.
 func WriteUserEnvKey(path, key, value string) error {
 	dir := filepath.Dir(path)

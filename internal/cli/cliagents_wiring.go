@@ -6,9 +6,9 @@ package cli
 // here runs at process start in every binary that imports cli.
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 )
 
 func init() {

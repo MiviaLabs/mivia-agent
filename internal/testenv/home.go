@@ -24,7 +24,7 @@ const HomeDirPrefix = "mivia-test-home-"
 //
 // A package asserts this to keep its results independent of the machine it
 // runs on. Ambient state does not only pollute a real home; it also DECIDES
-// test outcomes. internal/cliworkflow read the developer's own
+// test outcomes. internal/cli/workflow read the developer's own
 // ~/.mivia/mivia.toml through config.Load - which merges the user-level [mcp]
 // table regardless of an explicit ConfigPath - and 19 resume tests failed on
 // a machine with MCP servers configured while passing everywhere else. A

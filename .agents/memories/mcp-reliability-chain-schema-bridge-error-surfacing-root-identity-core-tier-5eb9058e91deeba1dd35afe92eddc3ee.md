@@ -30,10 +30,10 @@ Three separate suppressions compounded into "codegraph is configured but never w
 - internal/mcp/render.go
 - internal/mcp/manager.go
 - internal/mcp/tool.go
-- internal/cliagents/tool_tiers.go
-- internal/cliagents/mcp_scope.go
-- internal/clichat/chat_mcp_entrypoint_integration_test.go
-- internal/cliagents/tool_tiers_mcp_test.go
+- internal/cli/agents/tool_tiers.go
+- internal/cli/agents/mcp_scope.go
+- internal/cli/chat/chat_mcp_entrypoint_integration_test.go
+- internal/cli/agents/tool_tiers_mcp_test.go
 
 ## History
 - Merged in `mcp_tools_core_tier_fix_for_the_root_identity_codegraph_usable_without_agents_17f9018285674d91d776054fc513fa95` on 2026-09-11 (housekeeping: that file documented commit 6e91f4aa, which this one already listed as a bullet; its root-cause paragraph, "did not work" entry, and test references are folded in above).

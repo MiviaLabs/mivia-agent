@@ -13,7 +13,7 @@ updated: 2026-09-04
 ## The trap
 
 `dispatch_tasks` mints tasks with a namespaced id (`<call_id>:<raw_id>`,
-`internal/cliorchestrate/task_namespace.go`). Everything the coordinator
+`internal/cli/orchestrate/task_namespace.go`). Everything the coordinator
 records - task snapshots, lifecycle events, the task-message index built by
 `TaskMessageIndex` - keys by that FULL id. But the model-visible result rows
 report the stripped `RawID` (`modelVisibleTaskID`). A lookup that takes its
@@ -35,21 +35,21 @@ pre-strip id.
 
 1. Attachments (tool_calls_ref + messages) are written by exactly ONE
    function: `attachTaskRecord(dst, snap, msgs)` in
-   `internal/cliorchestrate/dispatch_encode.go`. Route every producer
+   `internal/cli/orchestrate/dispatch_encode.go`. Route every producer
    through it; never hand-assemble those fields.
 2. The message index is opaque (`TaskMessages`): the only read is
    `ForSnapshot(snap)`, which keys internally by the snapshot's full
    `TaskID` - a wrong-form key is unwritable, not merely tested.
 3. Any NEW producer of a model-visible task result must join the
    conformance table in
-   `internal/cliorchestrate/task_result_producer_conformance_test.go`
+   `internal/cli/orchestrate/task_result_producer_conformance_test.go`
    (`TestTaskResultProducerConformance`) - it feeds every producer one
    namespaced task with recorded messages and refs; joinSalvageEnvelope
    was the straggler it caught. Pre-commit runs it for any staged
-   `internal/cliorchestrate/` change.
+   `internal/cli/orchestrate/` change.
 4. Recorded trigger (do NOT build speculatively): escalate to distinct
    FullTaskID/RawTaskID types only if a wrong-form bug ever ships OUTSIDE
-   internal/cliorchestrate, where this package boundary cannot reach. A
+   internal/cli/orchestrate, where this package boundary cannot reach. A
    repo-wide typed-ID refactor was reviewed 2026-08-29 and rejected -
    the model-visible TaskID holds either form by design, so casts would
    hollow out the guarantee (`ledger.TaskID` already exists unused as

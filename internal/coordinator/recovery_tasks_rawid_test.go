@@ -10,10 +10,10 @@ import (
 
 // TestTasksFromSnapshotsRestoresRawID pins a resume-path regression: a
 // dispatch_tasks task's real internal id is namespace+":"+RawID
-// (internal/cliorchestrate/dispatch.go's buildTasks), and RawID is
+// (internal/cli/orchestrate/dispatch.go's buildTasks), and RawID is
 // persisted onto ledger.TaskSnapshot alongside it so join_run/
 // inspect_agents/run_messages can report the model's own raw id back
-// without any string-heuristic (see internal/cliorchestrate/
+// without any string-heuristic (see internal/cli/orchestrate/
 // task_namespace.go's modelVisibleTaskID). taskFromSnapshot - the
 // snapshot -> subagents.Task path a resumed run's coordinator rebuilds
 // live tasks through - must carry RawID across that round-trip, or a

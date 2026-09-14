@@ -5,7 +5,7 @@ package cli
 // the authoritative definitions.
 
 import (
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 

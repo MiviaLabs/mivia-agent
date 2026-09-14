@@ -625,7 +625,7 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	}
 	// Namespaced with the tool call's own id, matching what LoadHistory
 	// actually keys the reconstructed panel row and thread lookup under
-	// (see thread.go's namespacedTaskID call) - internal/cliorchestrate/
+	// (see thread.go's namespacedTaskID call) - internal/cli/orchestrate/
 	// dispatch.go's dispatchNamespace is the same scheme a live dispatch
 	// mints its real per-task id under.
 	threads := stubThreads{"call_disp_99:task-leak-check": subagentConv}

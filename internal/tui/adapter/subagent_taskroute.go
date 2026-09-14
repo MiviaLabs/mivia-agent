@@ -32,7 +32,7 @@ const subagentTaskTimeout = 30 * time.Second
 // The coordinator is per-route, not one field on the registry, because ONE
 // SubagentThreads is shared by every pooled session (see SessionPool) while
 // a coordinator is created per *runtime.Dispatcher, so per session
-// (internal/cliorchestrate.InitCoordinator). A single registry-wide
+// (internal/cli/orchestrate.InitCoordinator). A single registry-wide
 // coordinator would bind every session's routes to whichever session
 // dispatched last, and a lookup for another session's run would then miss
 // and surface as the misleading "run is no longer active". Carrying it here

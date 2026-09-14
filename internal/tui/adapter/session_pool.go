@@ -10,7 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -116,7 +116,7 @@ type SessionPool struct {
 var AuthorUserIDProvider = chatsync.DefaultAuthorUserIDProvider
 
 // SessionBusRegistrar binds a session's EventBus into the CLI-side
-// session-keyed registry (internal/clichat.RegisterSessionBus) so
+// session-keyed registry (internal/cli/chat.RegisterSessionBus) so
 // emitSubagentProgress - package-level, no session of its own - can
 // publish that session's subagent lifecycle events onto it. Nil (the
 // zero value) is a safe no-op: a caller that never wires this (a test,
@@ -634,7 +634,7 @@ func (p *SessionPool) ReattachSyncAfterLogin() {
 // exact value production uses, instead of asserting on a hand-built copy that
 // can drift away from the wiring it claims to cover.
 func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
-	// See the matching comment in internal/clichat/chat_sync.go: the identity
+	// See the matching comment in internal/cli/chat/chat_sync.go: the identity
 	// must be resolved before the options, because OutboxDir has to carry the
 	// local handle before OpenSession opens the outbox. wsRoot, not
 	// sess.SessionDir - see attachSyncLocked's comment for why.
@@ -652,7 +652,7 @@ func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.R
 			IncludeToolIO:   res.Sync.IncludeToolIO,
 			IncludeThinking: res.Sync.IncludeThinking,
 			StreamAssistant: res.Sync.StreamAssistant,
-			// See the matching comment in internal/clichat/chat_sync.go: both
+			// See the matching comment in internal/cli/chat/chat_sync.go: both
 			// zero values are wrong rather than absent, and this is the only
 			// site that can supply them for the TUI surface.
 			ErrorMessage: chat.TurnErrorMessage,

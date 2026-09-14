@@ -26,7 +26,7 @@ import (
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"

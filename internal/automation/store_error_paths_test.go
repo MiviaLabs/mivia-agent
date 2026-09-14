@@ -258,7 +258,7 @@ func TestWriteFileAtomicRejectsUnwritableDir(t *testing.T) {
 // that is itself an existing, non-empty DIRECTORY fails deterministically
 // and portably (os.Rename refuses file-onto-nonempty-directory on every
 // platform this repo supports), matching the class of trigger this
-// package's own precedent (internal/cliworktree, internal/chatsync) uses
+// package's own precedent (internal/cli/worktree, internal/chatsync) uses
 // for the identical rename-failure shape.
 func TestWriteFileAtomicRejectsRenameOverADirectory(t *testing.T) {
 	dir := t.TempDir()

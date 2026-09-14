@@ -3,15 +3,15 @@ package cli
 
 import (
 	"fmt"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"os"
 	"strings"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	cliautomations "github.com/MiviaLabs/mivia-agent/internal/cliautomations"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	cliautomations "github.com/MiviaLabs/mivia-agent/internal/cli/automations"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 

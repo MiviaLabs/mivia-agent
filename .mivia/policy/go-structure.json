@@ -15,11 +15,11 @@
     "soft": 25,
     "hard": 30,
     "baseline": {
-      "internal/clichat/chat_json_writer.go": 83,
-      "internal/clichat/session_delivery_repair.go": 52,
-      "internal/clichat/e2e_ask_chain_test.go": 51,
+      "internal/cli/chat/chat_json_writer.go": 83,
+      "internal/cli/chat/session_delivery_repair.go": 52,
+      "internal/cli/chat/e2e_ask_chain_test.go": 51,
       "internal/ledger/storage_schema.go": 37,
-      "internal/clichat/e2e_ask_messaging_test.go": 34,
+      "internal/cli/chat/e2e_ask_messaging_test.go": 34,
       "internal/workflows/delivery/repair.go": 33,
       "internal/workflows/controller/linear_bindings.go": 32,
       "internal/config/tools_config.go": 31
@@ -38,19 +38,19 @@
         "maxLines": 903,
         "note": "local/web/ssrf; split by scope"
       },
-      "internal/clichat/highlight.go": {
+      "internal/cli/chat/highlight.go": {
         "maxLines": 721,
         "note": "syntax tables OK-ish"
       },
-      "internal/clichat/markdown.go": {
+      "internal/cli/chat/markdown.go": {
         "maxLines": 641,
         "note": "stream markdown"
       },
-      "internal/clichat/chat_repl.go": {
+      "internal/cli/chat/chat_repl.go": {
         "maxLines": 327,
         "note": "extracted REPL; split loop handlers; line-mode moved to chat_repl_linemode.go"
       },
-      "internal/clichat/chat_slash.go": {
+      "internal/cli/chat/chat_slash.go": {
         "maxLines": 190,
         "note": "extracted slash dispatch; split command groups"
       }

@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -23,7 +23,7 @@ import (
 
 // sessionToolCatalogNames is the dispatcher-owned catalog every root binding
 // must be able to execute (load_tools ships only when the plan defers; the
-// rest are unconditional). Mirrors internal/clichat/sessionToolCatalog.
+// rest are unconditional). Mirrors internal/cli/chat/sessionToolCatalog.
 var sessionToolCatalogNames = []string{
 	"dispatch_tasks",
 	"inspect_agents",
@@ -38,7 +38,7 @@ var sessionToolCatalogNames = []string{
 }
 
 // stubHookSession satisfies clichat.HookSessionState with no hooks, mirroring
-// internal/clichat's own TestMain stub.
+// internal/cli/chat's own TestMain stub.
 type stubHookSession struct{}
 
 func (stubHookSession) RunnableGroups() []hooks.Group { return nil }

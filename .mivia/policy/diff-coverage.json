@@ -174,21 +174,21 @@
       ],
       "reason": "mutateGeneral's default case for an unknown ports.GeneralEdit. ports.GeneralEdit's marker method (isGeneralEdit) is unexported to package ports, so only types declared in that package can implement it - no type constructible from internal/tui/adapter (or any test package) can reach this switch with a value the earlier cases do not already match. Confirmed by a compile error when attempting exactly this from a uiadapter-side test (unexported method isGeneralEdit)."
     },
-    "internal/cliagents/agent_surface.go": {
+    "internal/cli/agents/agent_surface.go": {
       "lines": [
         56,
         57
       ],
       "reason": "buildAgentScopedSurface's LoadSessionSkills error check, same unreachable class as the accepted attach_rebuilt_surface.go 62-64 entry: LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error, so LoadSessionSkills can never return a non-nil error for this check to catch."
     },
-    "internal/cliagents/markdown_store.go": {
+    "internal/cli/agents/markdown_store.go": {
       "lines": [
         276,
         277
       ],
       "reason": "Delete's FindMemoryIndexEntry non-NotFound error branch, already flagged in-source (the line above carries a \"Not diff-covered\" comment): forcing the shared *storage.SQLite to fail HERE specifically - after the refresh calls above succeed but before this lookup - needs a test-only failure-injection seam that does not exist on the shared store. Not forceable deterministically in-process."
     },
-    "internal/cliagents/attach_rebuilt_surface.go": {
+    "internal/cli/agents/attach_rebuilt_surface.go": {
       "lines": [
         64,
         65,
@@ -267,13 +267,13 @@
       ],
       "reason": "execRunner.Run's StdinPipe() and Close() error returns: StdinPipe fails only on os.Pipe() (file-descriptor exhaustion, an EMFILE/ENFILE condition) since this code never sets cmd.Stdin nor calls it after Start; Close on an already-successfully-written pipe fails only on a genuine OS-level close error. Neither is safely or deterministically triggerable in-process without exhausting real process-wide file descriptors (which would destabilize the rest of the test suite) - TestExecRunnerWriteErrorAfterCommandExits and TestExecRunnerUnknownCommandErrors already cover the two branches (Write, Start) that a large-payload/nonexistent-binary test can reach deterministically."
     },
-    "internal/cliagents/agents_command.go": {
+    "internal/cli/agents/agents_command.go": {
       "lines": [
         62
       ],
       "reason": "default case unreachable: parseAgentsArgs rejects any subcommand other than list/explain before the switch runs"
     },
-    "internal/clichat/dialog_geometry.go": {
+    "internal/cli/chat/dialog_geometry.go": {
       "lines": [
         156,
         164,
@@ -284,39 +284,39 @@
       ],
       "reason": "defensive zero-width fallbacks in WrapDisplayRowsWithSources: sliceANSI is grapheme-aware and never returns a zero-width part for a line of positive width; verified unreachable empirically with wide runes, ZWSP/ZWJ, combining marks, and ANSI escapes"
     },
-    "internal/clichat/messaging_tools.go": {
+    "internal/cli/chat/messaging_tools.go": {
       "lines": [
         343
       ],
       "reason": "nil coordinator after a successful AccessibleOrchestrationHandle is not constructible: every stored orchestration handle carries a non-nil coordinator"
     },
-    "internal/cliorchestrate/dispatch.go": {
+    "internal/cli/orchestrate/dispatch.go": {
       "lines": [
         142
       ],
       "reason": "runResult.Err with zero results is unreachable: coordinator Join/salvage always populate one Result per task (finalizeDAG fills missing entries)"
     },
-    "internal/cliorchestrate/orchestration_state.go": {
+    "internal/cli/orchestrate/orchestration_state.go": {
       "lines": [
         314,
         315
       ],
       "reason": "defensive type-assertion guard in ActiveCoordinator: every writer of the coordinators map stores coordinator.Coordinator values, so the non-coordinator continue branch cannot execute without a test poking the unexported map"
     },
-    "internal/cliworkflow/test_exports.go": {
+    "internal/cli/workflow/test_exports.go": {
       "lines": [
         34
       ],
       "reason": "t.Fatalf deadline branch inside a test-export helper: executing it fails the enclosing test by design"
     },
-    "internal/cliworktree/context_setup.go": {
+    "internal/cli/worktree/context_setup.go": {
       "lines": [
         51,
         52
       ],
       "reason": "filepath.Abs fails only when os.Getwd fails (deleted cwd); not triggerable safely in-process"
     },
-    "internal/cliworktree/worktree_lifecycle_recovery.go": {
+    "internal/cli/worktree/worktree_lifecycle_recovery.go": {
       "lines": [
         75
       ],
@@ -395,7 +395,7 @@
       ],
       "reason": "rewriteEventsFileLocked's json.Marshal(we) error wrap. we.Payload holds se.Payload, a json.RawMessage; json.Marshal delegates to RawMessage's own MarshalJSON, which never errors - an empty/nil RawMessage marshals to the literal `null` rather than failing (verified directly: json.Marshal(WireEvent{Payload: json.RawMessage(nil)}) succeeds), and any non-empty RawMessage reaching this point was already validated as parseable JSON by unflushedEventsLocked's own json.Unmarshal when it was first read from disk."
     },
-    "internal/cliagents/memory_support.go": {
+    "internal/cli/agents/memory_support.go": {
       "lines": [
         70,
         71,
@@ -487,13 +487,13 @@
       ],
       "reason": "json.Marshal of the doc map fails only when the doc contains a non-encodable value (chan/func/cyclic pointer); no CLI tool's Parameters() returns such a value today and the registry converter rejects ill-formed parameters upstream; the marshal-failure fallback at lines 174-176 is defensive depth (see relaxer tests in this commit for the coverable paths)"
     },
-    "internal/cliorchestrate/task_routing.go": {
+    "internal/cli/orchestrate/task_routing.go": {
       "lines": [
         87
       ],
       "reason": "One unreachable branch, in ResolveTaskRoute: line 87 returns the error DefinitionDigest cannot produce on a selected agent, because agents.Select sanitizes schema maps through a JSON round-trip before returning one. (Line 86 is the call itself and IS covered - the gate's any-covered-block rule counts it under the statement block, not the branch it opens. Line numbers moved when the dispatch_tasks decode and its name guards left this file for task_request_decode.go; those entries went with the code, and the guards' own bail-outs are covered by a test rather than excused here.)"
     },
-    "internal/cliautomations/automations.go": {
+    "internal/cli/automations/automations.go": {
       "lines": [
         162,
         164,
@@ -515,7 +515,7 @@
       ],
       "reason": "Three clusters. (1) 162: applyPrivacyPolicyFunc's own no-op func LITERAL body - a var declaration's default value, never invoked by any code path in this file (grep confirms no call site anywhere in the package); it exists as a seam for a future wiring that has not landed, matching cliworkflow's ApplyPrivacyPolicyFunc pattern. (2) 189-192: buildService's own NewHeadlessSpawner-error branch - NewHeadlessSpawner only fails on an empty workspaceRoot or nil config, and buildService's own call site supplies root/res from a JUST-SUCCEEDED resolveWorkspaceAndConfig, whose own contract (workspace.Open + config.Load, both already checked for error) never yields an empty root or nil *config.Resolved on success. TestNewHeadlessSpawnerRejectsEmptyWorkspaceRoot and TestNewHeadlessSpawnerRejectsNilConfig (spawner_test.go) cover NewHeadlessSpawner's own two guards directly. (3) 194-197: buildService's own automation.New-error branch - automation.New's only error is an empty root (service.go), which the same resolveWorkspaceAndConfig postcondition rules out here. Line numbers shifted from the prior accepted set (156, 183-186, 188-191) by +6: this chunk's D14 additions (the `runs`/`resume` switch cases and their usage-text lines, both earlier in this same file) pushed every later line down; the three clusters themselves are unchanged and still genuinely unreachable given the same preconditions. || ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: buildService's spawner-construction and service-construction error paths, each of which must close the already-open run store on the way out."
     },
-    "internal/cliautomations/run_cmd.go": {
+    "internal/cli/automations/run_cmd.go": {
       "lines": [
         40,
         41,
@@ -523,14 +523,14 @@
       ],
       "reason": "runRunCommand's own spawn.CloseLastRun()-error log branch: CloseLastRun's only failure is store.Close() failing on a live *storage.SQLite handle this package owns no seam to intercept - same unforceable live-fd-Close class already accepted for internal/memory/markdown_source.go's atomicWrite, internal/chatsync/identity.go's SaveIdentity, and this repo's other writeFileAtomic/writeFileDurably entries. TestRunCommandCallsCloseLastRunAfterRunOnce and TestRunCommandCallsCloseLastRunOnRunOnceError already cover CloseLastRun's own SUCCESS call on both the RunOnce-succeeded and RunOnce-failed paths. Line numbers shifted from the prior accepted set (35-37) by +5: this chunk's --wait flag additions (parseWaitFlag and its call site, both earlier in this same function) pushed this block down; the branch itself is unchanged and still genuinely unreachable."
     },
-    "internal/cliautomations/resume_cmd.go": {
+    "internal/cli/automations/resume_cmd.go": {
       "lines": [
         36,
         37
       ],
       "reason": "runResumeCommand's own spawn.CloseLastRun()-error log branch: the exact same unforceable live-fd-Close class as run_cmd.go's own CloseLastRun log branch (see that entry above) - runResumeCommand mirrors runRunCommand's shape precisely per its own doc comment. TestResumeCommandClosesSessionStoreOnErrorPath already covers CloseLastRun's own call on the ResumeRun-failed path (proving it runs, not that it can be made to error)."
     },
-    "internal/cliautomations/serve_cmd.go": {
+    "internal/cli/automations/serve_cmd.go": {
       "lines": [
         18,
         19,
@@ -539,7 +539,7 @@
       ],
       "reason": "serveSignalContext's own default func literal body (signal.NotifyContext against real OS signals, lines 18-21). Every test in this package substitutes serveSignalContext with a test-controlled context (TestServeCommandExitsCleanlyOnSignal, TestServeCommandPropagatesNonCancelServeError, TestServeCommandSweepsInterruptedAtStartup) rather than invoking the real default, deliberately: sending the test process a real SIGINT/SIGTERM is unsafe before signal.NotifyContext's handler installs (see the var's own doc comment) and could terminate the whole shared test binary. The former second cluster (runServeCommand's own svc.Serve non-context.Canceled error-propagation branch) is now covered for real by TestServeCommandPropagatesNonCancelServeError, which substitutes a context.WithTimeout context that expires on its own (context.DeadlineExceeded, not context.Canceled) rather than being explicitly Cancel()-ed, so Service.Serve's own ctx.Err() return genuinely exercises this branch without needing a live scheduler-loop failure."
     },
-    "internal/cliautomations/spawner.go": {
+    "internal/cli/automations/spawner.go": {
       "lines": [
         159,
         160,
@@ -657,7 +657,7 @@
       ],
       "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: journalBusEvent's payload-marshal error return, on a struct of plain strings."
     },
-    "internal/clichat/headless_session.go": {
+    "internal/cli/chat/headless_session.go": {
       "lines": [
         210,
         211,

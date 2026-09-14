@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"testing"
 	"time"
 

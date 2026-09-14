@@ -1,6 +1,6 @@
 // scripted_completer_test.go supplies a provider.Completer fake for
 // adapter tests. It mirrors the shape of the clichat test fake
-// (internal/clichat/deferred_tool_loading_integration_test.go:21-100) but
+// (internal/cli/chat/deferred_tool_loading_integration_test.go:21-100) but
 // deliberately stays in package adapter_test so the adapter test
 // surface does not pull in any cli-family import. The block chan is
 // exposed so tests that need ChatTurn to block until released can pin

@@ -67,7 +67,7 @@ func NewLLMProxyCLI(opts Options) (Completer, error) {
 // by Request.Model, decided fresh per call rather than once at construction.
 // This has to be per-call: a same-provider subagent delegation can reuse an
 // already-constructed Completer while overriding only the model
-// (internal/cliagents/agent_binding.go - "Completers are provider-scoped:
+// (internal/cli/agents/agent_binding.go - "Completers are provider-scoped:
 // adapters take the model from each request, not from construction"), so a
 // single instance of this type can and does see requests for both an
 // AnthropicNativeModels entry and an ordinary OpenAI-compat model across one

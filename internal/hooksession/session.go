@@ -2,7 +2,7 @@
 // state: discovery, arming, and the /hooks listing text.
 //
 // It is a leaf package deliberately: it imports only internal/config and
-// internal/hooks, never internal/cli, internal/clichat, internal/agent,
+// internal/hooks, never internal/cli, internal/cli/chat, internal/agent,
 // internal/coordinator, or internal/hub. That is what lets internal/tui/adapter
 // (which may not import any of those) reach the same session state and
 // listing text the old CLI surface uses, without a seam indirection.
@@ -144,7 +144,7 @@ func Install(workspaceRoot string, staleBypass, quiet bool) (release func(), not
 }
 
 // SetForTest installs s as the current session and returns a restore func.
-// Exported for cross-package tests (internal/cli, internal/clichat) that need
+// Exported for cross-package tests (internal/cli, internal/cli/chat) that need
 // to exercise a specific hook session without going through Install.
 func SetForTest(s *Session) (restore func()) {
 	previous := sessionHookState.Load()

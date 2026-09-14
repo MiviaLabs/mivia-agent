@@ -69,7 +69,7 @@ func (s *SubagentThreads) resolver() toolCallContentResolver {
 
 // SubagentTaskRouteRegistrar hands a new SubagentThreads registry's route
 // sink to the CLI-side dispatch path
-// (internal/cliorchestrate.SetSubagentTaskRouteSink, re-exported as
+// (internal/cli/orchestrate.SetSubagentTaskRouteSink, re-exported as
 // cli.SetSubagentTaskRouteSink), so every task a later dispatch spawns
 // publishes its (coordinator, runID, taskID) identity back into that
 // registry. Without it the route table stays empty and BOTH

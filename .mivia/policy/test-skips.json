@@ -180,25 +180,25 @@
         "reason": "platform reports a path under a regular file as ENOENT; ENOTDIR is not observable"
       }
     ],
-    "internal/cliagents/chat_workspace_build_test.go": [
+    "internal/cli/agents/chat_workspace_build_test.go": [
       {
         "line": 64,
         "reason": "platform rejects a NUL path before the store can degrade: %v"
       }
     ],
-    "internal/cliautomations/spawner_test.go": [
+    "internal/cli/automations/spawner_test.go": [
       {
         "line": 489,
         "reason": "platform still creates files in a read-only directory"
       }
     ],
-    "internal/cliautomations/automations_dispatch_test.go": [
+    "internal/cli/automations/automations_dispatch_test.go": [
       {
         "line": 239,
         "reason": "platform still creates files in a read-only directory"
       }
     ],
-    "internal/cliagents/memory_reconciler_unix_test.go": [
+    "internal/cli/agents/memory_reconciler_unix_test.go": [
       {
         "line": 41,
         "reason": "RLIMIT_NOFILE unavailable on this platform: %v"
@@ -208,7 +208,7 @@
         "reason": "cannot lower RLIMIT_NOFILE in this sandbox: %v"
       }
     ],
-    "internal/cliagents/memory_support_coverage_test.go": [
+    "internal/cli/agents/memory_support_coverage_test.go": [
       {
         "line": 92,
         "reason": "platform will not remove its own working directory: %v"
@@ -218,19 +218,19 @@
         "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ],
-    "internal/cliagents/session_tool_root_test.go": [
+    "internal/cli/agents/session_tool_root_test.go": [
       {
         "line": 72,
         "reason": "POSIX hook fixture"
       }
     ],
-    "internal/clichat/context_workspace_id_drift_test.go": [
+    "internal/cli/chat/context_workspace_id_drift_test.go": [
       {
         "line": 46,
         "reason": "platform does not treat the golden fixture path as already absolute"
       }
     ],
-    "internal/cliworkflow/workflow_store_root_test.go": [
+    "internal/cli/workflow/workflow_store_root_test.go": [
       {
         "line": 24,
         "reason": "git unavailable or failed (%v): %s"
@@ -380,13 +380,13 @@
         "reason": "platform still creates files in a read-only directory"
       }
     ],
-    "internal/cliworkflow/workflow_run_prepare_errors_test.go": [
+    "internal/cli/workflow/workflow_run_prepare_errors_test.go": [
       {
         "line": 208,
         "reason": "platform does not support symlinks"
       }
     ],
-    "internal/cliworkflow/workflows_command_test.go": [
+    "internal/cli/workflow/workflows_command_test.go": [
       {
         "line": 757,
         "reason": "platform does not support symlinks"
@@ -444,7 +444,7 @@
         "reason": "platform still reads a 0000 file"
       }
     ],
-    "internal/clichat/headless_session_test.go": [
+    "internal/cli/chat/headless_session_test.go": [
       {
         "line": 195,
         "reason": "this workspace shape does not fail the agent load on this platform; the branch stays covered by its sibling cases"

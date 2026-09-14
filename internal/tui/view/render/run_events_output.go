@@ -11,7 +11,7 @@ import (
 )
 
 // runEventsEnvelope mirrors list_run_events' {run_id, events, count,
-// truncated} result (internal/clichat/ledger_tools.go's Execute). Kept
+// truncated} result (internal/cli/chat/ledger_tools.go's Execute). Kept
 // narrow and independent of that package - the UI layer must not import
 // the tool packages (mivia-ui isolation, INV-TUI-29).
 type runEventsEnvelope struct {

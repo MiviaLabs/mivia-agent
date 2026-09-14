@@ -284,7 +284,7 @@ func TestDispatchTasksToolStartFansOutPanelRowsPerTask(t *testing.T) {
 
 	// Row ids are namespaced with the call id (dispatchTaskIDs, matching
 	// what a live dispatch_tasks call actually mints - see
-	// internal/cliorchestrate/dispatch.go's dispatchNamespace).
+	// internal/cli/orchestrate/dispatch.go's dispatchNamespace).
 	want := map[string]string{
 		"dispatch_tasks-call-1:task-a": "completed",
 		"dispatch_tasks-call-1:task-b": "failed",

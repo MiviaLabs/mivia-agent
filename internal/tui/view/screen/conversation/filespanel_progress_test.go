@@ -193,7 +193,7 @@ func TestStatusBadgeRoleCoversTerminalVocabulary(t *testing.T) {
 
 // TestFormatElapsed pins the sidebar's compact elapsed label - the shape
 // requested for the metrics line ("10m 40s"), not clichat.FormatDuration's
-// "10m40s" (internal/tui/view/** may not import internal/clichat, UI isolation).
+// "10m40s" (internal/tui/view/** may not import internal/cli/chat, UI isolation).
 func TestFormatElapsed(t *testing.T) {
 	cases := []struct {
 		d    time.Duration

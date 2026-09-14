@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"

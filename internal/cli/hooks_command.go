@@ -1,16 +1,16 @@
 package cli
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 )
 
 // currentHookSession, hookSessionConfigured, handleSlashHooks, and
 // installHookSession are thin wrappers over internal/hooksession, which owns
 // the actual session state and listing logic. They exist so the clichat and
-// cliworkflow seam signatures (internal/clichat/seams.go,
-// internal/cliworkflow/seams.go) do not have to change: both still wire to a
+// cliworkflow seam signatures (internal/cli/chat/seams.go,
+// internal/cli/workflow/seams.go) do not have to change: both still wire to a
 // cli-owned func with the same shape they always had.
 
 func currentHookSession() *hooksession.Session { return hooksession.Current() }

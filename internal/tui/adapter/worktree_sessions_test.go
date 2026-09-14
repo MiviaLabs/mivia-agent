@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -300,7 +300,7 @@ func TestSessionPool_BoundEntryGuardArmsRunBeforePersistence(t *testing.T) {
 	// arms (bind, inherit, adopt) all ran ahead of persistence without
 	// wedging the pool. (The surface widener itself has no session-side
 	// getter; installing it is pinned by the entrybase invariant test in
-	// internal/cliagents.)
+	// internal/cli/agents.)
 	if _, err := pool.GetOrCreateBound("missing-id", nil); err == nil {
 		t.Fatal("GetOrCreateBound loaded an id that was never saved")
 	}

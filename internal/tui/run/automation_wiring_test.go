@@ -157,7 +157,7 @@ func TestWireAutomationBackendInstallsBackendOnSuccess(t *testing.T) {
 // sess.ContextStore() is NOT a *storage.SQLite, the Service must still
 // get a real backing store, opened at the exact SAME path
 // cli.ContextStorePath(root, res.Subagents) resolves - the path
-// internal/cliautomations's openAutomationStore now also resolves for
+// internal/cli/automations's openAutomationStore now also resolves for
 // the CLI surface (store_path_test.go). A path mismatch here would
 // silently reintroduce the split-history bug this slice fixes, just for
 // the TUI's own fallback path instead of its now-removed normal one.

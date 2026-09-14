@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"

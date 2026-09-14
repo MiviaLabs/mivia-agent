@@ -31,7 +31,7 @@ type Task struct {
 	ParentTaskID string
 	// RawID is the model-supplied task id verbatim, before dispatch_tasks
 	// namespaces it into ID for harness-level uniqueness
-	// (internal/cliorchestrate/task_namespace.go's namespacedTaskID). Kept
+	// (internal/cli/orchestrate/task_namespace.go's namespacedTaskID). Kept
 	// alongside ID so tools that only see a run_id - join_run,
 	// inspect_agents, run_messages, send_to_task - can report/resolve the
 	// id the model actually knows, without guessing at a namespace

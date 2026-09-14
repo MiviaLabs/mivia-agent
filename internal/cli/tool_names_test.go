@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 )
 
 func TestToolAndHandlerNameConsts(t *testing.T) {

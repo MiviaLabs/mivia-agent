@@ -404,7 +404,7 @@ func pathCapabilityKey(args json.RawMessage, ws *workspace.Root) string {
 // restrictive class - so an unclassified tool is gated rather than waved
 // through. That default is load-bearing on the approval paths: several real
 // tools declare no capability (post_message and run_messages in
-// internal/clichat, every workflow_* tool in internal/workflows/ledger), and
+// internal/cli/chat, every workflow_* tool in internal/workflows/ledger), and
 // classifying one of those below Write would run it unprompted under a
 // write-only policy.
 //

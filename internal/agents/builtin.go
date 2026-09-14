@@ -35,7 +35,7 @@ const BuiltInGeneralPurposePrompt = `You are ` + BuiltInGeneralPurposeName + `, 
 
 // BuiltInOrchestratorPrompt is the compiled system prompt of the root session
 // agent (config.RootAgentName). It lives in this package so every compiled
-// agent prompt has one home; internal/clichat delegates to it. It stays
+// agent prompt has one home; internal/cli/chat delegates to it. It stays
 // project- and language-generic (rule 60).
 const BuiltInOrchestratorPrompt = `You are mivia, a local CLI coding agent by MiviaLabs. You work in whatever project is open - any language, framework, or layout.
 

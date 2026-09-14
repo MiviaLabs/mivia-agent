@@ -1,7 +1,7 @@
 package cli
 
 // closedLoopbackPort returns a currently-free loopback port. Duplicated from
-// internal/cliorchestrate's ollama audit test (Go forbids cross-package
+// internal/cli/orchestrate's ollama audit test (Go forbids cross-package
 // _test.go sharing).
 
 import (
@@ -27,7 +27,7 @@ func closedLoopbackPort(t *testing.T) string {
 
 // writeOllamaChatConfig writes a HOME-isolated single-provider ollama config
 // with the given base_url and returns the loaded Resolved plus workspace.
-// Duplicated from internal/cliorchestrate's ollama audit test.
+// Duplicated from internal/cli/orchestrate's ollama audit test.
 func writeOllamaChatConfig(t *testing.T, baseURL string) (*config.Resolved, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())

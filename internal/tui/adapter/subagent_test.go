@@ -304,13 +304,13 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 			ToolCalls: []ports.ToolCall{
 				{
 					// Real wire shape from dispatchTasksTool.encodeResults
-					// (internal/cliorchestrate/dispatch.go): a bare JSON array
+					// (internal/cli/orchestrate/dispatch.go): a bare JSON array
 					// keyed "task_id", not {"tasks":[{"id":...}]}.
 					ID:        "call_dispatch_1",
 					Name:      "dispatch_tasks",
 					Arguments: `{"tasks":[{"id":"task-audit","prompt":"check for leaks","agent":"bug-auditor"},{"id":"task-plan","prompt":"design architecture","agent":"planner"}]}`,
 					// task_id is the real, namespaced id (callID+":"+raw id)
-					// dispatch_tasks actually reports - internal/cliorchestrate/
+					// dispatch_tasks actually reports - internal/cli/orchestrate/
 					// dispatch.go's buildTasks/dispatchNamespace.
 					Output: `[{"task_id":"task-audit","status":"completed","output":"no leaks found"},{"task_id":"task-plan","status":"completed","output":"architecture approved"}]`,
 				},
@@ -417,7 +417,7 @@ func TestPopulateFromToolCalls_SpawnAgent(t *testing.T) {
 			ToolCalls: []ports.ToolCall{
 				{
 					// Real wire shape from spawnAgentTool.Execute
-					// (internal/cliorchestrate/orchestrate.go): "tasks" array
+					// (internal/cli/orchestrate/orchestrate.go): "tasks" array
 					// in, {"task_results":[{"task_id":...,"output":...}]} out.
 					ID:        "call_spawn_1",
 					Name:      "spawn_agent",
@@ -444,7 +444,7 @@ func TestPopulateFromToolCalls_SpawnAgent(t *testing.T) {
 
 // TestPopulateFromToolCalls_DispatchTasksNestedObjectOutput guards a
 // dispatch_tasks task whose own raw output is itself a JSON object (a common
-// shape: ModelVisibleOutput in internal/cliorchestrate/synopsis.go embeds
+// shape: ModelVisibleOutput in internal/cli/orchestrate/synopsis.go embeds
 // the subagent's raw bytes as-is when they are valid JSON) rather than a
 // plain string - the reconstruction must unwrap the nested "output" key
 // instead of stringifying the whole object or losing the text.
@@ -517,7 +517,7 @@ func TestPopulateFromToolCalls_DispatchTasksRunLevelError(t *testing.T) {
 // multi-task dispatch: dispatchTasksTool.Execute returns the bare
 // {"error":...,"status":...} envelope whenever the run fails before
 // finalizeDAG produces any per-task result, regardless of how many tasks
-// were dispatched (internal/cliorchestrate/dispatch.go's own comment: "the
+// were dispatched (internal/cli/orchestrate/dispatch.go's own comment: "the
 // empty-results fallback underneath stays reachable"). Every dispatched
 // task must still get the readable error text, not silent empty output.
 func TestPopulateFromToolCalls_DispatchTasksRunLevelErrorMultiTask(t *testing.T) {
@@ -698,7 +698,7 @@ func TestPopulateFromToolCalls_RefOnlyResultShowsToolCallNotice(t *testing.T) {
 
 // TestPopulateFromToolCalls_DispatchTasksByReferenceOutput guards
 // dispatch_tasks' output-by-reference result shape
-// (internal/cliorchestrate/dispatch_encode.go's setOutputFields): once a
+// (internal/cli/orchestrate/dispatch_encode.go's setOutputFields): once a
 // task's real output exceeds the inline threshold, the tool omits "output"
 // entirely and reports "synopsis"/"output_ref" instead. Before this,
 // stringifyTaskOutput only ever looked at "output", so any task whose

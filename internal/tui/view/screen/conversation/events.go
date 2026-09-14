@@ -490,7 +490,7 @@ func foldedArg(m map[string]any, key string) any {
 	return m[folded[0]]
 }
 
-// namespacedTaskID mirrors internal/cliorchestrate's function of the same
+// namespacedTaskID mirrors internal/cli/orchestrate's function of the same
 // name. Duplicated, not imported: internal/tui/view/** must not import
 // internal/cli*-family packages (UI isolation, docs/design/ui-isolation.md,
 // enforced by scripts/check_import_layers.py), so the two copies are kept

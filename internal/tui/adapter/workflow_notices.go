@@ -2,7 +2,7 @@ package adapter
 
 // Workflow progress -> the pool's out-of-band notice stream.
 //
-// internal/cliworkflow publishes a controller progress event onto the owning
+// internal/cli/workflow publishes a controller progress event onto the owning
 // session's bus for every workflow lifecycle transition
 // (workflow_progress_bus.go), and every pooled session shares the launch
 // session's bus. Nothing consumed those kinds: the only SubscribeAcross call
@@ -21,7 +21,7 @@ package adapter
 //
 // This keeps INV-TUI-29 intact: the subscription lives in internal/tui/adapter,
 // the sole bridge, and reaches the UI as ordinary uievent.KindNotice values.
-// internal/tui/view learns nothing about internal/events or internal/cliworkflow.
+// internal/tui/view learns nothing about internal/events or internal/cli/workflow.
 
 import (
 	"context"

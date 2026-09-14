@@ -16,7 +16,7 @@ Fixed global (=true) MCP servers (e.g. codegraph) being deferred behind load_too
 
 ## What worked
 - Root cause: withMCPServerToolsAlwaysCore returned early on selected == nil, so the root identity (GlobalServerIDs scope) kept MCP tools deferred even though SetupSessionMCPTools attaches exactly those servers
-- Fix: identityMCPServerScope(selected, res) mirrors SelectedOrGlobalMCPServers; tier split now exempts the root's global MCP tools from deferral (internal/cliagents/tool_tiers.go, mcp_scope.go isMCPServerToolForServers)
+- Fix: identityMCPServerScope(selected, res) mirrors SelectedOrGlobalMCPServers; tier split now exempts the root's global MCP tools from deferral (internal/cli/agents/tool_tiers.go, mcp_scope.go isMCPServerToolForServers)
 - Proof: new e2e test with NO agent files fails under old behavior (tool named in prompt's deferred index) and passes with the fix; fakeProviderServer now stitches cache-marked system content parts before matching
 - make go-check (fmt + go test ./... + vet) green; make build rebuilt ./mivia
 
@@ -27,10 +27,10 @@ Fixed global (=true) MCP servers (e.g. codegraph) being deferred behind load_too
 The workspace runs the root identity because no agent named config.DefaultAgentName exists in .agents/agents/. The tier plan only exempted selected agents' EffectiveMCPServers from deferral, so a configured, successfully-connected global MCP server was advertised yet never callable without load_tools, whose publication can defer again (sibling turns, background orchestration) - the exact "codegraph configured but never used" report.
 
 ## References
-- internal/cliagents/tool_tiers.go
-- internal/cliagents/mcp_scope.go
-- internal/clichat/chat_mcp_entrypoint_integration_test.go
-- internal/cliagents/tool_tiers_mcp_test.go
+- internal/cli/agents/tool_tiers.go
+- internal/cli/agents/mcp_scope.go
+- internal/cli/chat/chat_mcp_entrypoint_integration_test.go
+- internal/cli/agents/tool_tiers_mcp_test.go
 
 ## Archive note
 Archived by the `memories-housekeeping` audit on 2026-09-11 as a near-duplicate of

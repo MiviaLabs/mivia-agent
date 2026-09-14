@@ -42,7 +42,7 @@ kind was never written into the list, so the test skipped it and stayed green.
   it against the PARSED source of the constant block. Adding a constant fails
   a test rather than being ignored by one.
 - `TestEveryEventKindReachesEveryViewerOrSaysWhyNot`
-  (`internal/clichat/viewer_surface_conformance_test.go`) drives every kind
+  (`internal/cli/chat/viewer_surface_conformance_test.go`) drives every kind
   through every surface: the TUI translation, the local `--json` writer, the
   cross-process relay, and the chat-sync wire the web app reads. A surface that renders nothing for a kind must
   declare it in `.mivia/policy/viewer-surfaces.json` **with a reason**. A

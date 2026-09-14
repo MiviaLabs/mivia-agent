@@ -19,7 +19,7 @@ import (
 //	cancel_tool_call "<row id> <tool call id>"     inside that subagent
 //
 // The subagent row id is the namespaced "<dispatching tool call id>:<task
-// id>" that internal/cliorchestrate's registerSubagentTaskRoutes registers
+// id>" that internal/cli/orchestrate's registerSubagentTaskRoutes registers
 // and events.go's dispatchTaskIDsAndNames builds panel rows with - the same
 // string the local files-panel cancel key passes.
 type remoteCancelTarget struct {

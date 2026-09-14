@@ -110,7 +110,7 @@ func plainPersistenceError(err error) error {
 // context path as a persistence failure while keeping the original cause
 // matchable: errors.Is(err, ErrPersistence) and errors.Is(err, <cause>) both
 // hold (multi-%w). Returns nil for a nil cause. This is what makes
-// shouldPrintOneShotOutput (internal/clichat/chat.go) print the answer that
+// shouldPrintOneShotOutput (internal/cli/chat/chat.go) print the answer that
 // already streamed to the caller's writer instead of suppressing it - the
 // returned error string/value itself is not what reaches the terminal, the
 // ErrPersistence tag on it is what flips that decision.
@@ -267,7 +267,7 @@ func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snap
 		// buffered/partial text is incomplete and untrustworthy, and tagging
 		// it ErrPersistence would wrongly signal "the answer is fine, only
 		// the save failed" when the answer itself never finished streaming.
-		// shouldPrintOneShotOutput (internal/clichat/chat.go) must stay false
+		// shouldPrintOneShotOutput (internal/cli/chat/chat.go) must stay false
 		// for this case.
 		s.adoptUncommittedPlainTurn(candidate, snapshot)
 		return "", err

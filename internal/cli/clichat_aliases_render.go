@@ -1,11 +1,11 @@
 package cli
 
-// clichat_aliases.go re-exports symbols that moved to internal/clichat so
+// clichat_aliases.go re-exports symbols that moved to internal/cli/chat so
 // staying consumers (internal/legacytui) compile without per-file import
 // updates. Use the clichat-qualified form in new code. These aliases are
 // intentional shims while the extraction stabilises.
 
-import clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+import clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 
 // AnsiBgDiffAdd re-exports the clichat.AnsiBgDiffAdd constant.
 const AnsiBgDiffAdd = clichat.AnsiBgDiffAdd

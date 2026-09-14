@@ -1,5 +1,5 @@
 {
-  "description": "Which event kinds each viewer surface deliberately does not render, and why. Enforced by TestEveryEventKindReachesEveryViewerOrSaysWhyNot in internal/clichat, driven by agent.AllEventKinds (itself checked against the parsed source of the constant block). An undeclared kind that produces nothing FAILS. A declared kind that DOES produce something also fails, so a stale entry cannot hide the next real gap. Adding a kind to internal/agent therefore forces a decision on every surface instead of a silence on some of them.",
+  "description": "Which event kinds each viewer surface deliberately does not render, and why. Enforced by TestEveryEventKindReachesEveryViewerOrSaysWhyNot in internal/cli/chat, driven by agent.AllEventKinds (itself checked against the parsed source of the constant block). An undeclared kind that produces nothing FAILS. A declared kind that DOES produce something also fails, so a stale entry cannot hide the next real gap. Adding a kind to internal/agent therefore forces a decision on every surface instead of a silence on some of them.",
   "surfaces": {
     "tui": {
       "description": "internal/tui/adapter translation into the uievent stream the TUI renders.",

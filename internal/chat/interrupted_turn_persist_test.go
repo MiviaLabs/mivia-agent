@@ -191,7 +191,7 @@ func (p plainCommitFailurePublisher) Commit(context.Context, contextmgr.Preparat
 // non-empty reply/partial, and tag the error so errors.Is(err,
 // ErrPersistence) holds alongside errors.Is(err, <cause>). One-shot (-p)
 // mode's user-visible fix comes entirely from that ErrPersistence tag
-// flipping shouldPrintOneShotOutput (internal/clichat/chat.go) so the
+// flipping shouldPrintOneShotOutput (internal/cli/chat/chat.go) so the
 // already-streamed answer buffer prints instead of being suppressed - NOT
 // from the returned reply string itself, which shipped one-shot callers
 // discard.

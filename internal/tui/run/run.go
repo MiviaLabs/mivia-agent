@@ -305,10 +305,10 @@ const automationCloseTimeout = 5 * time.Second
 // can always defer it.
 //
 // sess.ContextStore() normally already holds the *storage.SQLite the
-// root session opened at startup (openContextStore, internal/clichat),
+// root session opened at startup (openContextStore, internal/cli/chat),
 // itself resolved through cli.ContextStorePath(root, res.Subagents) -
 // the SAME store `mivia automations` opens (openAutomationStore,
-// internal/cliautomations), so the common case needs no extra work
+// internal/cli/automations), so the common case needs no extra work
 // here. When it is not a *storage.SQLite (a session whose context store
 // was never wired, or wired to something else), a nil db is passed to
 // automation.New instead of a fallback open, and internal/automation's
@@ -355,7 +355,7 @@ func wireAutomationBackend(store *adapter.SettingsStore, pool *adapter.SessionPo
 		return func() {}, nil
 	}
 	// Same startup sweep as `mivia automations serve`
-	// (internal/cliautomations/serve_cmd.go): a sweep failure must not
+	// (internal/cli/automations/serve_cmd.go): a sweep failure must not
 	// block the TUI, so it is logged, not returned.
 	if n, sweepErr := autoSvc.SweepInterrupted(context.Background()); sweepErr != nil {
 		log.Printf("automations: sweep interrupted runs at startup: %v", sweepErr)

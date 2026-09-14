@@ -1,11 +1,11 @@
 package cli
 
 // clichat_test_shims_test.go supplies test-scope shims for symbols that
-// moved to internal/clichat, so characterization_test.go stays byte-identical.
+// moved to internal/cli/chat, so characterization_test.go stays byte-identical.
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"os"

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"net/http"
 	"net/http/httptest"

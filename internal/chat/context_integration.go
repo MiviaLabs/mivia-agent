@@ -130,11 +130,11 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 // principal/revision/store untouched. A mid-session binding change
 // (SwitchBinding, or a resumed session's Load publishing a different saved
 // provider/model) does not rebuild the summarizer on its own - the
-// summarizer was captured once at session setup (see internal/clichat's
+// summarizer was captured once at session setup (see internal/cli/chat's
 // summaryWiring) and otherwise keeps summarizing through the pre-switch
 // model/completer. Production callers rebuild against the new binding and
 // publish it here after every such change: cliagents.publishModelSwitch
-// (the /model command) and internal/clichat's chat_command.go /
+// (the /model command) and internal/cli/chat's chat_command.go /
 // internal/tui/adapter's session_pool.go (both after sess.Load). nil clears a
 // summarizer that setup could no longer configure for the new binding
 // rather than leaving a stale one in place.
