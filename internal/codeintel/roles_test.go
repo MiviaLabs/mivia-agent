@@ -105,7 +105,7 @@ func TestReferencesClassifiesErrorsIsAsComparison(t *testing.T) {
 		// compare against slash-normalized paths or the slashed needles never
 		// match there.
 		norm := filepath.ToSlash(loc.Path)
-		if strings.Contains(norm, "storage_claims.go") || strings.Contains(norm, "ledgercore/errors.go") || strings.Contains(norm, "ledgercore/claims.go") {
+		if strings.Contains(norm, "storage_claims.go") || strings.Contains(norm, "ledger/core/errors.go") || strings.Contains(norm, "ledger/core/claims.go") {
 			foundStorageClaims = true
 		}
 	}
