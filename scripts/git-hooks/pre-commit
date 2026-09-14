@@ -278,7 +278,7 @@ if command -v go >/dev/null 2>&1; then
   # four, an arm with no allowlist entry, an allowlist entry with no arm).
   if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|tui/adapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
     echo " → Running viewer-surface conformance tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/cli/chat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The tool-execution conformance table. Two code paths execute a model's
@@ -288,7 +288,7 @@ if command -v go >/dev/null 2>&1; then
   # policy recording their declared divergences is touched.
   if echo "$STAGED" | grep -qE '^(internal/(chat|agent|clichat)/|\.mivia/policy/tool-execution-conformance\.json$)'; then
     echo " → Running tool-execution conformance tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryPath' ./internal/cli/chat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestNoToolReachesTheModelUngoverned' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The wire-field source check: every string leaving this machine must pass
@@ -309,9 +309,9 @@ if command -v go >/dev/null 2>&1; then
   # suite is the gate that holds EVERY producer to the same attachment
   # contract; the wire-contract test pins the envelope bytes adapter
   # mirrors by hand (INV-TUI-29 forbids the import).
-  if echo "$STAGED" | grep -qE '^internal/cliorchestrate/'; then
+  if echo "$STAGED" | grep -qE '^internal/cli/orchestrate/'; then
     echo " → Running orchestration result-envelope invariant tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTaskResultProducerConformance|TestTaskResultEnvelopeWireContract' ./internal/cliorchestrate/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTaskResultProducerConformance|TestTaskResultEnvelopeWireContract' ./internal/cli/orchestrate/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # Any staged Go change can add an exec; the gate walks internal/ whole, so
   # it is keyed on Go files rather than one directory.
@@ -332,9 +332,9 @@ if command -v go >/dev/null 2>&1; then
   # (DC-14); the marker publish absorbs that with a bounded retry that only
   # Windows CI would otherwise exercise, intermittently. The gate proves the
   # retry deterministically on every platform.
-  if echo "$STAGED" | grep -qE '^internal/cliworktree/'; then
+  if echo "$STAGED" | grep -qE '^internal/cli/worktree/'; then
     echo " → Running worktree marker publish invariant tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestMarkerPublishRetriesTransientRenameContention' ./internal/cliworktree/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestMarkerPublishRetriesTransientRenameContention' ./internal/cli/worktree/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."
