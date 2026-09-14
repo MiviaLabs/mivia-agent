@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -38,10 +38,10 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		TotalTimeout: totalTaskTimeout(cfg.DefaultTotalTimeoutSec),
 		WireStream:   cfg.WireStreamResolved(),
 	}
-	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerDelegate, handler); err != nil {
+	if err := d.Register(runtime.Subagent, orchestrate.HandlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
 	}
-	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerOneshot, handler); err != nil {
+	if err := d.Register(runtime.Subagent, orchestrate.HandlerOneshot, handler); err != nil {
 		return fmt.Errorf("register oneshot handler: %w", err)
 	}
 	return nil
@@ -78,7 +78,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		Reasoning: dial.static, ReasoningFunc: dial.live,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
-		ToolTimeout: toolTO, ToolRunTimeout: budgets.toolRunTimeout, TotalTimeout: totalTO, MaxTokens: cliorchestrate.DefaultMaxTokens, MaxContextTokens: maxContextTokens,
+		ToolTimeout: toolTO, ToolRunTimeout: budgets.toolRunTimeout, TotalTimeout: totalTO, MaxTokens: orchestrate.DefaultMaxTokens, MaxContextTokens: maxContextTokens,
 		MaxToolResultChars:        budgets.perCall,
 		BatchResultBudgetBytes:    budgets.perBatch,
 		RefOnlyTools:              budgets.refOnlyTools,
@@ -98,7 +98,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	if maxTokens != nil && *maxTokens > 0 {
 		h.MaxTokens = *maxTokens
 	}
-	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerMultiStep, h); err != nil {
+	if err := d.Register(runtime.Subagent, orchestrate.HandlerMultiStep, h); err != nil {
 		return fmt.Errorf("register multi-step handler: %w", err)
 	}
 	return nil
@@ -167,7 +167,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 		// bound the routed-agent handlers carry): see newSkillMultiStepHandler.
 		TotalTimeout:              totalTaskTimeout(cfg.DefaultTotalTimeoutSec),
 		SteerWatchdog:             config.SaturatingSeconds(cfg.Messaging.SteerWatchdogSecondsResolved()),
-		MaxTokens:                 cliorchestrate.DefaultMaxTokens,
+		MaxTokens:                 orchestrate.DefaultMaxTokens,
 		MaxContextTokens:          deps.maxContextTokens,
 		MaxContextTokensFunc:      deps.budget,
 		MaxToolResultChars:        deps.budgets.perCall,

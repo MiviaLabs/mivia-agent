@@ -16,7 +16,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -333,7 +333,7 @@ func TestDiffCov2AdmitNextWaveHaltedAtMaxTotal(t *testing.T) {
 	if err := store.TransitionTask("stk-max", "c1", stackStatusMerged); err != nil {
 		t.Fatal(err)
 	}
-	prepared := &cliworkflow.PreparedWorkflowRun{
+	prepared := &workflow.PreparedWorkflowRun{
 		Repo: workflowledger.NewMemoryRepository(),
 		Compiled: &definition.CompiledWorkflow{
 			Stacking: &definition.StackingConfig{MaxTotalChunks: 1},

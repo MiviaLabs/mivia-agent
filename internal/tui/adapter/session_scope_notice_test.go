@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -25,7 +25,7 @@ func newRunnerWithNotice(t *testing.T, notice string) (*CommandRunner, *SessionP
 	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
 	sess := chat.NewSession(res, fallbackCompleter{providerName: "fake"})
 	sess.SessionID = "session-main"
-	state := &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}
+	state := &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}
 	pool := NewSessionPool(sess, res, state, true)
 	t.Cleanup(pool.CloseAll)
 	runner := NewCommandRunnerWithPool(sess, pool, res, state)

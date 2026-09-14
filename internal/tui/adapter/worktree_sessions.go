@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
@@ -140,7 +140,7 @@ func worktreeBindFunc(store *storage.SQLite, root string, route worktreeroute.Ro
 		if err != nil {
 			return "", err
 		}
-		if err := cliagents.VerifyWorktreeMarker(bound.Dir, bound.Instance); err != nil {
+		if err := agents.VerifyWorktreeMarker(bound.Dir, bound.Instance); err != nil {
 			return "", err
 		}
 		return bound.Dir, nil
@@ -173,7 +173,7 @@ func (r *CommandRunner) fencePooledWorktree(ctx context.Context, store *storage.
 	if live.Instance.ID != binding.ID {
 		return recreatedInstanceText(summary.Worktree, binding.ID, live.Instance.ID), true
 	}
-	if err := cliagents.VerifyWorktreeMarker(pooled.ContextWorktreeRoot(), binding); err != nil {
+	if err := agents.VerifyWorktreeMarker(pooled.ContextWorktreeRoot(), binding); err != nil {
 		return fmt.Sprintf("cannot resume session in worktree %q: %v", summary.Worktree, err), true
 	}
 	return "", false
@@ -248,7 +248,7 @@ func (r *CommandRunner) StartInNewWorktree(ctx context.Context, name string) por
 	if err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("resolve launch checkout commit: %v", err)}
 	}
-	if err := cliagents.CreateManagedWorktreeForPoolFromRef(store, root, name, launchCommit); err != nil {
+	if err := agents.CreateManagedWorktreeForPoolFromRef(store, root, name, launchCommit); err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to create worktree %q: %v", name, err)}
 	}
 	// No canonicalization here: both consumers of WorktreeDir canonicalize

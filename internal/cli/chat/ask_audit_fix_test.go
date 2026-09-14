@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"sync"
 	"testing"
@@ -114,7 +114,7 @@ func TestAskMailboxFullDeclines(t *testing.T) {
 		return json.RawMessage(`{"ok":true}`), nil
 	}))
 	_ = d.Register(runtime.Subagent, "asker", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
-		coord := cliorchestrate.InitCoordinator(d, cfg, repo)
+		coord := orchestrate.InitCoordinator(d, cfg, repo)
 		id, _ := runtime.TaskIdentityFrom(ctx)
 		deadline := time.After(2 * time.Second)
 		for {
@@ -143,11 +143,11 @@ func TestAskMailboxFullDeclines(t *testing.T) {
 		return json.RawMessage(out), nil
 	}))
 	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 2})).WithMessagingLimits(2048, 1)
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "peer-1", Name: "peer", AgentName: "peer", Timeout: 5 * time.Second},
@@ -610,11 +610,11 @@ func TestLiveAskDrainIncludesMessageID(t *testing.T) {
 	}))
 	pool := subagents.New(d, subagents.Policy{Workers: 2})
 	c := coordinator.New(repo, pool)
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "peer-1", Name: "peer", AgentName: "peer", Timeout: 5 * time.Second},

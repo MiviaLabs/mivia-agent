@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 )
 
 func TestToolAndHandlerNameConsts(t *testing.T) {
@@ -13,14 +13,14 @@ func TestToolAndHandlerNameConsts(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"cliorchestrate.HandlerMultiStep", cliorchestrate.HandlerMultiStep, "multi_step"},
-		{"handlerDelegate", cliorchestrate.HandlerDelegate, "delegate"},
-		{"cliorchestrate.HandlerOneshot", cliorchestrate.HandlerOneshot, "oneshot"},
-		{"toolDispatchTasks", cliorchestrate.ToolDispatchTasks, "dispatch_tasks"},
-		{"cliorchestrate.ToolSpawnAgent", cliorchestrate.ToolSpawnAgent, "spawn_agent"},
-		{"cliorchestrate.ToolJoinRun", cliorchestrate.ToolJoinRun, "join_run"},
-		{"cliorchestrate.ToolInspectAgents", cliorchestrate.ToolInspectAgents, "inspect_agents"},
-		{"cliorchestrate.ToolCancelRun", cliorchestrate.ToolCancelRun, "cancel_run"},
+		{"orchestrate.HandlerMultiStep", orchestrate.HandlerMultiStep, "multi_step"},
+		{"handlerDelegate", orchestrate.HandlerDelegate, "delegate"},
+		{"orchestrate.HandlerOneshot", orchestrate.HandlerOneshot, "oneshot"},
+		{"toolDispatchTasks", orchestrate.ToolDispatchTasks, "dispatch_tasks"},
+		{"orchestrate.ToolSpawnAgent", orchestrate.ToolSpawnAgent, "spawn_agent"},
+		{"orchestrate.ToolJoinRun", orchestrate.ToolJoinRun, "join_run"},
+		{"orchestrate.ToolInspectAgents", orchestrate.ToolInspectAgents, "inspect_agents"},
+		{"orchestrate.ToolCancelRun", orchestrate.ToolCancelRun, "cancel_run"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {

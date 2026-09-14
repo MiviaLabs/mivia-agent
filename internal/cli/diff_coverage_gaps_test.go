@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -53,8 +53,8 @@ func TestExecuteRouterReachesRemainingHandlers(t *testing.T) {
 // previous values when the test ends.
 func wireStackSeams(t *testing.T) {
 	t.Helper()
-	savedOpen, savedResolve := clichat.OpenStackLedgerFunc, clichat.ResolveStackIDFunc
-	clichat.OpenStackLedgerFunc = func(root, configPath string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
+	savedOpen, savedResolve := chat.OpenStackLedgerFunc, chat.ResolveStackIDFunc
+	chat.OpenStackLedgerFunc = func(root, configPath string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
 		if strings.TrimSpace(root) == "" {
 			root = "."
 		}
@@ -76,7 +76,7 @@ func wireStackSeams(t *testing.T) {
 		}
 		return workflowledger.NewStore(store), repo, closeFn, nil
 	}
-	clichat.ResolveStackIDFunc = func(repo workflowledger.Repository, workflowName, stackFlag string) (string, error) {
+	chat.ResolveStackIDFunc = func(repo workflowledger.Repository, workflowName, stackFlag string) (string, error) {
 		if strings.TrimSpace(stackFlag) != "" {
 			return stackFlag, nil
 		}
@@ -112,8 +112,8 @@ func wireStackSeams(t *testing.T) {
 		return best, nil
 	}
 	t.Cleanup(func() {
-		clichat.OpenStackLedgerFunc = savedOpen
-		clichat.ResolveStackIDFunc = savedResolve
+		chat.OpenStackLedgerFunc = savedOpen
+		chat.ResolveStackIDFunc = savedResolve
 	})
 }
 
@@ -121,11 +121,11 @@ func wireStackSeams(t *testing.T) {
 // in-memory stores for one test and restores it afterwards.
 func overrideStackLedger(t *testing.T, ledger *workflowledger.Store, repo workflowledger.Repository) {
 	t.Helper()
-	saved := clichat.OpenStackLedgerFunc
-	clichat.OpenStackLedgerFunc = func(string, string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
+	saved := chat.OpenStackLedgerFunc
+	chat.OpenStackLedgerFunc = func(string, string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
 		return ledger, repo, func() {}, nil
 	}
-	t.Cleanup(func() { clichat.OpenStackLedgerFunc = saved })
+	t.Cleanup(func() { chat.OpenStackLedgerFunc = saved })
 }
 
 func TestRunStackWithIOFastFailures(t *testing.T) {
@@ -204,7 +204,7 @@ func TestRunStackStatusSeededStack(t *testing.T) {
 	t.Cleanup(func() { _ = repo.Close() })
 
 	const stackID = "stack-live"
-	scope := clichat.StackScope(stackID)
+	scope := chat.StackScope(stackID)
 	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: scope}); err != nil {
 		t.Fatal(err)
 	}
@@ -261,10 +261,10 @@ func TestRunStackStatusSeededStack(t *testing.T) {
 // The production CurrentHookSessionFunc closure must be invocable and must
 // wrap the (possibly nil) live hook session without panicking.
 func TestCurrentHookSessionFuncWiringClosure(t *testing.T) {
-	if clichat.CurrentHookSessionFunc == nil {
-		t.Fatal("clichat.CurrentHookSessionFunc must be wired by init")
+	if chat.CurrentHookSessionFunc == nil {
+		t.Fatal("chat.CurrentHookSessionFunc must be wired by init")
 	}
-	state := clichat.CurrentHookSessionFunc()
+	state := chat.CurrentHookSessionFunc()
 	if state == nil {
 		t.Fatal("CurrentHookSessionFunc() must return a non-nil adapter")
 	}

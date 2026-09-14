@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
@@ -103,7 +103,7 @@ func classLabel(c slashClass) string {
 }
 
 // validateStepSlash implements D15: Ref must resolve, via
-// clichat.FindSlashCommand(ref, clichat.SlashSurfaceTUI, registry) - the
+// chat.FindSlashCommand(ref, chat.SlashSurfaceTUI, registry) - the
 // surface choice is load-bearing (D15: SlashSurfaceTUI is the only
 // surface that resolves SlashKindSkill entries at all, and the only
 // exported surface constant) - to either a SlashKindSkill command
@@ -126,11 +126,11 @@ func validateStepSlash(automationID string, stepIndex int, ref string, registry 
 	cmdToken := fields[0]
 	hasArg := len(fields) > 1
 
-	cmd, ok := clichat.FindSlashCommand(cmdToken, clichat.SlashSurfaceTUI, registry)
+	cmd, ok := chat.FindSlashCommand(cmdToken, chat.SlashSurfaceTUI, registry)
 	if !ok {
 		return fmt.Errorf("automation %q: step %d: slash command %q is not recognized", automationID, stepIndex, ref)
 	}
-	if cmd.Kind == clichat.SlashKindSkill {
+	if cmd.Kind == chat.SlashKindSkill {
 		return nil
 	}
 	class, known := builtinSlashClass[cmd.Name]

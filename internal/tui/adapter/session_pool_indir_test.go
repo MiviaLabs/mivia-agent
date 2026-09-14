@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -50,12 +50,12 @@ func (noopTool) Execute(context.Context, json.RawMessage) (string, error) {
 
 func stubWorkflowWiring(t *testing.T) {
 	t.Helper()
-	prev := cliagents.WireWorkflowToolOptionsVar
-	cliagents.WireWorkflowToolOptionsVar = func(
+	prev := agents.WireWorkflowToolOptionsVar
+	agents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository,
 	) {
 	}
-	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
+	t.Cleanup(func() { agents.WireWorkflowToolOptionsVar = prev })
 }
 
 func baseRegistryAt(t *testing.T, root string, fullDisk bool) *tools.Registry {
@@ -287,14 +287,14 @@ func TestInDir_BuilderFailureKeepsInheritedTools(t *testing.T) {
 	pool.CloseAll()
 
 	os.RemoveAll(wtB)
-	prev := cliagents.WireWorkflowToolOptionsVar
-	cliagents.WireWorkflowToolOptionsVar = nil // fail loud behind the seam
-	cliagents.WireWorkflowToolOptionsVar = func(
+	prev := agents.WireWorkflowToolOptionsVar
+	agents.WireWorkflowToolOptionsVar = nil // fail loud behind the seam
+	agents.WireWorkflowToolOptionsVar = func(
 		d *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool, _ bool, _ ledger.LedgerRepository,
 	) {
 		d.Workspace = &workspace.Root{}
 	}
-	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
+	t.Cleanup(func() { agents.WireWorkflowToolOptionsVar = prev })
 
 	// workspace.Open ran before the seam; force its failure instead by
 	// asking for the now-removed root.
@@ -448,8 +448,8 @@ func TestInDir_ConcurrentPublishLoserClosesAndAdopts(t *testing.T) {
 	wtB := otherRoot(t, t.TempDir())
 	var winnerReg *tools.Registry
 
-	prev := cliagents.BuildToolsForRootHookForTest
-	cliagents.BuildToolsForRootHookForTest = func(rws, _ string, _ bool, _ *config.Resolved) (*tools.Registry, func(), error) {
+	prev := agents.BuildToolsForRootHookForTest
+	agents.BuildToolsForRootHookForTest = func(rws, _ string, _ bool, _ *config.Resolved) (*tools.Registry, func(), error) {
 		// Simulate a concurrent winner publishing during the unlocked
 		// build window: prime the memo, then hand back a loser registry.
 		winnerReg = baseRegistryAt(t, rws, false)
@@ -464,7 +464,7 @@ func TestInDir_ConcurrentPublishLoserClosesAndAdopts(t *testing.T) {
 		loser := baseRegistryAt(t, rws, false)
 		return loser, func() {}, nil
 	}
-	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prev })
+	t.Cleanup(func() { agents.BuildToolsForRootHookForTest = prev })
 
 	if _, err := pool.CreateFreshInDir(nil, wtB); err != nil {
 		t.Fatalf("CreateFreshInDir: %v", err)
@@ -558,13 +558,13 @@ func TestInDir_ToolScopeNoticeOnBuilderFailureKeepsInheritedTools(t *testing.T) 
 	rootA := t.TempDir()
 	pool, _, _ := newPoolAtRoot(t, rootA)
 
-	prevHook := cliagents.BuildToolsForRootHookForTest
-	cliagents.BuildToolsForRootHookForTest = func(
+	prevHook := agents.BuildToolsForRootHookForTest
+	agents.BuildToolsForRootHookForTest = func(
 		string, string, bool, *config.Resolved,
 	) (*tools.Registry, func(), error) {
 		return nil, func() {}, errors.New("boom-memory")
 	}
-	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prevHook })
+	t.Cleanup(func() { agents.BuildToolsForRootHookForTest = prevHook })
 
 	if _, err := pool.CreateFreshInDir(nil, otherRoot(t, t.TempDir())); err != nil {
 		t.Fatalf("creation aborted by builder failure: %v", err)
@@ -680,8 +680,8 @@ func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
 	firstBuild := make(chan struct{})   // closed when goroutine A is inside the builder
 	releaseBuild := make(chan struct{}) // closed when A may finish building
 	var builds atomic.Int32
-	prevHook := cliagents.BuildToolsForRootHookForTest
-	cliagents.BuildToolsForRootHookForTest = func(string, string, bool, *config.Resolved) (*tools.Registry, func(), error) {
+	prevHook := agents.BuildToolsForRootHookForTest
+	agents.BuildToolsForRootHookForTest = func(string, string, bool, *config.Resolved) (*tools.Registry, func(), error) {
 		// atomic: two racers reach this hook, and the assertion does not
 		// need a data race to make its point.
 		n := builds.Add(1)
@@ -691,7 +691,7 @@ func TestInDir_ConcurrentSameIDResumeJoinsTheWinner(t *testing.T) {
 		}
 		return tools.NewRegistry(), func() {}, nil
 	}
-	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prevHook })
+	t.Cleanup(func() { agents.BuildToolsForRootHookForTest = prevHook })
 
 	resA := make(chan result, 1)
 	go func() {
@@ -816,13 +816,13 @@ func TestInDir_BackgroundSpawnDoesNotClobberForegroundNotice(t *testing.T) {
 
 	inBuild := make(chan struct{})
 	releaseBuild := make(chan struct{})
-	prevHook := cliagents.BuildToolsForRootHookForTest
-	cliagents.BuildToolsForRootHookForTest = func(string, string, bool, *config.Resolved) (*tools.Registry, func(), error) {
+	prevHook := agents.BuildToolsForRootHookForTest
+	agents.BuildToolsForRootHookForTest = func(string, string, bool, *config.Resolved) (*tools.Registry, func(), error) {
 		close(inBuild)
 		<-releaseBuild
 		return tools.NewRegistry(), func() {}, nil
 	}
-	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prevHook })
+	t.Cleanup(func() { agents.BuildToolsForRootHookForTest = prevHook })
 
 	bgWt := otherRoot(t, t.TempDir())
 	bgDone := make(chan error, 1)

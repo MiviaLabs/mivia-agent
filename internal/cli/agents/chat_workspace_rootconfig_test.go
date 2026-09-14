@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -20,13 +20,13 @@ import (
 // the launch checkout's rules.
 func TestBuildToolsForRootHonorsThatRootsOwnToolsPolicy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := cliagents.WireWorkflowToolOptionsVar
-	cliagents.WireWorkflowToolOptionsVar = func(
+	prev := agents.WireWorkflowToolOptionsVar
+	agents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool,
 		ledger.LedgerRepository,
 	) {
 	}
-	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
+	t.Cleanup(func() { agents.WireWorkflowToolOptionsVar = prev })
 
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
@@ -47,8 +47,8 @@ func TestBuildToolsForRootHonorsThatRootsOwnToolsPolicy(t *testing.T) {
 		{"gate off: workspace policy is refused", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reg, closeFn, err := cliagents.BuildToolsForRoot(root, t.TempDir(), false, launch,
-				cliagents.SessionRootWiring{LoadWorkspaceConfig: tc.gate})
+			reg, closeFn, err := agents.BuildToolsForRoot(root, t.TempDir(), false, launch,
+				agents.SessionRootWiring{LoadWorkspaceConfig: tc.gate})
 			if err != nil {
 				t.Fatalf("BuildToolsForRoot: %v", err)
 			}
@@ -67,17 +67,17 @@ func TestBuildToolsForRootHonorsThatRootsOwnToolsPolicy(t *testing.T) {
 // rather than treated as an error.
 func TestBuildToolsForRootWithNoWorkspaceConfigUsesLaunchPolicy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := cliagents.WireWorkflowToolOptionsVar
-	cliagents.WireWorkflowToolOptionsVar = func(
+	prev := agents.WireWorkflowToolOptionsVar
+	agents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool,
 		ledger.LedgerRepository,
 	) {
 	}
-	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
+	t.Cleanup(func() { agents.WireWorkflowToolOptionsVar = prev })
 
 	launch := &config.Resolved{}
-	reg, closeFn, err := cliagents.BuildToolsForRoot(t.TempDir(), t.TempDir(), false, launch,
-		cliagents.SessionRootWiring{LoadWorkspaceConfig: true})
+	reg, closeFn, err := agents.BuildToolsForRoot(t.TempDir(), t.TempDir(), false, launch,
+		agents.SessionRootWiring{LoadWorkspaceConfig: true})
 	if err != nil {
 		t.Fatalf("BuildToolsForRoot with no workspace config file: %v", err)
 	}
@@ -100,8 +100,8 @@ func TestBuildToolsForRootPropagatesMalformedWorkspaceConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch := &config.Resolved{}
-	if _, _, err := cliagents.BuildToolsForRoot(root, t.TempDir(), false, launch,
-		cliagents.SessionRootWiring{LoadWorkspaceConfig: true}); err == nil {
+	if _, _, err := agents.BuildToolsForRoot(root, t.TempDir(), false, launch,
+		agents.SessionRootWiring{LoadWorkspaceConfig: true}); err == nil {
 		t.Fatal("BuildToolsForRoot accepted a root with malformed workspace config")
 	}
 }

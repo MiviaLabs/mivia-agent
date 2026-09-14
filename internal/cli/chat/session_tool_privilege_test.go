@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"strings"
 	"testing"
@@ -74,10 +74,10 @@ func TestRegisterSessionToolAcceptsMarkedTool(t *testing.T) {
 func TestOrchestrationToolsAreMarkedPrivileged(t *testing.T) {
 	d := newPrivilegeTestDispatcher(t)
 	shipped := []tools.Tool{
-		cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, nil),
-		cliorchestrate.NewInspectAgentToolConfigured(d),
-		cliorchestrate.NewJoinRunToolConfigured(d),
-		cliorchestrate.NewCancelRunToolConfigured(d),
+		orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, nil),
+		orchestrate.NewInspectAgentToolConfigured(d),
+		orchestrate.NewJoinRunToolConfigured(d),
+		orchestrate.NewCancelRunToolConfigured(d),
 	}
 	for _, tool := range shipped {
 		if _, privileged := tool.(tools.PrivilegedTool); !privileged {

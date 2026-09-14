@@ -9,7 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"strings"
 	"testing"
@@ -64,16 +64,16 @@ func TestWaitForIntegrationMergeRetriesAutoMergeEachTick(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	merges := &retryThenSuccessMergePR{t: t}
 	prevMerge := workflowStackMergePR
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := cliworkflow.WorkflowDeliverNewPR
-	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
-	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := workflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { workflow.WorkflowDeliverNewPR = prevNewPR })
+	workflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	prevInterval := stackMergePollInterval
 	t.Cleanup(func() { stackMergePollInterval = prevInterval })
@@ -110,16 +110,16 @@ func TestWaitForIntegrationMergePermanentMergeErrorHalts(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	merges := &recordingStackMergePR{err: errors.New("merge PR 123: pull request is closed")}
 	prevMerge := workflowStackMergePR
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := cliworkflow.WorkflowDeliverNewPR
-	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
-	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := workflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { workflow.WorkflowDeliverNewPR = prevNewPR })
+	workflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	err := waitForIntegrationMerge(context.Background(), prepared, repo, neverMergedChecker{}, stackID, "auto", io.Discard, io.Discard)
 	if err == nil {
@@ -151,7 +151,7 @@ func TestWaitForIntegrationMergeGrantPolicyDoesNotAutoMerge(t *testing.T) {
 		return nil
 	}
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo}
 	if err := waitForIntegrationMerge(context.Background(), prepared, repo, &immediateMergedChecker{}, stackID, "approve", io.Discard, io.Discard); err != nil {
 		t.Fatalf("waitForIntegrationMerge() error = %v", err)
 	}

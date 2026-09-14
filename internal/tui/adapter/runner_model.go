@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -153,7 +153,7 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 	}
 	providerName, modelName := resolveProviderAndModel(r.res, selProvider, name)
 
-	discarded, err := cliagents.SwitchModelCommand(sess, r.res, providerName, modelName)
+	discarded, err := agents.SwitchModelCommand(sess, r.res, providerName, modelName)
 	if err != nil {
 		msg := fmt.Sprintf("failed to switch model to %q (%s): %v", modelName, providerName, err)
 		if others := r.res.OtherProvidersWithModel(providerName, modelName); len(others) == 1 {

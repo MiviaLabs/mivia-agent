@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -217,7 +217,7 @@ func (s *SettingsStore) applyActivateModel(v ports.ActivateModel) error {
 		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
 	}
 	if s.sess != nil && s.res != nil {
-		if _, err := cliagents.SwitchModelCommand(s.sess, s.res, v.Provider, v.Model); err != nil {
+		if _, err := agents.SwitchModelCommand(s.sess, s.res, v.Provider, v.Model); err != nil {
 			return fmt.Errorf("failed to switch model to %q (%s): %w", v.Model, v.Provider, err)
 		}
 		s.res.ProviderName = v.Provider

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -75,7 +75,7 @@ func (r *replRuntime) restore() {
 	// auto-restore reuses the REPL's already-constructed Session, so both the
 	// summarizer and the token-estimate calibration are still bound to
 	// whatever session Load just replaced.
-	cliagents.RefreshSummarizerAfterModelSwitch(r.sess, r.config)
+	agents.RefreshSummarizerAfterModelSwitch(r.sess, r.config)
 	r.sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	r.renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(r.sess.Messages), r.sess.UserTurns())
 	if saved, current, ok := r.sess.ModelRestoreNotice(); ok {

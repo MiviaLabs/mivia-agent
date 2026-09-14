@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"path/filepath"
 	"testing"
 
@@ -52,7 +52,7 @@ func TestDispatcherInjectsIsolatedContextManager(t *testing.T) {
 	}
 	defer d.Close()
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "nested-context", Kind: runtime.Subagent, Name: cliorchestrate.HandlerMultiStep,
+		ID: "nested-context", Kind: runtime.Subagent, Name: orchestrate.HandlerMultiStep,
 		Input: json.RawMessage(`"task"`), SessionID: principal.SessionID,
 	})
 	if result.Err != nil {
@@ -69,7 +69,7 @@ func TestSharedSQLiteInjectedIntoChatAndLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cliorchestrate.CloseSharedSQLite(store)
+	defer orchestrate.CloseSharedSQLite(store)
 	d, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry: tools.NewRegistry(), Completer: nullCompleter{}, Model: "model",
 		Config: config.SubagentConfig{StoreBackend: "memory", DefaultTimeout: 60}, SharedSQLite: store,
@@ -77,7 +77,7 @@ func TestSharedSQLiteInjectedIntoChatAndLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, ok := cliorchestrate.OrchestrationRepoForDispatcher(d).(*ledger.StorageLedgerRepository)
+	repo, ok := orchestrate.OrchestrationRepoForDispatcher(d).(*ledger.StorageLedgerRepository)
 	if !ok || repo.UnderlyingStore() != store {
 		t.Fatalf("ledger store = %T/%p, want shared %p", repo.UnderlyingStore(), repo.UnderlyingStore(), store)
 	}
@@ -100,10 +100,10 @@ func TestOrchestrationStateClosesSharedSQLiteOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cliorchestrate.CloseSharedSQLite(store); err != nil {
+	if err := orchestrate.CloseSharedSQLite(store); err != nil {
 		t.Fatal(err)
 	}
-	if err := cliorchestrate.CloseSharedSQLite(store); err != nil {
+	if err := orchestrate.CloseSharedSQLite(store); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Events(context.Background(), "closed"); err == nil {

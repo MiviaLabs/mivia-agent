@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
-	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -47,7 +47,7 @@ func runChat(args []string) error {
 
 var runConfiguredChatOnceImpl = runConfiguredChatOnce
 var loadConfigForRestart = config.Load
-var classifyMissingMarkerForBind = cliworktree.ClassifyMissingWorktreeMarker
+var classifyMissingMarkerForBind = worktree.ClassifyMissingWorktreeMarker
 
 func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	configPath := invocation.configPath
@@ -130,7 +130,7 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 		return err
 	}
 	defer store.Close()
-	return cliworktree.ValidateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
+	return worktree.ValidateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
 }
 
 // configureSessionWorkspace wires workspace tools and memory into the chat
@@ -140,12 +140,12 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 // production start site: the one-shot ConfigureChatWorkspace callers (compact,
 // sessions) never attach one and keep pull-only reads.
 func configureSessionWorkspace(sess *chat.Session, wsRoot string, useTools bool, res *config.Resolved, agentState *AgentSessionState, invocation chatInvocation) (func(), error) {
-	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, chatFullDisk(invocation, wsRoot), true)
+	memClose, err := agents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, chatFullDisk(invocation, wsRoot), true)
 	if err != nil {
 		releaseSessionLedgerRepo(agentState)
 		return nil, err
 	}
-	stop, ok := cliagents.StartMemoryIndexReconciler(agentState.Memory, config.SaturatingSeconds(res.Memory.IndexRefreshIntervalSeconds))
+	stop, ok := agents.StartMemoryIndexReconciler(agentState.Memory, config.SaturatingSeconds(res.Memory.IndexRefreshIntervalSeconds))
 	if !ok {
 		return memClose, nil
 	}
@@ -173,7 +173,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	if err != nil {
 		return err
 	}
-	cliagents.ApplyWorkspacePromptGate(res, agentState.Global)
+	agents.ApplyWorkspacePromptGate(res, agentState.Global)
 	releaseHooks, err := InstallHookSessionFunc(wsRoot, invocation.staleBypass, invocation.quiet)
 	if err != nil {
 		return err
@@ -181,7 +181,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	defer releaseHooks()
 	// The get_diagnostics disclosure prints only when tools are on - the same condition under which the tool is registered.
 	if useTools {
-		cliagents.LogDiagnosticsCommandsOnce(os.Stderr, res.Tools, invocation.quiet)
+		agents.LogDiagnosticsCommandsOnce(os.Stderr, res.Tools, invocation.quiet)
 	}
 	res.SystemPrompt = rootPromptForSession(useTools, res, agentState.Registry)
 	comp, err := provider.New(res)
@@ -191,7 +191,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
 	applySessionApprovalPolicy(sess, invocation, res)
-	cliagents.InstallSessionIdentity(sess, agentState)
+	agents.InstallSessionIdentity(sess, agentState)
 	// BaseSystemPrompt, not SystemPrompt (plan 77, E3): equivalent right
 	// now (NewSession sets both identically and no compose has happened
 	// yet), but reading the field that's guaranteed memory-block-free stays
@@ -199,7 +199,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselinePrompt = sess.BaseSystemPrompt
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
-	cliorchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
+	orchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
 	// Adopt the session ledger store before the tool wiring (see
 	// adoptSessionRepoForTools): child runs stamp this instance.
 	adoptSessionRepoForTools(sess, useTools, res, agentState)
@@ -208,7 +208,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return err
 	}
 	defer memClose()
-	cliagents.ApplySelectedAgentPrompt(sess, res, agentState.Selected, agentState)
+	agents.ApplySelectedAgentPrompt(sess, res, agentState.Selected, agentState)
 	contextStore, err := setupChatSessionContext(sess, wsRoot, invocation, res)
 	if err != nil {
 		releaseSessionLedgerRepo(agentState)
@@ -216,7 +216,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	defer contextStore.Close()
 	// Capture pointer so /agent and model-switch rebuilds see updates.
-	sess.SetBindingFactory(cliagents.ChatBindingFactory(sess, res, wsRoot, agentState))
+	sess.SetBindingFactory(agents.ChatBindingFactory(sess, res, wsRoot, agentState))
 	if invocation.session != "" {
 		if err := resumeChatSession(sess, res, invocation.session); err != nil {
 			releaseSessionLedgerRepo(agentState)
@@ -225,7 +225,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
-		Catalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res),
+		Catalog: res.ModelCatalog(), CompleterFactory: agents.NewProviderCompleterFactory(res),
 		Context: contextWiring, Resolved: res,
 	})
 	if err != nil {
@@ -247,7 +247,7 @@ func resumeChatSession(sess *chat.Session, res *config.Resolved, session string)
 	if err := sess.Load(session); err != nil {
 		return fmt.Errorf("--session %q: %w (omit --session to start a new session under a system-assigned id)", session, err)
 	}
-	cliagents.RefreshSummarizerAfterModelSwitch(sess, res)
+	agents.RefreshSummarizerAfterModelSwitch(sess, res)
 	// Same reasoning as the summarizer refresh above: enableSessionContext
 	// seeded token-estimate calibration once, before Load published this
 	// session's real saved binding. See RefreshCalibrationAfterModelSwitch's
@@ -325,8 +325,8 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, wsRoot s
 		return oneShot(sess, invocation.prompt, useTools, res, invocation.quiet)
 	}
 	// Classic REPL /agent uses package state; TUI stores agentState on the model.
-	cliagents.ClassicAgentState = agentState
-	defer func() { cliagents.ClassicAgentState = nil }()
+	agents.ClassicAgentState = agentState
+	defer func() { agents.ClassicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		defer attachCLISync(sess, wsRoot, res)()
 		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
@@ -370,21 +370,21 @@ func loadChatSkills(wsRoot string) (*skills.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillReg, skillWarnings, err := cliagents.LoadSessionSkills(wsRoot, globalPreview.LoadWorkspaceConfig)
+	skillReg, skillWarnings, err := agents.LoadSessionSkills(wsRoot, globalPreview.LoadWorkspaceConfig)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}
-	cliagents.WarnSkillLoad(skillWarnings)
+	agents.WarnSkillLoad(skillWarnings)
 	return skillReg, nil
 }
 
 // prepareAgentSession loads and optionally selects a named agent definition.
 func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (*AgentSessionState, error) {
-	loaded, err := cliagents.LoadAgentDefinitions(wsRoot, agentFlag, skillReg)
+	loaded, err := agents.LoadAgentDefinitions(wsRoot, agentFlag, skillReg)
 	if err != nil {
 		return nil, err
 	}
-	cliagents.WarnAgentLoad(loaded.Warnings)
+	agents.WarnAgentLoad(loaded.Warnings)
 	return &AgentSessionState{
 		Global:             loaded.Global,
 		Selected:           loaded.Selected,

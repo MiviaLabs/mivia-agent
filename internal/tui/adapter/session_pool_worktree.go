@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
@@ -22,7 +22,7 @@ type BindFunc func(*chat.Session) (string, error)
 // SubagentThreads.resolver() defaulting to nil is what every reconstruction
 // path already falls back to. Lives here rather than session_pool.go: that
 // file already sits at the go-structure hard file-LOC cap.
-func (p *SessionPool) wireContentResolver(state *cliagents.AgentSessionState) {
+func (p *SessionPool) wireContentResolver(state *agents.AgentSessionState) {
 	if state == nil {
 		return
 	}
@@ -191,7 +191,7 @@ func (p *SessionPool) getOrCreateInDirLocking(id string, bind BindFunc, dir stri
 	if err := sess.Load(id); err != nil {
 		return nil, nil, false, err
 	}
-	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
+	agents.RefreshSummarizerAfterModelSwitch(sess, p.res)
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	if err := p.refuseIfDrainedLocked(); err != nil {
 		return nil, nil, false, err
@@ -262,7 +262,7 @@ func (p *SessionPool) newEntrySessionLocked() *chat.Session {
 // the write site keeps the decision inside the same lock hold that write
 // would happen under, so there is no unlock/relock window in which a
 // concurrent foreground caller's own real notice could be clobbered.
-func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string, withPolicies, background bool) *cliagents.AgentSessionState {
+func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string, withPolicies, background bool) *agents.AgentSessionState {
 	inheritApprovalLocked(sess, p.inheritEntryStateLocked(sess, withPolicies), p.res)
 	if notice := p.adoptWorktreeToolsLocked(sess, toolRootFor(boundRoot, dir)); notice != "" && !background {
 		p.lastToolScopeNotice = notice
@@ -285,7 +285,7 @@ func (p *SessionPool) wireEntryLocked(sess *chat.Session, boundRoot, dir string,
 	// the terminal, so it routes the count through the same single-slot
 	// notice as every other message on this path (and skips it on the
 	// background spawn, like every other write site above).
-	_, advertisedDropped, err := cliagents.AttachRebuiltSurface(sess, p.res, entryState)
+	_, advertisedDropped, err := agents.AttachRebuiltSurface(sess, p.res, entryState)
 	switch {
 	case err != nil && !background:
 		p.lastToolScopeNotice = "session tools: " + err.Error()

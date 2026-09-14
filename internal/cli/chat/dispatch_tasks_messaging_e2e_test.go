@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -44,7 +44,7 @@ func TestDispatchTasksThenSendToTaskAndRunMessagesResolveRawID(t *testing.T) {
 	}
 
 	callerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-dispatch-then-message"})
-	dispatchTool := cliorchestrate.NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "worker"))
+	dispatchTool := orchestrate.NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "worker"))
 	out, err := dispatchTool.Execute(callerCtx, json.RawMessage(
 		`{"tasks":[{"id":"solo","agent":"worker","prompt":"investigate"}],"wait":"none"}`))
 	if err != nil {

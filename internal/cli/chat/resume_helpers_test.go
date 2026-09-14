@@ -1,36 +1,36 @@
 package chat
 
 import (
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 )
 
 // ResumeConfirmationInfo is re-exported from cliorchestrate for the resume
 // slash tests that moved into this package.
-type ResumeConfirmationInfo = cliorchestrate.ResumeConfirmationInfo
+type ResumeConfirmationInfo = orchestrate.ResumeConfirmationInfo
 
 // FormatListedRuns is re-exported from cliorchestrate for tests.
-var FormatListedRuns = cliorchestrate.FormatListedRuns
+var FormatListedRuns = orchestrate.FormatListedRuns
 
 // FormatResumeConfirmation is re-exported from cliorchestrate for tests.
-var FormatResumeConfirmation = cliorchestrate.FormatResumeConfirmation
+var FormatResumeConfirmation = orchestrate.FormatResumeConfirmation
 
 // FormatResumeError is re-exported from cliorchestrate for tests.
-var FormatResumeError = cliorchestrate.FormatResumeError
+var FormatResumeError = orchestrate.FormatResumeError
 
 // ParseConfirmResponse is re-exported from cliorchestrate for tests.
-var ParseConfirmResponse = cliorchestrate.ParseConfirmResponse
+var ParseConfirmResponse = orchestrate.ParseConfirmResponse
 
 // FindCoordinator is re-exported from cliorchestrate for tests.
-var FindCoordinator = cliorchestrate.FindCoordinator
+var FindCoordinator = orchestrate.FindCoordinator
 
 // FindDispatcher is re-exported from cliorchestrate for tests.
-var FindDispatcher = cliorchestrate.FindDispatcher
+var FindDispatcher = orchestrate.FindDispatcher
 
 // ResumeRun is re-exported from cliorchestrate for tests.
-var ResumeRun = cliorchestrate.ResumeRun
+var ResumeRun = orchestrate.ResumeRun
 
 // ErrOrchestrationSwitchActive is re-exported from cliorchestrate for tests.
-var ErrOrchestrationSwitchActive = cliorchestrate.ErrOrchestrationSwitchActive
+var ErrOrchestrationSwitchActive = orchestrate.ErrOrchestrationSwitchActive
 
 // Coordinator is an alias kept for tests that reference the coordinator type:
 // it names clichat's narrow chatCoordinator consumer view.

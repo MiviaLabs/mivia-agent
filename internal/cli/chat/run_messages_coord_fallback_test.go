@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -19,7 +19,7 @@ import (
 // clichat's chatCoordinator subset: GetCoordinator's narrowing misses, so
 // run_messages must fall back to InitCoordinator for the dispatcher.
 type chatlessCoordinator struct {
-	cliorchestrate.OrchestrationCoordinator
+	orchestrate.OrchestrationCoordinator
 }
 
 // TestRunMessagesFallsBackToInitCoordinator covers the run_messages
@@ -30,7 +30,7 @@ func TestRunMessagesFallsBackToInitCoordinator(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	cfg := config.DefaultSubagentConfig
 	d := runtime.New(runtime.Policy{})
-	cliorchestrate.InitCoordinator(d, cfg, repo)
+	orchestrate.InitCoordinator(d, cfg, repo)
 
 	// A real coordinator owns the run; the handle record stores the
 	// chatless double so the first narrowing misses.
@@ -38,8 +38,8 @@ func TestRunMessagesFallsBackToInitCoordinator(t *testing.T) {
 	if err := repo.CreateRun(context.Background(), runID, ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	cliorchestrate.StoreTestRunHandle(runID, chatlessCoordinator{}, nil, repo, d, "sess-coord-fallback")
-	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete(runID) })
+	orchestrate.StoreTestRunHandle(runID, chatlessCoordinator{}, nil, repo, d, "sess-coord-fallback")
+	t.Cleanup(func() { orchestrate.RunHandlesForTest.Delete(runID) })
 
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-coord-fallback"})
 	tool := &runMessagesTool{dispatcher: d, cfg: cfg, repo: repo}
@@ -58,7 +58,7 @@ func TestRunMessagesFallsBackToInitCoordinator(t *testing.T) {
 	}
 }
 
-// resumeOnlyCoordinator implements exactly cliorchestrate.ResumeCoordinator:
+// resumeOnlyCoordinator implements exactly orchestrate.ResumeCoordinator:
 // it cannot be narrowed to OrchestrationCoordinator, which is the shape the
 // /resume defensive fallback must tolerate.
 type resumeOnlyCoordinator struct{}
@@ -74,10 +74,10 @@ func (resumeOnlyCoordinator) ResumeInterruptedRun(ctx context.Context, runID str
 // TestHandleSlashResumeRefusesResumeOnlyCoordinator covers the fail-closed
 // notice when the stored coordinator cannot serve the full resume surface.
 func TestHandleSlashResumeRefusesResumeOnlyCoordinator(t *testing.T) {
-	cliorchestrate.ClearAllCoordinators()
-	t.Cleanup(cliorchestrate.ClearAllCoordinators)
+	orchestrate.ClearAllCoordinators()
+	t.Cleanup(orchestrate.ClearAllCoordinators)
 	d := &runtime.Dispatcher{}
-	cleanup := cliorchestrate.StoreTestCoordinator(d, resumeOnlyCoordinator{}, ledger.NewMemoryLedgerRepository())
+	cleanup := orchestrate.StoreTestCoordinator(d, resumeOnlyCoordinator{}, ledger.NewMemoryLedgerRepository())
 	t.Cleanup(cleanup)
 
 	term := NewTestTerminal(&bytes.Buffer{})
@@ -94,11 +94,11 @@ func TestHandleSlashResumeRefusesResumeOnlyCoordinator(t *testing.T) {
 // OrchestrationCoordinator and reaches ResumeRun, which fails on the unknown
 // run id and renders the formatted resume error.
 func TestHandleSlashResumeReachesModuleResume(t *testing.T) {
-	cliorchestrate.ClearAllCoordinators()
-	t.Cleanup(cliorchestrate.ClearAllCoordinators)
+	orchestrate.ClearAllCoordinators()
+	t.Cleanup(orchestrate.ClearAllCoordinators)
 	d := &runtime.Dispatcher{}
 	repo := ledger.NewMemoryLedgerRepository()
-	cleanup := cliorchestrate.StoreTestCoordinator(d, coordinator.New(repo, nil), repo)
+	cleanup := orchestrate.StoreTestCoordinator(d, coordinator.New(repo, nil), repo)
 	t.Cleanup(cleanup)
 
 	term := NewTestTerminal(&bytes.Buffer{})

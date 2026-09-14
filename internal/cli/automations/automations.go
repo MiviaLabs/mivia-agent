@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -254,18 +254,18 @@ func installAutomationHooks(root string) (func(), error) {
 	return release, nil
 }
 
-// loadSessionSkillsFunc indirects cliagents.LoadSessionSkills so tests can
+// loadSessionSkillsFunc indirects agents.LoadSessionSkills so tests can
 // force a load failure. skills.LoadMarkdownSources' own contract makes a
 // real LoadSessionSkills error effectively unreachable in production (every
 // per-source failure is folded into a warning, not returned as an error;
 // see .mivia/policy/diff-coverage.json's entries for this class), so this
 // seam is the only way to exercise skillRegistrySource's error-reporting
 // path.
-var loadSessionSkillsFunc = cliagents.LoadSessionSkills
+var loadSessionSkillsFunc = agents.LoadSessionSkills
 
 // skillRegistrySource builds automation.Config.SkillRegistry's source:
 // the SAME loader the interactive session's own binding freezes in
-// (cliagents.LoadSessionSkills - the launch attach's skillRegFull path),
+// (agents.LoadSessionSkills - the launch attach's skillRegFull path),
 // project skills allowed because an automation's spec lives IN the
 // project and names project skills. The headless session composition
 // builds carries no skill registry of its own (composition.BuildSession
@@ -284,10 +284,10 @@ func skillRegistrySource(root string) func() *skills.Registry {
 			// package's existing warn/stderr path (the same one
 			// WarnSkillLoad and WarnAgentLoad use) so the operator sees
 			// why skills never loaded.
-			cliagents.WarnSkillLoad([]string{fmt.Sprintf("skill registry load failed: %v", err)})
+			agents.WarnSkillLoad([]string{fmt.Sprintf("skill registry load failed: %v", err)})
 			return nil
 		}
-		cliagents.WarnSkillLoad(warnings)
+		agents.WarnSkillLoad(warnings)
 		return reg
 	}
 }

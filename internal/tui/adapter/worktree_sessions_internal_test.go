@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -19,7 +19,7 @@ func TestLaunchCheckoutDir_FallsBackToAgentStateWhenNoPool(t *testing.T) {
 	// Built directly rather than via NewCommandRunner, which always
 	// constructs a live pool - this is the "hand-built runner" case the
 	// function's own doc comment describes, with r.pool genuinely nil.
-	r := &CommandRunner{agentState: &cliagents.AgentSessionState{WorkspaceRoot: dir}}
+	r := &CommandRunner{agentState: &agents.AgentSessionState{WorkspaceRoot: dir}}
 
 	got, err := r.launchCheckoutDir()
 	if err != nil {
@@ -56,7 +56,7 @@ func TestLaunchCheckoutDir_AbsErrorSurfaces(t *testing.T) {
 		t.Skip("platform still resolves an absolute path from a removed working directory")
 	}
 
-	pool := NewSessionPool(nil, &config.Resolved{}, &cliagents.AgentSessionState{WorkspaceRoot: "relative-root"}, false)
+	pool := NewSessionPool(nil, &config.Resolved{}, &agents.AgentSessionState{WorkspaceRoot: "relative-root"}, false)
 	r := NewCommandRunnerWithPool(nil, pool, &config.Resolved{}, nil)
 
 	if _, err := r.launchCheckoutDir(); err == nil {

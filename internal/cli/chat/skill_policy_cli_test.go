@@ -1,7 +1,7 @@
 package chat
 
 // skill_policy_cli_test.go contains the skill policy tests that need internal
-// cli types (cliorchestrate.DispatchTasksToolForTest, gatedSkillHandler, agentTaskHandler). These
+// cli types (orchestrate.DispatchTasksToolForTest, gatedSkillHandler, agentTaskHandler). These
 // tests were separated from internal/cli/agents/agent_skill_policy_test.go
 // because the cli-internal types they exercise cannot be accessed from
 // outside the cli package.
@@ -9,7 +9,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 
@@ -61,8 +61,8 @@ func TestSkillCannotBypassAgentSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := cliorchestrate.NewDispatchTasksToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
-	_, err := tool.BuildTasksForTest([]cliorchestrate.DispatchTaskParamForTest{{
+	tool := orchestrate.NewDispatchTasksToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
+	_, err := tool.BuildTasksForTest([]orchestrate.DispatchTaskParamForTest{{
 		ID: "t1", Prompt: "audit", Agent: "locked", Skill: "bug-audit",
 	}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
@@ -115,8 +115,8 @@ func TestRouteTimeRejectsSkillWithUnmetTool(t *testing.T) {
 	}
 	skillReg := skills.NewRegistry()
 	_ = skillReg.Register(skills.Definition{Name: "audit", Tools: []string{"read_file", "run_command"}})
-	tool := cliorchestrate.NewDispatchTasksToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
-	_, err := tool.BuildTasksForTest([]cliorchestrate.DispatchTaskParamForTest{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
+	tool := orchestrate.NewDispatchTasksToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
+	_, err := tool.BuildTasksForTest([]orchestrate.DispatchTaskParamForTest{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "run_command") {
 		t.Fatalf("route-time must reject unmet skill tool, got %v", err)
 	}

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -420,14 +420,14 @@ func TestBuildWorkflowControllerRegistersChildRunsUnderOwnerSession(t *testing.T
 	sessionRepo := ledger.NewMemoryLedgerRepository()
 	built := newChildRunFixture(t, "wfr-child-register", owner, sessionRepo)
 	childRunID := ensureWorkflowChildRun(t, built, coordinator.NewRunID())
-	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete(childRunID) })
+	t.Cleanup(func() { orchestrate.RunHandlesForTest.Delete(childRunID) })
 
 	// Repo-of-record is the SESSION's repo, not the workflow run's own.
-	raw, ok := cliorchestrate.RunHandlesForTest.Load(childRunID)
+	raw, ok := orchestrate.RunHandlesForTest.Load(childRunID)
 	if !ok {
 		t.Fatal("registered child record is missing")
 	}
-	if stamped := cliorchestrate.RepoOfHandle(raw.(*cliorchestrate.OrchestrationHandleForTest)); stamped != sessionRepo {
+	if stamped := orchestrate.RepoOfHandle(raw.(*orchestrate.OrchestrationHandleForTest)); stamped != sessionRepo {
 		t.Fatalf("record repo = %T@%v, want the owning session's repo instance", stamped, stamped)
 	}
 
@@ -436,7 +436,7 @@ func TestBuildWorkflowControllerRegistersChildRunsUnderOwnerSession(t *testing.T
 	// all belong to the workflow run's own wiring.
 	dispatcher := built.Dispatcher.(*runtime.Dispatcher)
 	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: owner})
-	record, errJSON := cliorchestrate.AccessibleOrchestrationHandle(ownerCtx, childRunID, dispatcher, sessionRepo)
+	record, errJSON := orchestrate.AccessibleOrchestrationHandle(ownerCtx, childRunID, dispatcher, sessionRepo)
 	if errJSON != "" {
 		t.Fatalf("accessible handle errJSON = %q, want resolution for the owning session", errJSON)
 	}
@@ -449,12 +449,12 @@ func TestBuildWorkflowControllerRegistersChildRunsUnderOwnerSession(t *testing.T
 
 	// Foreign session: unknown and inaccessible are indistinguishable.
 	foreignCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-other"})
-	if _, unknown := cliorchestrate.AccessibleOrchestrationHandle(foreignCtx, childRunID, dispatcher, sessionRepo); unknown != `{"error":"unknown run_id"}` {
+	if _, unknown := orchestrate.AccessibleOrchestrationHandle(foreignCtx, childRunID, dispatcher, sessionRepo); unknown != `{"error":"unknown run_id"}` {
 		t.Fatalf("foreign session errJSON = %q, want the one unknown envelope", unknown)
 	}
 	// A third repo instance (neither the session's nor matching anything on
 	// the record) is locked out too: instance equality still gates access.
-	if _, unknown := cliorchestrate.AccessibleOrchestrationHandle(ownerCtx, childRunID, dispatcher, ledger.NewMemoryLedgerRepository()); unknown != `{"error":"unknown run_id"}` {
+	if _, unknown := orchestrate.AccessibleOrchestrationHandle(ownerCtx, childRunID, dispatcher, ledger.NewMemoryLedgerRepository()); unknown != `{"error":"unknown run_id"}` {
 		t.Fatalf("foreign repo errJSON = %q, want the one unknown envelope", unknown)
 	}
 }
@@ -493,8 +493,8 @@ func TestBuildWorkflowControllerSkipsChildRunRegistrationWithoutOwner(t *testing
 	if err != nil {
 		t.Fatalf("EnsureRun() error = %v", err)
 	}
-	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete(h.RunID()) })
-	if _, ok := cliorchestrate.RunHandlesForTest.Load(h.RunID()); ok {
+	t.Cleanup(func() { orchestrate.RunHandlesForTest.Delete(h.RunID()) })
+	if _, ok := orchestrate.RunHandlesForTest.Load(h.RunID()); ok {
 		t.Fatal("a no-owner run registered a child record; the fail-closed rule is broken")
 	}
 }

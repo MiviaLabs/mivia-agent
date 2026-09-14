@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
@@ -50,24 +50,24 @@ func newPoolWithAgentState(t *testing.T, launchRoot string) (*SessionPool, *chat
 	// The dispatcher seam is wired at process start by internal/cli; this
 	// package's tests run without that wiring, so mirror it here (the same
 	// shape the production TUI binary installs).
-	prevDispatcher := cliagents.NewSessionDispatcherVar
-	prevSpool := cliagents.RemainderSpoolFromRegistryVar
+	prevDispatcher := agents.NewSessionDispatcherVar
+	prevSpool := agents.RemainderSpoolFromRegistryVar
 	prevHooksConfigured := clichat.HookSessionConfiguredFunc
 	prevHookState := clichat.CurrentHookSessionFunc
-	cliagents.NewSessionDispatcherVar = clichat.NewSessionDispatcher
-	cliagents.RemainderSpoolFromRegistryVar = clichat.RemainderSpoolFromRegistry
+	agents.NewSessionDispatcherVar = clichat.NewSessionDispatcher
+	agents.RemainderSpoolFromRegistryVar = clichat.RemainderSpoolFromRegistry
 	clichat.HookSessionConfiguredFunc = func() bool { return false }
 	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState { return stubHookSession{} }
 	t.Cleanup(func() {
-		cliagents.NewSessionDispatcherVar = prevDispatcher
-		cliagents.RemainderSpoolFromRegistryVar = prevSpool
+		agents.NewSessionDispatcherVar = prevDispatcher
+		agents.RemainderSpoolFromRegistryVar = prevSpool
 		clichat.HookSessionConfiguredFunc = prevHooksConfigured
 		clichat.CurrentHookSessionFunc = prevHookState
 	})
 	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
 	sess := chat.NewSession(res, fallbackCompleter{providerName: "fake"})
 	sess.SessionID = "session-main"
-	state := &cliagents.AgentSessionState{
+	state := &agents.AgentSessionState{
 		WorkspaceRoot: launchRoot,
 		SkillRegFull:  skills.NewRegistry(),
 	}

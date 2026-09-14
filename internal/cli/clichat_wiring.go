@@ -6,23 +6,23 @@ package cli
 // the cli router while the chat domain moved to internal/cli/chat.
 
 import (
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
 
 func init() {
-	clichat.FlagValueFunc = flagValue
-	clichat.FlagVarFunc = flagVar
-	clichat.InstallHookSessionFunc = installHookSession
-	// hooksession.Session already implements clichat.HookSessionState
+	chat.FlagValueFunc = flagValue
+	chat.FlagVarFunc = flagVar
+	chat.InstallHookSessionFunc = installHookSession
+	// hooksession.Session already implements chat.HookSessionState
 	// (RunnableGroups, NoteRunWarnings), so no adapter type is needed here.
-	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState { return hooksession.Current() }
-	clichat.HookSessionConfiguredFunc = hookSessionConfigured
-	clichat.HandleSlashHooksFunc = handleSlashHooks
-	clichat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }
-	clichat.MemoryConfigOfFunc = func(state *AgentSessionState) config.MemoryConfig {
+	chat.CurrentHookSessionFunc = func() chat.HookSessionState { return hooksession.Current() }
+	chat.HookSessionConfiguredFunc = hookSessionConfigured
+	chat.HandleSlashHooksFunc = handleSlashHooks
+	chat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }
+	chat.MemoryConfigOfFunc = func(state *AgentSessionState) config.MemoryConfig {
 		return memoryConfigOf(state)
 	}
 }

@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"testing"
 	"time"
 
@@ -15,11 +15,11 @@ import (
 )
 
 // fakeCoordinatorForResume implements the coordinator surface the resume
-// paths touch for testing. The embedded cliorchestrate.OrchestrationCoordinator
+// paths touch for testing. The embedded orchestrate.OrchestrationCoordinator
 // fills the members these tests never call; only the overrides below carry
 // behavior.
 type fakeCoordinatorForResume struct {
-	cliorchestrate.OrchestrationCoordinator
+	orchestrate.OrchestrationCoordinator
 	resumeFunc      func(ctx context.Context, runID string) (*coordinator.RunHandle, error)
 	listInterrupted func(ctx context.Context) ([]coordinator.RecoveredRun, error)
 	subscribeFn     func(fn coordinator.LifecycleSubscriber) func()
@@ -88,10 +88,10 @@ func TestResumeRunListsInterruptedRuns(t *testing.T) {
 	}
 }
 
-// initResumeTestStoreHandle creates a minimal cliorchestrate.OrchestrationHandleForTest record
-// and stores it in the cliorchestrate.RunHandlesForTest map for testing.
-func initResumeTestStoreHandle(runID string, record *cliorchestrate.OrchestrationHandleForTest) {
-	cliorchestrate.RunHandlesForTest.Store(runID, record)
+// initResumeTestStoreHandle creates a minimal orchestrate.OrchestrationHandleForTest record
+// and stores it in the orchestrate.RunHandlesForTest map for testing.
+func initResumeTestStoreHandle(runID string, record *orchestrate.OrchestrationHandleForTest) {
+	orchestrate.RunHandlesForTest.Store(runID, record)
 }
 
 // withActiveSession mirrors production: the CLI surfaces pass a bare context and
@@ -100,14 +100,14 @@ func initResumeTestStoreHandle(runID string, record *cliorchestrate.Orchestratio
 // production never takes.
 func withActiveSession(t *testing.T, sessionID string) {
 	t.Helper()
-	prev := cliorchestrate.ActiveSessionCallerForTest()
-	cliorchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: sessionID})
+	prev := orchestrate.ActiveSessionCallerForTest()
+	orchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: sessionID})
 	t.Cleanup(func() {
 		if prev != nil {
-			cliorchestrate.SetActiveSessionCaller(*prev)
+			orchestrate.SetActiveSessionCaller(*prev)
 			return
 		}
-		cliorchestrate.SetActiveSessionCaller(runtime.Caller{})
+		orchestrate.SetActiveSessionCaller(runtime.Caller{})
 	})
 }
 
@@ -182,17 +182,17 @@ func TestResumeRunRefusesUnresumableRun(t *testing.T) {
 // This is the load-bearing test: M1 and M2 mutations must fail it.
 //
 // M1 (skip handle registration / skip Delete): the test pre-populates
-// cliorchestrate.RunHandlesForTest with a dummy handle before ResumeRun. If cliorchestrate.RunHandlesForTest.Delete
+// orchestrate.RunHandlesForTest with a dummy handle before ResumeRun. If orchestrate.RunHandlesForTest.Delete
 // or Store is not called, the old handle remains and the assertion on
 // the stored record's principal fails.
 //
 // M2 (register with persisted principal): the test asserts the stored
 // handle's principal sessionID is the RESUMING caller's, not the original's.
 func TestResumeRunRegistersHandleWithResumingPrincipal(t *testing.T) {
-	// Pre-populate cliorchestrate.RunHandlesForTest with a dummy handle for this runID to catch
-	// M1: if ResumeRun skips cliorchestrate.RunHandlesForTest.Delete, the old handle survives
+	// Pre-populate orchestrate.RunHandlesForTest with a dummy handle for this runID to catch
+	// M1: if ResumeRun skips orchestrate.RunHandlesForTest.Delete, the old handle survives
 	// and the new one (with the resuming principal) is never stored.
-	cliorchestrate.StoreHandleForPrincipal("run-to-resume", "old-session", "user")
+	orchestrate.StoreHandleForPrincipal("run-to-resume", "old-session", "user")
 
 	// Create a minimal RunHandle.
 	handle := &coordinator.RunHandle{}
@@ -216,28 +216,28 @@ func TestResumeRunRegistersHandleWithResumingPrincipal(t *testing.T) {
 		t.Fatalf("ResumeRun: %v", err)
 	}
 	if record == nil {
-		t.Fatal("expected non-nil cliorchestrate.OrchestrationHandleForTest record")
+		t.Fatal("expected non-nil orchestrate.OrchestrationHandleForTest record")
 	}
-	if cliorchestrate.PrincipalSessionIDOfHandle(record) != "resume-session-1" {
-		t.Fatalf("expected principal sessionID 'resume-session-1', got %q", cliorchestrate.PrincipalSessionIDOfHandle(record))
+	if orchestrate.PrincipalSessionIDOfHandle(record) != "resume-session-1" {
+		t.Fatalf("expected principal sessionID 'resume-session-1', got %q", orchestrate.PrincipalSessionIDOfHandle(record))
 	}
 
 	// Verify the handle is in the map with the RESUMING principal (M1 catch).
-	loaded, ok := cliorchestrate.RunHandlesForTest.Load("run-to-resume")
+	loaded, ok := orchestrate.RunHandlesForTest.Load("run-to-resume")
 	if !ok {
-		t.Fatal("run handle not found in cliorchestrate.RunHandlesForTest map after resume")
+		t.Fatal("run handle not found in orchestrate.RunHandlesForTest map after resume")
 	}
-	loadedRecord, ok := loaded.(*cliorchestrate.OrchestrationHandleForTest)
+	loadedRecord, ok := loaded.(*orchestrate.OrchestrationHandleForTest)
 	if !ok {
-		t.Fatal("loaded value is not an cliorchestrate.OrchestrationHandleForTest")
+		t.Fatal("loaded value is not an orchestrate.OrchestrationHandleForTest")
 	}
-	if got := cliorchestrate.PrincipalSessionIDOfHandle(loadedRecord); got != "resume-session-1" {
+	if got := orchestrate.PrincipalSessionIDOfHandle(loadedRecord); got != "resume-session-1" {
 		t.Fatalf("stored handle principal = %q (old=\"old-session\"), want %q (resuming caller)",
 			got, "resume-session-1")
 	}
 
 	// Cleanup.
-	cliorchestrate.RunHandlesForTest.Delete("run-to-resume")
+	orchestrate.RunHandlesForTest.Delete("run-to-resume")
 }
 
 // TestResumeConfirmationShowsWhatWillReRun verifies that the confirmation
@@ -291,8 +291,8 @@ func TestResumeConfirmationHandlesEmptyFields(t *testing.T) {
 // ensureCleanRunHandles cleans up any test residues.
 func init() {
 	// Clean up any handles left by other tests that might interfere.
-	cliorchestrate.RunHandlesForTest.Range(func(key, _ any) bool {
-		cliorchestrate.RunHandlesForTest.Delete(key)
+	orchestrate.RunHandlesForTest.Range(func(key, _ any) bool {
+		orchestrate.RunHandlesForTest.Delete(key)
 		return true
 	})
 }
@@ -323,22 +323,22 @@ func newResumeFake(runID string) *fakeCoordinatorForResume {
 
 func TestResumeFromCLISurfaceUsesSessionPrincipal(t *testing.T) {
 	withActiveSession(t, "chat-session-1")
-	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete("run-cli") })
+	t.Cleanup(func() { orchestrate.RunHandlesForTest.Delete("run-cli") })
 
 	// Bare context, exactly as handleSlashResume and the dashboard key pass it.
 	record, err := ResumeRun(context.Background(), newResumeFake("run-cli"), nil, "run-cli", nil)
 	if err != nil {
 		t.Fatalf("ResumeRun: %v", err)
 	}
-	if cliorchestrate.PrincipalSessionIDOfHandle(record) != "chat-session-1" {
+	if orchestrate.PrincipalSessionIDOfHandle(record) != "chat-session-1" {
 		t.Fatalf("handle principal = %q, want the chat session %q (an ephemeral principal makes the run unreachable)",
-			cliorchestrate.PrincipalSessionIDOfHandle(record), "chat-session-1")
+			orchestrate.PrincipalSessionIDOfHandle(record), "chat-session-1")
 	}
-	stored, ok := cliorchestrate.RunHandlesForTest.Load("run-cli")
+	stored, ok := orchestrate.RunHandlesForTest.Load("run-cli")
 	if !ok {
 		t.Fatal("resumed handle not registered")
 	}
-	if got := cliorchestrate.PrincipalSessionIDOfHandle(stored.(*cliorchestrate.OrchestrationHandleForTest)); got != "chat-session-1" {
+	if got := orchestrate.PrincipalSessionIDOfHandle(stored.(*orchestrate.OrchestrationHandleForTest)); got != "chat-session-1" {
 		t.Fatalf("stored principal = %q, want %q", got, "chat-session-1")
 	}
 }
@@ -347,7 +347,7 @@ func TestResumeFromCLISurfaceUsesSessionPrincipal(t *testing.T) {
 // principal cannot. Asserts enforcement, not just the stored field value.
 func TestResumedHandleRejectsForeignPrincipal(t *testing.T) {
 	withActiveSession(t, "owner-session")
-	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete("run-owned") })
+	t.Cleanup(func() { orchestrate.RunHandlesForTest.Delete("run-owned") })
 
 	record, err := ResumeRun(context.Background(), newResumeFake("run-owned"), nil, "run-owned", nil)
 	if err != nil {
@@ -355,11 +355,11 @@ func TestResumedHandleRejectsForeignPrincipal(t *testing.T) {
 	}
 
 	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "owner-session"})
-	if !cliorchestrate.OrchestrationHandleAccessibleForTest(ownerCtx, record, cliorchestrate.DispatcherOfHandle(record), cliorchestrate.RepoOfHandle(record)) {
+	if !orchestrate.OrchestrationHandleAccessibleForTest(ownerCtx, record, orchestrate.DispatcherOfHandle(record), orchestrate.RepoOfHandle(record)) {
 		t.Fatal("resuming session must be able to reach the run it resumed")
 	}
 	foreignCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "other-session"})
-	if cliorchestrate.OrchestrationHandleAccessibleForTest(foreignCtx, record, cliorchestrate.DispatcherOfHandle(record), cliorchestrate.RepoOfHandle(record)) {
+	if orchestrate.OrchestrationHandleAccessibleForTest(foreignCtx, record, orchestrate.DispatcherOfHandle(record), orchestrate.RepoOfHandle(record)) {
 		t.Fatal("a foreign principal must not reach another session's resumed run")
 	}
 }

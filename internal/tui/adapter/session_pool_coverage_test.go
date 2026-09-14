@@ -13,7 +13,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
@@ -55,7 +55,7 @@ func TestSessionBindingFactory_RetriesWithConfiguredModelWhileLoading(t *testing
 
 	res := &config.Resolved{ProviderName: "configured-provider", Model: "configured-model"}
 	var calls []string
-	buildModelBindingVar = func(_ *chat.Session, res *config.Resolved, _, providerName, model string, _ *cliagents.AgentSessionState) (chat.ModelBinding, error) {
+	buildModelBindingVar = func(_ *chat.Session, res *config.Resolved, _, providerName, model string, _ *agents.AgentSessionState) (chat.ModelBinding, error) {
 		calls = append(calls, providerName+"/"+model)
 		if providerName == res.ProviderName && model == res.Model {
 			return chat.ModelBinding{ProviderName: providerName, Model: model}, nil
@@ -252,7 +252,7 @@ func TestSessionPool_StartBackgroundWatchDeliversRealInput(t *testing.T) {
 	res := backfillTestRes(server.URL)
 	res.Sync.BackgroundWatchMax = 8
 
-	pool := NewSessionPool(seed, res, &cliagents.AgentSessionState{WorkspaceRoot: wsRoot}, false)
+	pool := NewSessionPool(seed, res, &agents.AgentSessionState{WorkspaceRoot: wsRoot}, false)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

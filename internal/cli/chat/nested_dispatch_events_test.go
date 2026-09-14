@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -79,7 +79,7 @@ func (c *nestedDispatchScriptCompleter) ChatTurn(ctx context.Context, req provid
 // only way a spawned multi_step loop can reach a nested dispatch, given the
 // compiled denylist.
 type nestedDispatchWrapperTool struct {
-	inner *cliorchestrate.DispatchTasksToolForTest
+	inner *orchestrate.DispatchTasksToolForTest
 }
 
 func (t *nestedDispatchWrapperTool) Name() string        { return "nested_dispatch" }
@@ -152,7 +152,7 @@ func runNestedDispatchEventProbe(t *testing.T) ([]agent.Event, ledger.LedgerRepo
 		t.Fatal(err)
 	}
 
-	nestedTool := cliorchestrate.NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "leaf"))
+	nestedTool := orchestrate.NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "leaf"))
 	reg := tools.NewRegistry()
 	reg.Register(&nestedDispatchWrapperTool{inner: nestedTool})
 
@@ -171,7 +171,7 @@ func runNestedDispatchEventProbe(t *testing.T) ([]agent.Event, ledger.LedgerRepo
 	if err := d.Register(runtime.Subagent, "midagent", handler); err != nil {
 		t.Fatal(err)
 	}
-	outer := cliorchestrate.NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "midagent"))
+	outer := orchestrate.NewDispatchTasksToolConfigured(d, cfg, repo, testAgentRegistry(t, "midagent"))
 
 	done := make(chan nestedDispatchEventProbeExecResult, 1)
 	ctx, cancel := context.WithTimeout(

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -118,7 +118,7 @@ func TestR4DoctorLoopbackLocalhostKeyless(t *testing.T) {
 	cfgPath := writeOllamaDoctorConfig(t, "http://localhost:11434/v1")
 	t.Setenv("OLLAMA_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	if err := cliorchestrate.RunDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr); err != nil {
+	if err := orchestrate.RunDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr); err != nil {
 		t.Fatalf("doctor error for loopback ollama = %v (want ok)", err)
 	}
 	out := stdout.String()
@@ -142,7 +142,7 @@ func TestR4DoctorCloudNoKeyReportsMissing(t *testing.T) {
 	cfgPath := writeOllamaDoctorConfig(t, "https://ollama.com/v1")
 	t.Setenv("OLLAMA_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	err := cliorchestrate.RunDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr)
+	err := orchestrate.RunDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("doctor must report a non-ok status for cloud ollama with no key")
 	}

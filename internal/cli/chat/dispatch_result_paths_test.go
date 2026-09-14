@@ -7,7 +7,7 @@ package chat
 
 import (
 	"fmt"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 
@@ -48,7 +48,7 @@ func TestEncodeDispatchResultAlwaysCarriesASchemaVerdict(t *testing.T) {
 		TaskID: "t1",
 		Err:    fmt.Errorf("subagent: %w", subagents.ErrSchemaViolation),
 	}
-	tr := cliorchestrate.EncodeOneDispatchResult(result, nil, 0)
+	tr := orchestrate.EncodeOneDispatchResult(result, nil, 0)
 	if tr.Reason != "schema_violation" {
 		t.Fatalf("reason = %q, want schema_violation", tr.Reason)
 	}

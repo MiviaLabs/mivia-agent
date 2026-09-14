@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -19,7 +19,7 @@ import (
 // it admits tasks with BOTH a real, namespaced id and the RawID
 // subagents.Task.RawID field dispatch_tasks' buildTasks actually sets
 // (internal/cli/orchestrate/dispatch.go), the shape resolveSendTargetTaskID/
-// cliorchestrate.ResolveTaskID resolve against. spawnBroadcastRun's tasks
+// orchestrate.ResolveTaskID resolve against. spawnBroadcastRun's tasks
 // never set RawID (it constructs Task{ID: id} directly, bypassing
 // dispatch_tasks), so it cannot exercise this resolution path.
 func spawnNamespacedRun(t *testing.T, pairs map[string]string) *broadcastRun {
@@ -54,11 +54,11 @@ func spawnNamespacedRun(t *testing.T, pairs map[string]string) *broadcastRun {
 	}
 	pool := subagents.New(d, subagents.Policy{Workers: 2})
 	c := coordinator.New(repo, pool)
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	tasks := make([]subagents.Task, 0, len(pairs))
 	for realID, rawID := range pairs {
@@ -74,9 +74,9 @@ func spawnNamespacedRun(t *testing.T, pairs map[string]string) *broadcastRun {
 	}
 	runID := snap.RunID
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-namespaced"})
-	cliorchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-namespaced")
+	orchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-namespaced")
 	t.Cleanup(func() {
-		cliorchestrate.RunHandlesForTest.Delete(runID)
+		orchestrate.RunHandlesForTest.Delete(runID)
 	})
 	tool := &sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo}
 	return &broadcastRun{

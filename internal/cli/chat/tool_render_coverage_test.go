@@ -5,7 +5,7 @@ package chat
 // runtime path.
 
 import (
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -153,7 +153,7 @@ func TestToolIconForName(t *testing.T) {
 }
 
 func TestSummarizeAgentToolAndSummarizeDelegate(t *testing.T) {
-	if got := summarizeAgentTool(cliorchestrate.HandlerDelegate, "do thing", "did thing"); got == "" {
+	if got := summarizeAgentTool(orchestrate.HandlerDelegate, "do thing", "did thing"); got == "" {
 		t.Fatal("summarizeAgentTool must not be empty")
 	}
 	if got := summarizeDelegate("task one", "result one"); got == "" {

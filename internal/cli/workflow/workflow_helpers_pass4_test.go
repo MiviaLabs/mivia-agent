@@ -3,7 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"io"
 	"os"
 	"path/filepath"
@@ -494,8 +494,8 @@ func runEarlyWorkflowBuildFailureTests(t *testing.T, sentinel error, reset func(
 	})
 	t.Run("agents", func(t *testing.T) {
 		reset()
-		workflowBuildLoadAgents = func(string, string, *skills.Registry) (cliagents.AgentLoadResult, error) {
-			return cliagents.AgentLoadResult{}, sentinel
+		workflowBuildLoadAgents = func(string, string, *skills.Registry) (agents.AgentLoadResult, error) {
+			return agents.AgentLoadResult{}, sentinel
 		}
 		check(t)
 	})
@@ -540,7 +540,7 @@ func runLateWorkflowBuildFailureTests(t *testing.T, sentinel error, reset func()
 	})
 	t.Run("dispatcher", func(t *testing.T) {
 		reset()
-		WorkflowBuildDispatcher = func(cliagents.SessionDispatcherOpts) (*workflowruntime.Dispatcher, error) { return nil, sentinel }
+		WorkflowBuildDispatcher = func(agents.SessionDispatcherOpts) (*workflowruntime.Dispatcher, error) { return nil, sentinel }
 		check(t)
 	})
 	t.Run("controller", func(t *testing.T) {

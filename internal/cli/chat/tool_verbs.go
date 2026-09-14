@@ -2,7 +2,7 @@ package chat
 
 import (
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -34,9 +34,9 @@ func toolVerb(name string) string {
 		return "Listing"
 	case "run_command":
 		return "Running"
-	case cliorchestrate.HandlerDelegate:
+	case orchestrate.HandlerDelegate:
 		return "Delegating"
-	case cliorchestrate.ToolDispatchTasks:
+	case orchestrate.ToolDispatchTasks:
 		return "Dispatching tasks"
 	case "parallel":
 		return "Running tools in parallel"
@@ -105,7 +105,7 @@ func toolObjectFromDetail(name, detail string) string {
 			return capRunes(s, 40)
 		}
 	}
-	if name == cliorchestrate.HandlerDelegate || name == cliorchestrate.ToolDispatchTasks {
+	if name == orchestrate.HandlerDelegate || name == orchestrate.ToolDispatchTasks {
 		if s := jsonStringField(detail, "task"); s != "" {
 			return capRunes(s, 40)
 		}

@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -341,35 +341,35 @@ func handleSlashResume(cmd string, fields []string, term *Terminal) (bool, bool,
 	}
 	if len(fields) < 2 {
 		// No argument: list interrupted runs.
-		c := cliorchestrate.FindCoordinator()
+		c := orchestrate.FindCoordinator()
 		if c == nil {
 			term.WriteString("\nno active orchestration runs")
 			return true, false, nil
 		}
-		runs, err := cliorchestrate.ListInterruptedRuns(context.Background(), c)
+		runs, err := orchestrate.ListInterruptedRuns(context.Background(), c)
 		if err != nil {
 			term.WriteString(fmt.Sprintf("\nerror: %v", err))
 			return true, false, nil
 		}
-		term.WriteString("\n" + cliorchestrate.FormatListedRuns(runs))
+		term.WriteString("\n" + orchestrate.FormatListedRuns(runs))
 		return true, false, nil
 	}
 	// With a run ID: show confirmation and resume.
 	runID := fields[1]
-	c := cliorchestrate.FindCoordinator()
+	c := orchestrate.FindCoordinator()
 	if c == nil {
 		term.WriteString("\nno active orchestration runs")
 		return true, false, nil
 	}
-	d := cliorchestrate.FindDispatcher()
-	oc, ok := c.(cliorchestrate.OrchestrationCoordinator)
+	d := orchestrate.FindDispatcher()
+	oc, ok := c.(orchestrate.OrchestrationCoordinator)
 	if !ok {
 		term.WriteString("\nno active orchestration runs")
 		return true, false, nil
 	}
-	_, err := cliorchestrate.ResumeRun(context.Background(), oc, d, runID, nil)
+	_, err := orchestrate.ResumeRun(context.Background(), oc, d, runID, nil)
 	if err != nil {
-		term.WriteString(fmt.Sprintf("\n%v", cliorchestrate.FormatResumeError(err, runID)))
+		term.WriteString(fmt.Sprintf("\n%v", orchestrate.FormatResumeError(err, runID)))
 		return true, false, nil
 	}
 	term.WriteString(fmt.Sprintf("\nrun %s resumed", runID))

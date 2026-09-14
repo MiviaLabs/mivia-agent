@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -44,13 +44,13 @@ func startBlockedOrchestration(t *testing.T, sessionID string) (release func()) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	cliorchestrate.StoreTestRunHandle(snap.RunID, c, h, repo, dispatcher, sessionID)
+	orchestrate.StoreTestRunHandle(snap.RunID, c, h, repo, dispatcher, sessionID)
 	closed := false
 	t.Cleanup(func() {
 		if !closed {
 			close(gate)
 		}
-		cliorchestrate.RunHandlesForTest.Delete(snap.RunID)
+		orchestrate.RunHandlesForTest.Delete(snap.RunID)
 	})
 	return func() {
 		if closed {

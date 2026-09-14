@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -879,7 +879,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	cliworkflow.WorkflowBuildLoadSkills = func(string) (*skills.Registry, error) {
 		return skills.NewRegistry(), nil
 	}
-	cliworkflow.WorkflowBuildDispatcher = func(opts cliagents.SessionDispatcherOpts) (*runtime.Dispatcher, error) {
+	cliworkflow.WorkflowBuildDispatcher = func(opts agents.SessionDispatcherOpts) (*runtime.Dispatcher, error) {
 		d := runtime.New(runtime.Policy{})
 		if opts.AgentRegistry != nil {
 			for _, agent := range opts.AgentRegistry.List() {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -17,15 +17,15 @@ import (
 var unusableRoot = string([]byte{0})
 
 func TestBuildToolsForRoot_WorkspaceFailurePropagates(t *testing.T) {
-	prev := cliagents.WireWorkflowToolOptionsVar
-	cliagents.WireWorkflowToolOptionsVar = func(
+	prev := agents.WireWorkflowToolOptionsVar
+	agents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool,
 		ledger.LedgerRepository,
 	) {
 	}
-	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
+	t.Cleanup(func() { agents.WireWorkflowToolOptionsVar = prev })
 
-	reg, closeFn, err := cliagents.BuildToolsForRoot(unusableRoot, t.TempDir(), false, &config.Resolved{}, cliagents.SessionRootWiring{})
+	reg, closeFn, err := agents.BuildToolsForRoot(unusableRoot, t.TempDir(), false, &config.Resolved{}, agents.SessionRootWiring{})
 	if err == nil {
 		t.Fatal("expected workspace-open failure")
 	}
@@ -42,7 +42,7 @@ func TestBuildToolsForRoot_WorkspaceFailurePropagates(t *testing.T) {
 func TestBuildToolsForRoot_MemoryDegradesAndHappyPath(t *testing.T) {
 	wsRoot := t.TempDir()
 	memRoot := filepath.Join(wsRoot, ".mivia") // parent exists; store opens/creates fine
-	happyReg, closeFn, err := cliagents.BuildToolsForRoot(wsRoot, memRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
+	happyReg, closeFn, err := agents.BuildToolsForRoot(wsRoot, memRoot, false, &config.Resolved{}, agents.SessionRootWiring{})
 	if err != nil {
 		t.Fatalf("happy path: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestBuildToolsForRoot_MemoryDegradesAndHappyPath(t *testing.T) {
 	if _, probeErr := filepath.Abs(nulMemRoot); probeErr != nil {
 		t.Skipf("platform rejects a NUL path before the store can degrade: %v", probeErr)
 	}
-	degradedReg, degradedClose, derr := cliagents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, cliagents.SessionRootWiring{})
+	degradedReg, degradedClose, derr := agents.BuildToolsForRoot(wsRoot, nulMemRoot, false, &config.Resolved{}, agents.SessionRootWiring{})
 	if derr != nil {
 		t.Fatalf("unusable memory path must degrade, not fail wiring: %v", derr)
 	}

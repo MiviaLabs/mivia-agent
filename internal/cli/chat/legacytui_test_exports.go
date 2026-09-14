@@ -12,8 +12,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -92,7 +92,7 @@ func FormatUserMessageCard(text string, width int, sentAt time.Time) []string {
 
 // OrchestrationSwitchGuard is orchestrationSwitchGuard, exported for internal/legacytui.
 func OrchestrationSwitchGuard(sessionID string) func() error {
-	return cliorchestrate.OrchestrationSwitchGuard(sessionID)
+	return orchestrate.OrchestrationSwitchGuard(sessionID)
 }
 
 // AttachSessionDispatcher is attachSessionDispatcher, exported for internal/legacytui.
@@ -120,9 +120,9 @@ func NewSessionDispatcherMinimal(reg *tools.Registry, comp provider.Completer, m
 	return newSessionDispatcherMinimal(reg, comp, model, cfg, toolResultCapBytes, skillReg...)
 }
 
-// ResolveTaskRoute is cliorchestrate.ResolveTaskRoute, exported for internal/legacytui.
-func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agentName, skillName string) (cliorchestrate.TaskRoute, error) {
-	return cliorchestrate.ResolveTaskRoute(reg, skillReg, agentName, skillName)
+// ResolveTaskRoute is orchestrate.ResolveTaskRoute, exported for internal/legacytui.
+func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agentName, skillName string) (orchestrate.TaskRoute, error) {
+	return orchestrate.ResolveTaskRoute(reg, skillReg, agentName, skillName)
 }
 
 // RepositorySessionStorePath is repositorySessionStorePath, exported for internal/legacytui.
@@ -150,9 +150,9 @@ func RecoverManagedWorktreeRemoval(root, name, branchPrefix string) (bool, error
 	return cliworktree.RecoverManagedWorktreeRemoval(root, name, branchPrefix)
 }
 
-// OpenWorkflowStore is cliworkflow.OpenWorkflowStore, exported for internal/legacytui.
+// OpenWorkflowStore is workflow.OpenWorkflowStore, exported for internal/legacytui.
 func OpenWorkflowStore(root string, cfg config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
-	return cliworkflow.OpenWorkflowStore(root, cfg)
+	return workflow.OpenWorkflowStore(root, cfg)
 }
 
 // OneShot is oneShot, exported for internal/legacytui.
@@ -195,9 +195,9 @@ func BuildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	return cliagents.BuildModelBinding(sess, res, root, providerName, model, state)
 }
 
-// ApplyWorkflowStoreRoot is cliworkflow.ApplyWorkflowStoreRoot, exported for internal/legacytui.
+// ApplyWorkflowStoreRoot is workflow.ApplyWorkflowStoreRoot, exported for internal/legacytui.
 func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
-	cliworkflow.ApplyWorkflowStoreRoot(res, root)
+	workflow.ApplyWorkflowStoreRoot(res, root)
 }
 
 // ApplyPrivacyPolicy is applyPrivacyPolicy, exported for internal/legacytui.
@@ -279,10 +279,10 @@ func ContextDispatcherFor(sess *chat.Session, cfg config.SubagentConfig) Context
 	return contextDispatcherFor(sess, cfg)
 }
 
-// OrchestrationRepoForDispatcher is cliorchestrate.OrchestrationRepoForDispatcher, exported
+// OrchestrationRepoForDispatcher is orchestrate.OrchestrationRepoForDispatcher, exported
 // for internal/legacytui.
 func OrchestrationRepoForDispatcher(d *runtime.Dispatcher) ledger.LedgerRepository {
-	return cliorchestrate.OrchestrationRepoForDispatcher(d)
+	return orchestrate.OrchestrationRepoForDispatcher(d)
 }
 
 // NewChatInvocationWorkspacePath builds a ChatInvocation with only

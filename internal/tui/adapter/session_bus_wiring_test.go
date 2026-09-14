@@ -8,7 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
@@ -94,7 +94,7 @@ func TestSessionPool_BusWiring_TwoSessionsIndependent(t *testing.T) {
 	bus1 := events.New()
 	sess1.EventBus = bus1
 
-	pool := adapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	pool := adapter.NewSessionPool(sess1, res, &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 
 	conv2, err := pool.CreateFresh()
 	if err != nil || conv2 == nil {
@@ -150,7 +150,7 @@ func TestSessionPool_BusWiring_NilRegistrarIsNoOp(t *testing.T) {
 	sess.EventBus = events.New()
 
 	// Must not panic.
-	pool := adapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	pool := adapter.NewSessionPool(sess, res, &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	time.Sleep(50 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -184,7 +184,7 @@ func TestSessionPool_ReattachSyncAfterLogin_DoesNotReviveAReleasedPool(t *testin
 	sess.SessionID = "released-pool-1"
 	sess.EventBus = events.New()
 
-	pool := adapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	pool := adapter.NewSessionPool(sess, res, &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	sendFirstMessage(t, sess.EventBus, sess.SessionID, &mu, &createdIDs, 1)
 	mu.Lock()
 	attached := len(createdIDs)
@@ -238,7 +238,7 @@ func TestSessionPool_ReattachSyncAfterLogin_ClosesTheLoginGap(t *testing.T) {
 	sess1.SessionID = "login-gap-1"
 	sess1.EventBus = events.New()
 
-	pool := adapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	pool := adapter.NewSessionPool(sess1, res, &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 
 	// A second session pooled while still logged out - both must pick up
 	// sync after login, and neither must double-attach.

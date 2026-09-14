@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -39,11 +39,11 @@ func TestRunMessagesReportsAndFiltersByNamespacedTaskID(t *testing.T) {
 	}))
 	pool := subagents.New(d, subagents.Policy{Workers: 1})
 	c := coordinator.New(repo, pool)
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -60,8 +60,8 @@ func TestRunMessagesReportsAndFiltersByNamespacedTaskID(t *testing.T) {
 		t.Fatalf("result = %+v", result.Results)
 	}
 	runID := result.Snapshot.RunID
-	cliorchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-run-messages-ns")
-	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete(runID) })
+	orchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-run-messages-ns")
+	t.Cleanup(func() { orchestrate.RunHandlesForTest.Delete(runID) })
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-run-messages-ns"})
 
 	tool := &runMessagesTool{dispatcher: d, cfg: cfg, repo: repo}

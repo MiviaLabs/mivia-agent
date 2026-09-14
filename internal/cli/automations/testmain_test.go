@@ -15,8 +15,8 @@ import (
 	"os"
 	"testing"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
@@ -30,34 +30,34 @@ import (
 // internal/cli leaves them nil, and the consequences are not symmetric:
 //
 //   - WireWorkflowToolOptionsVar is called UNCONDITIONALLY by
-//     cliagents.BuildToolsForRoot, so a nil one panics. Stubbed to a no-op,
+//     agents.BuildToolsForRoot, so a nil one panics. Stubbed to a no-op,
 //     the same way internal/tui/adapter's own tests do; nothing here
 //     exercises real workflow tool wiring.
 //   - NewSessionDispatcherVar and RemainderSpoolFromRegistryVar are
-//     nil-GUARDED by cliagents.AttachRebuiltSurface, which returns
+//     nil-GUARDED by agents.AttachRebuiltSurface, which returns
 //     "not published" without an error when either is missing. Leaving them
 //     nil would make every spawned session in this package silently get no
 //     surface at all, and every assertion about that session vacuous. They
 //     are wired to the real implementations so the tests exercise the real
 //     attach.
 func wireProcessSeams() {
-	cliagents.WireWorkflowToolOptionsVar = func(
+	agents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository,
 	) {
 	}
-	cliagents.NewSessionDispatcherVar = clichat.NewSessionDispatcher
-	cliagents.RemainderSpoolFromRegistryVar = clichat.RemainderSpoolFromRegistry
-	cliagents.AdvertisedSessionToolSpecsVar = clichat.AdvertisedSessionToolSpecs
-	cliagents.ContextDispatcherForVar = clichat.ContextDispatcherFor
-	// clichat.NewSessionDispatcher reads both hook seams unconditionally
+	agents.NewSessionDispatcherVar = chat.NewSessionDispatcher
+	agents.RemainderSpoolFromRegistryVar = chat.RemainderSpoolFromRegistry
+	agents.AdvertisedSessionToolSpecsVar = chat.AdvertisedSessionToolSpecs
+	agents.ContextDispatcherForVar = chat.ContextDispatcherFor
+	// chat.NewSessionDispatcher reads both hook seams unconditionally
 	// (dispatcher.go's HooksConfigured/HookGroups fields), so a nil one
 	// panics rather than degrading. Stubbed to "no hooks configured",
 	// mirroring internal/cli/chat's own TestMain and internal/tui/adapter's.
-	clichat.HookSessionConfiguredFunc = func() bool { return false }
-	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState { return stubHookSession{} }
+	chat.HookSessionConfiguredFunc = func() bool { return false }
+	chat.CurrentHookSessionFunc = func() chat.HookSessionState { return stubHookSession{} }
 }
 
-// stubHookSession satisfies clichat.HookSessionState with no hooks.
+// stubHookSession satisfies chat.HookSessionState with no hooks.
 type stubHookSession struct{}
 
 func (stubHookSession) RunnableGroups() []hooks.Group { return nil }

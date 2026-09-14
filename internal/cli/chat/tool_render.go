@@ -3,7 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"regexp"
 	"strings"
 	"time"
@@ -308,9 +308,9 @@ func ToolIconForName(name string) string {
 // summarizeAgentTool builds operator-facing one-liners for delegation tools.
 func summarizeAgentTool(name, detail, result string) string {
 	switch name {
-	case cliorchestrate.HandlerDelegate:
+	case orchestrate.HandlerDelegate:
 		return summarizeDelegate(detail, result)
-	case cliorchestrate.ToolDispatchTasks:
+	case orchestrate.ToolDispatchTasks:
 		return summarizeDispatchTasks(detail, result)
 	default:
 		return ""
@@ -329,9 +329,9 @@ func summarizeDelegate(detail, result string) string {
 		}
 		return clipOneLine(firstLineOnly(result), 80)
 	}
-	mode := cliorchestrate.HandlerOneshot
+	mode := orchestrate.HandlerOneshot
 	if multi {
-		mode = cliorchestrate.HandlerMultiStep
+		mode = orchestrate.HandlerMultiStep
 	}
 	if task == "" {
 		return mode

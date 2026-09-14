@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"os"
@@ -46,7 +46,7 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 	case "plan":
 		return runStackPlan(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "drive":
-		return clichat.RunStackDrive(args[1:], workspaceRoot, configPath, stdout, stderr)
+		return chat.RunStackDrive(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "status":
 		return runStackStatus(args[1:], workspaceRoot, configPath, stdout, stderr)
 	default:
@@ -130,23 +130,23 @@ func parseRunLine(out string) (runID, status string) {
 // joined from the run ledger by the chunk's stable invocation key (task
 // fields are immutable once created; the run ledger is the durable source).
 func runStackStatus(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
-	name, stackFlag, rest, err := clichat.ParseStackWorkflowArgsFunc(args)
+	name, stackFlag, rest, err := chat.ParseStackWorkflowArgsFunc(args)
 	if err != nil {
 		return err
 	}
 	if len(rest) != 0 {
 		return fmt.Errorf("stack status: unexpected argument %q", rest[0])
 	}
-	ledger, repo, closeFn, err := clichat.OpenStackLedgerFunc(workspaceRoot, configPath)
+	ledger, repo, closeFn, err := chat.OpenStackLedgerFunc(workspaceRoot, configPath)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
-	stackID, err := clichat.ResolveStackIDFunc(repo, name, stackFlag)
+	stackID, err := chat.ResolveStackIDFunc(repo, name, stackFlag)
 	if err != nil {
 		return err
 	}
-	list, err := ledger.ListTasksByScope(clichat.StackScope(stackID))
+	list, err := ledger.ListTasksByScope(chat.StackScope(stackID))
 	if err != nil {
 		return err
 	}
@@ -162,8 +162,8 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 	}
 	// Reviewed chunks wait on a human publish grant: print the exact
 	// command per chunk so status and the drive's pause guidance agree.
-	for _, line := range clichat.StackGrantHintLines(list, func(chunkID string) string {
-		run, found, err := clichat.StackRunRefExport(repo, stackID, chunkID)
+	for _, line := range chat.StackGrantHintLines(list, func(chunkID string) string {
+		run, found, err := chat.StackRunRefExport(repo, stackID, chunkID)
 		if err != nil || !found {
 			return ""
 		}
@@ -177,14 +177,14 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 // stackRunDisplay joins a chunk task with its latest run (by invocation key)
 // and the run's PR number, for status output.
 func stackRunDisplay(repo workflowledger.Repository, stackID, chunkID string) (runRef, pr string) {
-	run, found, err := clichat.StackRunRefExport(repo, stackID, chunkID)
+	run, found, err := chat.StackRunRefExport(repo, stackID, chunkID)
 	if err != nil || !found {
 		return "-", "-"
 	}
 	pr = "-"
 	deliveries, err := repo.ListDeliveries(context.Background(), run.RunID)
 	if err == nil && len(deliveries) > 0 {
-		pr = clichat.StackPRNumber(deliveries[len(deliveries)-1].URL)
+		pr = chat.StackPRNumber(deliveries[len(deliveries)-1].URL)
 		if pr == "" {
 			pr = "published"
 		}

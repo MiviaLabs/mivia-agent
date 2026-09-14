@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"sync"
 	"testing"
@@ -25,11 +25,11 @@ func askTestEnv(t *testing.T, cfg config.SubagentConfig, workers int) (
 	d := runtime.New(runtime.Policy{})
 	pool := subagents.New(d, subagents.Policy{Workers: workers})
 	c := coordinator.New(repo, pool)
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	return d, c, repo
 }
@@ -121,7 +121,7 @@ func TestAskLiveRoundTrip(t *testing.T) {
 
 func answerFirstAsk(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, repo ledger.LedgerRepository) (json.RawMessage, error) {
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
-	coord := cliorchestrate.InitCoordinator(d, cfg, repo)
+	coord := orchestrate.InitCoordinator(d, cfg, repo)
 	id, ok := runtime.TaskIdentityFrom(ctx)
 	if !ok {
 		return nil, context.Canceled

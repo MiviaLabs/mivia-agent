@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -286,7 +286,7 @@ func TestCommandRunner_ResumeInWorktree_DegradesToSelectSession(t *testing.T) {
 func TestSessionPool_BoundEntryGuardArmsRunBeforePersistence(t *testing.T) {
 	store, _, mainDir, canonicalWt := worktreeCatalogFixture(t)
 	res := &config.Resolved{ProviderName: "fake", Model: "m1"}
-	state := &cliagents.AgentSessionState{}
+	state := &agents.AgentSessionState{}
 	initial := chat.NewSession(res, &nullCompleter{})
 	initial.SessionID = "session-main"
 	pool := adapter.NewSessionPool(initial, res, state, false)
@@ -439,12 +439,12 @@ func TestCommandRunner_SelectSession_ListedBoundRowRoutesToScopedResume(t *testi
 			WorktreeInstanceID: instX.ID,
 		}}, nil
 	})
-	cliagents.BuildToolsForRootHookForTest = func(rws string, _ string, _ bool, _ *config.Resolved) (*tools.Registry, func(), error) {
+	agents.BuildToolsForRootHookForTest = func(rws string, _ string, _ bool, _ *config.Resolved) (*tools.Registry, func(), error) {
 		reg := tools.NewRegistry()
 		return reg, func() {}, nil
 	}
-	prevHook := cliagents.BuildToolsForRootHookForTest
-	t.Cleanup(func() { cliagents.BuildToolsForRootHookForTest = prevHook })
+	prevHook := agents.BuildToolsForRootHookForTest
+	t.Cleanup(func() { agents.BuildToolsForRootHookForTest = prevHook })
 
 	// Routing proof lives in the SCOPED wrapper text: plain SelectSession
 	// would say `failed to resume session "x"` without the worktree phrase.

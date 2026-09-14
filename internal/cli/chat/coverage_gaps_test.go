@@ -18,7 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -310,33 +310,33 @@ func TestSummarizeToolDetailWroteUpdated(t *testing.T) {
 func TestSummarizeAgentToolBranches(t *testing.T) {
 	for _, tc := range []struct{ name, detail, result, wantSub string }{
 		// delegate: task from detail
-		{cliorchestrate.HandlerDelegate, `{"task":"do the thing"}`, "", "oneshot: do the thing"},
+		{orchestrate.HandlerDelegate, `{"task":"do the thing"}`, "", "oneshot: do the thing"},
 		// delegate: multi-step mode
-		{cliorchestrate.HandlerDelegate, `{"task":"t","multi_step":true}`, "", "multi_step: t"},
+		{orchestrate.HandlerDelegate, `{"task":"t","multi_step":true}`, "", "multi_step: t"},
 		// delegate: no task, empty result -> bare mode
-		{cliorchestrate.HandlerDelegate, `{}`, "", "oneshot"},
+		{orchestrate.HandlerDelegate, `{}`, "", "oneshot"},
 		// delegate: completed body with output
-		{cliorchestrate.HandlerDelegate, `{}`, `{"status":"ok","output":"done body"}`, "done body"},
+		{orchestrate.HandlerDelegate, `{}`, `{"status":"ok","output":"done body"}`, "done body"},
 		// delegate: completed body with status only
-		{cliorchestrate.HandlerDelegate, `{}`, `{"status":"completed"}`, "completed"},
+		{orchestrate.HandlerDelegate, `{}`, `{"status":"completed"}`, "completed"},
 		// delegate: non-JSON result falls back to the first line
-		{cliorchestrate.HandlerDelegate, `{}`, "plain\nsecond", "plain"},
+		{orchestrate.HandlerDelegate, `{}`, "plain\nsecond", "plain"},
 		// dispatch_tasks: count plus first prompt
-		{cliorchestrate.ToolDispatchTasks, `{"tasks":[{"id":"t1","prompt":"first prompt"},{"id":"t2"}]}`, "", "2 tasks · first prompt"},
+		{orchestrate.ToolDispatchTasks, `{"tasks":[{"id":"t1","prompt":"first prompt"},{"id":"t2"}]}`, "", "2 tasks · first prompt"},
 		// dispatch_tasks: count only when the first task has no prompt
-		{cliorchestrate.ToolDispatchTasks, `{"tasks":[{"id":"t1"},{"id":"t2"}]}`, "", "2 tasks"},
+		{orchestrate.ToolDispatchTasks, `{"tasks":[{"id":"t1"},{"id":"t2"}]}`, "", "2 tasks"},
 		// dispatch_tasks: empty detail, result with output
-		{cliorchestrate.ToolDispatchTasks, `{}`, `{"output":"batch output"}`, "batch output"},
+		{orchestrate.ToolDispatchTasks, `{}`, `{"output":"batch output"}`, "batch output"},
 		// dispatch_tasks: empty detail, result with status only
-		{cliorchestrate.ToolDispatchTasks, `{}`, `{"status":"succeeded"}`, "succeeded"},
+		{orchestrate.ToolDispatchTasks, `{}`, `{"status":"succeeded"}`, "succeeded"},
 		// dispatch_tasks: count only when the first task carries no prompt or id
-		{cliorchestrate.ToolDispatchTasks, `{"tasks":[{"prompt":"","id":""},{"id":"b"}]}`, "", "2 tasks"},
+		{orchestrate.ToolDispatchTasks, `{"tasks":[{"prompt":"","id":""},{"id":"b"}]}`, "", "2 tasks"},
 		// dispatch_tasks: result is an array of task results
-		{cliorchestrate.ToolDispatchTasks, `{}`, `[{"a":1},{"b":2},{"c":3}]`, "3 task results"},
+		{orchestrate.ToolDispatchTasks, `{}`, `[{"a":1},{"b":2},{"c":3}]`, "3 task results"},
 		// dispatch_tasks: error-only body maps to the output
-		{cliorchestrate.ToolDispatchTasks, `{}`, `{"error":"boom"}`, "boom"},
+		{orchestrate.ToolDispatchTasks, `{}`, `{"error":"boom"}`, "boom"},
 		// dispatch_tasks: non-JSON result falls back to the first line
-		{cliorchestrate.ToolDispatchTasks, `{}`, "plain batch\nmore", "plain batch"},
+		{orchestrate.ToolDispatchTasks, `{}`, "plain batch\nmore", "plain batch"},
 	} {
 		got := SummarizeToolDetail(tc.name, tc.detail, tc.result)
 		if !strings.Contains(got, tc.wantSub) {
@@ -539,7 +539,7 @@ func TestHandleSlashResumeWithTerminal(t *testing.T) {
 	// Hermetic: other tests in this package may have cached a real
 	// coordinator via ensureCoordinator; clear the map so this test sees
 	// the no-coordinator baseline regardless of ordering.
-	cliorchestrate.ClearAllCoordinators()
+	orchestrate.ClearAllCoordinators()
 	term := NewTestTerminal(&bytes.Buffer{})
 	// No argument with no active orchestration reports no runs.
 	if ok, _, err := handleSlashResume("/resume", []string{"/resume"}, term); !ok || err != nil {
@@ -557,9 +557,9 @@ func TestHandleSlashResumeWithTerminal(t *testing.T) {
 func TestHandleSlashResumeWithCoordinator(t *testing.T) {
 	// Hermetic: clear any coordinator cached by earlier tests so
 	// FindCoordinator deterministically returns this test's fake.
-	cliorchestrate.ClearAllCoordinators()
+	orchestrate.ClearAllCoordinators()
 	d := &runtime.Dispatcher{}
-	cleanup := cliorchestrate.StoreTestCoordinator(d, resumeCoordinatorFake{}, ledger.NewMemoryLedgerRepository())
+	cleanup := orchestrate.StoreTestCoordinator(d, resumeCoordinatorFake{}, ledger.NewMemoryLedgerRepository())
 	t.Cleanup(cleanup)
 	term := NewTestTerminal(&bytes.Buffer{})
 	out := &bytes.Buffer{}

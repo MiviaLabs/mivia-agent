@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -371,13 +371,13 @@ func workflowOwnerSessionID(ctx context.Context) string {
 // standard tools keep answering "unknown run_id" for the run's children - a
 // run registered under no session repo could never be inspected or canceled
 // by anyone.
-func workflowChildRunRegistrar(d *runtime.Dispatcher, coord cliorchestrate.OrchestrationCoordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
+func workflowChildRunRegistrar(d *runtime.Dispatcher, coord orchestrate.OrchestrationCoordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
 	if strings.TrimSpace(ownerSessionID) == "" || sessionRepo == nil {
 		log.Printf("workflow: child run registration skipped: no owning session or session ledger repo")
 		return nil
 	}
 	return func(_ context.Context, runID string, handle *coordinator.RunHandle) {
-		if err := cliorchestrate.RegisterChildRunHandle(runID, coord, handle, sessionRepo, d, ownerSessionID, cfg); err != nil {
+		if err := orchestrate.RegisterChildRunHandle(runID, coord, handle, sessionRepo, d, ownerSessionID, cfg); err != nil {
 			log.Printf("workflow: child run %s registration failed: %v", runID, err)
 		}
 	}

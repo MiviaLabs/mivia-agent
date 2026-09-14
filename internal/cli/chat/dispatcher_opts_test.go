@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"path/filepath"
 	"testing"
 
@@ -36,10 +36,10 @@ func TestNewSessionDispatcherOptsBuildsDispatcher(t *testing.T) {
 	}
 	defer d.Close()
 
-	if !d.Has(runtime.Subagent, cliorchestrate.HandlerMultiStep) {
+	if !d.Has(runtime.Subagent, orchestrate.HandlerMultiStep) {
 		t.Fatal("multi_step handler not registered")
 	}
-	if !d.Has(runtime.Subagent, cliorchestrate.HandlerDelegate) {
+	if !d.Has(runtime.Subagent, orchestrate.HandlerDelegate) {
 		t.Fatal("delegate handler not registered")
 	}
 	if !d.Has(runtime.Tool, "dispatch_tasks") {
@@ -50,7 +50,7 @@ func TestNewSessionDispatcherOptsBuildsDispatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "opts-budget", Kind: runtime.Subagent, Name: cliorchestrate.HandlerOneshot,
+		ID: "opts-budget", Kind: runtime.Subagent, Name: orchestrate.HandlerOneshot,
 		Input: json.RawMessage(`"nested prompt"`),
 	})
 	if !errors.Is(result.Err, agent.ErrPromptBudgetExceeded) {
@@ -77,7 +77,7 @@ func TestNewSessionDispatcherClosesOwnedStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
-	repo := cliorchestrate.OrchestrationRepoForDispatcher(d)
+	repo := orchestrate.OrchestrationRepoForDispatcher(d)
 	sr, ok := repo.(*ledger.StorageLedgerRepository)
 	if !ok || sr == nil {
 		// Under heavy parallel I/O the SQLite open can fail transiently
@@ -107,7 +107,7 @@ func TestNewSessionDispatcherUsesCallerRepo(t *testing.T) {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
 	defer d.Close()
-	got := cliorchestrate.OrchestrationRepoForDispatcher(d)
+	got := orchestrate.OrchestrationRepoForDispatcher(d)
 	if got != repo {
 		t.Fatalf("dispatcher repo = %p, want caller repo %p", got, repo)
 	}

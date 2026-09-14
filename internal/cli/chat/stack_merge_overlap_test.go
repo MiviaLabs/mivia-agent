@@ -13,7 +13,7 @@ package chat
 import (
 	"context"
 	"errors"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,7 +40,7 @@ func TestChunkMergeOverlapDetectsSiblingLandingSameFile(t *testing.T) {
 	gitRun(t, root, "checkout", "main")
 	writeAndPush(t, root, "main", "shared.txt", "sibling\n", "sibling: shared.txt")
 
-	overlap, err := chunkMergeOverlap(context.Background(), cliworkflow.WorkflowDeliverGit, gc, "main", "wf/c1")
+	overlap, err := chunkMergeOverlap(context.Background(), workflow.WorkflowDeliverGit, gc, "main", "wf/c1")
 	if err != nil {
 		t.Fatalf("chunkMergeOverlap: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestChunkMergeOverlapEmptyWhenBaseAdvanceIsDisjoint(t *testing.T) {
 	gitRun(t, root, "checkout", "main")
 	writeAndPush(t, root, "main", "other.txt", "sibling\n", "sibling: other.txt")
 
-	overlap, err := chunkMergeOverlap(context.Background(), cliworkflow.WorkflowDeliverGit, gc, "main", "wf/c2")
+	overlap, err := chunkMergeOverlap(context.Background(), workflow.WorkflowDeliverGit, gc, "main", "wf/c2")
 	if err != nil {
 		t.Fatalf("chunkMergeOverlap: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestChunkMergeOverlapMissingHeadFailsClosed(t *testing.T) {
 	// closed) instead of answering "no overlap": an unevaluated guard is
 	// not a passed guard, and autoMergeOne must not merge past it.
 	_, gc := scratchStackRepo(t)
-	_, err := chunkMergeOverlap(context.Background(), cliworkflow.WorkflowDeliverGit, gc, "main", "wf/never-pushed")
+	_, err := chunkMergeOverlap(context.Background(), workflow.WorkflowDeliverGit, gc, "main", "wf/never-pushed")
 	if err == nil {
 		t.Fatal("chunkMergeOverlap on a missing head returned nil error; want probe failure (fail closed)")
 	}

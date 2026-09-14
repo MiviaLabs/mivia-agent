@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -53,7 +53,7 @@ func TestApplySessionAgentUsesResolverBaseForRebuild(t *testing.T) {
 	// BaselineCaptured makes restoreRootSurface actually rebuild the
 	// surface: without it the root switch returns before entryBase runs
 	// and this test proves nothing (an earlier revision did exactly that).
-	state := &cliagents.AgentSessionState{}
+	state := &agents.AgentSessionState{}
 	state.ToolBase = launchBase
 	state.BaselineCaptured = true
 	state.BaselinePrompt = "sys"
@@ -67,7 +67,7 @@ func TestApplySessionAgentUsesResolverBaseForRebuild(t *testing.T) {
 	resolverBase.Register(sentinelTool{name: "wt-only"})
 	sess.ToolBaseResolver = func() *tools.Registry { return resolverBase }
 
-	if err := cliagents.ApplySessionAgent(sess, res, state, config.RootAgentName, false); err != nil {
+	if err := agents.ApplySessionAgent(sess, res, state, config.RootAgentName, false); err != nil {
 		t.Fatalf("ApplySessionAgent: %v", err)
 	}
 

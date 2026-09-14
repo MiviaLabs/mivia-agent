@@ -6,25 +6,25 @@ package cli
 // here runs at process start in every binary that imports cli.
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 )
 
 func init() {
-	cliagents.NewSessionDispatcherVar = clichat.NewSessionDispatcher
-	cliagents.RemainderSpoolFromRegistryVar = clichat.RemainderSpoolFromRegistry
-	cliagents.WireWorkflowToolOptionsVar = cliworkflow.WireWorkflowToolOptions
-	cliagents.BuiltInSlashTokensVar = builtInSlashTokenSet
-	cliagents.SummaryWiringVar = clichat.SummaryWiring
-	cliagents.AdvertisedSessionToolSpecsVar = clichat.AdvertisedSessionToolSpecs
-	cliagents.ContextDispatcherForVar = clichat.ContextDispatcherFor
+	agents.NewSessionDispatcherVar = chat.NewSessionDispatcher
+	agents.RemainderSpoolFromRegistryVar = chat.RemainderSpoolFromRegistry
+	agents.WireWorkflowToolOptionsVar = workflow.WireWorkflowToolOptions
+	agents.BuiltInSlashTokensVar = builtInSlashTokenSet
+	agents.SummaryWiringVar = chat.SummaryWiring
+	agents.AdvertisedSessionToolSpecsVar = chat.AdvertisedSessionToolSpecs
+	agents.ContextDispatcherForVar = chat.ContextDispatcherFor
 }
 
 // builtInSlashTokenSet returns the set of reserved slash command names.
-// Used by cliagents.LoadSessionSkills to reject skill names that collide.
+// Used by agents.LoadSessionSkills to reject skill names that collide.
 func builtInSlashTokenSet() map[string]struct{} {
-	cmds := clichat.BuiltInSlashCommands()
+	cmds := chat.BuiltInSlashCommands()
 	out := make(map[string]struct{}, len(cmds))
 	for _, cmd := range cmds {
 		out[cmd.Name] = struct{}{}

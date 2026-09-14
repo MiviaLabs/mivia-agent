@@ -18,7 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"os"
 	"os/exec"
@@ -225,7 +225,7 @@ func TestAdmitFollowUpCrashAfterPRCreateThenRetryIsExactlyOnce(t *testing.T) {
 	}
 
 	wireFollowUpPRStub(t, pr)
-	prepared := &cliworkflow.PreparedWorkflowRun{Root: root, Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Root: root, Repo: repo}
 	var stdout, stderr bytes.Buffer
 	if err := admitFollowUpsForChunk(context.Background(), prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err != nil {
 		t.Fatalf("retry admission after crash: %v", err)
@@ -254,7 +254,7 @@ func TestAdmitFollowUpFenceExistsBeforeGitSideEffects(t *testing.T) {
 	wireFollowUpGitStub(t, fence)
 	wireFollowUpPRStub(t, pr)
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Root: root, Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Root: root, Repo: repo}
 	var stdout, stderr bytes.Buffer
 	// The first admission succeeds despite the crash: EnsureFollowUpPublished's
 	// FindByHead retry finds the PR that crashOnCreate recorded in byHead.
@@ -296,7 +296,7 @@ func TestAdmitFollowUpConcurrentDoubleAdmissionRegistersOnce(t *testing.T) {
 	gated := &gateCreateRunRepository{Repository: repo, release: make(chan struct{}), blocked: make(chan struct{})}
 	pr.waitBlocked = gated.blocked
 	wireFollowUpPRStub(t, pr)
-	prepared := &cliworkflow.PreparedWorkflowRun{Root: root, Repo: gated}
+	prepared := &workflow.PreparedWorkflowRun{Root: root, Repo: gated}
 
 	errs := make(chan error, 2)
 	go func() {
@@ -450,16 +450,16 @@ func (g *gateCreateRunRepository) CreateRun(ctx context.Context, snap workflowle
 
 func wireFollowUpPRStub(t *testing.T, pr delivery.PRClient) {
 	t.Helper()
-	original := cliworkflow.WorkflowDeliverNewPR
-	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = original })
-	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return pr }
+	original := workflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { workflow.WorkflowDeliverNewPR = original })
+	workflow.WorkflowDeliverNewPR = func() delivery.PRClient { return pr }
 }
 
 func wireFollowUpGitStub(t *testing.T, git delivery.GitRunner) {
 	t.Helper()
-	original := cliworkflow.WorkflowDeliverGit
-	t.Cleanup(func() { cliworkflow.WorkflowDeliverGit = original })
-	cliworkflow.WorkflowDeliverGit = git
+	original := workflow.WorkflowDeliverGit
+	t.Cleanup(func() { workflow.WorkflowDeliverGit = original })
+	workflow.WorkflowDeliverGit = git
 }
 
 func gitExec(t *testing.T, dir string, args ...string) string {
@@ -528,7 +528,7 @@ func TestEnsureFollowUpPublishedCreateRaceReusesExistingPR(t *testing.T) {
 
 	var stdout bytes.Buffer
 	_, _, _, published, err := delivery.EnsureFollowUpPublished(
-		ctx, cliworkflow.WorkflowDeliverGit, pr, root, repo, parentRun, followUpTestChunkID,
+		ctx, workflow.WorkflowDeliverGit, pr, root, repo, parentRun, followUpTestChunkID,
 		func(s string) { fmt.Fprint(&stdout, s) },
 	)
 	if err != nil {
@@ -575,7 +575,7 @@ func TestAdmitFollowUpsForChunkHonorsDriveContext(t *testing.T) {
 	pr := newFollowUpPRClient()
 	wireFollowUpPRStub(t, pr)
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Root: root, Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Root: root, Repo: repo}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		<-pushStarted

@@ -8,7 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
@@ -41,7 +41,7 @@ func activationPool(t *testing.T, cfg config.ResolvedSync, firstMessage bool) in
 	// poolSyncOptions's doc comment). A nil agentState leaves wsRoot empty,
 	// which now correctly refuses to sync rather than writing under a
 	// relative ".mivia" path off the test binary's cwd.
-	pool := adapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	pool := adapter.NewSessionPool(sess, res, &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	time.Sleep(50 * time.Millisecond)
 
 	if firstMessage {

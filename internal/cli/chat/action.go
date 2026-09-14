@@ -6,7 +6,7 @@
 package chat
 
 import (
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 )
 
 type actionKind int
@@ -22,14 +22,14 @@ const (
 // agentControlTools are the delegation/orchestration surfaces: calling one
 // launches or controls another agent, so the transcript marks it ◆.
 var agentControlTools = map[string]bool{
-	cliorchestrate.HandlerDelegate:   true,
-	cliorchestrate.HandlerOneshot:    true,
-	cliorchestrate.HandlerMultiStep:  true,
-	cliorchestrate.ToolDispatchTasks: true,
-	cliorchestrate.ToolSpawnAgent:    true,
-	cliorchestrate.ToolJoinRun:       true,
-	cliorchestrate.ToolInspectAgents: true,
-	cliorchestrate.ToolCancelRun:     true,
+	orchestrate.HandlerDelegate:   true,
+	orchestrate.HandlerOneshot:    true,
+	orchestrate.HandlerMultiStep:  true,
+	orchestrate.ToolDispatchTasks: true,
+	orchestrate.ToolSpawnAgent:    true,
+	orchestrate.ToolJoinRun:       true,
+	orchestrate.ToolInspectAgents: true,
+	orchestrate.ToolCancelRun:     true,
 }
 
 // ActionKindForTool classifies a tool name. Workspace skills are dispatched

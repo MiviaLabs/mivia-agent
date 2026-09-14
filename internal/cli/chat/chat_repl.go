@@ -6,7 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
@@ -68,7 +68,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess == nil {
 		return func() {}, nil
 	}
-	sess.SetSwitchGuard(cliorchestrate.OrchestrationSwitchGuard(sess.SessionID))
+	sess.SetSwitchGuard(orchestrate.OrchestrationSwitchGuard(sess.SessionID))
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
@@ -183,7 +183,7 @@ func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state
 		// workflow child-run registration stamps exactly this instance.
 		return
 	}
-	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, os.Stderr)
+	repo, owned := orchestrate.OpenDurableLedgerRepo(cfg, os.Stderr)
 	state.AdoptLedgerRepo(repo, owned)
 }
 

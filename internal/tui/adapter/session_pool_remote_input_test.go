@@ -11,7 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
@@ -86,7 +86,7 @@ func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string, cr
 	sess.SessionID = sessionID
 	sess.EventBus = events.New()
 
-	pool := adapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	pool := adapter.NewSessionPool(sess, res, &agents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 
 	// The deferred attach - and with it the input poller - runs on the
 	// session's first message. Without it the poller never starts, and the

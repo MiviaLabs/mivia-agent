@@ -9,7 +9,7 @@ import (
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	cliautomations "github.com/MiviaLabs/mivia-agent/internal/cli/automations"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
@@ -35,7 +35,7 @@ func Execute(args []string) error {
 	case "config":
 		return runConfig(args[1:])
 	case "doctor":
-		return cliorchestrate.RunDoctor(args[1:])
+		return orchestrate.RunDoctor(args[1:])
 	case "agents":
 		return cliagents.RunAgents(args[1:])
 	case "sessions":

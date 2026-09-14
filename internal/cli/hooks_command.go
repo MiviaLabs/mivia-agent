@@ -1,8 +1,8 @@
 package cli
 
 import (
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 )
 
@@ -18,13 +18,13 @@ func currentHookSession() *hooksession.Session { return hooksession.Current() }
 func hookSessionConfigured() bool { return hooksession.Configured() }
 
 // handleSlashHooks serves /hooks on the old clichat surface.
-func handleSlashHooks(fields []string, term *clichat.Terminal) (bool, bool, error) {
+func handleSlashHooks(fields []string, term *chat.Terminal) (bool, bool, error) {
 	term.WriteString("\n" + hooksession.SlashOutput(fields))
 	return true, false, nil
 }
 
 // installHookSession resolves this session's lifecycle hooks and prints the
-// startup notices hooksession.Install returns. cliagents.WarnHookLoad is the
+// startup notices hooksession.Install returns. agents.WarnHookLoad is the
 // print step; hooksession stays free of any cli dependency by not doing it
 // itself.
 func installHookSession(workspaceRoot string, staleBypass, quiet bool) (func(), error) {
@@ -32,6 +32,6 @@ func installHookSession(workspaceRoot string, staleBypass, quiet bool) (func(), 
 	if err != nil {
 		return nil, err
 	}
-	cliagents.WarnHookLoad(notices)
+	agents.WarnHookLoad(notices)
 	return release, nil
 }

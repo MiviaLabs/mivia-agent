@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
@@ -84,9 +84,9 @@ func TestSkillHandlerMaxTokensOverride(t *testing.T) {
 		maxTokens *int
 		want      int
 	}{
-		{name: "nil_pointer_keeps_default", maxTokens: nil, want: cliorchestrate.DefaultMaxTokens},
+		{name: "nil_pointer_keeps_default", maxTokens: nil, want: orchestrate.DefaultMaxTokens},
 		{name: "positive_pointer_wins", maxTokens: &positive, want: 777},
-		{name: "non_positive_pointer_keeps_default", maxTokens: &nonPositive, want: cliorchestrate.DefaultMaxTokens},
+		{name: "non_positive_pointer_keeps_default", maxTokens: &nonPositive, want: orchestrate.DefaultMaxTokens},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

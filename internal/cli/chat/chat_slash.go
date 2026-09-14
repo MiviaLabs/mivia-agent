@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -33,7 +33,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 	case "/compact":
 		return handleSlashCompact(line, sess, res, term)
 	case "/agent":
-		return handleSlashAgent(fields, sess, res, term, cliagents.ClassicAgentState)
+		return handleSlashAgent(fields, sess, res, term, agents.ClassicAgentState)
 	case "/hooks":
 		return HandleSlashHooksFunc(fields, term)
 	case "/budget", "/steps":

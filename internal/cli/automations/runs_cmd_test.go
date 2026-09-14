@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -25,7 +25,7 @@ func automationStorePath(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatalf("resolveWorkspaceAndConfig(%q, \"\"): %v", root, err)
 	}
-	return clichat.ContextStorePath(gotRoot, res.Subagents)
+	return chat.ContextStorePath(gotRoot, res.Subagents)
 }
 
 // insertAutomationRun opens root's automation/session store (the same

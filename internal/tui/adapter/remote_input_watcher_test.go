@@ -13,7 +13,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -165,7 +165,7 @@ func TestRemoteInputWatcher_DeliversToRemoteInputs(t *testing.T) {
 	}
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "primary"
-	pool := NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: wsRoot}, false)
+	pool := NewSessionPool(sess, res, &agents.AgentSessionState{WorkspaceRoot: wsRoot}, false)
 
 	delivered := make(chan ports.RemoteInputEvent, 1)
 	cfg := WatcherConfig{

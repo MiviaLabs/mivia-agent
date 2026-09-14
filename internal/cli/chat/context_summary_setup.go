@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -106,7 +106,7 @@ func summaryWiringOverride(sess *chat.Session, res *config.Resolved) (*contextmg
 	if !ok {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
-	completer, err := cliagents.NewProviderCompleter(res, provider, model)
+	completer, err := agents.NewProviderCompleter(res, provider, model)
 	if err != nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}

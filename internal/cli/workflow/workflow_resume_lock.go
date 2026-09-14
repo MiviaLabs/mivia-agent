@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 )
 
 const workflowExecutionLockDir = ".mivia-workflow-locks"
 
 var (
-	workflowExecutionLockOpen = cliworktree.OpenMarkerExcludeLockFile
+	workflowExecutionLockOpen = worktree.OpenMarkerExcludeLockFile
 	workflowExecutionLockStat = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
 	workflowExecutionLockFile = LockWorkflowExecutionFile
 	workflowStoreAbs          = filepath.Abs
@@ -36,7 +36,7 @@ var (
 // wrong lock's name to a caller trying to diagnose a stuck workflow delivery
 // or resume. renameGitExcludeLockError rewrites the whole family generically.
 func LockWorkflowExecutionFile(file *os.File) (func(), error) {
-	unlock, err := cliworktree.LockWorktreeMarkerFile(file)
+	unlock, err := worktree.LockWorktreeMarkerFile(file)
 	if err != nil {
 		return nil, renameGitExcludeLockError(err)
 	}

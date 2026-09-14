@@ -19,7 +19,7 @@ package chat
 
 import (
 	"context"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"testing"
 	"time"
@@ -83,7 +83,7 @@ func TestWaitForChunkMergesReturnsWhenADependentBecomesAdmissible(t *testing.T) 
 
 	done := make(chan error, 1)
 	go func() {
-		done <- waitForChunkMerges(context.Background(), &cliworkflow.PreparedWorkflowRun{Repo: repo}, ledger, alwaysMergedChecker{}, stackID, chunks, "auto", io.Discard, io.Discard)
+		done <- waitForChunkMerges(context.Background(), &workflow.PreparedWorkflowRun{Repo: repo}, ledger, alwaysMergedChecker{}, stackID, chunks, "auto", io.Discard, io.Discard)
 	}()
 	select {
 	case err := <-done:

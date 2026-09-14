@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -74,7 +74,7 @@ var noUntrustedInputFuzzNote = struct{}{}
 
 // writeDoctorJSON builds and marshals the doctorJSON struct and writes it
 // to stdout as a single JSON value, newline-terminated.
-func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view cliagents.AgentCatalogView, catalogErr error, statusErr error) {
+func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view agents.AgentCatalogView, catalogErr error, statusErr error) {
 	dj := doctorJSON{
 		Config:        DisplayPath(res.ConfigPath),
 		EnvFile:       DisplayPath(res.EnvFilePath),
@@ -83,7 +83,7 @@ func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view cliagents.Agen
 		Model:         res.Model,
 		ModelCatalog:  mapModelCatalogJSON(res.ModelCatalog()),
 		BaseURL:       safeDoctorURL(res.BaseURL),
-		APIKeyEnv:     cliagents.SafeCatalogText(res.APIKeyEnv, 128),
+		APIKeyEnv:     agents.SafeCatalogText(res.APIKeyEnv, 128),
 		APIKeySet:     res.APIKeySet,
 		KeyRequired:   !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)),
 		AgentCatalog:  []jsonAgentEntry{},
@@ -93,9 +93,9 @@ func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view cliagents.Agen
 		dj.SyncAPISource, dj.SyncLogin, dj.SyncProbe = "disabled", "skipped (sync disabled)", "skipped (sync disabled)"
 	} else {
 		dj.SyncAPIURL = safeDoctorURL(sr.Endpoint.URL)
-		dj.SyncAPISource = cliagents.SafeCatalogText(sr.Endpoint.Source, 240)
+		dj.SyncAPISource = agents.SafeCatalogText(sr.Endpoint.Source, 240)
 		dj.SyncLogin = sr.login()
-		dj.SyncProbe = cliagents.SafeCatalogText(sr.Probe, 240)
+		dj.SyncProbe = agents.SafeCatalogText(sr.Probe, 240)
 	}
 
 	// Build agent catalog entries.

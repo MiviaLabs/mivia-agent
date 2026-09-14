@@ -10,7 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -43,7 +43,7 @@ type SessionPool struct {
 	// will ever stop - the resurrection window this guard closes.
 	released   atomic.Bool
 	res        *config.Resolved
-	agentState *cliagents.AgentSessionState
+	agentState *agents.AgentSessionState
 	// agentStates is the per-entry agent-selection state (Selected,
 	// SkillScope, TierPlan, Baseline*) for every pooled session, keyed by
 	// session ID. The launch entry is registered with agentState itself, not
@@ -52,7 +52,7 @@ type SessionPool struct {
 	// /agent switch or deferred-tool admission cannot rewrite another
 	// pooled session's policy through a shared pointer (bug-audit "pooled
 	// worktree sessions share mutable agent state"). See AgentState.
-	agentStates map[string]*cliagents.AgentSessionState
+	agentStates map[string]*agents.AgentSessionState
 	toolsOn     bool
 	// threads is the one SubagentThreads registry shared by every
 	// Conversation the pool creates or resumes, so the activity panel's
@@ -157,11 +157,11 @@ func (c fallbackCompleter) ChatTurn(context.Context, provider.Request) (*provide
 // session's own fork, never the pool's shared base (bug-audit "widener and
 // binding factory bound to the shared base state").
 var (
-	newSurfaceWidenerVar = cliagents.NewSurfaceWidener
-	buildModelBindingVar = cliagents.BuildModelBinding
+	newSurfaceWidenerVar = agents.NewSurfaceWidener
+	buildModelBindingVar = agents.BuildModelBinding
 )
 
-func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) func(string, string) (chat.ModelBinding, error) {
+func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *agents.AgentSessionState) func(string, string) (chat.ModelBinding, error) {
 	return func(providerName, model string) (chat.ModelBinding, error) {
 		if providerName == "" && res != nil {
 			providerName = res.ProviderName
@@ -182,7 +182,7 @@ func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *clia
 					return b, nil
 				}
 			}
-			profile, _ := cliagents.ConfiguredProfile(res, providerName, model)
+			profile, _ := agents.ConfiguredProfile(res, providerName, model)
 			var comp provider.Completer
 			if res != nil && res.ProviderName != "" {
 				comp, _ = provider.New(res)
@@ -311,7 +311,7 @@ func (p *SessionPool) IsActive(id string) bool {
 }
 
 // NewSessionPool constructs a SessionPool seeded with the initial session.
-func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cliagents.AgentSessionState, toolsOn bool) *SessionPool {
+func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *agents.AgentSessionState, toolsOn bool) *SessionPool {
 	pool := &SessionPool{
 		sessions:         make(map[string]*chat.Session),
 		convs:            make(map[string]*Conversation),
@@ -319,7 +319,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		busReleases:      make(map[string]func()),
 		res:              res,
 		agentState:       agentState,
-		agentStates:      make(map[string]*cliagents.AgentSessionState),
+		agentStates:      make(map[string]*agents.AgentSessionState),
 		toolsOn:          toolsOn,
 		threads:          NewSubagentThreads(),
 		notices:          make(chan uievent.Event, syncNoticeBuffer),
@@ -514,7 +514,7 @@ func (p *SessionPool) liveEntryForResolvedLocked(requested string, sess *chat.Se
 // and, when Load resolved the session to a different id, under that id too -
 // the same entry and the same private state under both keys, never a
 // second fork. Callers hold p.mu and have checked liveEntryForResolvedLocked.
-func (p *SessionPool) publishEntryLocked(requested string, sess *chat.Session, conv *Conversation, state *cliagents.AgentSessionState) {
+func (p *SessionPool) publishEntryLocked(requested string, sess *chat.Session, conv *Conversation, state *agents.AgentSessionState) {
 	p.sessions[requested] = sess
 	p.convs[requested] = conv
 	p.bindEntryStateLocked(requested, state)

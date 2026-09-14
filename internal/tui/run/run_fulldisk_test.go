@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/view/app"
@@ -53,7 +53,7 @@ func (m captureNoticeModel) View() tea.View { return tea.NewView("") }
 // applySetFullDiskAccess gates the notifier on.
 func TestFullDiskNotifierBridgeSendsToProgram(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	state := &cliagents.AgentSessionState{}
+	state := &agents.AgentSessionState{}
 	state.SetFullDiskReArm(func(bool) {})
 
 	store := adapter.NewSettingsStore(nil, nil, state)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"strings"
 	"testing"
 
@@ -100,7 +100,7 @@ func TestTerminationReasonsAreTyped(t *testing.T) {
 		result subagents.Result
 		want   string
 	}{
-		"agent ceiling": {subagents.Result{TaskID: "x", Err: fmt.Errorf("wrap: %w", cliagents.ErrAgentWallClockExceeded)}, "agent_wall_clock_exceeded"},
+		"agent ceiling": {subagents.Result{TaskID: "x", Err: fmt.Errorf("wrap: %w", agents.ErrAgentWallClockExceeded)}, "agent_wall_clock_exceeded"},
 		"deadline":      {subagents.Result{TaskID: "x", Err: fmt.Errorf("wrap: %w", context.DeadlineExceeded)}, "deadline_exceeded"},
 		"canceled":      {subagents.Result{TaskID: "x", Err: fmt.Errorf("wrap: %w", context.Canceled)}, "canceled"},
 		"failed":        {subagents.Result{TaskID: "x", Err: fmt.Errorf("provider refused")}, "failed"},

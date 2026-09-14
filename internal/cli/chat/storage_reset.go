@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hub"
@@ -29,7 +29,7 @@ func runStorageWithIO(args []string, stdout, stderr io.Writer) error {
 	case "reset":
 		return runStorageReset(rest, stdout, stderr)
 	default:
-		return fmt.Errorf("storage: unknown subcommand %q", cliagents.SafeCatalogText(subcommand, 80))
+		return fmt.Errorf("storage: unknown subcommand %q", agents.SafeCatalogText(subcommand, 80))
 	}
 }
 

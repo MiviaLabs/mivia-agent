@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -120,15 +120,15 @@ func TestResumeSlashRefusesUnresumableRun(t *testing.T) {
 
 // TestResumeSlashNoCoordinator verifies graceful handling when no coordinator exists.
 func TestResumeSlashNoCoordinator(t *testing.T) {
-	// Clean up any cliorchestrate.CoordinatorsForTest.
-	cliorchestrate.CoordinatorsForTest.Range(func(key, _ any) bool {
-		cliorchestrate.CoordinatorsForTest.Delete(key)
+	// Clean up any orchestrate.CoordinatorsForTest.
+	orchestrate.CoordinatorsForTest.Range(func(key, _ any) bool {
+		orchestrate.CoordinatorsForTest.Delete(key)
 		return true
 	})
 
 	// Ensure we don't have a coordinator.
 	var found bool
-	cliorchestrate.CoordinatorsForTest.Range(func(_, _ any) bool {
+	orchestrate.CoordinatorsForTest.Range(func(_, _ any) bool {
 		found = true
 		return false
 	})

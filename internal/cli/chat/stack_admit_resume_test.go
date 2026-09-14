@@ -10,7 +10,7 @@ package chat
 import (
 	"bytes"
 	"context"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"strings"
 	"testing"
@@ -45,7 +45,7 @@ func TestDriveChunkResumedOutcomeSucceededNoDiffMarksMerged(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo}
 	halt, err := driveChunkResumedOutcome(context.Background(), prepared, ledger, stackID, "a", run.RunID, &stdout)
 	if err != nil {
 		t.Fatalf("driveChunkResumedOutcome: %v", err)
@@ -80,7 +80,7 @@ func TestDriveChunkResumedOutcomeDeliveryPendingAwaitsGrant(t *testing.T) {
 	seedDeliveryPendingRun(t, repo, run, snapshotJSON)
 
 	var stdout bytes.Buffer
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo}
 	halt, err := driveChunkResumedOutcome(context.Background(), prepared, ledger, stackID, "a", run.RunID, &stdout)
 	if err != nil {
 		t.Fatalf("driveChunkResumedOutcome: %v", err)
@@ -132,7 +132,7 @@ func TestDriveChunkResumedOutcomeFailedReopensBounded(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo}
 	halt, err := driveChunkResumedOutcome(context.Background(), prepared, ledger, stackID, "a", run.RunID, &stdout)
 	if err != nil {
 		t.Fatalf("driveChunkResumedOutcome: %v", err)
@@ -206,7 +206,7 @@ func TestDriveIntegrationRunResumesOrphanedRun(t *testing.T) {
 	}
 	defer func() { stackChunkResumeFn = origResume }()
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Res: &config.Resolved{}}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Res: &config.Resolved{}}
 	var stdout bytes.Buffer
 	if err := driveIntegrationRun(context.Background(), prepared, ledger, stackID, "main", "auto", map[string]string{"task": "build"}, true, &stdout, io.Discard); err != nil {
 		t.Fatalf("driveIntegrationRun: %v", err)
@@ -261,7 +261,7 @@ func TestDriveIntegrationRunParksOnLiveClaim(t *testing.T) {
 	}
 	defer func() { stackChunkResumeFn = origResume }()
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: mockRepo, Res: &config.Resolved{}}
+	prepared := &workflow.PreparedWorkflowRun{Repo: mockRepo, Res: &config.Resolved{}}
 	var stdout bytes.Buffer
 	if err := driveIntegrationRun(context.Background(), prepared, ledger, stackID, "main", "auto", map[string]string{"task": "build"}, true, &stdout, io.Discard); err != nil {
 		t.Fatalf("driveIntegrationRun: %v", err)
@@ -322,7 +322,7 @@ func TestDriveIntegrationRunResumedFailureLeavesForCompletion(t *testing.T) {
 	}
 	defer func() { stackChunkResumeFn = origResume }()
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Res: &config.Resolved{}}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Res: &config.Resolved{}}
 	var stdout bytes.Buffer
 	if err := driveIntegrationRun(context.Background(), prepared, ledger, stackID, "main", "auto", map[string]string{"task": "build"}, true, &stdout, io.Discard); err != nil {
 		t.Fatalf("driveIntegrationRun: %v", err)
@@ -384,7 +384,7 @@ func TestDriveStackResumeStaleClaimsResumesOrphanedRunningTask(t *testing.T) {
 	}
 	defer func() { stackChunkResumeFn = origResume }()
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Res: &config.Resolved{}}
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Res: &config.Resolved{}}
 	var stdout bytes.Buffer
 	order := []string{chunkID}
 	if err := driveStackResumeStaleClaims(context.Background(), prepared, ledger, stackID, order, &stdout, io.Discard); err != nil {

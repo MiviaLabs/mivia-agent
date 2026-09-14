@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -18,7 +18,7 @@ import (
 // internal/cli/orchestrate/dispatch.go's dispatchNamespace) but strips that
 // prefix from every model-visible surface before returning, so the model
 // only ever learns the raw id and would naturally quote it back here.
-// cliorchestrate.ResolveTaskID matches by the task's stored RawID (or its
+// orchestrate.ResolveTaskID matches by the task's stored RawID (or its
 // real id verbatim, for spawn_agent/delegate or any dispatcher that never
 // namespaces); an id that names no task in this run at all passes through
 // unchanged, so an unresolvable id still surfaces the SAME not-found/
@@ -32,7 +32,7 @@ func resolveSendTargetTaskID(ctx context.Context, repo ledger.LedgerRepository, 
 	if err != nil {
 		return rawID
 	}
-	return cliorchestrate.ResolveTaskID(snap.Tasks, rawID)
+	return orchestrate.ResolveTaskID(snap.Tasks, rawID)
 }
 
 // sendToTaskTool is the parent-side tool for steer/answer delivery (plan 53.03).
@@ -118,7 +118,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	case in.TaskID == "" && len(in.TaskIDs) == 0:
 		return "", fmt.Errorf("exactly one of task_id or task_ids is required")
 	}
-	record, errJSON := cliorchestrate.AccessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
+	record, errJSON := orchestrate.AccessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
 	if errJSON != "" {
 		return errJSON, nil
 	}
@@ -166,7 +166,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 // per-task result map {task_id: {delivered, error}}. Each target gets its own
 // minted message; a failure on one child (unknown, terminal, or mailbox-full)
 // is recorded on that entry and does not fail the whole call.
-func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record cliorchestrate.RunAccess, in sendToTaskParams, kind agentmsg.Kind) (string, error) {
+func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record orchestrate.RunAccess, in sendToTaskParams, kind agentmsg.Kind) (string, error) {
 	type perTaskResult struct {
 		Delivered bool   `json:"delivered"`
 		Error     string `json:"error,omitempty"`

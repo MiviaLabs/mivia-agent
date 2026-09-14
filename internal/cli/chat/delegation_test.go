@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -100,7 +100,7 @@ func newTestDelegateDispatcher(completer provider.Completer) *runtime.Dispatcher
 func TestDispatchTasksCapabilityExtendsBeyondDefaultToolTimeout(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{name: "test", response: "ok"})
 	cfg := config.DefaultSubagentConfig // DefaultTimeout 0 → safety ceiling
-	dispatch := cliorchestrate.NewDispatchTasksToolConfigured(d, cfg, nil, nil)
+	dispatch := orchestrate.NewDispatchTasksToolConfigured(d, cfg, nil, nil)
 
 	// Explicit timeout_seconds must raise the parent tool budget above the
 	// effective default, and the call budget must OUTLIVE the longest task
@@ -119,7 +119,7 @@ func TestDispatchTasksCapabilityExtendsBeyondDefaultToolTimeout(t *testing.T) {
 	// got a 12h budget. Now RequestedTimeoutSec honors the explicit value, so
 	// a 5s override yields a ~20s call budget (5 + slack), NOT the 12h floor.
 	short := dispatch.Capability(json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x"}],"timeout_seconds":5}`))
-	wantShort := 5*time.Second + time.Duration(cliorchestrate.DispatchOrchestrationSlackSec)*time.Second
+	wantShort := 5*time.Second + time.Duration(orchestrate.DispatchOrchestrationSlackSec)*time.Second
 	if short.Timeout != wantShort {
 		t.Fatalf("short dispatch capability=%s must honor the explicit 5s override (want %s); before the fix it was silently floored to the 12h default", short.Timeout, wantShort)
 	}
@@ -139,7 +139,7 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}))
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, nil, testAgentRegistry(t, "oneshot"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, nil, testAgentRegistry(t, "oneshot"))
 	start := time.Now()
 	body, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"timeout_seconds": 1,
@@ -169,7 +169,7 @@ func TestDispatchTasksToolValid(t *testing.T) {
 		name:     "test",
 		response: "{\"output\":\"analysis result\"}",
 	})
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
@@ -206,7 +206,7 @@ func TestDispatchTasksToolEmpty(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name: "test", response: "ok",
 	})
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[]}`))
 	if err == nil || !strings.Contains(err.Error(), "non-empty") {
@@ -219,7 +219,7 @@ func TestDispatchTasksToolWithDependencies(t *testing.T) {
 		name:     "test",
 		response: "{\"output\":\"dependency result\"}",
 	})
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
@@ -250,7 +250,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name: "test", response: "will be canceled",
 	})
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -267,7 +267,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 }
 
 func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(runtime.New(runtime.Policy{}), config.DefaultSubagentConfig, nil, testAgentRegistry(t, "worker"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(runtime.New(runtime.Policy{}), config.DefaultSubagentConfig, nil, testAgentRegistry(t, "worker"))
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"x","depends_on":["missing"]}],"wait":"run"}`))
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
@@ -313,10 +313,10 @@ func TestNewSessionDispatcherRegistersDispatchTasksTool(t *testing.T) {
 
 func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
 	for _, tool := range []tools.Tool{
-		cliorchestrate.NewDispatchTasksToolForAdvertising(nil),
-		cliorchestrate.NewInspectAgentsToolZero(),
-		cliorchestrate.NewJoinRunToolZero(),
-		cliorchestrate.NewCancelRunToolZero(),
+		orchestrate.NewDispatchTasksToolForAdvertising(nil),
+		orchestrate.NewInspectAgentsToolZero(),
+		orchestrate.NewJoinRunToolZero(),
+		orchestrate.NewCancelRunToolZero(),
 	} {
 		if _, ok := tool.(tools.PrivilegedTool); !ok {
 			t.Errorf("%q does not implement PrivilegedTool", tool.Name())
@@ -363,7 +363,7 @@ func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !d.Has(runtime.Subagent, cliorchestrate.HandlerMultiStep) {
+	if !d.Has(runtime.Subagent, orchestrate.HandlerMultiStep) {
 		t.Fatal("multi_step handler not registered in dispatcher")
 	}
 }

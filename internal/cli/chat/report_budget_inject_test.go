@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -143,7 +143,7 @@ func TestPlainMultiStepPromptIncludesReportBudget(t *testing.T) {
 	defer d.Close()
 
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "multi-budget", Kind: runtime.Subagent, Name: cliorchestrate.HandlerMultiStep,
+		ID: "multi-budget", Kind: runtime.Subagent, Name: orchestrate.HandlerMultiStep,
 		Input: json.RawMessage(`"do the work"`), SessionID: "test",
 	})
 	if result.Err != nil {
@@ -163,7 +163,7 @@ func TestOneshotDelegateGetNoToolBudgetVariant(t *testing.T) {
 	d, completer := newBudgetProbeDispatcher(t)
 	defer d.Close()
 
-	for _, name := range []string{cliorchestrate.HandlerOneshot, cliorchestrate.HandlerDelegate} {
+	for _, name := range []string{orchestrate.HandlerOneshot, orchestrate.HandlerDelegate} {
 		result := d.Invoke(context.Background(), runtime.Request{
 			ID: "oneshot-budget-" + name, Kind: runtime.Subagent, Name: name,
 			Input: json.RawMessage(`"do the work"`), SessionID: "test",

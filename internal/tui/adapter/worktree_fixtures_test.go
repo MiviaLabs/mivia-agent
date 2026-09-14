@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -93,12 +93,12 @@ func catalogSession(t *testing.T, store *storage.SQLite, mainDir string) (*chat.
 // calling a nil seam.
 func stubWorkflowWiring(t *testing.T) {
 	t.Helper()
-	prev := cliagents.WireWorkflowToolOptionsVar
-	cliagents.WireWorkflowToolOptionsVar = func(
+	prev := agents.WireWorkflowToolOptionsVar
+	agents.WireWorkflowToolOptionsVar = func(
 		*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, bool, ledger.LedgerRepository,
 	) {
 	}
-	t.Cleanup(func() { cliagents.WireWorkflowToolOptionsVar = prev })
+	t.Cleanup(func() { agents.WireWorkflowToolOptionsVar = prev })
 }
 
 // toolRegistryAt builds a minimal default registry confined to root -

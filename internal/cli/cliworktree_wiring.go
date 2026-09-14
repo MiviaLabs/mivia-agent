@@ -1,7 +1,7 @@
 package cli
 
 // Wires internal/cli/worktree's OpenRepositoryContextStoreFunc to
-// clichat.OpenRepositoryContextStore at process start. cliworktree cannot import
+// chat.OpenRepositoryContextStore at process start. cliworktree cannot import
 // internal/cli directly (internal/cli imports internal/cli/worktree for
 // worktree-marker/route helpers, e.g. chat_command.go, chat_repository_binding.go,
 // workflow_resume_lock.go; the reverse import would close a cycle), so the
@@ -10,10 +10,10 @@ package cli
 // blocker this stands in for.
 
 import (
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
-	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 )
 
 func init() {
-	cliworktree.OpenRepositoryContextStoreFunc = clichat.OpenRepositoryContextStore
+	worktree.OpenRepositoryContextStoreFunc = chat.OpenRepositoryContextStore
 }

@@ -3,7 +3,7 @@ package chat
 import (
 	"bytes"
 	"context"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +16,9 @@ import (
 
 func TestOpenDurableLedgerRepoNonSQLite(t *testing.T) {
 	var buf bytes.Buffer
-	repo, owned := cliorchestrate.OpenDurableLedgerRepo(config.SubagentConfig{StoreBackend: "memory"}, &buf)
-	if repo != *cliorchestrate.DefaultOrchestrationRepo {
-		t.Fatal("non-sqlite config must return cliorchestrate.DefaultOrchestrationRepo")
+	repo, owned := orchestrate.OpenDurableLedgerRepo(config.SubagentConfig{StoreBackend: "memory"}, &buf)
+	if repo != *orchestrate.DefaultOrchestrationRepo {
+		t.Fatal("non-sqlite config must return orchestrate.DefaultOrchestrationRepo")
 	}
 	if owned != nil {
 		t.Fatal("non-sqlite config must not own a store")
@@ -39,9 +39,9 @@ func TestOpenDurableLedgerRepoOpenFailureFallsBack(t *testing.T) {
 		StoreBackend: "sqlite",
 		StorePath:    filepath.Join(blocker, "ledger.db"),
 	}
-	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, &buf)
-	if repo != *cliorchestrate.DefaultOrchestrationRepo {
-		t.Fatal("open failure must fall back to cliorchestrate.DefaultOrchestrationRepo")
+	repo, owned := orchestrate.OpenDurableLedgerRepo(cfg, &buf)
+	if repo != *orchestrate.DefaultOrchestrationRepo {
+		t.Fatal("open failure must fall back to orchestrate.DefaultOrchestrationRepo")
 	}
 	if owned != nil {
 		t.Fatal("open failure must not return an owned store")
@@ -59,7 +59,7 @@ func TestOpenDurableLedgerRepoSuccess(t *testing.T) {
 	var buf bytes.Buffer
 	path := filepath.Join(t.TempDir(), "orch.db")
 	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: path}
-	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, &buf)
+	repo, owned := orchestrate.OpenDurableLedgerRepo(cfg, &buf)
 	if owned == nil {
 		t.Fatal("successful open must return owned store")
 	}

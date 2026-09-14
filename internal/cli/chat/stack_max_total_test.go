@@ -10,7 +10,7 @@ package chat
 
 import (
 	"bytes"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +30,7 @@ func TestLoadAllStackChunksForDriveRefusesOverCapStack(t *testing.T) {
 	createContinuationRun(t, repo, stackID, 1, "wfr-wave1-ok", workflowledger.RunStatusSucceeded, time.Now().Add(-time.Minute))
 	seedSucceededDecomposeAttempt(t, repo, "wfr-wave1-ok", []byte(wave1DecomposeOutput))
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Compiled: &definition.CompiledWorkflow{
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Compiled: &definition.CompiledWorkflow{
 		Stacking: &definition.StackingConfig{Enabled: true, MaxTotalChunks: 3},
 	}}
 	var stdout, stderr bytes.Buffer
@@ -51,7 +51,7 @@ func TestLoadAllStackChunksForDriveAllowsAtCapStack(t *testing.T) {
 	createContinuationRun(t, repo, stackID, 1, "wfr-wave1-ok", workflowledger.RunStatusSucceeded, time.Now().Add(-time.Minute))
 	seedSucceededDecomposeAttempt(t, repo, "wfr-wave1-ok", []byte(wave1DecomposeOutput))
 
-	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Compiled: &definition.CompiledWorkflow{
+	prepared := &workflow.PreparedWorkflowRun{Repo: repo, Compiled: &definition.CompiledWorkflow{
 		Stacking: &definition.StackingConfig{Enabled: true, MaxTotalChunks: 4},
 	}}
 	var stdout, stderr bytes.Buffer

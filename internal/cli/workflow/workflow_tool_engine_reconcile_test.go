@@ -2,7 +2,7 @@ package workflow
 
 import (
 	"context"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -94,7 +94,7 @@ func TestConfigureChatWorkspaceRunRecoverySweepFalseSkipsSweep(t *testing.T) {
 	ApplyWorkflowStoreRoot(res, root)
 
 	sess := chat.NewSession(res, nil)
-	cleanup, err := cliagents.ConfigureChatWorkspace(sess, root, true, res, &cliagents.AgentSessionState{}, true, false, false)
+	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &agents.AgentSessionState{}, true, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

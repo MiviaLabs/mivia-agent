@@ -26,7 +26,7 @@ import (
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -64,7 +64,7 @@ func restoreRegistrars(t *testing.T) {
 		adapter.SubagentProgressRegistrar = prevProgress
 		adapter.SessionBusRegistrar = prevBus
 		adapter.SubagentTaskRouteRegistrar = prevRoutes
-		cliorchestrate.SetSubagentTaskRouteSink(nil)
+		orchestrate.SetSubagentTaskRouteSink(nil)
 	})
 }
 
@@ -94,12 +94,12 @@ func dispatchOneBlockingTask(t *testing.T) (*adapter.SubagentThreads, ledger.Led
 	if err := reg.Publish(agents.ResolvedAgent{Name: "blocker"}); err != nil {
 		t.Fatal(err)
 	}
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, repo, reg)
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, repo, reg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	ctx = runtime.ContextWithCaller(ctx, runtime.Caller{SessionID: "cancel-wiring-session"})
-	ctx = sdkagentloop.WithToolCall(ctx, provider.ToolCall{ID: "call_wire_1", Name: cliorchestrate.ToolDispatchTasks})
+	ctx = sdkagentloop.WithToolCall(ctx, provider.ToolCall{ID: "call_wire_1", Name: orchestrate.ToolDispatchTasks})
 
 	// wait="none" so Execute returns while the task is still running -
 	// the only state in which cancelling it is meaningful.
@@ -135,7 +135,7 @@ func TestSubagentCancelWiring_TaskIsCancellableThroughTheUIRegistry(t *testing.T
 // per-tool-call cancel key (2c) was unblocked by the same write site: it
 // resolves through the identical route table, so before routes were
 // published it could never reach the ToolCanceler its own producer half
-// (cliorchestrate.ToolCancelReadyHook) was already registering. Here a
+// (orchestrate.ToolCancelReadyHook) was already registering. Here a
 // canceler is registered directly on the run handle - standing in for the
 // nested agent loop that registers one in production - and the UI call
 // must reach it.
@@ -145,7 +145,7 @@ func TestSubagentCancelWiring_ToolCallCancelResolvesTheSameRoute(t *testing.T) {
 	// Exactly one coordinator is registered at this point: InitCoordinator
 	// keys the package map on the dispatcher, and each helper call's
 	// t.Cleanup(d.Close) deletes its own entry before the next test runs.
-	coord, found := cliorchestrate.ActiveCoordinator()
+	coord, found := orchestrate.ActiveCoordinator()
 	if !found {
 		t.Fatal("no coordinator registered after a real dispatch")
 	}

@@ -12,14 +12,14 @@ package chat
 // claimForCancel's own test style in
 // workflow_tool_engine_cancel_claim_test.go) rather than through the full
 // CLI entrypoint, since runStackDrive requires a real workspace/git
-// checkout via cliworkflow.PrepareWorkflowRun that is orthogonal to the claim logic
+// checkout via workflow.PrepareWorkflowRun that is orthogonal to the claim logic
 // under test here — the full entrypoint is covered separately in
 // stack_drive_claim_integration_test.go.
 
 import (
 	"context"
 	"errors"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,16 +115,16 @@ func TestClaimStackDriveSameHolderRefreshSucceeds(t *testing.T) {
 // TestClaimStackDrivePropagatesNonClaimHeldError mirrors
 // claimForCancel's own coverage of the non-ErrClaimHeld branch: an empty
 // holder is never minted by newStackDriveHolder in production, but
-// cliworkflow.ClaimWorkflowOperator's other error path must still propagate untouched
+// workflow.ClaimWorkflowOperator's other error path must still propagate untouched
 // rather than being swallowed.
 func TestClaimStackDrivePropagatesNonClaimHeldError(t *testing.T) {
 	ctx := context.Background()
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
 
-	err := cliworkflow.ClaimWorkflowOperator(ctx, repo, "wfr-stack-claim-empty-holder", "")
+	err := workflow.ClaimWorkflowOperator(ctx, repo, "wfr-stack-claim-empty-holder", "")
 	if !errors.Is(err, workflowledger.ErrClaimNotHeld) {
-		t.Fatalf("cliworkflow.ClaimWorkflowOperator() error = %v, want ErrClaimNotHeld", err)
+		t.Fatalf("workflow.ClaimWorkflowOperator() error = %v, want ErrClaimNotHeld", err)
 	}
 }
 

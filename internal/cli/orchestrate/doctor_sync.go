@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -59,7 +59,7 @@ func writeDoctorSyncHuman(stdout io.Writer, r doctorSyncReport) {
 		fmt.Fprintln(stdout, "  sync_api:   disabled ([sync] enabled = false)")
 		return
 	}
-	fmt.Fprintf(stdout, "  sync_api:   %s (%s)\n", safeDoctorURL(r.Endpoint.URL), cliagents.SafeCatalogText(r.Endpoint.Source, 240))
+	fmt.Fprintf(stdout, "  sync_api:   %s (%s)\n", safeDoctorURL(r.Endpoint.URL), agents.SafeCatalogText(r.Endpoint.Source, 240))
 	fmt.Fprintf(stdout, "  sync_login: %s\n", r.login())
-	fmt.Fprintf(stdout, "  sync_probe: %s\n", cliagents.SafeCatalogText(r.Probe, 240))
+	fmt.Fprintf(stdout, "  sync_probe: %s\n", agents.SafeCatalogText(r.Probe, 240))
 }

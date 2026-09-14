@@ -2,7 +2,7 @@ package chat
 
 import (
 	"context"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"path/filepath"
 	"testing"
 
@@ -119,7 +119,7 @@ func TestInitCoordinatorLeavesACallerOwnedStoreOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cliorchestrate.InitCoordinator(dispatcher, config.DefaultSubagentConfig, repo)
+	orchestrate.InitCoordinator(dispatcher, config.DefaultSubagentConfig, repo)
 	dispatcher.Close()
 	if _, err := repo.Recover(context.Background()); err != nil {
 		t.Fatalf("the dispatcher closed a caller-owned ledger store: %v", err)
@@ -182,16 +182,16 @@ func TestInitCoordinatorClosesOnlyItsOwnStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No repo argument at all: the coordinator opens (and owns) its own.
-	cliorchestrate.InitCoordinator(dispatcher, cfg)
-	repo, ok := cliorchestrate.CoordinatorReposForTest.Load(dispatcher)
+	orchestrate.InitCoordinator(dispatcher, cfg)
+	repo, ok := orchestrate.CoordinatorReposForTest.Load(dispatcher)
 	if !ok {
-		t.Fatal("cliorchestrate.InitCoordinator registered no repo")
+		t.Fatal("orchestrate.InitCoordinator registered no repo")
 	}
 	if _, isMemory := repo.(*ledger.MemoryLedgerRepository); isMemory {
 		t.Skip("sqlite backend fell back to memory; nothing owned to close")
 	}
 	dispatcher.Close()
-	if _, still := cliorchestrate.CoordinatorReposForTest.Load(dispatcher); still {
+	if _, still := orchestrate.CoordinatorReposForTest.Load(dispatcher); still {
 		t.Fatal("the close hook did not deregister the coordinator repo")
 	}
 	// The store it opened is closed, so a fresh open of the same file works.

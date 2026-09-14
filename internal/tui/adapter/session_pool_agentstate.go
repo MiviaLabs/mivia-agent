@@ -6,7 +6,7 @@ package adapter
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -16,7 +16,7 @@ import (
 // (CommandRunner.SetActiveSession) use this to swap the active agent
 // context alongside the active session, instead of leaving every pooled
 // session mutate the one shared instance.
-func (p *SessionPool) AgentState(id string) *cliagents.AgentSessionState {
+func (p *SessionPool) AgentState(id string) *agents.AgentSessionState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.agentStates[id]
@@ -29,7 +29,7 @@ func (p *SessionPool) AgentState(id string) *cliagents.AgentSessionState {
 // to the shared base state"). Nil when the pool has no base state - the
 // "tools/agent switching unavailable" case NewCommandRunner's nil-state
 // callers already handle. Callers hold p.mu.
-func (p *SessionPool) forkEntryStateLocked() *cliagents.AgentSessionState {
+func (p *SessionPool) forkEntryStateLocked() *agents.AgentSessionState {
 	if p.agentState == nil {
 		return nil
 	}
@@ -38,12 +38,12 @@ func (p *SessionPool) forkEntryStateLocked() *cliagents.AgentSessionState {
 
 // bindEntryStateLocked registers state as the private agent state of the
 // pooled entry id. A nil state registers nothing. Callers hold p.mu.
-func (p *SessionPool) bindEntryStateLocked(id string, state *cliagents.AgentSessionState) {
+func (p *SessionPool) bindEntryStateLocked(id string, state *agents.AgentSessionState) {
 	if state == nil || id == "" {
 		return
 	}
 	if p.agentStates == nil {
-		p.agentStates = make(map[string]*cliagents.AgentSessionState)
+		p.agentStates = make(map[string]*agents.AgentSessionState)
 	}
 	p.agentStates[id] = state
 }
@@ -54,7 +54,7 @@ func (p *SessionPool) bindEntryStateLocked(id string, state *cliagents.AgentSess
 // still get its OWN state on activation, not silently keep another
 // conversation's (bug-audit "switching sessions stops working"). Nil only
 // when the pool has no base state at all.
-func (p *SessionPool) EnsureAgentState(id string) *cliagents.AgentSessionState {
+func (p *SessionPool) EnsureAgentState(id string) *agents.AgentSessionState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if state := p.agentStates[id]; state != nil {

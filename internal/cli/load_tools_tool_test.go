@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // TestLoadToolsDeclaredExecutionWrite pins the load_tools Capability class.
 func TestLoadToolsDeclaredExecutionWrite(t *testing.T) {
-	tool := cliagents.NewLoadToolsTool(nil, nil)
+	tool := agents.NewLoadToolsTool(nil, nil)
 	capable, ok := tool.(tools.CapableTool)
 	if !ok {
 		t.Fatal("load_tools does not implement tools.CapableTool")

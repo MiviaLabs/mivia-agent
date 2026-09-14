@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -26,7 +26,7 @@ var (
 	WorkflowRunSetAdmission = func(b WorkflowControllerBuild) error {
 		return b.Controller.SetAdmission(b.Admission)
 	}
-	workflowBuildLoadAgents = cliagents.LoadAgentDefinitions
+	workflowBuildLoadAgents = agents.LoadAgentDefinitions
 	workflowBuildRegistry   = workflowDefaultRegistry
 	workflowBuildWorkspace  = SelectWorkflowWorkspace
 	workflowBuildProvider   = provider.New

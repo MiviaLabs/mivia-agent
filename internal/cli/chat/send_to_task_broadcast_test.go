@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"sync"
 	"testing"
@@ -49,7 +49,7 @@ func (s *signalOnce) fire() { s.once.Do(func() { close(s.ch) }) }
 
 // spawnBroadcastRun spawns a run whose tasks all share the "worker" handler.
 // Tasks named in `live` block on a release channel (kept live); all others
-// return immediately (terminal). The run handle is registered in cliorchestrate.RunHandlesForTest
+// return immediately (terminal). The run handle is registered in orchestrate.RunHandlesForTest
 // under an owner caller so sendToTaskTool's principal gate passes.
 func spawnBroadcastRun(t *testing.T, live map[string]bool, taskIDs ...string) *broadcastRun {
 	t.Helper()
@@ -94,11 +94,11 @@ func spawnBroadcastRun(t *testing.T, live map[string]bool, taskIDs ...string) *b
 			s.fire()
 		}
 	}
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	tasks := make([]subagents.Task, 0, len(taskIDs))
 	for _, id := range taskIDs {
@@ -115,9 +115,9 @@ func spawnBroadcastRun(t *testing.T, live map[string]bool, taskIDs ...string) *b
 	runID := snap.RunID
 	caller := runtime.Caller{SessionID: "sess-broadcast"}
 	ctx := runtime.ContextWithCaller(context.Background(), caller)
-	cliorchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-broadcast")
+	orchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-broadcast")
 	t.Cleanup(func() {
-		cliorchestrate.RunHandlesForTest.Delete(runID)
+		orchestrate.RunHandlesForTest.Delete(runID)
 		release()
 	})
 	tool := &sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo}

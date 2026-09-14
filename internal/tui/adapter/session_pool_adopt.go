@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -76,16 +76,16 @@ func (p *SessionPool) adoptWorktreeToolsLocked(sess *chat.Session, wtDir string)
 	// workflow started from a worktree session must publish progress on that
 	// session's bus and register its child runs against the repository the
 	// session's own inspect/cancel tools compare against.
-	wiring := cliagents.SessionRootWiring{
+	wiring := agents.SessionRootWiring{
 		Bus:                 p.sessionBusProviderLocked(),
 		SessionRepo:         p.agentState.LedgerRepoValue(),
 		LoadWorkspaceConfig: p.workspaceConfigAllowedLocked(),
 	}
-	build := func(rootWorkspace, rootMemory string, fd bool, res *config.Resolved, w cliagents.SessionRootWiring) (*tools.Registry, func(), error) {
-		if cliagents.BuildToolsForRootHookForTest != nil {
-			return cliagents.BuildToolsForRootHookForTest(rootWorkspace, rootMemory, fd, res)
+	build := func(rootWorkspace, rootMemory string, fd bool, res *config.Resolved, w agents.SessionRootWiring) (*tools.Registry, func(), error) {
+		if agents.BuildToolsForRootHookForTest != nil {
+			return agents.BuildToolsForRootHookForTest(rootWorkspace, rootMemory, fd, res)
 		}
-		return cliagents.BuildToolsForRoot(rootWorkspace, rootMemory, fd, res, w)
+		return agents.BuildToolsForRoot(rootWorkspace, rootMemory, fd, res, w)
 	}
 	p.mu.Unlock()
 	p.buildSer.Lock()
@@ -234,7 +234,7 @@ func samePath(a, b string) bool {
 
 // Scope of the rebuilt registries: direct dispatch uses sess.Tools, and
 // the dispatcher-rebuild paths - agent switch, model switch, MCP merge,
-// admission replay - resolve their base through cliagents.entryBase,
+// admission replay - resolve their base through agents.entryBase,
 // which prefers the ToolBaseResolver adoptRegistry installs above. Both
 // surfaces therefore re-scope from THIS entry's root (pinned by
 // TestApplySessionAgentUsesResolverBaseForRebuild). SCOPE LIMIT that

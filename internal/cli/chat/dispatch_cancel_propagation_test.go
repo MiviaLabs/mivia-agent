@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -42,7 +42,7 @@ func TestDispatchTasksSyncCancelPropagatesToOrphanedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, ledger.NewMemoryLedgerRepository(), testAgentRegistry(t, "oneshot"))
+	tool := orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, ledger.NewMemoryLedgerRepository(), testAgentRegistry(t, "oneshot"))
 
 	// No timeout_seconds override: the TASK's own deadline stays at the
 	// ~12h orchestration default (DispatchOrchestrationBudgetOutlivesTaskBudget),

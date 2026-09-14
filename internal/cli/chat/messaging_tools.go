@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -127,7 +127,7 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok {
 		return "", fmt.Errorf("post_message requires a running task identity")
 	}
-	var c chatCoordinator = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
+	var c chatCoordinator = orchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 
 	if kind == agentmsg.KindAsk {
 		return t.handleAsk(ctx, c, id, in.Body, in.Refs, in.ToRole, in.WaitSeconds, in.InReplyTo)
@@ -338,18 +338,18 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
 	// INV-AG-9: same principal gate as join_run / cancel_run.
-	record, errJSON := cliorchestrate.AccessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
+	record, errJSON := orchestrate.AccessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
 	if errJSON != "" {
 		return errJSON, nil
 	}
 	c, _ := record.GetCoordinator().(chatCoordinator)
 	if c == nil {
-		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
+		c = orchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
 	// One GetRun for both the incoming filter (a raw model id -> the real
 	// task the run holds) and each returned message's TaskID (the real,
 	// possibly namespaced id agentmsg stamped -> the model's own raw id) -
-	// cliorchestrate.ResolveTaskID and ModelVisibleTaskID are exact
+	// orchestrate.ResolveTaskID and ModelVisibleTaskID are exact
 	// inverses of each other over the same task list.
 	var tasks []ledger.TaskSnapshot
 	if snap, err := t.repo.GetRun(ctx, in.RunID); err == nil {
@@ -357,7 +357,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	targetID := in.TaskID
 	if targetID != "" {
-		targetID = cliorchestrate.ResolveTaskID(tasks, targetID)
+		targetID = orchestrate.ResolveTaskID(tasks, targetID)
 	}
 	msgs, err := c.ListRunMessages(ctx, in.RunID, targetID)
 	if err != nil {
@@ -378,7 +378,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 			Kind:       string(m.Kind),
 			Synopsis:   m.Synopsis,
 			ContentRef: m.ContentRef,
-			TaskID:     cliorchestrate.ModelVisibleTaskID(tasks, m.TaskID),
+			TaskID:     orchestrate.ModelVisibleTaskID(tasks, m.TaskID),
 		}
 		if in.IncludeBody && m.ContentRef != "" {
 			if full, err := c.LoadMessageBody(ctx, m.ContentRef); err == nil {
@@ -399,10 +399,10 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 	post := &postMessageTool{
 		dispatcher: d, cfg: cfg, repo: repo,
 		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
-			var c chatCoordinator = cliorchestrate.InitCoordinator(d, cfg, repo)
+			var c chatCoordinator = orchestrate.InitCoordinator(d, cfg, repo)
 			var meta coordinator.ReferralSpawnMeta
 			if agentReg != nil {
-				if route, err := cliorchestrate.ResolveTaskRoute(agentReg, nil, toRole, ""); err == nil {
+				if route, err := orchestrate.ResolveTaskRoute(agentReg, nil, toRole, ""); err == nil {
 					meta.AgentDigest = route.Digest()
 					// Provider/model left empty: pool uses session defaults when unset.
 				}

@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -40,7 +40,7 @@ func TestCommandRunner_StartInNewWorktree_UsesLaunchingCheckoutCommit(t *testing
 	sess.UseTools = true
 	sess.Tools = toolRegistryAt(t, mainDir)
 	t.Chdir(launchDir)
-	state := &cliagents.AgentSessionState{WorkspaceRoot: launchDir}
+	state := &agents.AgentSessionState{WorkspaceRoot: launchDir}
 	runner := adapter.NewCommandRunner(sess, res, state)
 	t.Cleanup(runner.Pool().CloseAll)
 	// Changing CWD after construction to another repository must not change
@@ -200,7 +200,7 @@ func TestCommandRunner_StartInNewWorktree_CreateFailureSurfacesError(t *testing.
 
 	// Create once, then begin removal: a second create for the same name
 	// hits the recovery-required error inside CreateManagedWorktreeForPool.
-	if err := cliagents.CreateManagedWorktreeForPool(store, mainDir, "wtz"); err != nil {
+	if err := agents.CreateManagedWorktreeForPool(store, mainDir, "wtz"); err != nil {
 		t.Fatalf("pre-create wtz: %v", err)
 	}
 	principal, _ := worktreeroute.Principal(mainDir)
@@ -416,7 +416,7 @@ func TestCommandRunner_StartInNewWorktree_LaunchCheckoutDirErrorSurfaces(t *test
 		t.Skip("platform still resolves an absolute path from a removed working directory")
 	}
 
-	state := &cliagents.AgentSessionState{WorkspaceRoot: "relative-root"}
+	state := &agents.AgentSessionState{WorkspaceRoot: "relative-root"}
 	runner := adapter.NewCommandRunner(sess, res, state)
 	t.Cleanup(runner.Pool().CloseAll)
 

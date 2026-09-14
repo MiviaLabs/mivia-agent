@@ -6,7 +6,7 @@ package chat
 
 import (
 	"context"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"os"
 	"path/filepath"
@@ -39,7 +39,7 @@ func TestStackDriveFailSettlesPlanRunFailed(t *testing.T) {
 
 // seedStackDriveFailSettleFixture builds a delivery_pending plan run whose
 // stack has one chunk that exhausted its retry budget and a failed run row.
-func seedStackDriveFailSettleFixture(t *testing.T) (*cliworkflow.PreparedWorkflowRun, string) {
+func seedStackDriveFailSettleFixture(t *testing.T) (*workflow.PreparedWorkflowRun, string) {
 	t.Helper()
 	root := t.TempDir()
 	storePath := filepath.Join(root, "workflow.db")
@@ -48,9 +48,9 @@ func seedStackDriveFailSettleFixture(t *testing.T) (*cliworkflow.PreparedWorkflo
 	if err := os.WriteFile(miniStackPath, []byte(miniStackWorkflowTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := cliworkflow.PrepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
+	prepared, err := workflow.PrepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
 	if err != nil {
-		t.Fatalf("cliworkflow.PrepareWorkflowRun() error = %v", err)
+		t.Fatalf("workflow.PrepareWorkflowRun() error = %v", err)
 	}
 	t.Cleanup(prepared.CloseFn)
 
@@ -95,7 +95,7 @@ func seedPlanRunDeliveryPending(t *testing.T, repo workflowledger.Repository, pl
 // with its two decomposed chunks seeded into the ledger (both still
 // "planned"), so callers can layer either a terminal failure (for the Failed
 // gate) or leave it as-is (for the Incomplete gate) on top.
-func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *cliworkflow.PreparedWorkflowRun {
+func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *workflow.PreparedWorkflowRun {
 	t.Helper()
 	root := t.TempDir()
 	storePath := filepath.Join(root, "workflow.db")
@@ -104,9 +104,9 @@ func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *cliworkflow.
 	if err := os.WriteFile(miniStackPath, []byte(miniStackWorkflowTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := cliworkflow.PrepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
+	prepared, err := workflow.PrepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
 	if err != nil {
-		t.Fatalf("cliworkflow.PrepareWorkflowRun() error = %v", err)
+		t.Fatalf("workflow.PrepareWorkflowRun() error = %v", err)
 	}
 	t.Cleanup(prepared.CloseFn)
 
@@ -130,7 +130,7 @@ func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *cliworkflow.
 // so callers that switch on the gate (settleStackPlanRunIfComplete,
 // driveStackOnePass's settle-on-error path, SettleFailedStackPlanRunIfNeeded)
 // can be tested directly.
-func seedStackDriveFailedGateFixture(t *testing.T) (*cliworkflow.PreparedWorkflowRun, string) {
+func seedStackDriveFailedGateFixture(t *testing.T) (*workflow.PreparedWorkflowRun, string) {
 	t.Helper()
 	const planRunID = "wfr-drive-failed-gate"
 	prepared := seedStackDriveGateFixtureBase(t, planRunID)
@@ -146,7 +146,7 @@ func seedStackDriveFailedGateFixture(t *testing.T) (*cliworkflow.PreparedWorkflo
 // PlanRunDelivery reports stackPlanRunIncomplete, not stackPlanRunFailed, so
 // callers that gate on Failed specifically (SettleFailedStackPlanRunIfNeeded)
 // can be proven to no-op on it.
-func seedStackDriveIncompleteGateFixture(t *testing.T) (*cliworkflow.PreparedWorkflowRun, string) {
+func seedStackDriveIncompleteGateFixture(t *testing.T) (*workflow.PreparedWorkflowRun, string) {
 	t.Helper()
 	const planRunID = "wfr-drive-incomplete-gate"
 	return seedStackDriveGateFixtureBase(t, planRunID), planRunID
@@ -155,7 +155,7 @@ func seedStackDriveIncompleteGateFixture(t *testing.T) (*cliworkflow.PreparedWor
 // seedExhaustedFailedChunk pre-seeds a chunk whose retry budget is exhausted
 // (reopened stackMaxChunkAttempts times) with a failed run row: reconcile will
 // mark it terminally failed, halting the drive pass.
-func seedExhaustedFailedChunk(t *testing.T, prepared *cliworkflow.PreparedWorkflowRun, planRunID, failedChunkID string) {
+func seedExhaustedFailedChunk(t *testing.T, prepared *workflow.PreparedWorkflowRun, planRunID, failedChunkID string) {
 	t.Helper()
 	ctx := context.Background()
 	ledger := workflowledger.NewStore(prepared.Store)

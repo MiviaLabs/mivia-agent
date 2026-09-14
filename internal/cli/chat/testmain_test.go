@@ -13,8 +13,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -155,12 +155,12 @@ func wireHookSeams() {
 // wireCliagentsSeams wires the cliagents seam vars that production wiring
 // in internal/cli sets; the implementations now live in this package.
 func wireCliagentsSeams() {
-	cliagents.NewSessionDispatcherVar = NewSessionDispatcher
-	cliagents.RemainderSpoolFromRegistryVar = RemainderSpoolFromRegistry
-	cliagents.SummaryWiringVar = summaryWiring
-	cliagents.AdvertisedSessionToolSpecsVar = advertisedSessionToolSpecs
-	cliagents.ContextDispatcherForVar = contextDispatcherFor
-	cliagents.BuiltInSlashTokensVar = builtInSlashTokenSetLocal
+	agents.NewSessionDispatcherVar = NewSessionDispatcher
+	agents.RemainderSpoolFromRegistryVar = RemainderSpoolFromRegistry
+	agents.SummaryWiringVar = summaryWiring
+	agents.AdvertisedSessionToolSpecsVar = advertisedSessionToolSpecs
+	agents.ContextDispatcherForVar = contextDispatcherFor
+	agents.BuiltInSlashTokensVar = builtInSlashTokenSetLocal
 }
 
 // builtInSlashTokenSetLocal mirrors cli.builtInSlashTokenSet.
@@ -176,7 +176,7 @@ func builtInSlashTokenSetLocal() map[string]struct{} {
 // wireWorkflowSeams wires the workflow tool options seam and the worktree
 // context store seam for the test binary.
 func wireWorkflowSeams() {
-	cliagents.WireWorkflowToolOptionsVar = cliworkflow.WireWorkflowToolOptions
+	agents.WireWorkflowToolOptionsVar = cliworkflow.WireWorkflowToolOptions
 	cliworktree.OpenRepositoryContextStoreFunc = OpenRepositoryContextStore
 }
 
@@ -192,7 +192,7 @@ func wireCliworkflowSeams() {
 	cliworkflow.InstallHookSessionFunc = installHookSessionStub
 	cliworkflow.LoadChatSkillsFunc = loadChatSkills
 	cliworkflow.NewSessionDispatcherFunc = NewSessionDispatcher
-	cliworkflow.InitCoordinatorFunc = cliorchestrate.InitCoordinator
+	cliworkflow.InitCoordinatorFunc = orchestrate.InitCoordinator
 	cliworkflow.InjectBaselineMessagingFunc = injectBaselineMessaging
 	cliworkflow.MessagingDisallowedFunc = messagingDisallowed
 	cliworkflow.SessionAutoDeliveryRepairLoopFunc = sessionAutoDeliveryRepairLoop

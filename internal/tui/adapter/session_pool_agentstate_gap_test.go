@@ -2,7 +2,7 @@ package adapter
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"testing"
 )
@@ -12,7 +12,7 @@ import (
 // so no test through the constructor ever sees it nil.
 func TestBindEntryStateLockedInitializesNilMap(t *testing.T) {
 	p := &SessionPool{}
-	p.bindEntryStateLocked("id-1", &cliagents.AgentSessionState{})
+	p.bindEntryStateLocked("id-1", &agents.AgentSessionState{})
 	if p.agentStates == nil {
 		t.Fatal("bindEntryStateLocked did not initialize a nil agentStates map")
 	}

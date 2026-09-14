@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +16,7 @@ import (
 // hangingBatchTool builds a dispatch_tasks tool whose "oneshot" handler answers
 // immediately unless the prompt says "block", in which case it hangs until its
 // context is cancelled - one fast sibling and one hanging task in the same batch.
-func hangingBatchTool(t *testing.T) *cliorchestrate.DispatchTasksToolForTest {
+func hangingBatchTool(t *testing.T) *orchestrate.DispatchTasksToolForTest {
 	t.Helper()
 	d := runtime.New(runtime.Policy{MaxDepth: 3})
 	err := d.Register(runtime.Subagent, "oneshot", handlerFunc(func(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
@@ -29,7 +29,7 @@ func hangingBatchTool(t *testing.T) *cliorchestrate.DispatchTasksToolForTest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, ledger.NewMemoryLedgerRepository(), testAgentRegistry(t, "oneshot"))
+	return orchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, ledger.NewMemoryLedgerRepository(), testAgentRegistry(t, "oneshot"))
 }
 
 // TestDispatchTasksHangingTaskKeepsSiblingResults is the regression the earlier
@@ -113,7 +113,7 @@ func TestDispatchOrchestrationBudgetOutlivesTaskBudget(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cliorchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, json.RawMessage(tt.args))
+			got := orchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, json.RawMessage(tt.args))
 			if got <= tt.task {
 				t.Fatalf("orchestration budget %ds must exceed the %ds task budget", got, tt.task)
 			}
@@ -123,12 +123,12 @@ func TestDispatchOrchestrationBudgetOutlivesTaskBudget(t *testing.T) {
 
 // TestDispatchOrchestrationSecClampsHugeOverride pins the overflow guard at the
 // whole-call budget: a huge model timeout_seconds must clamp to
-// MaxTimeoutSeconds so cliorchestrate.DispatchOrchestrationSec (and its +15 slack) stays
+// MaxTimeoutSeconds so orchestrate.DispatchOrchestrationSec (and its +15 slack) stays
 // positive and never drops below the orchestration floor. The agent loop arms
 // the call with Capability(args).Timeout, so that path must be positive too.
 func TestDispatchOrchestrationSecClampsHugeOverride(t *testing.T) {
 	args := json.RawMessage(`{"timeout_seconds":10000000000,"tasks":[{"id":"a","prompt":"x"}]}`)
-	got := cliorchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, args)
+	got := orchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, args)
 	if got <= 0 {
 		t.Fatalf("orchestration budget %ds must stay positive after a huge override", got)
 	}
@@ -157,22 +157,22 @@ func TestDispatchOrchestrationSecHonorsExplicitTimeout(t *testing.T) {
 	// With the 12h default configured (as in production), an explicit 600s
 	// must produce a ~615s call budget, not ~43215s.
 	args := json.RawMessage(`{"timeout_seconds":600,"tasks":[{"id":"a","prompt":"x"}]}`)
-	got := cliorchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, args)
-	if got != 600+cliorchestrate.DispatchOrchestrationSlackSec {
+	got := orchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, args)
+	if got != 600+orchestrate.DispatchOrchestrationSlackSec {
 		t.Fatalf("explicit 600s timeout: orchestration budget = %ds, want %ds (was silently floored to %ds before the fix)",
-			got, 600+cliorchestrate.DispatchOrchestrationSlackSec, config.DefaultOrchestrationTimeoutSec+cliorchestrate.DispatchOrchestrationSlackSec)
+			got, 600+orchestrate.DispatchOrchestrationSlackSec, config.DefaultOrchestrationTimeoutSec+orchestrate.DispatchOrchestrationSlackSec)
 	}
 	// Sanity: omitting timeout_seconds still yields the 12h default + slack.
 	argsNoTimeout := json.RawMessage(`{"tasks":[{"id":"a","prompt":"x"}]}`)
-	gotDefault := cliorchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, argsNoTimeout)
-	if gotDefault != config.DefaultOrchestrationTimeoutSec+cliorchestrate.DispatchOrchestrationSlackSec {
-		t.Fatalf("no explicit timeout: orchestration budget = %ds, want %ds", gotDefault, config.DefaultOrchestrationTimeoutSec+cliorchestrate.DispatchOrchestrationSlackSec)
+	gotDefault := orchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, argsNoTimeout)
+	if gotDefault != config.DefaultOrchestrationTimeoutSec+orchestrate.DispatchOrchestrationSlackSec {
+		t.Fatalf("no explicit timeout: orchestration budget = %ds, want %ds", gotDefault, config.DefaultOrchestrationTimeoutSec+orchestrate.DispatchOrchestrationSlackSec)
 	}
 	// Per-task timeout can still raise above the batch level.
 	argsRaised := json.RawMessage(`{"timeout_seconds":600,"tasks":[{"id":"a","prompt":"x","timeout_seconds":900}]}`)
-	gotRaised := cliorchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, argsRaised)
-	if gotRaised != 900+cliorchestrate.DispatchOrchestrationSlackSec {
-		t.Fatalf("per-task 900s raises above batch 600s: orchestration budget = %ds, want %ds", gotRaised, 900+cliorchestrate.DispatchOrchestrationSlackSec)
+	gotRaised := orchestrate.DispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, argsRaised)
+	if gotRaised != 900+orchestrate.DispatchOrchestrationSlackSec {
+		t.Fatalf("per-task 900s raises above batch 600s: orchestration budget = %ds, want %ds", gotRaised, 900+orchestrate.DispatchOrchestrationSlackSec)
 	}
 }
 

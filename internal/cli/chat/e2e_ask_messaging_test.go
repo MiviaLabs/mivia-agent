@@ -2,7 +2,7 @@ package chat
 
 // R3: end-to-end dispatched ask/answer round-trip.
 //
-// cliorchestrate.DispatchTasksToolForTest.Execute → NewSessionDispatcher → coordinator pool →
+// orchestrate.DispatchTasksToolForTest.Execute → NewSessionDispatcher → coordinator pool →
 // agent multi_step handler → post_message(kind=ask) → peer
 // post_message(kind=answer) → asker unblocked. The fake completer emits real
 // provider.ToolCall replies so the multi_step handlers actually invoke
@@ -13,7 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"io"
 	"slices"
 	"strings"
@@ -223,7 +223,7 @@ func auditorAnswered(req provider.Request) bool {
 // newAskE2EDispatchTool builds a real session dispatcher (agent → multi_step)
 // with reviewer and auditor agents and returns the dispatch_tasks tool, the
 // dispatcher, and the shared ledger repo for assertions.
-func newAskE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*cliorchestrate.DispatchTasksToolForTest, *runtime.Dispatcher, ledger.LedgerRepository) {
+func newAskE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*orchestrate.DispatchTasksToolForTest, *runtime.Dispatcher, ledger.LedgerRepository) {
 	t.Helper()
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
@@ -271,12 +271,12 @@ func newAskE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*cliorchest
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
-	raw, ok := reg.Get(cliorchestrate.ToolDispatchTasks)
+	raw, ok := reg.Get(orchestrate.ToolDispatchTasks)
 	if !ok {
 		d.Close()
 		t.Fatal("dispatch_tasks not registered")
 	}
-	tool, ok := raw.(*cliorchestrate.DispatchTasksToolForTest)
+	tool, ok := raw.(*orchestrate.DispatchTasksToolForTest)
 	if !ok {
 		d.Close()
 		t.Fatalf("dispatch_tasks type %T", raw)

@@ -20,7 +20,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -143,7 +143,7 @@ func TestOneshotTotalBudgetEndsRun(t *testing.T) {
 	start := time.Now()
 	result := d.Invoke(context.Background(), runtime.Request{
 		Kind:  runtime.Subagent,
-		Name:  cliorchestrate.HandlerOneshot,
+		Name:  orchestrate.HandlerOneshot,
 		Input: json.RawMessage(`"work"`),
 	})
 	if !errors.Is(result.Err, context.DeadlineExceeded) {

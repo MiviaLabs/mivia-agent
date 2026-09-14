@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -27,11 +27,11 @@ func setupPostMessageEnv(t *testing.T, cfg config.SubagentConfig) (
 		return json.RawMessage(`{"ok":true}`), nil
 	}))
 	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	// Seed durable run/task for PostTaskMessage.
 	const runID, taskID = "cov-run", "cov-task"
@@ -245,11 +245,11 @@ func TestPostMessageAskCancelWhileParked(t *testing.T) {
 		return json.RawMessage(`{"canceled":true}`), nil
 	}))
 	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
-	cliorchestrate.CoordinatorsForTest.Store(d, c)
-	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
+	orchestrate.CoordinatorsForTest.Store(d, c)
+	orchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		cliorchestrate.CoordinatorsForTest.Delete(d)
-		cliorchestrate.CoordinatorReposForTest.Delete(d)
+		orchestrate.CoordinatorsForTest.Delete(d)
+		orchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "peer-1", Name: "peer", AgentName: "peer", Timeout: 5 * time.Second},
@@ -262,18 +262,18 @@ func TestPostMessageAskCancelWhileParked(t *testing.T) {
 }
 
 func TestRunTaskResultsNilRepoWrapper(t *testing.T) {
-	// Hits cliorchestrate.RunTaskResults → runTaskResultsWithRepo(nil, ...) (lines 130-131).
+	// Hits orchestrate.RunTaskResults → runTaskResultsWithRepo(nil, ...) (lines 130-131).
 	result := &coordinator.RunResult{
 		Snapshot: ledger.RunSnapshot{RunID: "r", Tasks: []ledger.TaskSnapshot{
 			{TaskID: "t1", Status: "completed"},
 		}},
 		Results: []subagents.Result{{TaskID: "t1", Status: "completed"}},
 	}
-	got := cliorchestrate.RunTaskResults(result, 4096)
+	got := orchestrate.RunTaskResults(result, 4096)
 	if len(got) != 1 {
 		t.Fatalf("got=%+v", got)
 	}
-	if cliorchestrate.RunTaskResults(nil, 4096) != nil {
+	if orchestrate.RunTaskResults(nil, 4096) != nil {
 		t.Fatal("nil")
 	}
 }

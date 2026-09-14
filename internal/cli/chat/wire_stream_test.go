@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -124,7 +124,7 @@ func TestWireStreamOptOutE2E(t *testing.T) {
 
 			result := d.Invoke(context.Background(), runtime.Request{
 				Kind:  runtime.Subagent,
-				Name:  cliorchestrate.HandlerOneshot,
+				Name:  orchestrate.HandlerOneshot,
 				Input: json.RawMessage(`"work"`),
 			})
 			if result.Err != nil {

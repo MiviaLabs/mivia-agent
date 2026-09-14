@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
@@ -36,14 +36,14 @@ type resultBudgets struct {
 
 // sessionResultBudgets extracts the result budget values from opts.
 // Replaces the former (o SessionDispatcherOpts) resultBudgets() method,
-// which cannot be defined here since SessionDispatcherOpts is in cliagents.
+// which cannot be defined here since SessionDispatcherOpts is in agents.
 func sessionResultBudgets(opts SessionDispatcherOpts) resultBudgets {
 	return resultBudgets{perCall: opts.ToolResultCapBytes, perBatch: opts.BatchResultBudgetBytes, refOnlyTools: opts.RefOnlyTools, toolRunTimeout: opts.ToolRunTimeout}
 }
 
-// selectableModel wraps cliagents.SelectableModel for local use.
+// selectableModel wraps agents.SelectableModel for local use.
 func selectableModel(catalog []config.ProviderModelGroup, providerName, model string) (config.ModelSpec, bool) {
-	return cliagents.SelectableModel(catalog, providerName, model)
+	return agents.SelectableModel(catalog, providerName, model)
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -62,7 +62,7 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 		if opts.SharedSQLite != nil {
 			repo = ledger.NewBorrowedStorageLedgerRepository(opts.SharedSQLite)
 		} else {
-			repo, ownedStore = cliorchestrate.OpenDurableLedgerRepo(opts.Config, os.Stderr)
+			repo, ownedStore = orchestrate.OpenDurableLedgerRepo(opts.Config, os.Stderr)
 		}
 	}
 	d, err := newSessionDispatcherCore(opts, repo)
@@ -75,7 +75,7 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 	if ownedStore != nil {
 		d.OnClose(func() { _ = ownedStore.Close() })
 	}
-	cliorchestrate.InitCoordinator(d, opts.Config, repo)
+	orchestrate.InitCoordinator(d, opts.Config, repo)
 	return d, nil
 }
 
@@ -129,10 +129,10 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 		// Default wiring for every production caller: resolves the
 		// coordinator InitCoordinator installs for d (called by the
 		// caller of NewSessionDispatcher, AFTER this function returns -
-		// see cliorchestrate.ToolCancelReadyHook's own doc comment for why
+		// see orchestrate.ToolCancelReadyHook's own doc comment for why
 		// that ordering is safe). A caller that already set this field
 		// (tests supplying their own hook) keeps its own wiring.
-		opts.OnToolCancelReady = cliorchestrate.ToolCancelReadyHook(d)
+		opts.OnToolCancelReady = orchestrate.ToolCancelReadyHook(d)
 	}
 	maxTokens := sessionOutputCeiling(opts)
 	authority := opts.Authority()
@@ -142,7 +142,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	// issued survive the rebuild.
 	spool := opts.RemainderSpool
 	if spool == nil {
-		spool = newRemainderSpool(cliorchestrate.EffectiveOrchestrationRepo(repo))
+		spool = newRemainderSpool(orchestrate.EffectiveOrchestrationRepo(repo))
 	}
 	dial := sessionDialFor(opts)
 	// One loop rather than four copies of the same error branch: handler names
@@ -164,7 +164,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return nil, err
 		}
 	}
-	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model, opts.ToolDenylist); err != nil {
+	if err := orchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model, opts.ToolDenylist); err != nil {
 		return nil, err
 	}
 	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry, opts.ToolDenylist); err != nil {
@@ -207,7 +207,7 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools), opts.ToolDenylist)
+	return agents.RegisterSessionTool(d, opts.Registry, agents.NewLoadToolsTool(opts.Session, opts.DeferredTools), opts.ToolDenylist)
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {

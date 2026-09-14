@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -17,7 +17,7 @@ type SettingsStore struct {
 	sess       *chat.Session
 	conv       *Conversation
 	res        *config.Resolved
-	agentState *cliagents.AgentSessionState
+	agentState *agents.AgentSessionState
 	// pool fans operator-wide runtime settings out to every live session.
 	// Nil for a settings store built without one (tests, one-shot commands),
 	// which then falls back to the active session alone.
@@ -66,7 +66,7 @@ type SettingsStore struct {
 }
 
 // NewSettingsStore builds a SettingsStore populated from the resolved configuration and agent state.
-func NewSettingsStore(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) *SettingsStore {
+func NewSettingsStore(sess *chat.Session, res *config.Resolved, state *agents.AgentSessionState) *SettingsStore {
 	s := &SettingsStore{
 		sess:       sess,
 		res:        res,

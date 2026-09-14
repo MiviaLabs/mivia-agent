@@ -10,16 +10,16 @@ import (
 	"strings"
 	"testing"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 )
 
 // TestInstallAutomationHooksWithoutASeamIsANoOp pins the unwired case: a
 // binary that never installed the hook seam must get a usable no-op release
 // rather than a nil func the caller would panic on.
 func TestInstallAutomationHooksWithoutASeamIsANoOp(t *testing.T) {
-	prev := clichat.InstallHookSessionFunc
-	clichat.InstallHookSessionFunc = nil
-	t.Cleanup(func() { clichat.InstallHookSessionFunc = prev })
+	prev := chat.InstallHookSessionFunc
+	chat.InstallHookSessionFunc = nil
+	t.Cleanup(func() { chat.InstallHookSessionFunc = prev })
 
 	release, err := installAutomationHooks(t.TempDir())
 	if err != nil {
@@ -35,11 +35,11 @@ func TestInstallAutomationHooksWithoutASeamIsANoOp(t *testing.T) {
 // returning success with no releaser: the caller still defers release(), so
 // a nil there would panic at the end of every run.
 func TestInstallAutomationHooksTreatsANilReleaseAsANoOp(t *testing.T) {
-	prev := clichat.InstallHookSessionFunc
-	clichat.InstallHookSessionFunc = func(root string, interactive, quiet bool) (func(), error) {
+	prev := chat.InstallHookSessionFunc
+	chat.InstallHookSessionFunc = func(root string, interactive, quiet bool) (func(), error) {
 		return nil, nil
 	}
-	t.Cleanup(func() { clichat.InstallHookSessionFunc = prev })
+	t.Cleanup(func() { chat.InstallHookSessionFunc = prev })
 
 	release, err := installAutomationHooks(t.TempDir())
 	if err != nil {
@@ -56,11 +56,11 @@ func TestInstallAutomationHooksTreatsANilReleaseAsANoOp(t *testing.T) {
 // config or store failure.
 func TestInstallAutomationHooksWrapsASeamFailure(t *testing.T) {
 	sentinel := errors.New("hook install refused")
-	prev := clichat.InstallHookSessionFunc
-	clichat.InstallHookSessionFunc = func(root string, interactive, quiet bool) (func(), error) {
+	prev := chat.InstallHookSessionFunc
+	chat.InstallHookSessionFunc = func(root string, interactive, quiet bool) (func(), error) {
 		return nil, sentinel
 	}
-	t.Cleanup(func() { clichat.InstallHookSessionFunc = prev })
+	t.Cleanup(func() { chat.InstallHookSessionFunc = prev })
 
 	release, err := installAutomationHooks(t.TempDir())
 	if err == nil {
@@ -86,8 +86,8 @@ func TestBuildServiceReleasesTheStoreWhenHooksFail(t *testing.T) {
 	root := writeAutomationsFixture(t, "hook-failure-fixture")
 
 	sentinel := errors.New("hook install refused")
-	prev := clichat.InstallHookSessionFunc
-	clichat.InstallHookSessionFunc = func(string, bool, bool) (func(), error) {
+	prev := chat.InstallHookSessionFunc
+	chat.InstallHookSessionFunc = func(string, bool, bool) (func(), error) {
 		return nil, sentinel
 	}
 
@@ -101,7 +101,7 @@ func TestBuildServiceReleasesTheStoreWhenHooksFail(t *testing.T) {
 
 	// Restore the seam and build for real against the SAME root: this only
 	// works if the failed attempt closed the store it opened.
-	clichat.InstallHookSessionFunc = prev
+	chat.InstallHookSessionFunc = prev
 	svc, _, cleanup, err := buildService(root, "")
 	if err != nil {
 		t.Fatalf("buildService after a hook failure: %v, want the store to have been released", err)

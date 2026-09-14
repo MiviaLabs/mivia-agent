@@ -30,7 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/orchestrate"
 	"io"
 	"slices"
 	"strings"
@@ -177,7 +177,7 @@ func (c *declineToolCompleter) auditorTurn(req provider.Request) *provider.Respo
 // multi_step) with reviewer and auditor agents and returns the dispatch_tasks
 // tool, the dispatcher, the shared ledger repo, and the live completer (for
 // the askObserved/releaseAuditor channels). Mirrors newAskE2EDispatchTool.
-func newAskDeclineE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*cliorchestrate.DispatchTasksToolForTest, *runtime.Dispatcher, ledger.LedgerRepository, *declineToolCompleter) {
+func newAskDeclineE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*orchestrate.DispatchTasksToolForTest, *runtime.Dispatcher, ledger.LedgerRepository, *declineToolCompleter) {
 	t.Helper()
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
@@ -221,12 +221,12 @@ func newAskDeclineE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*cli
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
-	raw, ok := reg.Get(cliorchestrate.ToolDispatchTasks)
+	raw, ok := reg.Get(orchestrate.ToolDispatchTasks)
 	if !ok {
 		d.Close()
 		t.Fatal("dispatch_tasks not registered")
 	}
-	tool, ok := raw.(*cliorchestrate.DispatchTasksToolForTest)
+	tool, ok := raw.(*orchestrate.DispatchTasksToolForTest)
 	if !ok {
 		d.Close()
 		t.Fatalf("dispatch_tasks type %T", raw)
@@ -320,15 +320,15 @@ func waitForAskObserved(t *testing.T, comp *declineToolCompleter, release func()
 // ledger ask.
 func assertParked(t *testing.T, runID string) string {
 	t.Helper()
-	rawHandle, ok := cliorchestrate.RunHandlesForTest.Load(runID)
+	rawHandle, ok := orchestrate.RunHandlesForTest.Load(runID)
 	if !ok {
 		t.Fatalf("no orchestration handle for run %s", runID)
 	}
-	record, ok := rawHandle.(*cliorchestrate.OrchestrationHandleForTest)
-	if !ok || cliorchestrate.CoordinatorOfHandle(record) == nil {
-		t.Fatalf("run handle %T is not an cliorchestrate.OrchestrationHandleForTest with a coordinator", rawHandle)
+	record, ok := rawHandle.(*orchestrate.OrchestrationHandleForTest)
+	if !ok || orchestrate.CoordinatorOfHandle(record) == nil {
+		t.Fatalf("run handle %T is not an orchestrate.OrchestrationHandleForTest with a coordinator", rawHandle)
 	}
-	parks := cliorchestrate.CoordinatorOfHandle(record).ParkedQuestions(runID)
+	parks := orchestrate.CoordinatorOfHandle(record).ParkedQuestions(runID)
 	if len(parks) != 1 {
 		t.Fatalf("while asker parked, parks = %+v, want exactly 1 (the asker's park)", parks)
 	}

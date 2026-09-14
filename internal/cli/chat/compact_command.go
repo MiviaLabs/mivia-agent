@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 )
 
 // runCompact drives `mivia compact --session <name> [--json] [--workspace
@@ -51,7 +51,7 @@ func runCompactWithIO(args []string, stdout io.Writer) error {
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	// runRecoverySweep=false (F14): a standalone compaction is not a session
 	// start and must not push branches, publish PRs, or drive stacks.
-	cleanup, err := cliagents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
+	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("compact: %w", err)

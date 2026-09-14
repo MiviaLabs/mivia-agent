@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -58,7 +58,7 @@ func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, 
 // whose directory no operator manages. Only that tier is chmod'd; an
 // operator-configured store_path keeps the modes its owner chose.
 func hardenOrchestrationStore(root, path string) bool {
-	return cliagents.SameFilePath(runtime.GOOS, path, config.TempStorePath(root, "orchestration"))
+	return agents.SameFilePath(runtime.GOOS, path, config.TempStorePath(root, "orchestration"))
 }
 
 // openOrchestrationStoreAt opens the orchestration ledger at path, hardening
@@ -80,4 +80,4 @@ func openContextStorePathWithOptions(path string, opts storage.Options) (*storag
 	return store, nil
 }
 
-// The pure path comparison lives in cliagents.SameFilePath.
+// The pure path comparison lives in agents.SameFilePath.
