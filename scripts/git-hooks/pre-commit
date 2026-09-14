@@ -276,7 +276,7 @@ if command -v go >/dev/null 2>&1; then
   # kind gets added on one side and forgotten on the others. It is the gate for
   # a class that has shipped four times here (a kind reaching one viewer of
   # four, an arm with no allowlist entry, an allowlist entry with no arm).
-  if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|uiadapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
+  if echo "$STAGED" | grep -qE '^(internal/(agent|clichat|hub|tui/adapter|events)/|\.mivia/policy/viewer-surfaces\.json$)'; then
     echo " → Running viewer-surface conformance tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryEventKindReachesEveryViewerOrSaysWhyNot|TestTheRelayAllowlistAndItsRendererAgree' ./internal/clichat/ -count=1 -timeout=60s) || INV_FAIL=1
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestAllEventKindsMatchesTheDeclaredConstants' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
@@ -307,7 +307,7 @@ if command -v go >/dev/null 2>&1; then
   # and a result-producer lookup keyed by the wrong one compiles and misses
   # silently (DC-11) - the recovered path shipped that twice. The conformance
   # suite is the gate that holds EVERY producer to the same attachment
-  # contract; the wire-contract test pins the envelope bytes uiadapter
+  # contract; the wire-contract test pins the envelope bytes adapter
   # mirrors by hand (INV-TUI-29 forbids the import).
   if echo "$STAGED" | grep -qE '^internal/cliorchestrate/'; then
     echo " → Running orchestration result-envelope invariant tests..."
@@ -358,11 +358,11 @@ if command -v go >/dev/null 2>&1; then
   # them, or it reads "(0)" on screen forever. An adversarial review found
   # eight such mutations surviving the whole suite. Keyed on all three
   # packages, because the drift is between them.
-  if echo "$STAGED" | grep -qE '^internal/(chat/|uikit/ports/|uiadapter/)'; then
+  if echo "$STAGED" | grep -qE '^internal/(chat/|tui/kit/ports/|tui/adapter/)'; then
     echo " → Running context-breakdown enumeration invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryCostFieldIsRescaled|TestChatCountsOnlyKeepsEveryCount|TestFloorAndConversationPartitionEveryCost' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/uikit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/uiadapter/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryTokenFieldIsScaled|TestConversationBucketsAreExactlyTheReclaimableFields|TestCountsOnlyKeepsEveryCountAndDropsEveryCost' ./internal/tui/kit/ports/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryBreakdownFieldCrossesTheBridge' ./internal/tui/adapter/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   # The session catalog has two namespaces - plain and managed-worktree - and
   # every behaviour implemented for one and missed by the other in the

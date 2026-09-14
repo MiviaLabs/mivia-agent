@@ -43,11 +43,11 @@
       "reason": "sh command presence on PATH"
     },
     "TestConversation_DoesNotImportCLIFamily": {
-      "file": "internal/uiadapter/conversation_test.go",
+      "file": "internal/tui/adapter/conversation_test.go",
       "reason": "invariants skip in short mode"
     },
     "TestUIPackages_DoNotImportUIAdapter": {
-      "file": "internal/uiadapter/conversation_test.go",
+      "file": "internal/tui/adapter/conversation_test.go",
       "reason": "invariants skip in short mode"
     }
   }

@@ -2,7 +2,7 @@
   "description": "Which event kinds each viewer surface deliberately does not render, and why. Enforced by TestEveryEventKindReachesEveryViewerOrSaysWhyNot in internal/clichat, driven by agent.AllEventKinds (itself checked against the parsed source of the constant block). An undeclared kind that produces nothing FAILS. A declared kind that DOES produce something also fails, so a stale entry cannot hide the next real gap. Adding a kind to internal/agent therefore forces a decision on every surface instead of a silence on some of them.",
   "surfaces": {
     "tui": {
-      "description": "internal/uiadapter translation into the uievent stream the TUI renders.",
+      "description": "internal/tui/adapter translation into the uievent stream the TUI renders.",
       "ignores": {
         "step": "An iteration boundary. Opt-in through TranslateOptions.ShowIterationNotices, which is off by default, so the ordinary transcript is not one notice per loop step.",
         "cache_usage": "A per-step prompt-cache hit rate. Opt-in through TranslateOptions.ShowPromptCacheNotices; the statusline carries the session total.",

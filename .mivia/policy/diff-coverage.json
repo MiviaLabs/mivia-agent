@@ -36,7 +36,7 @@
       ],
       "reason": "Four unreachable-or-untriggerable clusters. (1) 93-94: the write-directory's SECOND rejectSymlinkComponents(dir) call, immediately after MkdirAll succeeds on the SAME dir value the first call (a few lines above) already passed. MkdirAll only creates plain directories, never symlinks, and no code runs between the two calls that could swap a path component for a symlink - the second check is TOCTOU defense against a concurrent external actor racing a symlink into the path in that window, which cannot be deterministically synchronized from an in-process test. (2) 149-151: Scan's Parse(data) error branch (149-150) plus the closing brace the coverage gate counts as part of the same block (151). Parse (internal/memory/entry.go) has exactly two return statements, both `return e, nil`; its (Entry, error) signature carries an error return the current line-based implementation never produces. (3) 399-412: atomicWrite's tmp.Chmod/tmp.Write/tmp.Sync/tmp.Close error-branch bodies on an *os.File value local to the function, with no seam to intercept it. Triggering a live fd's Write/Sync/Close failure deterministically and portably (without an OS-specific unsafe technique such as an RLIMIT_FSIZE trip, which raises SIGXFSZ and kills the test process by default) is not achievable from this test package; TestAtomicWriteRejectsCanceledContext and TestAtomicWrite_RenameFailsWhenDestinationIsADirectory already cover the two atomicWrite error paths that ARE reachable (context cancellation before CreateTemp, and os.Rename's error after a real directory-collision precondition). || ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: Save's Scan/mergeSimilar error propagation and mergeSimilar's Verdict/Created defaults and relation-check merge-skip branch. Reachable; simply not yet tested."
     },
-    "internal/ui/screen/conversation/thread.go": {
+    "internal/tui/view/screen/conversation/thread.go": {
       "lines": [
         291,
         292,
@@ -95,13 +95,13 @@
       ],
       "reason": "Two clusters, same class as the accepted identity.go/markdown_source.go entries. (1) 49-50: recordDelivered's json.Marshal(ids) error wrap - ids is []string, and Marshal cannot fail on a plain string slice. (2) 67-76: writeFileDurably's tmp file Write/Sync/Close error wraps on an *os.File local to the function, with no seam to intercept it."
     },
-    "internal/ui/component/composer/composer.go": {
+    "internal/tui/view/component/composer/composer.go": {
       "lines": [
         533
       ],
       "reason": "markCommandToken's own len(lines)==0 guard, and the code's own preceding comment already states why it is unreachable: strings.Split never returns an empty slice (even Split(\"\", \"\\n\") yields [\"\"], len 1), so this is defensive-only dead code kept as a guard against a future stdlib-contract change, not a reachable branch."
     },
-    "internal/ui/component/transcript/click.go": {
+    "internal/tui/view/component/transcript/click.go": {
       "lines": [
         49
       ],
@@ -168,11 +168,11 @@
       ],
       "reason": "writeFileAtomic's tmp file Write and Close error wraps on an *os.File local to the function, with no seam to intercept it - same class as the accepted identity.go/markdown_source.go/delivered_ledger.go entries."
     },
-    "internal/uiadapter/settings_general.go": {
+    "internal/tui/adapter/settings_general.go": {
       "lines": [
         330
       ],
-      "reason": "mutateGeneral's default case for an unknown ports.GeneralEdit. ports.GeneralEdit's marker method (isGeneralEdit) is unexported to package ports, so only types declared in that package can implement it - no type constructible from internal/uiadapter (or any test package) can reach this switch with a value the earlier cases do not already match. Confirmed by a compile error when attempting exactly this from a uiadapter-side test (unexported method isGeneralEdit)."
+      "reason": "mutateGeneral's default case for an unknown ports.GeneralEdit. ports.GeneralEdit's marker method (isGeneralEdit) is unexported to package ports, so only types declared in that package can implement it - no type constructible from internal/tui/adapter (or any test package) can reach this switch with a value the earlier cases do not already match. Confirmed by a compile error when attempting exactly this from a uiadapter-side test (unexported method isGeneralEdit)."
     },
     "internal/cliagents/agent_surface.go": {
       "lines": [
@@ -258,7 +258,7 @@
       ],
       "reason": "sdkSummarizerAdapter.Summarize's TurnState.Snapshot() error return: Snapshot re-validates the accumulator with validateSummaryText for state and validateSummaryList for the five lists, and contextmgr.TurnState's fields are unexported, so every value it can hold arrived through SetState or appendItem. SetState applies validateSummaryText(\"state\", state, true), the exact check Snapshot repeats. appendItem applies the same three rules validateSummaryList checks: the MaxSummaryItems cap, validateSummaryText(field, value, false), and duplicate rejection. No caller outside contextmgr can construct a TurnState that passes its setters and then fails its own Snapshot, so the skip branch is defensive and unreachable from this package. TestSDKSummarizerAdapterRequestInvalidSkips covers the sibling skip branch (buildRequest failure) that IS reachable."
     },
-    "internal/uikit/clipboardwrite/clipboardwrite.go": {
+    "internal/tui/kit/clipboardwrite/clipboardwrite.go": {
       "lines": [
         53,
         54,
@@ -349,7 +349,7 @@
       ],
       "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
     },
-    "internal/uiadapter/session_pool_worktree.go": {
+    "internal/tui/adapter/session_pool_worktree.go": {
       "lines": [
         284,
         285
@@ -371,7 +371,7 @@
       ],
       "reason": "Two unreachable branches. (1) 275-276: writePendingInput's json.Marshal(state) error wrap. pendingInputState wraps only a *SessionInput (plain strings and a *string) and a bool; no channel, func, complex, cyclic, or Marshaler value reaches it, so Marshal cannot fail. (2) 338: deliverInput's select-default case, explicitly called out as unreachable by the comment directly above it: the channel is always fresh with no concurrent reader racing it at this point in the flow."
     },
-    "internal/uiadapter/remote_input_watcher.go": {
+    "internal/tui/adapter/remote_input_watcher.go": {
       "lines": [
         163,
         164,
@@ -403,21 +403,21 @@
       ],
       "reason": "openMarkdownMemoryStore's OpenMarkdownStore error wrap, unreachable given this call site's own guarantees. OpenMarkdownStore (markdown_store.go:54-82) returns a non-nil error only from its own cfg.Index==nil and cfg.ProjectID==\"\" guards; every per-scope refresh() failure is absorbed into the store's degraded map instead of propagating. This call site's Index comes from a just-succeeded storage.OpenSQLiteWithOptions (never nil on success) and its ProjectID is filepath.Abs(root) (never empty), so neither guard can fire."
     },
-    "internal/uiadapter/session_pool_agentstate.go": {
+    "internal/tui/adapter/session_pool_agentstate.go": {
       "lines": [
         79,
         80
       ],
       "reason": "ApplyApprovalDefault's own normalized == \"\" guard. config.NormalizeDefaultMode's switch has no case that returns \"\": every named mode maps to a policy constant and the default case (and the explicit \"\" case) both return ApprovalPolicyWriteOnly, so no raw input makes NormalizeDefaultMode return an empty string."
     },
-    "internal/uiadapter/settings_theme.go": {
+    "internal/tui/adapter/settings_theme.go": {
       "lines": [
         16,
         17
       ],
       "reason": "PersistTheme's own synchronous Apply-error branch. settingsGeneral.Apply (settings_general.go:20-22) is `return g.newSaveHandle(...), nil` unconditionally - its second return value is a literal nil, never a variable that could carry an error - so this call can never return a non-nil err. The only failure PersistTheme can actually observe is the async SaveFailed event TestPersistTheme_SaveFailureSurfaces covers."
     },
-    "internal/uiadapter/runner_model.go": {
+    "internal/tui/adapter/runner_model.go": {
       "lines": [
         41,
         42,
@@ -425,14 +425,14 @@
       ],
       "reason": "availableModelsByProvider's own r.res == nil guard, explicitly called out as dead by the comment directly above it: the function's one caller, handleModel, already returns early on r.res == nil before ever reaching this call, so no input reaches this branch through the CommandRunner's public API."
     },
-    "internal/ui/component/approval/approval.go": {
+    "internal/tui/view/component/approval/approval.go": {
       "lines": [
         78,
         79
       ],
       "reason": "clampOffset's own max<0 branch. max := diffTotal() - windowHeight(), and windowHeight() is `min(diffTotal(), ApprovalDiffPreviewLines)` - so max always equals diffTotal() minus a value that is at most diffTotal() itself, which is never negative (a - min(a,b) >= 0 for any a,b). No diff length makes windowHeight() exceed diffTotal(), so max<0 cannot occur. An earlier commit's test for this line asserted a true fact (offset clamps to 0 for short content) but for an unrelated reason - the normal clamp() call two lines below, not this guard - and has been removed."
     },
-    "internal/ui/render/header.go": {
+    "internal/tui/view/render/header.go": {
       "lines": [
         294,
         295,
@@ -682,7 +682,7 @@
       ],
       "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: The memory backend's merged-entry Verdict/Created defaults."
     },
-    "internal/newtui/run.go": {
+    "internal/tui/run/run.go": {
       "lines": [
         253,
         254,
@@ -714,7 +714,7 @@
       ],
       "reason": "ACCEPTED UNTESTED on the dev->origin/dev branch of 2026-09-12, NOT a reachability claim. This branch accumulated 56 unpushed commits and 5252 changed statement lines; coverage work took the uncovered set from 357 to 87 and then stopped at a deliberate decision point. The lines below are reachable code for which no test was written, accepted as a one-time residue so the branch can land. They are NOT provably unreachable and must not be cited as precedent for a future 'unreachable' claim. Prune by writing the test, not by copying this reason. Per-file note: newContextID and beginWrite error returns, plus the rows.Scan arms inside both reader loops - events.kind and events.run_id are NOT NULL and SQLite coerces every other selected value, so a scan failure cannot be seeded through the real schema."
     },
-    "internal/uiadapter/conversation_progress.go": {
+    "internal/tui/adapter/conversation_progress.go": {
       "lines": [
         147,
         148

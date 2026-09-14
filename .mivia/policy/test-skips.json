@@ -4,7 +4,7 @@
   "requireReason": true,
   "allowInDiffWithoutEntry": false,
   "knownSkips": {
-    "internal/uikit/clipboardwrite/clipboardwrite_test.go": [
+    "internal/tui/kit/clipboardwrite/clipboardwrite_test.go": [
       {
         "line": 160,
         "reason": "uses a POSIX shell command (sh -c); no Windows equivalent wired here"
@@ -122,7 +122,7 @@
         "reason": "known bug, not a regression: the SDK's Trim return becomes the run's real carried history, so the leaked summary frame corrupts the memoized-message comparison across steps"
       }
     ],
-    "internal/ui/render/markdown_fuzz_test.go": [
+    "internal/tui/view/render/markdown_fuzz_test.go": [
       {
         "line": 44,
         "reason": "fuzz corpus size guard: input exceeds the 64KiB safety bound"
@@ -284,13 +284,13 @@
         "reason": "t.Skip()"
       }
     ],
-    "internal/ui/component/welcome/welcome_test.go": [
+    "internal/tui/view/component/welcome/welcome_test.go": [
       {
         "line": 227,
         "reason": "theme resolves accent and warning to the same colour; nothing to tell apart"
       }
     ],
-    "internal/uiadapter/session_pool_approval_test.go": [
+    "internal/tui/adapter/session_pool_approval_test.go": [
       {
         "line": 124,
         "reason": "this fixture cannot save a session: %v"
@@ -406,13 +406,13 @@
         "reason": "platform allows flock on a directory, so this precondition does not hold"
       }
     ],
-    "internal/uiadapter/settings_theme_error_test.go": [
+    "internal/tui/adapter/settings_theme_error_test.go": [
       {
         "line": 37,
         "reason": "platform still creates files in a read-only directory"
       }
     ],
-    "internal/uiadapter/worktree_create_test.go": [
+    "internal/tui/adapter/worktree_create_test.go": [
       {
         "line": 413,
         "reason": "platform will not remove its own working directory"
@@ -422,7 +422,7 @@
         "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ],
-    "internal/uiadapter/worktree_sessions_internal_test.go": [
+    "internal/tui/adapter/worktree_sessions_internal_test.go": [
       {
         "line": 53,
         "reason": "platform will not remove its own working directory"
@@ -450,7 +450,7 @@
         "reason": "this workspace shape does not fail the agent load on this platform; the branch stays covered by its sibling cases"
       }
     ],
-    "internal/ui/render/stream_markdown_fuzz_test.go": [
+    "internal/tui/view/render/stream_markdown_fuzz_test.go": [
       {
         "line": 65,
         "reason": "fuzz corpus size guard: input exceeds 16KiB"
@@ -460,7 +460,7 @@
         "reason": "fuzz corpus guard: input is not valid UTF-8"
       }
     ],
-    "internal/ui/render/stream_markdown_test.go": [
+    "internal/tui/view/render/stream_markdown_test.go": [
       {
         "line": 331,
         "reason": "need two embedded themes"
