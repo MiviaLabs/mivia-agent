@@ -213,7 +213,7 @@ func (p *recordingPrep) Discard(contextmgr.Preparation) { p.discard++ }
 // holds. The retry path must exercise a configured PreparationManager (the
 // old retry tests ran without one, which is why the staleness went untested).
 func TestPromptTooLongRetryRefreshesPreparation(t *testing.T) {
-	t.Skip("accepted gap, not a regression: runSDKPromptTooLongRecoverable's retry does not reproduce the legacy retry-time summary/preparation re-derivation (refreshOmittedEvidenceAfterRetry, memo invalidation, injectSummary) - documented inline on runSDKPromptTooLongRecoverable (agentloop_adapter.go).")
+	t.Skip("accepted gap, not a regression: the retry's summary re-derivation is fixed (sdkCompactAfterPromptTooLong re-derives omitted evidence and invalidates the memo, agentloop_recovery.go), but the stale-preparation Discard/re-Prepare half is still open - the retry path re-runs the SDK loop without discarding the rejected attempt's preparation (reproduces: Discard count 0, want 1).")
 	principal, binding := elisionPrincipalBinding(t)
 	prep := &recordingPrep{}
 	comp := &promptTooLongCompleter{

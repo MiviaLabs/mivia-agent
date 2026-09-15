@@ -20,7 +20,7 @@
     ],
     "internal/agent/audit_dump_test.go": [
       {
-        "line": 279,
+        "line": 282,
         "reason": "POSIX modes are not representable on Windows"
       }
     ],
@@ -32,28 +32,24 @@
     ],
     "internal/agent/hang_regression_integration_test.go": [
       {
-        "line": 55,
+        "line": 54,
         "reason": "named pipes environment requirement"
       },
       {
-        "line": 106,
+        "line": 105,
         "reason": "named pipes environment requirement"
       },
       {
-        "line": 155,
+        "line": 154,
         "reason": "named pipes environment requirement"
       },
       {
-        "line": 231,
+        "line": 230,
         "reason": "cat command path dependency"
       },
       {
-        "line": 275,
+        "line": 274,
         "reason": "yes command path dependency"
-      },
-      {
-        "line": 334,
-        "reason": "unix tools dependency"
       }
     ],
     "internal/agent/heartbeat_kind_test.go": [
@@ -65,31 +61,13 @@
     "internal/agent/loop_context_fix_test.go": [
       {
         "line": 216,
-        "reason": "accepted gap, not a regression: runSDKPromptTooLongRecoverable's retry does not reproduce the legacy retry-time summary/preparation re-derivation"
-      }
-    ],
-    "internal/agent/loop_reasoning_redaction_test.go": [
-      {
-        "line": 60,
-        "reason": "accepted gap, not a regression: legacy EventThinking has no SDK bridge - Event surface gap in docs/development/sdk-backend-field-mapping.md §2."
-      }
-    ],
-    "internal/agent/loop_retry_steer_test.go": [
-      {
-        "line": 199,
-        "reason": "known bug, not a regression: runSDKPromptTooLongRecoverable's retry has no continuation-after-steer path - tracked in docs/development/sdk-backend-field-mapping.md §4."
+        "reason": "accepted gap, not a regression: the retry's summary re-derivation is fixed (sdkCompactAfterPromptTooLong re-derives omitted evidence and invalidates the memo), but the stale-preparation Discard/re-Prepare half is still open - the retry path re-runs the SDK loop without discarding the rejected attempt's preparation."
       }
     ],
     "internal/agent/loop_steer_test.go": [
       {
         "line": 93,
         "reason": "accepted gap, not a regression: the SDK cancels Completer.Chat wholesale on Trigger and Result.Final is the zero value on a steered stop by design"
-      }
-    ],
-    "internal/agent/loop_steer_worklimit_test.go": [
-      {
-        "line": 87,
-        "reason": "known bug, not a regression: sdkWorkBudget.refund cannot distinguish a steer-canceled call from a plain provider error and refunds both - tracked in docs/development/sdk-backend-field-mapping.md §4."
       }
     ],
     "internal/agent/loop_tools_budget_test.go": [
@@ -100,12 +78,6 @@
       {
         "line": 65,
         "reason": "accepted approximation, not a regression: the SDK's ToolBudget.Reserve is charged the raw per-turn tool-call count, before per-batch-cap truncation"
-      }
-    ],
-    "internal/agent/summary_memo_test.go": [
-      {
-        "line": 62,
-        "reason": "known bug, not a regression: the SDK's Trim return becomes the run's real carried history, so the leaked summary frame corrupts the memoized-message comparison across steps"
       }
     ],
     "internal/tui/view/render/markdown_fuzz_test.go": [
@@ -236,23 +208,23 @@
     ],
     "internal/memory/markdown_source_test.go": [
       {
-        "line": 421,
+        "line": 449,
         "reason": "platform still reads %s after chmod 000; cannot force a read failure"
       },
       {
-        "line": 564,
+        "line": 592,
         "reason": "root bypasses the write-permission check this test relies on"
       },
       {
-        "line": 581,
+        "line": 609,
         "reason": "platform still creates files in a read-only directory; atomicWrite cannot fail here"
       },
       {
-        "line": 622,
+        "line": 650,
         "reason": "platform will not remove its own working directory"
       },
       {
-        "line": 625,
+        "line": 653,
         "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ],
@@ -358,11 +330,11 @@
     ],
     "internal/chatsync/session_badrequest_test.go": [
       {
-        "line": 267,
+        "line": 282,
         "reason": "platform still creates files in a read-only directory"
       },
       {
-        "line": 312,
+        "line": 327,
         "reason": "platform still creates files in a read-only directory"
       }
     ],
@@ -384,7 +356,7 @@
     ],
     "internal/miviaauth/session_lock_test.go": [
       {
-        "line": 397,
+        "line": 410,
         "reason": "real 20s lock-contention wait; skipped in -short"
       },
       {
