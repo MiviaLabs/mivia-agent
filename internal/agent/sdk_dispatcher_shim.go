@@ -289,17 +289,14 @@ func (d *dispatcherShim) dispatcherAndSpool() (*runtime.Dispatcher, *remainder.S
 }
 
 // toolCallKeyFromContext returns the lookup key for the in-flight tool call:
-// call.ID when non-empty, else call.Name. The fallback is not a test
-// affordance - a provider stream can send the tool-call NAME delta before, or
-// without, the ID delta, and every recorder on this path has to agree on the
-// key or an outcome lands where nothing looks for it.
+// call.ID when non-empty, else call.Name (delegating to sdkagentloop.ToolCallKey).
+// The fallback is not a test affordance - a provider stream can send the
+// tool-call NAME delta before, or without, the ID delta, and every recorder on
+// this path has to agree on the key or an outcome lands where nothing looks for it.
 func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
 	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
-		if tc.ID != "" {
-			return tc.ID
-		}
-		if tc.Name != "" {
-			return tc.Name
+		if key := sdkagentloop.ToolCallKey(tc); key != "" {
+			return key
 		}
 	}
 	return fallbackName

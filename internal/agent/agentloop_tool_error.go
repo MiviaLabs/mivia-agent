@@ -83,7 +83,7 @@ func hostAuthorizedToolMessage(ctx context.Context, opts Options, turn *sdkTurnS
 		// id. Guarding it again in one caller and not the other only made the
 		// two look like they had different contracts.
 		if turn != nil {
-			turn.recordToolOutcome(toolCallKey(call), call.Name, body, true)
+			turn.recordToolOutcome(sdkagentloop.ToolCallKey(call), call.Name, body, true)
 		}
 	}
 	return sdkshape.Message{
@@ -127,7 +127,7 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		if strings.TrimSpace(string(call.Arguments)) != "" && !json.Valid(call.Arguments) {
 			return sdkshape.Message{}, nil
 		}
-		callKey := toolCallKey(call)
+		callKey := sdkagentloop.ToolCallKey(call)
 		msg := ""
 		if opts.StagedToolMessage != nil {
 			if m, ok := opts.StagedToolMessage(call.Name); ok {
@@ -182,18 +182,6 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 	}
 }
 
-// toolCallKey is the outcome-map key for one call: its ID, or its Name when
-// the ID is empty. call.ID goes empty when a provider stream sends the
-// tool-call NAME delta before, or without, the ID delta, and every recorder
-// in this file has to agree on the fallback or an outcome lands under a key
-// bridgeToolCallEnd never looks up.
-func toolCallKey(call sdkshape.ToolCall) string {
-	if call.ID != "" {
-		return call.ID
-	}
-	return call.Name
-}
-
 // recordPreShimFailure records the operator outcome for a tool call the SDK
 // failed outside the dispatcher shim: a rejection before the shim (scope
 // denial, schema violation, undecodable payload) or a render failure after
@@ -230,5 +218,5 @@ func recordPreShimFailure(turn *sdkTurnState, call sdkshape.ToolCall, runErr err
 	if errors.Is(runErr, sdkagentloop.ErrArgumentValidation) {
 		body = sdkagentloop.ToolErrorPrefix + sdkschema.Corrective(runErr)
 	}
-	turn.recordToolOutcomeWithPreview(toolCallKey(call), call.Name, body, true, "", false, "")
+	turn.recordToolOutcomeWithPreview(sdkagentloop.ToolCallKey(call), call.Name, body, true, "", false, "")
 }
