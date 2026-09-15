@@ -74,6 +74,11 @@ topics:
     owner: agent
     description: Staged plan to adopt existing mivia-ai-sdk capabilities and retire duplicated host-side agent-loop logic
 
+  sdk-gap-ledger:
+    path: docs/development/sdk-gap-ledger.md
+    owner: agent
+    description: Stage 0 per-file verdicts (adopted/keep/candidate/gap) for the internal/agent SDK bridge layer against mivia-ai-sdk v0.6.0
+
   terminal-input:
     path: docs/development/terminal-input.md
     owner: quality
