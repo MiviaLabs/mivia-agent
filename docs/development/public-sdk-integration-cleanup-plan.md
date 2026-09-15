@@ -350,9 +350,9 @@ adopting it.
 
 If these cannot be stated concisely, keep the logic in `mivia-agent`.
 
-### Candidate: ToolCallKey exported helper (DRAFT)
+### Candidate: ToolCallKey exported helper (ADOPTED)
 
-Status: DRAFT pending SDK-side design (`release/v0.7.0`).
+Status: ADOPTED — SDK `release/v0.7.0` b00f76e exported the helper; host 1f3e4cf8 retired the four host copies.
 
 - **Generic problem**: 4 host copies of ID-else-name keying (`agent` and `sdkadapter`).
 - **Second consumer argument**: any SDK consumer recording per-call outcomes needs the same rule to associate outcomes with calls under blank-ID streams.
@@ -360,9 +360,9 @@ Status: DRAFT pending SDK-side design (`release/v0.7.0`).
 - **Semantics**: pure function of `provider.ToolCall`, no cancellation or concurrency surface.
 - **Tests**: SDK vectors + host parity tests.
 
-### Candidate: WorkBudget refund-on-failed-zero-Usage or explicit outcome reporting (DRAFT)
+### Candidate: WorkBudget refund-on-failed-zero-Usage or explicit outcome reporting (ADOPTED)
 
-Status: DRAFT pending SDK-side design (`release/v0.7.0`).
+Status: ADOPTED — SDK `release/v0.7.0` 9f9a6cc changed `WorkBudget.Refund` to carry the failure cause (breaking, api locks regenerated); host 20a4ac5c adopted it.
 
 - **Generic problem**: callers cannot distinguish cancelled from failed calls; ordinary provider errors trigger over-refunds or reservations leak.
 - **Second consumer argument**: any SDK consumer sharing a token ceiling across concurrent loops needs the failure-vs-consumed distinction to avoid over-refund on ordinary errors; without it every host must fork refund policy host-side.

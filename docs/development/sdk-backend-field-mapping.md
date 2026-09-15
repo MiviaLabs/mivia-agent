@@ -175,24 +175,20 @@ the SDK path.
   drains. `TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry`
   (`internal/agent/loop_retry_steer_test.go`) pins this gap and is
   skipped.
-- **`WorkBudget`'s refund does not distinguish a steer-canceled call
-  from a call that failed for its own reason** — the SDK's `Refund`
-  contract only receives `(ctx, req, used Usage)`; a zero `Usage`
-  means "never consumed," refunded unconditionally by
-  `sdkWorkBudget.refund` (`internal/agent/agentloop_budget.go`).
-  `refundWork` supplies zero `Usage` only for a failed call and
-  `settleWork` skips `Refund` for a successful zero-`Usage` call
-  (`agentloop/budget.go:75-110`), so the host full-refund branch
-  sees zero `Usage` exactly on failures. The
-  legacy `workLimitMeter.refundProvider` runs only on the
-  steer-interrupt path, not on a plain provider error, on the
-  reasoning that a call that failed for its own reason still consumed
-  real work. This widens (never narrows) a finite
-  `WorkLimits.MaxOutputTokens`/`MaxPromptTokens` budget after an
-  ordinary provider error - a leniency bug, not a safety one.
+- **`WorkBudget` zero-`Usage` refund — RESOLVED** (SDK `release/v0.7.0`
+  9f9a6cc, breaking, api locks regenerated; host 20a4ac5c): the v0.7.0
+  `Refund` contract carries the failure cause. A failed call refunds
+  with zero `Usage` plus that cause; a successful call refunds with
+  its real `Usage` and a nil cause; a zero-`Usage` success draws no
+  `Refund` call. The host meter (`sdkWorkBudget.refund`,
+  `internal/agent/agentloop_budget.go`) refunds fully on cancellation
+  and prompt-too-long (the recovery re-reserves, so keeping the
+  failed attempt double-charges) and keeps the reservation consumed on
+  ordinary provider errors, matching the legacy rule that a call that
+  failed for its own reason still consumed real work.
   `TestProviderErrorKeepsWorkLimitReservation`
-  (`internal/agent/loop_steer_worklimit_test.go`) pins this gap and
-  is skipped.
+  (`internal/agent/loop_steer_worklimit_test.go`) pins this contract
+  and is unskipped and green.
 
 ## 5. Adopted loop knobs
 
