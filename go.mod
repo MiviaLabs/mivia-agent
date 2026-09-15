@@ -77,3 +77,11 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.54.0
 )
+
+// Local SDK checkout: integration work lands in the sibling repository first
+// and must be testable here before anything is tagged or pushed. Absolute, not
+// relative: this path is the operator's own checkout location, and a relative
+// ../mivia-ai-sdk silently resolves against whatever tree the build runs in.
+// Drop this directive (and bump the require above) once the SDK release that
+// carries the adopted capabilities is tagged.
+replace github.com/MiviaLabs/mivia-ai-sdk => /home/mac/projects/mivialabs/mivia-ai-sdk

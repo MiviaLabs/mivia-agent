@@ -43,6 +43,15 @@ if [[ -n "$(git status --porcelain)" ]]; then
   printf 'release: working tree is not clean\n' >&2
   exit 1
 fi
+# A local module replacement builds the archives from a directory outside this
+# commit. Go never checksums a directory replacement, so the binary would carry
+# code that no tag pins and go.sum cannot verify, while the release workflow's
+# provenance attestation still names HEAD. Refuse rather than ship that.
+if grep -Eq '^replace[[:space:]]' "${repo_root}/go.mod"; then
+  printf 'release: go.mod has a replace directive; remove it before releasing\n' >&2
+  grep -En '^replace[[:space:]]' "${repo_root}/go.mod" >&2
+  exit 1
+fi
 
 version="${tag#v}"
 commit="$(git rev-parse --short=12 HEAD)"
