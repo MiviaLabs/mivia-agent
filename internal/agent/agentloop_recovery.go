@@ -46,7 +46,7 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 		if err != nil {
 			return sdkagentloop.Result{}, err
 		}
-		return runSDKSteerable(ctx, loop, opts, msgs, turn)
+		return runSDKSteerable(ctx, l, loop, opts, msgs, turn)
 	}
 	res, err := run(preparedMsgs)
 	if err == nil || opts.DisableProviderReplay || sdkCompactionAdopted(opts) ||

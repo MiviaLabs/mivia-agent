@@ -37,7 +37,7 @@ Verdict semantics:
 | agentloop_tool_error.go | adopted | Denial wording, staged-tool precedence, malformed-JSON fall-through already ride the SDK's `OnToolCallError` ErrorFunc — the correct seam. |
 | agentloop_events.go | keep | Translation into the Mivia wire vocabulary (session stamping, attribution, failed-detail for vetoed calls). Nothing re-derives SDK-native semantics. |
 | sdk_tool_events.go | keep | Legacy two-start/one-end wire shape, pinned by `cli/characterization_test.go`. 100% wire-vocabulary policy. |
-| agentloop_steer.go | **gap** | SDK with an injector installed soft-continues *every* steered stop ("emptiness gates nothing", steer.go:74-82); Mivia expects a steered stop gated by the caller. Host cooldown is intra-turn only (accepted gap, agentloop_steer.go:36-40) and triggers are gated on `HasActiveCall()` to avoid the poison-arm loop. Gen-gated ack and reset-surviving injector are otherwise correctly adopted. |
+| agentloop_steer.go | **adopted** | SDK v0.7.0 (361af35) gates steered stops on `ContinueOnStop`; the host gate returns nil (host stop authority) and `runOnceSDK`'s bounded steered-continue re-runs the turn, draining the mailbox via the re-run's iteration-top injector. The shared cooldown window (`Loop.steerCooldownUntil`, reset at turn start) spans every bridge of the turn, restoring the intra-turn contract across re-runs. Triggers are gated on `HasActiveCall()` to avoid the poison-arm loop. Gen-gated ack and reset-surviving injector are otherwise correctly adopted. |
 | sdk_turn_state.go | keep | Run-scoped carrier (pass1Map, surface rotation, cancel registry). SDK Options/Extensions cover none of it. |
 | sdk_summarizer_adapter.go (+memo) | keep | `agentloop.Summarizer` is a one-method interface (`plan.Summarizer` is the struct implementing it) — redaction/evidence capture cannot ride it, so the adapter is already the minimal seam. Memo is the smallest correct dedup. |
 | internal/remainder/spool.go | keep | Correct mechanism/policy split: SDK `memory.Spool` is the mechanism; INV-AG-10/CE-07 invariants and durable cross-restart grants are irreducibly host policy. Mechanism swap possible later only as a wrapper preserving the invariants. |
@@ -51,14 +51,20 @@ Verdict semantics:
    re-reserves, so keeping the failed attempt double-charges) and keeps the
    reservation consumed on ordinary provider errors.
    `TestProviderErrorKeepsWorkLimitReservation` is unskipped and green.
-2. **Steer soft-continue** (`agentloop_steer.go`): SDK injector semantics
-   continue every steered stop; Mivia's mailbox model needs stop authority.
-   Fix belongs in the SDK (an injector mode) or the divergence stays documented
-   as it is today.
+2. **Steer soft-continue — RESOLVED** (`agentloop_steer.go`): SDK
+   `release/v0.7.0` 361af35 gates steered stops on `ContinueOnStop`
+   (breaking behavior change for injector-only consumers, no signature
+   change, api locks unchanged). The host gate returns nil — host stop
+   authority — and `runOnceSDK`'s bounded steered-continue re-runs the
+   turn on the carried history, draining the mailbox via the re-run's
+   iteration-top injector. The shared cooldown window
+   (`Loop.steerCooldownUntil`) spans every bridge of the turn.
+   `TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry` is
+   unskipped and green; exhaustion is pinned by
+   `TestSteeredContinueExhaustsBudgetSurfacesInterrupt`.
 
-Item 2 (Steer soft-continue) remains an SDK-repository candidate for the
-`release/v0.7.0` branch named in the plan — it still needs the plan's
-Decision Log entry before any SDK change.
+Both real gaps are now closed; no SDK-repository candidate remains
+open for the `release/v0.7.0` branch.
 
 ## Reconciliation status
 
@@ -69,7 +75,11 @@ zero-Usage refunds, and once-per-turn `clampedMaxTokens`).
 ## Outstanding Stage 0 items
 
 - Step 2: done (this reconciliation, date-less).
-- Step 3: two remaining skips with unchanged root causes: `loop_retry_steer` (pins the Steer soft-continue gap) and `summary_inject` (`ChangedSurfaces` never wired — host-fixable, follow-up slice). The third skip, `loop_steer_worklimit`, is gone: `TestProviderErrorKeepsWorkLimitReservation` is unskipped and green (WorkBudget refund gap resolved, host 20a4ac5c).
+- Step 3: one remaining skip with unchanged root cause: `summary_inject`
+  (`ChangedSurfaces` never wired — host-fixable, follow-up slice). Two
+  skips are gone: `loop_steer_worklimit` via 20a4ac5c, and
+  `loop_retry_steer` is unskipped and green (Steer soft-continue gap
+  resolved, SDK 361af35 + host steered-continue adoption).
 - Step 4: done — SDK ToolCallKey exported (release/v0.7.0 b00f76e), four host copies retired (1f3e4cf8), parity pinned by TestToolCallKeyParityAgainstSDKVectors.
 
 ## Stage resolution
@@ -78,4 +88,6 @@ zero-Usage refunds, and once-per-turn `clampedMaxTokens`).
 - **Stage 2 timeouts** — keep (host per-call deadlines with `timeout_seconds` raises and `exit=timeout` envelope exceed static `ExecutionProfile`).
 - **Stage 3 spool** — keep (correct mechanism/policy split).
 - **Stage 4 events** — keep (wire vocabulary).
-- **Stage 5 layout** — blocked only on the Steer soft-continue gap.
+- **Stage 5 layout** — no longer gap-blocked; awaits the Stage 5
+  reassessment itself (coupling measurement and an extract-or-not
+  verdict).

@@ -5,7 +5,8 @@
 // survives in `history` are the assistant messages the loop already
 // appended before the cancel. The dispatcher must walk history and
 // return the last non-empty assistant as the partial reply, mirroring
-// the legacy `lastText` contract at loop.go:143-179. Without this
+// the legacy `lastText` contract (the interrupted-step partial-reply
+// rule `recordInterruptedPartial` documents on loop.go). Without this
 // fallback the dispatcher hard-returns "", turning a partial reply
 // into an interrupted-and-empty response (regression of the legacy
 // contract).

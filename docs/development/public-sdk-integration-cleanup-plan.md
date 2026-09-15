@@ -88,8 +88,9 @@ Cited so each slice below can be planned without re-reading the SDK.
 - `ContinueOnStop` (`stop.go:65-83`, `:87`): a non-empty return continues the
   turn; a panic is a hard failure.
 - `Steer` (`steer.go`): Trigger / SetInjector / HasActiveCall; a generation
-  counter gates the ack (`:160`); the injector survives `reset` (`:172`); **with
-  an injector installed, every steered stop soft-continues** (`:74-82`).
+  counter gates the ack (`:160`); the injector survives `reset` (`:172`). On
+  `release/v0.7.0` (361af35) a steered stop is decided solely by
+  `ContinueOnStop` — the injector auto-continue is removed.
 - `Compaction` (`compaction.go:288-301`) and `EnableCompaction` (`:319-335`):
   explicit `MaxTokens > 0`, otherwise 80/50 derived from the ContextAccountant.
   Recovery window triggers at 1% with target
@@ -370,7 +371,19 @@ Status: ADOPTED — SDK `release/v0.7.0` 9f9a6cc changed `WorkBudget.Refund` to 
 - **Semantics**: refund only on failed calls with zero `Usage` — matches `refundWork`, requires `settleWork` change or a richer `Refund` signature (SDK designer to choose).
 - **Tests**: host parity pins `TestProviderErrorKeepsWorkLimitReservation`.
 
-*Note*: Steer soft-continue remains a documented divergence needing its own design discussion before it is a Decision Log entry.
+*Note*: superseded — the Steer soft-continue divergence is resolved; see the ACCEPTED entry above.
+
+### Candidate: Steered stops consult ContinueOnStop (ACCEPTED)
+
+Status: ACCEPTED — owner decision that no behavioral divergence is accepted post-switch; SDK `release/v0.7.0` behavior change (no signature change, no api-lock drift expected); host `v0.2.3` adopts.
+
+- **Generic problem**: `ContinueOnStop` documents "consulted on every graceful stop" but a steered stop bypasses it; an installed injector force-continues every steered stop internally. Continuation policy is hard-wired to injector presence, so a caller cannot take control at a steered stop.
+- **Second consumer argument**: any consumer combining queued caller messages with a hard stop gesture — or any caller-gated continuation (budget guards, approval pauses, UI interrupts) — needs a vetoable steered stop. The only lever today is removing the injector mid-run, which `SetInjector`'s own doc declares racy.
+- **Host code it fixes**: `runSDKPromptTooLongRecoverable`'s retry gate (`agentloop_recovery.go:52`); makes the dispatcher's `StopSteered` -> `errSteerInterrupt` mapping reachable on injector runs (`loop_dispatch.go:90`); unskips `TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry` (`loop_retry_steer_test.go`).
+- **SDK-owned invariants vs host policy**: SDK owns steered-stop detection, ack-before-arm, once-delivery of injector frames, `StopDecision` shape, panic fail-closed. Host owns continuation policy: continue (return messages) or stop (return nil).
+- **Semantics**: no injector, no hook: unchanged (`StopSteered`, nil error, partial `Final`). Injector + gate non-empty: loop continues; trigger acked before the next arm; gate messages append to history; injector still drains exactly once at the next iteration top. Injector + gate nil: run stops with `StopSteered` exactly like the no-injector path; that boundary's pending drain is dropped (documented). Cancellation unchanged (`ctx` cancel is a hard fail, not a steer stop). Gate panic fails closed via `safeContinue`.
+- **Tests**: SDK rewrites the injector soft-continue pins and adds gate-continue/gate-stop/gate-panic/cancel-race/nil-hook-parity pins; `make api-update` must show no drift. Host parity: the unskipped retry-steer test plus adapter pins for `StopSteered` + gate-nil -> `errSteerInterrupt`.
+- **Versions**: SDK v0.7.0, host v0.2.3. Breaking tolerance precedent: 9f9a6cc.
 
 ## Immediate Next Action
 

@@ -34,9 +34,11 @@ import (
 //     when any message is waiting.
 //
 // All sources share one SoftInterruptCooldown gate. A positive cooldown caps
-// Trigger fires to one per window; zero disables the gate. The shared
-// cooldownUntil is intra-RunAgentLoopOnce (local atomic.Int64) and does not
-// span multiple SDK turns (accepted semantic gap).
+// Trigger fires to one per window; zero disables the gate. The window is the
+// caller-supplied cooldown counter (l.steerCooldownUntil) so it spans the
+// steered re-runs one turn drives from runOnceSDK: each re-run spawns a
+// fresh bridge, and a per-bridge window would let a still-queued signal
+// re-fire on every re-run.
 //
 // Goroutines call wg.Add(1) before spawn and defer wg.Done(). The caller
 // waits on wg after closing runDone so no goroutine outlives the call.
@@ -49,8 +51,10 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 	// selecting on that channel when the retry's fresh goroutine also
 	// is, and can win the race for an interrupt meant for the retry -
 	// see docs/development/sdk-backend-field-mapping.md §4.
-	wg *sync.WaitGroup) {
-	var cooldownUntil atomic.Int64
+	wg *sync.WaitGroup,
+	// cooldownUntil carries the shared cooldown window across the
+	// turn's steered re-runs; see the gate comment above.
+	cooldownUntil *atomic.Int64) {
 	cooldownOK := func() bool {
 		if opts.SoftInterruptCooldown <= 0 {
 			return true

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,14 +38,24 @@ type steerStep struct {
 }
 
 // steerCompleter is a scripted completer for soft-interrupt tests. Every call
-// is recorded on the loop goroutine; the first started signal is published on
-// started for test-side handshakes.
+// is recorded under mu so test-side closures (MailboxPendingInterrupt) can
+// read progress while the loop goroutine runs; the first started signal is
+// published on started for test-side handshakes.
 type steerCompleter struct {
+	mu       sync.Mutex
 	steps    []steerStep
 	started  chan struct{} // buffered; signaled (non-blocking) when a call begins
 	requests []provider.Request
 	calls    int
 	canceled []int // 0-based call indices that observed ctx cancellation
+}
+
+// canceledCount reports how many scripted calls observed ctx cancellation.
+// Safe to call from test-side closures while the loop goroutine runs.
+func (s *steerCompleter) canceledCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.canceled)
 }
 
 func (s *steerCompleter) Name() string { return "steer" }
@@ -59,15 +70,17 @@ func (s *steerCompleter) ChatStream(ctx context.Context, req provider.Request, w
 	return s.Chat(ctx, req)
 }
 func (s *steerCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	s.mu.Lock()
 	s.requests = append(s.requests, req)
+	idx := s.calls
+	s.calls++
+	s.mu.Unlock()
 	if s.started != nil {
 		select {
 		case s.started <- struct{}{}:
 		default:
 		}
 	}
-	idx := s.calls
-	s.calls++
 	step := steerStep{resp: provider.Response{Content: "done", FinishReason: "stop"}}
 	if idx < len(s.steps) {
 		step = s.steps[idx]
@@ -85,7 +98,9 @@ func (s *steerCompleter) ChatTurn(ctx context.Context, req provider.Request) (*p
 	}
 	if step.blockCtx {
 		<-ctx.Done()
+		s.mu.Lock()
 		s.canceled = append(s.canceled, idx)
+		s.mu.Unlock()
 		if step.cancelErr != nil {
 			return nil, step.cancelErr
 		}
@@ -93,14 +108,18 @@ func (s *steerCompleter) ChatTurn(ctx context.Context, req provider.Request) (*p
 	}
 	if step.waitGateOnly {
 		<-step.gate
+		s.mu.Lock()
 		s.canceled = append(s.canceled, idx)
+		s.mu.Unlock()
 		return nil, ctx.Err()
 	}
 	if step.gate != nil {
 		select {
 		case <-step.gate:
 		case <-ctx.Done():
+			s.mu.Lock()
 			s.canceled = append(s.canceled, idx)
+			s.mu.Unlock()
 			if step.cancelErr != nil {
 				return nil, step.cancelErr
 			}

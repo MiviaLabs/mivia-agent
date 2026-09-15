@@ -40,18 +40,7 @@ func (l *Loop) runOnce(ctx context.Context, userText string, opts Options) (stri
 // both backends with one error identity; every other graceful stop
 // returns the final assistant content.
 func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (string, error) {
-	// Each Run owns its finish-reason report, mirroring runOnceLegacy's
-	// reset: a previous run's reason must never leak into the next
-	// caller's read. The SDK path leaves the field empty because the
-	// SDK's Message shape carries no finish reason.
-	l.LastFinishReason = ""
-	// Run-start resets, mirroring runOnceLegacy: stale preparation from
-	// a previous turn is discarded, the turn compaction counters reset,
-	// and the turn gets a fresh TurnState. The per-iteration Trim
-	// closure then re-records preparation on every Completer call.
-	l.discardPreparation(opts)
-	l.resetTurnCompaction()
-	l.TurnState = manager.NewTurnState()
+	resetSDKTurnState(l, opts)
 	// Pre-append the user message to the carried history BEFORE the run,
 	// mirroring runOnceLegacy's append (loop.go): a turn that fails
 	// before any SDK iteration completes must still keep the user
@@ -64,52 +53,94 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		Content:   userText,
 		CreatedAt: time.Now(),
 	})
-	msgs := make([]provider.Message, len(l.Messages))
-	copy(msgs, l.Messages)
 	preLen := len(l.Messages)
-	res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
-	l.writeBackSDKHistory(res, preLen)
-	if err != nil {
-		// A canceled or timed-out run keeps the partial reply the turn
-		// already produced, mirroring the legacy interrupted-step
-		// contract (Loop.Run returns lastText on an interrupted step;
-		// the subagent pool maps it to status canceled/timed_out and
-		// keeps the output). Every other error returns empty so a raw
-		// provider body cannot leak (the pinned guarantee in
-		// TestMultiStepHandlerFailureOmitsRawProviderBodyAndRefs).
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			startIdx := sdkCurrentTurnStart(res.History, userText)
-			for i := len(res.History) - 1; i >= startIdx; i-- {
-				if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
-					return m.Content, err
+	// A steered stop returns control to the driver: the host's
+	// ContinueOnStop never continues one, so the SDK run ends and the
+	// steered stop surfaces here. With a BeforeStep carrier installed,
+	// the legacy soft-continue contract applies: write back the partial
+	// history, then re-run the turn on the carried history - the new
+	// run's iteration-top injector drain picks up the mailbox payload.
+	// Without BeforeStep there is nothing to drain, so the steered stop
+	// surfaces as errSteerInterrupt exactly as before. Each continue
+	// consumes one steered re-run; the bound is the step budget, so a
+	// hostile signal source cannot loop the turn forever.
+	maxSteerContinues := effectiveSDKMaxIterations(opts)
+	steerContinues := 0
+	for {
+		msgs := make([]provider.Message, len(l.Messages))
+		copy(msgs, l.Messages)
+		res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
+		l.writeBackSDKHistory(res, preLen)
+		if err != nil {
+			// A canceled or timed-out run keeps the partial reply the turn
+			// already produced, mirroring the legacy interrupted-step
+			// contract (Loop.Run returns lastText on an interrupted step;
+			// the subagent pool maps it to status canceled/timed_out and
+			// keeps the output). Every other error returns empty so a raw
+			// provider body cannot leak (the pinned guarantee in
+			// TestMultiStepHandlerFailureOmitsRawProviderBodyAndRefs).
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if text := sdkLastAssistantText(res, userText); text != "" {
+					return text, err
 				}
 			}
+			return "", err
 		}
-		return "", err
+		if res.Stop == sdkagentloop.StopSteered && opts.BeforeStep != nil && steerContinues < maxSteerContinues {
+			steerContinues++
+			continue
+		}
+		if res.Stop == sdkagentloop.StopSteered {
+			return sdkSteeredStopPartial(res.History, userText)
+		}
+		if res.Stop == sdkagentloop.StopMaxIterations {
+			// finalizeSDKTurn (inside RunAgentLoopOnce, above) already published
+			// this turn's last assistant text to the wire as a settled
+			// "completed" assistant.message before this stop-reason check ran -
+			// reset it so a viewer does not keep showing an answer this turn is
+			// about to report as a hard failure with no accepted reply.
+			emit(opts, Event{Kind: EventAssistantReset, Detail: "agent exceeded max_steps: the reply was never accepted"})
+			// Legacy parity: exceeding the step cap is a hard error naming
+			// the cap, not a graceful partial answer.
+			return "", fmt.Errorf("agent exceeded max_steps (%d)", effectiveSDKMaxIterations(opts))
+		}
+		if strings.TrimSpace(res.Final.Content) == "" {
+			return sdkLastAssistantText(res, userText), nil
+		}
+		return res.Final.Content, nil
 	}
-	if res.Stop == sdkagentloop.StopSteered {
-		return sdkSteeredStopPartial(res.History, userText)
-	}
-	if res.Stop == sdkagentloop.StopMaxIterations {
-		// finalizeSDKTurn (inside RunAgentLoopOnce, above) already published
-		// this turn's last assistant text to the wire as a settled
-		// "completed" assistant.message before this stop-reason check ran -
-		// reset it so a viewer does not keep showing an answer this turn is
-		// about to report as a hard failure with no accepted reply.
-		emit(opts, Event{Kind: EventAssistantReset, Detail: "agent exceeded max_steps: the reply was never accepted"})
-		// Legacy parity: exceeding the step cap is a hard error naming
-		// the cap, not a graceful partial answer.
-		return "", fmt.Errorf("agent exceeded max_steps (%d)", effectiveSDKMaxIterations(opts))
-	}
-	if strings.TrimSpace(res.Final.Content) == "" {
-		startIdx := sdkCurrentTurnStart(res.History, userText)
-		for i := len(res.History) - 1; i >= startIdx; i-- {
-			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
-				return m.Content, nil
-			}
+}
+
+// resetSDKTurnState applies runOnceSDK's run-start resets, mirroring
+// runOnceLegacy: a previous run's finish-reason report never leaks into
+// the next caller's read (the SDK path leaves the field empty - the
+// SDK's Message shape carries no finish reason), stale preparation is
+// discarded, the turn compaction counters reset, the turn gets a fresh
+// TurnState (the per-iteration Trim closure re-records preparation on
+// every Completer call), and the shared steer-cooldown window clears so
+// a previous turn's window never suppresses this turn's first steer.
+func resetSDKTurnState(l *Loop, opts Options) {
+	l.LastFinishReason = ""
+	l.discardPreparation(opts)
+	l.resetTurnCompaction()
+	l.TurnState = manager.NewTurnState()
+	l.steerCooldownUntil.Store(0)
+}
+
+// sdkLastAssistantText walks res.History backward from the current
+// turn's start (the most recent user-role message whose Content matches
+// userText) and returns the most recent non-empty assistant content, or
+// the empty string when the turn produced none. Both the canceled-run
+// partial-reply path and the graceful-empty fallback in runOnceSDK use
+// this walk.
+func sdkLastAssistantText(res sdkagentloop.Result, userText string) string {
+	startIdx := sdkCurrentTurnStart(res.History, userText)
+	for i := len(res.History) - 1; i >= startIdx; i-- {
+		if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+			return m.Content
 		}
 	}
-	return res.Final.Content, nil
+	return ""
 }
 
 // writeBackSDKHistory applies runOnceSDK's post-run history write-back.
@@ -197,8 +228,9 @@ func sdkCurrentTurnStart(history []sdkshape.Message, userText string) int {
 // marker (the most recent user-role message whose Content matches
 // `userText`) and walks history backward from there, returning the
 // most recent non-empty assistant content along with
-// `errSteerInterrupt`, mirroring the legacy `lastText` contract at
-// loop.go:143-179.
+// `errSteerInterrupt`, mirroring the legacy `lastText` contract (the
+// interrupted-step partial-reply rule `recordInterruptedPartial`
+// documents on loop.go).
 //
 // Locating the boundary by Content match (not by an index precomputed
 // against the pre-prepare msgs) is load-bearing: when a

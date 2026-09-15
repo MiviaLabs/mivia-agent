@@ -208,14 +208,15 @@ func handleSDKRunError(ctx context.Context, l *Loop, opts Options, turn *sdkTurn
 const maxEmptyResponseRetries = 2
 
 // runSDKSteerable installs the steer-signal bridge on one built SDK loop and drives RunSteerable.
-func runSDKSteerable(ctx context.Context, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState) (sdkagentloop.Result, error) {
+func runSDKSteerable(ctx context.Context, l *Loop, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState) (sdkagentloop.Result, error) {
 	steer := sdkagentloop.NewSteer()
 	// BeforeStep carrier (plan 54, blocker 2 of the SDK convergence):
 	// install the legacy BeforeStep as the SDK's pull-based steer
-	// injector. The SDK drains it at the top of every iteration AND
-	// at every steered-stop decision point, exactly mirroring the
-	// legacy context.go:15-19 placement. A nil opts.BeforeStep means
-	// no injector is installed and the SDK's existing Trigger
+	// injector. The SDK drains it at the top of every iteration,
+	// mirroring the legacy context.go:15-19 placement. A steered stop
+	// itself is gated by the host's ContinueOnStop (continue_on_stop.go):
+	// it always returns control to the step loop. A nil opts.BeforeStep
+	// means no injector is installed and the SDK's existing Trigger
 	// semantics are unchanged.
 	if opts.BeforeStep != nil {
 		steer.SetInjector(func() []sdkshape.Message {
@@ -242,7 +243,7 @@ func runSDKSteerable(ctx context.Context, loop *sdkagentloop.Loop, opts Options,
 	defer wg.Wait()
 	runDone := make(chan struct{})
 	defer close(runDone)
-	bridgeSteerSignals(ctx, runDone, opts, steer, &wg)
+	bridgeSteerSignals(ctx, runDone, opts, steer, &wg, &l.steerCooldownUntil)
 	// Context-cancel hook for the host-side turn shaping cond: a
 	// wrapper parked waiting on its predecessors would never wake if
 	// nothing else broadcasts the cond on ctx cancel - sync.Cond.Wait

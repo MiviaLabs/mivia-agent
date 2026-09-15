@@ -183,20 +183,21 @@ func TestLoopPromptTooLongRetrySecondRejectionFailsTurn(t *testing.T) {
 	}
 }
 
-// TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry is the RED test for
-// the steer-cannot-cancel-retry gap: the per-step watcher survives the first
-// prompt-too-long rejection (armed on llmCtx), the retry runs on a fresh live
-// context, and a steer arriving DURING the retry must cancel it. The canceled
-// retry maps to errSteerInterrupt (steerFired set, turn ctx alive): the
-// never-consumed reservation is refunded and the loop soft-continues, draining
-// the steer at the next BeforeStep, and the next step answers on a live
-// context. Pre-fix the watcher held only llmCancel, so the retry was never
-// canceled: call 2 blocks forever and runLoop's 5s timeout fails the test.
-// Deterministic ordering: the retry's started signal happens-after
-// scope.set(retryCancel), so by the time the test goroutine sends the steer
-// token the scope is armed with retryCancel.
+// TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry pins the
+// steer-cannot-cancel-retry contract as adopted: the per-step watcher
+// survives the first prompt-too-long rejection (armed on llmCtx), the
+// retry runs on a fresh live context, and a steer arriving DURING the
+// retry cancels it. The canceled retry surfaces as a steered stop (the
+// host's ContinueOnStop never continues one), which maps to
+// errSteerInterrupt (steerFired set, turn ctx alive): the
+// never-consumed reservation is refunded and the loop soft-continues,
+// draining the steer at the next BeforeStep, and the next step answers
+// on a live context. Pre-fix the watcher held only llmCancel, so the
+// retry was never canceled: call 2 blocks forever and runLoop's 5s
+// timeout fails the test. Deterministic ordering: the retry's started
+// signal happens-after scope.set(retryCancel), so by the time the test
+// goroutine sends the steer token the scope is armed with retryCancel.
 func TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry(t *testing.T) {
-	t.Skip("known bug, not a regression: runSDKPromptTooLongRecoverable's retry has no continuation-after-steer path - tracked in docs/development/sdk-backend-field-mapping.md §4.")
 	var pending atomic.Bool
 	pending.Store(true)
 	stepCalls := 0
@@ -228,13 +229,10 @@ func TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry(t *testing.T) {
 		MaxSteps:                10,
 		MaxContextTokens:        20000,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
-		MailboxPendingInterrupt: func() bool { return pending.Load() },
+		MailboxPendingInterrupt: func() bool { return pending.Load() && comp.canceledCount() == 0 },
 		SoftInterruptCooldown:   0,
 		BeforeStep: func() []provider.Message {
 			stepCalls++
-			if stepCalls > 1 {
-				pending.Store(false) // mailbox drained after step 1
-			}
 			return nil
 		},
 	})
