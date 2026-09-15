@@ -209,6 +209,23 @@ func (s *sdkTurnState) recordChangedSurface(surface string) {
 	}
 }
 
+// recordToolResultEvidence records the content-free evidence item for one
+// executed tool result, so the call surfaces in a later summary's
+// evidence even when no planner elision ever drops its result. Duplicates
+// (the same result later elided by a compaction) are rejected by the
+// turn state and ignored.
+func (s *sdkTurnState) recordToolResultEvidence(toolName string, resultLen int) {
+	if s == nil {
+		return
+	}
+	s.turnFactsMu.Lock()
+	facts := s.turnFacts
+	s.turnFactsMu.Unlock()
+	if facts != nil {
+		_ = facts.AddEvidence(manager.ToolResultEvidence(toolName, resultLen))
+	}
+}
+
 // setTracer parks the run's SDK span tracer on the turn state
 // (adoption row: Tracer); see agentloop_adoption.go.
 func (s *sdkTurnState) setTracer(t *sdktrace.Tracer) {

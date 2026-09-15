@@ -261,6 +261,7 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 	// viewer was told the call completed.
 	failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
 	if d.turn != nil {
+		d.turn.recordToolResultEvidence(d.inner.Name(), len(body))
 		if !failed && (capability.Class == tools.ExecutionWrite || sdktools.ExecutionProfileOf(d.inner).Class == sdktools.ExecutionClassWrite) {
 			d.turn.recordChangedSurface(d.inner.Name())
 		}

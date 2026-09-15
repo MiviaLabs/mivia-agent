@@ -355,7 +355,14 @@ func cloneMessages(messages []provider.Message) []provider.Message {
 	out := make([]provider.Message, len(messages))
 	copy(out, messages)
 	for i := range out {
-		out[i].ToolCalls = append([]provider.ToolCall(nil), messages[i].ToolCalls...)
+		// Preserve the nil-vs-empty distinction: a clone that turns an
+		// empty-but-non-nil ToolCalls into nil fails reflect.DeepEqual
+		// against its source and breaks content-identity walks (the
+		// omitted-evidence diff classifies the whole history as dropped).
+		if messages[i].ToolCalls != nil {
+			out[i].ToolCalls = make([]provider.ToolCall, len(messages[i].ToolCalls))
+			copy(out[i].ToolCalls, messages[i].ToolCalls)
+		}
 	}
 	return out
 }

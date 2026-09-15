@@ -295,11 +295,37 @@ func retainedCorresponds(input, retained provider.Message) bool {
 		return true
 	}
 	if input.Role != retained.Role || input.Name != retained.Name ||
-		input.ToolCallID != retained.ToolCallID || !reflect.DeepEqual(input.ToolCalls, retained.ToolCalls) {
+		input.ToolCallID != retained.ToolCallID || !toolCallsCorrespond(input.ToolCalls, retained.ToolCalls) {
 		return false
 	}
+	// Identical bodies correspond regardless of representation-only
+	// differences DeepEqual cannot forgive (a nil vs an empty ToolCalls
+	// slice from a lossy clone or conversion).
+	if input.Content == retained.Content && input.ReasoningContent == retained.ReasoningContent {
+		return true
+	}
+	// Planner elision rewrites the body without touching structural
+	// identity: a tool-result notice or a reasoning marker.
 	return strings.HasPrefix(retained.Content, elisionNoticePrefix) ||
 		retained.ReasoningContent == reasoningElisionMarker
+}
+
+// toolCallsCorrespond reports whether two ToolCalls lists are the same
+// structural identity. A nil list and an empty list are the same identity:
+// the SDK-to-CLI message conversions and preparation clones legitimately
+// move between the two representations, and a walk that treats them as
+// different stalls at the first such message and classifies every later
+// message - including the system prompt - as dropped.
+func toolCallsCorrespond(input, retained []provider.ToolCall) bool {
+	if len(input) != len(retained) {
+		return false
+	}
+	for i := range input {
+		if !reflect.DeepEqual(input[i], retained[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // omittedEvidenceItem renders one content-free evidence item. The size bucket
@@ -311,6 +337,15 @@ func omittedEvidenceItem(message provider.Message) string {
 		return "tool " + sanitizeEvidenceText(message.Name) + " result (~" + sizeBucketLabel(len(message.Content)) + ")"
 	}
 	return message.Role + " message (~" + sizeBucketLabel(len(message.Content)) + ")"
+}
+
+// ToolResultEvidence renders the content-free evidence item for one
+// executed tool result: "tool <name> result (~<size bucket>)". The
+// length is the result body the model actually received. Turn-state
+// recorders use it at execution time so a tool call surfaces in a later
+// summary's evidence even when no planner elision ever drops its result.
+func ToolResultEvidence(toolName string, resultLen int) string {
+	return "tool " + sanitizeEvidenceText(toolName) + " result (~" + sizeBucketLabel(resultLen) + ")"
 }
 
 // sanitizeEvidenceText keeps evidence envelope-valid even when a

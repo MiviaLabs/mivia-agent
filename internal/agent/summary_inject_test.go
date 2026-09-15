@@ -617,7 +617,6 @@ func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
 // never-sent history; the fix re-derives the omitted diff from the pre-prune
 // vs pruned history before the retry request is built (R0-1).
 func TestSummaryInjectionRetryPath(t *testing.T) {
-	t.Skip("accepted gap, not a regression: runSDKPromptTooLongRecoverable's retry does not reproduce the legacy retry-time summary re-derivation - documented inline on runSDKPromptTooLongRecoverable (agentloop_adapter.go).")
 	summ := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, summ)
 	comp := &promptTooLongCompleter{
