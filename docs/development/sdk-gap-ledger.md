@@ -24,7 +24,7 @@ Verdict semantics:
 | agentloop_run.go | keep | WorkLimits deadline narrowing, preflight ordering, empty-response retry bound (2), finalize/FinalWriter contract. No SDK counterpart. |
 | agentloop_adapter.go | keep | Options projection is host contract: MaxTurns clamp, shim chain, Surface-rotation restatement around SDK's unconditional Advertised replace. |
 | agentloop_adoption.go | keep | Compaction wired manually for exact 80%/50% host-style numbers; SDK's raw pair prices against Budget and diverges effectively (64%/40%). ApplySDKTrim correctly honours Validate's Trim/Window exclusivity (options.go:331-343). |
-| agentloop_budget.go | **gap** | Host `refund` has a zero-Usage full-refund branch (agentloop_budget.go:112-120); SDK `settleWork` never calls Refund on zero Usage (SDK budget.go:102-110), so a cancelled/timeout call permanently consumes its reservation — diverging from the documented steer-cancel refund contract. Also `clampedMaxTokens` is once-per-turn (accepted gap). |
+| agentloop_budget.go | **gap** | SDK `refundWork` (budget.go:75-82) refunds with zero Usage on failed calls; `settleWork` (budget.go:102-110) skips Refund on successful zero-Usage calls. Host `refund` (agentloop_budget.go:118-120) receives zero Usage on all failures, over-refunding ordinary provider errors (widens budget when it should keep reservation; pinned by skipped `TestProviderErrorKeepsWorkLimitReservation`). Also `clampedMaxTokens` is once-per-turn (accepted gap). |
 | agentloop_toolbudget.go | adopted | Reserve-only delegate onto the SDK ToolBudget; raw pre-filter count is the documented conservative approximation. No Refund exists to diverge from. |
 | agentloop_recovery.go | keep | 16K target, MaxContextTokens/4 clamp, model-visible notice, single retry — legacy policy numbers the SDK recovery does not replicate. |
 | agentloop_completer.go | keep | `translatePromptTooLong` is the seam SDK Window recovery depends on; ChatTurn translation and usage callback are host contract. |
@@ -44,10 +44,15 @@ Verdict semantics:
 
 ## Real gaps (adoption blockers)
 
-1. **WorkBudget zero-Usage refund** (`agentloop_budget.go`): SDK never refunds
-   on zero Usage. Host's contract refunds the full reservation when a call was
-   cancelled before consuming. Fix belongs in the SDK (`settleWork`) or the gap
-   is accepted in writing with the reservation-leak documented.
+1. **WorkBudget zero-Usage refund** (`agentloop_budget.go`): SDK `refundWork`
+   refunds zero Usage on failed calls (including cancel/timeout). SDK
+   `settleWork` skips Refund only on successful zero-Usage calls. The host's
+   full-refund branch (`agentloop_budget.go:118-120`) therefore fires on all
+   failures. This creates an over-refund divergence. An ordinary provider
+   error is indistinguishable from a steer-canceled call. The budget widens
+   when it should keep the reservation (pinned by skipped
+   `TestProviderErrorKeepsWorkLimitReservation`). Fix belongs in the SDK
+   or the divergence remains accepted and documented.
 2. **Steer soft-continue** (`agentloop_steer.go`): SDK injector semantics
    continue every steered stop; Mivia's mailbox model needs stop authority.
    Fix belongs in the SDK (an injector mode) or the divergence stays documented
@@ -58,17 +63,20 @@ plan — each needs the plan's Decision Log entry before any SDK change.
 
 ## Reconciliation status
 
-`docs/development/sdk-backend-field-mapping.md` predates v0.6.0 surface
-verification; its accepted-gap list should be cross-checked against the two
-gaps above and the once-per-turn `clampedMaxTokens` note. Not done in this
-slice.
+`docs/development/sdk-backend-field-mapping.md` is reconciled against the
+v0.6.0 surface (§1, §2, and §4 updated for Steer soft-continue, WorkBudget
+zero-Usage refunds, and once-per-turn `clampedMaxTokens`).
 
 ## Outstanding Stage 0 items
 
-- Step 2: reconcile `sdk-backend-field-mapping.md` against v0.6.0 (above).
-- Step 3: the three skipped defect tests (`summary_inject_test.go`,
-  `loop_retry_steer_test.go`, `loop_steer_worklimit_test.go`) remain skipped;
-  two of them pin exactly the steer/budget gaps recorded here. Fix or accept
-  with an owner before Stage 1.
-- Step 4: tool-call keying duplication inventory not yet measured; only
-  relevant if a shared helper is later proposed.
+- Step 2: done (this reconciliation, date-less).
+- Step 3: done — all three skips re-verified failing with unchanged root causes: `summary_inject` (`ChangedSurfaces` never wired — host-fixable, follow-up slice), `loop_retry_steer` (pins Steer soft-continue gap), `loop_steer_worklimit` (pins WorkBudget zero-Usage refund gap).
+- Step 4: done — keying inventory: 8 sites, 6 paired in two contracts (outcome-map key ID-else-name across agent+sdkadapter; `pass1Map` key ID-only), one SDK-candidate rule duplicated 4x, natural home `sdkagentloop.ToolCallKey` over the existing `ToolCallFromContext` plumbing; risk: drift silently drops operator outcomes under blank-ID streams.
+
+## Stage resolution
+
+- **Stage 1 admission** — already adopted (`DecideApproval` + `OnToolCallError` are the correct seams; `ScopeOptions.Approve` rejected because it cannot represent standing decisions/resource keys/deferred path).
+- **Stage 2 timeouts** — keep (host per-call deadlines with `timeout_seconds` raises and `exit=timeout` envelope exceed static `ExecutionProfile`).
+- **Stage 3 spool** — keep (correct mechanism/policy split).
+- **Stage 4 events** — keep (wire vocabulary).
+- **Stage 5 layout** — blocked on the two SDK gaps.

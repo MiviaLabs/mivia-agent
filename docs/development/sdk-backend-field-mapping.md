@@ -15,7 +15,7 @@ The SDK path consumes these directly:
 |---|---|---|
 | `Model` | `Options.Model` | pass-through |
 | `Temperature` | `Request.Temperature` | translator in `agentloop_completer.go` |
-| `MaxTokens` | completer turn defaults | the SDK loop's request never sets it; `mergeTurnDefaults` injects `Options.MaxTokens` per call |
+| `MaxTokens` | completer turn defaults | the SDK loop's request never sets it; `mergeTurnDefaults` injects `Options.MaxTokens` per call (computed once at option build in `newSDKWorkBudgetHook`, not re-clamped per step; can only exhaust SOONER than legacy) |
 | `Temperature` | completer turn defaults | same carrier as `MaxTokens` |
 | `RequestTimeout` | completer turn defaults | fills `Request.Timeout` when the SDK left it zero |
 | `DisableProviderReplay` | completer turn defaults | OR-merged into the request |
@@ -43,10 +43,10 @@ The SDK path consumes these directly:
 | `InterruptCh` | steer bridge | one-shot goroutine; gated on `MailboxPendingInterrupt` when that predicate is set (a bare `InterruptCh` with no mailbox gate is an explicit interrupt) |
 | `MailboxPending` | steer bridge | watchdog poller; continuous across repeated steers, exits on a run-scoped done channel closed in `RunAgentLoopOnce`'s defer |
 | `MailboxPendingInterrupt` | steer bridge | strict signal-branch poller; continuous across repeated steers, exits on the run-scoped done channel |
-| `BeforeStep` | Steer injector | `RunAgentLoopOnce` installs `opts.BeforeStep` as `Steer.SetInjector`; the SDK drains it at the top of every iteration (BEFORE the MaxIterations check, matching `context.go:15-19`) and at every steered-stop downgrade point. A non-empty return appends to history and the run CONTINUES; an empty return keeps existing Trigger semantics. The `ackTriggered` at the downgrade point is load-bearing: without it the next iteration's Chat call would arm a still-triggered Steer and cancel instantly. |
+| `BeforeStep` | Steer injector | `RunAgentLoopOnce` installs `opts.BeforeStep` as `Steer.SetInjector`; the SDK drains it at the top of every iteration (BEFORE the MaxIterations check, agentloop/run.go:103, drain at run.go:110). The gate is `hasInjector()` not drain content (SDK `run.go:221`, `steer.go:74-82`): with `BeforeStep` installed EVERY steered stop soft-continues including empty return; drain runs only at iteration top (`run.go:110`); without injector the single-shot `StopSteered` contract is preserved. The `ackTriggered` at the downgrade point is load-bearing: without it the next iteration's Chat call would arm a still-triggered Steer and cancel instantly. |
 | `Surface` | `Options.Surface` bridge | `bridgeSDKBridgeSurface` maps the CLI per-step hook onto the SDK's own per-iteration `Options.Surface` (consulted from the second iteration on, the legacy skip-step-1 rule). The rotation's `Dispatcher`/`RemainderSpool` land in the run's `sdkTurnState` (per-call shim reads), the `Registry` rebuilds through the ONE construction path `buildSDKToolRegistry` (shared shaping counter), and `ToolSpecs` re-advertise as SDK definitions. A rotation carrying a `Registry` and NO `ToolSpecs` restates that registry's own definitions (`sdkagentloop.Definitions(reg, nil)`, matching what `loop.New` computed for request 1, since the host never sets a `Scope`): the SDK's `applySurface` assigns `Surface.Advertised` wholesale, so leaving it nil there cleared the offered set instead of keeping it. The restated definitions are a wire value only - the run's pinned snapshot in `sdkTurnState` is deliberately left alone. A conversion failure at a rotation, or a `Definitions` failure on the rotated registry, records into the turn state and fails the run after `RunSteerable` returns. Accepted gap: step 1 advertises registry-derived definitions (no `Description`), so the pinned snapshot with descriptions applies from step 2 on; and a call to an advertised-but-unregistered name degrades to the SDK's `[tool-error]` `RoleTool` body instead of the legacy `UnadmittedToolHandler` auto-stage denial (the handler still fires for registered tools). |
 | `BatchResultBudgetBytes < 0` | host-side derivation | `applyTurnShaping` resolves the negative form via `derivedBatchBudget(opts.MaxContextTokens)` (shared with `effectiveBatchBudget` in `shape_batch.go:493`); constants (`bytesPerToken`, `derivedBudgetShare`, `derivedBatchBudgetFloorBytes`, `maxDerivableTokens`) cannot drift between the legacy and SDK paths. |
-| turn history | `Result.History` | `runOnceSDK` writes the SDK history back onto `Loop.Messages`, including the turn's assistant and tool messages, and falls back to the last assistant text when the final step produced none. The legacy `lastText` contract at `loop.go:143-179` is mirrored on every graceful-cancel path: the steered-stop branch returns the in-scope partial via `sdkSteeredStopPartial`, the cancel branch (errors.Is `context.Canceled`/`context.DeadlineExceeded`) and the graceful-empty fallback both walk history with the same `sdkCurrentTurnStart` Content-match helper. Streamed bytes inside an in-flight cancel are still lost — the SDK cancels `Completer.Chat` wholesale on Trigger — but assistant messages appended to history before the cancel point survive. |
+| turn history | `Result.History` | `runOnceSDK` writes the SDK history back onto `Loop.Messages`, including the turn's assistant and tool messages, and falls back to the last assistant text when the final step produced none. The legacy `lastText` contract at `loop.go:143-179` is mirrored on every graceful-cancel path: the steered-stop branch returns the in-scope partial via `sdkSteeredStopPartial` (reachable only on injector-less runs; see §2), the cancel branch (errors.Is `context.Canceled`/`context.DeadlineExceeded`) and the graceful-empty fallback both walk history with the same `sdkCurrentTurnStart` Content-match helper. Streamed bytes inside an in-flight cancel are still lost — the SDK cancels `Completer.Chat` wholesale on Trigger — but assistant messages appended to history before the cancel point survive. |
 | `WorkLimits.MaxPromptTokens` / `MaxOutputTokens` / `MaxOutputPerCall` | `Options.WorkBudget` | `newSDKWorkBudget`/`newSDKWorkBudgetHook` (`agentloop_budget.go`) bridge the SDK's Reserve-before-call/Refund-after-outcome hook onto the SAME `workLimitMeter` the legacy loop uses (`work_limits.go`); no policy is forked, only the call points differ |
 | `WorkLimits.MaxToolCalls` | `Options.ToolBudget` | `newSDKToolBudget` (`agentloop_toolbudget.go`) bridges the SDK's per-turn Reserve hook onto the SAME `workLimitMeter`'s `reserveToolBatch`. Accepted approximation: the SDK calls Reserve with the RAW `resp.ToolCalls` count, before per-call malformed-argument filtering or in-turn dedup (both happen later, inside the SDK's own `runToolCalls`), where the legacy `processToolCalls` charged only the validated, batch-cap-clamped count. This can only exhaust the cumulative cap SOONER than exact accounting would, never later. |
 | `PreserveWorkLimits` | shared meter reset rule | `newSDKWorkBudget` applies the legacy reset rule: a nil meter, a non-preserved run, or changed `WorkLimits` rebuilds the meter; the flag means the same thing the legacy loop's reset rule meant, covering all four reservation fields above |
@@ -71,7 +71,7 @@ SDK interprets it differently or not at all.
 - **`MaxSteps <= 0`** — the legacy loop treats 0 as unbounded, and
   the SDK does too: `agentloop.New` runs `unboundedOrSet(opts.MaxIterations)`,
   which maps `0` to `math.MaxInt32` so the run loop's `iterations >=
-  l.maxIterations` check at `agentloop/run.go:89` never fires. The
+  l.bounds.MaxIterations` check at `run.go:114` never fires. The
   adapter passes `opts.MaxSteps` straight through
   (`internal/agent/agentloop_adapter.go`); the SDK path honors an
   unbounded run.
@@ -113,17 +113,17 @@ SDK interprets it differently or not at all.
   The SDK cancels `Completer.Chat` wholesale on Trigger, so any
   streamed partial the Completer had already produced is dropped —
   the SDK's `Result.Final` on a steered stop is the zero value, by
-  design. The drain-after-Steer injector downgrade keeps the run
-  going instead of stopping, which is the correct SDK behaviour for
-  a non-empty mailbox drain; for an empty drain the SDK still stops
-  with `Stop == StopSteered` and `Final` empty, where the legacy path
-  would have surfaced the partial. The dispatcher at
-  `loop_dispatch.go` (delegating to `sdkSteeredStopPartial`)
-  walks `res.History` and returns the most recent in-scope assistant
-  text along with `errSteerInterrupt`, mirroring the legacy
-  `lastText` contract for what was already appended to history
-  before the cancel. Bytes the Completer had streamed inside the
-  canceled call itself are still lost.
+  design. With an injector installed, every steered stop
+  soft-continues (pinned by SDK
+  `steer_injector_softcontinue_test.go:102`) and the drain return value
+  never gates the stop. The legacy `steerInterruptOutcome` /
+  `sdkSteeredStopPartial` path is now reachable only on injector-less
+  runs. The dispatcher at `loop_dispatch.go` (delegating to
+  `sdkSteeredStopPartial`) walks `res.History` and returns the most
+  recent in-scope assistant text along with `errSteerInterrupt`,
+  mirroring the legacy `lastText` contract for what was already
+  appended to history before the cancel. Bytes the Completer had
+  streamed inside the canceled call itself are still lost.
 - **Prompt-too-long retry** — carried: the SDK path retries once with
   a compacted prompt (`runSDKPromptTooLongRecoverable`,
   `internal/agent/agentloop_recovery.go`). One gap remains: a steer
@@ -136,6 +136,10 @@ SDK interprets it differently or not at all.
   bridge; `EventThinking` is bridged via `emitReasoning`, while
   `EventStep`/`EventToolStart`/`EventToolEnd` carry the SDK's string
   payload, not the legacy typed details.
+- **Once-per-turn `clampedMaxTokens`** — `clampedMaxTokens` is computed
+  once at option build time in `newSDKWorkBudgetHook`, not re-clamped per
+  step. This can only exhaust SOONER than legacy accounting, never
+  later.
 
 ## 3. Fail-closed fields
 
@@ -175,7 +179,11 @@ the SDK path.
   from a call that failed for its own reason** — the SDK's `Refund`
   contract only receives `(ctx, req, used Usage)`; a zero `Usage`
   means "never consumed," refunded unconditionally by
-  `sdkWorkBudget.refund` (`internal/agent/agentloop_budget.go`). The
+  `sdkWorkBudget.refund` (`internal/agent/agentloop_budget.go`).
+  `refundWork` supplies zero `Usage` only for a failed call and
+  `settleWork` skips `Refund` for a successful zero-`Usage` call
+  (`agentloop/budget.go:75-110`), so the host full-refund branch
+  sees zero `Usage` exactly on failures. The
   legacy `workLimitMeter.refundProvider` runs only on the
   steer-interrupt path, not on a plain provider error, on the
   reasoning that a call that failed for its own reason still consumed

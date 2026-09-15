@@ -350,6 +350,28 @@ adopting it.
 
 If these cannot be stated concisely, keep the logic in `mivia-agent`.
 
+### Candidate: ToolCallKey exported helper (DRAFT)
+
+Status: DRAFT pending SDK-side design (`release/v0.7.0`).
+
+- **Generic problem**: 4 host copies of ID-else-name keying (`agent` and `sdkadapter`).
+- **Second consumer argument**: any SDK consumer recording per-call outcomes needs the same rule to associate outcomes with calls under blank-ID streams.
+- **Host code it deletes**: the 4 copies across `agent` and `sdkadapter`.
+- **Semantics**: pure function of `provider.ToolCall`, no cancellation or concurrency surface.
+- **Tests**: SDK vectors + host parity tests.
+
+### Candidate: WorkBudget refund-on-failed-zero-Usage or explicit outcome reporting (DRAFT)
+
+Status: DRAFT pending SDK-side design (`release/v0.7.0`).
+
+- **Generic problem**: callers cannot distinguish cancelled from failed calls; ordinary provider errors trigger over-refunds or reservations leak.
+- **Second consumer argument**: any SDK consumer sharing a token ceiling across concurrent loops needs the failure-vs-consumed distinction to avoid over-refund on ordinary errors; without it every host must fork refund policy host-side.
+- **Host code it fixes**: `agentloop_budget.go` full-refund branch.
+- **Semantics**: refund only on failed calls with zero `Usage` — matches `refundWork`, requires `settleWork` change or a richer `Refund` signature (SDK designer to choose).
+- **Tests**: host parity pins `TestProviderErrorKeepsWorkLimitReservation`.
+
+*Note*: Steer soft-continue remains a documented divergence needing its own design discussion before it is a Decision Log entry.
+
 ## Immediate Next Action
 
 Execute Stage 0. Produce the gap ledger over the 18 bridge files against the
