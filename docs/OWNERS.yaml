@@ -69,11 +69,6 @@ topics:
     owner: agent
     description: Which CLI agent.Options fields the SDK backend carries, accepts as semantic gaps, or fail-closes on
 
-  sdk-integration-cleanup-plan:
-    path: docs/development/public-sdk-integration-cleanup-plan.md
-    owner: agent
-    description: Staged plan to adopt existing mivia-ai-sdk capabilities and retire duplicated host-side agent-loop logic
-
   sdk-gap-ledger:
     path: docs/development/sdk-gap-ledger.md
     owner: agent

@@ -1,9 +1,11 @@
 # SDK Gap Ledger (Stage 0)
-
-Companion to [public-sdk-integration-cleanup-plan.md](public-sdk-integration-cleanup-plan.md).
-Per-file verdicts for `internal/agent`'s SDK-bridge layer against
-`mivia-ai-sdk v0.6.0` (HEAD `5d73261`). Every SDK fact below was read from the
-checkout; host facts cite `internal/agent` directly.
+#
+# Historical record of the v0.8.0 SDK capability adoption: per-file verdicts
+# for `internal/agent`'s SDK-bridge layer against
+# `mivia-ai-sdk v0.6.0` (HEAD `5d73261`). Every SDK fact below was read from the
+# checkout; host facts cite `internal/agent` directly.
+# The companion staged plan was removed once its work completed; the one item
+# it still tracked is cutting host `v0.2.3`.
 
 Verdict semantics:
 
