@@ -84,7 +84,6 @@ func TestSoftInterruptRefundsWorkLimitReservation(t *testing.T) {
 // consumed its budget even though it produced no completion, so refunding it
 // would widen the budget beyond what the reservation accounted for.
 func TestProviderErrorKeepsWorkLimitReservation(t *testing.T) {
-	t.Skip("known bug, not a regression: sdkWorkBudget.refund cannot distinguish a steer-canceled call from a plain provider error and refunds both - tracked in docs/development/sdk-backend-field-mapping.md §4.")
 	interrupt := make(chan struct{}, 1)
 	interrupt <- struct{}{} // steer signal ready; MailboxPendingInterrupt true
 	comp := &steerCompleter{
