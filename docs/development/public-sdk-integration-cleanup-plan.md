@@ -2,10 +2,11 @@
 
 ## Status
 
-Implementation-ready. Every SDK claim below was read from the checkout at
+Complete except release mechanics. Every SDK claim below was read from the
+checkout at
 `/home/mac/projects/mivialabs/mivia-ai-sdk` (module
 `github.com/MiviaLabs/mivia-ai-sdk`, `go 1.25.0`, branch `main`, latest tag
-`v0.6.0` == HEAD `5d73261`).
+`v0.6.0` == HEAD `5d73261`; adopted work sits on branch `release/v0.7.0`).
 
 The host builds and tests green against that checkout through a local `replace`
 directive in `go.mod`. Nothing is pushed or tagged by this plan.
@@ -399,6 +400,53 @@ Status: ACCEPTED — owner decision that no behavioral divergence is accepted po
 - **Semantics**: no injector, no hook: unchanged (`StopSteered`, nil error, partial `Final`). Injector + gate non-empty: loop continues; trigger acked before the next arm; gate messages append to history; injector still drains exactly once at the next iteration top. Injector + gate nil: run stops with `StopSteered` exactly like the no-injector path; that boundary's pending drain is dropped (documented). Cancellation unchanged (`ctx` cancel is a hard fail, not a steer stop). Gate panic fails closed via `safeContinue`.
 - **Tests**: SDK rewrites the injector soft-continue pins and adds gate-continue/gate-stop/gate-panic/cancel-race/nil-hook-parity pins; `make api-update` must show no drift. Host parity: the unskipped retry-steer test plus adapter pins for `StopSteered` + gate-nil -> `errSteerInterrupt`.
 - **Versions**: SDK v0.7.0, host v0.2.3. Breaking tolerance precedent: 9f9a6cc.
+
+## Progress And Remaining Work
+
+Recorded at close of the adoption effort, after host commit 05c013c3.
+
+### Done
+
+- **Stage 0 (gap ledger)**: complete. Every bridge file carries a verdict in
+  `docs/development/sdk-gap-ledger.md`; the field-mapping doc is reconciled.
+- **Tool-call keying**: adopted. SDK b00f76e exported `ToolCallKey`; host
+  1f3e4cf8 retired the four host copies. Parity pinned by
+  `TestToolCallKeyParityAgainstSDKVectors`.
+- **WorkBudget refunds**: adopted. SDK 9f9a6cc made `Refund` carry the failure
+  cause; host 20a4ac5c settles refunds by cause. Pin test unskipped and green.
+- **Steered stops**: adopted. SDK 361af35 gates steered stops on
+  `ContinueOnStop`; host eff64b6b regained stop authority. Both steer skip
+  tests unskipped and green.
+- **Retry-time summary re-derivation**: fixed host-side in 57729e17. The retry
+  re-derives omitted evidence and invalidates the memo. Skip removed.
+- **Stage 1 admission**: verdict `keep` — `DecideApproval` and
+  `OnToolCallError` already ride the SDK seams; `ScopeOptions.Approve` was
+  rejected because it cannot represent standing decisions, resource keys, or
+  the deferred path.
+- **Stage 2 timeouts**: verdict `keep` — host per-call deadlines exceed a
+  static `ExecutionProfile`.
+- **Stage 3 spool**: verdict `keep` — correct mechanism/policy split; a later
+  swap is possible only as a wrapper preserving INV-AG-10/CE-07.
+- **Stage 4 events**: verdict `keep` — wire vocabulary is host contract.
+- **Stage 5 layout**: verdict recorded — no split; the bridge stays in
+  `internal/agent` (52 private-state references across 19 files).
+
+### Remaining
+
+1. **Tag SDK `v0.7.0`** on the `release/v0.7.0` branch (explicit instruction
+   required; run `make verify`, `make api-update`, `check_api.py` first).
+2. **Drop the `go.mod` `replace`** and bump `require` to the tagged release.
+   The `replace` must never reach a host release build.
+3. **Retire the local-checkout plumbing** added to `scripts/release.sh` and
+   `scripts/test_release.py` in host de834456.
+4. **Cut host `v0.2.3`** carrying the adoption commits.
+5. **Deferred, not blocking**: fold the pinned request-0 tool union in
+   `sdk_advertised.go` onto `Extensions.Surface` (low urgency); delete
+   `agentloop_convert.go` only if the SDK ships a converter; `clampedMaxTokens`
+   stays once-per-turn as an accepted gap.
+
+Nothing else is open. Per the ledger, no SDK-repository candidate remains for
+the `release/v0.7.0` branch.
 
 ## Immediate Next Action
 
