@@ -340,7 +340,11 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// notices into the JSON stream. runRecoverySweep=false (F14): a usage
 	// query is read-only and must not push branches, publish PRs, or drive
 	// stacks as a side effect.
-	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
+	fullDisk := config.UserFullDiskAccessForWorkspace(root)
+	if fullDisk {
+		fmt.Fprintln(os.Stderr, config.FullDiskNoticeText)
+	}
+	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, fullDisk, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)
