@@ -15,7 +15,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	git.sr.ht/~jamesponddotco/gitignore-go v1.0.0
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/MiviaLabs/mivia-ai-sdk v0.6.0
+	github.com/MiviaLabs/mivia-ai-sdk v0.8.0
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.0
@@ -77,11 +77,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.54.0
 )
-
-// Local SDK checkout: integration work lands in the sibling repository first
-// and must be testable here before anything is tagged or pushed. Absolute, not
-// relative: this path is the operator's own checkout location, and a relative
-// ../mivia-ai-sdk silently resolves against whatever tree the build runs in.
-// Drop this directive (and bump the require above) once the SDK release that
-// carries the adopted capabilities is tagged.
-replace github.com/MiviaLabs/mivia-ai-sdk => /home/mac/projects/mivialabs/mivia-ai-sdk
