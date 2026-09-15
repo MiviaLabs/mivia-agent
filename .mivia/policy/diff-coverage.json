@@ -486,6 +486,15 @@
       ],
       "reason": "Known SDK-path gaps from the session unpin. 57-58 and 89-90 = clampedMaxTokens error returns in newSDKWorkBudgetHook and reserve (commit 370aa24d): the error needs malformed MaxTokens/outputCap calibration no test supplies (calibration-carry gap). 114-115 = refund with an empty reservation stack: fires only when the SDK budget hook completes or aborts a turn without a matching reserve - the interrupted-turn persistence gap, which no deterministic test currently drives."
     },
+    "internal/agent/loop_dispatch.go": {
+      "lines": [
+        96,
+        340,
+        341,
+        342
+      ],
+      "reason": "shrinkStepBudgetForReRun's `remaining <= 0` guard (runOnceSDK's turn-scoped steered-continue fix) and its caller's resulting sdkSteeredStopPartial return (line 96) are provably unreachable via a genuine StopSteered result. Each re-run's SDK Bounds.MaxIterations is set to `remaining` (the turn-scoped budget left before that call), and the SDK's run loop only attempts a completer call while iterations < Bounds.MaxIterations; a canceled/steered call never increments iterations. So a StopSteered result's completed-iteration count K always satisfies K < remaining_before, giving remaining_after = remaining_before - K >= 1 on every real steered stop - it can never reach 0 or below that way. The only path that drives stepsConsumed to exactly origMaxSteps is a run using its entire per-run bound (K == bound), which the SDK reports as StopMaxIterations (loop_dispatch.go's separate max-iterations branch), never StopSteered. The guard is retained as a defensive backstop against a future SDK contract change (e.g. iterations incrementing before the stop check), not as reachable production logic; verified by hand-trace across MaxSteps in {1,2,4,8,100} with and without WorkLimits.MaxTurns."
+    },
     "internal/agent/agentloop_completer.go": {
       "lines": [
         137,

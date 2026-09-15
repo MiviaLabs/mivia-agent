@@ -61,15 +61,20 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	// history, then re-run the turn on the carried history - the new
 	// run's iteration-top injector drain picks up the mailbox payload.
 	// Without BeforeStep there is nothing to drain, so the steered stop
-	// surfaces as errSteerInterrupt exactly as before. Each continue
-	// consumes one steered re-run; the bound is the step budget, so a
-	// hostile signal source cannot loop the turn forever.
-	maxSteerContinues := effectiveSDKMaxIterations(opts)
+	// surfaces as errSteerInterrupt exactly as before.
+	//
+	// The re-run bound is turn-scoped (see steerContinueBound and
+	// shrinkStepBudgetForReRun): a naive per-run reset would let the
+	// turn's step/work budgets multiply by steerContinues+1.
+	origMaxSteps := opts.MaxSteps
+	stepsConsumed := 0
+	maxSteerContinues := steerContinueBound(opts)
 	steerContinues := 0
 	for {
 		msgs := make([]provider.Message, len(l.Messages))
 		copy(msgs, l.Messages)
 		res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
+		stepsConsumed += res.Iterations
 		l.writeBackSDKHistory(res, preLen)
 		if err != nil {
 			// A canceled or timed-out run keeps the partial reply the turn
@@ -87,6 +92,10 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 			return "", err
 		}
 		if res.Stop == sdkagentloop.StopSteered && opts.BeforeStep != nil && steerContinues < maxSteerContinues {
+			if !shrinkStepBudgetForReRun(&opts, origMaxSteps, stepsConsumed) {
+				return sdkSteeredStopPartial(res.History, userText)
+			}
+			opts.PreserveWorkLimits = true
 			steerContinues++
 			continue
 		}
@@ -274,6 +283,65 @@ func restoreSDKHistoryTimestamps(fresh, old []provider.Message) []provider.Messa
 		}
 	}
 	return fresh
+}
+
+// maxUnboundedSteerContinues bounds the number of steered re-runs
+// runOnceSDK permits when effectiveSDKMaxIterations reports no cap
+// (both opts.MaxSteps and opts.WorkLimits.MaxTurns are unset/zero).
+// In that configuration the per-run step budget itself has no cap,
+// so using 0 as the re-run ceiling would be a dead path (0 means
+// "never continue" today) and using no ceiling at all would let a
+// hostile or malfunctioning steer-signal source request an unbounded
+// number of re-runs. This constant bounds only the COUNT of re-runs;
+// each individual re-run is still governed by its own already-existing
+// per-run step bound, unchanged.
+const maxUnboundedSteerContinues = 25
+
+// steerContinueBound returns runOnceSDK's re-run ceiling for opts.
+// effectiveSDKMaxIterations reports 0 when both opts.MaxSteps and
+// opts.WorkLimits.MaxTurns are unset - "no cap" on the per-run step
+// budget, not "never continue" - so that case falls back to the fixed
+// maxUnboundedSteerContinues ceiling instead of the dead 0 value.
+func steerContinueBound(opts Options) int {
+	if bound := effectiveSDKMaxIterations(opts); bound > 0 {
+		return bound
+	}
+	return maxUnboundedSteerContinues
+}
+
+// shrinkStepBudgetForReRun clamps opts.MaxSteps to the turn-scoped
+// budget remaining before a steered re-run and reports whether the
+// re-run may proceed.
+//
+// Each steered re-run builds a fresh sdkTurnState and, absent
+// opts.PreserveWorkLimits, a fresh WorkBudget meter (see
+// newSDKWorkBudget): left alone, that would let one turn's total step
+// count and token/tool-call budget multiply by (steerContinues+1)
+// instead of being capped once. This function keeps the step half of
+// that bound turn-scoped: when origMaxSteps is positive, the caller's
+// per-run budget is shrunk to origMaxSteps-stepsConsumed rather than
+// restarting at the full cap on every re-run. An exhausted remaining
+// budget (<=0) refuses the re-run - mirroring the hard-stop guard
+// shape at internal/subagents/multi_step_schema.go's
+// runValidatedReply - instead of mapping the exhausted case to 0,
+// which the SDK reads as uncapped, the opposite of exhausted.
+// origMaxSteps<=0 (unbounded) is left unshrunk and always proceeds.
+//
+// opts is the caller's local copy (runOnceSDK receives Options by
+// value), so mutating *opts here across loop iterations never reaches
+// the caller. The companion PreserveWorkLimits assignment, which
+// carries the token/tool-call meter's cumulative counts forward
+// instead of resetting them, is made by the caller alongside this call.
+func shrinkStepBudgetForReRun(opts *Options, origMaxSteps, stepsConsumed int) bool {
+	if origMaxSteps <= 0 {
+		return true
+	}
+	remaining := origMaxSteps - stepsConsumed
+	if remaining <= 0 {
+		return false
+	}
+	opts.MaxSteps = remaining
+	return true
 }
 
 // effectiveSDKMaxIterations mirrors buildAgentLoopOptions' iteration
