@@ -71,7 +71,7 @@ zero-Usage refunds, and once-per-turn `clampedMaxTokens`).
 
 - Step 2: done (this reconciliation, date-less).
 - Step 3: done — all three skips re-verified failing with unchanged root causes: `summary_inject` (`ChangedSurfaces` never wired — host-fixable, follow-up slice), `loop_retry_steer` (pins Steer soft-continue gap), `loop_steer_worklimit` (pins WorkBudget zero-Usage refund gap).
-- Step 4: done — keying inventory: 8 sites, 6 paired in two contracts (outcome-map key ID-else-name across agent+sdkadapter; `pass1Map` key ID-only), one SDK-candidate rule duplicated 4x, natural home `sdkagentloop.ToolCallKey` over the existing `ToolCallFromContext` plumbing; risk: drift silently drops operator outcomes under blank-ID streams.
+- Step 4: done — SDK ToolCallKey exported (release/v0.7.0 b00f76e), four host copies retired (1f3e4cf8), parity pinned by TestToolCallKeyParityAgainstSDKVectors.
 
 ## Stage resolution
 
