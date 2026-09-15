@@ -262,7 +262,7 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 	failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
 	if d.turn != nil {
 		d.turn.recordToolResultEvidence(d.inner.Name(), len(body))
-		if !failed && (capability.Class == tools.ExecutionWrite || sdktools.ExecutionProfileOf(d.inner).Class == sdktools.ExecutionClassWrite) {
+		if d.touchedSurface(args, capability) {
 			d.turn.recordChangedSurface(d.inner.Name())
 		}
 		if reminder := d.turn.recordProgress(failed, d.inner.Name(), args, capability); reminder != "" {
@@ -271,6 +271,22 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 	}
 	d.recordToolEventOutcome(callKey, args, body, failed, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
+}
+
+// touchedSurface reports whether this call attempted a state mutation,
+// REGARDLESS of whether it succeeded: a write-class tool (by CLI
+// Capability or by the SDK profile's own Write class) or a mutating
+// run_command invocation both count, because a call that got far enough
+// to attempt the mutation should be recorded whether it succeeded or
+// failed (a partial write is still a touch). This mirrors
+// recordProgress's own mutation test in sdk_turn_state.go so the two
+// tables agree on the same call instead of drifting apart - it does not
+// duplicate isMutatingCommand's logic, it calls the exact same function.
+func (d *dispatcherShim) touchedSurface(args []byte, capability tools.Capability) bool {
+	if capability.Class == tools.ExecutionWrite || sdktools.ExecutionProfileOf(d.inner).Class == sdktools.ExecutionClassWrite {
+		return true
+	}
+	return d.inner.Name() == tools.RunCommandToolName && isMutatingCommand(args)
 }
 
 // dispatcherAndSpool reads the live dispatcher and spool from the turn
