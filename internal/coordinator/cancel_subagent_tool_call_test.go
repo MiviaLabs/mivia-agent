@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -130,7 +129,7 @@ func cancelableSubagentTask(t *testing.T, d *runtime.Dispatcher, coord *Coordina
 		FullRegistry: reg,
 		SystemPrompt: "test subagent",
 		MaxSteps:     4,
-		OnToolCancelReady: func(ctx context.Context, canceler agent.ToolCanceler) {
+		OnToolCancelReady: func(ctx context.Context, canceler subagents.ToolCanceler) {
 			id, ok := runtime.TaskIdentityFrom(ctx)
 			if !ok {
 				return
