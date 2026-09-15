@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -132,6 +133,8 @@ type sdkTurnState struct {
 	toolMu        sync.Mutex
 	toolOutcomes  map[string]*toolCallOutcome
 	streamRevoked atomic.Bool
+	turnFactsMu   sync.Mutex
+	turnFacts     *manager.TurnState
 	// cancels holds the per-call CancelFunc for every tool call
 	// currently in flight in this turn, keyed by call ID (the same
 	// key Run derives via toolCallKeyFromContext). Both the admitted
@@ -185,6 +188,24 @@ func isMutatingCommand(args []byte) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func (s *sdkTurnState) seedTurnFacts(facts *manager.TurnState) {
+	s.turnFactsMu.Lock()
+	defer s.turnFactsMu.Unlock()
+	s.turnFacts = facts
+}
+
+func (s *sdkTurnState) recordChangedSurface(surface string) {
+	if s == nil {
+		return
+	}
+	s.turnFactsMu.Lock()
+	facts := s.turnFacts
+	s.turnFactsMu.Unlock()
+	if facts != nil {
+		_ = facts.AddChangedSurface(surface)
 	}
 }
 

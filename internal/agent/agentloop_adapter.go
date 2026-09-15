@@ -67,6 +67,9 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	}
 	turn := newSDKTurnState()
 	seedSDKTurnState(turn, opts)
+	if l != nil && l.TurnState != nil {
+		turn.seedTurnFacts(l.TurnState)
+	}
 	if opts.OnToolCancelReady != nil {
 		opts.OnToolCancelReady(turn.cancelCall)
 	}
@@ -117,6 +120,20 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	// sharing l.workLimits with the WorkBudget bridge above.
 	sdkExtensions(&out).WorkBudget = budgetHook
 	sdkExtensions(&out).ToolBudget = newSDKToolBudget(l)
+	installSDKSurfaceBridge(l, &out, opts, turn)
+	// WatchdogInterval deliberately does NOT map to
+	// HeartbeatInterval: the heartbeat row is adopted only where an
+	// event surface is wired (RunAgentLoopOnce's
+	// installSDKEventBridge), because a positive HeartbeatInterval
+	// without a Bus fails the SDK's Validate. The watchdog's
+	// steer-latency role is carried by the MailboxPending poller in
+	// the steer bridge instead.
+	return out, turn, nil
+}
+
+// installSDKSurfaceBridge wires the per-step Surface hook onto the SDK's
+// Options.Surface when configured.
+func installSDKSurfaceBridge(l *Loop, out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
 	// Surface rotation: the CLI's per-step Surface hook (legacy
 	// applySurfaceHook) bridges onto the SDK's own Options.Surface,
 	// consulted at the top of every iteration from the second one on -
@@ -130,16 +147,8 @@ func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagent
 	// returns nil (keep prior surface); RunAgentLoopOnce fails the run
 	// with the recorded error after RunSteerable returns.
 	if opts.Surface != nil {
-		sdkExtensions(&out).Surface = bridgeSDKBridgeSurface(l, opts, turn)
+		sdkExtensions(out).Surface = bridgeSDKBridgeSurface(l, opts, turn)
 	}
-	// WatchdogInterval deliberately does NOT map to
-	// HeartbeatInterval: the heartbeat row is adopted only where an
-	// event surface is wired (RunAgentLoopOnce's
-	// installSDKEventBridge), because a positive HeartbeatInterval
-	// without a Bus fails the SDK's Validate. The watchdog's
-	// steer-latency role is carried by the MailboxPending poller in
-	// the steer bridge instead.
-	return out, turn, nil
 }
 
 // applySDKStepBound sets the SDK iteration bound for the turn:

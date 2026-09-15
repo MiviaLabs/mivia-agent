@@ -261,6 +261,9 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 	// viewer was told the call completed.
 	failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
 	if d.turn != nil {
+		if !failed && (capability.Class == tools.ExecutionWrite || sdktools.ExecutionProfileOf(d.inner).Class == sdktools.ExecutionClassWrite) {
+			d.turn.recordChangedSurface(d.inner.Name())
+		}
 		if reminder := d.turn.recordProgress(failed, d.inner.Name(), args, capability); reminder != "" {
 			body = AppendSystemReminder(body, reminder)
 		}
