@@ -159,7 +159,7 @@ Deep status for one workflow run.
 |-----------|------|----------|-------------|
 | `run_id` | string | yes | Workflow run ID (form: `wfr-...`) |
 
-Returns: run metadata, active step, version, timestamps, base commit, worktree path, all attempts with their status and transition target, loop iteration counts, delivery records, and approval records.
+Returns: run metadata, active step, version, timestamps, base commit, worktree path, and loop iteration counts. Also returned: all attempts with their status and transition target, delivery records, and approval records.
 
 ### workflow_events
 
@@ -634,7 +634,7 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
 
-For a stacking workflow, the plan-mode run is the stack root, not the deliverable. When a multi-chunk plan run finishes, its chunk stack is driven to completion first; only then does the host decide whether to publish the plan run itself. By default (`deliver_plan_run = false`) it does not: the plan run settles `succeeded` with its plan and artifacts recorded in the ledger, and the chunk PRs are the published work. Set `delivery.deliver_plan_run = true` to also publish the plan run's own PR; the stack still drives before publication, and the publish grant still applies.
+For a stacking workflow, the plan-mode run is the stack root, not the deliverable. When a multi-chunk plan run finishes, its chunk stack is driven to completion first. Only then does the host decide whether to publish the plan run itself. By default (`deliver_plan_run = false`) it does not. The plan run settles `succeeded` with its plan and artifacts recorded in the ledger, and the chunk PRs are the published work. Set `delivery.deliver_plan_run = true` to also publish the plan run's own PR; the stack still drives before publication, and the publish grant still applies.
 
 Delivery runs after the success terminal, outside the step graph. A delivery
 that fails therefore has no route back into the workflow, and the run stops
@@ -744,7 +744,7 @@ invocation.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Nothing is blocked by default — protection is opt-in. A project names what it wants protected. The recommended set is `.git`, `.githooks`, `scripts`, `Makefile`, `.mivia/hooks`, `.claude`, the config file itself, and `.mivia/policy`. An agent that can edit Git metadata can rewrite history. An agent that can plant a hook, or rewrite a gate script the hook runs, can bypass the host gates. An agent that can edit the config can delete the entries that stop it. `[tools].write_path_blocklist_remove` removes an entry it (or a layer above it) added. A project that omits the key leaves every path writable by workflow agents: Git metadata, the hooks, the config, the control-surface trees, the Go module files, and the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
+Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Nothing is blocked by default — protection is opt-in. A project names what it wants protected. The recommended set is `.git`, `.githooks`, `scripts`, `Makefile`, `.mivia/hooks`, `.claude`, the config file itself, and `.mivia/policy`. An agent that can edit Git metadata can rewrite history. An agent that can plant a hook, or rewrite a gate script the hook runs, can bypass the host gates. An agent that can edit the config can delete the entries that stop it. `[tools].write_path_blocklist_remove` removes an entry it (or a layer above it) added. A project that omits the key leaves every path writable by workflow agents. Those paths include Git metadata, the hooks, the config, the control-surface trees, the Go module files, and the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
 
 ### Blocked writes are a host problem, never a review failure
 
@@ -773,7 +773,7 @@ Before a run starts, the compiler checks the workflow file:
 6. Verifier names are valid for evidence gate steps.
 7. On-failure targets reference declared steps or terminals.
 8. Delivery config is valid: kind, mode, provider, and base.
-9. No input instructs a write to a write-blocklisted path (refused at admission with a diagnostic naming the path; route the change through the interactive session instead).
+9. No input instructs a write to a write-blocklisted path. Such writes are refused at admission with a diagnostic naming the path; route the change through the interactive session instead.
 
 ## Resume
 
@@ -803,15 +803,15 @@ max_concurrent_chunks = 4     # default 4; chunk runs the driver admits and driv
 split_deferred = true         # default false; host auto-splits an over-limit diff
 ```
 
-`split_deferred = true` lets the host split an over-limit chunk itself: it measures the actual per-file diff size and defers the largest files to a follow-up PR until the delivered diff fits, with no repair round trip. The split never separates a file from its same-directory test companion (`*_test`, `*.test`, `*_spec`, `*.spec`, `test_*`, `Test*`): a delivered commit that ships code without its tests can fail the repository's own test gate, so such a split is refused with a clear reason and the chunk still goes to the diff-size repair step to shrink. The same rule applies to a repair agent's own `deferred_files` declaration: a file and its tests ship in the same commit (both delivered or both deferred).
+`split_deferred = true` lets the host split an over-limit chunk itself. It measures the actual per-file diff size and defers the largest files to a follow-up PR. This continues until the delivered diff fits, with no repair round trip. The split never separates a file from its same-directory test companion (`*_test`, `*.test`, `*_spec`, `*.spec`, `test_*`, `Test*`). A delivered commit that ships code without its tests can fail the repository's own test gate. Such a split is refused with a clear reason, and the chunk still goes to the diff-size repair step to shrink. The same rule applies to a repair agent's own `deferred_files` declaration. A file and its tests ship in the same commit (both delivered or both deferred).
 
-The section is validated at compile time: an enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume recompiles the admitted snapshot definition under the same rule, so a run keeps its compiled shape across interrupts.
+The section is validated at compile time. An enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume recompiles the admitted snapshot definition under the same rule, so a run keeps its compiled shape across interrupts.
 
-`max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack: the driver refuses to admit a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but is not enforced as a distinct per-call cap — a workflow's declared `max_chunks` is what each individual decompose call is checked against.
+`max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack. The driver refuses a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but is not enforced as a distinct per-call cap. A workflow's declared `max_chunks` is what each individual decompose call is checked against.
 
 ### Incremental decompose (large changes)
 
-When a change needs more chunks than fit in one `decompose` call, decompose can plan only the next wave and declare `has_more`/`remaining_scope` in its output (see `.mivia/workflows/templates/decompose.md`). Once every currently-known chunk in the stack has merged, if the latest wave declared `has_more`, `stack drive` automatically admits a fresh run that starts directly at the `decompose` step (`stack_mode = "decompose_continue"`), seeded with the prior wave's `remaining_scope` text instead of the original plan artifact, and folds its chunks into the same stack. This repeats until a wave declares no more scope, `max_total_chunks` is reached, or a wave fails. Most plans fit in one wave and never trigger this path.
+When a change needs more chunks than fit in one `decompose` call, decompose can plan only the next wave. It declares `has_more`/`remaining_scope` in its output (see `.mivia/workflows/templates/decompose.md`). Once every currently-known chunk in the stack has merged, `stack drive` checks whether the latest wave declared `has_more`. If it did, `stack drive` automatically admits a fresh run that starts directly at the `decompose` step (`stack_mode = "decompose_continue"`). That run is seeded with the prior wave's `remaining_scope` text instead of the original plan artifact, and it folds its chunks into the same stack. This repeats until a wave declares no more scope, `max_total_chunks` is reached, or a wave fails. Most plans fit in one wave and never trigger this path.
 
 ### What a plan-mode run does
 
@@ -843,9 +843,9 @@ mivia stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--confi
 
 ### Concurrent wave execution
 
-Each drive pass computes the next admission wave — every chunk whose dependencies have all merged. Chunks in the same wave are independent by construction, so the driver admits and drives the whole wave concurrently, bounded by `max_concurrent_chunks` (default 4). Each chunk runs in its own isolated worktree, and a per-chunk atomic claim guarantees exactly one admission per chunk even when several are dispatched at once — re-running `stack drive` after a restart or a partial failure never double-admits a chunk already in flight.
+Each drive pass computes the next admission wave — every chunk whose dependencies have all merged. Chunks in the same wave are independent by construction, so the driver admits and drives the whole wave concurrently, bounded by `max_concurrent_chunks` (default 4). Each chunk runs in its own isolated worktree. A per-chunk atomic claim guarantees exactly one admission per chunk even when several are dispatched at once. Re-running `stack drive` after a restart or a partial failure never double-admits a chunk already in flight.
 
-Only chunk *execution* is concurrent. Merging still happens one PR at a time, in dependency order — multiple chunks can reach `delivery_pending` or get published within the same drive pass, but they merge one at a time.
+Only chunk *execution* is concurrent. Merging still happens one PR at a time, in dependency order. Multiple chunks can reach `delivery_pending` or get published within the same drive pass, but they merge one at a time.
 
 ### Merge policies
 
@@ -860,11 +860,11 @@ Any chunk that fails terminally (exhausted retry budget) halts the stack. The dr
 
 ### Recovery on restart
 
-Every `stack drive` start runs idempotent reconciliation: it loads chunk tasks from the task ledger, reconciles each non-terminal task against its run and git merge state, and schedules the next admission wave. Stable admission keys (`<stack-id>:<chunk-id>`) ensure that re-admission after a restart returns the same run — no duplicate runs, no lost tasks. Reconciliation is derived from durable state only (task ledger, run ledger, git merge state).
+Every `stack drive` start runs idempotent reconciliation. It loads chunk tasks from the task ledger, reconciles each non-terminal task against its run and git merge state, and schedules the next admission wave. Stable admission keys (`<stack-id>:<chunk-id>`) ensure that re-admission after a restart returns the same run — no duplicate runs, no lost tasks. Reconciliation is derived from durable state only (task ledger, run ledger, git merge state).
 
 ### Recognizing and recovering a parked stack
 
-Driving a multi-chunk stack normally happens in the background inside whichever process started or resumed the plan run (the CLI foreground path, or the `workflow_run`/`workflow_resume` agent tools — both drive identically). If that process exits, is killed, or restarts before the drive reaches a durable checkpoint, the plan run is left parked at `delivery_pending` with none of its chunks admitted. Nothing re-drives it automatically: there is no separate background scheduler for this, so a parked stack stays parked until an operator intervenes.
+Driving a multi-chunk stack normally happens in the background inside whichever process started or resumed the plan run. That is the CLI foreground path, or the `workflow_run`/`workflow_resume` agent tools — both drive identically. If that process exits, is killed, or restarts before the drive reaches a durable checkpoint, the plan run is left parked at `delivery_pending`. None of its chunks have been admitted. Nothing re-drives it automatically: there is no separate background scheduler for this, so a parked stack stays parked until an operator intervenes.
 
 Signs a plan run is parked, not just normally pending:
 

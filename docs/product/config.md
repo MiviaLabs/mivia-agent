@@ -256,9 +256,9 @@ An empty list, a missing list, or a remote model registry is invalid. mivia does
 
 `context_window_tokens` is the model's physical prompt-plus-completion limit. `max_output_tokens` is the response ceiling and must stay below the context window. The usable prompt budget keeps the tighter of this value and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set. `config show` shows each catalog entry as `provider/model:context_window_tokens`.
 
-An explicit `[chat] max_tokens` is authoritative about how much **answer** you want. It is not authoritative about how much a model spends thinking before it writes one, so on a reasoning model it is raised to that model's reasoning reserve when it sits below it: `max` and `xhigh` reserve 65536, `high` 32768, `medium` 16384, `low` and `minimal` 8192. Below the reserve the request is not a smaller answer, it is no answer - an always-thinking model (z.ai's GLM-5.3 family, where `thinking.type` accepts only `enabled`) spends the whole allowance on reasoning tokens, returns `finish_reason: length` with empty content, and the turn fails with `agent: turn produced no assistant text`. The raise never exceeds `max_output_tokens` or the context window, and a model with no reasoning level, or `off`, keeps your value exactly.
+An explicit `[chat] max_tokens` is authoritative about how much **answer** you want. It is not authoritative about how much a model spends thinking before it writes one. On a reasoning model it is therefore raised to that model's reasoning reserve when it sits below it. The reserves are `max` and `xhigh` 65536, `high` 32768, `medium` 16384, `low` and `minimal` 8192. Below the reserve the request is not a smaller answer, it is no answer. An always-thinking model spends the whole allowance on reasoning tokens and returns `finish_reason: length` with empty content. The turn then fails with `agent: turn produced no assistant text`. z.ai's GLM-5.3 family, where `thinking.type` accepts only `enabled`, is always-thinking in this way. The raise never exceeds `max_output_tokens` or the context window, and a model with no reasoning level, or `off`, keeps your value exactly.
 
-This matters most for a user-level `~/.mivia/mivia.toml`: `loadFile` layers a workspace file over the base file per key, so a modest `max_tokens` there applies to every workspace that does not set its own - including one bound to a hard-thinking model the value was never chosen for.
+This matters most for a user-level `~/.mivia/mivia.toml`. `loadFile` layers a workspace file over the base file per key. A modest `max_tokens` there applies to every workspace that does not set its own. That includes a workspace bound to a hard-thinking model the value was never chosen for.
 
 ```bash
 DEEPSEEK_API_KEY=sk-REPLACE-ME
@@ -352,11 +352,11 @@ same underlying policies.
 
 The `run_command` program allowlist has a built-in default; the child-process environment allowlist does not.
 
-`run_command` can already execute a curated built-in list with `[tools].run_allowlist` unset: common compilers/interpreters, their package managers, git, and read-only Unix utilities. It deliberately excludes shells (`sh`, `bash` — unrestricted execution defeats the allowlist), file-mutating programs (`rm`, `cp`, `mv`, `mkdir`, and similar — `run_command` is not gated by the write-path blocklist, so a mutating program here would bypass it entirely), `find` (its `-exec`/`-delete` flags run arbitrary commands and delete files), and networking/container/infra tools (`curl`, `wget`, `ssh`, `docker`, `kubectl`, `terraform`). `[tools].run_allowlist` extends the built-in list; `[tools].run_allowlist_only` replaces it entirely, for a closed allowlist.
+`run_command` can already execute a curated built-in list with `[tools].run_allowlist` unset: common compilers/interpreters, their package managers, git, and read-only Unix utilities. It deliberately excludes shells (`sh`, `bash` — unrestricted execution defeats the allowlist). It also excludes file-mutating programs (`rm`, `cp`, `mv`, `mkdir`, and similar). `run_command` is not gated by the write-path blocklist, so a mutating program here would bypass it entirely. It excludes `find` (its `-exec`/`-delete` flags run arbitrary commands and delete files). It also excludes networking/container/infra tools (`curl`, `wget`, `ssh`, `docker`, `kubectl`, `terraform`). `[tools].run_allowlist` extends the built-in list; `[tools].run_allowlist_only` replaces it entirely, for a closed allowlist.
 
 The child-process environment allowlist has no compiled default: `[tools].env_allowlist` is the only source, and with it unset, child processes inherit no environment.
 
-A fuller, opt-in `run_allowlist` (including shells and network clients, extending the built-in list) and a starting `env_allowlist` ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in environment list to extend or replace, `env_allowlist_only` behaves identically to `env_allowlist`; `run_allowlist_only` differs from `run_allowlist` in that it replaces the built-in `run_command` default instead of extending it.
+A fuller, opt-in `run_allowlist` (including shells and network clients, extending the built-in list) and a starting `env_allowlist` ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in environment list to extend or replace, `env_allowlist_only` behaves identically to `env_allowlist`. `run_allowlist_only` differs from `run_allowlist` in that it replaces the built-in `run_command` default instead of extending it.
 
 `[tools].env_allow_keyword_blocklist` is the companion subtractive filter. A variable admitted by a `*` prefix rule is dropped when its name contains any listed substring. The example lists `SECRET`, `TOKEN`, `PASSWORD`, and `API_KEY`. Exact `env_allowlist` entries are never dropped, so a build that needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything they match.
 
@@ -364,11 +364,11 @@ A fuller, opt-in `run_allowlist` (including shells and network clients, extendin
 
 `[tools].write_path_blocklist` names workspace-relative paths or directories that the write tools of workflow agent steps (`write_file`, `search_replace`, `multi_edit`, `delete_file`) refuse to change. It applies to workflow runs only, not to the interactive session.
 
-Nothing is blocked by default: protection is opt-in, not a built-in set a project must opt out of. `[tools].write_path_blocklist_remove` removes an entry from the effective set — an entry a project (or a layer above it) added, never a compiled-in default, since there is none. An entry in both keys is a config error.
+Nothing is blocked by default: protection is opt-in, not a built-in set a project must opt out of. `[tools].write_path_blocklist_remove` removes an entry from the effective set. That is an entry a project (or a layer above it) added, never a compiled-in default, since there is none. An entry in both keys is a config error.
 
-Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
+Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error. mivia refuses to start rather than silently ignore a blocklist entry that can never match.
 
-This key is a project decision. A project that omits it leaves every path writable by workflow agents. That includes `.git`, the live Git hooks, this blocklist, and the workflow definition the run executes. The recommended starting values are `.git`, `.githooks`, `scripts`, `Makefile`, `.mivia/hooks`, `.claude`, the config file itself, and `.mivia/policy`. install_git_hooks.sh points the hooks path at `.githooks`. The hooks therefore live outside `.git`. Blocking `.git` alone does not protect the hooks. `scripts` covers both the hook implementations and the gate scripts those hooks run: with `scripts` writable, an agent rewrites a gate to exit 0 and every check the protected hook invokes passes. `Makefile` decides which gates run at all. The config file must block itself. An agent that can edit it can empty this key and give itself write access to every other entry. `.mivia/policy` holds the pattern files the hook guard reads. `.mivia/hooks` holds the guard script itself, and `.claude` holds `settings.json`, which registers that guard as a PreToolUse handler; either one writable lets an agent silently disable enforcement. A project that also wants workflow-run protection for its control-surface trees (`.mivia/`, `.agents/`, `.claude/`), its Go module files, or its workflow definitions lists them here too. `.mivia/mivia.toml.example` ships this set, and this repository's own `.mivia/mivia.toml` uses it. `scripts/verify_agent_config.py` fails the build when the live config stops covering it.
+This key is a project decision. A project that omits it leaves every path writable by workflow agents. That includes `.git`, the live Git hooks, this blocklist, and the workflow definition the run executes. The recommended starting values are `.git`, `.githooks`, `scripts`, `Makefile`, `.mivia/hooks`, `.claude`, the config file itself, and `.mivia/policy`. install_git_hooks.sh points the hooks path at `.githooks`. The hooks therefore live outside `.git`. Blocking `.git` alone does not protect the hooks. `scripts` covers both the hook implementations and the gate scripts those hooks run. With `scripts` writable, an agent rewrites a gate to exit 0 and every check the protected hook invokes passes. `Makefile` decides which gates run at all. The config file must block itself. An agent that can edit it can empty this key and give itself write access to every other entry. `.mivia/policy` holds the pattern files the hook guard reads. `.mivia/hooks` holds the guard script itself, and `.claude` holds `settings.json`, which registers that guard as a PreToolUse handler; either one writable lets an agent silently disable enforcement. A project that also wants workflow-run protection for its control-surface trees (`.mivia/`, `.agents/`, `.claude/`), its Go module files, or its workflow definitions lists them here too. `.mivia/mivia.toml.example` ships this set, and this repository's own `.mivia/mivia.toml` uses it. `scripts/verify_agent_config.py` fails the build when the live config stops covering it.
 
 ## Redaction and persisted orchestration history
 
@@ -389,17 +389,17 @@ Two consequences worth knowing before you enable it:
 
 ## Unacted-turn continuation
 
-`[chat] max_unacted_continuations` bounds how many times one turn is continued after it announced work and then ended without calling a single tool - the "I am going to dispatch four agents", no tool call, turn over shape. `0`, the default, disables the mechanism.
+`[chat] max_unacted_continuations` bounds how many times one turn is continued after it announced work and then ended without calling a single tool. That is the "I am going to dispatch four agents", no tool call, turn over shape. `0`, the default, disables the mechanism.
 
 Set it to `1` for a model that narrates its plan instead of acting on it. Whether a model needs this is a property of the model, which is why it is an operator switch and not a default. Values above `3` are clamped to `3`: every continuation is a full extra provider call on a turn that already answered.
 
-A continuation appends a short bracket-labelled notice to the turn's own history and keeps the same loop running, so the model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call and counts as an ordinary step of the turn, so `max_steps` stays the exact ceiling on one turn's provider calls, continuations included. The notice persists in session history, labelled `[mivia: …]` so a later turn cannot read it as the user's own words.
+A continuation appends a short bracket-labelled notice to the turn's own history and keeps the same loop running. The model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call and counts as an ordinary step of the turn. `max_steps` therefore stays the exact ceiling on one turn's provider calls, continuations included. The notice persists in session history, labelled `[mivia: …]` so a later turn cannot read it as the user's own words.
 
 A caller that disabled provider replays (subagent and workflow paths that set `DisableProviderReplay`) never continues, whatever this key says: a continuation is a replay.
 
-A turn is continued only when **all** of these hold: the run ended with no tool calls; the turn called no tool at all; tools were advertised; the answer was not empty; and the text reads as a promise of tool work. The zero-tool-call rule is what makes it safe - nothing ran, so nothing can run twice. A turn that called one tool and then narrated the next step is never continued.
+A turn is continued only when **all** of these hold. The run ended with no tool calls. The turn called no tool at all. Tools were advertised. The answer was not empty. The text reads as a promise of tool work. The zero-tool-call rule is what makes it safe - nothing ran, so nothing can run twice. A turn that called one tool and then narrated the next step is never continued.
 
-Text that defers to the user - "let me know if you'd like me to run the tests", "I need to check with you first" - is never continued, even though it matches the promise pattern. That is the one false positive that would cost more than a wasted call: it would run a tool the model deliberately handed back for approval.
+Text that defers to the user is never continued, even though it matches the promise pattern. Examples: "let me know if you'd like me to run the tests", "I need to check with you first". That is the one false positive that would cost more than a wasted call. It would run a tool the model deliberately handed back for approval.
 
 Root chat turns only. Sub-agent loops never continue themselves, whatever this key says.
 
@@ -411,25 +411,25 @@ The last condition is a best-effort, English-oriented text heuristic. It will mi
 
 The bound covers the LLM request only. Context preparation, the summarizer call, and the durable commit keep their own budgets.
 
-A deadline that fires mid-stream ends the turn as an interrupt, not as an error: the text already streamed stays in history and is persisted, and the partial answer comes back as the reply. Raise this value for models that think for a long time before they answer.
+A deadline that fires mid-stream ends the turn as an interrupt, not as an error. The text already streamed stays in history and is persisted, and the partial answer comes back as the reply. Raise this value for models that think for a long time before they answer.
 
-A deadline interrupt and a `Ctrl+C` interrupt differ in one way after the turn ends. `Ctrl+C` cancels the caller's context, which suppresses the turn-boundary compaction pass. A deadline fires on the provider's own request context and leaves the caller's context live, so the compaction pass runs, and it can make a summary call to the provider that just timed out. That call carries the summarizer's own 20-second bound and degrades to structural-only compaction when it fails, so the cost is one bounded attempt.
+A deadline interrupt and a `Ctrl+C` interrupt differ in one way after the turn ends. `Ctrl+C` cancels the caller's context, which suppresses the turn-boundary compaction pass. A deadline fires on the provider's own request context and leaves the caller's context live. So the compaction pass runs, and it can make a summary call to the provider that just timed out. That call carries the summarizer's own 20-second bound and degrades to structural-only compaction when it fails, so the cost is one bounded attempt.
 
 ## Bounded prompt budget
 
 `[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. It has no default, and leaving it unset is the normal setting.
 
-When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`), so each model runs to its own capacity: a 1M-window model gets a 1M budget and a 200k one gets 200k. One cap applied over a mixed catalogue instead holds every model to the smallest, which is why no value is recommended here.
+When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`). Each model then runs to its own capacity: a 1M-window model gets a 1M budget and a 200k one gets 200k. One cap applied over a mixed catalogue instead holds every model to the smallest, which is why no value is recommended here.
 
-Set it when you want compaction to fire earlier than the model's own window would cause. History compacts at 80% of the budget, targeting 50%, so a smaller budget means more frequent and cheaper compactions, and a larger one means fewer and larger summarizer calls that invalidate more of the prefix cache. The dial is recall versus price: larger values keep more history in the prompt at higher cost. Any explicit value up to `10000000` (10M) is accepted.
+Set it when you want compaction to fire earlier than the model's own window would cause. History compacts at 80% of the budget, targeting 50%. A smaller budget therefore means more frequent and cheaper compactions. A larger one means fewer and larger summarizer calls that invalidate more of the prefix cache. The dial is recall versus price: larger values keep more history in the prompt at higher cost. Any explicit value up to `10000000` (10M) is accepted.
 
-`mivia doctor` and `mivia config show` always report the active budget as `prompt_budget`, the number the context gauge divides by and compaction measures against, which is stated nowhere else. It names where the budget came from: the model window, or an explicit cap. When a cap holds the budget below half the model's declared window, the line names the window too, because a large model held to a small budget otherwise reads as a small model in every surface that shows it.
+`mivia doctor` and `mivia config show` always report the active budget as `prompt_budget`. That number is what the context gauge divides by and compaction measures against; it is stated nowhere else. It names where the budget came from: the model window, or an explicit cap. When a cap holds the budget below half the model's declared window, the line names the window too. Otherwise a large model held to a small budget reads as a small model in every surface that shows it.
 
 ## Tool result ceiling
 
-`[tools] max_tool_result_bytes` caps each tool result stored in agent-loop history, in bytes. Default is `0`, which means uncapped. The per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound. The one knob governs both the interactive session loop and nested sub-agent loops, so a sub-agent never sees a different ceiling than the session that spawned it.
+`[tools] max_tool_result_bytes` caps each tool result stored in agent-loop history, in bytes. Default is `0`, which means uncapped. The per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound. The one knob governs both the interactive session loop and nested sub-agent loops. A sub-agent therefore never sees a different ceiling than the session that spawned it.
 
-Set a positive value (minimum 1024; smaller positive values are a config error) when running small-context models. When a cap is set, `read_file` pre-clamps its own byte budget below it, and the code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`) tighten their JSON budgets to fit.
+Set a positive value (minimum 1024; smaller positive values are a config error) when running small-context models. When a cap is set, `read_file` pre-clamps its own byte budget below it. The code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`) tighten their JSON budgets to fit.
 
 Set it to `4000` to match the fixed ceiling small-context models need.
 
@@ -449,7 +449,7 @@ Contrast with `[tools] max_tool_result_bytes = 0` (uncapped per-call). Per-call 
 
 ## Ref-only tools
 
-`[tools] ref_only_tools` is an opt-in list of tool names whose results are never inlined into the model context when they exceed the batch degrade floor (16 KiB, `BatchDegradeFloorBytes`). Instead the whole body is spooled to the remainder store and the result is replaced by a notice naming a remainder ref the model can fetch with `read_output`. Only the notice's bytes are charged (notice-only token charge). Ephemeral tools are never spooled. The default is empty (off).
+`[tools] ref_only_tools` is an opt-in list of tool names whose results are never inlined into the model context when they exceed the batch degrade floor. The floor is 16 KiB (`BatchDegradeFloorBytes`). Instead the whole body is spooled to the remainder store. The result is replaced by a notice naming a remainder ref the model can fetch with `read_output`. Only the notice's bytes are charged (notice-only token charge). Ephemeral tools are never spooled. The default is empty (off).
 
 When the spool succeeds the notice names the ref:
 
@@ -481,7 +481,7 @@ This bound is not clamped by `max_tool_result_bytes`. That key caps what the age
 
 ## Bounded `run_command` capture
 
-When `max_output_bytes` is a positive bound, stdout and stderr capture keeps roughly one-third head and two-thirds tail of the shared budget, with an elision marker between. Compiler error tails survive.
+When `max_output_bytes` is a positive bound, stdout and stderr capture keeps roughly one-third head and two-thirds tail of the shared budget. An elision marker sits between. Compiler error tails survive.
 
 ## Durable source payloads (chunking)
 
@@ -489,16 +489,16 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 ## LLM compaction summaries
 
-The compaction summarizer is always enabled. A bounded provider call summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
+The compaction summarizer is always enabled. A bounded provider call summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary. The reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
 
 Two conditions must hold, or the summary stays off: a resolved provider endpoint, and a resolved provider/model binding. A configured `[privacy]` redaction policy is NOT one of them: `[privacy]` governs what the checkpoint may persist, not whether the summary may run. A summary the redaction policy refuses is dropped, never sent or stored.
 
 Config load refuses `[context.summary] enabled = false`: the compaction
 summarizer is always enabled. Remove the line from any config that sets it.
 
-Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once at the adapter, then fails the turn closed instead of degrading silently. The governed summarizer already retries once inline, so one adapter attempt costs two provider requests and a failed pair costs four.
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call. This holds for the default compaction path. An opt-in SDK-driven compaction path (`Options.PreferSDKCompaction`, not enabled on any production call site) retries a retryable summary failure exactly once at the adapter. It fails the turn closed instead of degrading silently. The governed summarizer already retries once inline, so one adapter attempt costs two provider requests and a failed pair costs four.
 
-The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
+The summarize request carries bounded quotes of the dropped messages' real content. Quotes cover user and assistant text plus truncated tool results, at most 16 KiB, newest first. An excerpt the `[privacy]` policy flags is dropped from the request. Tool-call arguments and assistant reasoning are never included.
 
 ## Provider stream watchdogs
 
@@ -510,21 +510,21 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 | `stream_idle_timeout_seconds` | int | `100` | Gap between successive bytes once the first byte arrived |
 | `stream_content_idle_timeout_seconds` | int | `90` | Gap between successive content chunks on an SSE stream. A keepalive trickle does not reset it |
 
-Above the watchdogs sits the derived HTTP client wall, the absolute per-attempt transport bound: the maximum of the 15-minute floor and every configured per-request budget (`[chat] request_timeout_seconds`, `[subagents] default_request_timeout_seconds`) plus a 60-second margin. Because the wall derives from the budgets, a spent budget always reports as its own terminal deadline, never as a transport fault.
+Above the watchdogs sits the derived HTTP client wall, the absolute per-attempt transport bound. It is the maximum of the 15-minute floor and every configured per-request budget (`[chat] request_timeout_seconds`, `[subagents] default_request_timeout_seconds`) plus a 60-second margin. Because the wall derives from the budgets, a spent budget always reports as its own terminal deadline, never as a transport fault.
 
 ## Provider wire dump
 
-`MIVIA_PROVIDER_AUDIT_DIR` names a directory that receives one JSONL file per session (`<session-id>.jsonl`), with one line per agent-loop iteration: the request this host built (model, reasoning level and dialect, `tool_choice`, advertised tool names, the full replayed history) and the response the provider returned (finish reason, content, reasoning, tool calls, token and cache usage). Unset (the default) wires no hook, so the seam costs nothing when it is off.
+`MIVIA_PROVIDER_AUDIT_DIR` names a directory that receives one JSONL file per session (`<session-id>.jsonl`), with one line per agent-loop iteration. The line carries the request this host built (model, reasoning level and dialect, `tool_choice`, advertised tool names, the full replayed history). It also carries the response the provider returned (finish reason, content, reasoning, tool calls, token and cache usage). Unset (the default) wires no hook, so the seam costs nothing when it is off.
 
-Use it when a turn ends with no visible work: the dump is the only way to tell a model that answered with nothing from a request this host built wrong.
+Use it when a turn ends with no visible work. The dump is the only way to tell a model that answered with nothing from a request this host built wrong.
 
-The file holds prompts and model output **in cleartext unless you configured redaction**. Every captured string passes through the process-wide redaction policy, and tool-call arguments additionally go through key-name elision - but that policy comes from `[privacy] redaction_patterns` / `redaction_key_names`, which are empty by default. A workspace that configured neither redacts nothing, and the dump is then a plaintext prompt log. Each field is capped at 32 KiB. Paths this code creates are made `0700`/`0600`; an existing directory keeps whatever permissions it already has, so name a private one. Writing through a symlink is refused outright.
+The file holds prompts and model output **in cleartext unless you configured redaction**. Every captured string passes through the process-wide redaction policy, and tool-call arguments additionally go through key-name elision. That policy comes from `[privacy] redaction_patterns` / `redaction_key_names`, which are empty by default. A workspace that configured neither redacts nothing, and the dump is then a plaintext prompt log. Each field is capped at 32 KiB. Paths this code creates are made `0700`/`0600`; an existing directory keeps whatever permissions it already has, so name a private one. Writing through a symlink is refused outright.
 
 There is no size cap or rotation. Every iteration writes the whole replayed history, so growth is `iterations × history` - a long session produces a large file quickly. Point the directory outside the workspace, so a dump can never be committed, and delete it when the investigation ends.
 
 One file per session id. A run built without a session id writes to `session.jsonl`, which several such runs in one process share.
 
-A dump target that cannot be written is reported once and then latched off for the rest of the process: the debugging aid never fails the turn it is observing, and never retries a target it already knows is broken.
+A dump target that cannot be written is reported once and then latched off for the rest of the process. The debugging aid never fails the turn it is observing, and never retries a target it already knows is broken.
 
 ## Subagent knobs
 
@@ -542,13 +542,13 @@ A dump target that cannot be written is reported once and then latched off for t
 | `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
 | `store_path` | string | `~/.mivia/context.db` (chat); platform cache dir (non-chat orchestration) | One SQLite file for chat sessions, context, worktree routes, and runs |
 
-`wire_stream` (default `true`) changes the transport of nested subagent LLM calls, not their contract: the request goes to the provider's SSE endpoint with `stream:true`, and the full answer is assembled before the call returns. The change exists because a provider connection can trickle keepalive bytes forever while the model answer never advances; byte-level idle watchdogs cannot tell that apart from model thinking. The content-idle bound closes this gap: a turn that receives no chunk which would advance the answer within the bound (default 90 seconds, `[provider] stream_content_idle_timeout_seconds`) is a stall. A stalled call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request with a JSON error, or stalls a stream attempt without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set `wire_stream = false` to keep every nested call on the plain non-stream endpoint. The content-idle bound is independent of `[provider] stream_idle_timeout_seconds`, which still governs plain byte-idle on live streaming turns. Workflow child runs inherit the behavior through their handlers.
+`wire_stream` (default `true`) changes the transport of nested subagent LLM calls, not their contract. The request goes to the provider's SSE endpoint with `stream:true`, and the full answer is assembled before the call returns. The change exists because a provider connection can trickle keepalive bytes forever while the model answer never advances. Byte-level idle watchdogs cannot tell that apart from model thinking. The content-idle bound closes this gap. A turn that receives no chunk which would advance the answer within the bound is a stall. The default bound is 90 seconds (`[provider] stream_content_idle_timeout_seconds`). A stalled call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request with a JSON error is remembered for the life of the process. So is a provider that stalls a stream attempt without ever sending one data line. Later calls skip the stream endpoint. Set `wire_stream = false` to keep every nested call on the plain non-stream endpoint. The content-idle bound is independent of `[provider] stream_idle_timeout_seconds`, which still governs plain byte-idle on live streaming turns. Workflow child runs inherit the behavior through their handlers.
 
 Admission control is independent of the transport. With `default_budget` unset, the built-in default (`DefaultMaxBudget` in `internal/subagents/subagents.go`: 1,000,000 total) refuses an over-budget batch before any provider call, on either transport.
 
 For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
 
-Workflow child runs register for `inspect_agents`, `cancel_run`, and `join_run` only when a chat session owns them. Runs started without an owning session (CLI commands, review panels, one-shot catalog flows) stay manageable through the workflow tools instead; this fail-closed skip is by design and logs one line per skipped registration.
+Workflow child runs register for `inspect_agents`, `cancel_run`, and `join_run` only when a chat session owns them. Runs started without an owning session (CLI commands, review panels, one-shot catalog flows) stay manageable through the workflow tools instead. This fail-closed skip is by design and logs one line per skipped registration.
 
 ## Workflow panel limits
 
@@ -580,7 +580,7 @@ member_deadline_default_seconds = 43200
 
 ## Live cross-process relay
 
-Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory - which happens automatically, since every workspace defaults to the same shared `~/.mivia/context.db`.
+Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`. One process owns the hub and every other process joins it as a client. A turn published by one process is thus relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory. This happens automatically, since every workspace defaults to the same shared `~/.mivia/context.db`.
 
 If a workspace pins its own `store_path` (see above), its processes relay only with other processes that resolve that same path:
 
@@ -594,7 +594,7 @@ The hub is keyed to the store directory, not the workspace, so anything that mov
 
 Rendering is directional. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The classic REPL and line mode publish their own turns to the hub and do not render turns received from other processes. The TUI publishes nothing: it never joins the hub, and its session is constructed with no event bus. The full event vocabulary is specified in [Wire schema](wire-schema.md).
 
-`default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The HTTP client wall is derived from the configured request budgets: it is the maximum of the 15-minute floor and every configured per-request budget plus a 60-second margin. The wall therefore never cuts a request before its own budget does; a spent budget reports as a terminal deadline, not a transport fault. The stream watchdogs stop a hung provider call long before either bound.
+`default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The HTTP client wall is derived from the configured request budgets. It is the maximum of the 15-minute floor and every configured per-request budget plus a 60-second margin. The wall therefore never cuts a request before its own budget does; a spent budget reports as a terminal deadline, not a transport fault. The stream watchdogs stop a hung provider call long before either bound.
 
 ## See also
 

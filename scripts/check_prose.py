@@ -39,10 +39,34 @@ def check_file(path: Path, rel: Path) -> list[str]:
     return violations
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parent.parent
     violations = []
-    for path in sorted((root / "docs").rglob("*.md")):
+    if argv:
+        # Explicit paths: check only what was passed. Directories are
+        # expanded to their *.md files (recursively).
+        paths = []
+        for arg in argv:
+            path = Path(arg)
+            if not path.is_absolute():
+                path = root / path
+            if path.is_dir():
+                md = sorted(path.rglob("*.md"))
+                if not md:
+                    print(f"{arg}: no .md files under directory", file=sys.stderr)
+                    return 2
+                paths.extend(md)
+                continue
+            if path.suffix != ".md":
+                print(f"{arg}: not a .md file", file=sys.stderr)
+                return 2
+            if not path.is_file():
+                print(f"{arg}: no such file", file=sys.stderr)
+                return 2
+            paths.append(path)
+    else:
+        paths = sorted((root / "docs").rglob("*.md"))
+    for path in paths:
         violations.extend(check_file(path, path.relative_to(root)))
     if violations:
         print("\n".join(violations))
@@ -51,4 +75,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

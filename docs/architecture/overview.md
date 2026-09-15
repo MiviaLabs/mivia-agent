@@ -152,7 +152,7 @@ Two further layers catch what the transport cannot see:
 
 ## Context compaction and elision recoverability
 
-Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/context/manager` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
+Compaction elides prior-turn oversized tool-result bodies to reclaim context budget, driven by `internal/context/manager` (`Plan`, `Summarizer`). Elision is recoverable when a remainder spool is configured. The full body is spooled before replacement, and the minted ref is named in the notice. The model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
 
 When a spool is configured on the loop (`agent.Options.RemainderSpool`) plus a session principal, the elision notice includes a principal-scoped remainder ref:
 
@@ -183,7 +183,7 @@ The Coordinator interface is larger than a Spawn/Inspect/Join/Cancel summary sug
 - Referral spawning, where one run can hand off work to spawn another.
 - `PanelCoordinator` (`internal/workflows/ledger`), which binds every panel child operation to persisted panel state; it does not itself execute panel fan-out or aggregation — the workflow controller drives fan-out and calls `ComputeHostVerdict` (see [Panel review steps](workflows.md#panel-review-steps)).
 
-`Spawn` also enforces idempotency scoping and conflict detection: a caller-supplied scope key (`scopedKey`) that collides with a different in-flight or completed run's inputs fails closed with `ErrIdempotencyConflict`, rather than silently reusing or duplicating the run.
+`Spawn` also enforces idempotency scoping and conflict detection. A caller-supplied scope key (`scopedKey`) colliding with a different in-flight or completed run's inputs fails closed with `ErrIdempotencyConflict`. The run is never silently reused or duplicated.
 
 ```mermaid
 flowchart TD
@@ -266,13 +266,13 @@ When `store_backend = "sqlite"` is configured:
 2. On startup, `Recover()` scans the store for runs with non-terminal statuses and marks them as `WasInterrupted`
 3. `ResumeInterruptedRun(runID)` transitions running tasks to `failed` with `interrupted_unrecoverable`, then re-runs the DAG (optionally with retry)
 
-Recovery has one deliberate carve-out: a run left at `delivery_pending` (see [Delivery states](#delivery-states-and-repair) below) keeps its run claim uncleared across restart. Clearing the claim on recovery would let a second executor redeliver the same PR; the claim stays held until a delivery attempt actually settles the run.
+Recovery has one deliberate carve-out. A run left at `delivery_pending` (see [Delivery states](#delivery-states-and-repair) below) keeps its run claim uncleared across restart. Clearing the claim on recovery would let a second executor redeliver the same PR. The claim stays held until a delivery attempt actually settles the run.
 
-Run execution itself is guarded by a fenced-lease claim on the `run_claims` table (`ClaimRun` / `ReleaseRun` / `ClearRunClaim` / `TakeoverExpiredRunClaim` in `internal/ledger`), not just the in-process goroutine model above. Only the executor holding the claim may drive a run; an expired claim can be taken over by another executor, which is what makes multi-process recovery and the `delivery_pending` carve-out safe. See [Embedded persistence](embedded-persistence.md#data-model) for the backing table.
+Run execution itself is guarded by a fenced-lease claim on the `run_claims` table, not just the in-process goroutine model above. The relevant functions are `ClaimRun`, `ReleaseRun`, `ClearRunClaim`, and `TakeoverExpiredRunClaim` in `internal/ledger`. Only the executor holding the claim may drive a run. An expired claim can be taken over by another executor. This is what makes multi-process recovery and the `delivery_pending` carve-out safe. See [Embedded persistence](embedded-persistence.md#data-model) for the backing table.
 
 ### Delivery states and repair
 
-A workflow run that reaches its success terminal is not necessarily done: `delivery_pending` and `delivery_failed` are further run states owned by the delivery subsystem, not the step graph. `delivery_pending` means the run succeeded but a human publish grant or a network-dependent delivery step has not yet completed; `delivery_failed` means the delivery repair cycle exhausted its bound (`max_repairs`) without a successful publish. See [Delivery design](workflows.md#delivery-design) for the PR title/body rendering, `PRMetadataError`/`DiffSizeError` repair routes, and the stacked small-PR delivery engine.
+A workflow run that reaches its success terminal is not necessarily done. The delivery subsystem owns further run states, `delivery_pending` and `delivery_failed`; they are not step-graph states. `delivery_pending` means the run succeeded but a human publish grant or a network-dependent delivery step has not yet completed. `delivery_failed` means the delivery repair cycle exhausted its bound (`max_repairs`) without a successful publish. See [Delivery design](workflows.md#delivery-design) for the PR title/body rendering, `PRMetadataError`/`DiffSizeError` repair routes, and the stacked small-PR delivery engine.
 
 ### Lifecycle event subscriptions
 

@@ -58,7 +58,7 @@ mivia can read, search, and edit files with these tools:
 
 The `get_diagnostics` tool runs a workspace-declared diagnostics command and returns a normalized JSON envelope of findings, each with `file`, `line`, `severity`, and `message` fields. It is configured through `[tools] diagnostics_commands`, a map of command names to argv: for example `vet = ["go", "vet", "./..."]`, `lint = ["npm", "run", "lint"]`, or `check = ["pytest", "--output", "json"]`. The agent selects one command with the `command` argument. When the argument is omitted, the tool runs the entry named `default`, or the sole entry when only one exists. With several commands and no `default`, an omitted `command` is refused with an explanatory envelope error; an unknown command name is refused the same way. The envelope names the command that ran (`command_name`) and the exact argv (`command`). The v1 key `[tools] diagnostics_command` still loads: it is a deprecated alias that folds into the `default` entry. Setting both keys is a configuration error.
 
-The tool is registered only when at least one command is configured and its argv[0] is on the effective run allowlist; an unset or empty configuration leaves the tool unregistered. The tool's entire captured output (stdout and stderr) is redacted before parsing per the workspace privacy policy, so credentials hidden in raw output can never reach a result row. The result envelope is bounded by a 256 KiB default budget that feeds the derived per-tool output ceiling without raising the global cap; an over-budget result is refused with a bounded error envelope naming the bound — never tail-cut, never invalid JSON.
+The tool is registered only when at least one command is configured and its argv[0] is on the effective run allowlist. An unset or empty configuration leaves the tool unregistered. The tool's entire captured output (stdout and stderr) is redacted before parsing per the workspace privacy policy. Credentials hidden in raw output can therefore never reach a result row. The result envelope is bounded by a 256 KiB default budget that feeds the derived per-tool output ceiling without raising the global cap. An over-budget result is refused with a bounded error envelope naming the bound — never tail-cut, never invalid JSON.
 
 ## Web research tools
 
@@ -78,7 +78,7 @@ Tool names, descriptions, and schemas are project- and language-generic. mivia w
 
 ## Deferred tool loading
 
-Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's advertised description is shortened to a one-line summary; its parameter schema still ships in full, since that is what the model needs to invoke it correctly once loaded. The same one-liner also appears in a one-line index injected into the prompt. The full description is sent once, when the tool is actually admitted, as the result of the `load_tools` call that loads it.
+Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's advertised description is shortened to a one-line summary. Its parameter schema still ships in full, since that is what the model needs to invoke it correctly once loaded. The same one-liner also appears in a one-line index injected into the prompt. The full description is sent once, when the tool is actually admitted, as the result of the `load_tools` call that loads it.
 
 - Unset is the default and is fully inert. Every authorized tool is core. No `load_tools` tool is registered.
 - Loading takes effect on the model's next turn. The current turn's tool list was already sent to the provider.
@@ -183,13 +183,13 @@ Tasks can declare `depends_on` for dependency ordering. The scheduler:
 
 #### Idempotency
 
-`dispatch_tasks` is idempotent automatically: the harness derives its own idempotency key from the tool call's identity (not a caller-supplied value), so a provider-level retry of the same call reuses the in-flight or completed run instead of dispatching duplicate work. There is no `idempotency_key` parameter to pass.
+`dispatch_tasks` is idempotent automatically. The harness derives its own idempotency key from the tool call's identity (not a caller-supplied value). A provider-level retry of the same call therefore reuses the in-flight or completed run instead of dispatching duplicate work. There is no `idempotency_key` parameter to pass.
 
 #### Results are always complete
 
 Orchestration returns one result per task. Each result has its own status: `completed`, `failed`, `timed_out`, `canceled`, or `blocked`. One task failing or hanging never costs you the others.
 
-`join_run` and `dispatch_tasks` called with `wait` set to `none` or `task` return the `run_id`/`task_results` envelope, which carries a `run_error` field for a problem with the run itself. `dispatch_tasks` with the default `wait=run` returns the bare per-task array only, with no `run_error` field.
+`join_run` and `dispatch_tasks` called with `wait` set to `none` or `task` return the `run_id`/`task_results` envelope. That envelope carries a `run_error` field for a problem with the run itself. `dispatch_tasks` with the default `wait=run` returns the bare per-task array only. That array has no `run_error` field.
 
 If the call's context expires before the run resolves, the results are read back from the recorded execution history. The run is not cancelled. It keeps going and stays reachable through `inspect_agents` and `join_run` on its `run_id`.
 
@@ -306,7 +306,7 @@ Hooks are safety scripts that a project can set. They run at fixed moments durin
 - Redaction is also configuration-controlled. Do not put secrets in prompts. Do not rely on tool filtering as a security boundary.
 - Run results are stored by content reference and exposed to the model through bounded references. Stored content is raw at rest, even when a privacy policy redacts displayed content. Protect the store and keep secrets out of prompts.
 
-`--full-disk` lifts the workspace confinement: file tools (`read_file`, `write_file`, `edit`, `list_dir`, `grep`, `glob`, etc.) may operate anywhere on the filesystem. The grant has two operator-owned sources: the `--full-disk` invocation flag, or `[workspace_access] full_disk = true` in the operator's own USER config (`~/.mivia/mivia.toml`) — settable from the TUI's Settings → General ("full disk access"), which persists AND applies live to the running session. It cannot come from workspace config (`.mivia/mivia.toml`): the key is read only from the fixed user config path, never from the workspace-overlay-merged config, so a cloned repository cannot grant itself full disk access. The loud `FULL DISK ACCESS` disclosure fires for every source — the startup notice at launch, a permanent transcript notice on a live toggle (suppressed only by `--quiet` at launch). The program allowlist, env allowlists, and the write-path denylist (`.git`, `.mivia/mivia.toml`) still apply to in-workspace paths even when full disk is active.
+`--full-disk` lifts the workspace confinement: file tools (`read_file`, `write_file`, `edit`, `list_dir`, `grep`, `glob`, etc.) may operate anywhere on the filesystem. The grant has two operator-owned sources: the `--full-disk` invocation flag, or `[workspace_access] full_disk = true` in the operator's own USER config (`~/.mivia/mivia.toml`). The latter is settable from the TUI's Settings → General ("full disk access"), which persists AND applies live to the running session. It cannot come from workspace config (`.mivia/mivia.toml`): the key is read only from the fixed user config path, never from the workspace-overlay-merged config. A cloned repository therefore cannot grant itself full disk access. The loud `FULL DISK ACCESS` disclosure fires for every source. That means the startup notice at launch, and a permanent transcript notice on a live toggle (suppressed only by `--quiet` at launch). The program allowlist, env allowlists, and the write-path denylist (`.git`, `.mivia/mivia.toml`) still apply to in-workspace paths even when full disk is active.
 
 By default, one interactive turn has no step ceiling. Set `[chat] max_steps` to a positive number to cap turns, or use `/steps`. Ctrl-C cancels a reply in progress.
 
