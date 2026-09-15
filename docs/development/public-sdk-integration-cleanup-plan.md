@@ -317,6 +317,21 @@ Only once host-private coupling is measurably reduced:
 Exit: an extraction that removes real coupling, or a recorded decision not to
 split. Import-path churn alone is not a goal.
 
+**Outcome (recorded):** the coupling measurement counts 52 references to
+`Loop`-private state across the 19 bridge files, with 12 of 19 files at
+zero; the coupling concentrates in 7 files (`sdk_prepare.go` 15,
+`sdk_summarizer_adapter.go` 11, `agentloop_adoption.go` 10,
+`agentloop_budget.go` 6, `agentloop_adapter.go` 5,
+`agentloop_recovery.go` 4, `agentloop_toolbudget.go` 1), binding to the
+shared `workLimitMeter` (`l.workLimits`), `contextAccounting`, and the
+compaction/summary cluster (`recordPreparation`/`LastPreparation`/
+`sdkPendingCompaction`/`lastEmittedCompactionKey`/`turnCompactionEmitted`)
+whose reset runs once per turn. An interface extraction is mechanically
+feasible for the 12 zero-ref files, but the shared meter and the turn
+compaction/summary policy keep the bridge layer in `internal/agent`.
+Decision: no split, per this stage's own exit rule ("keep it in
+`internal/agent` and stop").
+
 ## Verification
 
 Host, per slice:
@@ -387,6 +402,9 @@ Status: ACCEPTED — owner decision that no behavioral divergence is accepted po
 
 ## Immediate Next Action
 
-Execute Stage 0. Produce the gap ledger over the 18 bridge files against the
-v0.6.0 capability reference above. Do not move `Loop`, work-limit policy, result
-shaping, `remainder.Spool`, or Mivia audit and approval behaviour into the SDK.
+Stage 0 is complete: the gap ledger is produced, all three stage-0 skips
+are resolved, and both real gaps are closed (SDK 361af35, 9f9a6cc; host
+57729e17, eff64b6b, 20a4ac5c). The remaining work is release mechanics:
+tag the SDK `v0.7.0`, drop the host `replace` directive, and bump the
+`require`. Do not move `Loop`, work-limit policy, result shaping,
+`remainder.Spool`, or Mivia audit and approval behaviour into the SDK.

@@ -163,16 +163,17 @@ Unlike §2 (deliberately accepted differences), these are defects on
 the SDK path.
 
 - **Tool facts never reach a compaction summary's changed-surfaces
-  list** — `contextmgr.TurnState.AddChangedSurface`
-  (`internal/context/manager/turnstate.go`) has no production caller, so a
-  real tool call never lands in a compaction summary's
-  `ChangedSurfaces`. `TestSummaryInjectionToolFactsReachLaterRequest`
-  (`internal/agent/summary_inject_test.go`) pins this gap and is
-  skipped.
+  list — RESOLVED** (host f2bceb35 wires write-class surfaces at
+  dispatch; host 57729e17 adds execution-time content-free tool-result
+  evidence, so a call reaches a later summary's evidence even when no
+  planner elision ever drops its result).
+  `TestSummaryInjectionToolFactsReachLaterRequest`
+  (`internal/agent/summary_inject_test.go`) pins this contract and is
+  unskipped.
 - **A steer that fires during a prompt-too-long retry — RESOLVED**
   (SDK `release/v0.7.0` 361af35 gates steered stops on
-  `ContinueOnStop`; host adopts the bounded steered-continue in
-  `runOnceSDK`): the retry's in-flight call is canceled, the run ends
+  `ContinueOnStop`; host eff64b6b adopts the bounded steered-continue
+  in `runOnceSDK`): the retry's in-flight call is canceled, the run ends
   with a graceful `StopSteered`, and `runOnceSDK` re-runs the turn on
   the carried history - the next step answers on a live context after
   the mailbox drain.

@@ -75,11 +75,10 @@ zero-Usage refunds, and once-per-turn `clampedMaxTokens`).
 ## Outstanding Stage 0 items
 
 - Step 2: done (this reconciliation, date-less).
-- Step 3: one remaining skip with unchanged root cause: `summary_inject`
-  (`ChangedSurfaces` never wired — host-fixable, follow-up slice). Two
-  skips are gone: `loop_steer_worklimit` via 20a4ac5c, and
-  `loop_retry_steer` is unskipped and green (Steer soft-continue gap
-  resolved, SDK 361af35 + host steered-continue adoption).
+- Step 3: done — all three skips are gone. `summary_inject` fixed by
+  host 57729e17 (the retry re-derives omitted evidence and invalidates
+  the memo); `loop_retry_steer` unskipped via SDK 361af35 + host
+  eff64b6b; `loop_steer_worklimit` unskipped via 20a4ac5c.
 - Step 4: done — SDK ToolCallKey exported (release/v0.7.0 b00f76e), four host copies retired (1f3e4cf8), parity pinned by TestToolCallKeyParityAgainstSDKVectors.
 
 ## Stage resolution
@@ -88,6 +87,11 @@ zero-Usage refunds, and once-per-turn `clampedMaxTokens`).
 - **Stage 2 timeouts** — keep (host per-call deadlines with `timeout_seconds` raises and `exit=timeout` envelope exceed static `ExecutionProfile`).
 - **Stage 3 spool** — keep (correct mechanism/policy split).
 - **Stage 4 events** — keep (wire vocabulary).
-- **Stage 5 layout** — no longer gap-blocked; awaits the Stage 5
-  reassessment itself (coupling measurement and an extract-or-not
-  verdict).
+- **Stage 5 layout** — VERDICT: keep the bridge layer in
+  `internal/agent`. The shared work-limit meter and turn
+  compaction/summary policy bind 7 of 19 files to per-Loop lifecycle
+  state (52 private-state references); an interface extraction is
+  mechanically feasible for the 12 zero-ref files but would trade real
+  coupling for an interface layer without removing it. Per the plan's
+  Stage 5 exit rule ("keep it in `internal/agent` and stop") the
+  decision is recorded NOT to split.
