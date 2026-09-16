@@ -41,7 +41,7 @@ func installTestAuthTokenInternal(t *testing.T) {
 }
 
 // TestSessionBindingFactory_RetriesWithConfiguredModelWhileLoading covers
-// sessionBindingFactory's IsLoading fallback retry (session_pool.go's
+// sessionBindingFactory's IsLoading fallback retry (session_pool_binding.go's
 // buildModelBindingVar(sess, res, ".", res.ProviderName, res.Model, state)
 // call inside the `sess.IsLoading()` branch): a session resuming from disk
 // requests its OWN saved provider/model, that pair is no longer selectable
@@ -181,6 +181,29 @@ func TestSessionPool_StartBackgroundWatchNoopWhenNoSeedSession(t *testing.T) {
 	}
 }
 
+// TestSessionPool_StartBackgroundWatchNoopWhenPoolReleased covers the
+// `if p.released.Load() || p.res == nil { return }` early exit: a pool whose
+// leases were already released (the ReleaseLeases latch, written under p.mu
+// in session_pool_lifecycle.go) must not arm a watcher nothing will ever
+// stop - the same resurrection window the latch closes for attachSyncLocked.
+func TestSessionPool_StartBackgroundWatchNoopWhenPoolReleased(t *testing.T) {
+	installTestAuthTokenInternal(t)
+	res := &config.Resolved{}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "seed-released"
+	pool := NewSessionPool(sess, res, nil, false)
+	pool.ReleaseLeases(context.Background())
+
+	pool.StartBackgroundWatch(context.Background())
+
+	pool.mu.Lock()
+	w := pool.watcher
+	pool.mu.Unlock()
+	if w != nil {
+		t.Fatal("StartBackgroundWatch armed a watcher on a released pool")
+	}
+}
+
 // newBackfillInputServer answers /v1/chat-sessions/{id}/inputs/next with one
 // real RemoteInput for remoteID (once) and its matching consume endpoint,
 // mirroring newMockInputServer in remote_input_watcher_test.go but
@@ -226,7 +249,7 @@ func newBackfillInputServer(t *testing.T, remoteID string) *httptest.Server {
 // both the IsPooled closure (returns false for the unpooled candidate, true
 // would exclude it) and the Deliver closure (forwards the real
 // chatsync.RemoteInput onto the pool's ports.RemoteInputEvent channel) that
-// WatcherConfig wires from session_pool.go's StartBackgroundWatch.
+// WatcherConfig wires from session_pool_sync.go's StartBackgroundWatch.
 func TestSessionPool_StartBackgroundWatchDeliversRealInput(t *testing.T) {
 	installTestAuthTokenInternal(t)
 	orig := AuthorUserIDProvider
