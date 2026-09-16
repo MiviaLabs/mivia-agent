@@ -1,6 +1,9 @@
 package adapter
 
 // Split from session_pool.go for maintainability (move-only, no logic change).
+// Owns inheritance onto a just-built pooled entry: inheritApprovalLocked
+// (approval policy/gate/standing) and inheritEntryStateLocked (tools, bus,
+// context manager/store/redaction policy). Callers hold p.mu.
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"

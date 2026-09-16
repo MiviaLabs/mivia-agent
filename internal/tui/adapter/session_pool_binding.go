@@ -1,6 +1,10 @@
 package adapter
 
 // Split from session_pool.go for maintainability (move-only, no logic change).
+// Owns the model-binding fallback path: fallbackCompleter, the
+// newSurfaceWidenerVar/buildModelBindingVar indirection vars, and
+// sessionBindingFactory. Takes no pool lock; the session passed in is fully
+// built by the caller.
 
 import (
 	"context"

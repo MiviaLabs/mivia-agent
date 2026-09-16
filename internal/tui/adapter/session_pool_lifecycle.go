@@ -4,7 +4,7 @@ package adapter
 // (releaseSessionLease and ReleaseLeases), kept together because
 // ReleaseLeases' statement order is load-bearing and must not scatter across
 // files.
-// INVARIANT: p.released is written here and read in four places - attachSyncLocked and StartBackgroundWatch (session_pool.go, moving to session_pool_sync.go in the next slice), session_pool_worktree.go's refuseIfDrainedLocked, and workflow_notices.go. The latch must be stored under p.mu BEFORE the drain.
+// INVARIANT: p.released is written here and read in four places - attachSyncLocked and StartBackgroundWatch (session_pool_sync.go), session_pool_worktree.go's refuseIfDrainedLocked, and workflow_notices.go. The latch must be stored under p.mu BEFORE the drain.
 
 import (
 	"context"
