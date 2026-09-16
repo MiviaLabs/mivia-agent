@@ -23,6 +23,10 @@ var knownSkillKeys = map[string]bool{
 	"name": true, "description": true, "triggers": true,
 	"user-invocable": true, "argument-hint": true, "short-description": true,
 	"tools": true,
+	// Spec-defined keys the loader consumes/ignores deliberately:
+	// license is a plain string; metadata is a nested map carried for
+	// provenance but not surfaced model-facing.
+	"license": true, "metadata": true,
 	// JSON-string schemas (nested maps are not supported by the frontmatter
 	// subset parser). Example: output_schema: '{"type":"object"}'
 	"input_schema": true, "output_schema": true,
@@ -66,6 +70,16 @@ func fillParsedSkillFrontmatter(parsed *parsedSkill, m map[string]any) error {
 	}
 	if parsed.description, err = frontmatterStringField(m, "description"); err != nil {
 		return err
+	}
+	// license (string) and metadata (map) are accepted for spec conformance
+	// and intentionally not surfaced model-facing.
+	if _, err := frontmatterStringField(m, "license"); err != nil {
+		return fmt.Errorf("license must be a string")
+	}
+	if raw, ok := m["metadata"]; ok && raw != nil {
+		if _, ok := raw.(map[string]any); !ok {
+			return fmt.Errorf("metadata must be a map of scalars")
+		}
 	}
 	switch tv := m["triggers"].(type) {
 	case []string:

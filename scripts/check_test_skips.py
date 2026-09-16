@@ -39,6 +39,56 @@ LEDGER_KEY = "knownSkips"
 # skips just as hard. A mention in a comment or string does not.
 SKIP_CALL = re.compile(r"^\s*t\.Skip(?:f|Now)?\(")
 
+# The first double-quoted string literal argument of a t.Skip/t.Skipf call,
+# captured only when it directly follows the opening paren (so a later,
+# unrelated quoted string on the same line is never mistaken for it). No
+# full Go parser: a lightweight regex, matching this script's existing
+# style. t.Skip() and t.SkipNow() carry no such argument and simply do not
+# match; for t.Skipf the literal format string itself is captured (its
+# %-verbs and trailing args are not evaluated - they cannot be, statically).
+SKIP_REASON_ARG = re.compile(r'^\s*t\.Skip(?:f|Now)?\(\s*"((?:[^"\\]|\\.)*)"')
+
+# Word-token extraction for the reason comparison below.
+_WORD = re.compile(r"[A-Za-z0-9]+")
+
+# Below this token count on the smaller side, a subset match is too cheap to
+# trust (see _reason_matches) and only an exact match is accepted.
+MIN_MATCH_TOKENS = 2
+
+
+def _tokens(text: str) -> set[str]:
+    return {w.lower() for w in _WORD.findall(text)}
+
+
+def _reason_matches(ledger_reason: str, call_arg: str) -> bool:
+    """Whether the ledger's reason and the skip call's literal argument
+    describe the same skip.
+
+    They are rarely byte-identical in this repo today: some ledger entries
+    predate a wording touch-up on the call site (or vice versa) - one side
+    gained a trailing clause, a doc reference, or a "why" without the other
+    being updated, even though both still describe the same skip. An exact
+    string match would fail a large fraction of the real, currently-correct
+    ledger. So this compares word-token sets and accepts either side being a
+    subset of the other: additive drift in either direction passes, but a
+    reason that shares no vocabulary with the live call's argument - the
+    actual defect this check exists to catch - fails.
+
+    A bare subset test alone lets a single generic token ("directory",
+    "platform") act as a universal wildcard against any longer reason that
+    happens to contain it, defeating the whole comparison for a degenerate
+    ledger entry. MIN_MATCH_TOKENS floors the smaller side so a match must
+    carry real content, not one common word.
+    """
+    reason_tokens = _tokens(ledger_reason)
+    arg_tokens = _tokens(call_arg)
+    if not reason_tokens or not arg_tokens:
+        return False
+    smaller = min(len(reason_tokens), len(arg_tokens))
+    if smaller < MIN_MATCH_TOKENS:
+        return reason_tokens == arg_tokens
+    return reason_tokens <= arg_tokens or arg_tokens <= reason_tokens
+
 
 def load_ledger(root: Path) -> dict[str, list[dict]]:
     """Read knownSkips from the policy file. Takes root so a test can
@@ -89,11 +139,38 @@ def check_ledger(root: Path) -> None:
                      f"({len(lines)} lines). The skip moved or vanished; "
                      "update the entry in the same change.")
                 continue
-            if not SKIP_CALL.match(lines[line - 1]):
+            call_line = lines[line - 1]
+            call_match = SKIP_CALL.match(call_line)
+            if not call_match:
                 fail(
                     f"{POLICY}: {rel}:{line} carries no t.Skip call. The "
                     "ledger entry is stale: the skip was removed, unskipped, "
                     "or drifted to another line. Update or retire the entry."
+                )
+                continue
+            reason = item.get("reason")
+            if not isinstance(reason, str) or not reason:
+                fail(f"{POLICY}: {rel}:{line} carries no non-empty "
+                     "\"reason\" string, so the ledger cannot be checked "
+                     "against the live skip's argument.")
+                continue
+            arg_match = SKIP_REASON_ARG.match(call_line)
+            # A literal string argument (t.Skip("...") or t.Skipf("...", ...))
+            # compares against its own text. A bare t.Skip()/t.SkipNow() call
+            # carries no argument to extract; fall back to the matched call
+            # text itself (e.g. "t.Skip()") so a ledger reason that already
+            # just names the bare call (a convention already in use in this
+            # repo) still compares as equal, rather than being treated as an
+            # unconditional pass the way the old check-for-existence-only
+            # gate did.
+            call_reason = arg_match.group(1) if arg_match else call_match.group(0)
+            if not _reason_matches(reason, call_reason):
+                fail(
+                    f"{POLICY}: {rel}:{line} ledger reason does not match "
+                    f"the live skip's argument: ledger says {reason!r}, the "
+                    f"code's skip call carries {call_reason!r}. Update the "
+                    "entry to the current reason, or fix the code's skip "
+                    "argument, in the same change."
                 )
     if entries == 0:
         fail(f"{POLICY}: the ledger holds no entries under any file. If that "

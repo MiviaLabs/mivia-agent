@@ -7,7 +7,7 @@ import (
 
 // FuzzParseAllowPairsNeverPanics asserts parseAllowPairs never panics on any
 // input. Allow entries come from operator config and cross the trust boundary
-// unchanged (internal/config/load.go fills numeric defaults only and never
+// unchanged (the internal/config loader fills numeric defaults only and never
 // validates the entries), so a panic on hostile input would be a reachable
 // defect regardless of whether the shape is valid.
 func FuzzParseAllowPairsNeverPanics(f *testing.F) {

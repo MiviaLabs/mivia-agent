@@ -160,7 +160,7 @@ When a spool is configured on the loop (`agent.Options.RemainderSpool`) plus a s
 [context elided prior tool result; original size about N KiB; remainder: <ref> — use read_output to fetch the full body]
 ```
 
-When the spool is nil, the principal is empty, the store is nil, or the store fails the notice is plain and no ref is invented:
+When the spool is nil, the principal is empty, or the store is nil or fails, the notice stays plain and no ref is invented:
 
 ```
 [context elided prior tool result; original size about N KiB]

@@ -146,11 +146,58 @@ def test_file_key_with_no_entries_fails() -> None:
     assert exc is not None and "maps to no entries" in exc
 
 
-def test_skipnow_and_skipf_count() -> None:
+def test_reason_mismatch_fails() -> None:
+    # The exact bug this check pins: the old check only confirmed *a*
+    # t.Skip call exists on the entry's line, never that its reason
+    # matches the ledger's. A ledger reason that shares no vocabulary
+    # with the live call's argument must now fail.
     mod = load_mod()
-    for call in ('t.SkipNow()', 't.Skipf("r %v", x)'):
+    policy = (
+        '{"knownSkips": {"pkg/x_test.go": '
+        '[{"line": 10, "reason": "ledger says this reason"}]}}'
+    )
+    body = "\n" * 9 + '\tt.Skip("but the code actually says this")\n'
+    exc = run(mod, scratch(policy, body))
+    assert exc is not None and "does not match" in exc
+
+
+def test_single_generic_token_reason_does_not_wildcard_match() -> None:
+    # A degenerate one-word ledger reason must not act as a universal
+    # wildcard against any longer call argument that happens to contain
+    # it: "directory" is a genuine subset of "platform still creates
+    # files in a read-only directory" by the plain subset rule, but the
+    # two describe different skips and must not match below
+    # MIN_MATCH_TOKENS.
+    mod = load_mod()
+    policy = (
+        '{"knownSkips": {"pkg/x_test.go": '
+        '[{"line": 10, "reason": "directory"}]}}'
+    )
+    body = "\n" * 9 + (
+        '\tt.Skip("platform still creates files in a read-only directory")\n'
+    )
+    exc = run(mod, scratch(policy, body))
+    assert exc is not None and "does not match" in exc
+
+
+def test_skipnow_and_skipf_count() -> None:
+    # SkipNow and Skipf must still be recognised as skip calls, and their
+    # (respectively absent, and format-string) argument checked like any
+    # other skip's reason.
+    mod = load_mod()
+    cases = {
+        "t.SkipNow()": (
+            '{"knownSkips": {"pkg/x_test.go": '
+            '[{"line": 10, "reason": "t.SkipNow()"}]}}'
+        ),
+        't.Skipf("network unavailable: %v", err)': (
+            '{"knownSkips": {"pkg/x_test.go": '
+            '[{"line": 10, "reason": "network unavailable"}]}}'
+        ),
+    }
+    for call, policy in cases.items():
         body = "\n" * 9 + f"\t{call}\n"
-        assert run(mod, scratch(POLICY_10, body)) is None, call
+        assert run(mod, scratch(policy, body)) is None, call
 
 
 def main() -> None:
@@ -167,6 +214,8 @@ def main() -> None:
     test_missing_file_fails()
     test_entry_without_line_fails()
     test_file_key_with_no_entries_fails()
+    test_reason_mismatch_fails()
+    test_single_generic_token_reason_does_not_wildcard_match()
     test_skipnow_and_skipf_count()
     print("test_check_test_skips: ok")
 

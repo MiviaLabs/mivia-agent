@@ -56,7 +56,8 @@ const serverURLEnvKey = "MIVIA_API_BASE_URL"
 // ServerURLFromEnv returns MIVIA_API_BASE_URL if set and non-blank, else
 // DefaultServerURL. The process environment wins; ./.env and ~/.mivia/.env
 // are consulted as a fallback, matching how provider API keys are resolved
-// elsewhere in this repo (internal/config/load.go, internal/config.Lookup)
+// elsewhere in this repo (internal/config/load.go, internal/config.Lookup in
+// envlookup.go)
 // -- without this, a value set only in ~/.mivia/.env would be silently
 // invisible here, since that file is never loaded into the OS environment.
 func ServerURLFromEnv() string {

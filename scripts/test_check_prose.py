@@ -82,6 +82,26 @@ def test_at_cap_passes_over_cap_fails() -> None:
         assert "26 words" in violations[0], violations
 
 
+def test_unterminated_long_sentence_flagged() -> None:
+    mod = load_mod()
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "unterminated.md"
+        words = " ".join(f"word{i}" for i in range(30))
+        # No trailing terminator at all - must still be counted.
+        f.write_text(f"{words}\n", encoding="utf-8")
+        violations = mod.check_file(f, f.relative_to(td))
+        assert len(violations) == 1, violations
+        assert "30 words" in violations[0], violations
+
+
+def test_bad_path_outside_root_exits_2() -> None:
+    mod = load_mod()
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "outside.md"
+        f.write_text("Fine.\n", encoding="utf-8")
+        assert mod.main([str(f)]) == 2
+
+
 def main() -> None:
     test_short_sentence_passes()
     test_long_sentence_flagged()
@@ -89,6 +109,8 @@ def main() -> None:
     test_heading_and_list_exempt()
     test_conflict_marker_flagged()
     test_at_cap_passes_over_cap_fails()
+    test_unterminated_long_sentence_flagged()
+    test_bad_path_outside_root_exits_2()
     print("test_check_prose: ok")
 
 

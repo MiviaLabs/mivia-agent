@@ -169,7 +169,7 @@ func (l *Loop) writeBackSDKHistory(res sdkagentloop.Result, preLen int) {
 	extras := append([]provider.Message(nil), l.Messages[preLen:]...)
 	if len(res.History) > 0 {
 		fresh := restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages[:preLen])
-		// Since the ContinueOnStop hook (mivia-ai-sdk v0.1.3) drives the
+		// Since the ContinueOnStop hook (mivia-ai-sdk v0.7.0) drives the
 		// empty-response retry inside one loop, a continued empty attempt
 		// leaves its genuinely-empty assistant message in res.History. The
 		// wire layers drop the shape per request, but a message that is

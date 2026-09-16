@@ -171,7 +171,7 @@ func TestParseFrontmatter_UnclosedFlowSequence(t *testing.T) {
 func TestParseFrontmatterKnown_RejectsUnknownKeys(t *testing.T) {
 	input := []byte("---\nname: review\ntriggers: [a, b]\nunknown_key: x\n---")
 	known := map[string]bool{"name": true, "triggers": true}
-	_, err := ParseFrontmatterKnown(input, known)
+	_, _, err := ParseFrontmatterKnownWithClosing(input, known)
 	if err == nil || !strings.Contains(err.Error(), "unknown frontmatter key") {
 		t.Fatalf("expected unknown-key error, got %v", err)
 	}
@@ -180,7 +180,7 @@ func TestParseFrontmatterKnown_RejectsUnknownKeys(t *testing.T) {
 func TestParseFrontmatterKnown_AcceptsKnownKeys(t *testing.T) {
 	input := []byte("---\nname: review\ntriggers:\n  - audit\n  - check\n---")
 	known := map[string]bool{"name": true, "triggers": true}
-	m, err := ParseFrontmatterKnown(input, known)
+	m, _, err := ParseFrontmatterKnownWithClosing(input, known)
 	if err != nil {
 		t.Fatal(err)
 	}

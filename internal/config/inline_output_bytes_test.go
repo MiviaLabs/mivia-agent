@@ -75,7 +75,8 @@ func writeWorkspaceOverlayConfig(t *testing.T, workspaceRoot, extra string) {
 // TestInlineOutputBytesExplicitZeroSurvivesWorkspaceOverlay pins that an
 // explicit [subagents] inline_output_bytes = 0 in the base config survives a
 // distinct workspace overlay (.mivia/mivia.toml under WorkspaceRoot) that
-// omits the key. Before the fix, probeInlineOutputBytes unconditionally
+// omits the key. Before the fix, the inline_output_bytes probe (since
+// merged into probeSubagentPresence) unconditionally
 // overwrote inlineOutputBytesSet on every layer decode, so the overlay's
 // absence reset the base's explicit-0 presence flag and
 // resolveSubagentConfig replaced the operator's "always use refs" setting

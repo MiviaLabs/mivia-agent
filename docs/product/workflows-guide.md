@@ -872,7 +872,7 @@ Signs a plan run is parked, not just normally pending:
 - `mivia workflow deliver <plan-run-id> --allow-publish` refuses with an error naming the stack, instead of publishing — this is the drive-before-delivery guard (see `deliver_plan_run` above) refusing to let the plan run settle `succeeded` while its chunks were never driven.
 - `mivia stack status <workflow> --stack <plan-run-id>` shows every chunk still in its initial (non-admitted) state well after the plan run itself finished.
 
-To recover, first confirm no other process still owns the run (a live executor's claim must not be double-driven — check `mivia workflow status` for a fresh delivery claim before proceeding), then drive it directly:
+To recover, first confirm no other process still owns the run. A live executor's claim must not be double-driven, so check `mivia workflow status` for a fresh delivery claim before proceeding. Then drive it directly:
 
 ```bash
 mivia stack drive <workflow> --stack <plan-run-id>

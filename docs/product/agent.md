@@ -109,6 +109,8 @@ Each definition file is `<name>.md` (Markdown with a YAML frontmatter block) or 
 | `mcp_servers` | Exact MCP server IDs; omit for the default server scope, `[]` for none |
 | `model` | Spawned-task model identifier, validated against the active provider catalog; it does not change root model selection |
 | `max_turns` | Omitted = session default; `0` = unlimited; positive = cap |
+| `timeout_seconds` | Optional wall-clock ceiling for tasks spawned from this definition, in seconds; must be `> 0` when set |
+| `max_tokens` | Optional token ceiling for tasks spawned from this definition; must be `> 0` when set (unlike `max_turns`, `0` is not an "unlimited" sentinel) |
 | `system_prompt` | Optional user-owned prompt; workspace prompt text is gate-controlled |
 
 When `tools` is omitted, a root definition receives the complete known workspace-tool catalog unless the trusted `require_explicit_tools` safety setting is enabled. `tools = []` is an explicit empty set. `skills` keeps the same distinction: omitted means all trusted skills, while `skills = []` means none. An empty effective toolset is refused by the default `fail_on_empty_toolset` safety setting.

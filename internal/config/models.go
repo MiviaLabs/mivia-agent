@@ -240,3 +240,9 @@ func normalizeModels(in []ModelSpec, maxTokens int, provider string) ([]ModelSpe
 func ModelReasoning(spec ModelSpec) reasoning.Setting {
 	return reasoning.Setting{Level: spec.Reasoning, Dialect: spec.ReasoningDialect}
 }
+
+const (
+	maxProviderModels      = 128
+	minContextWindowTokens = 1024
+	maxContextWindowTokens = 10_000_000
+)

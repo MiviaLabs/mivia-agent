@@ -820,9 +820,9 @@
       ],
       "reason": "ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
     },
-    "internal/config/load.go": {
+    "internal/config/load_provider.go": {
       "lines": [
-        374
+        29
       ],
       "reason": "ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
     },

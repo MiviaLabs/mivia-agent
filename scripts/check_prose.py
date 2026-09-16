@@ -15,8 +15,18 @@ import sys
 from pathlib import Path
 
 MAX_WORDS = 25
-SENTENCE = re.compile(r"[^.!?]+[.!?]")
+# A sentence is normally terminated text ("...word."), but a trailing run
+# with no terminator at all (a silent gate bypass otherwise) also counts.
+SENTENCE = re.compile(r"[^.!?]+[.!?]|[^.!?]+$")
 CONFLICT_MARKER = re.compile(r"^(<{7} |={7}$|>{7} )")
+
+
+def _within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def check_file(path: Path, rel: Path) -> list[str]:
@@ -51,7 +61,11 @@ def main(argv: list[str]) -> int:
             if not path.is_absolute():
                 path = root / path
             if path.is_dir():
-                md = sorted(path.rglob("*.md"))
+                md = sorted(
+                    p
+                    for p in path.rglob("*.md")
+                    if _within_root(p, root)
+                )
                 if not md:
                     print(f"{arg}: no .md files under directory", file=sys.stderr)
                     return 2
@@ -62,6 +76,9 @@ def main(argv: list[str]) -> int:
                 return 2
             if not path.is_file():
                 print(f"{arg}: no such file", file=sys.stderr)
+                return 2
+            if not _within_root(path, root):
+                print(f"{arg}: outside repo root", file=sys.stderr)
                 return 2
             paths.append(path)
     else:

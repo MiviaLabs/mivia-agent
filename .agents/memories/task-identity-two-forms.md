@@ -52,5 +52,5 @@ pre-strip id.
    internal/cli/orchestrate, where this package boundary cannot reach. A
    repo-wide typed-ID refactor was reviewed 2026-08-29 and rejected -
    the model-visible TaskID holds either form by design, so casts would
-   hollow out the guarantee (`ledger.TaskID` already exists unused as
-   evidence of a stalled prior attempt).
+   hollow out the guarantee (the former `ledger.TaskID` type, deleted as
+   the leftover of that stalled attempt).

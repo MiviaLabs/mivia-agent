@@ -305,9 +305,13 @@ type Options struct {
 	// with a steer pending, the in-flight LLM call is softly interrupted at
 	// most this often. 0 disables the watchdog.
 	WatchdogInterval time.Duration
-	// SoftInterruptCooldown caps soft-interrupt frequency across calls: at
-	// most one interrupt per window. 0 disables the cooldown (tests). The
-	// production 5s default lives in the subagents wiring, NOT here.
+	// SoftInterruptCooldown caps soft-interrupt frequency within one
+	// turn: at most one interrupt per window. The window is reset at the
+	// start of each turn (runOnceSDK), so it does not carry across calls -
+	// a steered re-run inside the same turn keeps the running window
+	// (see loop.go's steerCooldownUntil), but a new top-level call starts
+	// fresh. 0 disables the cooldown (tests). The production 5s default
+	// lives in the subagents wiring, NOT here.
 	SoftInterruptCooldown time.Duration
 	// Surface, when non-nil, is invoked by Loop.Run at the top of EVERY step
 	// iteration (before runStep, hence before BeforeStep inside prepareStep) to
@@ -317,17 +321,21 @@ type Options struct {
 	// one consistent read so the registry/dispatcher/spec agreement invariant
 	// (M3) holds for the step. Nil is a no-op.
 	Surface func() Surface
-	// OnToolCancelReady, when non-nil, is invoked exactly once per SDK-backed
-	// run - as soon as the run's per-turn cancel registry exists, before any
-	// tool call executes - with a ToolCanceler the host can retain past the
-	// call that constructed it and invoke later, from any goroutine, to
+	// OnToolCancelReady, when non-nil, is invoked once per SDK run attempt
+	// - as soon as that attempt's per-turn cancel registry exists, before
+	// any tool call executes - with a ToolCanceler the host can retain past
+	// the call that constructed it and invoke later, from any goroutine, to
 	// cancel ONE in-flight tool call by its call ID without aborting the
-	// rest of the turn or any concurrent sibling call. The turn's internal
-	// state (sdkTurnState) is not exported; this is the minimal seam a host
-	// needs to reach it. A legacy (non-SDK) run never calls this hook, so a
-	// host relying on it alone sees no cancel capability on that backend -
-	// treat a nil ToolCanceler, or one that always returns false, as "not
-	// supported here" rather than an error.
+	// rest of the turn or any concurrent sibling call. A steered-continue
+	// re-run is a new SDK run attempt, so this fires again per re-run with
+	// a fresh ToolCanceler for that attempt; a stale closure from a prior
+	// attempt simply misses (its turn state is gone) rather than canceling
+	// the wrong call. The turn's internal state (sdkTurnState) is not
+	// exported; this is the minimal seam a host needs to reach it. A
+	// legacy (non-SDK) run never calls this hook, so a host relying on it
+	// alone sees no cancel capability on that backend - treat a nil
+	// ToolCanceler, or one that always returns false, as "not supported
+	// here" rather than an error.
 	OnToolCancelReady func(ToolCanceler)
 }
 
