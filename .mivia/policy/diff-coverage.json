@@ -316,6 +316,13 @@
       ],
       "reason": "filepath.Abs fails only when os.Getwd fails (deleted cwd); not triggerable safely in-process"
     },
+    "internal/config/load_discovery.go": {
+      "lines": [
+        26,
+        27
+      ],
+      "reason": "loadRuntimeMCPConfig's own os.Getwd() error wrap, reached only when the process's current working directory has been deleted out from under it - the same unforceable-in-process condition already accepted for internal/cli/worktree/context_setup.go's filepath.Abs error wrap (which fails only when os.Getwd itself fails). TestLoadRuntimeMCPConfig_EmptyWorkspaceRootFallsBackToGetwd and TestLoadRuntimeMCPConfig_EmptyWorkspaceRootMatchesExplicitCwd cover the reachable success path (empty workspaceRoot resolves via a real os.Getwd() call and matches an explicit cwd)."
+    },
     "internal/cli/worktree/worktree_lifecycle_recovery.go": {
       "lines": [
         37,
@@ -951,6 +958,13 @@
         261
       ],
       "reason": "ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
+    },
+    "internal/config/load_subagents.go": {
+      "lines": [
+        102,
+        103
+      ],
+      "reason": "probeSubagentPresence's own toml.Unmarshal error-return early-exit, unreachable given decodeConfigInto's contract (see decodeConfigInto's own doc comment in load_discovery.go, which addresses exactly this sibling-probe pattern). decodeConfigInto returns early on a failed File decode (dec.Decode(file), using EnableUnmarshalerInterface()) BEFORE probeSubagentPresence ever runs on the same bytes, so this probe only ever sees bytes the main decode already accepted. probeSubagentPresence's own doc comment already spells out why that is not simply 'a superset decode': its local struct declares only [subagents] *int fields (inline_output_bytes, spawn_stagger_ms), which go-toml/v2 accepts as untyped absent-or-present ints regardless of what the main File struct's EnableUnmarshalerInterface() dispatch does elsewhere in the document, and the package's one custom unmarshaler that is in play on the same document, ModelSpec.UnmarshalTOML (for the wholly separate [providers.*.models] table path), is strictly MORE restrictive than the decoding it replaces - it can only reject bytes the plain decode would have accepted, never accept bytes the plain decode rejects. So no byte sequence can fail toml.Unmarshal(data, &probe) after already succeeding through dec.Decode(file) for the identical [subagents] keys. Same unreachable-sibling-probe class as decodeConfigInto's own doc comment states for a plain struct decode versus its own raw-byte probes. Not forceable from a test without changing the go-toml/v2 dependency's own decode/unmarshal contract."
     }
   }
 }
