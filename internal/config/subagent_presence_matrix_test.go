@@ -59,8 +59,9 @@ func overlayRoot(t *testing.T, overlay string) string {
 	return root
 }
 
-func runPresenceCases(t *testing.T, cases []presenceCase) {
+func runPresenceCases(t *testing.T, cases []presenceCase) int {
 	t.Helper()
+	var ran int
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			inline, stagger := loadSubagentPresence(t, tt.base, tt.overlay)
@@ -71,7 +72,9 @@ func runPresenceCases(t *testing.T, cases []presenceCase) {
 				t.Errorf("spawn_stagger_ms = %d, want %d", stagger, tt.wantStagger)
 			}
 		})
+		ran++
 	}
+	return ran
 }
 
 // TestSubagentPresenceOneLayerSpeaks covers the rows where at most one layer
@@ -79,7 +82,7 @@ func runPresenceCases(t *testing.T, cases []presenceCase) {
 // regression the whole mechanism exists for - and that each key's own
 // resolution rule still applies.
 func TestSubagentPresenceOneLayerSpeaks(t *testing.T) {
-	runPresenceCases(t, []presenceCase{{
+	cases := []presenceCase{{
 		name:       "both absent everywhere take their defaults",
 		wantInline: defaultInlineOutputBytes, wantStagger: defaultSpawnStaggerMs,
 	}, {
@@ -121,7 +124,10 @@ func TestSubagentPresenceOneLayerSpeaks(t *testing.T) {
 		name:       "overlay-only explicit stagger 0 wins over an absent base",
 		overlay:    "spawn_stagger_ms = 0\n",
 		wantInline: defaultInlineOutputBytes, wantStagger: 0,
-	}})
+	}}
+	if ran := runPresenceCases(t, cases); ran != len(cases) {
+		t.Fatalf("ran %d cases, want %d", ran, len(cases))
+	}
 }
 
 // TestSubagentPresenceBothLayersSpeak covers the rows where both layers declare
@@ -129,7 +135,7 @@ func TestSubagentPresenceOneLayerSpeaks(t *testing.T) {
 // conflate: absence is non-destructive, but an explicit later key still wins on
 // value, and a layer naming one key must leave the other key's presence alone.
 func TestSubagentPresenceBothLayersSpeak(t *testing.T) {
-	runPresenceCases(t, []presenceCase{{
+	cases := []presenceCase{{
 		// Independence: the overlay declaring stagger must neither re-assert
 		// nor erase inline's presence.
 		name: "base names only inline, overlay names only stagger",
@@ -148,5 +154,8 @@ func TestSubagentPresenceBothLayersSpeak(t *testing.T) {
 		name: "overlay wins on value where both layers name stagger",
 		base: "spawn_stagger_ms = 0\n", overlay: "spawn_stagger_ms = 500\n",
 		wantInline: defaultInlineOutputBytes, wantStagger: 500,
-	}})
+	}}
+	if ran := runPresenceCases(t, cases); ran != len(cases) {
+		t.Fatalf("ran %d cases, want %d", ran, len(cases))
+	}
 }

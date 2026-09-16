@@ -61,10 +61,15 @@ func TestMailboxAccessContextRoundTrip(t *testing.T) {
 	}
 
 	// Behavioral checks on the returned bundle.
-	if ch := got.Interrupt(); ch == nil {
+	ch1 := got.Interrupt()
+	if ch1 == nil {
 		t.Error("Interrupt returned a nil channel, want a fresh one")
 	}
-	if got.Interrupt() == got.Interrupt() {
+	ch2 := got.Interrupt()
+	if ch2 == nil {
+		t.Error("Interrupt returned a nil channel, want a fresh one")
+	}
+	if ch1 == ch2 {
 		t.Error("Interrupt should return a fresh channel per call")
 	}
 	if !got.Pending() {

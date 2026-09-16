@@ -157,8 +157,40 @@ func TestEmitTokenUsageSwallowsWriterError(t *testing.T) {
 }
 
 func TestEmitTokenUsageNilUsageWriterIsNoop(t *testing.T) {
+	var got Event
+	var busEvent events.Event
+	bus := events.New()
+	bus.Subscribe(events.KindTokenUsage, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		busEvent = ev
+	}))
+
 	// Must not panic when UsageWriter is unset - the default everywhere this
-	// slice isn't wired.
-	EmitTokenUsage(context.Background(), Options{}, "deepseek", "deepseek-v4-pro",
+	// slice isn't wired - and must still publish events to OnEvent and EventBus.
+	EmitTokenUsage(context.Background(), Options{
+		OnEvent:  func(e Event) { got = e },
+		EventBus: bus,
+	}, "deepseek", "deepseek-v4-pro",
 		provider.TokenUsage{Reported: true, InputTokens: 100, OutputTokens: 50}, 96, 1.04)
+	bus.Flush()
+
+	if got.Kind != EventTokenUsage || got.TokenUsage == nil {
+		t.Fatalf("expected EventTokenUsage with nil UsageWriter, got %+v", got)
+	}
+	if got.TokenUsage.InputTokens != 100 || got.TokenUsage.OutputTokens != 50 || got.TokenUsage.EstimatedTokens != 96 {
+		t.Fatalf("token usage fields = %+v", got.TokenUsage)
+	}
+	if busEvent.Kind != events.KindTokenUsage {
+		t.Fatalf("expected bus event KindTokenUsage, got %+v", busEvent)
+	}
+
+	// Calling with empty Options (all nil) must also be a safe no-op.
+	panicked := func() (p any) {
+		defer func() { p = recover() }()
+		EmitTokenUsage(context.Background(), Options{}, "deepseek", "deepseek-v4-pro",
+			provider.TokenUsage{Reported: true, InputTokens: 100, OutputTokens: 50}, 96, 1.04)
+		return nil
+	}()
+	if panicked != nil {
+		t.Fatalf("EmitTokenUsage with empty options panicked: %v", panicked)
+	}
 }

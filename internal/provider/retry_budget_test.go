@@ -364,10 +364,15 @@ func TestRetryRoundTripper_TotalBudget(t *testing.T) {
 			wantAttempts: 1,
 		},
 	}
+	var ran int
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			runTotalBudgetCase(t, tc, sentinel)
 		})
+		ran++
+	}
+	if ran == 0 || ran != len(cases) {
+		t.Fatalf("ran %d cases, want %d", ran, len(cases))
 	}
 }
 

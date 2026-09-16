@@ -97,8 +97,29 @@ func TestEmitOnlyEventBus(t *testing.T) {
 // TestEmitNilBoth verifies that emit() is safe when both
 // OnEvent and EventBus are nil.
 func TestEmitNilBoth(t *testing.T) {
-	// Should not panic.
-	emit(Options{}, Event{Kind: EventAssistant, Content: "no-op"})
+	panicked := func() (p any) {
+		defer func() { p = recover() }()
+		// Should not panic for various event kinds when both sinks are unset.
+		emit(Options{}, Event{Kind: EventAssistant, Content: "no-op"})
+		emit(Options{SessionID: "sess-1", TurnID: "turn-1"}, Event{
+			Kind:       EventToolStart,
+			ToolCallID: "tc-1",
+			Name:       "read_file",
+		})
+		emit(Options{}, Event{
+			Kind:       EventHook,
+			Name:       "pre-tool",
+			Program:    "guard.sh",
+			Tool:       "write_file",
+			Denied:     true,
+			HookStdout: "blocked",
+		})
+		ToolPendingEmitter(Options{})("tc-1", "read_file", "reading", "{}")
+		return nil
+	}()
+	if panicked != nil {
+		t.Fatalf("emit with nil OnEvent and EventBus panicked: %v, want safe no-op", panicked)
+	}
 }
 
 func TestEmitPublishesTypedIdentityAndTurnBinding(t *testing.T) {

@@ -138,16 +138,22 @@ func TestRetryDrainOfHungErrorBodyIsBounded(t *testing.T) {
 	client := &http.Client{Transport: rt}
 	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
 
+	var resp *http.Response
 	err := callWithin(t, 20*time.Second, func() error {
-		resp, doErr := client.Do(req)
-		if resp != nil {
-			resp.Body.Close()
-		}
+		var doErr error
+		resp, doErr = client.Do(req)
 		return doErr
 	})
-	// The exchange still fails (a 500 is a 500); what matters is that it
-	// returned at all rather than parking on the undelivered body.
-	_ = err
+	if err != nil {
+		t.Fatalf("unexpected client error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusInternalServerError)
+	}
 }
 
 // Guard against a watchdog so eager it breaks healthy traffic.

@@ -92,6 +92,7 @@ func TestCloneForGenerationNil(t *testing.T) {
 }
 
 func TestRegistryConcurrentRegisterAndScope(t *testing.T) {
+	const totalTools = 1_000
 	registry := NewRegistry()
 	start := make(chan struct{})
 	var workers sync.WaitGroup
@@ -100,7 +101,7 @@ func TestRegistryConcurrentRegisterAndScope(t *testing.T) {
 	go func() {
 		defer workers.Done()
 		<-start
-		for i := 0; i < 1_000; i++ {
+		for i := 0; i < totalTools; i++ {
 			registry.Register(&mockTool{name: fmt.Sprintf("tool-%d", i)})
 		}
 	}()
@@ -119,6 +120,26 @@ func TestRegistryConcurrentRegisterAndScope(t *testing.T) {
 
 	close(start)
 	workers.Wait()
+
+	list := registry.List()
+	if len(list) != totalTools {
+		t.Fatalf("registry.List() got %d tools, want %d", len(list), totalTools)
+	}
+	for i := 0; i < totalTools; i++ {
+		name := fmt.Sprintf("tool-%d", i)
+		tool, ok := registry.Get(name)
+		if !ok || tool == nil || tool.Name() != name {
+			t.Fatalf("registry.Get(%q) = (%v, %v), want tool with name %q", name, tool, ok, name)
+		}
+	}
+
+	scoped := ScopedRegistry(registry, ScopeOptions{Mode: ScopeSpawned})
+	if scoped == nil {
+		t.Fatal("ScopedRegistry() returned nil")
+	}
+	if scopedList := scoped.List(); len(scopedList) != totalTools {
+		t.Fatalf("scoped.List() got %d tools, want %d", len(scopedList), totalTools)
+	}
 }
 
 // mockTool implements Tool for testing.

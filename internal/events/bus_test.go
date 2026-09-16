@@ -146,14 +146,38 @@ func TestBusUnsubscribe(t *testing.T) {
 }
 
 // TestBusCloseMultipleTimes verifies that Close() is idempotent and safe
-// to call multiple times (no panic, no deadlock).
+// to call multiple times, draining pre-close events and ignoring post-close operations.
 func TestBusCloseMultipleTimes(t *testing.T) {
 	bus := New()
-	bus.Close()
-	bus.Close() // must not panic
+	h := &collectHandler{}
+	bus.Subscribe(KindToolStart, h)
+	bus.Publish(NewEvent(KindToolStart))
 
-	// After close, Publish must still be safe (no panic on closed bus).
+	bus.Close()
+	bus.Close() // idempotent second close
+
+	// After close, Publish is a silent no-op and must not deliver to handlers.
+	bus.Publish(NewEvent(KindToolStart))
 	bus.Publish(NewEvent(KindError))
+
+	if got := h.Len(); got != 1 {
+		t.Fatalf("handler received %d events, want 1", got)
+	}
+	if got := h.Events()[0].Kind; got != KindToolStart {
+		t.Fatalf("handler event kind = %s, want %s", got, KindToolStart)
+	}
+
+	bus.mu.Lock()
+	closed := bus.closed
+	subsNil := bus.subs == nil
+	bus.mu.Unlock()
+
+	if !closed {
+		t.Fatal("bus.closed is false after Close")
+	}
+	if !subsNil {
+		t.Fatal("bus.subs is not nil after Close")
+	}
 }
 
 // TestBusSubscribeMany verifies that SubscribeMany subscribes to multiple
@@ -265,7 +289,8 @@ func TestBusPublishConcurrentSafe(t *testing.T) {
 }
 
 // TestBusSubscribeConcurrentSafe verifies concurrent Subscribe/Unsubscribe
-// while Publish is called, with no races.
+// while Publish is called, with no races, and verifies the bus state remains
+// consistent after concurrent operations settle.
 func TestBusSubscribeConcurrentSafe(t *testing.T) {
 	bus := New()
 	t.Cleanup(bus.Close)
@@ -291,8 +316,29 @@ func TestBusSubscribeConcurrentSafe(t *testing.T) {
 	}()
 
 	wg.Wait()
-	// No assertion on counts - must not race or deadlock.
-	// The -race detector will catch data races.
+	bus.Flush()
+
+	// Bus must remain fully functional and consistent after concurrent churn:
+	// a newly added subscriber must receive exactly one published event.
+	probe := &collectHandler{}
+	bus.Subscribe(KindToolStart, probe)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+
+	if probe.Len() != 1 {
+		t.Fatalf("probe received %d events after concurrent churn, want 1", probe.Len())
+	}
+	if probe.Events()[0].Kind != KindToolStart {
+		t.Fatalf("probe received kind %s, want %s", probe.Events()[0].Kind, KindToolStart)
+	}
+
+	bus.Unsubscribe(KindToolStart, probe)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+
+	if probe.Len() != 1 {
+		t.Fatalf("probe received %d events after Unsubscribe, want 1", probe.Len())
+	}
 }
 
 // TestUnsubscribeNonexistent verifies that unsubscribing a handler that was
@@ -301,9 +347,29 @@ func TestUnsubscribeNonexistent(t *testing.T) {
 	bus := New()
 	t.Cleanup(bus.Close)
 	h := &collectHandler{}
-	// Must not panic
-	bus.Unsubscribe(KindToolStart, h)
-	bus.Unsubscribe(KindError, h)
+
+	var recovered any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered = r
+			}
+		}()
+		bus.Unsubscribe(KindToolStart, h)
+		bus.Unsubscribe(KindError, h)
+	}()
+	if recovered != nil {
+		t.Fatalf("Unsubscribe nonexistent handler panicked: %v", recovered)
+	}
+
+	// Postcondition: bus remains operational and Flush barrier succeeds.
+	probe := &collectHandler{}
+	bus.Subscribe(KindToolStart, probe)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+	if got := probe.Len(); got != 1 {
+		t.Fatalf("probe received %d events after Unsubscribe nonexistent, want 1", got)
+	}
 }
 
 // Regression: Bus.Unsubscribe must not panic when the handler is a
@@ -369,11 +435,29 @@ func TestBusUnsubscribeWithHandlerFuncDoesNotPanic(t *testing.T) {
 func TestSubscribeNilHandler(t *testing.T) {
 	bus := New()
 	t.Cleanup(bus.Close)
-	bus.Subscribe(KindToolStart, nil) // must not panic
-	bus.SubscribeMany([]Kind{KindToolEnd, KindStep}, nil)
 
-	// Publishing should still work
+	var recovered any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered = r
+			}
+		}()
+		bus.Subscribe(KindToolStart, nil)
+		bus.SubscribeMany([]Kind{KindToolEnd, KindStep}, nil)
+	}()
+	if recovered != nil {
+		t.Fatalf("Subscribe nil handler panicked: %v", recovered)
+	}
+
+	// Postcondition: subscribing a real handler still works and delivers events.
+	h := &collectHandler{}
+	bus.Subscribe(KindToolStart, h)
 	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+	if got := h.Len(); got != 1 {
+		t.Fatalf("handler received %d events, want 1", got)
+	}
 }
 
 // TestBusPublishEmptyBus verifies that Publish on an empty bus (no subscribers)
@@ -381,8 +465,32 @@ func TestSubscribeNilHandler(t *testing.T) {
 func TestBusPublishEmptyBus(t *testing.T) {
 	bus := New()
 	t.Cleanup(bus.Close)
+
+	var recovered any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered = r
+			}
+		}()
+		bus.Publish(NewEvent(KindAssistant))
+		bus.Publish(NewEvent(KindError))
+	}()
+	if recovered != nil {
+		t.Fatalf("Publish on empty bus panicked: %v", recovered)
+	}
+
+	// Flush barrier must succeed on empty bus.
+	bus.Flush()
+
+	// Postcondition: bus accepts new subscriptions and delivers.
+	h := &collectHandler{}
+	bus.Subscribe(KindAssistant, h)
 	bus.Publish(NewEvent(KindAssistant))
-	bus.Publish(NewEvent(KindError))
+	bus.Flush()
+	if got := h.Len(); got != 1 {
+		t.Fatalf("handler received %d events after publishing to empty bus, want 1", got)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -402,9 +510,12 @@ func TestBusAsyncDelivery(t *testing.T) {
 
 	bus.Publish(NewEvent(KindAssistant))
 
-	<-done
-	// The handler was called from a delivery goroutine, not the publisher.
-	// We just verify the handler ran and didn't deadlock.
+	select {
+	case <-done:
+		// Handler ran successfully from delivery goroutine.
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for async event delivery")
+	}
 }
 
 // TestBusFlushSynchronizesDelivery verifies that Flush ensures all prior

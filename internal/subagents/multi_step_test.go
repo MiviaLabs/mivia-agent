@@ -663,6 +663,18 @@ func (m *scriptedStepCompleter) ChatStream(ctx context.Context, req provider.Req
 func TestMultiStepHandlerInterruptedStatusAndPartialOutput(t *testing.T) {
 	partial := "Analysis so far: the multi-step handler wraps agent.Loop."
 
+	raw, err := buildResult(partial, 2, 100*time.Millisecond, 1, context.Canceled)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("buildResult interrupted error = %v, want context.Canceled", err)
+	}
+	parsed := assertSafeSubagentEnvelope(t, raw)
+	if got := parsed["status"]; got != "canceled" {
+		t.Fatalf("buildResult status = %v, want %q", got, "canceled")
+	}
+	if got, ok := parsed["output"].(string); !ok || got != partial {
+		t.Fatalf("buildResult output = %v, want %q", parsed["output"], partial)
+	}
+
 	t.Run("canceled_keeps_partial", func(t *testing.T) {
 		testInterruptedSubagentKeepsPartial(t, partial, context.Canceled, "canceled")
 	})

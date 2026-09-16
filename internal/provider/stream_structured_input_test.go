@@ -179,8 +179,13 @@ func TestChatTurnStreamStructuredInputToolsPath(t *testing.T) {
 			calls:   1,
 		},
 	}
+	var ran int
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { runChatTurnStreamToolCase(t, tc) })
+		ran++
+	}
+	if ran == 0 || ran != len(cases) {
+		t.Fatalf("ran %d cases, want %d", ran, len(cases))
 	}
 }
 
@@ -208,8 +213,13 @@ func TestChatTurnStreamStructuredInputEdgeCases(t *testing.T) {
 			calls:   2,
 		},
 	}
+	var ran int
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { runChatTurnStreamToolCase(t, tc) })
+		ran++
+	}
+	if ran == 0 || ran != len(cases) {
+		t.Fatalf("ran %d cases, want %d", ran, len(cases))
 	}
 }
 

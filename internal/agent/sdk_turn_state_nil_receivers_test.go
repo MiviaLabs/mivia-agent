@@ -8,6 +8,13 @@ import "testing"
 // no-op instead of panicking.
 func TestSDKTurnStateNilReceiverRecordersAreNoOps(t *testing.T) {
 	var s *sdkTurnState
-	s.recordChangedSurface("write")
-	s.recordToolResultEvidence("write", 42)
+	panicked := func() (p any) {
+		defer func() { p = recover() }()
+		s.recordChangedSurface("write")
+		s.recordToolResultEvidence("write", 42)
+		return nil
+	}()
+	if panicked != nil {
+		t.Fatalf("nil-receiver recorders panicked: %v, want safe no-op", panicked)
+	}
 }
