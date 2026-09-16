@@ -8,10 +8,6 @@
     {
       "file": "internal/context/manager/summary_provider_llm.go",
       "reason": "Summarizer.attemptSummarize wraps ctx with summaryTimeout (20s) before calling this provider, so the summary call carries its own bound"
-    },
-    {
-      "file": "internal/sdkadapter/provider.go",
-      "reason": "dead bridge: no production caller (only its own test), and the literal is deliberately empty because the SDK-shaped request is discarded. Wiring this up means building a real request - set Timeout then and drop this entry"
     }
   ]
 }

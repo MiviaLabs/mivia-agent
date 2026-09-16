@@ -1,19 +1,15 @@
-// Package sdkadapter bridges CLI types and SDK types for the SDK convergence
-// work tracked at internal/sdkadapter. Each bridge file in this package maps a
-// pair of types that share an intent but differ in field shape: the CLI shapes
-// here come from internal/{provider,tools,skills,hooks,contentref,reasoning,
-// ledger}; the SDK shapes come from github.com/MiviaLabs/mivia-ai-sdk.
+// Package sdkadapter bridges CLI types and SDK types. Shape adapters in this
+// package map pairs of types that share an intent but differ in field shape.
+// The CLI shapes come from internal/{provider,tools,reasoning}. The SDK shapes
+// come from github.com/MiviaLabs/mivia-ai-sdk.
 //
-// This package is the only seam between the CLI runtime and the SDK. It is
-// permitted to import CLI packages and it is permitted to import SDK
-// packages, but nothing else in the tree may import both: doing so would let a
-// shape drift propagate. The .mivia/policy/import-layers.json row for
-// internal/sdkadapter is the contract that pins this seam.
+// This package owns CLI type-shape adapters, while internal/agent directly
+// bridges the SDK loop. It translates types across the boundary to prevent
+// shape drift. The .mivia/policy/import-layers.json file pins the allowed
+// import edges for this package.
 //
-// Each bridge file has a companion <name>_test.go whose table of tests is
-// the round-trip surface: convert CLI -> SDK -> CLI (or write a struct,
-// read its bridge output, and assert the key fields). New behaviour that
-// gains its own test must NOT be added here unless it lives in the
-// corresponding bridge file; the round-trip tests are the proof that the
-// bridge is shape-faithful.
+// Applicable shape adapters have companion tests that verify round-trip
+// conversions between CLI and SDK representations. These tests convert
+// CLI to SDK to CLI or assert key fields on bridge output. The round-trip
+// tests prove that the bridge is shape-faithful.
 package sdkadapter
