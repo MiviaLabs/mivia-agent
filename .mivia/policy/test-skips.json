@@ -2242,7 +2242,16 @@
     "TestWritePreviewSectionRedactsSensitiveValuesAndCapsLines",
     "TestWritePreviewSectionWithoutPolicyShowsValues",
     "TestYankKeyCopiesSelectedBlock",
-    "TestZeroHitRelaxationAcrossBackends"
+    "TestZeroHitRelaxationAcrossBackends",
+    "TestAuditOllamaEnvTrimming",
+    "TestAuditOllamaKeyFileInterplay",
+    "TestAuditOllamaLoadAndSelectableMatrix",
+    "TestAuditShippedExampleLoads",
+    "TestR4ConfigLoadDoesNotResolveDNS",
+    "TestR4OllamaSelectableMatrixHas17Combos",
+    "TestRound8ExampleConfigsLoad",
+    "TestRound8IsOllamaLoopbackEdgeInputs",
+    "TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",
@@ -2385,15 +2394,6 @@
     "TestWorktreeAndWorkflowExports",
     "TestWorktreeLifecycleLockSurvivesRemovingParentExit",
     "TestWorktreeListAndAgentExports",
-    "TestWriteModelRestoreNotice",
-    "TestAuditOllamaEnvTrimming",
-    "TestAuditOllamaKeyFileInterplay",
-    "TestAuditOllamaLoadAndSelectableMatrix",
-    "TestAuditShippedExampleLoads",
-    "TestR4ConfigLoadDoesNotResolveDNS",
-    "TestR4OllamaSelectableMatrixHas17Combos",
-    "TestRound8ExampleConfigsLoad",
-    "TestRound8IsOllamaLoopbackEdgeInputs",
-    "TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic"
+    "TestWriteModelRestoreNotice"
   ]
 }

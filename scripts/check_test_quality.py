@@ -549,45 +549,38 @@ ROUND_NAME_PATTERN_KEY = "pattern"
 ROUND_NAME_DEFAULT_PATTERN = r"coverage|pass[0-9]|round[0-9]|audit|wave"
 
 
-def load_round_name_policy(root: Path, diff_args: list[str] | None) -> dict:
-    """Round-named-test-file baseline. When the policy file is modified in an
-    uncommitted diff, the BASE (HEAD) policy is used so a change cannot
-    allowlist itself; a committed range is a review aid and reads the file as
-    committed. Missing or unparseable policy yields {} - fail closed."""
-    policy_file = root / ".mivia" / "policy" / "round-named-tests.json"
-    if not policy_file.is_file():
-        return {}
+def _committed_round_policy_text(root: Path, ref: str) -> str:
+    r = subprocess.run(
+        ["git", "show", f"{ref}:.mivia/policy/round-named-tests.json"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    return r.stdout if r.returncode == 0 else ""
 
-    raw_text = ""
-    if diff_args is not None:
-        r = subprocess.run(
-            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/round-named-tests.json"],
-            cwd=root, capture_output=True, text=True, check=False,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            show_res = subprocess.run(
-                ["git", "show", "HEAD:.mivia/policy/round-named-tests.json"],
-                cwd=root, capture_output=True, text=True, check=False,
-            )
-            if show_res.returncode == 0 and show_res.stdout.strip():
-                raw_text = show_res.stdout
-            else:
-                # No committed baseline: nothing is allowlisted.
-                return {}
-    if not raw_text:
-        raw_text = policy_file.read_text(encoding="utf-8")
+
+def load_round_name_policy(root: Path, diff_args: list[str] | None, tip: str = "HEAD") -> dict:
+    """Round-named-test-file baseline. The baseline must be a COMMITTED one:
+    whenever the committed reference differs from the working tree, the
+    committed text wins (uncommitted modes use HEAD; a committed range uses
+    its tip). A staged round-named file with an unstaged policy edit, or a
+    policy edit in the same staged change, therefore cannot allowlist itself.
+    A missing committed baseline yields {} - fail closed."""
+    committed = _committed_round_policy_text(root, tip)
+    if not committed.strip():
+        return {}
+    raw_text = committed
     try:
         return json.loads(raw_text)
     except Exception:
         return {}
 
 
-def round_name_violations(target_files: list[Path], root: Path, diff_args: list[str] | None) -> list[str]:
+def round_name_violations(target_files: list[Path], root: Path, diff_args: list[str] | None, tip: str = "HEAD") -> list[str]:
     """Reject test files named after audit rounds, coverage passes, or waves
-    unless they sit in the shrink-only committed baseline. The baseline is
-    evaluated as of HEAD when it is itself modified in the change, so a new
-    round-named file cannot approve itself in the same commit."""
-    policy = load_round_name_policy(root, diff_args)
+    unless they sit in the committed baseline. The baseline is always read
+    from the committed reference (HEAD for uncommitted shapes, the range tip
+    for committed ranges), so a policy edit - staged or not - can never
+    approve a new round-named file in the same change."""
+    policy = load_round_name_policy(root, diff_args, tip)
     pattern_text = policy.get(ROUND_NAME_PATTERN_KEY) or ROUND_NAME_DEFAULT_PATTERN
     try:
         pattern = re.compile(pattern_text)
@@ -646,6 +639,7 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
     # evaded are recorded in this file's git history.)
     rng = committed_range(diff_args) if diff_args is not None else None
     policy = policy_at(root, rng[1]) if rng is not None else load_skip_policy(root, diff_args)
+    round_tip = rng[1] if rng is not None else "HEAD"
     known_zero_assertions = set(policy.get("knownZeroAssertions", []))
 
     for rep in reports:
@@ -655,7 +649,7 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
             rel_file = str(Path(issue["file"]).relative_to(root)) if Path(issue["file"]).is_absolute() and str(issue["file"]).startswith(str(root)) else issue["file"]
             violations.append(f"{rel_file}:{issue['line']}: [{issue['kind']}] {issue['message']}")
 
-    violations.extend(round_name_violations(target_files, root, diff_args))
+    violations.extend(round_name_violations(target_files, root, diff_args, round_tip))
 
     if diff_args is not None:
         violations.extend(unit_violations(root, diff_args, policy))

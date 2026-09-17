@@ -646,6 +646,33 @@ def test_round_gate_passes_when_no_round_names_present() -> None:
         assert r.returncode == 0, f"clean tree flagged by round gate: {r.stdout}"
 
 
+def test_round_baseline_unstaged_edit_cannot_self_approve() -> None:
+    """The baseline is read from the COMMITTED reference, never from the
+    working tree: an unstaged policy edit cannot allowlist a staged
+    round-named test file."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        _round_policy(root, [])
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "baseline", cwd=root)
+        (root / "pkg" / "round9_thing_test.go").write_text(
+            """package pkg
+import "testing"
+func TestRound9Thing(t *testing.T) {
+    if Add(1, 2) != 3 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        # Unstaged policy edit allowing the new file.
+        _round_policy(root, ["pkg/round9_thing_test.go"])
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"unstaged policy edit self-approved: {r.stdout}"
+        assert "round_named_test_file" in r.stdout
+
+
 def main() -> int:
     tests = [
         v
