@@ -1,0 +1,16 @@
+id = "narrating-verbose-comments"
+title = "Design carries plan labels and next-line narration in comments"
+section = "Price the tradeoff"
+verdict = "BLOCK"
+anchors = [
+  "Apply YAGNI, KISS, and DRY as review gates. YAGNI: no capability without a",
+  "A comment must serve the code it sits",
+  "Flag comments that restate the next line, carry task or plan labels,",
+]
+design = """A design adds a parser module whose comments restate each
+function's next line in prose. One comment block runs forty lines and
+retells the delivery plan, with task numbers and change history for
+each stage. No comment states the grammar contract the parser
+implements or the constraint that input must not be trusted. The
+author kept the plan rationale in the code instead of the project's
+documentation."""
