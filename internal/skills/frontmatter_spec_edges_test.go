@@ -64,6 +64,17 @@ func TestParseFrontmatter_BlockScalarHeaderChompBeforeDigit(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatter_BlockScalarFoldsAdjacentLines(t *testing.T) {
+	input := []byte("---\nname: n\ndescription: >\n  first\n  second\n---")
+	m, err := ParseFrontmatter(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m["description"].(string); got != "first second\n" {
+		t.Fatalf("description = %q, want %q", got, "first second\n")
+	}
+}
+
 func TestParseFrontmatter_BlockScalarBodyOnlyBlankLines(t *testing.T) {
 	// A body of only blank lines leaves foldBlockScalar's indent unset; it
 	// must default to zero and fold to an empty string rather than panic.
