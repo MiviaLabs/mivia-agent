@@ -6,7 +6,8 @@ importance: medium
 x-scope: project
 x-verdict: good
 tags: [refactor, package-moves, relative-paths, test-seams, pre-commit-gates]
-updated: 2026-09-14
+related: [cli_workflow_seam_gate_and_stack_driver_home_decision]
+updated: 2026-09-18
 ---
 
 # cli* package regroup: relative-path fixtures and nil test seams are the recurring breakage
