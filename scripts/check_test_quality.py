@@ -545,6 +545,72 @@ def get_git_diff_deleted_tests(diff_args: list[str], root: Path) -> list[tuple[s
     return deleted_tests
 
 
+ROUND_NAME_PATTERN_KEY = "pattern"
+ROUND_NAME_DEFAULT_PATTERN = r"coverage|pass[0-9]|round[0-9]|audit|wave"
+
+
+def load_round_name_policy(root: Path, diff_args: list[str] | None) -> dict:
+    """Round-named-test-file baseline. When the policy file is modified in an
+    uncommitted diff, the BASE (HEAD) policy is used so a change cannot
+    allowlist itself; a committed range is a review aid and reads the file as
+    committed. Missing or unparseable policy yields {} - fail closed."""
+    policy_file = root / ".mivia" / "policy" / "round-named-tests.json"
+    if not policy_file.is_file():
+        return {}
+
+    raw_text = ""
+    if diff_args is not None:
+        r = subprocess.run(
+            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/round-named-tests.json"],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            show_res = subprocess.run(
+                ["git", "show", "HEAD:.mivia/policy/round-named-tests.json"],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            if show_res.returncode == 0 and show_res.stdout.strip():
+                raw_text = show_res.stdout
+            else:
+                # No committed baseline: nothing is allowlisted.
+                return {}
+    if not raw_text:
+        raw_text = policy_file.read_text(encoding="utf-8")
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        return {}
+
+
+def round_name_violations(target_files: list[Path], root: Path, diff_args: list[str] | None) -> list[str]:
+    """Reject test files named after audit rounds, coverage passes, or waves
+    unless they sit in the shrink-only committed baseline. The baseline is
+    evaluated as of HEAD when it is itself modified in the change, so a new
+    round-named file cannot approve itself in the same commit."""
+    policy = load_round_name_policy(root, diff_args)
+    pattern_text = policy.get(ROUND_NAME_PATTERN_KEY) or ROUND_NAME_DEFAULT_PATTERN
+    try:
+        pattern = re.compile(pattern_text)
+    except re.error:
+        return [f".mivia/policy/round-named-tests.json: [round_name_pattern_invalid] pattern {pattern_text!r} does not compile"]
+    allowed = set(policy.get("allowedFiles", []))
+    out: list[str] = []
+    for f in target_files:
+        try:
+            rel = f.resolve().relative_to(root.resolve()).as_posix()
+        except (ValueError, OSError):
+            rel = f.as_posix()
+        stem = Path(rel).name
+        if stem.endswith("_test.go"):
+            stem = stem[: -len("_test.go")]
+        if pattern.search(stem) and rel not in allowed:
+            out.append(
+                f"{rel}: [round_named_test_file] test file named after a round/pass/audit/wave; "
+                "name it after the behaviour it owns (baseline: .mivia/policy/round-named-tests.json, may only shrink)"
+            )
+    return out
+
+
 def unit_violations(root: Path, diff_args: list[str], policy: dict) -> list[str]:
     """Evaluate ONE change unit (a staged set, a dirty tree, or a single
     commit) against the policy as it stood BEFORE that unit. An entry added
@@ -588,6 +654,8 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
                 continue
             rel_file = str(Path(issue["file"]).relative_to(root)) if Path(issue["file"]).is_absolute() and str(issue["file"]).startswith(str(root)) else issue["file"]
             violations.append(f"{rel_file}:{issue['line']}: [{issue['kind']}] {issue['message']}")
+
+    violations.extend(round_name_violations(target_files, root, diff_args))
 
     if diff_args is not None:
         violations.extend(unit_violations(root, diff_args, policy))
