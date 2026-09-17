@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
+
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -112,5 +114,48 @@ func TestUnboundedStepsStayUnbounded(t *testing.T) {
 	}
 	if got := comp.count(); got != 3 {
 		t.Fatalf("unbounded steps must still run 1 call + 2 continuations, got %d", got)
+	}
+}
+
+// TestBudgetAgreementGuardObservesShrunkenBound pins the positional
+// agreement between shrinkStepBudgetForReRun (loop_dispatch.go) and the
+// ContinueOnStop guard (continue_on_stop.go:81-83): the guard reads the
+// shrunken bound, not the original MaxSteps.
+func TestBudgetAgreementGuardObservesShrunkenBound(t *testing.T) {
+	opts := Options{Model: "m", MaxSteps: 5}
+	if !shrinkStepBudgetForReRun(&opts, 5, 2) {
+		t.Fatal("shrink with remaining budget must proceed")
+	}
+	if opts.MaxSteps != 3 {
+		t.Fatalf("shrunken MaxSteps = %d, want 3", opts.MaxSteps)
+	}
+	turn := newSDKTurnState()
+	turn.bumpIteration()
+	turn.bumpIteration()
+	turn.bumpIteration()
+	sdkOpts := sdkagentloop.Options{Bounds: sdkagentloop.Bounds{MaxIterations: 3}}
+	// RequireFinalText must be true: with false the StopEmptyResponse leg
+	// returns nil at continue_on_stop.go:92 regardless of the budget guard,
+	// and the test would pass with the guard deleted.
+	hook := newSDKContinueOnStop(&Loop{}, sdkOpts, Options{Model: "m", RequireFinalText: true}, turn, "u")
+	// Mutating the original after construction must not affect the guard:
+	// installSDKContinueOnStop passes *out by value (agentloop_adapter.go:183).
+	sdkOpts.Bounds.MaxIterations = 99
+	d := sdkagentloop.StopDecision{Stop: sdkagentloop.StopEmptyResponse}
+	if got := hook(context.Background(), d); got != nil {
+		t.Fatalf("exhausted budget must return nil, got %v", got)
+	}
+}
+
+// TestShrinkStepBudgetExhaustedRefusesReRun pins the exhausted branch:
+// remaining <= 0 refuses instead of mapping to 0 (which the SDK reads
+// as uncapped).
+func TestShrinkStepBudgetExhaustedRefusesReRun(t *testing.T) {
+	opts := Options{Model: "m", MaxSteps: 5}
+	if shrinkStepBudgetForReRun(&opts, 5, 5) {
+		t.Fatal("exhausted budget must refuse the re-run")
+	}
+	if opts.MaxSteps != 5 {
+		t.Fatalf("refused shrink must leave MaxSteps = %d, want 5", opts.MaxSteps)
 	}
 }
