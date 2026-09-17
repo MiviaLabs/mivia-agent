@@ -310,7 +310,7 @@ type Resolved struct {
 	// ProviderHTTPTimeout is the derived absolute http.Client wall for
 	// provider requests: the maximum of the 15-minute floor and every
 	// configured per-request budget plus the margin. See
-	// resolveProviderHTTPTimeout in load.go.
+	// resolveProviderHTTPTimeout in load_timeouts.go.
 	ProviderHTTPTimeout time.Duration
 
 	// PromptCache is the resolved "auto" or "off" policy for prompt-cache

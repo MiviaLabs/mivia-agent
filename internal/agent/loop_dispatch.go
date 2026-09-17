@@ -204,7 +204,7 @@ func (l *Loop) writeBackSDKHistory(res sdkagentloop.Result, preLen int) {
 // can sit anywhere in the interior of a multi-step history, not only at the
 // tail - removing it first would shift every later index out of alignment.
 func stripInjectedSummaryFrames(messages []provider.Message) []provider.Message {
-	out := messages[:0]
+	out := make([]provider.Message, 0, len(messages))
 	for _, m := range messages {
 		if m.Name == SummaryMessageName {
 			continue
