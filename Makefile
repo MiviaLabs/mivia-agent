@@ -23,7 +23,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
+	hook-test agent-hook-test test-quality structure-check import-layers-check seam-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants subprocess-stdin-check invariants mutation diff-coverage verifier-integration smoke release release-test \
 	prose-check wire-vocabulary-check live-auth-smoke live-chat-smoke live-smoke
 
@@ -44,6 +44,7 @@ help:
 		'  make docs-check        Check adapter/docs ownership' \
 		'  make structure-check   Go LOC/function limits + 500 KiB file-size' \
 		'  make import-layers-check  Internal import-edge policy (allow/deny/cap)' \
+		'  make seam-check            Hold internal/cli seam counts to baseline' \
 		'  make timeout-saturation-check  No unbounded seconds-to-Duration multiply (DC-7)' \
 		'  make request-deadline-check  Every provider.Request carries a deadline (DC-7)' \
 		'  make semgrep           Run repo Semgrep policy scan (if installed)' \
@@ -81,7 +82,7 @@ install-hooks hooks:
 # still runs on main and macOS in CI, and standalone via `make
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
-	import-layers-check subprocess-stdin-check timeout-saturation-check request-deadline-check \
+	import-layers-check seam-check subprocess-stdin-check timeout-saturation-check request-deadline-check \
 	wire-vocabulary-check \
 	semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality validate-invariants semgrep verify-go
@@ -122,6 +123,10 @@ structure-check:
 
 import-layers-check:
 	@python3 scripts/check_import_layers.py
+
+seam-check:
+	@python3 scripts/test_check_seams.py
+	@python3 scripts/check_seams.py
 
 subprocess-stdin-check:
 	@python3 scripts/test_check_subprocess_stdin.py

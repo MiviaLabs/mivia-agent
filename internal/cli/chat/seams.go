@@ -9,7 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -62,7 +61,3 @@ var ResolveStackIDFunc func(repo workflowledger.Repository, workflowName, stackF
 
 // ParseStackWorkflowArgsFunc stands for cli.parseStackWorkflowArgs.
 var ParseStackWorkflowArgsFunc func(args []string) (name, stackFlag string, rest []string, err error)
-
-// NewEmptyDelegateToolFunc stands for a zero-value cli delegate tool, used by
-// the session tool catalog.
-var NewEmptyDelegateToolFunc func() tools.Tool
