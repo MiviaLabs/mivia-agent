@@ -870,3 +870,95 @@ func TestCommandRunner_HandleModel_ExplicitNonOwnerProviderFailsClosed(t *testin
 		t.Fatal("Run(model, openai non-existent-model) expected error, got success")
 	}
 }
+
+// TestCommandRunner_HandleModel_ProviderArgMatchesRuntimeMap covers
+// findProvider's ProviderRuntimes branch (runner_model.go:58-63): a
+// "<provider> <model>" handleModel argument whose provider token matches no
+// ModelCatalog provider but does match a configured ProviderRuntimes key
+// (case-folded). The catalog loop must miss first, so resolution reaches the
+// runtime map and dispatches SelectModelForProvider with the runtime's
+// canonical name.
+func TestCommandRunner_HandleModel_ProviderArgMatchesRuntimeMap(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"openrouter": {
+				ProviderName: "openrouter",
+				APIKey:       "sk-or-v1-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "model-b"}},
+			},
+		},
+	}
+	// No "openrouter" catalog group: the catalog loop in findProvider must
+	// miss so the runtime-map branch is what matches. Without a catalog
+	// entry the downstream switch fails; what this test pins is that
+	// resolution reached SelectModelForProvider under the runtime's name,
+	// which the error message's "(openrouter)" tag proves.
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "OpenRouter model-b")
+	if out.Err == "" {
+		t.Fatal("Run(model, OpenRouter model-b) expected the downstream switch error, got success")
+	}
+	if !strings.Contains(out.Err, `"model-b" (openrouter)`) {
+		t.Fatalf("error must name the resolved provider/model pair, got %q", out.Err)
+	}
+}
+
+// TestCommandRunner_HandleModel_ProviderArgMatchesNothing covers
+// findProvider's final miss return (runner_model.go:65-66): a "<provider>
+// <model>" argument whose provider token matches neither a catalog provider
+// nor a ProviderRuntimes key, so handleModel abandons the two-token form and
+// treats the whole argument as a plain model name via SelectModel.
+func TestCommandRunner_HandleModel_ProviderArgMatchesNothing(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "nosuchprovider model-x")
+	if out.Err == "" {
+		t.Fatal("Run(model, nosuchprovider model-x) expected error, got success")
+	}
+	if !strings.Contains(out.Err, "model-x") {
+		t.Fatalf("error must carry the plain-model-name resolution attempt, got %q", out.Err)
+	}
+}
+
+// TestCommandRunner_SelectModelForProvider_UninitializedRunner covers
+// switchModel's uninitialized guard (runner_model.go:196-198) through the
+// exported SelectModelForProvider, which - unlike handleModel and SelectModel
+// - carries no session/res guard of its own before calling switchModel. A
+// runner built with a nil session must fail closed with the standard
+// "not initialized" message instead of panicking.
+func TestCommandRunner_SelectModelForProvider_UninitializedRunner(t *testing.T) {
+	runner := adapter.NewCommandRunner(nil, nil, nil)
+
+	out := runner.SelectModelForProvider(context.Background(), "openrouter", "model-b")
+	if out.Err != "session or configuration not initialized" {
+		t.Fatalf("SelectModelForProvider on an uninitialized runner = %+v, want Err %q", out, "session or configuration not initialized")
+	}
+}

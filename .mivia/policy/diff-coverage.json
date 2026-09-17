@@ -443,9 +443,12 @@
       "lines": [
         41,
         42,
-        43
+        43,
+        51,
+        52,
+        117
       ],
-      "reason": "availableModelsByProvider's own r.res == nil guard, explicitly called out as dead by the comment directly above it: the function's one caller, handleModel, already returns early on r.res == nil before ever reaching this call, so no input reaches this branch through the CommandRunner's public API."
+      "reason": "Three unreachable nil-res guards, each dead because every call site already guards. (1) 41-43: availableModelsByProvider's own r.res == nil guard, explicitly called out as dead by the comment directly above it: the function's one caller, handleModel, already returns early on r.res == nil before ever reaching this call. (2) 51-52: findProvider's res == nil guard; its one caller, handleModel, passes r.res only after that same early return at the top of handleModel, so the argument is never nil. (3) 117: resolveExplicitModelSelection's res == nil guard; both callers (SelectModel's 0-owner and multi-owner branches) run behind SelectModel's own sess/res guard, so res is never nil there. No input reaches any of the three through the CommandRunner's public API."
     },
     "internal/tui/view/component/approval/approval.go": {
       "lines": [
