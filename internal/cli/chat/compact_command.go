@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
 // runCompact drives `mivia compact --session <name> [--json] [--workspace
@@ -50,10 +49,7 @@ func runCompactWithIO(args []string, stdout io.Writer) error {
 	// forced plan's own retain/discard decision (unaffected by a uniform
 	// scale) would still be correct.
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
-	fullDisk := config.UserFullDiskAccessForWorkspace(root)
-	if fullDisk {
-		fmt.Fprintln(os.Stderr, config.FullDiskNoticeText)
-	}
+	fullDisk := resolveFullDiskWithNotice(root)
 	// runRecoverySweep=false (F14): a standalone compaction is not a session
 	// start and must not push branches, publish PRs, or drive stacks.
 	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, fullDisk, false)
