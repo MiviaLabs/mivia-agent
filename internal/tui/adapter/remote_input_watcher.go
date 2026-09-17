@@ -18,14 +18,22 @@ type WatcherConfig struct {
 	WorkspaceRoot  string
 	AuthorProvider chatsync.AuthorUserIDProvider
 	Max            int
-	IsPooled       func(sessionID string) bool
-	Deliver        func(sessionID string, in chatsync.RemoteInput, ack func())
+	// IsPooled must be callable without holding RemoteInputWatcher.mu: the
+	// production closure reaches into SessionPool.mu, and attach paths take
+	// RemoteInputWatcher.mu (StopSync) while holding that same pool lock. Every
+	// call site here is unlocked on purpose - see Backfill's filter pass.
+	IsPooled func(sessionID string) bool
+	Deliver  func(sessionID string, in chatsync.RemoteInput, ack func())
 }
 
 // RemoteInputWatcher runs standalone chatsync.InputPoller instances for saved
 // sessions that already have a persisted RemoteSessionID but are not currently
 // pooled. It never opens an Outbox, never takes flock on events.jsonl, and
 // never sends heartbeats or creates sessions.
+//
+// Lock order: SessionPool.mu -> RemoteInputWatcher.mu, never the reverse. The
+// pool holds its lock across StopSync/Stop, so nothing here may reach back into
+// the pool while w.mu is held.
 type RemoteInputWatcher struct {
 	mu       sync.Mutex
 	watching map[string]*chatsync.InputPoller
@@ -132,6 +140,31 @@ func (w *RemoteInputWatcher) candidates() []candidateSession {
 	return candidates
 }
 
+// freshCandidates drops the candidates that became pool members since
+// candidates() enumerated them, so a poller is never installed for a session
+// the pool has already adopted.
+//
+// The caller must NOT hold w.mu. IsPooled is StartBackgroundWatch's closure
+// over SessionPool.mu, and every attach path holds that same pool lock while
+// calling attachSyncLocked -> watcher.StopSync -> w.mu, so those two mutexes
+// have to be taken in one order only (pool, then watcher). Calling IsPooled
+// under w.mu reverses that order and blocks both goroutines for good: a Go
+// mutex acquisition has no timeout, and StopSync's 2s budget is spent only
+// after it already owns w.mu.
+func (w *RemoteInputWatcher) freshCandidates(candidates []candidateSession) []candidateSession {
+	if w.cfg.IsPooled == nil {
+		return candidates
+	}
+	fresh := make([]candidateSession, 0, len(candidates))
+	for _, cand := range candidates {
+		if w.cfg.IsPooled(cand.sessionID) {
+			continue
+		}
+		fresh = append(fresh, cand)
+	}
+	return fresh
+}
+
 // Backfill scans candidates and starts pollers for unpooled sessions up to cfg.Max.
 func (w *RemoteInputWatcher) Backfill(ctx context.Context) {
 	if w == nil {
@@ -166,20 +199,23 @@ func (w *RemoteInputWatcher) Backfill(ctx context.Context) {
 
 	anchor := chatSyncAnchor(w.cfg.WorkspaceRoot)
 
+	// Unlocked on purpose: see freshCandidates.
+	fresh := w.freshCandidates(candidates)
+	if len(fresh) == 0 {
+		return
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.stopped {
 		return
 	}
 
-	for _, cand := range candidates {
+	for _, cand := range fresh {
 		if len(w.watching) >= w.cfg.Max {
 			break
 		}
 		if _, exists := w.watching[cand.sessionID]; exists {
-			continue
-		}
-		if w.cfg.IsPooled != nil && w.cfg.IsPooled(cand.sessionID) {
 			continue
 		}
 

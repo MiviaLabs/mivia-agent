@@ -6,6 +6,7 @@ package adapter
 // p.busReleases bookkeeping and the released-latch discipline described
 // below.
 // INVARIANT: attachSyncLocked and StartBackgroundWatch read p.released, which ReleaseLeases (session_pool_lifecycle.go) stores under p.mu before draining the pool. Each read must stay inside its caller's p.mu critical section.
+// LOCK ORDER: p.mu -> RemoteInputWatcher.mu, never the reverse. attachSyncLocked's watcher.StopSync and ReleaseLeases' watcher.Stop both acquire w.mu while p.mu is (StopSync) or was just held, so no watcher path may call back into the pool under w.mu - see RemoteInputWatcher's own doc comment and Backfill's IsPooled filter pass.
 
 import (
 	"context"
