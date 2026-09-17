@@ -72,12 +72,12 @@ stream_idle_timeout_seconds = 300
 [providers.deepseek]
 api_key_env = 'DEEPSEEK_API_KEY'
 base_url = 'https://api.deepseek.com/v1'
-default_model = 'deepseek-v4-flash'
+default_model = 'deepseek-v4.1-flash'
 
 [[providers.deepseek.models]]
 context_window_tokens = 1000000
 max_output_tokens = 384000
-name = 'deepseek-v4-flash'
+name = 'deepseek-v4.1-flash'
 reasoning = 'high'
 reasoning_dialect = 'thinking_effort'
 reasoning_efforts = ['high', 'max']
@@ -93,13 +93,13 @@ reasoning_efforts = ['high', 'max']
 [providers.llmgateway]
 api_key_env = 'LLMGATEWAY_API_KEY'
 base_url = 'https://api.llmgateway.io/v1'
-default_model = 'deepseek-v4-pro'
+default_model = 'deepseek-v4.1-flash'
 
 [[providers.llmgateway.models]]
 context_window_tokens = 1100000
-name = 'deepseek-v4-pro'
+name = 'deepseek-v4.1-flash'
 reasoning = 'high'
-reasoning_efforts = ['low', 'medium', 'high', 'max']
+reasoning_efforts = ['low', 'high']
 
 [[providers.llmgateway.models]]
 context_window_tokens = 1000000
