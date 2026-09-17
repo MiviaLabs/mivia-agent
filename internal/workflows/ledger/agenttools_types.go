@@ -1,7 +1,8 @@
-// Package agenttools exposes in-process workflow tools for the agent surface.
-// Tools call the shared workflow ledger for reads and an injected Engine for
+// Workflow tool types for the agent surface: tool names, result budgets,
+// request/response payloads and the Engine/RepoFactory seams. The tools
+// call the shared workflow ledger for reads and an injected Engine for
 // mutations. This package must not import controller/agents/skills so the
-// tools package can import it without an import cycle.
+// tools wrapper package can import it without an import cycle.
 package ledger
 
 import (
