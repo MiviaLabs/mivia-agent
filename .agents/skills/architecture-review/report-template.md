@@ -10,7 +10,7 @@ Drivers:
 Evidence:
 - <artifact, search, or check>: <what it establishes and its limits>
 Findings:
-- [AR-1] <finding with consequence, alternative, tradeoff, and action>
+- [AR-1] [High] <finding with consequence, alternative, tradeoff, and action>
 RejectedConcerns:
 - <candidate rejected by contrary evidence>
 ResidualRisk: none | <specific uncertainty>
@@ -21,3 +21,17 @@ NextAction: none | <specific decision, evidence, or change required>
 - `BLOCK`: a confirmed requirement-threatening flaw or unenforced unsafe sequencing.
 - `PARTIAL`: useful review, but required scope, evidence, a decision, or measurement is missing.
 - `NOT_RUN`: no reviewable architecture.
+
+Give each finding a severity:
+
+- Critical: the design breaks a published contract, a tenant or safety
+  boundary, or an enforced delivery order, with no safe migration.
+- High: the design breaks an existing caller or invariant, or adds a
+  boundary whose cost is not justified by any driver.
+- Medium: bounded structural drift, duplicated responsibility, or a
+  boundary that is more complex than the demonstrated requirements
+  need.
+- Low: minor structural issue with limited blast radius.
+
+Never invent a Low finding about style or naming on otherwise sound
+structure.
