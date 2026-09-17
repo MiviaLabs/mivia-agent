@@ -74,52 +74,16 @@ func resolveProviderAndModel(res *config.Resolved, selProvider, name string) (st
 		providerName = selProvider
 	}
 
-	// 1. Explicit provider prefix matching a catalog provider
-	for _, group := range res.ModelCatalog() {
-		prefix := group.Provider + "/"
-		if strings.HasPrefix(strings.ToLower(name), prefix) {
-			return group.Provider, name[len(prefix):]
-		}
-	}
-
-	// 1b. Prefix matching a configured provider runtime
-	if res.ProviderRuntimes != nil {
-		for p := range res.ProviderRuntimes {
-			prefix := strings.ToLower(p) + "/"
-			if strings.HasPrefix(strings.ToLower(name), prefix) {
-				return p, name[len(prefix):]
-			}
-		}
-	}
-
-	// 1c. Name containing a slash matching known provider name
-	if p, m, ok := strings.Cut(name, "/"); ok && p != "" && m != "" {
-		for _, group := range res.ModelCatalog() {
-			if strings.EqualFold(group.Provider, p) {
-				return group.Provider, m
-			}
-		}
-		if res.ProviderRuntimes != nil {
-			for rName := range res.ProviderRuntimes {
-				if strings.EqualFold(rName, p) {
-					return rName, m
-				}
-			}
-		}
-	}
-
-	// 2. Search unique provider in catalog. A name matching more than one
-	// Selectable provider is NOT resolved here - silently picking the first
-	// catalog-order match would be an unannounced provider switch (different
-	// auth, base URL, and wire behavior) on nothing but name coincidence,
-	// the exact class of surprise a same-named model across providers (e.g.
-	// "claude-sonnet-5" under both an OpenAI-compatible proxy and the native
-	// anthropic provider) causes. Falling through here leaves providerName
-	// as today's default (current selection), and SwitchModelCommand's
-	// resulting "not available" error carries the ambiguity via
-	// res.OtherProvidersWithModel in SelectModel's error path below - naming
-	// every match so the user picks explicitly with /model <provider> <name>
-	// rather than the tool guessing for them.
+	// 1. Search unique provider in catalog by exact whole-name match across
+	// Selectable catalog groups. A name matching more than one Selectable
+	// provider is NOT resolved here - silently picking the first catalog-order
+	// match would be an unannounced provider switch (different auth, base URL,
+	// and wire behavior) on nothing but name coincidence. If matches > 1, we
+	// fall through to the explicit provider/runtime prefix parser below; if
+	// that also does not disambiguate, the final fallback leaves providerName
+	// as today's default (current selection) and SwitchModelCommand's resulting
+	// "not available" error names every match so the user picks explicitly
+	// with /model <provider> <name>.
 	var matchedProvider string
 	matches := 0
 	for _, group := range res.ModelCatalog() {
@@ -136,6 +100,40 @@ func resolveProviderAndModel(res *config.Resolved, selProvider, name string) (st
 	}
 	if matches == 1 {
 		return matchedProvider, name
+	}
+
+	// 2. Explicit provider prefix matching a catalog provider
+	for _, group := range res.ModelCatalog() {
+		prefix := group.Provider + "/"
+		if strings.HasPrefix(strings.ToLower(name), prefix) {
+			return group.Provider, name[len(prefix):]
+		}
+	}
+
+	// 2b. Prefix matching a configured provider runtime
+	if res.ProviderRuntimes != nil {
+		for p := range res.ProviderRuntimes {
+			prefix := strings.ToLower(p) + "/"
+			if strings.HasPrefix(strings.ToLower(name), prefix) {
+				return p, name[len(prefix):]
+			}
+		}
+	}
+
+	// 2c. Name containing a slash matching known provider name
+	if p, m, ok := strings.Cut(name, "/"); ok && p != "" && m != "" {
+		for _, group := range res.ModelCatalog() {
+			if strings.EqualFold(group.Provider, p) {
+				return group.Provider, m
+			}
+		}
+		if res.ProviderRuntimes != nil {
+			for rName := range res.ProviderRuntimes {
+				if strings.EqualFold(rName, p) {
+					return rName, m
+				}
+			}
+		}
 	}
 
 	return providerName, name
