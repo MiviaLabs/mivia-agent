@@ -1,0 +1,12 @@
+id = "minimal-design"
+title = "Direct local implementation for one consumer"
+section = "Price the tradeoff"
+verdict = "PASS"
+anchors = [
+  "Treat patterns, indirection, single consumers, forwarding",
+  "single consumer does not automatically invalidate it.",
+]
+design = """A change adds one small formatter module. One caller uses the
+module today. It has one public function and no configuration. No driver
+asks for a second implementation or a wider interface. The design keeps
+the behavior local and direct."""

@@ -581,8 +581,18 @@ nested_steps = 0  # 0 = unlimited sub-agent loop steps
 # spawn_stagger_ms delays each task after the first in a dispatch batch, so
 # concurrent workers do not fire their first provider call on the same instant
 # (thundering herd against local proxies). Default when absent: 150. An
-# explicit 0 disables; values above 1000 clamp to 1000.
+# explicit 0 disables; values above 1000 clamp to 1000. Unlike max_depth and
+# max_fanout above, a NEGATIVE value is refused at load rather than read as
+# "disabled" - it would behave exactly like 0, so -150 would silently mean
+# "staggering off" when 150 was meant.
 spawn_stagger_ms = 150
+# inline_output_bytes is the per-task output size threshold (bytes). A task
+# result at or below it is inlined in the model-visible envelope; above it,
+# only a ref, a byte count, and a bounded synopsis are sent and the parent
+# fetches the body with ledger_read. Default when absent: 4096. An explicit 0
+# means "always use refs" (never inline). Negative is refused at load, for the
+# same reason as spawn_stagger_ms: it is indistinguishable from 0 in effect.
+# inline_output_bytes = 4096
 # default_timeout_seconds is the per-agent default budget. 43200s = 12 hours,
 # the same safety bound an unset-or-0 value selects; it is written out so the
 # default is visible and a smaller value never slips in silently. Batches and

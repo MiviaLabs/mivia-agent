@@ -93,11 +93,13 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 	opts := agent.Options{
 		// The nested loop wires a BeforeStep mailbox drain
 		// (applyMailboxAccess). It maps onto the SDK path through the
-		// Steer injector installed in RunAgentLoopOnce: the SDK
-		// drains the injector at the top of every iteration and at
-		// every steered-stop downgrade point, growing history with
-		// the framed parent message and downgrading a pending
-		// StopSteered when the drain is non-empty. No Backend override
+		// Steer injector installed in runSDKSteerable: the SDK drains
+		// the injector at the top of every iteration, growing history
+		// with the framed parent message. A steered stop ends the SDK
+		// run (the host's ContinueOnStop never continues one) and
+		// runOnceSDK's bounded steered-continue re-runs the turn, whose
+		// iteration-top drain delivers the queued payload. No Backend
+		// override
 		// here: the SDK is the default and the BeforeStep carrier
 		// lives there now.
 		Model:            h.Model,

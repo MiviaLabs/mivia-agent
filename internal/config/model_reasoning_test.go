@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -131,13 +132,19 @@ func TestDeepSeekConfigReasoningLoads(t *testing.T) {
 		t.Fatal("runtime.Caller failed")
 	}
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
-	for _, name := range []string{"mivia.toml", "mivia.toml.example"} {
-		t.Run(name, func(t *testing.T) {
-			res, err := Load(LoadOptions{ConfigPath: filepath.Join(root, ".mivia", name)})
+	for _, tc := range []struct {
+		name   string
+		models []string
+	}{
+		{name: "mivia.toml", models: []string{"deepseek-v4-pro", "deepseek-v4.1-flash"}},
+		{name: "mivia.toml.example", models: []string{"deepseek-v4-pro", "deepseek-v4-flash"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Load(LoadOptions{ConfigPath: filepath.Join(root, ".mivia", tc.name)})
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			for _, model := range []string{"deepseek-v4-pro", "deepseek-v4-flash"} {
+			for _, model := range tc.models {
 				spec := profileNamed(t, res, "deepseek", model)
 				if spec.Reasoning != reasoning.High {
 					t.Fatalf("%s Reasoning = %q, want high", model, spec.Reasoning)
@@ -178,6 +185,49 @@ func TestMiniMaxM3ConfigReasoningLoads(t *testing.T) {
 	}
 	if !resolved.Level.Active() {
 		t.Fatalf("resolved level = %q, want an active level", resolved.Level)
+	}
+}
+
+// LLMGateway's root-ID catalog alignment pin verifies the repo configuration
+// loads the bare model identifier without duplicate provider prefixes and
+// preserves reasoning metadata.
+func TestLLMGatewayRootIDCatalogAlignment(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	res, err := Load(LoadOptions{
+		ConfigPath:       filepath.Join(root, ".mivia", "mivia.toml"),
+		ProviderOverride: "llmgateway",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if res.ProviderName != "llmgateway" {
+		t.Fatalf("ProviderName = %q, want llmgateway", res.ProviderName)
+	}
+	const wantModel = "deepseek-v4.1-flash"
+	if res.Model != wantModel {
+		t.Fatalf("Model = %q, want exactly %q", res.Model, wantModel)
+	}
+	if strings.HasPrefix(res.Model, "llmgateway/") || strings.Contains(res.Model, "llmgateway/") {
+		t.Fatalf("Model %q has unexpected provider prefix", res.Model)
+	}
+
+	spec := profileNamed(t, res, "llmgateway", wantModel)
+	if strings.HasPrefix(spec.Name, "llmgateway/") || strings.Contains(spec.Name, "llmgateway/") {
+		t.Fatalf("spec.Name %q has unexpected provider prefix", spec.Name)
+	}
+	if spec.ContextWindowTokens != 1100000 {
+		t.Fatalf("ContextWindowTokens = %d, want 1100000", spec.ContextWindowTokens)
+	}
+	if spec.Reasoning != reasoning.High {
+		t.Fatalf("Reasoning = %q, want high", spec.Reasoning)
+	}
+	wantEfforts := []reasoning.Level{reasoning.Low, reasoning.High}
+	if !slices.Equal(spec.ReasoningEfforts, wantEfforts) {
+		t.Fatalf("ReasoningEfforts = %v, want %v", spec.ReasoningEfforts, wantEfforts)
 	}
 }
 

@@ -76,4 +76,30 @@ func TestFencingFieldsUnderConcurrentTurnPressure(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	if sess.HasActiveTurn() {
+		t.Fatal("expected no active turns after all workers completed")
+	}
+
+	// NewSession initializes turnID to 1 during its initial resetSystem call.
+	// Each worker's beginAgentTurn incremented turnID by 1 without refusal,
+	// so a subsequent beginAgentTurn must deterministically yield turnID:
+	// 1 (initial) + (turnGoroutines * iterations) + 1 (postcondition turn).
+	const wantTurn = uint64(1 + turnGoroutines*iterations + 1)
+	snapshot, done, err := sess.beginAgentTurn("postcondition", nil)
+	if err != nil {
+		t.Fatalf("beginAgentTurn after concurrent stress failed: %v", err)
+	}
+	if !sess.HasActiveTurn() {
+		done()
+		t.Fatal("expected HasActiveTurn to be true while postcondition turn is active")
+	}
+	if snapshot.myTurn != wantTurn {
+		done()
+		t.Fatalf("turn ID = %d, want %d", snapshot.myTurn, wantTurn)
+	}
+	done()
+	if sess.HasActiveTurn() {
+		t.Fatal("expected no active turns after releasing postcondition turn")
+	}
 }

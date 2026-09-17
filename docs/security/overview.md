@@ -38,7 +38,7 @@ Tool approval is policy-gated (`[approvals] default_mode`):
 
 YOLO mode (`--yolo`, `--approval-policy auto`, or `[approvals] default_mode = "always"` - the shipped default) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
 
-**`--approval-policy` uses a different vocabulary than `default_mode`.** The CLI flag accepts the legacy `write-only` / `auto` / `always` values, where `always` means "prompt for every call, including reads" (paranoid mode) - the opposite of the config/TUI `always` above, which means "accept every call". Use `--yolo` or `--approval-policy auto` (not `--approval-policy always`) to accept everything from the command line.
+**`--approval-policy` uses a different vocabulary than `default_mode`.** The CLI flag accepts the legacy `write-only` / `auto` / `always` values. In that vocabulary, `always` means "prompt for every call, including reads" (paranoid mode). This is the opposite of the config/TUI `always` above, which means "accept every call". Use `--yolo` or `--approval-policy auto` (not `--approval-policy always`) to accept everything from the command line.
 
 ## Secret path filtering
 
@@ -59,7 +59,7 @@ Tool argument redaction is opt-in. Set `[privacy] redact_tool_args = true` in TO
 
 ## The cross-process hub is a local IPC boundary
 
-Every `mivia` process for one store directory joins a local hub, so a second live surface can follow a turn running in another process. This is a real IPC surface and it carries conversation content: the relayed set includes `turn_start`, whose `Detail` is the user's own submitted prompt, plus assistant text, reasoning, and tool input and output.
+Every `mivia` process for one store directory joins a local hub, so a second live surface can follow a turn running in another process. This is a real IPC surface and it carries conversation content. The relayed set includes `turn_start`, whose `Detail` is the user's own submitted prompt. It also includes assistant text, reasoning, and tool input and output.
 
 Two properties follow from that, and both are load-bearing:
 

@@ -69,6 +69,11 @@ topics:
     owner: agent
     description: Which CLI agent.Options fields the SDK backend carries, accepts as semantic gaps, or fail-closes on
 
+  sdk-gap-ledger:
+    path: docs/development/sdk-gap-ledger.md
+    owner: agent
+    description: Stage 0 per-file verdicts (adopted/keep/candidate/gap) for the internal/agent SDK bridge layer against mivia-ai-sdk v0.6.0
+
   terminal-input:
     path: docs/development/terminal-input.md
     owner: quality

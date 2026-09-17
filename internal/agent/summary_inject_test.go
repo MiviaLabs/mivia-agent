@@ -581,7 +581,6 @@ func (p *stepKeyedCompactingProbe) Discard(manager.Preparation) {}
 // sees the accumulated facts (a repeat of the SAME compaction event would be
 // served from the memo instead).
 func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
-	t.Skip("separate, newly-found gap, not the SDK Trim/write-back leak this test was originally skipped for (that part now passes): manager.TurnState.AddChangedSurface has no production caller anywhere outside its own file, so a real tool call never lands in a compaction summary's ChangedSurfaces - the write-class-tool tracking this test exercises does not exist yet. Wiring it requires threading TurnState into the tool-dispatch path, a separate feature-sized change, not a one-line fix.")
 	provider := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, provider)
 	completer := &capturingRequestCompleter{toolStep: true}
@@ -618,7 +617,6 @@ func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
 // never-sent history; the fix re-derives the omitted diff from the pre-prune
 // vs pruned history before the retry request is built (R0-1).
 func TestSummaryInjectionRetryPath(t *testing.T) {
-	t.Skip("accepted gap, not a regression: runSDKPromptTooLongRecoverable's retry does not reproduce the legacy retry-time summary re-derivation - documented inline on runSDKPromptTooLongRecoverable (agentloop_adapter.go).")
 	summ := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, summ)
 	comp := &promptTooLongCompleter{

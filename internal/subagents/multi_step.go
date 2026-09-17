@@ -162,6 +162,10 @@ type MultiStepHandler struct {
 	OnToolCancelReady func(ctx context.Context, canceler agent.ToolCanceler)
 }
 
+// ToolCanceler cancels one in-flight tool call by its call ID. It returns
+// true if the call was found and canceled, false otherwise.
+type ToolCanceler = agent.ToolCanceler
+
 // Invoke creates a restricted agent loop and runs the assigned task.
 func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
 	if ctx.Err() != nil {

@@ -80,19 +80,19 @@
       "reason": "compile-time constant expression"
     },
     {
-      "file": "internal/config/load.go",
+      "file": "internal/config/load_timeouts.go",
       "operand": "DefaultProviderHTTPTimeoutSeconds",
       "unit": "Second",
       "reason": "compile-time constant"
     },
     {
-      "file": "internal/config/load.go",
+      "file": "internal/config/load_timeouts.go",
       "operand": "DefaultHTTPWallMarginSeconds",
       "unit": "Second",
       "reason": "compile-time constant"
     },
     {
-      "file": "internal/config/load.go",
+      "file": "internal/config/load_timeouts.go",
       "operand": "sec",
       "unit": "Second",
       "reason": "the body of SaturatingSeconds itself, after its own clamp"

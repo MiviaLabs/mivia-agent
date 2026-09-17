@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
 // fakeCancelCoordinator is a minimal coordinator test double
@@ -30,10 +30,10 @@ type fakeCancelCoordinator struct {
 	calls    int
 	runID    string
 	taskID   string
-	canceler agent.ToolCanceler
+	canceler subagents.ToolCanceler
 }
 
-func (f *fakeCancelCoordinator) RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler) {
+func (f *fakeCancelCoordinator) RegisterSubagentToolCanceler(runID, taskID string, canceler subagents.ToolCanceler) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -46,7 +46,7 @@ func (f *fakeCancelCoordinator) callCount() int {
 	return f.calls
 }
 
-// noopCanceler is a valid, non-nil agent.ToolCanceler for hook tests that
+// noopCanceler is a valid, non-nil subagents.ToolCanceler for hook tests that
 // never expect it to actually be invoked.
 func noopCanceler(string) bool { return false }
 

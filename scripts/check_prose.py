@@ -15,8 +15,18 @@ import sys
 from pathlib import Path
 
 MAX_WORDS = 25
-SENTENCE = re.compile(r"[^.!?]+[.!?]")
+# A sentence is normally terminated text ("...word."), but a trailing run
+# with no terminator at all (a silent gate bypass otherwise) also counts.
+SENTENCE = re.compile(r"[^.!?]+[.!?]|[^.!?]+$")
 CONFLICT_MARKER = re.compile(r"^(<{7} |={7}$|>{7} )")
+
+
+def _within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def check_file(path: Path, rel: Path) -> list[str]:
@@ -39,10 +49,41 @@ def check_file(path: Path, rel: Path) -> list[str]:
     return violations
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parent.parent
     violations = []
-    for path in sorted((root / "docs").rglob("*.md")):
+    if argv:
+        # Explicit paths: check only what was passed. Directories are
+        # expanded to their *.md files (recursively).
+        paths = []
+        for arg in argv:
+            path = Path(arg)
+            if not path.is_absolute():
+                path = root / path
+            if path.is_dir():
+                md = sorted(
+                    p
+                    for p in path.rglob("*.md")
+                    if _within_root(p, root)
+                )
+                if not md:
+                    print(f"{arg}: no .md files under directory", file=sys.stderr)
+                    return 2
+                paths.extend(md)
+                continue
+            if path.suffix != ".md":
+                print(f"{arg}: not a .md file", file=sys.stderr)
+                return 2
+            if not path.is_file():
+                print(f"{arg}: no such file", file=sys.stderr)
+                return 2
+            if not _within_root(path, root):
+                print(f"{arg}: outside repo root", file=sys.stderr)
+                return 2
+            paths.append(path)
+    else:
+        paths = sorted((root / "docs").rglob("*.md"))
+    for path in paths:
         violations.extend(check_file(path, path.relative_to(root)))
     if violations:
         print("\n".join(violations))
@@ -51,4 +92,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

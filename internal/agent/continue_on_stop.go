@@ -82,6 +82,12 @@ func newSDKContinueOnStop(l *Loop, sdkOpts sdkagentloop.Options, opts Options, t
 			return nil
 		}
 		switch d.Stop {
+		case sdkagentloop.StopSteered:
+			// Host stop authority: a steered stop always returns
+			// control to the step loop, which drains the mailbox via
+			// BeforeStep and resumes. Never continue a steered stop,
+			// even with step budget left.
+			return nil
 		case sdkagentloop.StopEmptyResponse:
 			if !opts.RequireFinalText ||
 				emptyRetries >= maxEmptyResponseRetries ||

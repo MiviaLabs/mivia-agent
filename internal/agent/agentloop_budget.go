@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -101,13 +102,22 @@ func (b *sdkWorkBudget) reserve(ctx context.Context, req sdkshape.Request) error
 	return nil
 }
 
-// refund settles one reservation. A zero Usage means the call never
-// consumed it (the SDK's failed-call contract): refund the full
-// reservation, mirroring the legacy refundProvider on a steer-canceled
-// call. A real Usage settles the output side only: the unused part of
-// the output reserve comes back, the prompt estimate stays consumed -
-// the legacy consume-on-completion rule.
-func (b *sdkWorkBudget) refund(ctx context.Context, req sdkshape.Request, used sdkshape.Usage) {
+// refund settles one reservation according to the call's outcome:
+//   - Canceled call or prompt-too-long recovery rejection
+//     (err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, sdkshape.ErrPromptTooLong) || errors.Is(err, provider.ErrPromptTooLong))):
+//     refund the full reservation (prompt + output), mirroring the legacy
+//     refundProvider path on a steer-canceled call and allowing a prompt-too-long
+//     compaction retry to re-reserve without double-charging.
+//   - Ordinary provider failure (err != nil otherwise): pop the reservation stack
+//     and keep the reservation consumed (no refund) so a failed call cannot
+//     widen the remaining budget.
+//   - Successful call with real usage (err == nil): settle the output side
+//     only — refund the unused portion of the output reserve while the prompt
+//     estimate stays consumed (the legacy consume-on-completion rule).
+//
+// The SDK never calls Refund on a zero-Usage success, so failure is the only
+// path that carries zero Usage.
+func (b *sdkWorkBudget) refund(ctx context.Context, req sdkshape.Request, used sdkshape.Usage, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.stack) == 0 {
@@ -115,8 +125,10 @@ func (b *sdkWorkBudget) refund(ctx context.Context, req sdkshape.Request, used s
 	}
 	res := b.stack[len(b.stack)-1]
 	b.stack = b.stack[:len(b.stack)-1]
-	if used.PromptTokens == 0 && used.CompletionTokens == 0 && used.TotalTokens == 0 {
-		b.meter.refundProvider(res.promptTokens, res.outputTokens)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, sdkshape.ErrPromptTooLong) || errors.Is(err, provider.ErrPromptTooLong) {
+			b.meter.refundProvider(res.promptTokens, res.outputTokens)
+		}
 		return
 	}
 	if unused := res.outputTokens - used.CompletionTokens; unused > 0 {

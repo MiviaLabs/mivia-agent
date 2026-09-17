@@ -49,9 +49,10 @@ func runCompactWithIO(args []string, stdout io.Writer) error {
 	// forced plan's own retain/discard decision (unaffected by a uniform
 	// scale) would still be correct.
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
+	fullDisk := resolveFullDiskWithNotice(root)
 	// runRecoverySweep=false (F14): a standalone compaction is not a session
 	// start and must not push branches, publish PRs, or drive stacks.
-	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
+	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, fullDisk, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("compact: %w", err)

@@ -37,6 +37,13 @@ type Loop struct {
 	// context so it outlives the turn.
 	injectedSummary    provider.Message
 	hasInjectedSummary bool
+	// steerCooldownUntil is the shared SoftInterruptCooldown window for
+	// every steer bridge this turn spawns. It lives on the Loop so the
+	// cooldown survives the SDK runs a steered stop hands control back
+	// from: each steered re-run spawns a fresh bridge, and a per-bridge
+	// window would let a still-queued signal re-fire on every re-run.
+	// Reset at turn start (runOnceSDK), so it stays intra-turn.
+	steerCooldownUntil atomic.Int64
 	// Summary memo: one Summarize attempt per compaction event, keyed by the
 	// compacting preparation's identity (turnCompactionKey). Later steps of
 	// the turn reuse the memoized RENDERED message byte-for-byte instead of
@@ -111,12 +118,7 @@ type Loop struct {
 	// request. Reset at resetTurnCompaction, beside every other
 	// turn-scoped compaction field.
 	sdkSummaryMemo *sdkSummaryMemo
-	// softInterruptAt is the unix-nano timestamp of the last soft interrupt
-	// (plan 54). It backs the cross-call SoftInterruptCooldown; watcher
-	// goroutines write it and later calls' watchers read it, so it must be
-	// atomic.
-	softInterruptAt atomic.Int64
-	workLimits      *workLimitMeter
+	workLimits     *workLimitMeter
 }
 
 func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, error) {

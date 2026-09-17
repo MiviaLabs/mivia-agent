@@ -138,6 +138,17 @@ func (c catalogReadOnlyCompleter) ChatTurn(context.Context, provider.Request) (*
 	return nil, fmt.Errorf("catalog session for provider %q is read-only: cannot dispatch", c.providerName)
 }
 
+// resolveFullDiskWithNotice returns UserFullDiskAccessForWorkspace(root),
+// printing the full-disk notice to stderr when granted. Shared by the
+// catalog commands so both print identical guidance.
+func resolveFullDiskWithNotice(root string) bool {
+	fullDisk := config.UserFullDiskAccessForWorkspace(root)
+	if fullDisk {
+		fmt.Fprintln(os.Stderr, config.FullDiskNoticeText)
+	}
+	return fullDisk
+}
+
 // newCatalogSession builds a session bound to the same context-catalog
 // storage a real `mivia chat` invocation under workspaceRoot would use: the
 // repository-level store when workspaceRoot sits inside a git repo (mirroring
@@ -340,7 +351,8 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// notices into the JSON stream. runRecoverySweep=false (F14): a usage
 	// query is read-only and must not push branches, publish PRs, or drive
 	// stacks as a side effect.
-	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
+	fullDisk := resolveFullDiskWithNotice(root)
+	cleanup, err := agents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, fullDisk, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)

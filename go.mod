@@ -15,7 +15,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	git.sr.ht/~jamesponddotco/gitignore-go v1.0.0
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/MiviaLabs/mivia-ai-sdk v0.6.0
+	github.com/MiviaLabs/mivia-ai-sdk v0.8.0
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.0

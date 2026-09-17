@@ -1,6 +1,6 @@
 # Chat wire schema
 
-This document gives the wire contract for `mivia chat --json` and for the JSON output of the session commands. A frontend that drives mivia as a child process (for example a desktop app) uses this contract to send user input and to read structured output.
+This document gives the wire contract for `mivia chat --json` and for the JSON output of the session commands. A frontend that drives mivia as a child process (for example a desktop app) uses this contract. It sends user input and reads structured output through it.
 
 All output is newline-delimited JSON (NDJSON): one JSON object per line, on stdout. Every line has a `type` field. Read the `type` first, then the fields that belong to that type. Unknown types are safe to ignore: mivia adds new types, and old consumers must keep working.
 
@@ -124,18 +124,18 @@ much smaller than the silent splice it prevents.
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
 
-The relay is lossy on purpose. Every queue between the two processes is bounded and drops its oldest entry when a slow reader falls behind, so a busy turn can lose events rather than stall the process that is producing them. Two consequences for a consumer:
+The relay is lossy on purpose. Every queue between the two processes is bounded. It drops its oldest entry when a slow reader falls behind. A busy turn can lose events rather than stall the process that is producing them. Two consequences for a consumer:
 
 - Events of one turn always arrive in the order the other process published them. A later event never overtakes an earlier one, so `external_done` is the last event you receive for its `run_id`.
 - Events can be missing, and you are told when. Each loss produces one `external_dropped` event; a stream with no loss never emits one. The total counts loss on your own connection to the hub only, and it restarts at zero if the hub owner changes (the process you were connected to exited and another took over), so treat a total lower than the previous one as a new connection rather than as an error.
 
-  A THIRD loss is not reported either, and it is the one a new consumer meets first: a reader that predates the `external_subagent_*` types drops those lines in its own parser. `external_dropped` counts hub-side loss only, so a consumer comparing totals concludes the relay is lossless while its own parser is discarding a subagent's whole contribution. If you see no subagent activity at all, check that your reader knows the types before you look for loss.
+  A THIRD loss is not reported either, and it is the one a new consumer meets first. A reader that predates the `external_subagent_*` types drops those lines in its own parser. `external_dropped` counts hub-side loss only, so a consumer comparing totals concludes the relay is lossless while its own parser is discarding a subagent's whole contribution. If you see no subagent activity at all, check that your reader knows the types before you look for loss.
 
-  Two further losses cannot be reported at all. Events still queued when a connection closes are lost silently. So are events lost at the very end of a turn: the count travels only on a later event, and after the last one there is none.
+  Two further losses cannot be reported at all. Events still queued when a connection closes are lost silently. So are events lost at the very end of a turn. The count travels only on a later event, and after the last one there is none.
 
   Treat `external_chunk` text as a live preview, not as the authoritative transcript. Read the stored session with `mivia sessions show` for the complete answer, especially after an `external_dropped`.
 
-A turn whose start was lost is not reported at all: you never receive `external_done` for a `run_id` you have not already seen, so a `run_id` that appears for the first time is always a real turn beginning.
+A turn whose start was lost is not reported at all. You never receive `external_done` for a `run_id` you have not already seen. A `run_id` that appears for the first time is always a real turn beginning.
 
 ## Session commands
 

@@ -16,17 +16,19 @@ const maxFrontmatterBytes = 256 << 10
 //   - key: scalar
 //   - key: [a, b, c]        (flow sequence)
 //   - key:                  (block sequence, subsequent indented "- item" lines)
+//   - key:                  (nested map, subsequent indented "k: v" lines)
+//   - key: > / >- / | / |- / |+  (block scalar; indented body lines follow)
 //   - # comments and blank lines, skipped anywhere including inside a sequence
 //
-// Everything else (nested maps, >/| block scalars, anchors, multi-doc, etc.)
+// Everything else (anchors, multi-doc, quoted keys, etc.)
 // is a hard error naming the line number. Rejecting beats guessing: a silently
 // dropped key is the class of bug this parser exists to prevent.
 //
 // Unknown keys are NOT rejected here - the returned map uses raw key names.
-// Callers must reject keys they do not understand; use ParseFrontmatterKnown,
-// which is the safe entry point.
+// Callers must reject keys they do not understand; use
+// ParseFrontmatterKnownWithClosing, which is the safe entry point.
 func ParseFrontmatter(data []byte) (map[string]any, error) {
-	front, ok, err := frontmatterLines(data)
+	front, _, ok, err := frontmatterLinesWithClosing(data)
 	if err != nil {
 		return nil, err
 	}
@@ -36,13 +38,9 @@ func ParseFrontmatter(data []byte) (map[string]any, error) {
 	return parseFrontLines(front)
 }
 
-// ParseFrontmatterKnown wraps ParseFrontmatter and rejects any key not in the
-// known set, so a field that nothing consumes cannot be introduced silently.
-func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, error) {
-	m, err := ParseFrontmatter(data)
-	if err != nil || m == nil {
-		return nil, err
-	}
+// checkUnknownKeys returns an error naming every key of m that is not in the
+// known set, listing the recognised keys for the author.
+func checkUnknownKeys(m map[string]any, known map[string]bool) error {
 	var unknown []string
 	for k := range m {
 		if !known[k] {
@@ -50,7 +48,7 @@ func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, 
 		}
 	}
 	if len(unknown) == 0 {
-		return m, nil
+		return nil
 	}
 	sort.Strings(unknown)
 	knownList := make([]string, 0, len(known))
@@ -58,12 +56,13 @@ func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, 
 		knownList = append(knownList, k)
 	}
 	sort.Strings(knownList)
-	return nil, fmt.Errorf("unknown frontmatter key(s) %v; recognised: %v", unknown, knownList)
+	return fmt.Errorf("unknown frontmatter key(s) %v; recognised: %v", unknown, knownList)
 }
 
-// ParseFrontmatterKnownWithClosing is like ParseFrontmatterKnown but also
-// returns the line index of the closing "---" delimiter. When no frontmatter
-// is present, closing is -1.
+// ParseFrontmatterKnownWithClosing parses the frontmatter and rejects any key
+// not in the known set, so a field that nothing consumes cannot be introduced
+// silently. It also returns the line index of the closing "---" delimiter.
+// When no frontmatter is present, closing is -1.
 func ParseFrontmatterKnownWithClosing(data []byte, known map[string]bool) (map[string]any, int, error) {
 	front, closingLine, ok, err := frontmatterLinesWithClosing(data)
 	if err != nil {
@@ -76,22 +75,10 @@ func ParseFrontmatterKnownWithClosing(data []byte, known map[string]bool) (map[s
 	if err != nil {
 		return nil, -1, err
 	}
-	var unknown []string
-	for k := range m {
-		if !known[k] {
-			unknown = append(unknown, k)
-		}
+	if err := checkUnknownKeys(m, known); err != nil {
+		return nil, -1, err
 	}
-	if len(unknown) == 0 {
-		return m, closingLine, nil
-	}
-	sort.Strings(unknown)
-	knownList := make([]string, 0, len(known))
-	for k := range known {
-		knownList = append(knownList, k)
-	}
-	sort.Strings(knownList)
-	return nil, -1, fmt.Errorf("unknown frontmatter key(s) %v; recognised: %v", unknown, knownList)
+	return m, closingLine, nil
 }
 
 // frontmatterLinesWithClosing returns the lines between the opening and
@@ -119,40 +106,165 @@ func normalizeNewlines(s string) string {
 	return strings.ReplaceAll(s, "\r", "\n")
 }
 
-// frontmatterLines returns the lines between the opening and closing "---".
-// ok is false when the document has no frontmatter block at all, which is not
-// an error.
-func frontmatterLines(data []byte) (front []string, ok bool, err error) {
-	if len(data) > maxFrontmatterBytes {
-		return nil, false, fmt.Errorf("frontmatter exceeds %d bytes", maxFrontmatterBytes)
-	}
-	lines := strings.Split(normalizeNewlines(string(data)), "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return nil, false, nil
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return lines[1:i], true, nil
-		}
-	}
-	return nil, false, fmt.Errorf("unterminated frontmatter (no closing ---)")
-}
-
-// fmParser holds block-sequence accumulation state across lines.
+// fmParser holds block-sequence, nested-map, and block-scalar accumulation
+// state across lines.
 type fmParser struct {
 	result  map[string]any
 	key     string
 	block   []string
 	inBlock bool
+	// nested-map collection: indented "k: v" lines under a bare "key:"
+	inMap     bool
+	mapData   map[string]any
+	mapIndent int
+	// block-scalar collection: indented body lines under "key: >-" etc.
+	scalarStyle string
+	scalarLines []string
 }
 
-// flush commits a pending block sequence to the result map.
 func (p *fmParser) flush() {
 	if p.inBlock {
 		p.result[p.key] = p.block
 		p.block = nil
 		p.inBlock = false
 	}
+	if p.inMap {
+		p.result[p.key] = p.mapData
+		p.mapData = nil
+		p.inMap = false
+	}
+	if p.scalarStyle != "" {
+		p.result[p.key] = foldBlockScalar(p.scalarStyle, p.scalarLines)
+		p.scalarStyle = ""
+		p.scalarLines = nil
+	}
+}
+
+// foldBlockScalar renders collected body lines per YAML folded (>) or literal
+// (|) rules. Indentation was preserved in scalarLines; the common indent is
+// stripped here. Chomping: "-" strips trailing newlines; default clips to one.
+func foldBlockScalar(style string, lines []string) string {
+	indent := -1
+	for _, l := range lines {
+		trimmed := strings.TrimLeft(l, " ")
+		if trimmed == "" {
+			continue
+		}
+		n := len(l) - len(trimmed)
+		if indent < 0 || n < indent {
+			indent = n
+		}
+	}
+	if indent < 0 {
+		indent = 0
+	}
+	stripped := make([]string, len(lines))
+	for i, l := range lines {
+		if len(l) >= indent {
+			stripped[i] = l[indent:]
+		} else {
+			stripped[i] = strings.TrimLeft(l, " ")
+		}
+	}
+	var b strings.Builder
+	if strings.HasPrefix(style, "|") {
+		for _, l := range stripped {
+			b.WriteString(l)
+			b.WriteString("\n")
+		}
+	} else {
+		for i, l := range stripped {
+			if l == "" {
+				b.WriteString("\n")
+				continue
+			}
+			if i > 0 && stripped[i-1] != "" {
+				b.WriteString(" ")
+			}
+			b.WriteString(l)
+		}
+		b.WriteString("\n")
+	}
+	out := b.String()
+	if strings.HasSuffix(style, "-") {
+		out = strings.TrimRight(out, "\n")
+	} else {
+		out = strings.TrimRight(out, "\n") + "\n"
+	}
+	return out
+}
+
+// blockScalarBody reports whether rest is a YAML block-scalar header: a
+// '>' or '|' indicator optionally followed by one chomping (+/-) and/or one
+// explicit indentation digit, in either order. A leading digit is NOT an
+// indicator: "2|" is a plain scalar, not a header.
+func blockScalarBody(rest string) (string, bool) {
+	s := strings.TrimRight(rest, " ")
+	if s == "" || (s[0] != '>' && s[0] != '|') {
+		return "", false
+	}
+	style := string(s[0])
+	var hasChomp, hasDigit bool
+	for _, ch := range s[1:] {
+		switch {
+		case ch == '+' || ch == '-':
+			if hasChomp {
+				return "", false
+			}
+			hasChomp = true
+			style += string(ch)
+		case ch >= '1' && ch <= '9':
+			if hasDigit {
+				return "", false
+			}
+			hasDigit = true
+			// The digit is validated but never appended to style: the fold
+			// derives indentation from the body, and style's prefix/suffix
+			// probes encode the indicator and chomping only.
+		default:
+			return "", false
+		}
+	}
+	return style, true
+}
+
+// nextIsIndentedMapLine reports whether the next meaningful line after idx
+// is an indented "k: v" line (a nested map), as opposed to a list item or
+// nothing at all, and returns that line's indent.
+func nextIsIndentedMapLine(front []string, idx int) (int, bool) {
+	for j := idx + 1; j < len(front); j++ {
+		trimmed := strings.TrimSpace(front[j])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if isIndented(front[j]) && trimmed != "-" && !strings.HasPrefix(trimmed, "- ") {
+			return indentOf(front[j]), true
+		}
+		return 0, false
+	}
+	return 0, false
+}
+
+// mapLine parses one indented "k: v" line inside a nested map. Values are
+// plain scalars; deeper nesting fails closed.
+func (p *fmParser) mapLine(trimmed string, lineNum int, indent int) error {
+	if indent > p.mapIndent {
+		return fmt.Errorf("line %d: nested map %q does not support deeper nesting", lineNum, p.key)
+	}
+	colon := strings.Index(trimmed, ":")
+	if colon <= 0 {
+		return fmt.Errorf("line %d: expected indented \"key: value\" inside nested map %q", lineNum, p.key)
+	}
+	sub := strings.TrimSpace(trimmed[:colon])
+	val, err := unquote(strings.TrimSpace(trimmed[colon+1:]))
+	if err != nil {
+		return fmt.Errorf("line %d: key %q: %v", lineNum, sub, err)
+	}
+	if _, exists := p.mapData[sub]; exists {
+		return fmt.Errorf("line %d: duplicate key %q in nested map %q", lineNum, sub, p.key)
+	}
+	p.mapData[sub] = val
+	return nil
 }
 
 func parseFrontLines(front []string) (map[string]any, error) {
@@ -160,12 +272,30 @@ func parseFrontLines(front []string) (map[string]any, error) {
 	for i, raw := range front {
 		lineNum := i + 2 // 1-based, accounting for the opening "---"
 		trimmed := strings.TrimSpace(raw)
+		if p.scalarStyle != "" {
+			// Inside a block-scalar body blank lines and indented lines are
+			// content: they must not be skipped, folded away, or comment-
+			// stripped. A non-indented, non-blank line terminates the block
+			// scalar (as in YAML) and is parsed as the next frontmatter key -
+			// folding it into the scalar would silently swallow keys and
+			// defeat the duplicate- and unknown-key contracts below.
+			if trimmed == "" || isIndented(raw) {
+				p.scalarLines = append(p.scalarLines, raw)
+				continue
+			}
+		}
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		if isIndented(raw) {
 			if !p.inBlock {
-				return nil, fmt.Errorf("line %d: unexpected indented line (nested maps are not supported)", lineNum)
+				if p.inMap {
+					if err := p.mapLine(trimmed, lineNum, indentOf(raw)); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				return nil, fmt.Errorf("line %d: unexpected indented line (no enclosing block sequence, nested map, or block scalar)", lineNum)
 			}
 			item, err := blockItem(trimmed, lineNum)
 			if err != nil {
@@ -211,10 +341,17 @@ func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int)
 	case rest == "":
 		if startsBlockSequence(front, idx) {
 			p.key, p.block, p.inBlock = key, nil, true
+		} else if indent, ok := nextIsIndentedMapLine(front, idx); ok {
+			p.key, p.mapData, p.inMap = key, make(map[string]any), true
+			p.mapIndent = indent
 		} else {
 			p.result[key] = ""
 		}
 	default:
+		if style, ok := blockScalarBody(rest); ok {
+			p.key, p.scalarStyle, p.scalarLines = key, style, nil
+			return nil
+		}
 		val, err := unquote(rest)
 		if err != nil {
 			return fmt.Errorf("line %d: key %q: %v", lineNum, key, err)
@@ -243,6 +380,16 @@ func startsBlockSequence(front []string, idx int) bool {
 
 func isIndented(s string) bool {
 	return strings.HasPrefix(s, " ") || strings.HasPrefix(s, "\t")
+}
+
+// indentOf counts leading spaces of a raw line (tabs count as one column).
+func indentOf(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] != ' ' && s[i] != '\t' {
+			return i
+		}
+	}
+	return len(s)
 }
 
 // blockItem extracts the value from an indented "- item" line. Anything else

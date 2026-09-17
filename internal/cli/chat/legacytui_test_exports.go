@@ -35,11 +35,6 @@ type ChatInvocation = chatInvocation
 // SessionRouting is sessionRouting, exported for internal/legacytui.
 type SessionRouting = sessionRouting
 
-// SetupSessionContext is setupSessionContext, exported for internal/legacytui.
-func SetupSessionContext(sess *chat.Session, root string, res *config.Resolved) (*storage.SQLite, error) {
-	return setupSessionContext(sess, root, res)
-}
-
 // OpenContextStorePath is openContextStorePath, exported for internal/legacytui.
 func OpenContextStorePath(path string) (*storage.SQLite, error) {
 	return openContextStorePath(path)
@@ -48,21 +43,6 @@ func OpenContextStorePath(path string) (*storage.SQLite, error) {
 // ContextWorkspaceID is contextWorkspaceID, exported for internal/legacytui.
 func ContextWorkspaceID(root string) string {
 	return contextWorkspaceID(root)
-}
-
-// ValidateWorkspaceRestart is validateWorkspaceRestart, exported for internal/legacytui.
-func ValidateWorkspaceRestart(restart workspaceRestartError, invocation ChatInvocation) error {
-	return validateWorkspaceRestart(restart, invocation)
-}
-
-// BindManagedWorktreeSessionExpected is bindManagedWorktreeSessionExpected, exported for internal/legacytui.
-func BindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string, expected contextstate.WorktreeInstance) error {
-	return bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, storePath, expected)
-}
-
-// HandleSlash is handleSlash, exported for internal/legacytui.
-func HandleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
-	return handleSlash(line, sess, res, toolsOn, term)
 }
 
 // SkillScopeFromAgent is cliagents.SkillScopeFromAgent, exported for internal/legacytui.
@@ -170,11 +150,6 @@ func NewREPLRuntime(sess *chat.Session, res *config.Resolved, toolsOn bool, term
 	return newREPLRuntime(sess, res, toolsOn, term)
 }
 
-// HandleSlashSessions is handleSlashSessions, exported for internal/legacytui.
-func HandleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (bool, bool, error) {
-	return handleSlashSessions(cmd, line, sess, term)
-}
-
 // HandleSlashAgent is handleSlashAgent, exported for internal/legacytui.
 func HandleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved, term *Terminal, state *AgentSessionState) (bool, bool, error) {
 	return handleSlashAgent(fields, sess, res, term, state)
@@ -240,38 +215,14 @@ func BeginManagedWorktreeRemovalInStore(store *storage.SQLite, root string, wt *
 	return cliworktree.BeginManagedWorktreeRemovalInStore(store, root, wt)
 }
 
-// SetupChatSessionContext is setupChatSessionContext, exported for internal/legacytui.
-func SetupChatSessionContext(sess *chat.Session, workspaceRoot string, invocation ChatInvocation, res *config.Resolved) (*storage.SQLite, error) {
-	return setupChatSessionContext(sess, workspaceRoot, invocation, res)
-}
-
-// SetupRepositorySessionContext is setupRepositorySessionContext, exported for internal/legacytui.
-func SetupRepositorySessionContext(sess *chat.Session, repositoryRoot, storePath string, res *config.Resolved) (*storage.SQLite, error) {
-	return setupRepositorySessionContext(sess, repositoryRoot, storePath, res)
-}
-
 // RegisterWorktreeRoute is cliworktree.RegisterWorktreeRoute, exported for internal/legacytui.
 func RegisterWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
 	return cliworktree.RegisterWorktreeRoute(root, wt)
 }
 
-// EnableSessionContext is enableSessionContext, exported for internal/legacytui.
-func EnableSessionContext(sess *chat.Session, root string, store *storage.SQLite, res *config.Resolved) error {
-	return enableSessionContext(sess, root, store, res)
-}
-
 // OpenContextStore is openContextStore, exported for internal/legacytui.
 func OpenContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
 	return openContextStore(root, cfg)
-}
-
-// ClassicAgentStatePtr is &cliagents.ClassicAgentState, exported for internal/legacytui.
-var ClassicAgentStatePtr = &cliagents.ClassicAgentState
-
-// NewTestTerminal builds a Terminal that writes to w, for tests that need a
-// Terminal without opening a real tty. Exported for internal/legacytui.
-func NewTestTerminal(w io.Writer) *Terminal {
-	return &Terminal{out: w}
 }
 
 // ContextDispatcherFor is contextDispatcherFor, exported for internal/legacytui.
@@ -284,23 +235,6 @@ func ContextDispatcherFor(sess *chat.Session, cfg config.SubagentConfig) Context
 func OrchestrationRepoForDispatcher(d *runtime.Dispatcher) ledger.LedgerRepository {
 	return orchestrate.OrchestrationRepoForDispatcher(d)
 }
-
-// NewChatInvocationWorkspacePath builds a ChatInvocation with only
-// workspacePath set, for internal/legacytui tests that need one without a
-// full CLI parse. chatInvocation's fields are unexported (chat_command.go),
-// so a constructor is the only way to set one from outside the package.
-func NewChatInvocationWorkspacePath(workspacePath string) ChatInvocation {
-	return chatInvocation{workspacePath: workspacePath}
-}
-
-// NewChatInvocationRepositorySessionStorePath builds a ChatInvocation with
-// only repositorySessionStorePath set, for internal/legacytui tests.
-func NewChatInvocationRepositorySessionStorePath(path string) ChatInvocation {
-	return chatInvocation{repositorySessionStorePath: path}
-}
-
-// REPLRuntime is replRuntime, exported for internal/legacytui.
-type REPLRuntime = replRuntime
 
 // RestoreREPLRuntime builds a replRuntime for sess/res/term via
 // newREPLRuntime (toolsOn=false: no caller of this export exercises the
@@ -315,21 +249,6 @@ func RestoreREPLRuntime(sess *chat.Session, res *config.Resolved, term *Terminal
 
 // SlashSurfacePlain is slashSurfacePlain, exported for internal/legacytui.
 const SlashSurfacePlain = slashSurfacePlain
-
-// LoadSessionSkills is cliagents.LoadSessionSkills, exported for internal/legacytui.
-func LoadSessionSkills(root string, allowProject bool) (*skills.Registry, []string, error) {
-	return cliagents.LoadSessionSkills(root, allowProject)
-}
-
-// SkillTurnPreamble is skills.SkillTurnPreamble, exported for internal/legacytui.
-const SkillTurnPreamble = skills.SkillTurnPreamble
-
-// AnsiBgDiffAdd and AnsiBgDiffDel are ansiBgDiffAdd/ansiBgDiffDel, exported
-// for internal/legacytui.
-const (
-	AnsiBgDiffAdd = ansiBgDiffAdd
-	AnsiBgDiffDel = ansiBgDiffDel
-)
 
 // LoadChatSkills is loadChatSkills, exported for internal/legacytui.
 func LoadChatSkills(wsRoot string) (*skills.Registry, error) {

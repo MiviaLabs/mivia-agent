@@ -80,6 +80,40 @@ func TestEmitCacheUsageSwallowsWriterError(t *testing.T) {
 }
 
 func TestEmitCacheUsageNilUsageWriterIsNoop(t *testing.T) {
-	EmitCacheUsage(context.Background(), Options{}, "deepseek", "deepseek-v4-pro",
+	var got Event
+	bus := events.New()
+	var busEvent events.Event
+	bus.Subscribe(events.KindCacheUsage, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		busEvent = ev
+	}))
+
+	// Must not panic when UsageWriter is unset - the default everywhere this
+	// slice isn't wired - and must still publish events to OnEvent and EventBus.
+	EmitCacheUsage(context.Background(), Options{
+		OnEvent:  func(e Event) { got = e },
+		EventBus: bus,
+	}, "deepseek", "deepseek-v4-pro",
 		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80})
+	bus.Flush()
+
+	if got.Kind != EventCacheUsage || got.CacheUsage == nil {
+		t.Fatalf("expected EventCacheUsage with nil UsageWriter, got %+v", got)
+	}
+	if got.CacheUsage.CachedInputTokens != 80 || got.CacheUsage.InputTokens != 100 {
+		t.Fatalf("cached input tokens = %d, input tokens = %d", got.CacheUsage.CachedInputTokens, got.CacheUsage.InputTokens)
+	}
+	if busEvent.Kind != events.KindCacheUsage {
+		t.Fatalf("expected bus event KindCacheUsage, got %+v", busEvent)
+	}
+
+	// Calling with empty Options (all nil) must also be a safe no-op.
+	panicked := func() (p any) {
+		defer func() { p = recover() }()
+		EmitCacheUsage(context.Background(), Options{}, "deepseek", "deepseek-v4-pro",
+			provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80})
+		return nil
+	}()
+	if panicked != nil {
+		t.Fatalf("EmitCacheUsage with empty options panicked: %v", panicked)
+	}
 }

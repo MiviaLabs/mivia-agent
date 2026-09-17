@@ -1,0 +1,13 @@
+id = "moving-unpinned-baseline"
+title = "Review baseline moved during the review"
+section = "Discover the Context"
+verdict = "PARTIAL"
+anchors = [
+  "Pin a version-control baseline to an immutable revision identifier",
+  "a movable reference can change while the review runs.",
+]
+design = """A review compares the structure against a moving branch
+reference. During the review, the reference moves to a new revision. Two
+findings cite content that the new revision replaced. The reviewer cannot
+reproduce those findings at the new revision. The review stays partial
+until the baseline is an immutable revision identifier."""

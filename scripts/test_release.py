@@ -62,6 +62,11 @@ def main() -> None:
         "checksums.txt",
         "mivia-version.txt",
         "install.ps1",
+        # A local `replace` directive points the build at a working tree outside
+        # this commit: the archives would carry code that no tag pins and no
+        # go.sum verifies, while the provenance attestation still names HEAD.
+        # The release script must refuse to build in that state.
+        "^replace",
     ):
         require(release, fragment, release_path)
 

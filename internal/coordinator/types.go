@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -53,7 +52,7 @@ type RunHandle struct {
 	// that task - and every sibling task, and the run itself - running.
 	// Guarded by its own mutex rather than taskCancelMu so the two
 	// registries never contend with each other.
-	subagentToolCancelers map[string]agent.ToolCanceler
+	subagentToolCancelers map[string]subagents.ToolCanceler
 	subagentToolCancelMu  sync.RWMutex
 	recovered             bool
 	localActor            bool

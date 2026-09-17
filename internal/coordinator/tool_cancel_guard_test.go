@@ -12,7 +12,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -24,7 +23,7 @@ func validTestCanceler(string) bool { return true }
 // with a non-empty taskID and a non-nil canceler must not panic.
 func TestRegisterSubagentToolCanceler_NilHandleReceiverIsNoop(t *testing.T) {
 	var h *RunHandle
-	h.registerSubagentToolCanceler("task-1", agent.ToolCanceler(validTestCanceler)) // must not panic
+	h.registerSubagentToolCanceler("task-1", subagents.ToolCanceler(validTestCanceler)) // must not panic
 }
 
 // TestRegisterSubagentToolCanceler_EmptyTaskIDIsNoop isolates the
@@ -32,7 +31,7 @@ func TestRegisterSubagentToolCanceler_NilHandleReceiverIsNoop(t *testing.T) {
 // taskID, must leave the handle's canceler map untouched.
 func TestRegisterSubagentToolCanceler_EmptyTaskIDIsNoop(t *testing.T) {
 	h := &RunHandle{}
-	h.registerSubagentToolCanceler("", agent.ToolCanceler(validTestCanceler))
+	h.registerSubagentToolCanceler("", subagents.ToolCanceler(validTestCanceler))
 	if n := len(h.subagentToolCancelers); n != 0 {
 		t.Fatalf("subagentToolCancelers has %d entries after an empty-taskID call, want 0", n)
 	}
@@ -56,7 +55,7 @@ func TestRegisterSubagentToolCanceler_NilCancelerIsNoop(t *testing.T) {
 // anything.
 func TestRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing.T) {
 	h := &RunHandle{}
-	h.registerSubagentToolCanceler("task-1", agent.ToolCanceler(validTestCanceler))
+	h.registerSubagentToolCanceler("task-1", subagents.ToolCanceler(validTestCanceler))
 	got, ok := h.subagentToolCanceler("task-1")
 	if !ok {
 		t.Fatal("subagentToolCanceler(\"task-1\") ok = false, want true after a valid registration")
@@ -71,7 +70,7 @@ func TestRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing.T) {
 // guard: calling it on a nil *Coordinator must not panic.
 func TestCoordinatorRegisterSubagentToolCanceler_NilReceiverIsNoop(t *testing.T) {
 	var c *Coordinator
-	c.RegisterSubagentToolCanceler("run-1", "task-1", agent.ToolCanceler(validTestCanceler)) // must not panic
+	c.RegisterSubagentToolCanceler("run-1", "task-1", subagents.ToolCanceler(validTestCanceler)) // must not panic
 }
 
 // TestCoordinatorRegisterSubagentToolCanceler_EmptyRunIDIsNoop isolates
@@ -92,7 +91,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_EmptyRunIDIsNoop(t *testing.T) 
 	seeded := &RunHandle{runID: "", owner: c}
 	c.handlesByRun[""] = seeded
 
-	c.RegisterSubagentToolCanceler("", "task-1", agent.ToolCanceler(validTestCanceler))
+	c.RegisterSubagentToolCanceler("", "task-1", subagents.ToolCanceler(validTestCanceler))
 
 	if n := len(seeded.subagentToolCancelers); n != 0 {
 		t.Fatalf("seeded handle has %d registered cancelers after an empty-runID call, want 0 (guard must short-circuit before HandleForRun)", n)
@@ -108,7 +107,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing
 	h := &RunHandle{runID: "run-1", owner: c}
 	c.handlesByRun["run-1"] = h
 
-	c.RegisterSubagentToolCanceler("run-1", "task-1", agent.ToolCanceler(validTestCanceler))
+	c.RegisterSubagentToolCanceler("run-1", "task-1", subagents.ToolCanceler(validTestCanceler))
 
 	got, ok := h.subagentToolCanceler("task-1")
 	if !ok || got == nil {
@@ -120,7 +119,7 @@ func TestCoordinatorRegisterSubagentToolCanceler_ValidInputsRegisters(t *testing
 // `canceler == nil` leg of CancelSubagentToolCall's guard, distinct from
 // "never registered at all" (already covered by
 // TestCancelSubagentToolCall_UnknownIsSafeNoop's unknown-call-ID case):
-// this stores a nil agent.ToolCanceler value directly under a known
+// this stores a nil subagents.ToolCanceler value directly under a known
 // taskID/callID pairing (bypassing registerSubagentToolCanceler, which
 // itself refuses to store a nil canceler), so `ok` is true but the stored
 // value is nil. Mirrors internal/tui/adapter's
@@ -132,7 +131,7 @@ func TestCancelSubagentToolCall_RegisteredNilCancelerIsSafeNoop(t *testing.T) {
 
 	h := &RunHandle{runID: "run-1", owner: c, done: make(chan struct{}), cancelDone: make(chan struct{})}
 	h.subagentToolCancelMu.Lock()
-	h.subagentToolCancelers = map[string]agent.ToolCanceler{"task-1": nil}
+	h.subagentToolCancelers = map[string]subagents.ToolCanceler{"task-1": nil}
 	h.subagentToolCancelMu.Unlock()
 
 	ok, err := c.CancelSubagentToolCall(context.Background(), h, "task-1", "call-1")
@@ -150,7 +149,7 @@ func TestCancelSubagentToolCall_RegisteredNilCancelerIsSafeNoop(t *testing.T) {
 // register nothing.
 func TestCoordinatorRegisterSubagentToolCanceler_UnknownRunIDIsNoop(t *testing.T) {
 	c := &Coordinator{handlesByRun: map[string]*RunHandle{}}
-	c.RegisterSubagentToolCanceler("run-never-spawned", "task-1", agent.ToolCanceler(validTestCanceler)) // must not panic
+	c.RegisterSubagentToolCanceler("run-never-spawned", "task-1", subagents.ToolCanceler(validTestCanceler)) // must not panic
 }
 
 // TestCancelSubagentToolCall_InvalidHandlePropagates pins

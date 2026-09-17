@@ -306,7 +306,13 @@ func (s Screen) dialogSize() (int, int) {
 // no notice. Both close the picker, so both clear the screen (the same
 // reasoning as opening it: the picker drew content the transcript and
 // composer underneath never redrew, and closing it exposes them again).
-func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdName string, apply func(string) ports.CommandOutcome) (app.Screen, tea.Cmd) {
+func (s Screen) handlePickerKey(
+	msg tea.KeyPressMsg,
+	which *picker.Model,
+	cmdName string,
+	apply func(string) ports.CommandOutcome,
+	applyGrouped func(header, item string) ports.CommandOutcome,
+) (app.Screen, tea.Cmd) {
 	// ctrl+c is the emergency exit and must not be swallowed by the
 	// modal, the same rule as the approval prompt: close the picker,
 	// then run the ordinary quit flow (cancel the turn, arm the second
@@ -326,17 +332,23 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 	// (SelectMsg) or "esc" (CancelMsg) - see internal/tui/view/component/picker.
 	switch m := cmd().(type) {
 	case picker.SelectMsg:
+		header, item, _ := next.SelectedWithHeader()
 		s.modelPicker, s.agentPicker, s.sessionPicker, s.palettePicker, s.effortPicker = nil, nil, nil, nil, nil
 		if s.runner == nil {
 			return s.withError("no command runner configured for /" + cmdName), tea.ClearScreen
 		}
-		out := apply(m.Item)
+		var out ports.CommandOutcome
+		if applyGrouped != nil && header != "" {
+			out = applyGrouped(header, item)
+		} else {
+			out = apply(m.Item)
+		}
 		if s.conv != nil {
 			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
 			s.transcript.SetModel(s.conv.Model().Name)
 		}
-		next, outcomeCmd := s.applyCommandOutcome(out)
-		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+		nextScreen, outcomeCmd := s.applyCommandOutcome(out)
+		return nextScreen, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:
 		s.modelPicker, s.agentPicker, s.sessionPicker, s.palettePicker, s.effortPicker = nil, nil, nil, nil, nil
 		return s, tea.ClearScreen
@@ -349,19 +361,25 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s.handlePickerKey(msg, s.modelPicker, "model", func(name string) ports.CommandOutcome {
 		return s.runner.SelectModel(context.Background(), name)
+	}, func(header, item string) ports.CommandOutcome {
+		runner, ok := s.runner.(ports.ModelSelectionRunner)
+		if !ok {
+			return ports.CommandOutcome{Err: "command runner does not support provider-aware model selection"}
+		}
+		return runner.SelectModelForProvider(context.Background(), header, item)
 	})
 }
 
 func (s Screen) handleAgentPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s.handlePickerKey(msg, s.agentPicker, "agents", func(name string) ports.CommandOutcome {
 		return s.runner.SelectAgent(context.Background(), name)
-	})
+	}, nil)
 }
 
 func (s Screen) handleEffortPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s.handlePickerKey(msg, s.effortPicker, "effort", func(level string) ports.CommandOutcome {
 		return s.runner.SelectEffort(context.Background(), level)
-	})
+	}, nil)
 }
 
 func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {

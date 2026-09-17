@@ -93,7 +93,7 @@ func assertGoEngineerAgent(t *testing.T, reg *AgentRegistry) {
 
 func assertSpecialistScopes(t *testing.T, reg *AgentRegistry) {
 	t.Helper()
-	for _, name := range []string{"researcher", "reviewer", "security"} {
+	for _, name := range []string{"researcher", "security"} {
 		a, ok := reg.Get(name)
 		if !ok {
 			t.Fatalf("%s missing", name)

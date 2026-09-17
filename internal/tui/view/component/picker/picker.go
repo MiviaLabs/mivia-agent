@@ -184,6 +184,28 @@ func (m Model) Selected() (string, bool) {
 	return it.text, true
 }
 
+// SelectedWithHeader returns the header of the group enclosing the currently
+// selected item, the selected item's text, and true; or ("", "", false) if the
+// cursor is invalid or on a non-selectable header row. If the item belongs to an
+// anonymous group or a flat list without headers, header is returned as "".
+// It inspects the filtered items slice from the selected cursor backwards to the
+// nearest preceding header.
+func (m Model) SelectedWithHeader() (header, item string, ok bool) {
+	if m.cursor < 0 || m.cursor >= len(m.items) {
+		return "", "", false
+	}
+	it := m.items[m.cursor]
+	if it.kind != itemKindModel {
+		return "", "", false
+	}
+	for i := m.cursor - 1; i >= 0; i-- {
+		if m.items[i].kind == itemKindHeader {
+			return m.items[i].text, it.text, true
+		}
+	}
+	return "", it.text, true
+}
+
 // SelectMsg is emitted when the user confirms a selection with Enter.
 type SelectMsg struct{ Item string }
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -87,5 +88,32 @@ func TestRunOnceSDKCarriesMaxToolCallsThroughRun(t *testing.T) {
 	}
 	if got != "sdk-output" {
 		t.Fatalf("got %q, want %q", got, "sdk-output")
+	}
+}
+
+// TestStripInjectedSummaryFramesPreservesCaller pins the no-aliasing
+// contract of stripInjectedSummaryFrames: it must strip every
+// SummaryMessageName frame while leaving the caller's slice (and its
+// backing array) untouched. The old `out := messages[:0]` trick reused
+// the caller's backing array, so stripping an interior summary frame
+// shifted later messages down over the caller's own elements.
+func TestStripInjectedSummaryFramesPreservesCaller(t *testing.T) {
+	input := []provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{Role: provider.RoleUser, Content: "summary", Name: SummaryMessageName},
+		{Role: provider.RoleAssistant, Content: "world"},
+	}
+	snapshot := append([]provider.Message(nil), input...)
+	out := stripInjectedSummaryFrames(input)
+	if len(out) != 2 {
+		t.Fatalf("got %d messages, want 2 (summary frame stripped): %+v", len(out), out)
+	}
+	if out[0].Content != "hello" || out[1].Content != "world" {
+		t.Fatalf("wrong frames survived the strip: %+v", out)
+	}
+	for i := range input {
+		if !reflect.DeepEqual(input[i], snapshot[i]) {
+			t.Fatalf("caller slice modified at index %d: got %+v, want %+v", i, input[i], snapshot[i])
+		}
 	}
 }

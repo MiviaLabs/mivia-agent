@@ -101,6 +101,10 @@ func (l *Loop) resetTurnCompaction() {
 	l.summaryMemoKey = ""
 	l.sdkPendingCompaction = nil
 	l.sdkSummaryMemo = nil
+	// preCompactSource is turn-scoped like everything reset here: leaving
+	// it set past the turn could leak this turn's pre-compaction history
+	// into a later turn's SourceExcerpts.
+	l.preCompactSource = nil
 }
 
 // compactionIdentity derives the memo key for one compaction event from its

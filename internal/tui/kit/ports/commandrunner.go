@@ -186,3 +186,10 @@ type CommandRunner interface {
 // The picker always offers it first so switching back needs no recall of
 // the name.
 const DefaultAgentName = "general-orchestrator"
+
+// ModelSelectionRunner is an optional extension to CommandRunner. Keeping
+// it separate prevents breaking fakes and callers that only implement the
+// base CommandRunner interface.
+type ModelSelectionRunner interface {
+	SelectModelForProvider(ctx context.Context, provider, model string) CommandOutcome
+}

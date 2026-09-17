@@ -56,6 +56,10 @@ SKILL_ARGS_HINT_MAX = 80          # argsHintMaxLen
 SKILL_KNOWN_KEYS = {
     "name", "description", "triggers", "user-invocable", "argument-hint",
     "short-description", "tools",
+    # Spec-defined keys the loader consumes/ignores deliberately:
+    # license is a plain string; metadata is a nested map carried for
+    # provenance but not surfaced model-facing.
+    "license", "metadata",
     # JSON-string schemas. The frontmatter subset parser holds them as
     # strings, not as nested maps.
     "input_schema", "output_schema",
@@ -125,8 +129,9 @@ def frontmatter_violations(body: str) -> list[str]:
         if key in seen:
             problems.append(f"line {line_num}: duplicate frontmatter key {key!r}")
         seen.add(key)
-        # A key with no inline value opens a block sequence.
-        in_block = rest.strip() == ""
+        # A key with no inline value opens a block sequence or nested map;
+        # a '>' or '|' header opens a block scalar.
+        in_block = rest.strip() == "" or rest.strip()[:1] in (">", "|")
     return problems
 
 

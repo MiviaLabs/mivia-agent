@@ -1,0 +1,13 @@
+id = "half-applied-pattern"
+title = "Observer pattern applied on one site of three"
+section = "Price the tradeoff"
+verdict = "BLOCK"
+anchors = [
+  "When a design names a pattern, style, or mechanism, verify that every",
+  "half-applied pattern is a finding, not a style preference",
+]
+design = """A design names an observer-style pattern across three data
+sites. The pattern requires a notification path from each site to its
+subscribers. Two of the three sites omit that path. One subscriber learns
+nothing when those two sites change. The design applies the pattern in
+name only."""

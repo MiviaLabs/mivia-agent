@@ -175,7 +175,6 @@
       "internal/workspace"
     ],
     "internal/cli/orchestrate": [
-      "internal/agent",
       "internal/agents",
       "internal/chatsync",
       "internal/cli/agents",
@@ -259,7 +258,6 @@
       "internal/usage"
     ],
     "internal/coordinator": [
-      "internal/agent",
       "internal/agentmsg",
       "internal/config",
       "internal/ledger",
@@ -331,10 +329,7 @@
       "internal/tools"
     ],
     "internal/sdkadapter": [
-      "internal/hooks",
-      "internal/provider",
       "internal/provider/reasoning",
-      "internal/skills",
       "internal/tools"
     ],
     "internal/skills": [

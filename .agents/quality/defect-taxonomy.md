@@ -1299,7 +1299,7 @@ unconditionally zeroes `chat.Session.SessionDir` (with `sessionStore`/
 `saveManager`) the instant context state is enabled - which every real
 `mivia chat` invocation does, CLI or TUI, before chat sync ever attaches.
 `internal/cli/chat/chat_sync.go`'s `cliSyncOptions` and
-`internal/tui/adapter/session_pool.go`'s `poolSyncOptions` read
+`internal/tui/adapter/session_pool_sync.go`'s `poolSyncOptions` read
 `sess.SessionDir` to anchor chat-sync's local identity file.
 `chatsync.LoadOrCreateIdentity` treats an empty anchor directory as "no
 identity directory available" and mints a fresh, NEVER-PERSISTED identity
@@ -1834,3 +1834,44 @@ cancelled the context lease of the live session while it ran active turns.
 **Gate.** Add unit tests that assert ownership detachment. Verify that calling
 cleanup on a discarded candidate leaves the live instance's leases and durable
 handles open and valid.
+
+## DC-45 Two owners take each other's mutex in opposite orders
+
+**Mechanism.** Owner A calls into owner B, and B calls back into A. Each side
+takes its own mutex, and each side holds that mutex across the call into the
+other. A takes `A.mu`, then reaches B and takes `B.mu`. B takes `B.mu`, then
+reaches A and takes `A.mu`. Go mutexes are not reentrant and acquisition has no
+timeout, so both goroutines wait forever.
+
+The deadlock needs the two goroutines to overlap, so it hides well. The code
+reads as synchronized because both sides do lock. A context deadline does not
+help: a budget spent after `Lock()` returns cannot break the tie in the
+acquisition itself.
+
+**Evidence.** 2026-09-17. In `internal/tui/adapter`, every attach path holds
+`SessionPool.mu` and calls `attachSyncLocked`, which takes
+`RemoteInputWatcher.mu` through `StopSync` (edge A -> B). `RemoteInputWatcher.
+Backfill` held `w.mu` across `cfg.IsPooled`, and `StartBackgroundWatch` wires
+`IsPooled` to a closure over `SessionPool.mu` (edge B -> A). One `Backfill`
+enumeration that overlapped one attach blocked both goroutines permanently:
+`SessionPool.mu` froze every session operation, and `ReleaseLeases` could no
+longer shut the pool down.
+
+**Probes.**
+- For every stored callback, function field, or injected closure, ask which lock
+  the caller holds at the call site, and which lock the callback takes. Two locks
+  in opposite orders is a defect even when no test shows it.
+- Prove the held-lock fact without a timing window. Call `mu.TryLock()` inside
+  the callback: a non-reentrant mutex refuses the goroutine that already owns it,
+  so `false` is proof that the caller holds the lock.
+- Force the interleaving with a channel handshake inside the callback, then
+  assert that both sides finish. A test that hangs without `t.Fatal` reports the
+  defect as a suite timeout instead of a failure.
+- State the allowed lock order in a doc comment at both owners. Two packages that
+  hold mutual locks need one written order, not two local rationales.
+
+**Gate.** `internal/tui/adapter/remote_input_watcher_lockorder_test.go`:
+`TestRemoteInputWatcher_BackfillCallsIsPooledWithoutHoldingWatcherLock` (the
+`TryLock` probe) and
+`TestSessionPool_AttachUnderPoolLockDoesNotDeadlockBackfill` (forced
+interleaving with a bounded wait). Invariant row: `INV-TUI-31`.

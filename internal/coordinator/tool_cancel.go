@@ -3,7 +3,7 @@ package coordinator
 import (
 	"context"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
 // registerSubagentToolCanceler installs the ToolCanceler for one task,
@@ -14,13 +14,13 @@ import (
 // never mid-flight for the one this call belongs to). Safe for concurrent
 // registration across sibling tasks; a nil handle, blank taskID, or nil
 // canceler is a no-op.
-func (h *RunHandle) registerSubagentToolCanceler(taskID string, canceler agent.ToolCanceler) {
+func (h *RunHandle) registerSubagentToolCanceler(taskID string, canceler subagents.ToolCanceler) {
 	if h == nil || taskID == "" || canceler == nil {
 		return
 	}
 	h.subagentToolCancelMu.Lock()
 	if h.subagentToolCancelers == nil {
-		h.subagentToolCancelers = map[string]agent.ToolCanceler{}
+		h.subagentToolCancelers = map[string]subagents.ToolCanceler{}
 	}
 	h.subagentToolCancelers[taskID] = canceler
 	h.subagentToolCancelMu.Unlock()
@@ -30,7 +30,7 @@ func (h *RunHandle) registerSubagentToolCanceler(taskID string, canceler agent.T
 // any. ok is false when the task never registered one: it has not started,
 // its loop uses the legacy (non-SDK) backend, or - for a recovered handle -
 // this process never ran the task at all and so never saw its hook fire.
-func (h *RunHandle) subagentToolCanceler(taskID string) (agent.ToolCanceler, bool) {
+func (h *RunHandle) subagentToolCanceler(taskID string) (subagents.ToolCanceler, bool) {
 	if h == nil {
 		return nil, false
 	}
@@ -44,7 +44,7 @@ func (h *RunHandle) subagentToolCanceler(taskID string) (agent.ToolCanceler, boo
 // doc comment (types.go) for the contract; HandleForRun already returns nil
 // for an unknown runID, so a not-yet-visible or already-evicted run is a
 // clean no-op rather than a panic.
-func (c *Coordinator) RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler) {
+func (c *Coordinator) RegisterSubagentToolCanceler(runID, taskID string, canceler subagents.ToolCanceler) {
 	if c == nil || runID == "" {
 		return
 	}

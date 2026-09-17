@@ -255,7 +255,10 @@ func TestManagerStdioDiscoverySurvivesStartupContext(t *testing.T) {
 }
 
 func TestStdioMCPHelper(t *testing.T) {
-	if os.Getenv("MIVIA_MCP_HELPER") != "1" {
+	if got := os.Getenv("MIVIA_MCP_HELPER"); got != "1" {
+		if got != "" {
+			t.Fatalf("MIVIA_MCP_HELPER = %q, want empty outside helper subprocess", got)
+		}
 		return
 	}
 	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)

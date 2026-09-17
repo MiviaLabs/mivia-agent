@@ -65,7 +65,9 @@ type SubagentConfig struct {
 	// Default: 4096. An explicit 0 means "always use refs" (never inline) and
 	// is preserved through resolution via inlineOutputBytesSet; an absent key
 	// falls back to the 4096 default. Errors follow the same rule with
-	// "error"/"error_ref".
+	// "error"/"error_ref". A negative value is rejected at load
+	// (rejectNegativeSubagentKnobs): it would behave identically to 0 and so
+	// hide the typo it almost always is.
 	InlineOutputBytes int `toml:"inline_output_bytes"`
 
 	// inlineOutputBytesSet records whether [subagents] inline_output_bytes was
@@ -87,7 +89,10 @@ type SubagentConfig struct {
 	// thundering-herd hang behind overloaded local proxies). Default: 150.
 	// An explicit 0 disables staggering and is preserved through resolution
 	// via spawnStaggerMsSet, mirroring inline_output_bytes; an absent key
-	// falls back to the default. Values above 1000 are clamped to 1000.
+	// falls back to the default. Values above 1000 are clamped to 1000. A
+	// negative value is rejected at load (rejectNegativeSubagentKnobs): the
+	// dispatch loop only staggers when the duration is positive, so -150 would
+	// silently mean "disabled" when 150 was meant.
 	SpawnStaggerMs int `toml:"spawn_stagger_ms"`
 
 	// spawnStaggerMsSet records whether [subagents] spawn_stagger_ms was

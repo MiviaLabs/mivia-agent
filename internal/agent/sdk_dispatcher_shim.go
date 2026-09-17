@@ -261,12 +261,32 @@ func (d *dispatcherShim) composeRunOutput(callKey string, args []byte, r runtime
 	// viewer was told the call completed.
 	failed := r.Err != nil || toolResultBodyFailed(d.inner.Name(), originalBody)
 	if d.turn != nil {
+		d.turn.recordToolResultEvidence(d.inner.Name(), len(body))
+		if d.touchedSurface(args, capability) {
+			d.turn.recordChangedSurface(d.inner.Name())
+		}
 		if reminder := d.turn.recordProgress(failed, d.inner.Name(), args, capability); reminder != "" {
 			body = AppendSystemReminder(body, reminder)
 		}
 	}
 	d.recordToolEventOutcome(callKey, args, body, failed, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
+}
+
+// touchedSurface reports whether this call attempted a state mutation,
+// REGARDLESS of whether it succeeded: a write-class tool (by CLI
+// Capability or by the SDK profile's own Write class) or a mutating
+// run_command invocation both count, because a call that got far enough
+// to attempt the mutation should be recorded whether it succeeded or
+// failed (a partial write is still a touch). This mirrors
+// recordProgress's own mutation test in sdk_turn_state.go so the two
+// tables agree on the same call instead of drifting apart - it does not
+// duplicate isMutatingCommand's logic, it calls the exact same function.
+func (d *dispatcherShim) touchedSurface(args []byte, capability tools.Capability) bool {
+	if capability.Class == tools.ExecutionWrite || sdktools.ExecutionProfileOf(d.inner).Class == sdktools.ExecutionClassWrite {
+		return true
+	}
+	return d.inner.Name() == tools.RunCommandToolName && isMutatingCommand(args)
 }
 
 // dispatcherAndSpool reads the live dispatcher and spool from the turn
@@ -286,17 +306,14 @@ func (d *dispatcherShim) dispatcherAndSpool() (*runtime.Dispatcher, *remainder.S
 }
 
 // toolCallKeyFromContext returns the lookup key for the in-flight tool call:
-// call.ID when non-empty, else call.Name. The fallback is not a test
-// affordance - a provider stream can send the tool-call NAME delta before, or
-// without, the ID delta, and every recorder on this path has to agree on the
-// key or an outcome lands where nothing looks for it.
+// call.ID when non-empty, else call.Name (delegating to sdkagentloop.ToolCallKey).
+// The fallback is not a test affordance - a provider stream can send the
+// tool-call NAME delta before, or without, the ID delta, and every recorder on
+// this path has to agree on the key or an outcome lands where nothing looks for it.
 func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
 	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
-		if tc.ID != "" {
-			return tc.ID
-		}
-		if tc.Name != "" {
-			return tc.Name
+		if key := sdkagentloop.ToolCallKey(tc); key != "" {
+			return key
 		}
 	}
 	return fallbackName

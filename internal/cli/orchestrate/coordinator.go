@@ -3,7 +3,6 @@ package orchestrate
 import (
 	"context"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -32,7 +31,7 @@ type OrchestrationCoordinator interface {
 	Join(ctx context.Context, h *coordinator.RunHandle) (*coordinator.RunResult, error)
 	Cancel(ctx context.Context, h *coordinator.RunHandle) error
 	ParkedQuestions(runID string) []coordinator.ParkedQuestion
-	RegisterSubagentToolCanceler(runID, taskID string, canceler agent.ToolCanceler)
+	RegisterSubagentToolCanceler(runID, taskID string, canceler subagents.ToolCanceler)
 }
 
 // Compile-time checks that the real coordinator satisfies both subsets.

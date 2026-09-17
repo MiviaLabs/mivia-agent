@@ -68,10 +68,12 @@ spawn agents - the orchestrator does that, in order.
    clean round (rule 05, Step 5): the same root-cause bug surviving 3
    fix attempts, or a revealed plan flaw - both go back to Step 0.
 7. **Commit (per slice)** - only after step 6's zero-finding round does
-   the orchestrator commit that slice with the conventional
-   `type(scope): subject` format from `.mivia/policy/commit-message.json`.
-   Pre-commit and commit-msg hooks enforce. The loop then returns to
-   step 5 for the next slice.
+   the reviewer commit that slice itself (the zero-finding round's
+   concluding act): it stages exactly the slice's reviewed files by path
+   and commits with the conventional `type(scope): subject` format from
+   `.mivia/policy/commit-message.json`, hooks running normally. The
+   orchestrator records the SHA the reviewer reports and never commits.
+   The loop then returns to step 5 for the next slice.
 
 Steps 5-7 repeat once per slice, in slice order. A slice whose latest
 review round still has findings - of any severity - is never committed;
@@ -96,9 +98,11 @@ Step 7: <status> - <slice id>: <commit landed | blocked | abandoned> (only after
 - Writing a plan file. ADLC forbids it.
 - Running any step's work directly. The orchestrator dispatches; this
   skill narrates.
-- Committing. The orchestrator commits each slice at step 7, and only
-  after that slice's review round reported zero findings. A slice whose
-  latest review round still has findings is never committed.
+- Committing. The reviewer commits each slice at the end of its own
+  zero-finding round (`.agents/agents/reviewer.md` "Commit on approval"),
+  and only after that slice's review round reported zero findings. The
+  orchestrator never commits. A slice whose latest review round still
+  has findings is never committed.
 - Skipping a step because the previous one "felt good." Each step's
   verdict is the only thing that lets the next step start - and a slice's
   commit is admitted by nothing except its own zero-finding review round.

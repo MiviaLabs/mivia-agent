@@ -18,7 +18,7 @@ import (
 //
 // call.ID goes empty when a provider stream sends the tool-call NAME delta
 // before, or without, the ID delta. The outcome recorder keys id-else-name
-// (internal/agent's toolCallKey), so a denial recorded under a blank id is
+// (sdkagentloop.ToolCallKey), so a denial recorded under a blank id is
 // dropped and the refusal reaches the operator as a bare "failed" with no
 // reason - recordKeyFromContext exists to stop that.
 //

@@ -20,11 +20,11 @@ import (
 // once on a freshly built SDK loop. A second rejection propagates
 // unchanged (fail fast - no second retry, no loop). DisableProviderReplay
 // suppresses the retry, mirroring the legacy gate: the retry IS a
-// provider replay of the rejected call. Accepted gaps versus the legacy
-// retry (documented, not wired here): the legacy path's retry-time
-// summary re-derivation (refreshOmittedEvidenceAfterRetry, memo
-// invalidation, injectSummary) and its prompt-token reservation are not
-// reproduced.
+// provider replay of the rejected call. The legacy retry-time summary
+// re-derivation is reproduced in sdkCompactAfterPromptTooLong: the
+// omitted-evidence diff of the prune lands in the turn state and the
+// summary memo is invalidated, so the retried request's summary
+// describes what the RETRIED (pruned) history actually drops.
 //
 // On an SDK-Window-adopted turn (sdkCompactionAdopted true), this
 // wrapper never reruns: adoptSDKCompaction already wired a Window, so
@@ -46,7 +46,7 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 		if err != nil {
 			return sdkagentloop.Result{}, err
 		}
-		return runSDKSteerable(ctx, loop, opts, msgs, turn)
+		return runSDKSteerable(ctx, l, loop, opts, msgs, turn)
 	}
 	res, err := run(preparedMsgs)
 	if err == nil || opts.DisableProviderReplay || sdkCompactionAdopted(opts) ||
@@ -75,7 +75,12 @@ const promptTooLongCompactNotice = "[context compacted: the provider rejected th
 // PruneMessagesKeepTurns keeps the system prompt and the newest turns
 // and drops tool exchanges as a unit, and the model-visible notice is
 // appended after the prune. One EventPrune announces the compaction
-// with the same detail text the legacy path emits.
+// with the same detail text the legacy path emits. The legacy retry-time
+// summary re-derivation rides here too: the content-free diff of what
+// the prune dropped lands in the turn state's evidence, and the summary
+// memo is invalidated so the retry's injectSummary runs a fresh
+// Summarize over the pruned history instead of replaying the memoized
+// attempt-1 summary.
 func sdkCompactAfterPromptTooLong(l *Loop, opts Options, msgs []sdkshape.Message) []sdkshape.Message {
 	target := 16 << 10
 	if opts.MaxContextTokens > 0 && opts.MaxContextTokens/4 < target {
@@ -89,8 +94,16 @@ func sdkCompactAfterPromptTooLong(l *Loop, opts Options, msgs []sdkshape.Message
 	if pruneTarget < 1 {
 		pruneTarget = 1
 	}
-	pruned := provider.PruneMessagesKeepTurns(sdkMessagesToCLI(msgs), pruneTarget, l.contextAccounting())
+	pre := sdkMessagesToCLI(msgs)
+	pruned := provider.PruneMessagesKeepTurns(pre, pruneTarget, l.contextAccounting())
 	pruned = append(pruned, notice)
+	// Re-derive the omitted-evidence diff from the pre-prune vs pruned
+	// history (the legacy refreshOmittedEvidenceAfterRetry): attempt 1's
+	// envelope captured evidence for the rejected, never-sent history.
+	for _, item := range contextmgr.OmittedEvidence(pre, pruned) {
+		_ = l.TurnState.AddEvidence(item)
+	}
+	l.invalidateSummaryMemo()
 	emit(opts, Event{
 		Kind:   EventPrune,
 		Detail: fmt.Sprintf("provider rejected prompt (prompt too long); compacted to %d tokens and retrying once", target),

@@ -3,8 +3,8 @@ package orchestrate
 import (
 	"context"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
 // ToolCancelReadyHook returns the OnToolCancelReady callback a
@@ -29,8 +29,8 @@ import (
 //
 // A dispatcher with no registered coordinator at all (never initialized, or
 // a bare test dispatcher) also yields a no-op: nothing to register with.
-func ToolCancelReadyHook(d *runtime.Dispatcher) func(ctx context.Context, canceler agent.ToolCanceler) {
-	return func(ctx context.Context, canceler agent.ToolCanceler) {
+func ToolCancelReadyHook(d *runtime.Dispatcher) func(ctx context.Context, canceler subagents.ToolCanceler) {
+	return func(ctx context.Context, canceler subagents.ToolCanceler) {
 		v, ok := coordinators.Load(d)
 		if !ok {
 			return

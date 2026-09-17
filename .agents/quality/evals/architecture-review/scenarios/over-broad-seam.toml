@@ -1,0 +1,12 @@
+id = "over-broad-seam"
+title = "Eleven-operation contract serves a two-operation consumer"
+section = "Compare alternatives"
+verdict = "BLOCK"
+anchors = [
+  "keep the behavior local; introduce the smallest repository-native",
+  "Prefer the narrowest contract that serves the demonstrated consumers.",
+]
+design = """A design introduces one new contract with eleven operations.
+The sole consumer calls two of them. No second consumer exists or is
+planned. The nine unused operations widen the seam without a driver. A
+two-operation contract serves the demonstrated consumer."""

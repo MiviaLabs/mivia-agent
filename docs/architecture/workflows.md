@@ -34,9 +34,9 @@ Transitions match only a closed attempt status and declared output-schema scalar
 
 ## Compiler responsibilities
 
-Compilation is side-effect free. It performs safe workflow discovery, strict TOML parsing, name and reference resolution, template/schema loading, semantic graph checks, matching-case overlap checks, bounds checks, stacking config validation, and a stable definition digest.
+Compilation is side-effect free. It performs safe workflow discovery, strict TOML parsing, and name and reference resolution. It also loads templates and schemas, and runs semantic graph, matching-case overlap, and bounds checks. Finally, it validates stacking config and computes a stable definition digest.
 
-The compiler rejects unknown fields, non-regular or escaping files, ambiguous routes, unbounded cycles, unreachable states, missing terminal paths, unresolved agents/verifiers/schemas/templates, and evidence bindings that do not reference a proven preceding schema-valid output. It also validates the `[stacking]` section when present: explicit step references must exist, thresholds must be in range, and merge policy must be `approve` or `auto`. When the section is absent, the compiler does not synthesize anything and the digest stays unchanged.
+The compiler rejects unknown fields, non-regular or escaping files, ambiguous routes, unbounded cycles, unreachable states, missing terminal paths, and unresolved agents/verifiers/schemas/templates. It also rejects evidence bindings that do not reference a proven preceding schema-valid output. It also validates the `[stacking]` section when present. Explicit step references must exist, thresholds must be in range, and merge policy must be `approve` or `auto`. When the section is absent, the compiler does not synthesize anything and the digest stays unchanged.
 
 Stack step synthesis (injecting `decompose` and `chunk_plan_validate` steps, reserved inputs, and router transitions) is a post-compile admission step in the controller, not part of compilation. The compiled digest is copied unchanged through synthesis so that an absent `[stacking]` section is digest-neutral.
 

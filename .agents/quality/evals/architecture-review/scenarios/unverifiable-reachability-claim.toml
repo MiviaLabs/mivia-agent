@@ -1,0 +1,13 @@
+id = "unverifiable-reachability-claim"
+title = "Reachability depends on unread runtime wiring"
+section = "Trace reachability and purpose"
+verdict = "PARTIAL"
+anchors = [
+  "State search limitations.",
+  "Reachability proves use;",
+]
+design = """A new guard claims that only the billing service can call it.
+The wiring happens at runtime through a configuration source that the
+review cannot read. Static search finds no caller in the repository. The
+claim may hold, but no reachable evidence confirms it. The review records
+the missing evidence instead of a confirmed gap."""

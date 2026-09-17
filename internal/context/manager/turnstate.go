@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"sync"
 
 	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
@@ -15,6 +16,7 @@ import (
 // must never fail the turn (the agent loop, the chat turn path) treat a
 // rejected fact as a drop, never as an error.
 type TurnState struct {
+	mu              sync.Mutex
 	state           string
 	decisions       []string
 	evidence        []string
@@ -35,6 +37,8 @@ func (t *TurnState) SetState(state string) error {
 	if err := validateSummaryText("state", state, true); err != nil {
 		return err
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.state = state
 	return nil
 }
@@ -45,6 +49,8 @@ func (t *TurnState) AddDecision(decision string) error {
 	if t == nil {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.appendItem(&t.decisions, "decisions", decision)
 }
 
@@ -54,6 +60,8 @@ func (t *TurnState) AddEvidence(evidence string) error {
 	if t == nil {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.appendItem(&t.evidence, "evidence", evidence)
 }
 
@@ -63,6 +71,8 @@ func (t *TurnState) AddChangedSurface(surface string) error {
 	if t == nil {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.appendItem(&t.changedSurfaces, "changed_surfaces", surface)
 }
 
@@ -72,6 +82,8 @@ func (t *TurnState) AddOpenWork(work string) error {
 	if t == nil {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.appendItem(&t.openWork, "open_work", work)
 }
 
@@ -80,6 +92,8 @@ func (t *TurnState) AddRisk(risk string) error {
 	if t == nil {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.appendItem(&t.risks, "risks", risk)
 }
 
@@ -116,6 +130,8 @@ func (t *TurnState) Snapshot() (TurnStateSnapshot, error) {
 	if t == nil {
 		return TurnStateSnapshot{}, nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if err := validateSummaryText("state", t.state, true); err != nil {
 		return TurnStateSnapshot{}, err
 	}

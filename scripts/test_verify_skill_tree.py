@@ -129,6 +129,36 @@ def test_gate_accepts_schema_keys() -> None:
             raise AssertionError(rejection)
 
 
+def test_gate_accepts_license_and_metadata() -> None:
+    rejection = run_gate_on_fixture("license")
+    if rejection is not None:
+        raise AssertionError(f"gate rejected license: {rejection}")
+
+    mod = load_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        skills_dir = Path(tmp) / "skills"
+        name = "probe-skill-meta"
+        (skills_dir / name).mkdir(parents=True)
+        (skills_dir / name / "SKILL.md").write_text(
+            "---\nname: probe-skill-meta\ndescription: Probe.\nmetadata:\n  author: MiviaLabs\n  version: 1\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                mod.check_skill_dir(skills_dir)
+        except SystemExit:
+            raise AssertionError(f"gate rejected nested metadata map: {captured.getvalue()}")
+
+
+def test_gate_accepts_block_scalar() -> None:
+    mod = load_gate()
+    body = "---\nname: probe-scalar\ndescription: >-\n  A multi-line\n  folded description.\n---\n\nBody.\n"
+    problems = mod.frontmatter_violations(body)
+    if problems:
+        raise AssertionError(f"unexpected violations for block scalar: {problems}")
+
+
 def test_gate_rejects_unknown_key() -> None:
     rejection = run_gate_on_fixture("bogus_key")
     if rejection is None:
@@ -550,6 +580,8 @@ def main() -> None:
     test_known_keys_match_go_source()
     test_gate_rejects_an_absent_skill_tree()
     test_gate_accepts_schema_keys()
+    test_gate_accepts_license_and_metadata()
+    test_gate_accepts_block_scalar()
     test_gate_rejects_unknown_key()
     test_gate_rejects_a_long_trigger()
     test_gate_rejects_shapes_the_go_parser_refuses()

@@ -520,6 +520,47 @@ def test_staged_same_change_deletion_self_approval_is_rejected() -> None:
         assert "deleted_test_function" in r.stdout
 
 
+def test_all_ignores_managed_worktrees_but_reports_repo_worktrees() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+
+        claude_dir = root / ".claude" / "worktrees" / "w" / "pkg"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "bad_test.go").write_text(
+            'package pkg\nimport "testing"\nfunc TestClaudeBad(t *testing.T) {}\n',
+            encoding="utf-8",
+        )
+
+        mivia_dir = root / ".mivia" / "worktrees" / "w" / "pkg"
+        mivia_dir.mkdir(parents=True, exist_ok=True)
+        (mivia_dir / "bad_test.go").write_text(
+            'package pkg\nimport "testing"\nfunc TestMiviaBad(t *testing.T) {}\n',
+            encoding="utf-8",
+        )
+
+        # Baseline pkg/lib_test.go is valid.
+        # Managed worktrees under .claude/worktrees and .mivia/worktrees must be ignored.
+        r1 = run_script(["--all"], cwd=root)
+        assert r1.returncode == 0, f"managed worktrees must be ignored under --all: {r1.stdout}"
+        assert ".claude" not in r1.stdout
+        assert ".mivia" not in r1.stdout
+
+        # Bad test under pkg/worktrees/normal must be reported.
+        repo_dir = root / "pkg" / "worktrees" / "normal"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "bad_test.go").write_text(
+            'package normal\nimport "testing"\nfunc TestNormalBad(t *testing.T) {}\n',
+            encoding="utf-8",
+        )
+
+        r2 = run_script(["--all"], cwd=root)
+        assert r2.returncode == 1, f"unmanaged repo worktrees path must be reported: {r2.stdout}"
+        assert "pkg/worktrees/normal" in r2.stdout
+        assert ".claude" not in r2.stdout
+        assert ".mivia" not in r2.stdout
+
+
 def main() -> int:
     tests = [
         v

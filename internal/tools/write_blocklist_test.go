@@ -146,6 +146,10 @@ func TestWriteFileBlocklistResolvedPathStillRefused(t *testing.T) {
 	setupProtectedSymlink(t, ws)
 
 	mustBlocked(t, reg, "write_file", map[string]any{"path": "protected/secret.txt", "content": "x"})
+
+	if _, err := os.Stat(filepath.Join(ws.Abs, "allowed", "secret.txt")); !os.IsNotExist(err) {
+		t.Fatalf("resolved protected path bypassed blocklist: allowed/secret.txt exists (stat err=%v)", err)
+	}
 }
 
 // TestWriteFileBlocklistAllowedControl verifies an ordinary, non-protected
@@ -155,4 +159,12 @@ func TestWriteFileBlocklistAllowedControl(t *testing.T) {
 	setupProtectedSymlink(t, ws)
 
 	mustExec(t, reg, "write_file", map[string]any{"path": "allowed/control.txt", "content": "ok"})
+
+	got, err := os.ReadFile(filepath.Join(ws.Abs, "allowed", "control.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "ok" {
+		t.Fatalf("allowed/control.txt content = %q, want %q", string(got), "ok")
+	}
 }

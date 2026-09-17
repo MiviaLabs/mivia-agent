@@ -1,0 +1,12 @@
+id = "over-engineered-speculative-design"
+title = "Speculative extension point has no current consumer"
+section = "Compare alternatives"
+verdict = "BLOCK"
+anchors = [
+  "first option that satisfies the drivers.",
+  "The wider the contract or seam, the weaker the abstraction.",
+]
+design = """A plan adds a public extension point for future plugin support.
+No current requirement names a plugin. No consumer exists in the baseline
+or in the change. The only driver is a forecast, not a demonstrated need.
+The plan gives no evidence that a narrower option fails the drivers."""

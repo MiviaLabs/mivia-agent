@@ -37,7 +37,7 @@ func bridgeToolCallEnd(opts Options, turn *sdkTurnState, ctx context.Context) {
 	if tc, ok := sdkagentloop.ToolCallFromContext(ctx); ok {
 		// The same helper the recorders key on: an outcome stored under one
 		// fallback and looked up under another is an outcome nobody sees.
-		callKey = toolCallKey(tc)
+		callKey = sdkagentloop.ToolCallKey(tc)
 		callName = tc.Name
 	}
 	if turn != nil && callKey != "" {

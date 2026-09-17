@@ -178,20 +178,35 @@ func TestZAIStream200CodeMessageChunk(t *testing.T) {
 // the partial string, readTurnStream returns a nil Response and discards it).
 // The probe locks the message-loss-free invariant on both paths.
 func TestChatTurnStreamCancelPartialContent(t *testing.T) {
-	for _, path := range []struct {
-		name string
-		tool bool
-	}{{"tools", true}, {"no tools", false}} {
+	cases := []struct {
+		name        string
+		tool        bool
+		wantContent string
+	}{
+		{name: "tools", tool: true, wantContent: ""},
+		{name: "no tools", tool: false, wantContent: "hel"},
+	}
+	for _, path := range cases {
 		t.Run(path.name, func(t *testing.T) {
-			runCancelPartialContent(t, path.tool)
+			writerText, content, err := runCancelPartialContent(t, path.tool)
+			if err == nil {
+				t.Fatal("cancelled mid-stream turn succeeded")
+			}
+			if writerText != "hel" {
+				t.Fatalf("writer got %q, want live partial %q (no message loss)", writerText, "hel")
+			}
+			if content != path.wantContent {
+				t.Fatalf("%s path returned partial %q, want %q", path.name, content, path.wantContent)
+			}
 		})
 	}
 }
 
 // runCancelPartialContent exercises one stream path: it serves a flushed
 // content delta, waits for it to reach the writer, then cancels the context
-// and asserts the live partial was delivered exactly once on the writer.
-func runCancelPartialContent(t *testing.T, tool bool) {
+// and returns the accumulated writer text, the returned content, and the error.
+func runCancelPartialContent(t *testing.T, tool bool) (string, string, error) {
+	t.Helper()
 	type result struct {
 		content string
 		err     error
@@ -237,25 +252,13 @@ func runCancelPartialContent(t *testing.T, tool bool) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("call did not return after cancel")
 	}
-	if out.err == nil {
-		t.Fatal("cancelled mid-stream turn succeeded")
-	}
 	// Nothing further may reach the writer after the cancel.
 	select {
 	case extra := <-w.ch:
 		t.Fatalf("writer received %q after the cancel", extra)
 	default:
 	}
-	if w.text.String() != "hel" {
-		t.Fatalf("writer got %q, want live partial %q (no message loss)", w.text.String(), "hel")
-	}
-	if tool {
-		if out.content != "" {
-			t.Fatalf("tools path returned partial %q, want empty (nil Response on ctx.Done)", out.content)
-		}
-	} else if out.content != "hel" {
-		t.Fatalf("no-tools path returned %q, want preserved partial %q", out.content, "hel")
-	}
+	return w.text.String(), out.content, out.err
 }
 
 // streamCancelPartialCall invokes the audited stream path: ChatTurn streaming

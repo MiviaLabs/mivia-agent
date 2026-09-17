@@ -1,12 +1,10 @@
 package adapter_test
 
-// runner_model_test.go closes the diff-coverage gap in runner_model.go:
-// handleModel's empty-catalog guard, availableModelsByProvider's per-group
-// skip/fallback branches, resolveProviderAndModel's provider-runtime-prefix
-// and slash-splitting resolution paths, the exact-name search's Selectable
-// skip, the single-other-provider switch-failure hint, and SelectModel's
-// discarded-reasoning-override notice. See the package doc comment at the
-// top of runner_model.go for the branches these lines belong to.
+// runner_model_test.go covers handleModel and SelectModel / SelectModelForProvider
+// execution paths: empty-catalog guard, availableModelsByProvider's per-group
+// skip/fallback branches, explicit model selection parsing, ModelOwners lookup,
+// ambiguous model handling, whitespace provider-model commands, disabled provider
+// handling, and SelectModel's discarded-reasoning-override notice.
 
 import (
 	"context"
@@ -382,5 +380,585 @@ func TestCommandRunner_SelectModel_DiscardsReasoningOverrideOnPlainRename(t *tes
 	}
 	if !strings.Contains(out.Notice, string(reasoning.High)) {
 		t.Fatalf("notice must name the discarded level %q, got %q", reasoning.High, out.Notice)
+	}
+}
+
+// TestCommandRunner_SelectModel_UniqueExactCollisionFullIDWinsOverProviderPrefix
+// covers priority ordering when an exact model ID matches a configured provider
+// prefix (e.g. openrouter/deepseek-v4.1-flash under llmgateway).
+// Priority tradeoff: step 1 exact whole-ID catalog matching intentionally takes
+// priority over step 2 provider-prefix parsing. When a model ID contains a slash
+// matching a selectable provider name ("openrouter/...") but is explicitly
+// declared under another provider (llmgateway), the exact catalog match wins
+// rather than stripping the prefix.
+func TestCommandRunner_SelectModel_UniqueExactCollisionFullIDWinsOverProviderPrefix(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-llm-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "openrouter/deepseek-v4.1-flash"}},
+			},
+			"openrouter": {
+				ProviderName: "openrouter",
+				APIKey:       "sk-or-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "deepseek-v4.1-flash"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: "openrouter/deepseek-v4.1-flash"}}},
+		{Provider: "openrouter", Selectable: true, Models: []config.ModelSpec{{Name: "deepseek-v4.1-flash"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "openrouter/deepseek-v4.1-flash")
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "llmgateway" {
+		t.Fatalf("provider = %q, want llmgateway (exact model ID should win over openrouter prefix)", got.ProviderName)
+	}
+	if got.Model != "openrouter/deepseek-v4.1-flash" {
+		t.Fatalf("model = %q, want openrouter/deepseek-v4.1-flash", got.Model)
+	}
+}
+
+// TestCommandRunner_SelectModel_LiteralNoncollisionFullIDSelectsGateway covers
+// resolving a literal non-colliding slash-containing model ID configured under
+// llmgateway to llmgateway with its full name intact.
+func TestCommandRunner_SelectModel_LiteralNoncollisionFullIDSelectsGateway(t *testing.T) {
+	const fullID = "consensusprotocol/deepseek-v4.1-flash"
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-llm-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: fullID}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: fullID}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), fullID)
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "llmgateway" || got.Model != fullID {
+		t.Fatalf("selection = %+v, want {llmgateway %s}", got, fullID)
+	}
+}
+
+// TestCommandRunner_SelectModel_UnselectableExactFullIDOwnerSkippedForSelectableOwner
+// verifies that an unselectable catalog group defining the exact full slash ID
+// is skipped during unique exact-match resolution in favor of the selectable owner.
+func TestCommandRunner_SelectModel_UnselectableExactFullIDOwnerSkippedForSelectableOwner(t *testing.T) {
+	const modelID = "customprefix/deepseek-v4.1-flash"
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-llm-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: modelID}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "disabled-gw", Selectable: false, Models: []config.ModelSpec{{Name: modelID}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: modelID}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), modelID)
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "llmgateway" || got.Model != modelID {
+		t.Fatalf("selection = %+v, want {llmgateway %s}", got, modelID)
+	}
+}
+
+// TestCommandRunner_SelectModel_CaseSensitiveFullIDMatch verifies that
+// whole-ID resolution is strictly case-sensitive.
+func TestCommandRunner_SelectModel_CaseSensitiveFullIDMatch(t *testing.T) {
+	const exactModel = "vendor/DeepSeek-V4.1-Flash"
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-llm-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: exactModel}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: exactModel}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	// Casing mismatch: exact-name step 1 does not match, vendor/ prefix step 2 has no vendor provider.
+	mismatched := "vendor/deepseek-v4.1-flash"
+	out := runner.SelectModel(context.Background(), mismatched)
+	if out.Err == "" {
+		t.Fatalf("SelectModel(%q) should fail when casing does not match exact model, got success: %+v", mismatched, out)
+	}
+
+	// Exact case match succeeds and selects llmgateway.
+	out = runner.SelectModel(context.Background(), exactModel)
+	if out.Err != "" {
+		t.Fatalf("SelectModel(%q) error: %v", exactModel, out.Err)
+	}
+	if got := sess.CurrentSelection(); got.ProviderName != "llmgateway" || got.Model != exactModel {
+		t.Fatalf("selection = %+v, want {llmgateway %s}", got, exactModel)
+	}
+}
+
+// TestCommandRunner_SelectModel_NoExactFullIDRetainsProviderPrefixBehavior
+// ensures that when no provider has an exact whole-ID match, standard prefix
+// stripping behavior remains active.
+func TestCommandRunner_SelectModel_NoExactFullIDRetainsProviderPrefixBehavior(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"openrouter": {
+				ProviderName: "openrouter",
+				APIKey:       "sk-or-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "deepseek-v4.1-flash"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "openrouter", Selectable: true, Models: []config.ModelSpec{{Name: "deepseek-v4.1-flash"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "openrouter/deepseek-v4.1-flash")
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "openrouter" || got.Model != "deepseek-v4.1-flash" {
+		t.Fatalf("selection = %+v, want {openrouter deepseek-v4.1-flash}", got)
+	}
+}
+
+// TestCommandRunner_SelectModel_AmbiguousFullIDRefusesCatalogOrderAndPrefixDisambiguates
+// proves that an exact full slash ID matching two selectable catalog groups does
+// not silently pick the first match by catalog order; and that an explicit provider
+// prefix like zai/shared-model correctly parses to provider zai when whole-ID is ambiguous.
+func TestCommandRunner_SelectModel_AmbiguousFullIDRefusesCatalogOrderAndPrefixDisambiguates(t *testing.T) {
+	const sharedModel = "zai/shared-model"
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"gw1": {
+				ProviderName: "gw1",
+				APIKey:       "sk-gw1-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: sharedModel}, {Name: "customgw/shared-model"}},
+			},
+			"gw2": {
+				ProviderName: "gw2",
+				APIKey:       "sk-gw2-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: sharedModel}, {Name: "customgw/shared-model"}},
+			},
+			"zai": {
+				ProviderName: "zai",
+				APIKey:       "sk-zai-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "shared-model"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "gw1", Selectable: true, Models: []config.ModelSpec{{Name: sharedModel}, {Name: "customgw/shared-model"}}},
+		{Provider: "gw2", Selectable: true, Models: []config.ModelSpec{{Name: sharedModel}, {Name: "customgw/shared-model"}}},
+		{Provider: "zai", Selectable: true, Models: []config.ModelSpec{{Name: "shared-model"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	// 1. Ambiguous whole-ID without provider prefix match: customgw/shared-model matches gw1 and gw2.
+	// It must NOT pick gw1 just because gw1 is earlier in catalog order; it must fail with ambiguity.
+	out := runner.SelectModel(context.Background(), "customgw/shared-model")
+	if out.Err == "" {
+		t.Fatalf("SelectModel(ambiguous whole ID) must fail, got success: %+v", out)
+	}
+	if sess.CurrentSelection().ProviderName == "gw1" || sess.CurrentSelection().ProviderName == "gw2" {
+		t.Fatalf("provider switched to %q on ambiguous name, want refusal", sess.CurrentSelection().ProviderName)
+	}
+
+	// 2. Whole-ID match is ambiguous across gw1 and gw2, but zai/ is an explicit provider prefix.
+	// It must fall through step 1 (matches == 2) to step 2 and parse to provider "zai", model "shared-model".
+	out = runner.SelectModel(context.Background(), sharedModel)
+	if out.Err != "" {
+		t.Fatalf("SelectModel(%q) error: %v", sharedModel, out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "zai" || got.Model != "shared-model" {
+		t.Fatalf("selection = %+v, want {zai shared-model}", got)
+	}
+}
+
+// TestCommandRunner_SelectModel_BareCurrentProviderIsOneOfMultipleExactError
+// proves that when a bare model name is ambiguous across multiple providers,
+// and the session's active provider is one of those owners, SelectModel does NOT
+// silently fall back to the current provider. It must return the exact ambiguous
+// error and leave the session unchanged.
+func TestCommandRunner_SelectModel_BareCurrentProviderIsOneOfMultipleExactError(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "initial-model",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "initial-model"}, {Name: "shared-model"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-gw-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "shared-model"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "initial-model"}, {Name: "shared-model"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: "shared-model"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "shared-model")
+	wantMsg := `model "shared-model" is ambiguous across providers: ollama, llmgateway; run /model <provider> shared-model to switch`
+	if out.Err != wantMsg {
+		t.Fatalf("SelectModel(shared-model) err = %q, want exact error %q", out.Err, wantMsg)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "ollama" || got.Model != "initial-model" {
+		t.Fatalf("session modified unexpectedly on ambiguous error: %+v", got)
+	}
+}
+
+// TestCommandRunner_SelectModel_UniqueOwnerDirectSwitch tests that a model
+// with a single owner in the catalog switches directly to that owner without legacy parsing.
+func TestCommandRunner_SelectModel_UniqueOwnerDirectSwitch(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-gw-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "unique-model"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: "unique-model"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "unique-model")
+	if out.Err != "" {
+		t.Fatalf("SelectModel(unique-model) unexpected err: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "llmgateway" || got.Model != "unique-model" {
+		t.Fatalf("selection = %+v, want {llmgateway unique-model}", got)
+	}
+}
+
+// TestCommandRunner_SelectModel_NoOwnerFallsBackToCurrentProvider verifies that
+// when a model is not owned by any selectable provider in the catalog and does not
+// match explicit provider prefixes, it attempts the switch under the current provider.
+func TestCommandRunner_SelectModel_NoOwnerFallsBackToCurrentProvider(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		Models:       []string{"model-a", "custom-unlisted"},
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}, {Name: "custom-unlisted"}},
+			},
+		},
+	}
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "custom-unlisted")
+	if out.Err != "" {
+		t.Fatalf("SelectModel(custom-unlisted) err: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "ollama" || got.Model != "custom-unlisted" {
+		t.Fatalf("selection = %+v, want {ollama custom-unlisted}", got)
+	}
+}
+
+// TestCommandRunner_HandleModel_ExplicitWhitespaceProviderModel tests "/model <provider> <model>"
+// syntax for switching directly via SelectModelForProvider.
+func TestCommandRunner_HandleModel_ExplicitWhitespaceProviderModel(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "llama3",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "llama3"}},
+			},
+			"llmgateway": {
+				ProviderName: "llmgateway",
+				APIKey:       "sk-gw-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "deepseek-v4.1-flash"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "llama3"}}},
+		{Provider: "llmgateway", Selectable: true, Models: []config.ModelSpec{{Name: "deepseek-v4.1-flash"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "llmgateway deepseek-v4.1-flash")
+	if out.Err != "" {
+		t.Fatalf("Run(model, \"llmgateway deepseek-v4.1-flash\") error: %v", out.Err)
+	}
+	got := sess.CurrentSelection()
+	if got.ProviderName != "llmgateway" || got.Model != "deepseek-v4.1-flash" {
+		t.Fatalf("selection = %+v, want {llmgateway deepseek-v4.1-flash}", got)
+	}
+}
+
+// TestCommandRunner_HandleModel_ExplicitDisabledProviderFailsClosed tests that
+// specifying an unselectable or disabled provider fails closed downstream.
+func TestCommandRunner_HandleModel_ExplicitDisabledProviderFailsClosed(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "llama3",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "llama3"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "llama3"}}},
+		{Provider: "disabled-prov", Selectable: false, DisabledReason: "no key", Models: []config.ModelSpec{{Name: "some-model"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "disabled-prov some-model")
+	if out.Err == "" {
+		t.Fatal("Run(model, disabled-prov some-model) expected error, got success")
+	}
+	if !strings.Contains(out.Err, "failed to switch model") && !strings.Contains(out.Err, "disabled-prov") {
+		t.Fatalf("unexpected error message: %q", out.Err)
+	}
+}
+
+// TestCommandRunner_HandleModel_ExplicitNonOwnerProviderFailsClosed tests that
+// specifying a provider that does not own the requested model fails closed downstream.
+func TestCommandRunner_HandleModel_ExplicitNonOwnerProviderFailsClosed(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "llama3",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "llama3"}},
+			},
+			"openai": {
+				ProviderName: "openai",
+				APIKey:       "sk-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "gpt-4o"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "llama3"}}},
+		{Provider: "openai", Selectable: true, Models: []config.ModelSpec{{Name: "gpt-4o"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "openai non-existent-model")
+	if out.Err == "" {
+		t.Fatal("Run(model, openai non-existent-model) expected error, got success")
+	}
+}
+
+// TestCommandRunner_HandleModel_ProviderArgMatchesRuntimeMap covers
+// findProvider's ProviderRuntimes branch (runner_model.go:58-63): a
+// "<provider> <model>" handleModel argument whose provider token matches no
+// ModelCatalog provider but does match a configured ProviderRuntimes key
+// (case-folded). The catalog loop must miss first, so resolution reaches the
+// runtime map and dispatches SelectModelForProvider with the runtime's
+// canonical name.
+func TestCommandRunner_HandleModel_ProviderArgMatchesRuntimeMap(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"openrouter": {
+				ProviderName: "openrouter",
+				APIKey:       "sk-or-v1-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "model-b"}},
+			},
+		},
+	}
+	// No "openrouter" catalog group: the catalog loop in findProvider must
+	// miss so the runtime-map branch is what matches. Without a catalog
+	// entry the downstream switch fails; what this test pins is that
+	// resolution reached SelectModelForProvider under the runtime's name,
+	// which the error message's "(openrouter)" tag proves.
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "OpenRouter model-b")
+	if out.Err == "" {
+		t.Fatal("Run(model, OpenRouter model-b) expected the downstream switch error, got success")
+	}
+	if !strings.Contains(out.Err, `"model-b" (openrouter)`) {
+		t.Fatalf("error must name the resolved provider/model pair, got %q", out.Err)
+	}
+}
+
+// TestCommandRunner_HandleModel_ProviderArgMatchesNothing covers
+// findProvider's final miss return (runner_model.go:65-66): a "<provider>
+// <model>" argument whose provider token matches neither a catalog provider
+// nor a ProviderRuntimes key, so handleModel abandons the two-token form and
+// treats the whole argument as a plain model name via SelectModel.
+func TestCommandRunner_HandleModel_ProviderArgMatchesNothing(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+	})
+	sess := chat.NewSession(res, &nullCompleter{})
+	runner := adapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "model", "nosuchprovider model-x")
+	if out.Err == "" {
+		t.Fatal("Run(model, nosuchprovider model-x) expected error, got success")
+	}
+	if !strings.Contains(out.Err, "model-x") {
+		t.Fatalf("error must carry the plain-model-name resolution attempt, got %q", out.Err)
+	}
+}
+
+// TestCommandRunner_SelectModelForProvider_UninitializedRunner covers
+// switchModel's uninitialized guard (runner_model.go:196-198) through the
+// exported SelectModelForProvider, which - unlike handleModel and SelectModel
+// - carries no session/res guard of its own before calling switchModel. A
+// runner built with a nil session must fail closed with the standard
+// "not initialized" message instead of panicking.
+func TestCommandRunner_SelectModelForProvider_UninitializedRunner(t *testing.T) {
+	runner := adapter.NewCommandRunner(nil, nil, nil)
+
+	out := runner.SelectModelForProvider(context.Background(), "openrouter", "model-b")
+	if out.Err != "session or configuration not initialized" {
+		t.Fatalf("SelectModelForProvider on an uninitialized runner = %+v, want Err %q", out, "session or configuration not initialized")
 	}
 }

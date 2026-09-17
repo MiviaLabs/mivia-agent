@@ -91,6 +91,7 @@ verify: verify-agent docs-check release-test secret-scan structure-check \
 verify-agent: agents-check
 	@python3 scripts/verify_agent_config.py
 	@python3 scripts/test_agent_skill_contract.py
+	@python3 scripts/test_architecture_review_evals.py
 	@python3 scripts/check_memories.py
 	@python3 scripts/check_gate_scripts.py
 
@@ -189,6 +190,8 @@ agent-hook-test:
 	@python3 scripts/test_check_labels.py
 	@python3 scripts/test_check_names.py
 	@python3 scripts/test_check_prose.py
+	@python3 scripts/check_test_skips.py
+	@python3 scripts/test_check_test_skips.py
 	@python3 scripts/test_import_layers.py
 	@python3 scripts/test_verify_skill_tree.py
 	@python3 scripts/test_check_memories.py

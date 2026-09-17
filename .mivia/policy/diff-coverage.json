@@ -316,6 +316,13 @@
       ],
       "reason": "filepath.Abs fails only when os.Getwd fails (deleted cwd); not triggerable safely in-process"
     },
+    "internal/config/load_discovery.go": {
+      "lines": [
+        26,
+        27
+      ],
+      "reason": "loadRuntimeMCPConfig's own os.Getwd() error wrap, reached only when the process's current working directory has been deleted out from under it - the same unforceable-in-process condition already accepted for internal/cli/worktree/context_setup.go's filepath.Abs error wrap (which fails only when os.Getwd itself fails). TestLoadRuntimeMCPConfig_EmptyWorkspaceRootFallsBackToGetwd and TestLoadRuntimeMCPConfig_EmptyWorkspaceRootMatchesExplicitCwd cover the reachable success path (empty workspaceRoot resolves via a real os.Getwd() call and matches an explicit cwd)."
+    },
     "internal/cli/worktree/worktree_lifecycle_recovery.go": {
       "lines": [
         37,
@@ -436,9 +443,12 @@
       "lines": [
         41,
         42,
-        43
+        43,
+        51,
+        52,
+        117
       ],
-      "reason": "availableModelsByProvider's own r.res == nil guard, explicitly called out as dead by the comment directly above it: the function's one caller, handleModel, already returns early on r.res == nil before ever reaching this call, so no input reaches this branch through the CommandRunner's public API."
+      "reason": "Three unreachable nil-res guards, each dead because every call site already guards. (1) 41-43: availableModelsByProvider's own r.res == nil guard, explicitly called out as dead by the comment directly above it: the function's one caller, handleModel, already returns early on r.res == nil before ever reaching this call. (2) 51-52: findProvider's res == nil guard; its one caller, handleModel, passes r.res only after that same early return at the top of handleModel, so the argument is never nil. (3) 117: resolveExplicitModelSelection's res == nil guard; both callers (SelectModel's 0-owner and multi-owner branches) run behind SelectModel's own sess/res guard, so res is never nil there. No input reaches any of the three through the CommandRunner's public API."
     },
     "internal/tui/view/component/approval/approval.go": {
       "lines": [
@@ -485,6 +495,15 @@
         115
       ],
       "reason": "Known SDK-path gaps from the session unpin. 57-58 and 89-90 = clampedMaxTokens error returns in newSDKWorkBudgetHook and reserve (commit 370aa24d): the error needs malformed MaxTokens/outputCap calibration no test supplies (calibration-carry gap). 114-115 = refund with an empty reservation stack: fires only when the SDK budget hook completes or aborts a turn without a matching reserve - the interrupted-turn persistence gap, which no deterministic test currently drives."
+    },
+    "internal/agent/loop_dispatch.go": {
+      "lines": [
+        96,
+        340,
+        341,
+        342
+      ],
+      "reason": "shrinkStepBudgetForReRun's `remaining <= 0` guard (runOnceSDK's turn-scoped steered-continue fix) and its caller's resulting sdkSteeredStopPartial return (line 96) are provably unreachable via a genuine StopSteered result. Each re-run's SDK Bounds.MaxIterations is set to `remaining` (the turn-scoped budget left before that call), and the SDK's run loop only attempts a completer call while iterations < Bounds.MaxIterations; a canceled/steered call never increments iterations. So a StopSteered result's completed-iteration count K always satisfies K < remaining_before, giving remaining_after = remaining_before - K >= 1 on every real steered stop - it can never reach 0 or below that way. The only path that drives stepsConsumed to exactly origMaxSteps is a run using its entire per-run bound (K == bound), which the SDK reports as StopMaxIterations (loop_dispatch.go's separate max-iterations branch), never StopSteered. The guard is retained as a defensive backstop against a future SDK contract change (e.g. iterations incrementing before the stop check), not as reachable production logic; verified by hand-trace across MaxSteps in {1,2,4,8,100} with and without WorkLimits.MaxTurns."
     },
     "internal/agent/agentloop_completer.go": {
       "lines": [
@@ -811,9 +830,9 @@
       ],
       "reason": "ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
     },
-    "internal/config/load.go": {
+    "internal/config/load_provider.go": {
       "lines": [
-        374
+        29
       ],
       "reason": "ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
     },
@@ -942,6 +961,13 @@
         261
       ],
       "reason": "ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
+    },
+    "internal/config/load_subagents.go": {
+      "lines": [
+        102,
+        103
+      ],
+      "reason": "probeSubagentPresence's own toml.Unmarshal error-return early-exit, unreachable given decodeConfigInto's contract (see decodeConfigInto's own doc comment in load_discovery.go, which addresses exactly this sibling-probe pattern). decodeConfigInto returns early on a failed File decode (dec.Decode(file), using EnableUnmarshalerInterface()) BEFORE probeSubagentPresence ever runs on the same bytes, so this probe only ever sees bytes the main decode already accepted. probeSubagentPresence's own doc comment already spells out why that is not simply 'a superset decode': its local struct declares only [subagents] *int fields (inline_output_bytes, spawn_stagger_ms), which go-toml/v2 accepts as untyped absent-or-present ints regardless of what the main File struct's EnableUnmarshalerInterface() dispatch does elsewhere in the document, and the package's one custom unmarshaler that is in play on the same document, ModelSpec.UnmarshalTOML (for the wholly separate [providers.*.models] table path), is strictly MORE restrictive than the decoding it replaces - it can only reject bytes the plain decode would have accepted, never accept bytes the plain decode rejects. So no byte sequence can fail toml.Unmarshal(data, &probe) after already succeeding through dec.Decode(file) for the identical [subagents] keys. Same unreachable-sibling-probe class as decodeConfigInto's own doc comment states for a plain struct decode versus its own raw-byte probes. Not forceable from a test without changing the go-toml/v2 dependency's own decode/unmarshal contract."
     }
   }
 }

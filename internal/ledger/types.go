@@ -14,9 +14,6 @@ import (
 // RunID is a system-generated immutable identifier for one orchestration run.
 type RunID string
 
-// TaskID is a system-generated immutable identifier for one DAG node within a run.
-type TaskID string
-
 // AttemptID is a system-generated immutable identifier for one execution attempt.
 type AttemptID string
 
@@ -163,7 +160,7 @@ type TaskSnapshot struct {
 	// ParentTaskID above is the one identity-shaped field that IS persisted - it
 	// is derived from Task.Owner (coordinator/spawn.go, via parentTaskID) and
 	// records DAG parentage, which resume needs. It is deliberately NOT restored
-	// into Task.Owner: doing so would make a resumed run'"'"'s dispatcher ParentID and
+	// into Task.Owner: doing so would make a resumed run's dispatcher ParentID and
 	// provenance attributable to a workspace-writable file.
 	// TestResumeDoesNotRestoreAuthorityFields is the tripwire. See plan 12 §3.
 	Input json.RawMessage `json:"input,omitempty"`

@@ -1,0 +1,13 @@
+id = "sibling-without-shared-conformance-check"
+title = "Sibling implementation lacks a shared conformance check"
+section = "Check verification and operation"
+verdict = "BLOCK"
+anchors = [
+  "When a design adds an implementation of an existing contract, require",
+  "A contract honored by one implementation and",
+]
+design = """A design adds a second implementation of an existing storage
+contract. Each implementation carries its own test file. No shared check
+runs both implementations through the same assertions. The first
+implementation passes its own file. The new one passes a different file
+with different claims."""

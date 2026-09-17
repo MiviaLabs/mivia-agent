@@ -36,8 +36,9 @@ type gateCase struct {
 	wantKeyErr bool // construction fails specifically with the missing-key error
 }
 
-func runGateMatrix(t *testing.T, cases []gateCase) {
+func runGateMatrix(t *testing.T, cases []gateCase) int {
 	t.Helper()
+	var ran int
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res := &config.Resolved{
@@ -67,7 +68,9 @@ func runGateMatrix(t *testing.T, cases []gateCase) {
 				t.Fatalf("NewForProvider error = %q, must not be a missing-key error", err)
 			}
 		})
+		ran++
 	}
+	return ran
 }
 
 // TestRound8GateMatrixNewForProvider exhaustively walks (provider, base_url,
@@ -101,7 +104,9 @@ func TestRound8GateMatrixNewForProvider(t *testing.T) {
 		{"ollama cloud blank key", "ollama", "https://ollama.com/v1", true, "   ", false, true},
 		{"ollama loopback blank key", "ollama", "http://127.0.0.1:11434/v1", true, "   ", true, false},
 	}
-	runGateMatrix(t, cases)
+	if ran := runGateMatrix(t, cases); ran != len(cases) {
+		t.Fatalf("ran %d gate matrix cases, want %d", ran, len(cases))
+	}
 }
 
 // TestRound8GateMatrixNew drives the same rule through the New(res) entry

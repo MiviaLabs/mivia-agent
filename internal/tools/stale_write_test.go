@@ -33,21 +33,6 @@ func readFileAbs(t *testing.T, abs string) string {
 	return string(data)
 }
 
-// wantStaleGuard fails unless err is a stale-write refusal that names the
-// cause, and the file on disk is still exactly want.
-func wantStaleGuard(t *testing.T, err error, abs, want string) {
-	t.Helper()
-	if err == nil {
-		t.Fatal("write succeeded; want a stale-write refusal (file changed on disk)")
-	}
-	if !strings.Contains(err.Error(), "changed on disk") {
-		t.Fatalf("refusal does not explain the cause: %v", err)
-	}
-	if got := readFileAbs(t, abs); got != want {
-		t.Fatalf("refused write still mutated the file: %q, want %q", got, want)
-	}
-}
-
 func TestSearchReplaceRefusesExternallyChangedFile(t *testing.T) {
 	ws, reg := setupWS(t)
 	abs := filepath.Join(ws.Abs, "f.txt")
@@ -59,7 +44,15 @@ func TestSearchReplaceRefusesExternallyChangedFile(t *testing.T) {
 	_, err := reg.Execute(context.Background(), "search_replace", mustJSON(t, map[string]any{
 		"path": "f.txt", "old_string": "BETA-external", "new_string": "gamma",
 	}))
-	wantStaleGuard(t, err, abs, "alpha\nBETA-external\n")
+	if err == nil {
+		t.Fatal("write succeeded; want a stale-write refusal (file changed on disk)")
+	}
+	if !strings.Contains(err.Error(), "changed on disk") {
+		t.Fatalf("refusal does not explain the cause: %v", err)
+	}
+	if got := readFileAbs(t, abs); got != "alpha\nBETA-external\n" {
+		t.Fatalf("refused write still mutated the file: %q, want %q", got, "alpha\nBETA-external\n")
+	}
 }
 
 func TestMultiEditRefusesExternallyChangedFile(t *testing.T) {
@@ -74,7 +67,15 @@ func TestMultiEditRefusesExternallyChangedFile(t *testing.T) {
 			{"old_string": "BETA-external", "new_string": "gamma"},
 		},
 	}))
-	wantStaleGuard(t, err, abs, "alpha\nBETA-external\n")
+	if err == nil {
+		t.Fatal("write succeeded; want a stale-write refusal (file changed on disk)")
+	}
+	if !strings.Contains(err.Error(), "changed on disk") {
+		t.Fatalf("refusal does not explain the cause: %v", err)
+	}
+	if got := readFileAbs(t, abs); got != "alpha\nBETA-external\n" {
+		t.Fatalf("refused write still mutated the file: %q, want %q", got, "alpha\nBETA-external\n")
+	}
 }
 
 func TestWriteFileRefusesExternallyChangedExistingFile(t *testing.T) {
@@ -86,7 +87,15 @@ func TestWriteFileRefusesExternallyChangedExistingFile(t *testing.T) {
 	_, err := reg.Execute(context.Background(), "write_file", mustJSON(t, map[string]any{
 		"path": "f.txt", "content": "mine\n",
 	}))
-	wantStaleGuard(t, err, abs, "foreign\n")
+	if err == nil {
+		t.Fatal("write succeeded; want a stale-write refusal (file changed on disk)")
+	}
+	if !strings.Contains(err.Error(), "changed on disk") {
+		t.Fatalf("refusal does not explain the cause: %v", err)
+	}
+	if got := readFileAbs(t, abs); got != "foreign\n" {
+		t.Fatalf("refused write still mutated the file: %q, want %q", got, "foreign\n")
+	}
 }
 
 // Deleting is as destructive as overwriting: a file changed by a foreign
@@ -100,7 +109,15 @@ func TestDeleteFileRefusesExternallyChangedFile(t *testing.T) {
 	_, err := reg.Execute(context.Background(), "delete_file", mustJSON(t, map[string]any{
 		"path": "f.txt",
 	}))
-	wantStaleGuard(t, err, abs, "foreign\n")
+	if err == nil {
+		t.Fatal("write succeeded; want a stale-write refusal (file changed on disk)")
+	}
+	if !strings.Contains(err.Error(), "changed on disk") {
+		t.Fatalf("refusal does not explain the cause: %v", err)
+	}
+	if got := readFileAbs(t, abs); got != "foreign\n" {
+		t.Fatalf("refused write still mutated the file: %q, want %q", got, "foreign\n")
+	}
 }
 
 // The guard must not fire on the agent's own traffic: first writes to files

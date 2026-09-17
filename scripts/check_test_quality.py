@@ -626,6 +626,20 @@ def diff_names(root: Path, *rev_args: str) -> list[str]:
     return [f for f in res.stdout.splitlines() if f.strip()]
 
 
+def find_repo_tests(root: Path) -> list[Path]:
+    skip_dirs = {".git", "node_modules", "vendor", "testdata"}
+    managed_prefixes = {(".claude", "worktrees"), (".mivia", "worktrees")}
+    matches: list[Path] = []
+    for p in root.rglob("*_test.go"):
+        rel_parts = p.relative_to(root).parts
+        if skip_dirs & set(rel_parts):
+            continue
+        if len(rel_parts) >= 2 and rel_parts[:2] in managed_prefixes:
+            continue
+        matches.append(p)
+    return matches
+
+
 def run_main() -> int:
     parser = argparse.ArgumentParser(description="Check Go test quality (anti-fake-test enforcement).")
     parser.add_argument("--staged", action="store_true", help="Inspect staged _test.go files vs HEAD")
@@ -677,10 +691,7 @@ def run_main() -> int:
     elif args.worktree:
         target_files = [root / f for f in diff_names(root, "HEAD") if f.endswith("_test.go")]
     elif args.all:
-        skip_dirs = {".git", "node_modules", "vendor", "testdata"}
-        for p in root.rglob("*_test.go"):
-            if not (skip_dirs & set(p.relative_to(root).parts)):
-                target_files.append(p)
+        target_files = find_repo_tests(root)
     else:
         # Default behavior: if staged files exist, check staged; otherwise check all
         staged = [root / f for f in diff_names(root, "--cached", "--", "*_test.go")]
@@ -688,10 +699,7 @@ def run_main() -> int:
             diff_args = ["--cached"]
             target_files = staged
         else:
-            skip_dirs = {".git", "node_modules", "vendor", "testdata"}
-            for p in root.rglob("*_test.go"):
-                if not (skip_dirs & set(p.relative_to(root).parts)):
-                    target_files.append(p)
+            target_files = find_repo_tests(root)
 
     if not target_files:
         print("check_test_quality: no test files in scope; skipping")

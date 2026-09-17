@@ -310,7 +310,7 @@ type Resolved struct {
 	// ProviderHTTPTimeout is the derived absolute http.Client wall for
 	// provider requests: the maximum of the 15-minute floor and every
 	// configured per-request budget plus the margin. See
-	// resolveProviderHTTPTimeout in load.go.
+	// resolveProviderHTTPTimeout in load_timeouts.go.
 	ProviderHTTPTimeout time.Duration
 
 	// PromptCache is the resolved "auto" or "off" policy for prompt-cache
@@ -391,6 +391,34 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 	return ""
 }
 
+// ModelOwners returns the provider names, in ModelCatalog order, of every
+// Selectable provider whose catalog contains a model named exactly name.
+// Matching is exact (case-sensitive, trimmed), matching AllowsModel's and
+// the model picker's own comparison. Returns nil if Resolved is nil, or if
+// name is empty or all whitespace.
+func (r *Resolved) ModelOwners(name string) []string {
+	if r == nil {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	var found []string
+	for _, group := range r.ModelCatalog() {
+		if !group.Selectable {
+			continue
+		}
+		for _, m := range group.Models {
+			if m.Name == name {
+				found = append(found, group.Provider)
+				break
+			}
+		}
+	}
+	return found
+}
+
 // OtherProvidersWithModel returns the provider names, in ModelCatalog order,
 // of every Selectable provider (other than exclude) whose catalog contains a
 // model named exactly name. Matching is exact (case-sensitive, trimmed),
@@ -410,21 +438,15 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 // is not a switch that would actually work, so it must not appear in a
 // "found under provider X" hint that tells the user to try it.
 func (r *Resolved) OtherProvidersWithModel(exclude, name string) []string {
-	name = strings.TrimSpace(name)
-	if name == "" {
+	exclude = strings.ToLower(strings.TrimSpace(exclude))
+	owners := r.ModelOwners(name)
+	if len(owners) == 0 {
 		return nil
 	}
-	exclude = strings.ToLower(strings.TrimSpace(exclude))
 	var found []string
-	for _, group := range r.ModelCatalog() {
-		if !group.Selectable || strings.ToLower(group.Provider) == exclude {
-			continue
-		}
-		for _, m := range group.Models {
-			if m.Name == name {
-				found = append(found, group.Provider)
-				break
-			}
+	for _, p := range owners {
+		if strings.ToLower(p) != exclude {
+			found = append(found, p)
 		}
 	}
 	return found

@@ -153,6 +153,18 @@ func refOnlyCeilPowerOfTwo(n int) int {
 	return p
 }
 
+// newRefOnlyShim is the ONLY construction site for refOnlyShim. Both
+// the registry route (applyRefOnlyShim) and the deferred route
+// (wrapRefOnly) construct their shim through this function, so every
+// field is set in exactly one place. Callers own all guards and
+// eligibility checks (nil spool, non-positive floor, empty
+// principal, named-tool membership, ephemeral detection, schema
+// assertion); newRefOnlyShim performs none of them and simply copies
+// its arguments into the struct.
+func newRefOnlyShim(inner sdktools.Tool, schema sdktools.SchemaTool, spool *remainder.Spool, names []string, floor int, principal string, ephemeral bool, turn *sdkTurnState) *refOnlyShim {
+	return &refOnlyShim{inner: inner, schema: schema, spool: spool, names: names, floor: floor, principal: principal, ephemeral: ephemeral, turn: turn}
+}
+
 // applyRefOnlyShim post-processes the SDK registry built by
 // sdkadapter.ConvertToolRegistryWithAdmission, wrapping each named
 // tool with the ref-only shim. Tools not in names keep their
@@ -186,16 +198,7 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names [
 		// Replace by re-adding under a fresh shim. The SDK's
 		// Registry exposes Remove, so the swap is two operations.
 		sdkReg.Remove(name)
-		wrapped := &refOnlyShim{
-			inner:     t,
-			schema:    st,
-			spool:     spool,
-			names:     names,
-			floor:     floor,
-			principal: principal,
-			ephemeral: ephemeral,
-			turn:      turn,
-		}
+		wrapped := newRefOnlyShim(t, st, spool, names, floor, principal, ephemeral, turn)
 		if err := sdkReg.Add(wrapped); err != nil {
 			// Restoring the unwrapped tool would hand the model the full body
 			// of a tool the OPERATOR asked to be spooled by reference - the
@@ -238,14 +241,5 @@ func wrapRefOnly(inner sdktools.Tool, cliTool tools.Tool, opts Options, turn *sd
 		return inner
 	}
 	_, ephemeral := cliTool.(tools.EphemeralResultTool)
-	return &refOnlyShim{
-		inner:     inner,
-		schema:    schema,
-		spool:     spool,
-		names:     opts.RefOnlyTools,
-		floor:     BatchDegradeFloorBytes,
-		principal: opts.SessionID,
-		ephemeral: ephemeral,
-		turn:      turn,
-	}
+	return newRefOnlyShim(inner, schema, spool, opts.RefOnlyTools, BatchDegradeFloorBytes, opts.SessionID, ephemeral, turn)
 }

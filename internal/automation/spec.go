@@ -89,7 +89,7 @@ func validStepKind(k StepKind) bool {
 // stays human-editable ("prompt", not "0"). Satisfies
 // encoding.TextMarshaler, which github.com/pelletier/go-toml/v2 honors on
 // encode without any opt-in flag (unlike its own Unmarshaler interface,
-// gated by EnableUnmarshalerInterface - see internal/config/load.go's
+// gated by EnableUnmarshalerInterface - see internal/config/load_discovery.go's
 // decodeConfigInto for that distinction).
 func (k StepKind) MarshalText() ([]byte, error) {
 	if !validStepKind(k) {

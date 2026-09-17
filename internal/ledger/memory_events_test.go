@@ -8,7 +8,7 @@ import (
 )
 
 // Memory-backend timestamp and ordering coverage. The memory repository is the
-// default backend (internal/config/load.go), and it is also the projection the
+// default backend (internal/config/load_subagents.go), and it is also the projection the
 // storage backend replays into, so the "stamp only what arrives unstamped"
 // contract has to hold here or it holds nowhere.
 
