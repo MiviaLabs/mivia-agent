@@ -43,11 +43,11 @@ func writeOllamaAuditConfig(t *testing.T, providerName, baseURL, modelName, cred
 	return path
 }
 
-// TestAuditOllamaEnvTrimming pins OLLAMA_API_KEY handling end to end: a
+// TestOllamaEnvTrimming pins OLLAMA_API_KEY handling end to end: a
 // whitespace-only value is treated as unset, a padded value is trimmed to
 // non-empty, and the loopback keyless path never consults the env var for
 // selectability.
-func TestAuditOllamaEnvTrimming(t *testing.T) {
+func TestOllamaEnvTrimming(t *testing.T) {
 	path := writeOllamaAuditConfig(t, "ollama", "http://127.0.0.1:11434/v1", "gpt-oss:120b", "unset", "")
 	tests := []struct {
 		name    string
@@ -85,10 +85,10 @@ func TestAuditOllamaEnvTrimming(t *testing.T) {
 	}
 }
 
-// TestAuditOllamaKeyFileInterplay pins the env_file path: a key read from an
+// TestOllamaKeyFileInterplay pins the env_file path: a key read from an
 // explicit env_file is honored, a blank value in the file is treated as
 // missing, and the loopback keyless path works with the env var unset.
-func TestAuditOllamaKeyFileInterplay(t *testing.T) {
+func TestOllamaKeyFileInterplay(t *testing.T) {
 	os.Unsetenv("OLLAMA_API_KEY")
 	t.Setenv("HOME", t.TempDir())
 	keyFile := filepath.Join(t.TempDir(), "creds")
@@ -131,7 +131,7 @@ func TestAuditOllamaKeyFileInterplay(t *testing.T) {
 	}
 }
 
-// ollamaSelectableMatrix drives TestAuditOllamaLoadAndSelectableMatrix over
+// ollamaSelectableMatrix drives TestOllamaLoadAndSelectableMatrix over
 // every base_url/key combination the config layer must distinguish: the
 // loopback keyless relaxation must apply ONLY to provider "ollama" and only
 // on loopback URLs; cloud URLs and every other provider keep requiring the
@@ -243,7 +243,7 @@ var ollamaSelectableMatrix = []struct {
 	},
 }
 
-func TestAuditOllamaLoadAndSelectableMatrix(t *testing.T) {
+func TestOllamaLoadAndSelectableMatrix(t *testing.T) {
 	const model = "gpt-oss:120b"
 	for _, tt := range ollamaSelectableMatrix {
 		t.Run(tt.name, func(t *testing.T) {
@@ -288,11 +288,11 @@ func TestAuditOllamaLoadAndSelectableMatrix(t *testing.T) {
 	}
 }
 
-// TestAuditShippedExampleLoads pins that the shipped .mivia/mivia.toml.example
+// TestShippedExampleLoads pins that the shipped .mivia/mivia.toml.example
 // loads with the real loader in every documented shape: as shipped (openrouter
 // active, ollama cloud profile), with ollama active and no key, with ollama
 // active and a key, and with the local-daemon profile (loopback, no key).
-func TestAuditShippedExampleLoads(t *testing.T) {
+func TestShippedExampleLoads(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".mivia", "mivia.toml.example"))
 	if err != nil {
 		t.Fatal(err)

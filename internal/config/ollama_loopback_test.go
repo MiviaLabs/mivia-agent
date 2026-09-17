@@ -1,7 +1,8 @@
 package config
 
-// Hostile functional audit of the Round-4 ollama changes: the config layer
-// must keep the literal loopback predicate (no DNS resolution at load), so
+// Hostile audit of the ollama loopback selectability contract: the config
+// layer must keep the literal loopback predicate (no DNS resolution at
+// load), so
 // the keyless loopback entry stays SELECTABLE at load even though provider
 // construction later fails closed under a hostile resolver. Also pins the
 // 17-combo selectability matrix size. TEST-ONLY.
@@ -15,11 +16,11 @@ import (
 	"testing"
 )
 
-// TestR4ConfigLoadDoesNotResolveDNS pins that Load never resolves DNS for the
+// TestOllamaLoopbackLoadDoesNotResolveDNS pins that Load never resolves DNS for the
 // ollama loopback selectability decision: a hostile resolver that fails any
 // lookup would break Load if the layer resolved hostnames. The provider layer
 // resolves once at construction; the config layer stays literal-only.
-func TestR4ConfigLoadDoesNotResolveDNS(t *testing.T) {
+func TestOllamaLoopbackLoadDoesNotResolveDNS(t *testing.T) {
 	orig := net.DefaultResolver
 	net.DefaultResolver = &net.Resolver{
 		PreferGo: true,
@@ -57,9 +58,9 @@ models = [{ name = "qwen3:8b", context_window_tokens = 32768 }]
 	}
 }
 
-// TestR4OllamaSelectableMatrixHas17Combos pins the audit-matrix size so the
+// TestOllamaSelectableMatrixHas17Combos pins the audit-matrix size so the
 // matrix cannot silently shrink below the 17 documented combinations.
-func TestR4OllamaSelectableMatrixHas17Combos(t *testing.T) {
+func TestOllamaSelectableMatrixHas17Combos(t *testing.T) {
 	if got := len(ollamaSelectableMatrix); got != 17 {
 		t.Fatalf("ollamaSelectableMatrix has %d combos, want 17", got)
 	}
