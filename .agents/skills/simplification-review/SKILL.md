@@ -20,8 +20,8 @@ tools:
 
 Review whether implemented code is the least complex form that satisfies its
 demonstrated requirements. This is the post-implementation counterpart to
-`architecture-review`: that skill judges proposed structure at plan time; this
-skill judges landed code and diffs.
+`architecture-review`: that skill reviews proposed designs and pre-merge
+structural changes; this skill judges landed code and diffs.
 
 Operate as an advisory reviewer. Do not implement, edit, commit, publish, or
 make external changes. Use read-only inspection. Do not replace correctness
