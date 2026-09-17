@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
@@ -40,10 +41,10 @@ func (e *Engine) panelCancelCoordinator(active *activeRun) workflowpanel.PanelCh
 	return runner.Coordinator
 }
 
-// Cancel implements workflowledger.Engine.
-func (e *Engine) Cancel(ctx context.Context, runID string) (workflowledger.CancelResult, error) {
+// Cancel implements workflowagenttools.Engine.
+func (e *Engine) Cancel(ctx context.Context, runID string) (workflowagenttools.CancelResult, error) {
 	if e == nil || e.Repo == nil {
-		return workflowledger.CancelResult{}, fmt.Errorf("workflow engine is incomplete")
+		return workflowagenttools.CancelResult{}, fmt.Errorf("workflow engine is incomplete")
 	}
 	e.mu.Lock()
 	_, delivering := e.delivering[runID]
@@ -53,7 +54,7 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (workflowledger.Cance
 		// A delivery is mid-publish in THIS engine. Refuse without touching
 		// any claim: clearing the live delivery claim would let a second
 		// publisher strip the exclusion fence and double-publish.
-		return workflowledger.CancelResult{}, fmt.Errorf("run %q is being delivered; cancel refused", runID)
+		return workflowagenttools.CancelResult{}, fmt.Errorf("run %q is being delivered; cancel refused", runID)
 	}
 	if ok {
 		active.cancel()
@@ -71,7 +72,7 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (workflowledger.Cance
 	// foreign claim is refused outright.
 	holder := "wfcancel-" + randomToken(5)
 	if err := e.claimOrTakeoverExpired(ctx, runID, holder); err != nil {
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	defer func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }()
 	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, e.Repo, e.panelCancelCoordinator(active), runID, holder)
@@ -80,21 +81,21 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (workflowledger.Cance
 		run, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
 			e.forgetWorktree(runID)
-			return workflowledger.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+			return workflowagenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 		}
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	// Terminal progress: one step_completed(canceled) per attempt the cancel
 	// settled, so hosts observing the engine see the operator cancel.
 	emitCanceledAttempts(runID, attempts)
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	if workflowledger.IsTerminalRunStatus(run.Status) {
 		e.forgetWorktree(runID)
 	}
-	return workflowledger.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+	return workflowagenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 }
 
 // claimOrTakeoverExpired claims runID for holder, taking over the existing

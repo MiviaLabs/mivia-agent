@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -73,7 +74,7 @@ func writeSugaredTwoStepWorkspace(t *testing.T) string {
 	return root
 }
 
-func newStepDefaultsEngine(t *testing.T) (*localengine.Engine, *workflowledger.Service, workflowledger.Repository) {
+func newStepDefaultsEngine(t *testing.T) (*localengine.Engine, *workflowagenttools.Service, workflowledger.Repository) {
 	t.Helper()
 	root := writeSugaredTwoStepWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()

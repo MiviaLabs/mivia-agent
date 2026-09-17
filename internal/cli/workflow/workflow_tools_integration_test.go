@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -34,10 +35,10 @@ import (
 // newToolSurfaceFixture builds a workspace and returns the workflow tool
 // service built the way production builds it.
 //
-// It deliberately does NOT hand-assemble a workflowledger.Service: going
+// It deliberately does NOT hand-assemble a workflowagenttools.Service: going
 // through WorkflowToolServiceWithBus is what makes this a test of the shipped
 // wiring rather than of a parallel construction only tests use.
-func newToolSurfaceFixture(t *testing.T) (*workflowledger.Service, string) {
+func newToolSurfaceFixture(t *testing.T) (*workflowagenttools.Service, string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -70,9 +71,9 @@ func newToolSurfaceFixture(t *testing.T) (*workflowledger.Service, string) {
 }
 
 // toolNamed returns one shipped tool by name.
-func toolNamed(t *testing.T, svc *workflowledger.Service, name string) workflowledger.Tool {
+func toolNamed(t *testing.T, svc *workflowagenttools.Service, name string) workflowagenttools.Tool {
 	t.Helper()
-	for _, tool := range workflowledger.Tools(svc) {
+	for _, tool := range workflowagenttools.Tools(svc) {
 		if tool.Name() == name {
 			return tool
 		}
@@ -82,13 +83,13 @@ func toolNamed(t *testing.T, svc *workflowledger.Service, name string) workflowl
 }
 
 // execTool calls one tool exactly as a model does: JSON in, JSON out.
-func execTool(t *testing.T, svc *workflowledger.Service, name, payload string) (string, error) {
+func execTool(t *testing.T, svc *workflowagenttools.Service, name, payload string) (string, error) {
 	t.Helper()
 	return toolNamed(t, svc, name).Execute(context.Background(), json.RawMessage(payload))
 }
 
 // mustExecTool fails the test if the tool call errors.
-func mustExecTool(t *testing.T, svc *workflowledger.Service, name, payload string) string {
+func mustExecTool(t *testing.T, svc *workflowagenttools.Service, name, payload string) string {
 	t.Helper()
 	out, err := execTool(t, svc, name, payload)
 	if err != nil {
@@ -101,12 +102,12 @@ func mustExecTool(t *testing.T, svc *workflowledger.Service, name, payload strin
 // terminal. Polling the tool rather than reaching into engine internals keeps
 // this an observer a model could be: if the status a model can see never
 // reports terminal, the test fails, which is the property worth holding.
-func awaitTerminalStatus(t *testing.T, svc *workflowledger.Service, runID string) workflowledger.StatusView {
+func awaitTerminalStatus(t *testing.T, svc *workflowagenttools.Service, runID string) workflowledger.StatusView {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	var last workflowledger.StatusView
 	for time.Now().Before(deadline) {
-		out := mustExecTool(t, svc, workflowledger.ToolWorkflowStatus, fmt.Sprintf(`{"run_id":%q}`, runID))
+		out := mustExecTool(t, svc, workflowagenttools.ToolWorkflowStatus, fmt.Sprintf(`{"run_id":%q}`, runID))
 		if err := json.Unmarshal([]byte(out), &last); err != nil {
 			t.Fatalf("decode workflow_status: %v (body %s)", err, out)
 		}
@@ -126,9 +127,9 @@ func TestIntegrationShippedToolsDriveTheProductionEngine(t *testing.T) {
 	svc, _ := newToolSurfaceFixture(t)
 
 	// 1. workflow_run admits the run.
-	startOut := mustExecTool(t, svc, workflowledger.ToolWorkflowRun,
+	startOut := mustExecTool(t, svc, workflowagenttools.ToolWorkflowRun,
 		`{"workflow":"two-step","inputs":{"task":"build"}}`)
-	var started workflowledger.StartResult
+	var started workflowagenttools.StartResult
 	if err := json.Unmarshal([]byte(startOut), &started); err != nil {
 		t.Fatalf("decode workflow_run: %v (body %s)", err, startOut)
 	}
@@ -151,7 +152,7 @@ func TestIntegrationShippedToolsDriveTheProductionEngine(t *testing.T) {
 	}
 
 	// 3. workflow_events returns the durable trail.
-	evOut := mustExecTool(t, svc, workflowledger.ToolWorkflowEvents,
+	evOut := mustExecTool(t, svc, workflowagenttools.ToolWorkflowEvents,
 		fmt.Sprintf(`{"run_id":%q,"limit":50}`, started.RunID))
 	var events workflowledger.EventsPage
 	if err := json.Unmarshal([]byte(evOut), &events); err != nil {
@@ -163,7 +164,7 @@ func TestIntegrationShippedToolsDriveTheProductionEngine(t *testing.T) {
 
 	// 4. workflow_inspect resolves one attempt's detail, including the child
 	//    identity the coordinator recorded and the transition it routed on.
-	insOut := mustExecTool(t, svc, workflowledger.ToolWorkflowInspect,
+	insOut := mustExecTool(t, svc, workflowagenttools.ToolWorkflowInspect,
 		fmt.Sprintf(`{"run_id":%q,"step":"one","attempt":1}`, started.RunID))
 	var inspect workflowledger.InspectView
 	if err := json.Unmarshal([]byte(insOut), &inspect); err != nil {
@@ -180,7 +181,7 @@ func TestIntegrationShippedToolsDriveTheProductionEngine(t *testing.T) {
 	}
 
 	// 5. workflow_list_runs lists it.
-	listOut := mustExecTool(t, svc, workflowledger.ToolWorkflowListRuns, `{}`)
+	listOut := mustExecTool(t, svc, workflowagenttools.ToolWorkflowListRuns, `{}`)
 	var list workflowledger.ListRunsView
 	if err := json.Unmarshal([]byte(listOut), &list); err != nil {
 		t.Fatalf("decode workflow_list_runs: %v (body %s)", err, listOut)
@@ -205,7 +206,7 @@ func TestIntegrationShippedToolsDriveTheProductionEngine(t *testing.T) {
 func TestIntegrationShippedToolSurfaceIsComplete(t *testing.T) {
 	svc, _ := newToolSurfaceFixture(t)
 	got := map[string]bool{}
-	for _, tool := range workflowledger.Tools(svc) {
+	for _, tool := range workflowagenttools.Tools(svc) {
 		got[tool.Name()] = true
 		if strings.TrimSpace(tool.Description()) == "" {
 			t.Errorf("tool %q ships with no description", tool.Name())
@@ -215,13 +216,13 @@ func TestIntegrationShippedToolSurfaceIsComplete(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		workflowledger.ToolWorkflowRun,
-		workflowledger.ToolWorkflowStatus,
-		workflowledger.ToolWorkflowEvents,
-		workflowledger.ToolWorkflowInspect,
-		workflowledger.ToolWorkflowListRuns,
-		workflowledger.ToolWorkflowDeliver,
-		workflowledger.ToolWorkflowCancel,
+		workflowagenttools.ToolWorkflowRun,
+		workflowagenttools.ToolWorkflowStatus,
+		workflowagenttools.ToolWorkflowEvents,
+		workflowagenttools.ToolWorkflowInspect,
+		workflowagenttools.ToolWorkflowListRuns,
+		workflowagenttools.ToolWorkflowDeliver,
+		workflowagenttools.ToolWorkflowCancel,
 	} {
 		if !got[want] {
 			t.Errorf("shipped tool surface is missing %q", want)
@@ -241,21 +242,21 @@ func TestIntegrationShippedToolSurfaceIsComplete(t *testing.T) {
 // call into the second, which this test detects.
 func TestIntegrationDeliverRefusesWithoutAllowPublish(t *testing.T) {
 	svc, _ := newToolSurfaceFixture(t)
-	startOut := mustExecTool(t, svc, workflowledger.ToolWorkflowRun,
+	startOut := mustExecTool(t, svc, workflowagenttools.ToolWorkflowRun,
 		`{"workflow":"two-step","inputs":{"task":"build"}}`)
-	var started workflowledger.StartResult
+	var started workflowagenttools.StartResult
 	if err := json.Unmarshal([]byte(startOut), &started); err != nil {
 		t.Fatal(err)
 	}
 	awaitTerminalStatus(t, svc, started.RunID)
 
 	// Without the flag: a clean, structured refusal that names the gate.
-	out, err := execTool(t, svc, workflowledger.ToolWorkflowDeliver,
+	out, err := execTool(t, svc, workflowagenttools.ToolWorkflowDeliver,
 		fmt.Sprintf(`{"run_id":%q}`, started.RunID))
 	if err != nil {
 		t.Fatalf("workflow_deliver without allow_publish errored (%v); the gate must refuse cleanly, not fail", err)
 	}
-	var refusal workflowledger.DeliverResult
+	var refusal workflowagenttools.DeliverResult
 	if jsonErr := json.Unmarshal([]byte(out), &refusal); jsonErr != nil {
 		t.Fatalf("decode workflow_deliver refusal: %v (body %s)", jsonErr, out)
 	}
@@ -269,10 +270,10 @@ func TestIntegrationDeliverRefusesWithoutAllowPublish(t *testing.T) {
 	// With the flag: the SAME run must get past the gate. It still fails -
 	// two-step declares no [delivery] policy - but on the policy, not the
 	// gate. This is the half that fails if the gate stops gating.
-	flagged, flaggedErr := execTool(t, svc, workflowledger.ToolWorkflowDeliver,
+	flagged, flaggedErr := execTool(t, svc, workflowagenttools.ToolWorkflowDeliver,
 		fmt.Sprintf(`{"run_id":%q,"allow_publish":true}`, started.RunID))
 	if flaggedErr == nil {
-		var passed workflowledger.DeliverResult
+		var passed workflowagenttools.DeliverResult
 		if jsonErr := json.Unmarshal([]byte(flagged), &passed); jsonErr == nil && passed.Refused &&
 			strings.Contains(passed.Reason, "allow_publish") {
 			t.Fatalf("allow_publish=true was still refused by the gate: %s", flagged)
@@ -287,19 +288,19 @@ func TestIntegrationDeliverRefusesWithoutAllowPublish(t *testing.T) {
 // settled state, never error and never reopen it.
 func TestIntegrationCancelOnTerminalRunIsIdempotent(t *testing.T) {
 	svc, _ := newToolSurfaceFixture(t)
-	startOut := mustExecTool(t, svc, workflowledger.ToolWorkflowRun,
+	startOut := mustExecTool(t, svc, workflowagenttools.ToolWorkflowRun,
 		`{"workflow":"two-step","inputs":{"task":"build"}}`)
-	var started workflowledger.StartResult
+	var started workflowagenttools.StartResult
 	if err := json.Unmarshal([]byte(startOut), &started); err != nil {
 		t.Fatal(err)
 	}
 	before := awaitTerminalStatus(t, svc, started.RunID)
 
-	if _, err := execTool(t, svc, workflowledger.ToolWorkflowCancel,
+	if _, err := execTool(t, svc, workflowagenttools.ToolWorkflowCancel,
 		fmt.Sprintf(`{"run_id":%q}`, started.RunID)); err != nil {
 		t.Fatalf("workflow_cancel on a terminal run = %v, want it to settle quietly", err)
 	}
-	after := mustExecTool(t, svc, workflowledger.ToolWorkflowStatus,
+	after := mustExecTool(t, svc, workflowagenttools.ToolWorkflowStatus,
 		fmt.Sprintf(`{"run_id":%q}`, started.RunID))
 	var status workflowledger.StatusView
 	if err := json.Unmarshal([]byte(after), &status); err != nil {
@@ -314,7 +315,7 @@ func TestIntegrationCancelOnTerminalRunIsIdempotent(t *testing.T) {
 // model is most likely to trigger, through the shipped entry point.
 func TestIntegrationRunRefusesUnknownWorkflow(t *testing.T) {
 	svc, _ := newToolSurfaceFixture(t)
-	if _, err := execTool(t, svc, workflowledger.ToolWorkflowRun,
+	if _, err := execTool(t, svc, workflowagenttools.ToolWorkflowRun,
 		`{"workflow":"no-such-workflow","inputs":{"task":"build"}}`); err == nil {
 		t.Fatal("workflow_run admitted a workflow the workspace does not define")
 	}
@@ -324,7 +325,7 @@ func TestIntegrationRunRefusesUnknownWorkflow(t *testing.T) {
 // production path: two-step declares task as required.
 func TestIntegrationRunRefusesMissingRequiredInput(t *testing.T) {
 	svc, _ := newToolSurfaceFixture(t)
-	if _, err := execTool(t, svc, workflowledger.ToolWorkflowRun,
+	if _, err := execTool(t, svc, workflowagenttools.ToolWorkflowRun,
 		`{"workflow":"two-step","inputs":{}}`); err == nil {
 		t.Fatal("workflow_run admitted a run with no value for the required input")
 	}

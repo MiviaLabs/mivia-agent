@@ -18,6 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -42,7 +43,7 @@ func newEngineCoveragePrepared(t *testing.T) (*sessionWorkflowEngine, *PreparedW
 // Start: a nil engine must fail closed with an explicit error.
 func TestSessionEngineStartNilReceiverRefused(t *testing.T) {
 	var e *sessionWorkflowEngine
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step"})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step"})
 	if err == nil || !strings.Contains(err.Error(), "nil") {
 		t.Fatalf("Start() on nil engine error = %v, want a nil-engine error", err)
 	}
@@ -53,7 +54,7 @@ func TestSessionEngineStartNilReceiverRefused(t *testing.T) {
 // the encode error before any admission work starts.
 func TestSessionEngineStartUnencodableInputRefused(t *testing.T) {
 	e := NewSessionWorkflowEngine(t.TempDir(), "")
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": make(chan int)},
 	})
@@ -67,7 +68,7 @@ func TestSessionEngineStartUnencodableInputRefused(t *testing.T) {
 // start with the workspace error.
 func TestSessionEngineStartMissingWorkspaceRefused(t *testing.T) {
 	e := NewSessionWorkflowEngine(filepath.Join(t.TempDir(), "absent"), "")
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})
@@ -86,7 +87,7 @@ func TestSessionEngineStartKeyOnTerminalRunReturnsStored(t *testing.T) {
 	key := "cov-terminal-key-1"
 	ctx := context.Background()
 
-	first, err := e.Start(ctx, workflowledger.StartRequest{
+	first, err := e.Start(ctx, workflowagenttools.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "compile"}, InvocationKey: key,
 	})
 	if err != nil {
@@ -94,13 +95,13 @@ func TestSessionEngineStartKeyOnTerminalRunReturnsStored(t *testing.T) {
 	}
 	waitForSessionEngineIdle(t, e, first.RunID)
 
-	second, err := e.Start(ctx, workflowledger.StartRequest{
+	second, err := e.Start(ctx, workflowagenttools.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "compile"}, InvocationKey: key,
 	})
 	if err != nil {
 		t.Fatalf("retry under a terminal key error = %v, want the stored result", err)
 	}
-	if second.RunID != string(workflowledger.InvocationRunID(key)) {
+	if second.RunID != string(workflowagenttools.InvocationRunID(key)) {
 		t.Fatalf("retry RunID = %q, want the keyed run id", second.RunID)
 	}
 	if second.Status != string(workflowledger.RunStatusSucceeded) {
@@ -117,14 +118,14 @@ func TestSessionEngineStartKeyMatchingInputsResumes(t *testing.T) {
 	root, configPath := newGatedKeyFixture(t, key)
 	e := NewSessionWorkflowEngine(root, configPath)
 
-	result, err := e.Start(context.Background(), workflowledger.StartRequest{
+	result, err := e.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "gated", Inputs: map[string]any{"task": "test"}, InvocationKey: key,
 	})
 	if err != nil && strings.Contains(err.Error(), "different inputs") {
 		t.Fatalf("matching inputs refused as different: %v", err)
 	}
 	if err == nil {
-		if result.RunID != string(workflowledger.InvocationRunID(key)) {
+		if result.RunID != string(workflowagenttools.InvocationRunID(key)) {
 			t.Fatalf("resume RunID = %q, want the keyed run id", result.RunID)
 		}
 		waitForSessionEngineIdle(t, e, result.RunID)
@@ -143,7 +144,7 @@ func TestBuildAndStartExecutionLockHeldFails(t *testing.T) {
 	}
 	defer release()
 
-	_, err = e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID, "", nil)
+	_, err = e.buildAndStart(context.Background(), prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, runID, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("buildAndStart() under a held lock error = %v, want a lock error", err)
 	}
@@ -160,7 +161,7 @@ func TestBuildAndStartBuildFailureSettles(t *testing.T) {
 	}
 	defer func() { WorkflowRunBuild = prev }()
 
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-build-fail", "", nil)
+	_, err := e.buildAndStart(context.Background(), prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, "wfr-cov-build-fail", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "coverage build failure") {
 		t.Fatalf("buildAndStart() error = %v, want the seam error", err)
 	}
@@ -177,7 +178,7 @@ func TestBuildAndStartAdmissionFailureSettles(t *testing.T) {
 	}
 	defer func() { WorkflowRunSetAdmission = prev }()
 
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-admission-fail", "", nil)
+	_, err := e.buildAndStart(context.Background(), prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, "wfr-cov-admission-fail", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "coverage admission failure") {
 		t.Fatalf("buildAndStart() error = %v, want the seam error", err)
 	}
@@ -188,7 +189,7 @@ func TestBuildAndStartAdmissionFailureSettles(t *testing.T) {
 // without the wfr- prefix) must fail after full resource cleanup.
 func TestBuildAndStartUnadmittableRunIDFails(t *testing.T) {
 	e, prepared := newEngineCoveragePrepared(t)
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "cov-not-a-run-id", "", nil)
+	_, err := e.buildAndStart(context.Background(), prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, "cov-not-a-run-id", "", nil)
 	if err == nil {
 		t.Fatal("buildAndStart() with an unadmittable run ID succeeded; want the admission error")
 	}
@@ -218,7 +219,7 @@ func TestBuildAndStartExistingRunReturnsStoredStatus(t *testing.T) {
 	built.Cleanup()
 	built.Dispatcher.Close()
 
-	result, err := e.buildAndStart(ctx, prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID, "", nil)
+	result, err := e.buildAndStart(ctx, prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, runID, "", nil)
 	if err != nil {
 		t.Fatalf("buildAndStart() on an existing run error = %v, want the stored result", err)
 	}
