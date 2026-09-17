@@ -1,0 +1,12 @@
+id = "style-only-structure-stays-pass"
+title = "Only style candidates on sound structure"
+section = "Report"
+verdict = "PASS"
+anchors = [
+  "minor structural issue with limited blast radius",
+  "Never invent a Low finding about style or naming on otherwise",
+]
+design = """A review completes on a sound, layered design. Every boundary
+has a demonstrated driver. Each check that the plan names runs and
+passes. The only candidate findings concern naming style on two modules.
+The reviewer reports a pass and records no finding."""

@@ -1,0 +1,11 @@
+id = "no-reviewable-artifact"
+title = "Request names no reviewable structure"
+section = "Scope"
+verdict = "NOT_RUN"
+anchors = [
+  "Return `NOT_RUN` when no reviewable design or structure is in scope.",
+]
+design = """A request asks for a general opinion about system quality. It
+names no design, plan, or structural change. No artifact bounds the
+review. The reviewer returns the not-run verdict and asks for a concrete
+artifact."""

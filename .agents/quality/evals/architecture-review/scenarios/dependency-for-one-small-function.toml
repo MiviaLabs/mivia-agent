@@ -1,0 +1,13 @@
+id = "dependency-for-one-small-function"
+title = "New dependency serves one small helper"
+section = "Check dependency hygiene"
+verdict = "BLOCK"
+anchors = [
+  "the driver it satisfies, why the standard library or an",
+  "A dependency added for one small function is an",
+]
+design = """A design adds one new third-party dependency. The dependency
+supplies one small helper that formats a duration value. The workspace
+already owns a module that formats duration values. The design names no
+driver that the owned module fails to serve. The dependency adds
+transitive weight for no demonstrated benefit."""

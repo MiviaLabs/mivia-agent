@@ -1,0 +1,13 @@
+id = "missing-foundation-with-driver"
+title = "Persisted schema lands without its required migration path"
+section = "Check evolution and reversibility"
+verdict = "BLOCK"
+anchors = [
+  "Flag a missing foundation only when a",
+  "Otherwise record a future trigger or threshold instead of",
+]
+design = """A design lands a persisted data schema in one stage. A current
+driver requires a migration path for existing stored records. The plan
+ships the schema without that path. Records written in the first stage
+become unreadable after the planned second stage. The retrofit risk is
+material and immediate, not speculative."""
