@@ -296,6 +296,22 @@ type resultBudgetTool interface {
 	ResultBudgetBytes() int
 }
 
+// newTurnShapeWrapper is the ONLY construction site for
+// turnShapeWrapper. Both the registry route (applyTurnShaping) and
+// the deferred route (wrapTurnShaping) construct their wrapper
+// through this function, so every field is set in exactly one place.
+// Callers own all eligibility, guard, and cap-floor decisions
+// (budget activity, ephemeral detection, cap resolution);
+// newTurnShapeWrapper performs none of them and simply copies its
+// arguments into the struct. onDegrade is caller-supplied and its
+// identity matters only at the call site - closures compare unequal,
+// so its contract is proven by invocation, not equality. cap shadows
+// the builtin exactly as the existing call sites do; it is not
+// renamed here.
+func newTurnShapeWrapper(inner sdktools.Tool, budget int, counter *turnShapeCounter, env shapeEnv, ephemeral bool, toolName string, turn *sdkTurnState, cap int, onDegrade func(charged, budget int)) *turnShapeWrapper {
+	return &turnShapeWrapper{inner: inner, budget: budget, counter: counter, env: env, ephemeral: ephemeral, toolName: toolName, turn: turn, cap: cap, onDegrade: onDegrade}
+}
+
 // applyTurnShaping wraps every tool in the SDK registry with the
 // turn-level shaping wrapper. Positive BatchResultBudgetBytes is
 // literal; negative selects the legacy derived-from-context budget
@@ -327,19 +343,9 @@ func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Op
 				cap = bt.ResultBudgetBytes()
 			}
 		}
-		wrapped := &turnShapeWrapper{
-			inner:     t,
-			budget:    budget,
-			counter:   counter,
-			env:       env,
-			ephemeral: ephemeral,
-			toolName:  name,
-			cap:       cap,
-			turn:      turn,
-			onDegrade: func(charged, budget int) {
-				emitBatchShapingRow(opts, charged, budget)
-			},
-		}
+		wrapped := newTurnShapeWrapper(t, budget, counter, env, ephemeral, name, turn, cap, func(charged, budget int) {
+			emitBatchShapingRow(opts, charged, budget)
+		})
 		sdkReg.Remove(name)
 		if err := sdkReg.Add(wrapped); err != nil {
 			// Not restoring t: an unwrapped tool escapes the turn's batch
@@ -388,19 +394,9 @@ func wrapTurnShaping(inner sdktools.Tool, cliTool tools.Tool, opts Options, turn
 			cap = bt.ResultBudgetBytes()
 		}
 	}
-	return &turnShapeWrapper{
-		inner:     inner,
-		budget:    budget,
-		counter:   turn.shapeCounter(),
-		env:       newShapeEnv(turn.currentSpool(), opts.SessionID),
-		ephemeral: ephemeral,
-		toolName:  inner.Name(),
-		cap:       cap,
-		turn:      turn,
-		onDegrade: func(charged, budget int) {
-			emitBatchShapingRow(opts, charged, budget)
-		},
-	}
+	return newTurnShapeWrapper(inner, budget, turn.shapeCounter(), newShapeEnv(turn.currentSpool(), opts.SessionID), ephemeral, inner.Name(), turn, cap, func(charged, budget int) {
+		emitBatchShapingRow(opts, charged, budget)
+	})
 }
 
 // batchShapingBudget resolves the turn's batch budget and whether shaping is
