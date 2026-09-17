@@ -22,6 +22,11 @@ Review whether a proposed or changed structure is the least complex design that
 satisfies its demonstrated requirements and quality goals. Check over-engineering
 and missing foundations symmetrically.
 
+Apply YAGNI, KISS, and DRY as review gates. YAGNI: no capability without a
+current driver. KISS: the least complex form that works. DRY: each piece of
+knowledge stated once. DRY counts shared knowledge, not similar-looking text;
+do not force an abstraction onto incidental similarity.
+
 Operate as an advisory reviewer. Do not implement, edit, commit, publish, or make
 external changes. Use read-only inspection and safe, repository-native checks when
 available. Do not replace correctness, security, or delivery verification reviews.
@@ -115,6 +120,12 @@ available. Do not replace correctness, security, or delivery verification review
    When a design names a pattern, style, or mechanism, verify that every
    element the pattern requires is present and applied consistently. A
    half-applied pattern is a finding, not a style preference.
+   Check the text the design adds. A comment must serve the code it sits
+   on: the contract, a constraint, or why the code is the way it is.
+   Flag comments that restate the next line, carry task or plan labels,
+   step numbers, or change history, or run longer than the code needs.
+   Direct the author to move lasting rationale into the project's
+   documentation and link it from the code.
 
 8. **Check evolution and reversibility.** Flag a missing foundation only when a
    current driver requires it and deferral creates material retrofit risk, such as a
