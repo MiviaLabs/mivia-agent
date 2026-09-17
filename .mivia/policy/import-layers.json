@@ -23,14 +23,21 @@
     "internal/agentmsg": [
       "internal/sdkadapter"
     ],
+    "internal/agents": [
+      "internal/config",
+      "internal/provider/registry",
+      "internal/skills",
+      "internal/subagents",
+      "internal/tools"
+    ],
     "internal/automation": [
       "internal/chat",
       "internal/cli/agents",
-      "internal/context/state",
       "internal/cli/chat",
       "internal/cli/workflow",
       "internal/cli/worktree",
       "internal/config",
+      "internal/context/state",
       "internal/cronschedule",
       "internal/sdkadapter",
       "internal/skills",
@@ -40,13 +47,6 @@
       "internal/tui/kit/uievent",
       "internal/workflows/ledger",
       "internal/workspace"
-    ],
-    "internal/agents": [
-      "internal/config",
-      "internal/provider/registry",
-      "internal/skills",
-      "internal/subagents",
-      "internal/tools"
     ],
     "internal/chat": [
       "internal/agent",
@@ -75,8 +75,8 @@
     "internal/cli": [
       "internal/chat",
       "internal/cli/agents",
-      "internal/cli/chat",
       "internal/cli/automations",
+      "internal/cli/chat",
       "internal/cli/orchestrate",
       "internal/cli/workflow",
       "internal/cli/worktree",
@@ -214,6 +214,7 @@
       "internal/workflows/delivery",
       "internal/workflows/ledger",
       "internal/workflows/localengine",
+      "internal/workflows/panel",
       "internal/workspace"
     ],
     "internal/cli/worktree": [
@@ -243,8 +244,8 @@
     ],
     "internal/config": [
       "internal/memory",
-      "internal/provider/registry",
       "internal/provider/reasoning",
+      "internal/provider/registry",
       "internal/redact",
       "internal/secretpath",
       "internal/tools",
@@ -299,26 +300,14 @@
     "internal/miviaauth": [
       "internal/config"
     ],
-    "internal/tui/run": [
-      "internal/agent",
-      "internal/automation",
-      "internal/chat",
-      "internal/chatsync",
-      "internal/cli",
-      "internal/config",
-      "internal/sdkadapter",
-      "internal/storage",
-      "internal/tui/view/app",
-      "internal/tui/view/screen/conversation",
-      "internal/tui/view/theme",
-      "internal/tui/adapter",
-      "internal/tui/kit/ports",
-      "internal/tui/kit/termprobe"
+    "internal/orchestrationnotify": [
+      "internal/ledger",
+      "internal/provider"
     ],
     "internal/provider": [
       "internal/config",
-      "internal/provider/registry",
-      "internal/provider/reasoning"
+      "internal/provider/reasoning",
+      "internal/provider/registry"
     ],
     "internal/remainder": [
       "internal/sdkadapter"
@@ -365,139 +354,6 @@
       "internal/textutil",
       "internal/workspace"
     ],
-    "internal/tui/view/app": [
-      "internal/tui/view/select",
-      "internal/tui/view/theme",
-      "internal/tui/kit/clipboardwrite"
-    ],
-    "internal/tui/view/component/approval": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config",
-      "internal/tui/kit/ports",
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/component/blackboard": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme"
-    ],
-    "internal/tui/view/component/composer": [
-      "internal/tui/view/render",
-      "internal/tui/view/select",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config"
-    ],
-    "internal/tui/view/component/field": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme"
-    ],
-    "internal/tui/view/component/history": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme"
-    ],
-    "internal/tui/view/component/mark": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config"
-    ],
-    "internal/tui/view/component/picker": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme"
-    ],
-    "internal/tui/view/component/queue": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme"
-    ],
-    "internal/tui/view/component/statusline": [
-      "internal/tui/view/component/mark",
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config"
-    ],
-    "internal/tui/view/component/topbar": [
-      "internal/tui/view/component/mark",
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/tui/kit/ports"
-    ],
-    "internal/tui/view/component/transcript": [
-      "internal/remainder",
-      "internal/tui/view/render",
-      "internal/tui/view/select",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config",
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/component/welcome": [
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/vcs"
-    ],
-    "internal/tui/view/jsonout": [
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/render": [
-      "internal/tui/view/theme",
-      "internal/tui/kit/config",
-      "internal/tui/kit/keymap",
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/screen/conversation": [
-      "internal/tui/view/app",
-      "internal/tui/view/component/approval",
-      "internal/tui/view/component/blackboard",
-      "internal/tui/view/component/composer",
-      "internal/tui/view/component/field",
-      "internal/tui/view/component/history",
-      "internal/tui/view/component/mark",
-      "internal/tui/view/component/picker",
-      "internal/tui/view/component/queue",
-      "internal/tui/view/component/statusline",
-      "internal/tui/view/component/topbar",
-      "internal/tui/view/component/transcript",
-      "internal/tui/view/component/welcome",
-      "internal/tui/view/render",
-      "internal/tui/view/screen/settings",
-      "internal/tui/view/screen/themepicker",
-      "internal/tui/view/screen/transcript",
-      "internal/tui/view/select",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config",
-      "internal/tui/kit/intent",
-      "internal/tui/kit/keymap",
-      "internal/tui/kit/ports",
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/screen/settings": [
-      "internal/tui/view/app",
-      "internal/tui/view/component/field",
-      "internal/tui/view/component/topbar",
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config",
-      "internal/tui/kit/keymap",
-      "internal/tui/kit/ports"
-    ],
-    "internal/tui/view/screen/themepicker": [
-      "internal/tui/view/app",
-      "internal/tui/view/component/picker",
-      "internal/tui/view/render",
-      "internal/tui/view/theme",
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/screen/transcript": [
-      "internal/tui/view/app",
-      "internal/tui/view/component/transcript",
-      "internal/tui/view/render",
-      "internal/tui/view/select",
-      "internal/tui/view/theme",
-      "internal/tui/kit/config",
-      "internal/tui/kit/keymap",
-      "internal/tui/kit/uievent"
-    ],
-    "internal/tui/view/stream": [
-      "internal/tui/kit/uievent"
-    ],
     "internal/tui/adapter": [
       "internal/agent",
       "internal/chat",
@@ -519,10 +375,10 @@
       "internal/skills",
       "internal/storage",
       "internal/tools",
-      "internal/tui/view/component/composer",
       "internal/tui/kit/intent",
       "internal/tui/kit/ports",
       "internal/tui/kit/uievent",
+      "internal/tui/view/component/composer",
       "internal/vcs",
       "internal/workspace",
       "internal/worktreeroute"
@@ -534,6 +390,155 @@
     "internal/tui/kit/replay": [
       "internal/tui/kit/intent",
       "internal/tui/kit/ports",
+      "internal/tui/kit/uievent"
+    ],
+    "internal/tui/run": [
+      "internal/agent",
+      "internal/automation",
+      "internal/chat",
+      "internal/chatsync",
+      "internal/cli",
+      "internal/config",
+      "internal/sdkadapter",
+      "internal/storage",
+      "internal/tui/adapter",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/termprobe",
+      "internal/tui/view/app",
+      "internal/tui/view/screen/conversation",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/app": [
+      "internal/tui/kit/clipboardwrite",
+      "internal/tui/view/select",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/approval": [
+      "internal/tui/kit/config",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent",
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/blackboard": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/composer": [
+      "internal/tui/kit/config",
+      "internal/tui/view/render",
+      "internal/tui/view/select",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/field": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/history": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/mark": [
+      "internal/tui/kit/config",
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/picker": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/queue": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/statusline": [
+      "internal/tui/kit/config",
+      "internal/tui/view/component/mark",
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/topbar": [
+      "internal/tui/kit/ports",
+      "internal/tui/view/component/mark",
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/transcript": [
+      "internal/remainder",
+      "internal/tui/kit/config",
+      "internal/tui/kit/uievent",
+      "internal/tui/view/render",
+      "internal/tui/view/select",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/component/welcome": [
+      "internal/tui/view/render",
+      "internal/tui/view/theme",
+      "internal/vcs"
+    ],
+    "internal/tui/view/jsonout": [
+      "internal/tui/kit/uievent"
+    ],
+    "internal/tui/view/render": [
+      "internal/tui/kit/config",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/uievent",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/screen/conversation": [
+      "internal/tui/kit/config",
+      "internal/tui/kit/intent",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/ports",
+      "internal/tui/kit/uievent",
+      "internal/tui/view/app",
+      "internal/tui/view/component/approval",
+      "internal/tui/view/component/blackboard",
+      "internal/tui/view/component/composer",
+      "internal/tui/view/component/field",
+      "internal/tui/view/component/history",
+      "internal/tui/view/component/mark",
+      "internal/tui/view/component/picker",
+      "internal/tui/view/component/queue",
+      "internal/tui/view/component/statusline",
+      "internal/tui/view/component/topbar",
+      "internal/tui/view/component/transcript",
+      "internal/tui/view/component/welcome",
+      "internal/tui/view/render",
+      "internal/tui/view/screen/settings",
+      "internal/tui/view/screen/themepicker",
+      "internal/tui/view/screen/transcript",
+      "internal/tui/view/select",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/screen/settings": [
+      "internal/tui/kit/config",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/ports",
+      "internal/tui/view/app",
+      "internal/tui/view/component/field",
+      "internal/tui/view/component/topbar",
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/screen/themepicker": [
+      "internal/tui/kit/uievent",
+      "internal/tui/view/app",
+      "internal/tui/view/component/picker",
+      "internal/tui/view/render",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/screen/transcript": [
+      "internal/tui/kit/config",
+      "internal/tui/kit/keymap",
+      "internal/tui/kit/uievent",
+      "internal/tui/view/app",
+      "internal/tui/view/component/transcript",
+      "internal/tui/view/render",
+      "internal/tui/view/select",
+      "internal/tui/view/theme"
+    ],
+    "internal/tui/view/stream": [
       "internal/tui/kit/uievent"
     ],
     "internal/vcs": [
@@ -554,7 +559,8 @@
       "internal/textutil",
       "internal/workflows/definition",
       "internal/workflows/delivery",
-      "internal/workflows/ledger"
+      "internal/workflows/ledger",
+      "internal/workflows/panel"
     ],
     "internal/workflows/definition": [
       "internal/agents",
@@ -573,14 +579,10 @@
       "internal/workspace"
     ],
     "internal/workflows/ledger": [
-      "internal/coordinator",
-      "internal/jschema",
-      "internal/ledger",
       "internal/ledger/core",
       "internal/redact",
       "internal/runtime",
       "internal/storage",
-      "internal/subagents",
       "internal/textutil",
       "internal/workspace"
     ],
@@ -595,17 +597,21 @@
       "internal/workflows/definition",
       "internal/workflows/delivery",
       "internal/workflows/ledger",
+      "internal/workflows/panel",
       "internal/workspace"
+    ],
+    "internal/workflows/panel": [
+      "internal/coordinator",
+      "internal/jschema",
+      "internal/ledger",
+      "internal/subagents",
+      "internal/workflows/ledger"
     ],
     "internal/worktreeroute": [
       "internal/chat",
       "internal/context/state",
       "internal/storage",
       "internal/vcs"
-    ],
-    "internal/orchestrationnotify": [
-      "internal/ledger",
-      "internal/provider"
     ]
   },
   "deny": [

@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // panelCancelCoordinator returns the coordinator that can inspect and cancel
@@ -23,7 +24,7 @@ import (
 // yields a *controller.CoordinatorRunner (e.g. a scripted test runner):
 // CancelRunWithAttemptsWithClaim then fails closed only if it actually
 // finds a live panel attempt to reconcile.
-func (e *Engine) panelCancelCoordinator(active *activeRun) workflowledger.PanelChildCoordinator {
+func (e *Engine) panelCancelCoordinator(active *activeRun) workflowpanel.PanelChildCoordinator {
 	if active != nil && active.ctrl != nil {
 		if runner, ok := active.ctrl.Runner.(*controller.CoordinatorRunner); ok {
 			return runner.Coordinator

@@ -23,7 +23,7 @@ var ErrCancelBlocked = errors.New("cancel_blocked")
 var ErrCancelPending = errors.New("cancel_pending")
 
 // PanelCancelCoordinator performs the durable per-child cancel/tombstone
-// operations cancel_pending reconciliation needs. workflowledger.PanelCoordinator
+// operations cancel_pending reconciliation needs. workflowpanel.PanelCoordinator
 // implements it.
 type PanelCancelCoordinator interface {
 	CancelOrTombstoneMember(ctx context.Context, attemptID, memberID string) (bool, error)
