@@ -127,3 +127,46 @@ func TestOtherProvidersWithModel_NilResolved(t *testing.T) {
 		t.Fatalf("OtherProvidersWithModel() on nil Resolved = %v, want nil (must not panic)", got)
 	}
 }
+
+func TestModelOwners_NilOrEmptyOrWhitespace(t *testing.T) {
+	var rNil *Resolved
+	if got := rNil.ModelOwners("model-a"); got != nil {
+		t.Fatalf("ModelOwners() on nil Resolved = %v, want nil", got)
+	}
+	r := &Resolved{}
+	r.SetModelCatalogForTest(otherProvidersCatalog())
+	if got := r.ModelOwners(""); got != nil {
+		t.Fatalf("ModelOwners(\"\") = %v, want nil", got)
+	}
+	if got := r.ModelOwners("   \t\n  "); got != nil {
+		t.Fatalf("ModelOwners(whitespace) = %v, want nil", got)
+	}
+}
+
+func TestModelOwners_SelectableOnly(t *testing.T) {
+	r := &Resolved{}
+	r.SetModelCatalogForTest([]ProviderModelGroup{
+		{Provider: "disabled", Selectable: false, Models: []ModelSpec{{Name: "dup-model"}}},
+		{Provider: "active", Selectable: true, Models: []ModelSpec{{Name: "dup-model"}}},
+	})
+	got := r.ModelOwners("dup-model")
+	want := []string{"active"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ModelOwners(dup-model) = %v, want %v (unselectable must be skipped)", got, want)
+	}
+}
+
+func TestModelOwners_CatalogOrderAndAllOwners(t *testing.T) {
+	r := &Resolved{}
+	r.SetModelCatalogForTest([]ProviderModelGroup{
+		{Provider: "first", Selectable: true, Models: []ModelSpec{{Name: "shared"}}},
+		{Provider: "unselectable", Selectable: false, Models: []ModelSpec{{Name: "shared"}}},
+		{Provider: "second", Selectable: true, Models: []ModelSpec{{Name: "shared"}}},
+		{Provider: "third", Selectable: true, Models: []ModelSpec{{Name: "shared"}}},
+	})
+	got := r.ModelOwners("shared")
+	want := []string{"first", "second", "third"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ModelOwners(shared) = %v, want %v (catalog order, all selectable owners)", got, want)
+	}
+}

@@ -7,17 +7,26 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
 
+var _ ports.ModelSelectionRunner = (*CommandRunner)(nil)
+
 func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
 	if r.activeSession() == nil || r.res == nil {
 		return ports.CommandOutcome{Err: "session or configuration not initialized"}
 	}
+	args = strings.TrimSpace(args)
 	if args != "" {
+		if first, rest, ok := splitFirstWhitespace(args); ok && rest != "" {
+			if canonical, found := findProvider(r.res, first); found {
+				return r.SelectModelForProvider(context.Background(), canonical, rest)
+			}
+		}
 		return r.SelectModel(context.Background(), args)
 	}
 	groups := r.availableModelsByProvider()
@@ -25,6 +34,35 @@ func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
 		return ports.CommandOutcome{Err: "no models loaded"}
 	}
 	return ports.CommandOutcome{ModelChoiceGroups: groups}
+}
+
+func splitFirstWhitespace(s string) (first, rest string, ok bool) {
+	idx := strings.IndexFunc(s, unicode.IsSpace)
+	if idx < 0 {
+		return s, "", false
+	}
+	first = s[:idx]
+	rest = strings.TrimSpace(s[idx:])
+	return first, rest, true
+}
+
+func findProvider(res *config.Resolved, name string) (string, bool) {
+	if res == nil {
+		return "", false
+	}
+	for _, group := range res.ModelCatalog() {
+		if strings.EqualFold(group.Provider, name) {
+			return group.Provider, true
+		}
+	}
+	if res.ProviderRuntimes != nil {
+		for rName := range res.ProviderRuntimes {
+			if strings.EqualFold(rName, name) {
+				return rName, true
+			}
+		}
+	}
+	return "", false
 }
 
 // availableModelsByProvider returns the selectable catalog grouped by
@@ -67,76 +105,60 @@ func (r *CommandRunner) availableModelsByProvider() []ports.ModelChoiceGroup {
 	return groups
 }
 
-func resolveProviderAndModel(res *config.Resolved, selProvider, name string) (string, string) {
+// resolveExplicitModelSelection parses provider/model compatibility syntax:
+// provider prefix against catalog providers, provider prefix against runtimes,
+// or a slash-split identifier matching a known provider or runtime (case-folded).
+// It returns (provider, model, true) if recognized, or ("", "", false).
+// It contains only explicit provider/runtime prefix and slash-cut compatibility logic;
+// it does not perform exact owner counting across catalog groups or fall back to
+// the session's current provider.
+func resolveExplicitModelSelection(res *config.Resolved, name string) (string, string, bool) {
+	if res == nil {
+		return "", "", false
+	}
 	name = strings.TrimSpace(name)
-	providerName := res.ProviderName
-	if selProvider != "" {
-		providerName = selProvider
-	}
 
-	// 1. Search unique provider in catalog by exact whole-name match across
-	// Selectable catalog groups. A name matching more than one Selectable
-	// provider is NOT resolved here - silently picking the first catalog-order
-	// match would be an unannounced provider switch (different auth, base URL,
-	// and wire behavior) on nothing but name coincidence. If matches > 1, we
-	// fall through to the explicit provider/runtime prefix parser below; if
-	// that also does not disambiguate, the final fallback leaves providerName
-	// as today's default (current selection) and SwitchModelCommand's resulting
-	// "not available" error names every match so the user picks explicitly
-	// with /model <provider> <name>.
-	var matchedProvider string
-	matches := 0
-	for _, group := range res.ModelCatalog() {
-		if !group.Selectable {
-			continue
-		}
-		for _, m := range group.Models {
-			if m.Name == name {
-				matchedProvider = group.Provider
-				matches++
-				break
-			}
-		}
-	}
-	if matches == 1 {
-		return matchedProvider, name
-	}
-
-	// 2. Explicit provider prefix matching a catalog provider
+	// 1. Explicit provider prefix matching a catalog provider
 	for _, group := range res.ModelCatalog() {
 		prefix := group.Provider + "/"
 		if strings.HasPrefix(strings.ToLower(name), prefix) {
-			return group.Provider, name[len(prefix):]
+			return group.Provider, name[len(prefix):], true
 		}
 	}
 
-	// 2b. Prefix matching a configured provider runtime
+	// 2. Prefix matching a configured provider runtime
 	if res.ProviderRuntimes != nil {
 		for p := range res.ProviderRuntimes {
 			prefix := strings.ToLower(p) + "/"
 			if strings.HasPrefix(strings.ToLower(name), prefix) {
-				return p, name[len(prefix):]
+				return p, name[len(prefix):], true
 			}
 		}
 	}
 
-	// 2c. Name containing a slash matching known provider name
+	// 3. Name containing a slash matching known provider name
 	if p, m, ok := strings.Cut(name, "/"); ok && p != "" && m != "" {
 		for _, group := range res.ModelCatalog() {
 			if strings.EqualFold(group.Provider, p) {
-				return group.Provider, m
+				return group.Provider, m, true
 			}
 		}
 		if res.ProviderRuntimes != nil {
 			for rName := range res.ProviderRuntimes {
 				if strings.EqualFold(rName, p) {
-					return rName, m
+					return rName, m, true
 				}
 			}
 		}
 	}
 
-	return providerName, name
+	return "", "", false
+}
+
+// SelectModelForProvider switches the session's active model to the specified
+// model under the given provider without performing provider resolution.
+func (r *CommandRunner) SelectModelForProvider(_ context.Context, provider, model string) ports.CommandOutcome {
+	return r.switchModel(provider, model)
 }
 
 // SelectModel switches the session's active model.
@@ -145,11 +167,35 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 	if sess == nil || r.res == nil {
 		return ports.CommandOutcome{Err: "session or configuration not initialized"}
 	}
-	selProvider := ""
-	if sel := sess.CurrentSelection(); sel.ProviderName != "" {
-		selProvider = sel.ProviderName
+	name = strings.TrimSpace(name)
+	owners := r.res.ModelOwners(name)
+	switch len(owners) {
+	case 1:
+		return r.switchModel(owners[0], name)
+	case 0:
+		if p, m, ok := resolveExplicitModelSelection(r.res, name); ok {
+			return r.switchModel(p, m)
+		}
+		selProvider := r.res.ProviderName
+		if sel := sess.CurrentSelection(); sel.ProviderName != "" {
+			selProvider = sel.ProviderName
+		}
+		return r.switchModel(selProvider, name)
+	default: // > 1
+		if p, m, ok := resolveExplicitModelSelection(r.res, name); ok {
+			return r.switchModel(p, m)
+		}
+		return ports.CommandOutcome{
+			Err: fmt.Sprintf("model %q is ambiguous across providers: %s; run /model <provider> %s to switch", name, strings.Join(owners, ", "), name),
+		}
 	}
-	providerName, modelName := resolveProviderAndModel(r.res, selProvider, name)
+}
+
+func (r *CommandRunner) switchModel(providerName, modelName string) ports.CommandOutcome {
+	sess := r.activeSession()
+	if sess == nil || r.res == nil {
+		return ports.CommandOutcome{Err: "session or configuration not initialized"}
+	}
 
 	discarded, err := agents.SwitchModelCommand(sess, r.res, providerName, modelName)
 	if err != nil {

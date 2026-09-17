@@ -430,3 +430,95 @@ func TestViewWindowScrollsWithCursor(t *testing.T) {
 		t.Errorf("expected item7..item9 at bottom, got:\n%s", v9)
 	}
 }
+
+func TestSelectedWithHeader_GroupedSelection(t *testing.T) {
+	m := NewGroups(loadTheme(t), theme.TierASCII, []Group{
+		{Provider: "ollama", Models: []string{"llama3.2", "llama3.3"}},
+		{Provider: "openrouter", Models: []string{"gpt-4o"}},
+	})
+	// Initial cursor on llama3.2 (under ollama)
+	header, item, ok := m.SelectedWithHeader()
+	if !ok || header != "ollama" || item != "llama3.2" {
+		t.Fatalf("SelectedWithHeader() = (%q, %q, %v), want (\"ollama\", \"llama3.2\", true)", header, item, ok)
+	}
+
+	// Move down to llama3.3
+	m, _ = m.Update(downKey())
+	header, item, ok = m.SelectedWithHeader()
+	if !ok || header != "ollama" || item != "llama3.3" {
+		t.Fatalf("SelectedWithHeader() = (%q, %q, %v), want (\"ollama\", \"llama3.3\", true)", header, item, ok)
+	}
+
+	// Move down to openrouter header (not selectable)
+	m, _ = m.Update(downKey())
+	header, item, ok = m.SelectedWithHeader()
+	if ok || header != "" || item != "" {
+		t.Fatalf("SelectedWithHeader() on header = (%q, %q, %v), want (\"\", \"\", false)", header, item, ok)
+	}
+
+	// Move down to gpt-4o (under openrouter)
+	m, _ = m.Update(downKey())
+	header, item, ok = m.SelectedWithHeader()
+	if !ok || header != "openrouter" || item != "gpt-4o" {
+		t.Fatalf("SelectedWithHeader() = (%q, %q, %v), want (\"openrouter\", \"gpt-4o\", true)", header, item, ok)
+	}
+}
+
+func TestSelectedWithHeader_ProviderHeaderFilter(t *testing.T) {
+	m := NewGroups(loadTheme(t), theme.TierASCII, []Group{
+		{Provider: "ollama", Models: []string{"model-1"}},
+		{Provider: "openrouter", Models: []string{"model-2"}},
+	})
+	m, _ = m.Update(keyMsg("open"))
+	header, item, ok := m.SelectedWithHeader()
+	if !ok || header != "openrouter" || item != "model-2" {
+		t.Fatalf("SelectedWithHeader() with provider filter = (%q, %q, %v), want (\"openrouter\", \"model-2\", true)", header, item, ok)
+	}
+}
+
+func TestSelectedWithHeader_ModelFilter(t *testing.T) {
+	m := NewGroups(loadTheme(t), theme.TierASCII, []Group{
+		{Provider: "provider-a", Models: []string{"claude-3-opus", "gpt-4"}},
+		{Provider: "provider-b", Models: []string{"claude-3.5-sonnet", "gemini"}},
+	})
+	m, _ = m.Update(keyMsg("sonnet"))
+	header, item, ok := m.SelectedWithHeader()
+	if !ok || header != "provider-b" || item != "claude-3.5-sonnet" {
+		t.Fatalf("SelectedWithHeader() with model filter = (%q, %q, %v), want (\"provider-b\", \"claude-3.5-sonnet\", true)", header, item, ok)
+	}
+}
+
+func TestSelectedWithHeader_RebindGroups(t *testing.T) {
+	m := NewGroups(loadTheme(t), theme.TierASCII, []Group{
+		{Provider: "ollama", Models: []string{"llama3.2"}},
+	})
+	m.RebindGroups([]Group{
+		{Provider: "deepseek", Models: []string{"deepseek-chat"}},
+		{Provider: "anthropic", Models: []string{"claude-3-5"}},
+	})
+	header, item, ok := m.SelectedWithHeader()
+	if !ok || header != "deepseek" || item != "deepseek-chat" {
+		t.Fatalf("SelectedWithHeader() after RebindGroups = (%q, %q, %v), want (\"deepseek\", \"deepseek-chat\", true)", header, item, ok)
+	}
+}
+
+func TestSelectedWithHeader_FlatNewAndRebindEmptyHeader(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"apple", "banana"})
+	header, item, ok := m.SelectedWithHeader()
+	if !ok || header != "" || item != "apple" {
+		t.Fatalf("flat New SelectedWithHeader() = (%q, %q, %v), want (\"\", \"apple\", true)", header, item, ok)
+	}
+
+	m.Rebind([]string{"orange", "grape"})
+	header, item, ok = m.SelectedWithHeader()
+	if !ok || header != "" || item != "orange" {
+		t.Fatalf("flat Rebind SelectedWithHeader() = (%q, %q, %v), want (\"\", \"orange\", true)", header, item, ok)
+	}
+
+	// Empty list
+	mEmpty := New(loadTheme(t), theme.TierASCII, nil)
+	header, item, ok = mEmpty.SelectedWithHeader()
+	if ok || header != "" || item != "" {
+		t.Fatalf("empty flat SelectedWithHeader() = (%q, %q, %v), want (\"\", \"\", false)", header, item, ok)
+	}
+}
