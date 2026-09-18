@@ -373,7 +373,7 @@ func TestZAIUnknownHTTP429KeepsDefaultRetry(t *testing.T) {
 }
 
 // The step-level retry (runStepWithTransientRetry) consults provider.IsTransient
-// on the runner error. A permanent z.ai quota/plan 429 must classify as NOT
+// on the runner error. A permanent z.ai 429 for quota or plan limits must classify as NOT
 // transient there, or the whole step re-runs up to three times on a block that
 // holds for the rest of the billing period. The parser's error text contains
 // "HTTP 429" - which transientMessages matches - so the parser must mark these
