@@ -16,6 +16,7 @@ func TestOpenContextStorePathExportOpensStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenContextStorePath: %v", err)
 	}
+	defer store.Close() // release the file handle before t.TempDir cleanup (Windows unlink fails on open files)
 	if store == nil {
 		t.Fatal("OpenContextStorePath = nil store")
 	}
@@ -26,6 +27,7 @@ func TestOpenContextStoreExportOpensStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenContextStore: %v", err)
 	}
+	defer store.Close()
 	if store == nil {
 		t.Fatal("OpenContextStore = nil store")
 	}
