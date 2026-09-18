@@ -13,12 +13,10 @@ import (
 	"io"
 	"log"
 	"os"
-	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -27,13 +25,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestMain(m *testing.M) {
@@ -65,36 +61,10 @@ func TestMain(m *testing.M) {
 // wireTestSeams installs every cli-backed seam default that does not need
 // internal/cli.
 func wireTestSeams() {
-	wireDeliverySeams()
 	wireStackReadSeams()
 	wireStackGateSeams()
 	wireSessionSeams()
 	InitCLIDefaults()
-}
-
-// wireDeliverySeams wires the store, flag, and policy seams.
-func wireDeliverySeams() {
-	ContextStorePath = func(root string, cfg config.SubagentConfig) string {
-		if cfg.StorePath != "" {
-			return config.ExpandPath(cfg.StorePath)
-		}
-		return workspace.GlobalContextStorePath(root)
-	}
-	OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
-		p := ContextStorePath(root, cfg)
-		harden := cliagents.SameFilePath(goruntime.GOOS, p, config.TempStorePath(root, "orchestration"))
-		return storage.OpenSQLiteWithOptions(p, storage.Options{Harden: harden})
-	}
-	ApplyPrivacyPolicyFunc = func(res *config.Resolved) {}
-	LogMCPWarningsFunc = func(w io.Writer, res *config.Resolved) {}
-	FlagValueFunc = flagValueLocal
-	FlagVarFunc = flagVarLocal
-	SliceErrorsFunc = func(context string, errs []string) error {
-		if len(errs) == 0 {
-			return nil
-		}
-		return fmt.Errorf("%s: %s", context, strings.Join(errs, "; "))
-	}
 }
 
 // wireStackReadSeams no longer overrides anything: the stack helper seams
@@ -128,35 +98,7 @@ func wireSessionSeams() {
 		}
 		return d, nil
 	}
-	InjectSkillResourceToolFunc = func(registry *tools.Registry, activation *skills.SkillActivation) (*tools.Registry, error) {
-		clone := registry.Clone()
-		if _, exists := clone.Get(tools.SkillResourceToolName); exists {
-			return nil, fmt.Errorf("skill resource capability conflict")
-		}
-		clone.Register(tools.NewSkillResourceTool(
-			func(ctx context.Context, id string) (string, string, error) {
-				content, err := activation.Read(ctx, id)
-				if err != nil {
-					return "", "", err
-				}
-				return content.Text, "skill resource loaded: " + content.ID, nil
-			},
-			activation.ToolKey(),
-			activation.ToolResultBudget(),
-		))
-		return clone, nil
-	}
 	InjectBaselineMessagingFunc = func(full, scoped *tools.Registry, cfg config.SubagentConfig, disallowed map[string]struct{}) {}
-	MessagingDisallowedFunc = func(agent agents.ResolvedAgent) map[string]struct{} {
-		out := map[string]struct{}{}
-		for _, name := range agent.EffectiveDenylist {
-			out[name] = struct{}{}
-		}
-		for _, name := range agent.DisallowedTools {
-			out[name] = struct{}{}
-		}
-		return out
-	}
 }
 
 func loadAllStackChunksLocal(repo workflowledger.Repository, stackID string) (chunks []delivery.ChunkPlan, hasMore bool, remainingScope string, err error) {

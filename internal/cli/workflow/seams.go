@@ -12,17 +12,13 @@
 package workflow
 
 import (
-	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
-	"io"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -31,24 +27,6 @@ import (
 // initialized above to this package's own implementations.
 
 var (
-	// ContextStorePath stands for cli.ContextStorePath (context_setup.go).
-	ContextStorePath func(root string, cfg config.SubagentConfig) string
-
-	// ApplyPrivacyPolicyFunc stands for cli.applyPrivacyPolicy (chat_command.go).
-	ApplyPrivacyPolicyFunc func(res *config.Resolved)
-
-	// LogMCPWarningsFunc stands for cli.logMCPWarnings (limits_summary.go).
-	LogMCPWarningsFunc func(w io.Writer, res *config.Resolved)
-
-	// SliceErrorsFunc stands for cli.sliceErrors (errors.go).
-	SliceErrorsFunc func(context string, errs []string) error
-
-	// FlagValueFunc stands for cli.flagValue (root.go).
-	FlagValueFunc func(args []string, names ...string) (string, []string, bool, error)
-
-	// FlagVarFunc stands for cli.flagVar (root.go).
-	FlagVarFunc func(args []string, names ...string) ([]string, []string, bool, error)
-
 	// InstallHookSessionFunc stands for cli.installHookSession (hooks_command.go).
 	InstallHookSessionFunc func(workspaceRoot string, staleBypass, quiet bool) (func(), error)
 
@@ -64,10 +42,6 @@ var (
 	// InjectBaselineMessagingFunc stands for cli.injectBaselineMessaging
 	// (messaging_tools.go).
 	InjectBaselineMessagingFunc func(full, scoped *tools.Registry, cfg config.SubagentConfig, disallowed map[string]struct{})
-
-	// MessagingDisallowedFunc stands for cli.messagingDisallowed
-	// (agent_task_handler.go).
-	MessagingDisallowedFunc func(agent agents.ResolvedAgent) map[string]struct{}
 
 	// ErrStackAwaitsGrant is the durable grant-pause sentinel returned by the
 	// drive loop (stack_grant_pause.go); kept as a var so tests can swap it.
@@ -133,13 +107,6 @@ var (
 	// StackDecomposedChunksFunc overrides stackDecomposedChunks.
 	StackDecomposedChunksFunc = stackDecomposedChunks
 
-	// OpenContextStoreFunc stands for cli.openContextStore (context_setup.go).
-	OpenContextStoreFunc func(root string, cfg config.SubagentConfig) (*storage.SQLite, error)
-
-	// InjectSkillResourceToolFunc stands for cli.InjectSkillResourceTool
-	// (skill_resource_tool.go).
-	InjectSkillResourceToolFunc func(registry *tools.Registry, activation *skills.SkillActivation) (*tools.Registry, error)
-
 	// GitMergeCheckFunc overrides gitMergeCheck.
 	GitMergeCheckFunc = gitMergeCheck
 )
@@ -173,16 +140,6 @@ func InitCLIDefaults() {
 	if WorkflowExecutionHooks == nil {
 		WorkflowExecutionHooks = InstallHookSessionFunc
 	}
-}
-
-// OpenContextStorePath opens the SQLite context store at path. It mirrors
-// cli.openContextStorePath (context_setup.go); both wrap storage.OpenSQLite.
-func OpenContextStorePath(path string) (*storage.SQLite, error) {
-	store, err := storage.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open context store %q: %w", path, err)
-	}
-	return store, nil
 }
 
 // LoadAgentDefinitionsLocal loads agent definitions under the user gate. It

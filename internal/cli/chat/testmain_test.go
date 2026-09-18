@@ -179,20 +179,11 @@ func wireWorkflowSeams() {
 // wireCliworkflowSeams mirrors internal/cli/cliworkflow_wiring.go for the
 // test binary; every implementation now lives in this package.
 func wireCliworkflowSeams() {
-	cliworkflow.ContextStorePath = ContextStorePath
-	cliworkflow.ApplyPrivacyPolicyFunc = applyPrivacyPolicy
-	cliworkflow.LogMCPWarningsFunc = logMCPWarnings
-	cliworkflow.SliceErrorsFunc = sliceErrors
-	cliworkflow.FlagValueFunc = flagValueLocal
-	cliworkflow.FlagVarFunc = flagVarLocal
 	cliworkflow.InstallHookSessionFunc = installHookSessionStub
 	cliworkflow.LoadChatSkillsFunc = loadChatSkills
 	cliworkflow.NewSessionDispatcherFunc = NewSessionDispatcher
 	cliworkflow.InitCoordinatorFunc = orchestrate.InitCoordinator
 	cliworkflow.InjectBaselineMessagingFunc = injectBaselineMessaging
-	cliworkflow.MessagingDisallowedFunc = messagingDisallowed
-	cliworkflow.OpenContextStoreFunc = openContextStore
-	cliworkflow.InjectSkillResourceToolFunc = InjectSkillResourceTool
 	cliworkflow.InitCLIDefaults()
 }
 

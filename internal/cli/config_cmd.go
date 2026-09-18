@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"os"
 	"strings"
@@ -24,7 +25,7 @@ func runConfig(args []string) error {
 }
 
 func runConfigShow(args []string, stdout io.Writer) error {
-	cfgPath, rest, _, err := flagValue(args, "--config")
+	cfgPath, rest, _, err := workflow.FlagValue(args, "--config")
 	if err != nil {
 		return err
 	}

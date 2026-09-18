@@ -21,7 +21,7 @@ import (
 // remaining args. The --stack flag pins the stack to one plan run; without
 // it the latest plan-mode run of the workflow is used.
 func parseStackWorkflowArgs(args []string) (name, stackFlag string, rest []string, err error) {
-	stackFlag, rest, _, err = FlagValueFunc(args, "--stack")
+	stackFlag, rest, _, err = FlagValue(args, "--stack")
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -96,7 +96,7 @@ func openStackLedger(root, configPath string) (*workflowledger.Store, workflowle
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

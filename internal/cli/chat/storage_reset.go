@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hub"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -74,7 +74,7 @@ func runStorageReset(args []string, stdout, stderr io.Writer) error {
 	if filepath.Clean(orchestrationPath) != filepath.Clean(contextStore.Path()) {
 		// Same gate as openContextStore: only the ad-hoc temp tier is
 		// chmod'd; an operator-configured store keeps its modes.
-		orchestrationStore, err = openOrchestrationStoreAt(root, orchestrationPath)
+		orchestrationStore, err = workflow.OpenOrchestrationStoreAt(root, orchestrationPath)
 		if err != nil {
 			return fmt.Errorf("storage reset: open orchestration store: %w", err)
 		}
@@ -129,10 +129,10 @@ func runStorageReset(args []string, stdout, stderr io.Writer) error {
 // orchestrationStorePathFor mirrors how a real `mivia workflow run` in this
 // workspace resolves its store, without opening it: clone res so the
 // context store's own already-resolved StorePath is untouched, then apply
-// the same pin cliworkflow.ApplyWorkflowStoreRoot uses.
+// the same pin workflow.ApplyWorkflowStoreRoot uses.
 func orchestrationStorePathFor(res *config.Resolved, root string) string {
 	clone := *res
-	cliworkflow.ApplyWorkflowStoreRoot(&clone, root)
+	workflow.ApplyWorkflowStoreRoot(&clone, root)
 	return clone.Subagents.StorePath
 }
 

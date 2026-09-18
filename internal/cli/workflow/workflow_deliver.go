@@ -56,7 +56,7 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 	if err != nil {
 		return err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

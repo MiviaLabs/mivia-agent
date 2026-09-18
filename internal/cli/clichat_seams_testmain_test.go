@@ -6,6 +6,7 @@ package cli
 
 import (
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"testing"
 
@@ -28,8 +29,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
 		os.Exit(1)
 	}
-	chat.FlagValueFunc = flagValue
-	chat.FlagVarFunc = flagVar
+	chat.FlagValueFunc = workflow.FlagValue
+	chat.FlagVarFunc = workflow.FlagVar
 	chat.InstallHookSessionFunc = installHookSession
 	// CurrentHookSessionFunc stays as wired by clichat_wiring.go's init: the
 	// production closure has the same body the testmain used to install, and

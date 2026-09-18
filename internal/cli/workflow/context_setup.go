@@ -1,4 +1,4 @@
-package chat
+package workflow
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ import (
 // Flagged as a blocker; these two functions stay in internal/cli unexported,
 // same as before this slice, only ContextStorePath was exported (cliworktree
 // needs it externally; the other two do not).
-func ContextStorePath(root string, cfg config.SubagentConfig) string {
+func contextStorePathImpl(root string, cfg config.SubagentConfig) string {
 	if cfg.StorePath != "" {
 		path := config.ExpandPath(cfg.StorePath)
 		// A relative store_path (e.g. the dogfooded ".mivia/context.db") must
@@ -49,7 +49,7 @@ func ContextStorePath(root string, cfg config.SubagentConfig) string {
 }
 
 func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
-	p := ContextStorePath(root, cfg)
+	p := contextStorePathImpl(root, cfg)
 	return openContextStorePathWithOptions(p, storage.Options{Harden: hardenOrchestrationStore(root, p)})
 }
 
@@ -64,11 +64,11 @@ func hardenOrchestrationStore(root, path string) bool {
 // openOrchestrationStoreAt opens the orchestration ledger at path, hardening
 // the ad-hoc temp tier (see hardenOrchestrationStore). Callers that already
 // hold the same store open pass it by instead.
-func openOrchestrationStoreAt(root, path string) (*storage.SQLite, error) {
+func OpenOrchestrationStoreAt(root, path string) (*storage.SQLite, error) {
 	return storage.OpenSQLiteWithOptions(path, storage.Options{Harden: hardenOrchestrationStore(root, path)})
 }
 
-func openContextStorePath(path string) (*storage.SQLite, error) {
+func OpenContextStorePath(path string) (*storage.SQLite, error) {
 	return openContextStorePathWithOptions(path, storage.Options{})
 }
 
@@ -81,3 +81,11 @@ func openContextStorePathWithOptions(path string, opts storage.Options) (*storag
 }
 
 // The pure path comparison lives in agents.SameFilePath.
+
+// OpenContextStore opens the workspace context store; a package variable so
+// tests can stub store-open failures.
+var OpenContextStore = openContextStore
+
+// ContextStorePath resolves the context store path; a package variable so
+// tests can redirect it.
+var ContextStorePath = contextStorePathImpl

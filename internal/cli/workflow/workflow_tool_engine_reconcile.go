@@ -61,7 +61,7 @@ func (e *sessionWorkflowEngine) ReconcileParkedRuns(ctx context.Context, quiet b
 	if err != nil {
 		return
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

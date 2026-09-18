@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"strings"
 
@@ -52,17 +53,8 @@ func logEffectiveLimitsOnce(w io.Writer, res *config.Resolved, quiet bool) {
 	for _, warn := range config.ToolResultBytesWarnings(res.Tools) {
 		fmt.Fprintf(w, "warning: %s\n", warn)
 	}
-	logMCPWarnings(w, res)
+	workflow.LogMCPWarnings(w, res)
 	if line := formatEffectiveLimitsSummary(res); line != "" && !quiet {
 		fmt.Fprintln(w, line)
-	}
-}
-
-func logMCPWarnings(w io.Writer, res *config.Resolved) {
-	if w == nil || res == nil {
-		return
-	}
-	for _, warn := range res.MCPWarnings {
-		fmt.Fprintf(w, "warning: %s\n", warn)
 	}
 }

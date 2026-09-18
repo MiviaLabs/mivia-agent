@@ -74,7 +74,7 @@ func RunStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 		return fmt.Errorf("stack drive: %w", err)
 	}
 	defer prepared.CloseFn()
-	LogMCPWarningsFunc(stderr, prepared.Res)
+	LogMCPWarnings(stderr, prepared.Res)
 
 	wf := prepared.Compiled
 	if wf.Stacking == nil || !wf.Stacking.Enabled {

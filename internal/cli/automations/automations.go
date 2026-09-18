@@ -2,6 +2,7 @@ package automations
 
 import (
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"strings"
 
@@ -167,7 +168,7 @@ var applyPrivacyPolicyFunc = func(*config.Resolved) {}
 // automation Service uses for run records and fenced claims.
 //
 // This is the SAME store composition.BuildSession opens for a chat
-// session (clichat.ContextStorePath(root, cfg.Subagents), honoring an
+// session (workflow.ContextStorePath(root, cfg.Subagents), honoring an
 // operator-configured [subagents] store_path and otherwise defaulting to
 // workspace.GlobalContextStorePath - one store shared by every workspace
 // on the machine), not a package-private "automations.db". Before this,
@@ -179,7 +180,7 @@ var applyPrivacyPolicyFunc = func(*config.Resolved) {}
 // interrupted, or vice versa. Sharing the resolver unifies both
 // surfaces' run history in one file.
 func openAutomationStore(root string, cfg *config.Resolved) (*storage.SQLite, error) {
-	return storage.OpenSQLite(clichat.ContextStorePath(root, cfg.Subagents))
+	return storage.OpenSQLite(workflow.ContextStorePath(root, cfg.Subagents))
 }
 
 // buildService constructs the automation.Service used by every

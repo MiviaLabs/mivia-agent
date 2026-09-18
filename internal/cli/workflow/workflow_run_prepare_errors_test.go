@@ -56,9 +56,9 @@ func TestPrepareWorkflowRunDefaultsEmptyRootToWorkingDirectory(t *testing.T) {
 func TestPrepareWorkflowRunSurfacesStoreOpenFailure(t *testing.T) {
 	root := writeWorkflowTestWorkspace(t, nil)
 	boom := errors.New("store is locked")
-	prev := OpenContextStoreFunc
-	t.Cleanup(func() { OpenContextStoreFunc = prev })
-	OpenContextStoreFunc = func(string, config.SubagentConfig) (*storage.SQLite, error) { return nil, boom }
+	prev := OpenContextStore
+	t.Cleanup(func() { OpenContextStore = prev })
+	OpenContextStore = func(string, config.SubagentConfig) (*storage.SQLite, error) { return nil, boom }
 
 	prepared, err := PrepareWorkflowRun("demo", root, filepath.Join(root, "mivia.toml"), []string{"task=x"})
 	if !errors.Is(err, boom) {
@@ -157,9 +157,9 @@ func runPrepareWorkflowRunAdmissionFailureCase(t *testing.T, tc prepareWorkflowR
 
 	var opened int
 	var handed *storage.SQLite
-	prev := OpenContextStoreFunc
-	t.Cleanup(func() { OpenContextStoreFunc = prev })
-	OpenContextStoreFunc = func(r string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+	prev := OpenContextStore
+	t.Cleanup(func() { OpenContextStore = prev })
+	OpenContextStore = func(r string, cfg config.SubagentConfig) (*storage.SQLite, error) {
 		store, err := prev(r, cfg)
 		if err == nil {
 			opened++

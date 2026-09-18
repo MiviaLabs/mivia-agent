@@ -1,23 +1,24 @@
 package cli
 
 import (
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"strings"
 	"testing"
 )
 
 func TestSliceErrorsNilAndEmpty(t *testing.T) {
-	if err := sliceErrors("workflow", nil); err != nil {
-		t.Fatalf("sliceErrors(nil) = %v, want nil", err)
+	if err := workflow.SliceErrors("workflow", nil); err != nil {
+		t.Fatalf("workflow.SliceErrors(nil) = %v, want nil", err)
 	}
-	if err := sliceErrors("workflow", []string{}); err != nil {
-		t.Fatalf("sliceErrors(empty) = %v, want nil", err)
+	if err := workflow.SliceErrors("workflow", []string{}); err != nil {
+		t.Fatalf("workflow.SliceErrors(empty) = %v, want nil", err)
 	}
 }
 
 func TestSliceErrorsJoinsMessages(t *testing.T) {
-	err := sliceErrors("workflow", []string{"first problem", "second problem"})
+	err := workflow.SliceErrors("workflow", []string{"first problem", "second problem"})
 	if err == nil {
-		t.Fatal("sliceErrors(non-empty) = nil, want error")
+		t.Fatal("workflow.SliceErrors(non-empty) = nil, want error")
 	}
 	want := "workflow: first problem; second problem"
 	if err.Error() != want {

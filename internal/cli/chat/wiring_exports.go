@@ -18,12 +18,6 @@ var BuiltInSlashCommands = builtInSlashCommands
 // InjectBaselineMessaging is the exported alias for the injectBaselineMessaging function, for seam wiring.
 var InjectBaselineMessaging = injectBaselineMessaging
 
-// LogMCPWarnings is the exported alias for the logMCPWarnings function, for seam wiring.
-var LogMCPWarnings = logMCPWarnings
-
-// MessagingDisallowed is the exported alias for the messagingDisallowed function, for seam wiring.
-var MessagingDisallowed = messagingDisallowed
-
 // SummaryWiring is the exported alias for the summaryWiring function, for seam wiring.
 var SummaryWiring = summaryWiring
 

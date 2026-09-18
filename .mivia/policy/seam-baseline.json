@@ -5,7 +5,7 @@
     "internal/cli/agents": 8,
     "internal/cli/chat": 9,
     "internal/cli/orchestrate": 1,
-    "internal/cli/workflow": 20,
+    "internal/cli/workflow": 11,
     "internal/cli/worktree": 1
   },
   "chat_workflows_fanout": {

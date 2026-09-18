@@ -210,7 +210,7 @@ func openWorkflowResolutionContext(root, configPath, runID string) (func(), work
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {
@@ -240,7 +240,7 @@ func openWorkflowResolutionContextBounded(ctx context.Context, root, configPath,
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

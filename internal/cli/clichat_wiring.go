@@ -7,14 +7,15 @@ package cli
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks/session"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
 
 func init() {
-	chat.FlagValueFunc = flagValue
-	chat.FlagVarFunc = flagVar
+	chat.FlagValueFunc = workflow.FlagValue
+	chat.FlagVarFunc = workflow.FlagVar
 	chat.InstallHookSessionFunc = installHookSession
 	// session.Session already implements chat.HookSessionState
 	// (RunnableGroups, NoteRunWarnings), so no adapter type is needed here.

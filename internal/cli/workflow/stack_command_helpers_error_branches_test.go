@@ -43,13 +43,10 @@ func (f *failingStackRepo) ListStepAttempts(ctx context.Context, runID string) (
 // --- stack_command_helpers.go ---
 
 func TestParseStackWorkflowArgsFlagError(t *testing.T) {
-	prev := FlagValueFunc
-	FlagValueFunc = func(args []string, names ...string) (string, []string, bool, error) {
-		return "", nil, false, errors.New("flag boom")
-	}
-	defer func() { FlagValueFunc = prev }()
-	if _, _, _, err := ParseStackWorkflowArgs([]string{"wf"}); err == nil || !strings.Contains(err.Error(), "flag boom") {
-		t.Fatalf("ParseStackWorkflowArgs must surface the seam error; got %v", err)
+	// FlagValue is a plain function since the move; exercise its own
+	// missing-value error through the parser instead of a seam stub.
+	if _, _, _, err := ParseStackWorkflowArgs([]string{"--stack"}); err == nil || !strings.Contains(err.Error(), "requires a value") {
+		t.Fatalf("ParseStackWorkflowArgs(--stack without value) err = %v; want requires-a-value", err)
 	}
 }
 

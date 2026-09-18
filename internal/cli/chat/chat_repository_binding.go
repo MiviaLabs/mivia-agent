@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 
@@ -80,7 +81,7 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 			return err
 		}
 	}
-	store, err := openContextStorePath(storePath)
+	store, err := workflow.OpenContextStorePath(storePath)
 	if err != nil {
 		return err
 	}

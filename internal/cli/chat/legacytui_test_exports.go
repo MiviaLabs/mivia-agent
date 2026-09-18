@@ -37,7 +37,7 @@ type SessionRouting = sessionRouting
 
 // OpenContextStorePath is openContextStorePath, exported for internal/legacytui.
 func OpenContextStorePath(path string) (*storage.SQLite, error) {
-	return openContextStorePath(path)
+	return workflow.OpenContextStorePath(path)
 }
 
 // ContextWorkspaceID is contextWorkspaceID, exported for internal/legacytui.
@@ -177,7 +177,7 @@ func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 
 // ApplyPrivacyPolicy is applyPrivacyPolicy, exported for internal/legacytui.
 func ApplyPrivacyPolicy(res *config.Resolved) {
-	applyPrivacyPolicy(res)
+	workflow.ApplyPrivacyPolicy(res)
 }
 
 // SendLineMode is sendLineMode, exported for internal/legacytui.
@@ -222,7 +222,7 @@ func RegisterWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
 
 // OpenContextStore is openContextStore, exported for internal/legacytui.
 func OpenContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
-	return openContextStore(root, cfg)
+	return workflow.OpenContextStore(root, cfg)
 }
 
 // ContextDispatcherFor is contextDispatcherFor, exported for internal/legacytui.

@@ -31,11 +31,11 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	var workspaceRoot, configPath string
 	var err error
-	workspaceRoot, args, _, err = flagValue(args, "--workspace")
+	workspaceRoot, args, _, err = workflow.FlagValue(args, "--workspace")
 	if err != nil {
 		return err
 	}
-	configPath, args, _, err = flagValue(args, "--config")
+	configPath, args, _, err = workflow.FlagValue(args, "--config")
 	if err != nil {
 		return err
 	}

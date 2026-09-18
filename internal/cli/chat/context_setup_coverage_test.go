@@ -1,6 +1,7 @@
 package chat
 
 import (
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,8 +50,8 @@ func TestContextStorePathExpandsTilde(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: "~/.mivia/test-context.db"}
-	if got, want := ContextStorePath(t.TempDir(), cfg), filepath.Join(home, ".mivia", "test-context.db"); got != want {
-		t.Fatalf("ContextStorePath() = %q, want %q", got, want)
+	if got, want := workflow.ContextStorePath(t.TempDir(), cfg), filepath.Join(home, ".mivia", "test-context.db"); got != want {
+		t.Fatalf("workflow.ContextStorePath() = %q, want %q", got, want)
 	}
 }
 
@@ -66,10 +67,10 @@ func TestContextStorePathExpandsTilde(t *testing.T) {
 func TestContextStorePathAnchorsRelativeStorePathToRoot(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: filepath.Join(".mivia", "context.db")}
-	got := ContextStorePath(root, cfg)
+	got := workflow.ContextStorePath(root, cfg)
 	want := filepath.Join(root, ".mivia", "context.db")
 	if got != want {
-		t.Fatalf("ContextStorePath() = %q, want workspace-rooted %q", got, want)
+		t.Fatalf("workflow.ContextStorePath() = %q, want workspace-rooted %q", got, want)
 	}
 }
 
@@ -79,8 +80,8 @@ func TestContextStorePathAnchorsRelativeStorePathToRoot(t *testing.T) {
 func TestContextStorePathKeepsAbsoluteStorePath(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "context.db")
 	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: abs}
-	if got := ContextStorePath(t.TempDir(), cfg); got != abs {
-		t.Fatalf("ContextStorePath() = %q, want unchanged absolute %q", got, abs)
+	if got := workflow.ContextStorePath(t.TempDir(), cfg); got != abs {
+		t.Fatalf("workflow.ContextStorePath() = %q, want unchanged absolute %q", got, abs)
 	}
 }
 

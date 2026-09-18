@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -37,7 +38,7 @@ func TestBaselineMessagingHonoursTheOperatorDenylist(t *testing.T) {
 		EffectiveDenylist: []string{toolPostMessage},
 	}
 
-	injectBaselineMessaging(full, scoped, config.SubagentConfig{}, messagingDisallowed(agent))
+	injectBaselineMessaging(full, scoped, config.SubagentConfig{}, workflow.MessagingDisallowed(agent))
 
 	if _, ok := scoped.Get(toolPostMessage); ok {
 		t.Error("post_message was re-injected into a scoped registry after the " +
@@ -54,7 +55,7 @@ func TestBaselineMessagingStillHonoursTheAgentsOwnOptOut(t *testing.T) {
 	scoped := tools.NewRegistry()
 
 	agent := agents.ResolvedAgent{Name: "worker", DisallowedTools: []string{toolPostMessage}}
-	injectBaselineMessaging(full, scoped, config.SubagentConfig{}, messagingDisallowed(agent))
+	injectBaselineMessaging(full, scoped, config.SubagentConfig{}, workflow.MessagingDisallowed(agent))
 
 	if _, ok := scoped.Get(toolPostMessage); ok {
 		t.Error("the agent file's own opt-out stopped working")
@@ -69,7 +70,7 @@ func TestBaselineMessagingStillInjectsWhenNothingIsDenied(t *testing.T) {
 	scoped := tools.NewRegistry()
 
 	agent := agents.ResolvedAgent{Name: "worker"}
-	injectBaselineMessaging(full, scoped, config.SubagentConfig{}, messagingDisallowed(agent))
+	injectBaselineMessaging(full, scoped, config.SubagentConfig{}, workflow.MessagingDisallowed(agent))
 
 	if _, ok := scoped.Get(toolPostMessage); !ok {
 		t.Error("post_message was not injected for an agent that denied nothing")

@@ -118,7 +118,7 @@ func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req workfl
 	if err != nil {
 		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

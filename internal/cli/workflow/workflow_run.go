@@ -46,11 +46,11 @@ func RunWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	var workspaceRoot, configPath string
 	var err error
-	workspaceRoot, args, _, err = FlagValueFunc(args, "--workspace")
+	workspaceRoot, args, _, err = FlagValue(args, "--workspace")
 	if err != nil {
 		return err
 	}
-	configPath, args, _, err = FlagValueFunc(args, "--config")
+	configPath, args, _, err = FlagValue(args, "--config")
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func ExecuteWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	if err != nil {
 		return err
 	}
-	LogMCPWarningsFunc(stderr, prepared.Res)
+	LogMCPWarnings(stderr, prepared.Res)
 	defer prepared.CloseFn()
 	runID := NewCLIWorkflowRunID()
 	releaseExecution, err := beginWorkflowRunExecution(prepared.Root, ContextStorePath(prepared.Root, prepared.Res.Subagents), runID)

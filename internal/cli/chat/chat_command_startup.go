@@ -2,43 +2,14 @@ package chat
 
 import (
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/context/state"
-	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"golang.org/x/term"
 )
-
-// applyPrivacyPolicy installs the process-wide privacy settings.
-//
-// Tool-argument redaction is opt-in and read from BOTH [privacy] and [tools]
-// so either TOML path works. The redaction policy is nil when the workspace
-// configured no patterns, which redacts nothing - see rule 10.
-func applyPrivacyPolicy(res *config.Resolved) {
-	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
-	redact.SetPolicy(res.RedactionPolicy)
-	applyContextLimits(res)
-}
-
-// applyContextLimits installs the operator's durable ceilings process-wide.
-// It sits beside the redaction policy deliberately: both are workspace policy
-// this binary must not invent, and a process that configures neither runs
-// uncapped and unredacted rather than under a compiled-in guess.
-func applyContextLimits(res *config.Resolved) {
-	state.SetLimits(state.Limits{
-		SourceEventBytes:        res.Context.MaxSourceEventBytes,
-		CheckpointBytes:         res.Context.MaxCheckpointBytes,
-		CommitEvents:            res.Context.MaxCommitEvents,
-		CommitEventBytes:        res.Context.MaxCommitEventBytes,
-		SessionStateBytes:       res.Context.MaxSessionStateBytes,
-		ExportBytes:             res.Context.MaxExportBytes,
-		SummaryMetadataBytes:    res.Context.SummaryMetadataBytes,
-		CheckpointMetadataBytes: res.Context.CheckpointMetadataBytes,
-	})
-}
 
 type chatInvocation struct {
 	prompt, provider, model, configPath, workspacePath, resumeSessionName, repositorySessionStorePath string
@@ -155,7 +126,7 @@ func prepareChatStartup(res *config.Resolved, invocation chatInvocation) (bool, 
 	}
 	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)
 	useTools := !invocation.noTools
-	applyPrivacyPolicy(res)
+	workflow.ApplyPrivacyPolicy(res)
 	logEffectiveLimitsOnce(os.Stderr, res, invocation.quiet)
 	effectiveFullDisk := chatFullDisk(invocation, invocation.workspacePath)
 	if effectiveFullDisk && !invocation.quiet {

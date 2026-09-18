@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"net/http"
 	"os"
@@ -94,14 +95,14 @@ func parseLoginArgs(args []string) (loginOptions, error) {
 	var opts loginOptions
 	var err error
 
-	opts.email, args, _, err = flagValue(args, "--email")
+	opts.email, args, _, err = workflow.FlagValue(args, "--email")
 	if err != nil {
 		return opts, fmt.Errorf("login: %w", err)
 	}
 	opts.email = strings.TrimSpace(opts.email)
 
 	var serverURLFound bool
-	opts.serverURL, args, serverURLFound, err = flagValue(args, "--server-url")
+	opts.serverURL, args, serverURLFound, err = workflow.FlagValue(args, "--server-url")
 	if err != nil {
 		return opts, fmt.Errorf("login: %w", err)
 	}

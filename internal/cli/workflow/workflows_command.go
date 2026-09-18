@@ -205,7 +205,7 @@ func validateWorkflowReferences(root, base string, wf *definition.CompiledWorkfl
 	if err != nil {
 		return fmt.Errorf("load workflow agents: %w", err)
 	}
-	if err := SliceErrorsFunc("workflow", definition.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry)); err != nil {
+	if err := SliceErrors("workflow", definition.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry)); err != nil {
 		return err
 	}
 	if err := validateWorkflowSkillTools(wf, loaded.Registry, skillRegistry); err != nil {
@@ -265,7 +265,7 @@ func validateWorkflowFiles(base string, wf *definition.CompiledWorkflow) error {
 			}
 		}
 	}
-	return SliceErrorsFunc("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
+	return SliceErrors("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
 }
 
 func validateWorkflowFileReferences(base string, wf *definition.CompiledWorkflow, step definition.Step, memberID, templateRef, schemaRef string, schemas map[string][]byte) error {
