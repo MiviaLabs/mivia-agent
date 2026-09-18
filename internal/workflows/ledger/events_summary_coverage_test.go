@@ -328,11 +328,6 @@ func TestCoverageRecordRunResumedClosedRepo(t *testing.T) {
 	}
 }
 
-// TestCoverageRecordRunResumedNotFound covers the ErrNotFound branch after the
-// open check: an absent run is not resumed and no event is appended.
-func TestCoverageRecordRunResumedNotFound(t *testing.T) {
-	repo := newMemoryRepo(t)
-	if err := repo.RecordRunResumed(context.Background(), "wfr-missing"); err != ErrNotFound {
-		t.Fatalf("RecordRunResumed on a missing run = %v, want ErrNotFound", err)
-	}
-}
+// TestCoverageRecordRunResumedNotFound was an exact duplicate of
+// storage_runs_test.go's TestStorageRepository_RecordRunResumedUnknownRun and
+// was removed; see commit history.
