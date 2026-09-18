@@ -1,10 +1,10 @@
 ---
 id: round_named_test_files_measured_low_dup_gate_landed_fold_on_next_touch
 title: 'Round-named test files: duplication measured low; new ones gated; fold on next touch'
-content: Measured over release/v0.2.3, round-named Go test files hold ~4.6k Test functions with ZERO exact duplicate bodies and only 26 near-duplicate bodies (AST hash with identifiers and literals elided), so consolidation means renaming to behaviour-owned files, not deleting copies; a gate in scripts/check_test_quality.py now rejects new round-named test files outside the shrink-only baseline .mivia/policy/round-named-tests.json.
+content: Measured tree-wide, round-named Go test files hold ZERO exact duplicate bodies (an all-file scan later found 8, all removed in dca848ca), so consolidation means renaming to behaviour-owned files, not deleting copies; a gate in scripts/check_test_quality.py rejects new round-named test files outside the shrink-only baseline .mivia/policy/round-named-tests.json, and BOTH policy baselines (test-skips.json and round-named-tests.json) are read from the committed reference only, never the working tree.
 importance: medium
 tags: [testing, gates, check_test_quality, test-organization, measurement]
-updated: 2026-09-17
+updated: 2026-09-18
 ---
 
 # Round-named test files: duplication measured low; new ones gated; fold on next touch
@@ -44,6 +44,18 @@ so none were redundant. The real defect is naming and ownership, not copy-paste.
   `hooks_provider_choices_test.go`, `load_runtime_mcp_test.go`,
   `provider_resolution_test.go`) with byte-identical bodies; old Test names
   went into `allowedDeletions`.
+
+## Refined measurement (all files, not only round-named)
+`scripts/check_test_duplication.py` hashes every Test function three ways:
+exact body, elided body shape, and an assertion-surface hash (>=3
+assertions, argument shapes elided) that catches duplicates written
+differently. The all-file scan surfaced 8 exact duplicates the round-only
+pass had missed - 3 host-backend prompt-too-long retry tests duplicated by
+agentloop_retry_test.go, and one ledger branch test duplicated by
+storage_runs_test.go - all removed in dca848ca with the surviving twins
+verified green. Surface and loose counts elsewhere are lead generators, not
+proof: table-driven tests legitimately share shapes; only exact-hash groups
+justify deletion without reading the code.
 
 ## Rule for later work
 Fold a package's round files when that package is next touched for any other
