@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"os"
@@ -56,7 +55,7 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 
 // runStackPlan admits a plan-mode run for a stacking-enabled workflow using
 // the exact engine admission path the workflow CLI already uses
-// (cliworkflow.ExecuteWorkflowRun). A run started WITHOUT stack_mode IS plan mode (step
+// (workflow.ExecuteWorkflowRun). A run started WITHOUT stack_mode IS plan mode (step
 // 0): the workflow's planning steps plus the engine-injected decompose step
 // end with a chunk plan. The plan run id becomes the stack id.
 func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
@@ -66,7 +65,7 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 	name := args[0]
 	var buf bytes.Buffer
 	out := io.MultiWriter(stdout, &buf)
-	if err := cliworkflow.ExecuteWorkflowRun(name, workspaceRoot, configPath, nil, false, out, stderr); err != nil {
+	if err := workflow.ExecuteWorkflowRun(name, workspaceRoot, configPath, nil, false, out, stderr); err != nil {
 		return fmt.Errorf("stack plan: %w", err)
 	}
 	runID, status := parseRunLine(buf.String())
@@ -89,7 +88,7 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 // stack_grant_pause.go): the plan itself succeeded, but the stack awaits its
 // first drive. Reporting that as a plan failure misdiagnosed the designed
 // pause (F11); a merge_policy=auto stack either finishes here or blocks
-// inside cliworkflow.ExecuteWorkflowRun until it does (never returns delivery_pending to
+// inside workflow.ExecuteWorkflowRun until it does (never returns delivery_pending to
 // this point), so seeing delivery_pending here is unambiguously the pause.
 func stackPlanOutcomeLine(runID, status string) (string, error) {
 	switch status {

@@ -2,6 +2,10 @@
 
 Multi-chunk stacking workflows deliver code changes in ordered waves of pull requests. A plan run transitions to `delivery_pending` upon completing its execution phase, then drives its chunk stack to completion before settling.
 
+## Implementation location
+
+The CLI-side stack driver lives in `internal/cli/workflow` (`stack_*.go`): the drive loop, the stack ledger helpers, the merge and publish gates, and the plan-run delivery gate. It moved there from `internal/cli/chat` so the workflow domain owns its own stack machinery and `internal/cli/chat` no longer reaches back into it through runtime seams.
+
 ## Stack drive lifecycle
 
 Stack driving executes in five stages:

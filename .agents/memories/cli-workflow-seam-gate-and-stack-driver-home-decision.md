@@ -38,16 +38,20 @@ narrow interface the driver needs) into `internal/workflows`, which
 would let the driver live below both cli packages. Reopen trigger: a
 second non-cli consumer of the stack driver.
 
-## Slice plan for the removal
+## Slice outcome (executed 2026-09-18, branch cli/workflow-seam-removal)
 
-1. Gate + baseline (done, d79be280). 2. Move stack files + their tests
-into `internal/cli/workflow`; rewrite the three `errors.Is` sites
-(workflow_resume.go, workflow_run.go, workflow_tool_engine_reconcile.go)
-to the package-local `errStackAwaitsGrant` BEFORE deleting the
-`ErrStackAwaitsGrant` seam; rewrite `stack_command_helpers.go`'s
-`applyPrivacyPolicy` call to the seam; add a TestMain in workflow that
-installs test defaults so moved tests never see nil seams. 3. Class-b
-chat-session helpers (each destination needs a `go list -deps` cycle
-check; anything reaching internal/cli/orchestrate becomes an explicit
-parameter instead). 4. Leftover cli-root helpers become explicit
-parameters; seams.go shrinks to the options struct or is deleted.
+1. Gate + baseline: d79be280. 2. Stack driver + session_delivery_repair
+moved into `internal/cli/workflow`; the 24 stack seams became initialized
+overrides over the moved impls (ErrStackAwaitsGrant = errStackAwaitsGrant,
+so the three `errors.Is` sites kept working); 18492118. 3. Nine
+self-contained helpers moved (ContextStorePath family, ApplyPrivacyPolicy,
+LogMCPWarnings, MessagingDisallowed, InjectSkillResourceTool, SliceErrors,
+FlagValue/FlagVar); b7775a7c. Final baselines: workflow 11, chat 9,
+fan-out 2. Remaining five seams are deliberate (AR-3): their impls reach
+internal/cli/orchestrate or chat internals - InstallHookSessionFunc,
+LoadChatSkillsFunc, NewSessionDispatcherFunc, InitCoordinatorFunc,
+InjectBaselineMessagingFunc. Lesson that cost a debug round: workflow's
+TestMain kept overriding the moved seams with simplified locals, which
+broke the moved integration tests (the Local repair loop read
+WorkflowAutoDeliveryAttemptTimeout, unstubbed); the fix was deleting the
+overrides so the test binary runs the production impls.
