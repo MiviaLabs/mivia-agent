@@ -66,7 +66,7 @@ type DefaultOptions struct {
 	// (see registerDiagnosticsTool).
 	DiagnosticsCommands map[string][]string
 
-	// WorkflowTools are pre-built Phase 7 workflow tools. They register only
+	// WorkflowTools are pre-built workflow tools. They register only
 	// when the workspace has .mivia/workflows/ and no WorkflowToolsBuilder is
 	// installed. Prefer tools.SetWorkflowToolsBuilder for production wiring so
 	// this package does not import workflow/ledger (storage test import cycle).

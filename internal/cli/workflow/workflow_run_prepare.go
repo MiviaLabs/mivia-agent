@@ -43,7 +43,7 @@ func PrepareWorkflowRun(name, root, configPath string, rawInputs []string) (*Pre
 	if err != nil {
 		return nil, err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {
@@ -109,7 +109,7 @@ func PrepareWorkflowRun(name, root, configPath string, rawInputs []string) (*Pre
 }
 
 func OpenWorkflowStore(root string, cfg config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
-	store, err := OpenContextStoreFunc(root, cfg)
+	store, err := OpenContextStore(root, cfg)
 	if err != nil {
 		return nil, nil, func() {}, err
 	}

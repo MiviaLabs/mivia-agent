@@ -1,17 +1,17 @@
 package automations
 
 import (
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"testing"
 
-	clichat "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestOpenAutomationStoreUsesSharedContextStorePathWhenUnset proves
-// openAutomationStore resolves the SAME path clichat.ContextStorePath
+// openAutomationStore resolves the SAME path workflow.ContextStorePath
 // resolves for an unset [subagents] store_path - the shared, HOME-scoped
 // default every chat session also opens (openContextStore in
 // internal/cli/chat) - not a package-private "automations.db". Sharing
@@ -28,7 +28,7 @@ func TestOpenAutomationStoreUsesSharedContextStorePathWhenUnset(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	wantPath := clichat.ContextStorePath(root, res.Subagents)
+	wantPath := workflow.ContextStorePath(root, res.Subagents)
 	notWantPath := workspace.NamespacePath(root, "automations.db")
 	if wantPath == notWantPath {
 		t.Fatalf("test fixture bug: wantPath %q collides with the old automations.db path", wantPath)
@@ -44,7 +44,7 @@ func TestOpenAutomationStoreUsesSharedContextStorePathWhenUnset(t *testing.T) {
 // TestOpenAutomationStoreHonorsExplicitRelativeStorePath proves an
 // operator-configured [subagents] store_path (a relative path, as this
 // repo's own dogfooded .mivia/mivia.toml sets) resolves joined onto
-// root, exactly like clichat.ContextStorePath resolves it for a chat
+// root, exactly like workflow.ContextStorePath resolves it for a chat
 // session - not against the process's current working directory.
 func TestOpenAutomationStoreHonorsExplicitRelativeStorePath(t *testing.T) {
 	root := t.TempDir()
@@ -57,8 +57,8 @@ func TestOpenAutomationStoreHonorsExplicitRelativeStorePath(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	wantPath := filepath.Join(root, ".mivia", "context.db")
-	if got := clichat.ContextStorePath(root, res.Subagents); got != wantPath {
-		t.Fatalf("clichat.ContextStorePath(%q, ...) = %q, want %q", root, got, wantPath)
+	if got := workflow.ContextStorePath(root, res.Subagents); got != wantPath {
+		t.Fatalf("workflow.ContextStorePath(%q, ...) = %q, want %q", root, got, wantPath)
 	}
 	if _, statErr := os.Stat(wantPath); statErr != nil {
 		t.Fatalf("openAutomationStore did not create the store at the configured relative path %q: %v", wantPath, statErr)
@@ -80,8 +80,8 @@ func TestStorePathForIgnoresWorktreeDirArgument(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.SubagentConfig{}
 	got := storePathFor(root, cfg)
-	want := clichat.ContextStorePath(root, cfg)
+	want := workflow.ContextStorePath(root, cfg)
 	if got != want {
-		t.Fatalf("storePathFor(%q, cfg) = %q, want %q (clichat.ContextStorePath)", root, got, want)
+		t.Fatalf("storePathFor(%q, cfg) = %q, want %q (workflow.ContextStorePath)", root, got, want)
 	}
 }

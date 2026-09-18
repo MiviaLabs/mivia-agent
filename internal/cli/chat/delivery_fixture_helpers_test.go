@@ -116,7 +116,7 @@ func newDeliveryFixture(t *testing.T) (root, storePath, config string, recorder 
 // openDeliveryStore opens the fixture store and returns its repository.
 func openDeliveryStore(t *testing.T, storePath string) workflowledger.Repository {
 	t.Helper()
-	store, err := openContextStorePath(storePath)
+	store, err := cliworkflow.OpenContextStorePath(storePath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
-// Phase 2 of the agent model routing plan: a routed agent executes against a
+// A routed agent executes against a
 // completer bound to its own resolved provider. Previously an agent could
 // select a model but still inherited the session's completer, so a
 // provider-qualified binding was silently provider-local.

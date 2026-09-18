@@ -43,8 +43,8 @@ func ExecuteWorkflowResume(runID, root, configPath string, force, allowPublish, 
 	if err != nil {
 		return err
 	}
-	LogMCPWarningsFunc(stderr, res)
-	ApplyPrivacyPolicyFunc(res)
+	LogMCPWarnings(stderr, res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := WorkflowResumeOpenStore(work.Abs, res.Subagents)
 	if err != nil {

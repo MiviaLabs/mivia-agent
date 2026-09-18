@@ -1,73 +1,32 @@
 // Package cliworkflow holds the workflow CLI domain: workflow run, resume,
 // deliver, status, events, approve, reject, cancel, cleanup, delete, and gc
-// commands, the session workflow tool engine, and the workflow snapshot and
-// verifier pinning machinery.
+// commands, the stack driver (moved here from internal/cli/chat), the session
+// workflow tool engine, and the workflow snapshot and verifier pinning
+// machinery.
 //
 // The package must never import internal/cli (the CLI composition root
-// imports this package). Every symbol this package needs from internal/cli is
-// declared below as a nil package variable and assigned by the init() in
-// internal/cli/cliworkflow_wiring.go. Each seam documents the cli helper it
-// stands for and the cycle it breaks. The real fix is to move the helper into
-// a domain package both sides can import (the stack helpers belong in a
-// future internal/clistack; the chat/config helpers belong in the packages
-// that own them).
+// imports this package). The remaining nil seam vars below cover helpers
+// still owned by internal/cli/chat and the cli root, assigned by the init()
+// in internal/cli/cliworkflow_wiring.go; the stack-domain vars are
+// initialized overrides over this package's own implementations.
 package workflow
 
 import (
-	"context"
-	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
-	"io"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-)
-
-// StackPlanRunGate classifies a stacking plan run's delivery gate. It mirrors
-// internal/cli's unexported stackPlanRunGate; the wiring converts the cli
-// value with StackPlanRunGate(int(...)).
-type StackPlanRunGate int
-
-// Stack plan delivery gate values. The order mirrors internal/cli's
-// stackPlanRunGate iota so the int conversion in the wiring is exact.
-const (
-	stackPlanRunNotApplicable StackPlanRunGate = iota
-	stackPlanRunIncomplete
-	stackPlanRunComplete
-	stackPlanRunFailed
 )
 
 // Seams over internal/cli helpers. All are nil until
-// internal/cli/cliworkflow_wiring.go assigns them.
+// internal/cli/cliworkflow_wiring.go assigns them. Stack-domain vars are
+// initialized above to this package's own implementations.
 
 var (
-	// ContextStorePath stands for cli.ContextStorePath (context_setup.go).
-	ContextStorePath func(root string, cfg config.SubagentConfig) string
-
-	// ApplyPrivacyPolicyFunc stands for cli.applyPrivacyPolicy (chat_command.go).
-	ApplyPrivacyPolicyFunc func(res *config.Resolved)
-
-	// LogMCPWarningsFunc stands for cli.logMCPWarnings (limits_summary.go).
-	LogMCPWarningsFunc func(w io.Writer, res *config.Resolved)
-
-	// SliceErrorsFunc stands for cli.sliceErrors (errors.go).
-	SliceErrorsFunc func(context string, errs []string) error
-
-	// FlagValueFunc stands for cli.flagValue (root.go).
-	FlagValueFunc func(args []string, names ...string) (string, []string, bool, error)
-
-	// FlagVarFunc stands for cli.flagVar (root.go).
-	FlagVarFunc func(args []string, names ...string) ([]string, []string, bool, error)
-
 	// InstallHookSessionFunc stands for cli.installHookSession (hooks_command.go).
 	InstallHookSessionFunc func(workspaceRoot string, staleBypass, quiet bool) (func(), error)
 
@@ -84,109 +43,72 @@ var (
 	// (messaging_tools.go).
 	InjectBaselineMessagingFunc func(full, scoped *tools.Registry, cfg config.SubagentConfig, disallowed map[string]struct{})
 
-	// MessagingDisallowedFunc stands for cli.messagingDisallowed
-	// (agent_task_handler.go).
-	MessagingDisallowedFunc func(agent agents.ResolvedAgent) map[string]struct{}
+	// ErrStackAwaitsGrant is the durable grant-pause sentinel returned by the
+	// drive loop (stack_grant_pause.go); kept as a var so tests can swap it.
+	ErrStackAwaitsGrant error = errStackAwaitsGrant
 
-	// SessionAutoDeliveryRepairLoopFunc stands for
-	// cli.sessionAutoDeliveryRepairLoop (session_delivery_repair.go).
-	SessionAutoDeliveryRepairLoopFunc func(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), deliverPlanRun bool)
+	// StackingDriveAllowPublishFunc overrides stackingDriveAllowPublish.
+	StackingDriveAllowPublishFunc = stackingDriveAllowPublish
 
-	// ErrStackAwaitsGrant stands for cli.errStackAwaitsGrant
-	// (stack_grant_pause.go).
-	ErrStackAwaitsGrant error
+	// ClassifyStackPlanRunDeliveryFn overrides classifyStackPlanRunDelivery.
+	ClassifyStackPlanRunDeliveryFn = classifyStackPlanRunDelivery
 
-	// StackingDriveAllowPublishFunc stands for cli.stackingDriveAllowPublish
-	// (stack_grant_pause.go).
-	StackingDriveAllowPublishFunc func(compiled *definition.CompiledWorkflow) bool
+	// StackPlanRunFailureReasonFn overrides stackPlanRunFailureReason.
+	StackPlanRunFailureReasonFn = stackPlanRunFailureReason
 
-	// ClassifyStackPlanRunDeliveryFunc stands for
-	// cli.classifyStackPlanRunDelivery (stack_admit_integration.go).
-	ClassifyStackPlanRunDeliveryFunc func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, remoteMergeOracle bool) StackPlanRunGate
+	// ErrFailedStackPlanRunFunc overrides errFailedStackPlanRun.
+	ErrFailedStackPlanRunFunc = errFailedStackPlanRun
 
-	// ClassifyStackPlanRunDeliveryFn is the test seam over
-	// ClassifyStackPlanRunDeliveryFunc (mirrors the cli var of the same name).
-	ClassifyStackPlanRunDeliveryFn func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, remoteMergeOracle bool) StackPlanRunGate
+	// ErrUndrivenStackPlanRunFunc overrides errUndrivenStackPlanRun.
+	ErrUndrivenStackPlanRunFunc = errUndrivenStackPlanRun
 
-	// StackPlanRunFailureReasonFunc stands for cli.stackPlanRunFailureReason
-	// (stack_admit_integration.go).
-	StackPlanRunFailureReasonFunc func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) (failed bool, reason string)
+	// LoadStackPlanOutputFunc overrides loadStackPlanOutput.
+	LoadStackPlanOutputFunc = loadStackPlanOutput
 
-	// StackPlanRunFailureReasonFn is the test seam over
-	// StackPlanRunFailureReasonFunc (mirrors the cli var of the same name).
-	StackPlanRunFailureReasonFn func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) (failed bool, reason string)
+	// ParseStackPlanOutputFunc overrides parseStackPlanOutput.
+	ParseStackPlanOutputFunc = parseStackPlanOutput
 
-	// ErrFailedStackPlanRunFunc stands for cli.errFailedStackPlanRun
-	// (stack_admit_integration.go).
-	ErrFailedStackPlanRunFunc func(runID, reason string) error
+	// StackPlanInputsFunc overrides stackPlanInputs.
+	StackPlanInputsFunc = stackPlanInputs
 
-	// ErrUndrivenStackPlanRunFunc stands for cli.errUndrivenStackPlanRun
-	// (stack_admit_integration.go).
-	ErrUndrivenStackPlanRunFunc func(runID string) error
+	// LoadAllStackChunksForDriveFunc overrides loadAllStackChunksForDrive.
+	LoadAllStackChunksForDriveFunc = loadAllStackChunksForDrive
 
-	// LoadStackPlanOutputFunc stands for cli.loadStackPlanOutput (stack_state.go).
-	LoadStackPlanOutputFunc func(repo workflowledger.Repository, stackID string) ([]byte, error)
+	// SeedStackLedgerFunc overrides seedStackLedger.
+	SeedStackLedgerFunc = seedStackLedger
 
-	// ParseStackPlanOutputFunc stands for cli.parseStackPlanOutput
-	// (stack_reconcile.go).
-	ParseStackPlanOutputFunc func(raw []byte) (mode string, chunks []delivery.ChunkPlan, hasMore bool, remainingScope string, err error)
+	// LoadAllStackChunksFunc overrides loadAllStackChunks.
+	LoadAllStackChunksFunc = loadAllStackChunks
 
-	// StackPlanInputsFunc stands for cli.stackPlanInputs (stack_state.go).
-	StackPlanInputsFunc func(repo workflowledger.Repository, stackID string) (map[string]string, error)
+	// StackTaskMapFunc overrides stackTaskMap.
+	StackTaskMapFunc = stackTaskMap
 
-	// LoadAllStackChunksForDriveFunc stands for
-	// cli.loadAllStackChunksForDrive (stack_decompose_continue.go).
-	LoadAllStackChunksForDriveFunc func(prepared *PreparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) (chunks []delivery.ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, err error)
+	// StackMergedSetFunc overrides stackMergedSet.
+	StackMergedSetFunc = stackMergedSet
 
-	// SeedStackLedgerFunc stands for cli.seedStackLedger (stack_state.go).
-	SeedStackLedgerFunc func(ledger *workflowledger.Store, stackID string, chunks []delivery.ChunkPlan) error
+	// AllChunksMergedFunc overrides allChunksMerged.
+	AllChunksMergedFunc = allChunksMerged
 
-	// DriveStackToCompletionFunc stands for cli.driveStackToCompletion
-	// (stack_drive.go).
-	DriveStackToCompletionFunc func(ctx context.Context, prepared *PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []delivery.ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error
+	// StackRunRefFunc overrides stackRunRef.
+	StackRunRefFunc = StackRunRef
 
-	// LoadAllStackChunksFunc stands for cli.loadAllStackChunks (stack_state.go).
-	LoadAllStackChunksFunc func(repo workflowledger.Repository, stackID string) (chunks []delivery.ChunkPlan, hasMore bool, remainingScope string, err error)
+	// StackHeadBranchFunc overrides stackHeadBranch.
+	StackHeadBranchFunc = stackHeadBranch
 
-	// StackTaskMapFunc stands for cli.stackTaskMap (stack_state.go).
-	StackTaskMapFunc func(ledger *workflowledger.Store, stackID string) (map[string]workflowledger.Task, error)
+	// StackRunHeadCommitFunc overrides stackRunHeadCommit.
+	StackRunHeadCommitFunc = stackRunHeadCommit
 
-	// StackMergedSetFunc stands for cli.stackMergedSet (stack_state.go).
-	StackMergedSetFunc func(byID map[string]workflowledger.Task) map[string]bool
+	// StackRunPushedFunc overrides stackRunPushed.
+	StackRunPushedFunc = stackRunPushed
 
-	// AllChunksMergedFunc stands for cli.allChunksMerged (stack_state.go).
-	AllChunksMergedFunc func(chunks []delivery.ChunkPlan, merged map[string]bool) bool
+	// StackRunPublishWithheldFunc overrides stackRunPublishWithheld.
+	StackRunPublishWithheldFunc = stackRunPublishWithheld
 
-	// StackRunRefFunc stands for cli.stackRunRef (stack_reconcile.go).
-	StackRunRefFunc func(repo workflowledger.Repository, stackID, chunkID string) (workflowledger.RunSnapshot, bool, error)
+	// StackDecomposedChunksFunc overrides stackDecomposedChunks.
+	StackDecomposedChunksFunc = stackDecomposedChunks
 
-	// StackHeadBranchFunc stands for cli.stackHeadBranch (stack_reconcile.go).
-	StackHeadBranchFunc func(run workflowledger.RunSnapshot) string
-
-	// StackRunHeadCommitFunc stands for cli.stackRunHeadCommit (stack_state.go).
-	StackRunHeadCommitFunc func(repo workflowledger.Repository, run workflowledger.RunSnapshot) string
-
-	// StackRunPushedFunc stands for cli.stackRunPushed (stack_state.go).
-	StackRunPushedFunc func(repo workflowledger.Repository, run workflowledger.RunSnapshot) bool
-
-	// StackRunPublishWithheldFunc stands for cli.stackRunPublishWithheld
-	// (stack_publish_gate.go).
-	StackRunPublishWithheldFunc func(ctx context.Context, repo workflowledger.Repository, runID string, quiet bool) bool
-
-	// StackDecomposedChunksFunc stands for cli.stackDecomposedChunks
-	// (stack_admit_integration.go).
-	StackDecomposedChunksFunc func(ctx context.Context, repo delivery.LedgerRepository, runID string) (chunks int, ok bool)
-
-	// OpenContextStoreFunc stands for cli.openContextStore (context_setup.go).
-	OpenContextStoreFunc func(root string, cfg config.SubagentConfig) (*storage.SQLite, error)
-
-	// InjectSkillResourceToolFunc stands for cli.InjectSkillResourceTool
-	// (skill_resource_tool.go).
-	InjectSkillResourceToolFunc func(registry *tools.Registry, activation *skills.SkillActivation) (*tools.Registry, error)
-
-	// GitMergeCheckFunc stands for cli.gitMergeChecker{}.Merged
-	// (stack_merge_checker.go).
-	GitMergeCheckFunc func(ctx context.Context, git delivery.GitRunner, pr delivery.PRClient, gc delivery.GitContext, headBranch, baseBranch, headCommit, repoSlug string, wasPushed bool) (bool, error)
+	// GitMergeCheckFunc overrides gitMergeCheck.
+	GitMergeCheckFunc = gitMergeCheck
 )
 
 // toolPostMessage is the post_message tool name used by the authority
@@ -212,31 +134,12 @@ func InitCLIDefaults() {
 	if WorkflowBuildDispatcher == nil {
 		WorkflowBuildDispatcher = NewSessionDispatcherFunc
 	}
-	if WorkflowStackDriveToCompletion == nil {
-		WorkflowStackDriveToCompletion = DriveStackToCompletionFunc
-	}
 	if WorkflowResumeInstallHooks == nil {
 		WorkflowResumeInstallHooks = InstallHookSessionFunc
 	}
 	if WorkflowExecutionHooks == nil {
 		WorkflowExecutionHooks = InstallHookSessionFunc
 	}
-	if ClassifyStackPlanRunDeliveryFn == nil {
-		ClassifyStackPlanRunDeliveryFn = ClassifyStackPlanRunDeliveryFunc
-	}
-	if StackPlanRunFailureReasonFn == nil {
-		StackPlanRunFailureReasonFn = StackPlanRunFailureReasonFunc
-	}
-}
-
-// OpenContextStorePath opens the SQLite context store at path. It mirrors
-// cli.openContextStorePath (context_setup.go); both wrap storage.OpenSQLite.
-func OpenContextStorePath(path string) (*storage.SQLite, error) {
-	store, err := storage.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open context store %q: %w", path, err)
-	}
-	return store, nil
 }
 
 // LoadAgentDefinitionsLocal loads agent definitions under the user gate. It
@@ -246,6 +149,6 @@ func LoadAgentDefinitionsLocal(workspaceRoot, agentFlag string, skillReg *skills
 	return cliagents.LoadAgentDefinitions(workspaceRoot, agentFlag, skillReg)
 }
 
-// SettleStackPlanRunIfCompleteFn stands for cli.settleStackPlanRunIfComplete
+// SettleStackPlanRunIfCompleteFn overrides settleStackPlanRunIfComplete
 // (stack_drive.go): the drive loop's completion settle.
-var SettleStackPlanRunIfCompleteFn func(ctx context.Context, prepared *PreparedWorkflowRun, stackID string, stdout io.Writer) error
+var SettleStackPlanRunIfCompleteFn = settleStackPlanRunIfComplete

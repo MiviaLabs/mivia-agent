@@ -326,7 +326,7 @@ func TestFormatValidationErrPrefersBasicOutputAndStaysBounded(t *testing.T) {
 
 func TestStripOneCodeFenceAllowsThreeBacktickContentInFourBacktickFence(t *testing.T) {
 	// A 4-backtick fence whose body contains a line starting with exactly 3
-	// backticks is valid CommonMark (§4.5): a fenced code block opened with N
+	// backticks is valid CommonMark: a fenced code block opened with N
 	// backticks can contain lines of N-1 or fewer backticks. The function's doc
 	// comment advertises 4-backtick support but the hardcoded triple-backtick
 	// guard at line ~160 incorrectly rejects this input.

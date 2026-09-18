@@ -5,6 +5,7 @@ package chat
 // full chat flow but were individually uncovered after the cli split.
 
 import (
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -12,7 +13,7 @@ import (
 
 func TestApplyPrivacyPolicy(t *testing.T) {
 	res := &config.Resolved{}
-	applyPrivacyPolicy(res)
+	workflow.ApplyPrivacyPolicy(res)
 	if res == nil {
 		t.Fatal("applyPrivacyPolicy must not panic on a fresh Resolved")
 	}
@@ -20,7 +21,7 @@ func TestApplyPrivacyPolicy(t *testing.T) {
 
 func TestApplyContextLimits(t *testing.T) {
 	res := &config.Resolved{}
-	applyContextLimits(res)
+	workflow.ApplyPrivacyPolicy(res)
 	if res == nil {
 		t.Fatal("applyContextLimits must not panic on a fresh Resolved")
 	}

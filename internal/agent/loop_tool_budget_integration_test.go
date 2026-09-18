@@ -137,9 +137,9 @@ func TestLoopToolInputEventsRedactCredentialsWithConfiguredPolicy(t *testing.T) 
 }
 
 // TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd is the documented
-// default after plan 10: a workspace that configures no policy sends tool
+// default: a workspace that configures no policy sends tool
 // previews through untouched. This fails open on purpose - what counts as a
-// secret is a property of a workspace - and the cost is stated in plan 10 §5.
+// secret is a property of a workspace - and that cost is accepted here.
 // If this test starts failing, a pattern list has grown back into the binary.
 func TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd(t *testing.T) {
 	redact.SetPolicy(nil)

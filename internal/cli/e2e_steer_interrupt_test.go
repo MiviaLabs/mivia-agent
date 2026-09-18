@@ -1,6 +1,6 @@
 package cli
 
-// Plan 54 §7 (cli/send_to_task e2e): mid-step steer delivery through the full
+// Send-to-task e2e: mid-step steer delivery through the full
 // coordinator path.
 //
 // TestSendToTaskInterruptBreaksIntoBlockedChild pins the interrupt contract:

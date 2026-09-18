@@ -19,8 +19,8 @@ var lookupLocalhost = net.LookupIP
 
 // newLoopbackDialContext resolves the base URL host once at construction and
 // returns a DialContext that pins every dial to the resolved loopback
-// addresses. It is the resolve-once half of the loopback-http gate (plan
-// §12 item 1, generalized beyond ollama - see NewForProvider):
+// addresses. It is the resolve-once half of the loopback-http gate
+// (generalized beyond ollama - see NewForProvider):
 // config.IsOllamaLoopback approves the literal hostname at config time, and
 // this function turns that approval into a fixed, verified address set, so
 // the per-request dial can never follow a resolver that has since moved

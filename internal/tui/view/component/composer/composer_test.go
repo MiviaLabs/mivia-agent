@@ -86,7 +86,7 @@ func TestSetValueRoundtrips(t *testing.T) {
 	}
 }
 
-// ----- Phase 1: multi-line tests -----
+// ----- Multi-line tests -----
 
 func TestShiftEnterInsertsNewline(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 80)
@@ -280,7 +280,7 @@ func TestSetCommandsImmutability(t *testing.T) {
 	}
 }
 
-// ----- Phase 2: @-mention picker tests -----
+// ----- @-mention picker tests -----
 
 func TestMentionMenuActiveOnAt(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 80)

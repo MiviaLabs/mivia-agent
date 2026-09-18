@@ -10,8 +10,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tui/view/theme"
 )
 
-// This file holds C7's compact child tree under a dispatch row
-// (docs/design/chat-tui-crush-comparison.md §3 C7): the child tool calls a
+// This file holds the compact child tree under a dispatch row.
+// The child tool calls a
 // dispatched subagent made, drawn as a few compact body rows of the parent
 // dispatch_tasks block so the reader sees what the batch DID without opening
 // the thread dialog.

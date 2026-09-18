@@ -110,7 +110,7 @@ func (c *countingStore) reads() (eventsRead, fullReadCalls int) {
 	return c.eventsRead, c.fullReadCalls
 }
 
-// TestProjectionSeesWritesFromAnotherRepository is the §5 regression: two
+// TestProjectionSeesWritesFromAnotherRepository is the projection regression: two
 // repository instances over ONE store. B builds its projection first, A then
 // writes, and B must observe A's write. Against the one-shot `built` flag B
 // reported "not found" and zero runs forever.

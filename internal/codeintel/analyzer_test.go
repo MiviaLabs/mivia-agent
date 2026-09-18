@@ -291,8 +291,8 @@ func TestReferencesHonorsContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for an already-canceled context")
 	}
-	// A cold packages.Load on this repo can take several seconds (see plan
-	// 18 §4). Honoring cancellation means failing fast, not after the full
+	// A cold packages.Load on this repo can take several seconds. Honoring
+	// cancellation means failing fast, not after the full
 	// load completes.
 	if elapsed > 5*time.Second {
 		t.Errorf("References took %v after an already-canceled context; cancellation was not propagated into packages.Load", elapsed)

@@ -25,7 +25,7 @@ func TestEvidenceGateRepairLoopRespectsMaxIterations(t *testing.T) {
 	if !strings.Contains(err.Error(), "loop \"repair\" exhausted") {
 		t.Fatalf("error = %v; want loop exhausted", err)
 	}
-	// The failure must carry the structured recovery hint (R2 Phase 1).
+	// The failure must carry the structured recovery hint.
 	assertLoopExhaustionHint(t, err)
 	if got.Status != workflowledger.RunStatusFailed {
 		t.Fatalf("status = %q, want failed", got.Status)
@@ -208,7 +208,7 @@ func verifiedJSON(s string) json.RawMessage { return json.RawMessage(s) }
 
 // assertLoopExhaustionHint checks the structured recovery hint carried by a
 // loop-exhausted failure: loop name, cap, spent iterations, and the step whose
-// route was refused (R2 Phase 1).
+// route was refused.
 func assertLoopExhaustionHint(t *testing.T, err error) {
 	t.Helper()
 	var loopErr *loopExhaustedError
@@ -222,7 +222,7 @@ func assertLoopExhaustionHint(t *testing.T, err error) {
 		t.Fatalf("error = %v; want the refused step named in the recovery hint", err)
 	}
 	if len(loopErr.Salvage) == 0 {
-		t.Fatalf("loop hint carries no salvaged outputs; want the verified implement output preserved (R2 Phase 2)")
+		t.Fatalf("loop hint carries no salvaged outputs; want the verified implement output preserved")
 	}
 	salvagedImplement := false
 	for _, s := range loopErr.Salvage {
@@ -293,7 +293,7 @@ func newEvidenceLoopPartialController(t *testing.T) (*workflowledger.StorageRepo
 	return repo, ctrl, runner
 }
 
-// TestEvidenceGateLoopPartialAcceptRoutesToDeclaredTarget pins R2 Phase 2: a
+// TestEvidenceGateLoopPartialAcceptRoutesToDeclaredTarget pins partial-accept: a
 // loop whose transition declares partial_target routes to that step when its
 // budget exhausts and verified outputs survive, instead of failing the run.
 // The refused attempt is persisted with the partial route, the deliver step

@@ -16,7 +16,7 @@ import (
 func TestCoordinator_ResumeInterruptedRun(t *testing.T) {
 	store := storage.NewMemory()
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	// Phase 1: Create interrupted state via storage repo.
+	// Step 1: Create interrupted state via storage repo.
 	storeRepo := ledger.NewStorageLedgerRepository(store)
 	storeRepo.SetTimeSource(func() time.Time { return now })
 	ctx := context.Background()
@@ -36,7 +36,7 @@ func TestCoordinator_ResumeInterruptedRun(t *testing.T) {
 	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t2", 1, string(ledger.TaskStatusRunning))
 	storeRepo.Close()
 
-	// Phase 2: Create coordinator with fresh storage repo from same store.
+	// Step 2: Create coordinator with fresh storage repo from same store.
 	recoveredRepo := ledger.NewStorageLedgerRepository(store)
 	recoveredRepo.SetTimeSource(func() time.Time { return now })
 	d := runtime.New(runtime.Policy{})

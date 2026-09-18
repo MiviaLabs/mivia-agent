@@ -155,7 +155,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		maxTokens = limit
 	}
 	outSchema := h.resolveOutputSchema(req)
-	// Steer watchdog (plan 54 §4.5): the [subagents.messaging]
+	// Steer watchdog: the [subagents.messaging]
 	// steer_watchdog_seconds knob bounds how long a pending steer may wait
 	// before the loop soft-interrupts the in-flight LLM call. nil means the
 	// 300s default; an explicit 0 disables the watchdog (unbounded).

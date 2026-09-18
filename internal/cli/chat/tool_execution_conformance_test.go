@@ -247,7 +247,7 @@ func TestEveryPathCapsTheResult(t *testing.T) {
 	}
 }
 
-// C7: a tool named in ref_only_tools never inlines its body.
+// A tool named in ref_only_tools never inlines its body.
 //
 // RefOnlyTools is applied by wrapping tools IN THE SDK REGISTRY. A deferred
 // tool is deliberately absent from that registry, so the wrapper never saw it

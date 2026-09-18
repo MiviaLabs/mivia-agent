@@ -100,7 +100,7 @@ func assertRenderDiffLineCase(t *testing.T, line string, wantTokens, banTokens [
 	}
 }
 
-// TestRenderDiffLineHunkIsMagenta pins §3: @@ uses hunk/magenta, not context/dim.
+// TestRenderDiffLineHunkIsMagenta pins the style: @@ uses hunk/magenta, not context/dim.
 func TestRenderDiffLineHunkIsMagenta(t *testing.T) {
 	hunk := RenderDiffLine("@@ -1 +1 @@")
 	ctx := RenderDiffLine(" context")

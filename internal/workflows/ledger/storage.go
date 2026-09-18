@@ -161,7 +161,7 @@ func (s *StorageRepository) nextSequence(runID string) uint64 {
 
 // appendEvent writes the event to the store and resolves the writer's bookkeeping.
 func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, rollback func()) error {
-	holder, _ := claimHolderFromContext(ctx)
+	holder, _ := ClaimHolderFromContext(ctx)
 	return s.engine.AppendEvent(ctx, evt, core.AppendOptions{
 		BoundHolder: holder,
 		Rollback: func() {

@@ -104,7 +104,7 @@ type MultiStepHandler struct {
 	RequestTimeout time.Duration
 	// SteerWatchdog bounds steer latency when no interrupt signal is wired: the
 	// loop's watcher cancels the in-flight LLM call once a steer has been
-	// pending for this long (plan 54 §4.5). 0 disables the watchdog.
+	// pending for this long. 0 disables the watchdog.
 	SteerWatchdog time.Duration
 	// TotalTimeout is the maximum wall-clock time for the entire sub-agent.
 	TotalTimeout time.Duration

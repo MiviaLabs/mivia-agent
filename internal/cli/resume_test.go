@@ -178,7 +178,7 @@ func TestResumeRunRefusesUnresumableRun(t *testing.T) {
 }
 
 // TestResumeRunRegistersHandleWithResumingPrincipal verifies that after
-// resume, the handle is stored with the resuming caller's principal (§3.2).
+// resume, the handle is stored with the resuming caller's principal.
 // This is the load-bearing test: M1 and M2 mutations must fail it.
 //
 // M1 (skip handle registration / skip Delete): the test pre-populates
@@ -241,7 +241,7 @@ func TestResumeRunRegistersHandleWithResumingPrincipal(t *testing.T) {
 }
 
 // TestResumeConfirmationShowsWhatWillReRun verifies that the confirmation
-// message includes task count and prior attempt info (§5).
+// message includes task count and prior attempt info.
 func TestResumeConfirmationShowsWhatWillReRun(t *testing.T) {
 	info := ResumeConfirmationInfo{
 		RunID:         "run-confirm",
@@ -305,7 +305,7 @@ var _ = time.Now // reference to avoid unused import
 // call site and minted a fresh ephemeral principal when the context carried no
 // caller. The handle was then owned by a session id nothing held, so the run the
 // user had just resumed could not be inspected, joined or cancelled - the exact
-// outcome §3.2 exists to prevent. The pre-existing principal test injected its
+// outcome this test exists to prevent. The pre-existing principal test injected its
 // own caller, so it passed while production was broken. These drive the
 // production shape: a bare context plus the session principal from startup.
 
@@ -343,7 +343,7 @@ func TestResumeFromCLISurfaceUsesSessionPrincipal(t *testing.T) {
 	}
 }
 
-// §7's negative half: the resuming session can reach the handle and a different
+// Negative half: the resuming session can reach the handle and a different
 // principal cannot. Asserts enforcement, not just the stored field value.
 func TestResumedHandleRejectsForeignPrincipal(t *testing.T) {
 	withActiveSession(t, "owner-session")

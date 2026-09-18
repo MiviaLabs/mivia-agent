@@ -31,7 +31,7 @@ func TestValidateBindingLimitsSkipsMissingOptionalWithTinyCap(t *testing.T) {
 }
 
 // TestMarshalEvidenceSelectionRecordsEnvelope pins the envelope-aware
-// selection metadata (plan 59 named test): an envelope evidence value is
+// selection metadata: an envelope evidence value is
 // recorded with its own bytes and digest, artifact_digest is extracted from
 // the envelope's embedded artifact digest, and inline values carry no
 // artifact_digest (omitempty keeps inline metadata byte-identical).

@@ -44,7 +44,7 @@ func registryNames(reg *tools.Registry) []string {
 }
 
 // TestRestrictedRegistryNeverReExpandsPastItsInput pins the production
-// contract of the no-Allowlist spawn path (plan tools/05 §4.3, 51.05 §4.2).
+// contract of the no-Allowlist spawn path.
 // MultiStepHandler.restrictedRegistry passes no allowlist, so its safety rests
 // entirely on FullRegistry having been pre-scoped by the caller. This asserts
 // the two properties that makes it depend on: the result is a subset of the

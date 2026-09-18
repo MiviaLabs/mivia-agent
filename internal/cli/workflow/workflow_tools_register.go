@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 )
 
 func init() {
-	// Install the Phase 7 workflow tool builder so NewDefaultRegistry registers
+	// Install the workflow tool builder so NewDefaultRegistry registers
 	// the eight tools when a workspace has .mivia/workflows/.
 	tools.SetWorkflowToolsBuilder(buildWorkflowToolsForRegistry)
 }
@@ -25,7 +25,7 @@ func buildWorkflowToolsForRegistry(opts tools.DefaultOptions) []tools.Tool {
 	if opts.Workspace != nil {
 		root = opts.Workspace.Abs
 	}
-	if !ledger.HasWorkflows(root) {
+	if !workflowagenttools.HasWorkflows(root) {
 		return nil
 	}
 	svc := workflowToolService(root, nil)
@@ -35,20 +35,20 @@ func buildWorkflowToolsForRegistry(opts tools.DefaultOptions) []tools.Tool {
 	return wrapWorkflowTools(svc)
 }
 
-func wrapWorkflowTools(svc *ledger.Service) []tools.Tool {
+func wrapWorkflowTools(svc *workflowagenttools.Service) []tools.Tool {
 	if svc == nil {
 		return nil
 	}
 	out := make([]tools.Tool, 0, 8)
-	for _, inner := range ledger.Tools(svc) {
+	for _, inner := range workflowagenttools.Tools(svc) {
 		out = append(out, &workflowRegistryTool{inner: inner})
 	}
 	return out
 }
 
-// workflowRegistryTool adapts ledger.Tool to tools.Tool.
+// workflowRegistryTool adapts workflowagenttools.Tool to tools.Tool.
 type workflowRegistryTool struct {
-	inner ledger.Tool
+	inner workflowagenttools.Tool
 }
 
 func (t *workflowRegistryTool) Name() string               { return t.inner.Name() }

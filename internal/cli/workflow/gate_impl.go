@@ -20,19 +20,19 @@ import (
 // complete, or failed. It mirrors the cli implementation.
 func ClassifyStackPlanRunDeliveryImpl(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, remoteMergeOracle bool) StackPlanRunGate {
 	if snap, err := repo.GetRun(ctx, runID); err == nil && snap.InvocationKey != "" && strings.HasSuffix(snap.InvocationKey, ":"+delivery.IntegrationChunkID) {
-		return stackPlanRunNotApplicable
+		return StackPlanRunNotApplicable
 	}
 	if _, ok := delivery.DecomposedChunks(ctx, repo, runID); !ok {
-		return stackPlanRunNotApplicable
+		return StackPlanRunNotApplicable
 	}
 	if failed, _ := StackPlanRunFailureReasonImpl(ctx, root, store, repo, runID); failed {
-		return stackPlanRunFailed
+		return StackPlanRunFailed
 	}
 	policy := StackPlanMergePolicy(ctx, repo, runID)
 	if !StackDriveCompleted(ctx, root, store, repo, runID, policy, remoteMergeOracle) {
-		return stackPlanRunIncomplete
+		return StackPlanRunIncomplete
 	}
-	return stackPlanRunComplete
+	return StackPlanRunComplete
 }
 
 // StackPlanRunFailureReasonImpl reports whether a multi-chunk stack plan run

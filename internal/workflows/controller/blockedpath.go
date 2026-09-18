@@ -1,4 +1,4 @@
-// Package blockedpath detects when task text or agent output instructs a
+// Detects when task text or agent output instructs a
 // write to a workspace path that the host write-path policy blocklists for
 // workflow agents.
 //
@@ -11,6 +11,7 @@
 // directory with .mivia/workflows"): that describes a throwaway fixture's
 // layout, not a demand to edit the host's path. A read-only mention (no
 // demand verb) is not.
+
 package controller
 
 import (

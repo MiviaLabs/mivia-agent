@@ -20,6 +20,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -108,7 +109,7 @@ func gapsStaticEngine(t *testing.T, root string) *Engine {
 	}
 }
 
-func gapsStart(t *testing.T, e *Engine, req workflowledger.StartRequest) workflowledger.StartResult {
+func gapsStart(t *testing.T, e *Engine, req workflowagenttools.StartRequest) workflowagenttools.StartResult {
 	t.Helper()
 	res, err := e.Start(context.Background(), req)
 	if err != nil {
@@ -220,7 +221,7 @@ func (r *gapsRepo) GetDeliveryByIdempotencyKey(ctx context.Context, key string) 
 
 func TestGapEngineGuardsOnIncompleteEngine(t *testing.T) {
 	var incomplete *Engine
-	if _, err := incomplete.Start(context.Background(), workflowledger.StartRequest{}); err == nil || !strings.Contains(err.Error(), "incomplete") {
+	if _, err := incomplete.Start(context.Background(), workflowagenttools.StartRequest{}); err == nil || !strings.Contains(err.Error(), "incomplete") {
 		t.Fatalf("Start on incomplete engine error = %v", err)
 	}
 	if _, err := incomplete.Cancel(context.Background(), "run"); err == nil || !strings.Contains(err.Error(), "incomplete") {
@@ -235,7 +236,7 @@ func TestGapEngineGuardsOnIncompleteEngine(t *testing.T) {
 
 func TestGapStartUnknownWorkflowFails(t *testing.T) {
 	e := gapsStaticEngine(t, gapsTwoStepWorkspace(t))
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "missing", Inputs: map[string]any{"task": "x"}})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "missing", Inputs: map[string]any{"task": "x"}})
 	if err == nil {
 		t.Fatal("Start on an unknown workflow must fail")
 	}
@@ -244,9 +245,9 @@ func TestGapStartUnknownWorkflowFails(t *testing.T) {
 func TestGapStartInvocationKeyReusesTerminalRun(t *testing.T) {
 	e := gapsStaticEngine(t, gapsTwoStepWorkspace(t))
 	key := "gap-key-terminal"
-	res := gapsStart(t, e, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
+	res := gapsStart(t, e, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
 	gapsWaitStatus(t, e, res.RunID, workflowledger.RunStatusSucceeded, 15*time.Second)
-	again, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
+	again, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
 	if err != nil {
 		t.Fatalf("second Start with the same key: %v", err)
 	}
@@ -260,7 +261,7 @@ func TestGapStartInvocationGetRunErrorFails(t *testing.T) {
 	inner := workflowledger.NewMemoryRepository()
 	wrapped := &gapsRepo{Repository: inner, getRunErr: errors.New("ledger read refused by test")}
 	e := &Engine{WorkspaceRoot: root, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: "gap-key-err"})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: "gap-key-err"})
 	if err == nil || !strings.Contains(err.Error(), "ledger read refused") {
 		t.Fatalf("Start with a failing GetRun error = %v", err)
 	}
@@ -270,7 +271,7 @@ func TestGapStartInvocationAdmissionWaitCanceled(t *testing.T) {
 	root := gapsTwoStepWorkspace(t)
 	e := &Engine{WorkspaceRoot: root, Repo: workflowledger.NewMemoryRepository(), NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
 	key := "gap-key-canceled"
-	runID := workflowledger.InvocationRunID(key)
+	runID := workflowagenttools.InvocationRunID(key)
 	owner, release := e.beginInvocationAdmission(runID)
 	if !owner {
 		t.Fatal("the first admission must own the slot")
@@ -278,7 +279,7 @@ func TestGapStartInvocationAdmissionWaitCanceled(t *testing.T) {
 	t.Cleanup(func() { e.finishInvocationAdmission(runID, release) })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := e.Start(ctx, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
+	_, err := e.Start(ctx, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Start with a canceled context while waiting error = %v", err)
 	}
@@ -287,7 +288,7 @@ func TestGapStartInvocationAdmissionWaitCanceled(t *testing.T) {
 func TestGapStartInvocationAdmissionWaitSeesExistingRun(t *testing.T) {
 	root := gapsTwoStepWorkspace(t)
 	key := "gap-key-existing"
-	runID := workflowledger.InvocationRunID(key)
+	runID := workflowagenttools.InvocationRunID(key)
 	wrapped := &gapsRepo{
 		Repository:    workflowledger.NewMemoryRepository(),
 		notFoundOnce:  true,
@@ -302,7 +303,7 @@ func TestGapStartInvocationAdmissionWaitSeesExistingRun(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		e.finishInvocationAdmission(runID, release)
 	}()
-	res, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
+	res, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
 	if err != nil {
 		t.Fatalf("Start after the first admission released: %v", err)
 	}
@@ -314,7 +315,7 @@ func TestGapStartInvocationAdmissionWaitSeesExistingRun(t *testing.T) {
 func TestGapStartInvocationAdmissionWaitGetRunError(t *testing.T) {
 	root := gapsTwoStepWorkspace(t)
 	key := "gap-key-admit-err"
-	runID := workflowledger.InvocationRunID(key)
+	runID := workflowagenttools.InvocationRunID(key)
 	wrapped := &gapsRepo{Repository: workflowledger.NewMemoryRepository()}
 	wrapped.notFoundOnce = true
 	wrapped.getRunErr = nil
@@ -329,7 +330,7 @@ func TestGapStartInvocationAdmissionWaitGetRunError(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		e.finishInvocationAdmission(runID, release)
 	}()
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key})
 	if err == nil || !strings.Contains(err.Error(), "did not admit") {
 		t.Fatalf("Start with a failing re-read error = %v", err)
 	}
@@ -373,7 +374,7 @@ func TestGapStartFinalGetRunError(t *testing.T) {
 	wrapped := &gapsRepo{Repository: workflowledger.NewMemoryRepository()}
 	wrapped.failGetRunAt = 2
 	e := &Engine{WorkspaceRoot: root, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	if err == nil || !strings.Contains(err.Error(), "get run refused by test") {
 		t.Fatalf("Start with a failing final GetRun error = %v", err)
 	}
@@ -388,7 +389,7 @@ func TestGapStartFinalGetRunError(t *testing.T) {
 
 func TestGapCancelSucceededRunReportsTerminalSuccess(t *testing.T) {
 	e := gapsStaticEngine(t, gapsTwoStepWorkspace(t))
-	res := gapsStart(t, e, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, e, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, e, res.RunID, workflowledger.RunStatusSucceeded, 15*time.Second)
 	out, err := e.Cancel(context.Background(), res.RunID)
 	if err != nil {
@@ -406,7 +407,7 @@ func TestGapDeleteRunErrorPropagates(t *testing.T) {
 	inner := workflowledger.NewMemoryRepository()
 	seeder := gapsStaticEngine(t, root)
 	seeder.Repo = inner
-	res := gapsStart(t, seeder, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, seeder, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, seeder, res.RunID, workflowledger.RunStatusSucceeded, 15*time.Second)
 	// The terminal status is written before the executor drops its claim, so
 	// the seeder can still hold the run when Delete's cancel runs and the
@@ -428,7 +429,7 @@ func TestGapDeliverReplayRecordErrorPropagates(t *testing.T) {
 	e := &Engine{WorkspaceRoot: root, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
 	seeder := gapsStaticEngine(t, root)
 	seeder.Repo = inner
-	res := gapsStart(t, seeder, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, seeder, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, seeder, res.RunID, workflowledger.RunStatusSucceeded, 15*time.Second)
 	_, err := e.Deliver(context.Background(), res.RunID, true)
 	if err == nil || !strings.Contains(err.Error(), "replay delivery") {
@@ -477,14 +478,14 @@ status = "succeeded"
 
 func TestGapResumeDeliveryPendingIsRefused(t *testing.T) {
 	e := gapsStaticEngine(t, gapsDeliveryWorkspace(t))
-	res := gapsStart(t, e, workflowledger.StartRequest{Workflow: "deliver-me", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, e, workflowagenttools.StartRequest{Workflow: "deliver-me", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, e, res.RunID, workflowledger.RunStatusDeliveryPending, 15*time.Second)
 	waitCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := e.Wait(waitCtx, res.RunID); err != nil {
 		t.Fatalf("wait for delivery_pending controller: %v", err)
 	}
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Resume: true, RunID: res.RunID})
 	if err == nil || !strings.Contains(err.Error(), "waiting for delivery") {
 		t.Fatalf("resume of a delivery_pending run error = %v", err)
 	}
@@ -494,7 +495,7 @@ func TestGapResumeGetRunErrorPropagates(t *testing.T) {
 	root := gapsTwoStepWorkspace(t)
 	wrapped := &gapsRepo{Repository: workflowledger.NewMemoryRepository(), getRunErr: errors.New("resume read refused by test")}
 	e := &Engine{WorkspaceRoot: root, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := e.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: "wfr-missing"})
+	_, err := e.Start(context.Background(), workflowagenttools.StartRequest{Resume: true, RunID: "wfr-missing"})
 	if err == nil || !strings.Contains(err.Error(), "resume read refused") {
 		t.Fatalf("resume with a failing GetRun error = %v", err)
 	}
@@ -521,7 +522,7 @@ func gapsWaitTerminal(t *testing.T, e *Engine, runID string) {
 	}
 }
 
-func gapsBlockedEngine(t *testing.T) (*Engine, <-chan struct{}, workflowledger.StartResult) {
+func gapsBlockedEngine(t *testing.T) (*Engine, <-chan struct{}, workflowagenttools.StartResult) {
 	t.Helper()
 	root := gapsTwoStepWorkspace(t)
 	block := make(chan struct{})
@@ -532,7 +533,7 @@ func gapsBlockedEngine(t *testing.T) (*Engine, <-chan struct{}, workflowledger.S
 			return &StaticStepRunner{BlockUntil: block}
 		},
 	}
-	res := gapsStart(t, e, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, e, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, e, res.RunID, workflowledger.RunStatusRunning, 15*time.Second)
 	t.Cleanup(func() { close(block) })
 	return e, block, res
@@ -543,7 +544,7 @@ func TestGapResumeSnapshotErrorPropagates(t *testing.T) {
 	root := owner.WorkspaceRoot
 	wrapped := &gapsRepo{Repository: owner.Repo, snapshotErr: errors.New("snapshot refused by test")}
 	fresh := &Engine{WorkspaceRoot: root, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := fresh.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
+	_, err := fresh.Start(context.Background(), workflowagenttools.StartRequest{Resume: true, RunID: res.RunID})
 	if err == nil || !strings.Contains(err.Error(), "snapshot refused") {
 		t.Fatalf("resume with a failing snapshot read error = %v", err)
 	}
@@ -564,7 +565,7 @@ func TestGapResumeForeignClaimIsRefused(t *testing.T) {
 		t.Fatalf("foreign claim: %v", err)
 	}
 	fresh := &Engine{WorkspaceRoot: owner.WorkspaceRoot, Repo: owner.Repo, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := fresh.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
+	_, err := fresh.Start(context.Background(), workflowagenttools.StartRequest{Resume: true, RunID: res.RunID})
 	if err == nil || !strings.Contains(err.Error(), "another host") {
 		t.Fatalf("resume against a fresh foreign claim error = %v", err)
 	}
@@ -587,7 +588,7 @@ func TestGapResumeGetRunAfterLaunchError(t *testing.T) {
 	// that builds the result - fails deterministically.
 	wrapped := &gapsRepo{Repository: owner.Repo, failGetRunAfter: 1}
 	fresh := &Engine{WorkspaceRoot: owner.WorkspaceRoot, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := fresh.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
+	_, err := fresh.Start(context.Background(), workflowagenttools.StartRequest{Resume: true, RunID: res.RunID})
 	if err == nil || !strings.Contains(err.Error(), "get run refused by test") {
 		t.Fatalf("resume with a failing final GetRun error = %v", err)
 	}
@@ -615,7 +616,7 @@ func TestGapResumePostLaunchGetRunErrorPropagates(t *testing.T) {
 	// the run launches and only the read that builds the StartResult fails.
 	wrapped := &gapsRepo{Repository: owner.Repo, failGetRunAfter: 2}
 	fresh := &Engine{WorkspaceRoot: owner.WorkspaceRoot, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := fresh.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
+	_, err := fresh.Start(context.Background(), workflowagenttools.StartRequest{Resume: true, RunID: res.RunID})
 	if err == nil || !strings.Contains(err.Error(), "get run refused by test") {
 		t.Fatalf("resume with a failing post-launch GetRun error = %v", err)
 	}
@@ -648,7 +649,7 @@ func (gapsMergedPR) IsMerged(context.Context, string, string) (bool, error) {
 func gapsSeedStackRun(t *testing.T, repo workflowledger.Repository, stackID, chunkID string, status workflowledger.RunStatus, remoteURL string) {
 	t.Helper()
 	key := stackID + ":" + chunkID
-	runID := workflowledger.InvocationRunID(key)
+	runID := workflowagenttools.InvocationRunID(key)
 	snap := workflowledger.RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", InvocationKey: key,
 		Status: workflowledger.RunStatusPending, RemoteURL: remoteURL, WorktreeName: "workflow-" + runID,
@@ -695,11 +696,11 @@ func TestGapProcessSettledChunksClassifiesOutcomes(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	ledgerStore := gapsSeedLedger(t, "c1", "c2", "c3")
 	gapsSeedStackRun(t, repo, "stack-gap", "c1", workflowledger.RunStatusSucceeded, "")
-	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{RunID: workflowledger.InvocationRunID("stack-gap:c1"), IdempotencyKey: "d1", Status: "no_diff"}); err != nil {
+	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{RunID: workflowagenttools.InvocationRunID("stack-gap:c1"), IdempotencyKey: "d1", Status: "no_diff"}); err != nil {
 		t.Fatal(err)
 	}
 	gapsSeedStackRun(t, repo, "stack-gap", "c2", workflowledger.RunStatusSucceeded, "")
-	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{RunID: workflowledger.InvocationRunID("stack-gap:c2"), IdempotencyKey: "d2", Status: "pushed", CommitSHA: "abc123"}); err != nil {
+	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{RunID: workflowagenttools.InvocationRunID("stack-gap:c2"), IdempotencyKey: "d2", Status: "pushed", CommitSHA: "abc123"}); err != nil {
 		t.Fatal(err)
 	}
 	gapsSeedStackRun(t, repo, "stack-gap", "c3", workflowledger.RunStatusSucceeded, "")
@@ -737,8 +738,8 @@ func TestGapMarkMergedChunksWithMergedPROracle(t *testing.T) {
 	// Durable pushed evidence: the deliverer writes a pushed record with the
 	// commit SHA before the PR can exist, and the merge oracle requires it.
 	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{
-		RunID: workflowledger.InvocationRunID("stack-gap:c4"), IdempotencyKey: "d4",
-		Status: "pushed", CommitSHA: "beef0001", HeadRef: "wf/workflow-" + workflowledger.InvocationRunID("stack-gap:c4"),
+		RunID: workflowagenttools.InvocationRunID("stack-gap:c4"), IdempotencyKey: "d4",
+		Status: "pushed", CommitSHA: "beef0001", HeadRef: "wf/workflow-" + workflowagenttools.InvocationRunID("stack-gap:c4"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -810,7 +811,7 @@ func TestGapCancelDeliveryPendingRunFails(t *testing.T) {
 	// CancelRun refuses a delivery_pending run; the run is not terminal, so
 	// Cancel must surface the refusal error.
 	e := gapsStaticEngine(t, gapsDeliveryWorkspace(t))
-	res := gapsStart(t, e, workflowledger.StartRequest{Workflow: "deliver-me", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, e, workflowagenttools.StartRequest{Workflow: "deliver-me", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, e, res.RunID, workflowledger.RunStatusDeliveryPending, 15*time.Second)
 	if _, err := e.Cancel(context.Background(), res.RunID); err == nil || !strings.Contains(err.Error(), "waiting for delivery") {
 		t.Fatalf("cancel of a delivery_pending run error = %v", err)
@@ -865,7 +866,7 @@ func TestGapDriveStackLoopRereadsAfterMergeProgress(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	ledgerStore := gapsSeedLedger(t, "c7")
 	gapsSeedStackRun(t, repo, "stack-gap", "c7", workflowledger.RunStatusSucceeded, "https://github.com/acme/widgets")
-	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{RunID: workflowledger.InvocationRunID("stack-gap:c7"), IdempotencyKey: "d7", Status: "pushed", CommitSHA: "def456"}); err != nil {
+	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{RunID: workflowagenttools.InvocationRunID("stack-gap:c7"), IdempotencyKey: "d7", Status: "pushed", CommitSHA: "def456"}); err != nil {
 		t.Fatal(err)
 	}
 	e := &Engine{WorkspaceRoot: t.TempDir(), Repo: repo, PR: gapsMergedPR{}}
@@ -889,11 +890,11 @@ func TestGapStartNewReturnsExistingRunReadError(t *testing.T) {
 	root := gapsTwoStepWorkspace(t)
 	inner := workflowledger.NewMemoryRepository()
 	first := &Engine{WorkspaceRoot: root, Repo: inner, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	res := gapsStart(t, first, workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	res := gapsStart(t, first, workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	gapsWaitStatus(t, first, res.RunID, workflowledger.RunStatusSucceeded, 15*time.Second)
 	wrapped := &gapsRepo{Repository: inner, failGetRunAt: 2}
 	second := &Engine{WorkspaceRoot: root, Repo: wrapped, NewRunID: func() string { return res.RunID }, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
-	_, err := second.Start(context.Background(), workflowledger.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
+	_, err := second.Start(context.Background(), workflowagenttools.StartRequest{Workflow: "two-step", Inputs: map[string]any{"task": "x"}})
 	if err == nil || !strings.Contains(err.Error(), "get run refused by test") {
 		t.Fatalf("idempotent re-entry with a failing run read error = %v", err)
 	}

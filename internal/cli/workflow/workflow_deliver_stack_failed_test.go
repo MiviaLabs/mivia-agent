@@ -1,12 +1,12 @@
 package workflow
 
-// Pins two regressions the stackPlanRunFailed gate introduced:
+// Pins two regressions the StackPlanRunFailed gate introduced:
 //
 //  1. `workflow deliver` had cases for Incomplete and Complete only, so a
 //     terminally FAILED stack's plan run fell out of the switch into
 //     DeliverRunWithStore: the plan PR was published and the run settled
 //     succeeded over a stack that lost a chunk.
-//  2. StackPlanRunFailureReasonFunc counted a delivery_failed integration run as a
+//  2. stackPlanRunFailureReason counted a delivery_failed integration run as a
 //     terminal stack failure. delivery_failed is the REPAIRABLE delivery state
 //     (workflowledger.ValidRunTransition keeps outgoing edges for it), so the
 //     plan run was CAS-settled to failed - a status with NO outgoing edges -
@@ -48,7 +48,7 @@ func seedStackIntegrationRunTerminal(t *testing.T, repo workflowledger.Repositor
 
 // TestWorkflowDeliverRefusesFailedStackPlanRun pins R1: `workflow deliver` on
 // the plan run of a terminally failed stack must refuse, settle the plan run
-// failed, and publish NOTHING. Before the fix the stackPlanRunFailed gate fell
+// failed, and publish NOTHING. Before the fix the StackPlanRunFailed gate fell
 // out of the switch and the plan PR was created with the run settled
 // succeeded, over a stack whose integration run had died.
 func TestWorkflowDeliverRefusesFailedStackPlanRun(t *testing.T) {
@@ -91,12 +91,12 @@ func TestStackPlanRunFailureReasonDeliveryFailedIsRepairable(t *testing.T) {
 	ctx := context.Background()
 
 	root, store, repo, stackID := seedFailedIntegrationStack(t, workflowledger.RunStatusDeliveryFailed)
-	failed, reason := StackPlanRunFailureReasonFunc(ctx, root, store, repo, stackID)
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, stackID)
 	if failed {
-		t.Fatalf("StackPlanRunFailureReasonFunc() = true (%q) for a delivery_failed integration run; want false - delivery_failed is repairable", reason)
+		t.Fatalf("stackPlanRunFailureReason() = true (%q) for a delivery_failed integration run; want false - delivery_failed is repairable", reason)
 	}
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, stackID, true); got != stackPlanRunIncomplete {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() = %v, want stackPlanRunIncomplete for a delivery_failed integration run", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, stackID, true); got != StackPlanRunIncomplete {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want StackPlanRunIncomplete for a delivery_failed integration run", got)
 	}
 
 	for _, status := range []workflowledger.RunStatus{
@@ -111,8 +111,8 @@ func TestStackPlanRunFailureReasonDeliveryFailedIsRepairable(t *testing.T) {
 				t.Fatalf("status %q has a repair edge; it must not count as a terminal stack failure", status)
 			}
 			r, s, rp, id := seedFailedIntegrationStack(t, status)
-			if got, _ := StackPlanRunFailureReasonFunc(ctx, r, s, rp, id); !got {
-				t.Fatalf("StackPlanRunFailureReasonFunc() = false for integration run status %q, want true", status)
+			if got, _ := stackPlanRunFailureReason(ctx, r, s, rp, id); !got {
+				t.Fatalf("stackPlanRunFailureReason() = false for integration run status %q, want true", status)
 			}
 		})
 	}
@@ -167,7 +167,7 @@ func TestWorkflowDeliverKeepsPlanRunAliveWhenIntegrationDeliveryFailed(t *testin
 // TestWorkflowDeliverUnknownGateFailsClosed pins the fail-closed default case
 // in ExecuteWorkflowDeliver's gate switch: a StackPlanRunGate value outside
 // the 4 declared constants must refuse to publish, never fall through to
-// DeliverRunWithStore. ClassifyStackPlanRunDeliveryFunc can never itself produce
+// DeliverRunWithStore. classifyStackPlanRunDelivery can never itself produce
 // a 5th value; the ClassifyStackPlanRunDeliveryFn seam simulates one so a
 // future gate value added without updating this switch is caught here
 // instead of by production fail-open behavior.

@@ -20,7 +20,7 @@ import (
 
 const (
 	pkgDelivery = "github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
-	pkgCLIDrive = "github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	pkgCLIDrive = "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 )
 
 // mergeSymbols returns the type-identity object of the merge action:
@@ -80,7 +80,7 @@ func TestMergeActionCallerSet(t *testing.T) {
 	allowed := map[string]bool{pkgDelivery: true, pkgCLIDrive: true}
 	for path, sym := range callers {
 		if !allowed[path] {
-			t.Errorf("merge symbol %q is used by %q, which is not an allowed merge authority (allowed: delivery, internal/cli/chat); the engine stack driver must stay observe-only", sym, path)
+			t.Errorf("merge symbol %q is used by %q, which is not an allowed merge authority (allowed: delivery, internal/cli/workflow); the engine stack driver must stay observe-only", sym, path)
 		}
 	}
 	if callers[pkgCLIDrive] == "" {

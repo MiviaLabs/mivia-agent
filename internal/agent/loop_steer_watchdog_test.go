@@ -1,6 +1,6 @@
 package agent
 
-// Watchdog / cooldown / stale-signal soft-interrupt loop tests (plan 54 §7).
+// Watchdog / cooldown / stale-signal soft-interrupt loop tests.
 // Shared scripted helpers (steerCompleter, steerStep, gateTool, runLoop) live
 // in loop_steer_helpers_test.go; the core interrupt tests live in
 // loop_steer_test.go.

@@ -17,7 +17,7 @@ import (
 
 // The code-navigation integration suite. Everything here runs the SHIPPED
 // tools out of a real default registry against a real module on disk: no
-// fakes, no injected analyzer. What it is here to prove is plan tools/03's
+// fakes, no injected analyzer. What it is here to prove is the suite's
 // central invariant - no stale positions, ever - which is a property of the
 // combination (writer tool -> filesystem -> analyzer cache -> nav tool) and
 // therefore cannot be established by any one of them in isolation.
@@ -115,7 +115,7 @@ func definitionOf(t *testing.T, reg *Registry, symbol string) goToDefinitionResu
 	return got
 }
 
-// TestIntegrationNavStalenessMatrix is the plan's invariant §5 in full: FIVE
+// TestIntegrationNavStalenessMatrix is the suite's staleness invariant in full: FIVE
 // write paths, each followed IMMEDIATELY by a query that must see the new
 // text at the new position. Four of them are tools; the fifth is a plain
 // os.WriteFile standing in for an editor, a git checkout, or anything else
@@ -328,7 +328,7 @@ func TestIntegrationNavToolsShareTheCacheAcrossTools(t *testing.T) {
 }
 
 // TestIntegrationOrientationCostsLessThanReadingTheFile is the token-economics
-// smoke from plan §7: orienting in a file through its outline must cost a
+// smoke: orienting in a file through its outline must cost a
 // fraction of reading the file, or the tool has no reason to exist.
 func TestIntegrationOrientationCostsLessThanReadingTheFile(t *testing.T) {
 	reg, ws := newNavRegistry(t)

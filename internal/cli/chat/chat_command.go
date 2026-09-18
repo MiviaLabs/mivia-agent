@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,7 +126,7 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 			return err
 		}
 	}
-	store, err := openContextStorePath(storePath)
+	store, err := workflow.OpenContextStorePath(storePath)
 	if err != nil {
 		return err
 	}

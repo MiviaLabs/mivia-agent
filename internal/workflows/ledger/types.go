@@ -234,7 +234,7 @@ func (s StepAttempt) Clone() StepAttempt {
 	clone.Executions = cloneStepExecutions(s.Executions)
 	clone.DecisionJSON = append([]byte(nil), s.DecisionJSON...)
 	clone.EvidenceJSON = append([]byte(nil), s.EvidenceJSON...)
-	clone.PanelExecution = s.PanelExecution.clone()
+	clone.PanelExecution = s.PanelExecution.Clone()
 	if s.FinishedAt != nil {
 		t := *s.FinishedAt
 		clone.FinishedAt = &t
@@ -331,7 +331,7 @@ type DeliveryRecord struct {
 	ErrorRef       string `json:"error_ref,omitempty"`
 	DiffRef        string `json:"diff_ref,omitempty"`
 	// DeferredFiles is the host-computed split decision of a deferred-split
-	// delivery (spec-auto-split-oversized-prs.md §5.2, revised per §10): a
+	// delivery: a
 	// JSON-encoded array of workspace-relative paths whose edits ship in a
 	// separate follow-up commit on DeferredBranchName, never on the pushed
 	// branch. It is recorded on the pending stage record BEFORE the delivered
@@ -345,7 +345,7 @@ type DeliveryRecord struct {
 	// branch after the one that was pushed (git rev-list --count, a derived
 	// integer, never an LLM-authored claim), set when a diff-size repair
 	// commits a review-sized slice plus deferred scope as trailing commits on
-	// the same branch (spec-auto-split-oversized-prs.md §5.2-5.3). Zero means
+	// the same branch. Zero means
 	// no split: nothing downstream changes from a chunk that delivered
 	// cleanly. The stack driver reads this to admit the trailing commits as
 	// follow-up chunk runs stacked on this one.

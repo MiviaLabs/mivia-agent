@@ -14,7 +14,7 @@ import (
 )
 
 // softInterruptCooldown is the default minimum spacing between soft interrupts
-// of an in-flight LLM call (plan 54 §4.3). The loop treats 0 as off, which
+// of an in-flight LLM call. The loop treats 0 as off, which
 // tests use to disable the cap.
 const softInterruptCooldown = 5 * time.Second
 

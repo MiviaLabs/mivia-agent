@@ -1,6 +1,6 @@
 package agent
 
-// Work-limit accounting across a soft interrupt (plan 54 §4.3): a steer that
+// Work-limit accounting across a soft interrupt: a steer that
 // cancels the in-flight LLM call before completion must refund the prompt+output
 // reservation that call charged, or the next step's outputCap sees an exhausted
 // budget and aborts the run - breaking the soft-steer soft-continue contract.

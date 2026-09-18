@@ -205,10 +205,9 @@ func TestRootPromptMessagingBlockOmitsHandler(t *testing.T) {
 }
 
 // TestProtocolMarkers pins the parent-side messaging vocabulary on the one
-// compiled prompt surface. This repo no longer ships its own root-agent
-// override (.agents/agents/mivia.md was removed so the dogfood workspace
-// exercises the same compiled fallback every user gets), so there is no
-// second surface to keep in agreement.
+// compiled prompt surface. This repo ships no root-agent override, so
+// the dogfood workspace exercises the same compiled fallback every user
+// gets; there is no second surface to keep in agreement.
 func TestProtocolMarkers(t *testing.T) {
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	if !strings.Contains(prompt, "send_to_task") {

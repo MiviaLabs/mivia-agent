@@ -20,6 +20,7 @@
 // existing spinner tick (statusline.TickMsg) that the conversation screen
 // already repaints on. So a row can read "running" for up to one 30s
 // heartbeat interval past uiStallThreshold.
+
 package conversation
 
 import "time"

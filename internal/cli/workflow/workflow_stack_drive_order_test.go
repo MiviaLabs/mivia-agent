@@ -1,6 +1,6 @@
 package workflow
 
-// Drive-before-delivery ordering regressions (plan D2/D3/D8, §5a):
+// Drive-before-delivery ordering regressions:
 //
 // A stacking-enabled delivery workflow's plan run settles at delivery_pending:
 // its success terminal is delivery-policy active (multi -> chunk_plan_validate
@@ -293,7 +293,7 @@ func TestSessionAutoDeliveryRepairLoopDrivesStackBeforeDelivery(t *testing.T) {
 	t.Cleanup(func() { WorkflowDeliverGit = prevGit })
 	WorkflowDeliverGit = orderGitRunner{rec: rec}
 
-	SessionAutoDeliveryRepairLoopFunc(context.Background(), repo, p.root, p.res, p.store, runID,
+	SessionAutoDeliveryRepairLoop(context.Background(), repo, p.root, p.res, p.store, runID,
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return repo.GetRun(ctx, runID)
 		},
@@ -330,7 +330,7 @@ func TestSessionAutoDeliveryRepairLoopDrivesStackBeforeDelivery(t *testing.T) {
 func TestSessionAutoDeliveryRepairLoopSkipsPlanRunWhenDisabled(t *testing.T) {
 	_, repo, p, runID, prRecorder := newSessionAutoDeliveryRepairFixture(t)
 
-	SessionAutoDeliveryRepairLoopFunc(context.Background(), repo, p.root, p.res, p.store, runID,
+	SessionAutoDeliveryRepairLoop(context.Background(), repo, p.root, p.res, p.store, runID,
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return repo.GetRun(ctx, runID)
 		},
@@ -359,7 +359,7 @@ func TestSessionAutoDeliveryRepairLoopPublishesPlanRunWhenEnabled(t *testing.T) 
 	t.Cleanup(func() { WorkflowDeliverGit = prevGit })
 	WorkflowDeliverGit = orderGitRunner{rec: &orderRecorder{}}
 
-	SessionAutoDeliveryRepairLoopFunc(context.Background(), repo, p.root, p.res, p.store, runID,
+	SessionAutoDeliveryRepairLoop(context.Background(), repo, p.root, p.res, p.store, runID,
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return repo.GetRun(ctx, runID)
 		},

@@ -222,7 +222,7 @@ func TestWorkLimitMeterReservePromptOnlyChargesPromptNotOutput(t *testing.T) {
 }
 
 // refundProvider subtracts a reservation that never completed (a soft steer
-// canceled the LLM call before completion, plan 54 §4.3). An exact refund
+// canceled the LLM call before completion). An exact refund
 // restores the balances; an over-refund clamps at zero so an accounting drift
 // can never produce a negative budget (a negative balance would widen the next
 // outputCap allocation); a nil receiver is a no-op mirroring reserveProvider.

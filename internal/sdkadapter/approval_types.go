@@ -1,4 +1,4 @@
-// Package sdkadapter - shared approval types.
+// Shared approval types.
 //
 // ApprovalResult and ApprovalStanding live in this package rather than
 // internal/agent because internal/sdkadapter already imports nothing
@@ -10,6 +10,7 @@
 // The values produced by an Approver bridge flow from a real agent's
 // internal/tui/adapter port through this package's type, so the wire
 // shape is the same for the legacy and SDK paths.
+
 package sdkadapter
 
 import (

@@ -76,7 +76,7 @@ func (m *workLimitMeter) reserveProvider(promptTokens, outputTokens int) error {
 }
 
 // refundProvider subtracts a reservation that never completed. It backs the
-// soft-steer path (plan 54 §4.3): a steer cancels ONLY the in-flight LLM call,
+// soft-steer path: a steer cancels ONLY the in-flight LLM call,
 // so the prompt+output reservation that call charged was never consumed, and
 // leaving it charged makes the next step's outputCap fail with an exhausted
 // budget - aborting a run the soft interrupt was supposed to soft-continue.

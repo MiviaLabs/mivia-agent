@@ -1,6 +1,6 @@
 package delivery
 
-// CountUnshippedCommits (spec-auto-split-oversized-prs.md §5.2-5.3): counts
+// CountUnshippedCommits (commit walk): counts
 // the commits left on a branch after the one delivery pushed, using a real
 // git repo (RealGit), matching the repo's existing GitRunner test pattern
 // (gitops_test.go's initRepo/runGit) rather than a fake git double.
@@ -32,7 +32,7 @@ func TestCountUnshippedCommits_CountsTrailingCommits(t *testing.T) {
 	deliveredHead := strings.TrimSpace(runGitOut(t, repo, "rev-parse", "HEAD"))
 
 	// Two trailing commits on top of the delivered one, as a diff-size
-	// repair's commit stack would leave (§5.2): the review-sized slice
+	// repair's commit stack would leave: the review-sized slice
 	// (already delivered as deliveredHead) plus deferred-scope commits.
 	writeAndCommit(t, repo, "a.txt", "a", "deferred: chunk 2")
 	writeAndCommit(t, repo, "b.txt", "b", "deferred: chunk 3")

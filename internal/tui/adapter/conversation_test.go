@@ -1,5 +1,5 @@
 // conversation_test.go drives ports.Conversation end-to-end against a
-// chat.Session built from a scriptedCompleter. It is the Phase 2 test
+// chat.Session built from a scriptedCompleter. It is the test
 // surface for the adapter: it covers the contract listed in the plan
 // (turn.start/turn.end ordering, prior-handler restore, cancel,
 // concurrent Send, history/model/usage/title, no CLI-family imports).
@@ -707,7 +707,7 @@ func TestUIPackages_DoNotImportUIAdapter(t *testing.T) {
 }
 
 // TestSend_FullTurn_ExactlyOneOfEach pins the per-turn event-count
-// invariants that manual acceptance of Phase 3 surfaced as bugs:
+// invariants that manual acceptance surfaced as bugs:
 //
 //   - exactly one KindTurnStart (a duplicated synthetic turn.start
 //     surfaces as a duplicated "> hi" in the stream renderer).
@@ -783,7 +783,7 @@ func TestSend_FullTurn_ExactlyOneOfEach(t *testing.T) {
 //
 // The streaming-delta case (assistant content emitted as N deltas +
 // one final text.end) is exercised by the end-to-end stream-renderer
-// smoke test in cmd/mivia-ui_test.go (Phase 3 acceptance), which
+// smoke test in cmd/mivia-ui_test.go, which
 // runs the binary against a real completer. The test below covers
 // the non-streaming scripted path which is the most common offline
 // assertion surface.

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,7 +25,7 @@ func TestOpenContextStoreHardensAdhocTempTier(t *testing.T) {
 		StorePath:    config.TempStorePath(root, "orchestration"),
 	}
 
-	store, err := openContextStore(root, cfg)
+	store, err := workflow.OpenContextStore(root, cfg)
 	if err != nil {
 		t.Fatalf("openContextStore: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestOpenContextStoreLeavesOperatorPathAlone(t *testing.T) {
 		StorePath:    operatorPath,
 	}
 
-	store, err := openContextStore(root, cfg)
+	store, err := workflow.OpenContextStore(root, cfg)
 	if err != nil {
 		t.Fatalf("openContextStore: %v", err)
 	}

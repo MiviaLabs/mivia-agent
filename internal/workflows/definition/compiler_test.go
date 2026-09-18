@@ -263,7 +263,7 @@ func TestCompile_MissingAgent(t *testing.T) {
 
 func TestCompile_BadTransitionOutputKey(t *testing.T) {
 	wf := loadFixture(t, "../testdata/invalid/bad-transition-output-key.toml")
-	// Schema-based output key validation is deferred to the transition matcher (Phase 2+).
+	// Schema-based output key validation is deferred to the transition matcher.
 	// The fixture should parse and compile since the compiler validates
 	// structural graph properties, not schema-key membership.
 	cw, err := Compile(wf)

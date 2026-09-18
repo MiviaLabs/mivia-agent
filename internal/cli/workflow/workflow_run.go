@@ -17,7 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -47,11 +46,11 @@ func RunWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	var workspaceRoot, configPath string
 	var err error
-	workspaceRoot, args, _, err = FlagValueFunc(args, "--workspace")
+	workspaceRoot, args, _, err = FlagValue(args, "--workspace")
 	if err != nil {
 		return err
 	}
-	configPath, args, _, err = FlagValueFunc(args, "--config")
+	configPath, args, _, err = FlagValue(args, "--config")
 	if err != nil {
 		return err
 	}
@@ -117,7 +116,7 @@ func ExecuteWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	if err != nil {
 		return err
 	}
-	LogMCPWarningsFunc(stderr, prepared.Res)
+	LogMCPWarnings(stderr, prepared.Res)
 	defer prepared.CloseFn()
 	runID := NewCLIWorkflowRunID()
 	releaseExecution, err := beginWorkflowRunExecution(prepared.Root, ContextStorePath(prepared.Root, prepared.Res.Subagents), runID)
@@ -297,7 +296,7 @@ func SettlePlanRunSkippedDelivery(ctx context.Context, repo workflowledger.Repos
 // WorkflowStackDriveToCompletion is the stack driver invoked for a settled
 // multi-chunk plan run. It is a package variable so tests can stub the drive
 // and pin the drive-before-delivery ordering without running chunk agents.
-var WorkflowStackDriveToCompletion func(ctx context.Context, prepared *PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []delivery.ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error
+var WorkflowStackDriveToCompletion = driveStackToCompletion
 
 // finishWorkflowRunDelivery completes a run that settled at delivery_pending:
 // with --allow-publish it performs delivery and prints the settled status;

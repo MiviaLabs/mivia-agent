@@ -13,7 +13,7 @@ import (
 
 // CompareAndSetPanelPhase stores one panel phase intent under the workflow claim.
 func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID string, attemptID string, expectedVersion uint64, from PanelPhase, to PanelPhase, synthesis *PanelSynthesisExecution) error {
-	holder, ok := claimHolderFromContext(ctx)
+	holder, ok := ClaimHolderFromContext(ctx)
 	if !ok {
 		return ErrClaimNotHeld
 	}
@@ -59,7 +59,7 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 	next.Version++
 	next.PanelExecution.Phase = to
 	if to == PanelPhaseSynthesisAdmitted {
-		next.PanelExecution.Synthesis = synthesis.clone()
+		next.PanelExecution.Synthesis = synthesis.Clone()
 	}
 	s.mu.Unlock()
 	if synthesis != nil {
@@ -72,7 +72,7 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 }
 
 func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attemptID, holder string, to PanelPhase, synthesis *PanelSynthesisExecution, next StepAttempt, idx int) error {
-	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone(), CreatedAt: s.engine.Now()})
+	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.Clone(), CreatedAt: s.engine.Now()})
 	if err != nil {
 		return fmt.Errorf("marshal %s payload: %w", eventKindPanelPhaseSet, err)
 	}
@@ -112,7 +112,7 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 			if uerr != nil {
 				return fmt.Errorf("decode %s payload: %w", eventKindPanelPhaseSet, uerr)
 			}
-			if panelPhasePayloadEqualIgnoringCreatedAt(stored, panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone()}) {
+			if panelPhasePayloadEqualIgnoringCreatedAt(stored, panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.Clone()}) {
 				return nil
 			}
 			return ErrConflict
@@ -153,7 +153,7 @@ func validPanelTransitionWithWork(from, to PanelPhase, synthesis *PanelSynthesis
 			return false
 		}
 		if allowMissingWorkFingerprint {
-			return synthesis.Work.validateLegacy() == nil
+			return synthesis.Work.ValidateLegacy() == nil
 		}
 		return synthesis.Work.Validate() == nil
 	case from == PanelPhaseMembersAdmitted && to == PanelPhaseCancelPending:

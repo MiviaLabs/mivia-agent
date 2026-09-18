@@ -56,7 +56,7 @@ type Admission struct {
 }
 
 // LinearController advances a workflow one active step at a time.
-// Phase 4 supports agent, agent_gate, evidence_gate, human_gate, and loops.
+// It supports agent, agent_gate, evidence_gate, human_gate, and loops.
 type LinearController struct {
 	Repo           LedgerRepository
 	Runner         AgentStepRunner

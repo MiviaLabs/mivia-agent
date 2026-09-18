@@ -614,7 +614,7 @@ func TestStackingDecomposeRepairLoopExhausts(t *testing.T) {
 	}
 }
 
-// TestStackingDecomposeContinueRunStartsAtDecompose pins §12.1's
+// TestStackingDecomposeContinueRunStartsAtDecompose pins the
 // incremental-decompose entry point: a run admitted with
 // stack_mode=decompose_continue starts directly at the decompose step (no
 // plan phase runs in this run), and the decompose step's context binding for

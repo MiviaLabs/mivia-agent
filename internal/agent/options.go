@@ -91,7 +91,7 @@ type Options struct {
 	MaxTokens   *int
 	// AdvertisedToolSpecs, when non-nil, is the tools[] array Run serializes
 	// on every step of this turn - the host's pinned, binding-lifetime
-	// snapshot (plan tools-advertising/01), computed once from the session's
+	// snapshot, computed once from the session's
 	// admissible union and byte-identical across turns and admissions. Run
 	// falls back to Tools.OpenAITools() when nil, which is today's behavior:
 	// subagent and workflow-engine loops that never set this field are
@@ -271,7 +271,7 @@ type Options struct {
 	// plans/sdk-window-compaction-adoption-plan.md.
 	PreferSDKCompaction bool
 	// BeforeStep, when set, is called on the loop goroutine at the top of each
-	// step before history pruning and request build (plan 53.03). Returned
+	// step before history pruning and request build. Returned
 	// messages are appended to the loop history. Nil is a no-op.
 	BeforeStep func() []provider.Message
 	// ObserveRequestHistory, when set, is called on the loop goroutine at each
@@ -285,7 +285,7 @@ type Options struct {
 	// exact billed message list is in hand on every step. Nil is a no-op.
 	ObserveRequestHistory func([]provider.Message)
 	// InterruptCh, when non-nil, resolves the channel a parent can signal to
-	// softly interrupt the in-flight LLM call (plan 54). It is re-read once
+	// softly interrupt the in-flight LLM call. It is re-read once
 	// per LLM call. Nil disables the signal path. A steer never cancels a tool
 	// batch: only the LLM-scoped context is cancelable.
 	InterruptCh func() <-chan struct{}

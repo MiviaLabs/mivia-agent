@@ -1,4 +1,4 @@
-// Package agent - adoption slices for the SDK loop's own knobs.
+// adoption slices for the SDK loop's own knobs.
 //
 // Each adopt* function sets one row of the adoption table
 // (docs/development/sdk-backend-field-mapping.md): a knob the SDK
@@ -6,6 +6,7 @@
 // host-side counterpart of. Setting the field here keeps the
 // projection in one place, and the tests in agentloop_adapter_test.go
 // pin every row so a future edit cannot silently drop one.
+
 package agent
 
 import (
@@ -220,9 +221,10 @@ func sdkContextWindowForwarded(opts Options) int {
 // MaxContextTokens (Window.CompactTrigger/CompactTarget price a
 // percent against Budget = MaxTokens - Reserve, four fifths of
 // MaxTokens here, so a bare 80/50 TriggerPercent/TargetPercent pair
-// prices at an effective 64%/40% of MaxContextTokens instead - see
-// mivia-ai-sdk's docs/plans/agentloop.md, "Effective thresholds for
-// host-style configs"). PreserveNames carries opts.PreparationInput's
+// prices at an effective 64%/40% of MaxContextTokens instead; the SDK
+// prices a percent against Budget = MaxTokens - Reserve, so percent
+// pairs map to lower effective thresholds than the host-style mapping.
+// PreserveNames carries opts.PreparationInput's
 // own list (set by internal/chat's prepareInputForContext, the same
 // list the PreparationManager path already protects) so a compaction
 // that crosses the core-memory frame does not drop it.

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Phase 1 of the agent model routing plan: an agent binding is a
+// An agent binding is a
 // provider-qualified pair, not a bare model name. These tests pin the parse
 // layer's half of that contract.
 

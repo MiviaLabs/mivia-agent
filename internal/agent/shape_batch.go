@@ -8,7 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
-// Aggregate per-batch tool-result budget (plan tools/06).
+// Aggregate per-batch tool-result budget.
 //
 // N parallel calls, each honestly under its own per-call cap, still blow the
 // context when they land together. The per-call cap cannot see them: it is
@@ -40,13 +40,13 @@ const (
 	// Cutting to exactly the remaining bytes is correct arithmetic and useless
 	// output: a 40-byte remainder buys the model nothing but a notice. One
 	// result per batch may overshoot the budget by up to this much - see the
-	// bound in shapeReport's doc and §5 of the plan.
+	// bound in shapeReport's doc.
 	BatchDegradeFloorBytes = 16 << 10
 
 	// statusLineMaxBytes bounds the D8 status line. It is a bound, not a
 	// format: statusLine composes four ints into a fixed template, and
 	// TestShapeBatchStatusLineIsBounded pins that even int-max arguments stay
-	// under this. The framing bound in §4.3 is stated in terms of it.
+	// under this. The framing bound in shapeReport's doc is stated in terms of it.
 	statusLineMaxBytes = 160
 
 	// Derived budget = MaxContextTokens x bytesPerToken x (1/derivedBudgetShare).

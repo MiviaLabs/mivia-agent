@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -53,8 +53,8 @@ func TestExecuteRouterReachesRemainingHandlers(t *testing.T) {
 // previous values when the test ends.
 func wireStackSeams(t *testing.T) {
 	t.Helper()
-	savedOpen, savedResolve := chat.OpenStackLedgerFunc, chat.ResolveStackIDFunc
-	chat.OpenStackLedgerFunc = func(root, configPath string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
+	savedOpen, savedResolve := workflow.OpenStackLedger, workflow.ResolveStackID
+	workflow.OpenStackLedger = func(root, configPath string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
 		if strings.TrimSpace(root) == "" {
 			root = "."
 		}
@@ -62,21 +62,21 @@ func wireStackSeams(t *testing.T) {
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		cfgPath := cliworkflow.WorkflowConfigPath(work.Abs, configPath)
+		cfgPath := workflow.WorkflowConfigPath(work.Abs, configPath)
 		res, err := config.Load(config.LoadOptions{
 			ConfigPath: cfgPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true,
 		})
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		cliworkflow.ApplyWorkflowStoreRoot(res, work.Abs)
-		store, repo, closeFn, err := cliworkflow.OpenWorkflowStore(work.Abs, res.Subagents)
+		workflow.ApplyWorkflowStoreRoot(res, work.Abs)
+		store, repo, closeFn, err := workflow.OpenWorkflowStore(work.Abs, res.Subagents)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		return workflowledger.NewStore(store), repo, closeFn, nil
 	}
-	chat.ResolveStackIDFunc = func(repo workflowledger.Repository, workflowName, stackFlag string) (string, error) {
+	workflow.ResolveStackID = func(repo workflowledger.Repository, workflowName, stackFlag string) (string, error) {
 		if strings.TrimSpace(stackFlag) != "" {
 			return stackFlag, nil
 		}
@@ -112,8 +112,8 @@ func wireStackSeams(t *testing.T) {
 		return best, nil
 	}
 	t.Cleanup(func() {
-		chat.OpenStackLedgerFunc = savedOpen
-		chat.ResolveStackIDFunc = savedResolve
+		workflow.OpenStackLedger = savedOpen
+		workflow.ResolveStackID = savedResolve
 	})
 }
 
@@ -121,11 +121,11 @@ func wireStackSeams(t *testing.T) {
 // in-memory stores for one test and restores it afterwards.
 func overrideStackLedger(t *testing.T, ledger *workflowledger.Store, repo workflowledger.Repository) {
 	t.Helper()
-	saved := chat.OpenStackLedgerFunc
-	chat.OpenStackLedgerFunc = func(string, string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
+	saved := workflow.OpenStackLedger
+	workflow.OpenStackLedger = func(string, string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
 		return ledger, repo, func() {}, nil
 	}
-	t.Cleanup(func() { chat.OpenStackLedgerFunc = saved })
+	t.Cleanup(func() { workflow.OpenStackLedger = saved })
 }
 
 func TestRunStackWithIOFastFailures(t *testing.T) {
@@ -204,7 +204,7 @@ func TestRunStackStatusSeededStack(t *testing.T) {
 	t.Cleanup(func() { _ = repo.Close() })
 
 	const stackID = "stack-live"
-	scope := chat.StackScope(stackID)
+	scope := workflow.StackScope(stackID)
 	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: scope}); err != nil {
 		t.Fatal(err)
 	}
@@ -267,20 +267,5 @@ func TestCurrentHookSessionFuncWiringClosure(t *testing.T) {
 	state := chat.CurrentHookSessionFunc()
 	if state == nil {
 		t.Fatal("CurrentHookSessionFunc() must return a non-nil adapter")
-	}
-}
-
-// The production ClassifyStackPlanRunDeliveryFunc closure must run against
-// a repository without panicking; an unknown run classifies as not
-// applicable long before any store access.
-func TestClassifyStackPlanRunDeliveryWiringClosure(t *testing.T) {
-	if cliworkflow.ClassifyStackPlanRunDeliveryFunc == nil {
-		t.Fatal("cliworkflow.ClassifyStackPlanRunDeliveryFunc must be wired by init")
-	}
-	repo := workflowledger.NewMemoryRepository()
-	t.Cleanup(func() { _ = repo.Close() })
-	gate := cliworkflow.ClassifyStackPlanRunDeliveryFunc(context.Background(), t.TempDir(), nil, repo, "wfr-missing", false)
-	if gate < 0 {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc(unknown run) = %d, want a non-negative gate", gate)
 	}
 }

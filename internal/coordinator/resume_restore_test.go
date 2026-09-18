@@ -88,7 +88,7 @@ func TestResumeRestoresTaskInput(t *testing.T) {
 	}
 }
 
-// §3: the ledger restores work, never authority. A hand-edited ledger row must
+// The ledger restores work, never authority. A hand-edited ledger row must
 // not be able to hand a resumed task a permission, scope, role or identity.
 func TestResumeDoesNotRestoreAuthorityFields(t *testing.T) {
 	// Hostile fixture: ParentTaskID is the one identity-shaped field the ledger

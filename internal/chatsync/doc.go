@@ -1,7 +1,8 @@
-// Package chatsync will hold the CLI side of chat session sync: pushing local
-// session events to the mivia API and long-polling it for remote input.
+// Package chatsync holds the contract probe for the CLI side of chat session
+// sync: pushing local session events to the mivia API and long-polling it for
+// remote input.
 //
-// None of that exists yet. The API half shipped first, deliberately, and the
+// The sync client does not exist yet. The API half shipped first, and the
 // client design is still being planned. What this package holds today is only
 // the live contract probe in live_contract_test.go, behind the `livechat`
 // build tag, which checks the deployed /v1/chat-sessions surface end to end.

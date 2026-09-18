@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -41,7 +42,7 @@ func TestSelectWorkflowWorkspaceInvocationRunIDFitsWorktreeNameLimit(t *testing.
 		t.Fatal(err)
 	}
 	initWorkflowGitRepo(t, root)
-	identity, cleanup, err := SelectWorkflowWorkspace(t.Context(), root, workflowledger.InvocationRunID("request-1"), true, nil)
+	identity, cleanup, err := SelectWorkflowWorkspace(t.Context(), root, workflowagenttools.InvocationRunID("request-1"), true, nil)
 	if err != nil {
 		t.Fatalf("SelectWorkflowWorkspace: %v", err)
 	}

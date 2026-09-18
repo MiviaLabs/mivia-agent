@@ -3,7 +3,7 @@ package coordinator_test
 // Regression coverage for cancelRecovered discarding ledger.ErrConflict
 // instead of wrapping it: a per-child CAS conflict during a recovered
 // cancel must remain errors.Is-detectable as ledger.ErrConflict so
-// workflowledger.PanelCoordinator.isPanelCancelContention (D15) can keep
+// workflowpanel.PanelCoordinator.isPanelCancelContention (D15) can keep
 // classifying a racing concurrent-cancel attempt as benign, retryable
 // contention rather than a hard cancel failure.
 

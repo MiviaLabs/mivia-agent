@@ -71,8 +71,9 @@ func findRoleInFile(f *ast.File, id *ast.Ident, pkg *packages.Package) Role {
 // errors.Is or errors.As. A sentinel error passed as an argument to either is
 // a comparison in every sense that matters to a caller of find_references -
 // it is the idiomatic replacement for `==`/`!=` sentinel checks since Go
-// 1.13 (see plan 18 §1: "Where is ErrClaimHeld checked?" is answered
-// exclusively through errors.Is in this repo). The identifier is resolved
+// 1.13 (errors.Is is the idiomatic replacement for `==`/`!=` sentinel
+// checks, and this repo answers "where is ErrClaimHeld checked?"
+// exclusively through errors.Is). The identifier is resolved
 // through the package's own TypesInfo rather than by matching the literal
 // name "errors", so a local variable or type named "errors" cannot spoof a
 // match.

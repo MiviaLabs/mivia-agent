@@ -32,7 +32,7 @@ func RunWorkflowCommandGC(args []string, workspaceRoot, configPath string, stdou
 	if err != nil {
 		return err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, _, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

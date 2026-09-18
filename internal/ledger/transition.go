@@ -11,7 +11,7 @@ package ledger
 //	failed/timed_out -> blocked
 //	completed, canceled, blocked are terminal
 //
-// awaiting_input is the first status that may return to running (plan 53.02).
+// awaiting_input is the first status that may return to running.
 func ValidTaskTransition(oldStatus, newStatus string) bool {
 	switch oldStatus {
 	case string(TaskStatusQueued):

@@ -40,7 +40,7 @@ func benchModel(b *testing.B, width, height int) Model {
 	return m
 }
 
-// BenchmarkLayout is the Phase 0 baseline for one repaint of the
+// BenchmarkLayout is the performance baseline for one repaint of the
 // transcript at the block bound: layout() over 2,000 mixed blocks plus
 // styling the visible slice at 80x24, following the tail.
 func BenchmarkLayout(b *testing.B) {

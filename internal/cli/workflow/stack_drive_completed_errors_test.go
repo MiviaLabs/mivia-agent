@@ -97,7 +97,7 @@ func TestStackPlanMergePolicyFailsOpenToTheGrantDefaultOnUnreadableLedger(t *tes
 	}
 }
 
-// TestStackDriveCompletedRefusesPendingDecomposeWave pins §12.1: a decompose
+// TestStackDriveCompletedRefusesPendingDecomposeWave pins the rule: a decompose
 // wave that reports hasMore has chunks not yet admitted, so the stack is NOT
 // complete even when every currently known chunk merged. Settling here would
 // drop the outstanding chunks on the floor.

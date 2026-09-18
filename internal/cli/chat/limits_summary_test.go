@@ -2,6 +2,7 @@ package chat
 
 import (
 	"bytes"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,7 +136,7 @@ func TestLogEffectiveLimitsOnceWarnsPlaintextMCP(t *testing.T) {
 func TestLogMCPWarningsForWorkflowDiagnostics(t *testing.T) {
 	res := &config.Resolved{MCPWarnings: []string{"MCP server \"plain\" uses plaintext HTTP"}}
 	var buf bytes.Buffer
-	logMCPWarnings(&buf, res)
+	workflow.LogMCPWarnings(&buf, res)
 	if got := buf.String(); got != "warning: MCP server \"plain\" uses plaintext HTTP\n" {
 		t.Fatalf("workflow diagnostics = %q", got)
 	}

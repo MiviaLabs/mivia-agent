@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-// refOnlyTier implements the ref-only tier (plan tools/06): a tool
+// refOnlyTier implements the ref-only tier: a tool
 // explicitly opted out of inlining never reaches the budget tiers at all.
 // When its RAW body clears the floor and the result is not ephemeral, the
 // WHOLE body is spooled and the result is replaced by a notice naming the
@@ -46,7 +46,7 @@ func refOnlyTier(env shapeEnv, p resultParts, name string) (string, bool) {
 
 // sizeBucketLabel rounds n up to the next power of two and renders it as
 // KiB or MiB (powers of 1024), the same label contextmgr's elision notices
-// carry (plan tools/06): the ref-only notice has to agree with the rest of
+// carry: the ref-only notice has to agree with the rest of
 // the product. The ref-only tier only calls it with n >=
 // BatchDegradeFloorBytes, so the sub-KiB corner never arises here.
 func sizeBucketLabel(n int) string {

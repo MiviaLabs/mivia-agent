@@ -51,7 +51,7 @@ func cliSummarySummarizer(t *testing.T, provider contextmgr.SummaryProvider) *co
 }
 
 // cliSummaryBuilder derives the commit-time summary request from the
-// preparation itself, mirroring the documented Phase 1 seam.
+// preparation itself, mirroring the documented seam.
 func cliSummaryBuilder(summarizer *contextmgr.Summarizer) contextmgr.SummaryRequestBuilder {
 	return func(preparation contextmgr.Preparation) (contextmgr.SummaryRequest, error) {
 		objective := ""

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -46,7 +47,7 @@ func confSeedStack(t *testing.T, chunks []delivery.ChunkPlan) (*workflowledger.S
 func confSeedChunkRun(t *testing.T, repo workflowledger.Repository, chunkID string, status workflowledger.RunStatus, remoteURL string) workflowledger.RunSnapshot {
 	t.Helper()
 	key := "stack-conf:" + chunkID
-	runID := workflowledger.InvocationRunID(key)
+	runID := workflowagenttools.InvocationRunID(key)
 	snap := workflowledger.RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", InvocationKey: key,
 		Status: workflowledger.RunStatusPending, RemoteURL: remoteURL, WorktreeName: "workflow-" + chunkID, BaseRef: "main",

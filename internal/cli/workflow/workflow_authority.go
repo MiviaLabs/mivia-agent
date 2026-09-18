@@ -128,13 +128,13 @@ func ValidatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 				return err
 			}
 			defer activation.Close()
-			surface, err = InjectSkillResourceToolFunc(surface, activation)
+			surface, err = InjectSkillResourceTool(surface, activation)
 			if err != nil {
 				return err
 			}
 		}
 	}
-	InjectBaselineMessagingFunc(authority, surface, opts.Config, MessagingDisallowedFunc(agent))
+	InjectBaselineMessagingFunc(authority, surface, opts.Config, MessagingDisallowed(agent))
 	names := make([]string, 0, len(surface.List()))
 	for _, tool := range surface.List() {
 		names = append(names, tool.Name())

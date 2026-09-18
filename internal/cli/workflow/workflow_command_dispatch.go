@@ -11,7 +11,7 @@ import (
 // each command owns its arity and flag validation here.
 
 func RunWorkflowCommandRun(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
-	inputs, rest, _, err := FlagVarFunc(args, "--input")
+	inputs, rest, _, err := FlagVar(args, "--input")
 	if err != nil {
 		return err
 	}

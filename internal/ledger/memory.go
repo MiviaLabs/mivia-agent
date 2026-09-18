@@ -17,7 +17,7 @@ const (
 
 // MemoryLedgerRepository is an in-memory implementation of LedgerRepository.
 // It uses sync.RWMutex for concurrency safety and returns defensive copies
-// on all read paths. It is the default backend for Phase 1 and suitable for
+// on all read paths. It is the default backend and suitable for
 // unit and race tests.
 type MemoryLedgerRepository struct {
 	mu         sync.RWMutex

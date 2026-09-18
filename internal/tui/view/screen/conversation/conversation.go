@@ -1,7 +1,3 @@
-// Package conversation is the base screen: the transcript, composer,
-// transient status line, and inline approval prompt, driven by a real
-// ports.Conversation. It never calls a harness directly - only Send,
-// Cancel, and Approver.Resolve, exactly the ports surface.
 package conversation
 
 import (

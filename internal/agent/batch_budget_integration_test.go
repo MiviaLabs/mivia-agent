@@ -313,7 +313,7 @@ func TestIntegration_ShapedBatchKeepsToolPairingIntact(t *testing.T) {
 	assertToolPairing(t, pruned)
 }
 
-// C7: a worker-synthesized error body is charged like any other result and
+// A worker-synthesized error body is charged like any other result and
 // survives shaping intact - the model must still be told the call failed.
 func TestIntegration_FailedCallKeepsItsErrorTextUnderBudget(t *testing.T) {
 	calls := []provider.ToolCall{

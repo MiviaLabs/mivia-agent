@@ -1,4 +1,4 @@
-// Package agent - ref-only tool shim for the SDK backend.
+// ref-only tool shim for the SDK backend.
 //
 // The legacy CLI's refOnlyTier (internal/agent/shape_batch_refonly.go:25-45)
 // is a per-result shaper that runs inside the batch shaper and
@@ -20,6 +20,7 @@
 // (it imports sdkadapter for sdkadapter.Mint), so the shim type
 // itself belongs in the consumer package that bridges the two —
 // not in sdkadapter, which would create an import cycle.
+
 package agent
 
 import (

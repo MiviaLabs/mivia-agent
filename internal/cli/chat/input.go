@@ -1,4 +1,3 @@
-// Package cli implements mivia command handlers.
 package chat
 
 import (

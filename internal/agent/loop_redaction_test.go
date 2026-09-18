@@ -16,7 +16,7 @@ import (
 // exercise the engine and this call site's wiring, not a list shipped in the
 // binary.
 //
-// Two deliberate departures from the recommended list in plan 10 §2, both
+// Two deliberate departures from the recommended redaction list, both
 // documented there as hazards of pattern ordering and shape rather than of this
 // package:
 //
@@ -52,7 +52,7 @@ func installTestRedactionPolicy(t *testing.T) {
 	t.Cleanup(func() { redact.SetPolicy(nil) })
 }
 
-// TestPreviewsWithoutPolicyRedactNothing documents the posture plan 10 §5 sells:
+// TestPreviewsWithoutPolicyRedactNothing documents the posture:
 // an unconfigured workspace redacts nothing, anywhere. It is the load-bearing
 // test for this call site - if a pattern list ever grows back into the binary,
 // this is what fails.

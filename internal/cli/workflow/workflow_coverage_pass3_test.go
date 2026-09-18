@@ -19,6 +19,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -352,7 +353,7 @@ func TestBuildWorkflowControllerSynthesisFailure(t *testing.T) {
 func TestKeyedRunIDInputsMatchReadFailure(t *testing.T) {
 	e, prepared := newEngineCoveragePrepared(t)
 	key := "cov-inputs-read-failure"
-	runID := string(workflowledger.InvocationRunID(key))
+	runID := string(workflowagenttools.InvocationRunID(key))
 	ctx := context.Background()
 	if err := prepared.Repo.CreateRun(ctx, workflowledger.RunSnapshot{
 		RunID: runID, InvocationKey: key, WorkflowName: "two-step", Status: workflowledger.RunStatusPending,
@@ -361,7 +362,7 @@ func TestKeyedRunIDInputsMatchReadFailure(t *testing.T) {
 	}
 	realRepo := prepared.Repo
 	prepared.Repo = &faultRepo{Repository: realRepo, getRunFailFrom: 2}
-	_, _, err := e.keyedRunID(ctx, prepared, workflowledger.StartRequest{
+	_, _, err := e.keyedRunID(ctx, prepared, workflowagenttools.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"}, InvocationKey: key,
 	})
 	if err == nil || !strings.Contains(err.Error(), "scripted get-run failure") {
@@ -376,7 +377,7 @@ func TestBuildAndStartStartNewFailure(t *testing.T) {
 	e, prepared := newEngineCoveragePrepared(t)
 	realRepo := prepared.Repo
 	prepared.Repo = &faultRepo{Repository: realRepo, failCreateRun: true}
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-startnew-fail", "", nil)
+	_, err := e.buildAndStart(context.Background(), prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, "wfr-cov-startnew-fail", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "scripted create-run failure") {
 		t.Fatalf("buildAndStart() error = %v, want the scripted create-run failure", err)
 	}
@@ -405,7 +406,7 @@ func TestBuildAndStartExistingRunReadFailure(t *testing.T) {
 
 	realRepo := prepared.Repo
 	prepared.Repo = &faultRepo{Repository: realRepo, getRunFailFrom: 2}
-	_, err = e.buildAndStart(ctx, prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID, "", nil)
+	_, err = e.buildAndStart(ctx, prepared, workflowagenttools.StartRequest{Workflow: "two-step"}, runID, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "scripted get-run failure") {
 		t.Fatalf("buildAndStart() error = %v, want the scripted re-read failure", err)
 	}
@@ -541,14 +542,14 @@ func TestSessionLaunchResumeDriveHookInvoked(t *testing.T) {
 	}
 
 	hookCalled := make(chan struct{})
-	originalLoop := SessionAutoDeliveryRepairLoopFunc
-	SessionAutoDeliveryRepairLoopFunc = func(runCtx context.Context, _ workflowledger.Repository, _ string, _ *config.Resolved, _ *storage.SQLite, _ string, _ func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), _ bool) {
+	originalLoop := SessionAutoDeliveryRepairLoop
+	SessionAutoDeliveryRepairLoop = func(runCtx context.Context, _ workflowledger.Repository, _ string, _ *config.Resolved, _ *storage.SQLite, _ string, _ func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), _ bool) {
 		if _, err := driveStack(runCtx); err != nil {
 			t.Errorf("driveStack hook error = %v", err)
 		}
 		close(hookCalled)
 	}
-	t.Cleanup(func() { SessionAutoDeliveryRepairLoopFunc = originalLoop })
+	t.Cleanup(func() { SessionAutoDeliveryRepairLoop = originalLoop })
 
 	engine := NewSessionWorkflowEngine(".", "")
 	prepared := resumePrepared{
@@ -589,11 +590,11 @@ func TestSessionLaunchResumeReadFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalLoop := SessionAutoDeliveryRepairLoopFunc
-	SessionAutoDeliveryRepairLoopFunc = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
+	originalLoop := SessionAutoDeliveryRepairLoop
+	SessionAutoDeliveryRepairLoop = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
 		return
 	}
-	t.Cleanup(func() { SessionAutoDeliveryRepairLoopFunc = originalLoop })
+	t.Cleanup(func() { SessionAutoDeliveryRepairLoop = originalLoop })
 
 	engine := NewSessionWorkflowEngine(".", "")
 	prepared := resumePrepared{

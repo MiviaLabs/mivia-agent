@@ -166,7 +166,7 @@ func (p *Pool) MaxFanout() int { return p.p.MaxFanout }
 func (p *Pool) MaxDepth() int { return p.p.MaxDepth }
 
 // MaxBudget and Timeout expose the pool ceilings so a caller restoring
-// persisted limits can clamp them rather than trust them (plan 12 §3).
+// persisted limits can clamp them rather than trust them.
 func (p *Pool) MaxBudget() int         { return p.p.MaxBudget }
 func (p *Pool) Timeout() time.Duration { return p.p.Timeout }
 

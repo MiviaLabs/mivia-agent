@@ -12,7 +12,7 @@
 //
 // Every decision here is derived from durable state only - the task ledger,
 // the run ledger, and git merge state - never from driver memory, so either
-// surface can resume the other's stack (D8, plan v2.1 §5a).
+// surface can resume the other's stack.
 package delivery
 
 import (
@@ -130,7 +130,7 @@ type chunkList struct {
 
 // ParseStackPlanOutput decodes a decompose step output into the stack mode,
 // its chunk list, and whether decompose declared more scope than this wave
-// planned (§12.1 incremental decompose). stack_mode=single and no_bug are
+// planned (incremental decompose). stack_mode=single and no_bug are
 // valid and mean there is nothing to stack; malformed output is an error
 // (fail closed). hasMore/remainingScope are always zero-valued for single/
 // no_bug modes, matching decompose.md's contract that incremental planning
@@ -158,9 +158,9 @@ func ParseStackPlanOutput(raw []byte) (mode string, chunks []ChunkPlan, hasMore 
 // colon inside a chunk id would make "<stack>:<chunk>" unparseable.
 var chunkIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// AdmissionKey derives the stable run invocation key for a chunk run (plan
-// F15): re-admission after a restart resolves to the SAME run, never a
-// duplicate. The key is <stack-id>:<chunk-id> (plan D3, §5a step 3).
+// AdmissionKey derives the stable run invocation key for a chunk run:
+// re-admission after a restart resolves to the SAME run, never a
+// duplicate. The key is <stack-id>:<chunk-id>.
 func AdmissionKey(stackID, chunkID string) (string, error) {
 	if strings.TrimSpace(stackID) == "" {
 		return "", fmt.Errorf("stack id must not be empty")

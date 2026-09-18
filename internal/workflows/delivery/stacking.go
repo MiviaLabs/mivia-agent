@@ -22,7 +22,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
-// Reserved stacking input names (plan D3). The controller and driver inject
+// Reserved stacking input names. The controller and driver inject
 // these on chunk-mode runs; delivery honors pr_base and stack_part when
 // present.
 const (
@@ -169,7 +169,7 @@ func IsDiffSizeError(err error) bool {
 // included via git add -A). hard <= 0 means the gate is off and 0 is returned
 // without touching git. excludePaths, when non-empty, excludes those
 // workspace-relative paths from the measured diff via a pathspec exclusion
-// (spec-auto-split-oversized-prs.md §5.2: a repair's deferred_files are
+// (a repair's deferred_files are
 // committed separately and must not count against the delivered diff's own
 // size). It is shared by the delivery gate and the controller's post-implement
 // fail-fast gate so both measure identically; the controller's gate always
@@ -219,7 +219,7 @@ func excludePathspecs(paths []string) []string {
 //
 // An over-limit diff is either a repairable DiffSizeError (split disabled,
 // or no split fits) or, when the workflow's [stacking] split_deferred is on,
-// a host-computed automatic split (§5.2, revised per §10): the largest
+// a host-computed automatic split: the largest
 // files are deferred to a follow-up PR until the kept diff fits, and the
 // decision is written into req.Inputs[InputDeferredFiles] for
 // freshDeliveryCommit to execute - req.Inputs is a map (reference type), so
@@ -423,11 +423,11 @@ func branchExists(ctx context.Context, git GitRunner, gc GitContext, branch stri
 // CountUnshippedCommits counts the commits on the current worktree HEAD after
 // deliveredCommit (git rev-list --count deliveredCommit..HEAD): the trailing
 // commits a diff-size repair left on the branch after committing the
-// review-sized slice as deliveredCommit (spec-auto-split-oversized-prs.md
-// §5.2-5.3). Zero means no trailing commits: the repair produced exactly one
+// review-sized slice as deliveredCommit.
+// Zero means no trailing commits: the repair produced exactly one
 // delivered slice and nothing else. Shared by the delivery engine (to record
 // DeliveryRecord.StackRemainingCommits after a successful re-delivery) and by
-// the driver's follow-up chunk admission (§5.3), so both count identically.
+// the driver's follow-up chunk admission, so both count identically.
 func CountUnshippedCommits(ctx context.Context, git GitRunner, gc GitContext, deliveredCommit string) (int, error) {
 	if strings.TrimSpace(deliveredCommit) == "" {
 		return 0, fmt.Errorf("cannot count unshipped commits: delivered commit is empty")

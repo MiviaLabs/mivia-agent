@@ -128,7 +128,7 @@ type Block struct {
 	// (.agents/memories/tui-spinner-clock-*.md).
 	SpinnerFrame int
 
-	// Children is the compact child tree C7 draws under a dispatch_tasks
+	// Children is the compact child tree draws under a dispatch_tasks
 	// block: the tool calls the dispatched subagents made, pushed in by
 	// the screen (SetChildren) from the thread history it owns. They draw
 	// as body rows of THIS block (see children.go), and a block carrying
@@ -365,7 +365,7 @@ func (b Block) renderToolCard(t theme.Theme, tier theme.Tier, width int, sb *str
 		sb.WriteByte(' ') // right margin: plain, matching the left
 	}
 	// The child tree draws after the body and before the hidden-count hint
-	// (C7): plain rows, no tint - a tree is not tool output. Rows come from
+	// : plain rows, no tint - a tree is not tool output. Rows come from
 	// the same childRowCount Height reads, so the two cannot disagree.
 	for _, line := range b.childRows(t, tier, width) {
 		sb.WriteByte('\n')

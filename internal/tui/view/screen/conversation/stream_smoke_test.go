@@ -69,8 +69,7 @@ func TestConversationScreen_StreamingEventDeduplicationSmoke(t *testing.T) {
 }
 
 // TestConversationScreen_ChildTreeSmoke extends the offline smoke surface
-// with C7's user-visible behavior (docs/design/chat-tui-crush-comparison.md
-// §3 C7): a dispatch_tasks batch shows its settled child calls once under
+// with the child tree's user-visible behavior: a dispatch_tasks batch shows its settled child calls once under
 // its own row, and the row is NOT folded into the work-run summary - the
 // fold would hide exactly the tree the feature exists to show. Mirrors what
 // manual acceptance does: dispatch, progress, settle, read the screen.

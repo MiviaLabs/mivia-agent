@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -76,14 +77,14 @@ func (r *capturingRunner) RunStep(ctx context.Context, req controller.AgentStepR
 	return r.inner.RunStep(ctx, req)
 }
 
-func startTemplateStep(t *testing.T, svc *workflowledger.Service) workflowledger.StartResult {
+func startTemplateStep(t *testing.T, svc *workflowagenttools.Service) workflowagenttools.StartResult {
 	t.Helper()
-	out, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
+	out, err := mustTool(t, svc, workflowagenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"template-step","inputs":{"task":"x"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var started workflowledger.StartResult
+	var started workflowagenttools.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +289,7 @@ func TestIntegrationResumeFailsClosedOnDriftedAgent(t *testing.T) {
 	}
 	engine.AgentRegistry = drifted
 
-	_, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
+	_, err := mustTool(t, svc, workflowagenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(
 			`{"resume":true,"run_id":%q,"force":true}`, started.RunID)))
 	if err == nil || !strings.Contains(err.Error(), "changed since workflow admission") {

@@ -138,7 +138,7 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 						} else {
 							s.panel.observeAgentHistory(tc.ID, status, "")
 						}
-						// Rebuild C7's child tree for resumed sessions from the
+						// Rebuild child tree for resumed sessions from the
 						// same thread histories the live path reads. This keeps a
 						// reopened dispatch row complete before any new progress
 						// event arrives.

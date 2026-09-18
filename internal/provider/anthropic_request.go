@@ -308,7 +308,7 @@ func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string
 			// question; a live manual test (claude-sonnet-5 via
 			// llmproxycli's DialectAnthropicAdaptive, reasoning=high, two
 			// sequential tool calls each continued by its tool_result,
-			// 2026-08-29) completed with no error. The design doc's §3.5
+			// 2026-08-29) completed with no error. Some design docs' example
 			// example still shows a thinking block replayed alongside
 			// tool_use as the normative shape; this code takes the opposite
 			// path (omit rather than reconstruct-unsigned) because sending

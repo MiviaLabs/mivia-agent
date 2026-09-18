@@ -88,7 +88,7 @@ func TestDispatcherWithNoPolicyRedactsNothing(t *testing.T) {
 	}
 }
 
-// Plan 10 §4a: prompt and reasoning are the agent's own instructions and
+// Prompt and reasoning are the agent's own instructions and
 // deliberation, not the user's secrets. Eliding them made audit metadata
 // useless for reconstructing agent behaviour while protecting nothing, so they
 // are dropped from the key list and are NOT migrated into configuration.

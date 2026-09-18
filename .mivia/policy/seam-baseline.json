@@ -1,0 +1,15 @@
+{
+  "comment": "Baseline for scripts/check_seams.py: per-package count of package-level nil seam vars (func- and error-typed) under internal/cli/**, plus internal/cli/chat's file fan-out over internal/workflows/*. Counts may only go down; regenerate with --generate when a removal lands.",
+  "seams": {
+    "internal/cli": 1,
+    "internal/cli/agents": 8,
+    "internal/cli/chat": 9,
+    "internal/cli/orchestrate": 1,
+    "internal/cli/workflow": 11,
+    "internal/cli/worktree": 1
+  },
+  "chat_workflows_fanout": {
+    "internal/cli/chat": 2
+  },
+  "ignore": []
+}

@@ -1,4 +1,4 @@
-// Package adapter: Phase 2 Conversation and TurnHandle over chat.Session.
+// Package adapter: Conversation and TurnHandle over chat.Session.
 //
 // Conversation wraps an existing *chat.Session into the ports.Conversation
 // contract. The session is owned by the caller; the adapter holds no

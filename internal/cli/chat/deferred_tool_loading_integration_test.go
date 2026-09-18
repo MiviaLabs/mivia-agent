@@ -373,7 +373,7 @@ func TestAdmittedToolIsAppendedAsATail(t *testing.T) {
 	}
 }
 
-// TestSiblingToolCallsCompleteInTheSameBatchAsLoadTools is F2/§7: the
+// TestSiblingToolCallsCompleteInTheSameBatchAsLoadTools: the
 // dispatcher executing the batch that contains load_tools is never closed
 // mid-batch, so the sibling calls still run.
 func TestSiblingToolCallsCompleteInTheSameBatchAsLoadTools(t *testing.T) {

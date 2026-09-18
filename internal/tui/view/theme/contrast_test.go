@@ -83,8 +83,8 @@ func TestContrastRatioKnownValues(t *testing.T) {
 }
 
 // TestContrastChecksCoverInsetFill pins the two inset-fill rows: prose
-// and inline code draw RoleFG and RoleFGSubtle on RoleBGInset (chat TUI
-// polish plan, Phase 0), so those pairs must be in the gate table.
+// and inline code draw RoleFG and RoleFGSubtle on RoleBGInset, so those
+// pairs must be in the gate table.
 func TestContrastChecksCoverInsetFill(t *testing.T) {
 	want := map[[2]Role]float64{
 		{RoleFG, RoleBGInset}:       4.5,

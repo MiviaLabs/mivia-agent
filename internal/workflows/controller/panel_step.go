@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // ErrPanelMembersComplete reports that a panel attempt completed member work
@@ -114,7 +115,7 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	// start and no heartbeat, and a stuck panel was indistinguishable from a
 	// fast one on every observability surface.
 	c.emitStepStarted(step, attempt)
-	panel := workflowledger.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
+	panel := workflowpanel.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
 	// The durable panel phase is the authority on which children may still
 	// run. members_admitted means the members still need dispatch (and
 	// synthesis is not admitted yet). synthesis_admitted is the crash window
@@ -148,7 +149,7 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 // synthesis as long as at least one member succeeded, reporting each failed
 // member via ProgressPanelMemberFailed, and settles failed only when ALL
 // members fail.
-func (c *LinearController) advancePanelMembersAdmitted(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator) (workflowledger.RunSnapshot, bool, error) {
+func (c *LinearController) advancePanelMembersAdmitted(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowpanel.PanelCoordinator) (workflowledger.RunSnapshot, bool, error) {
 	members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
 	for i, member := range attempt.PanelExecution.Members {
 		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
@@ -203,7 +204,7 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 	if !ok || runner.Coordinator == nil {
 		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel cancel reconciliation has no coordinator"))
 	}
-	panel := workflowledger.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
+	panel := workflowpanel.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
 	reconciled, allTerminal, err := ReconcilePanelCancellation(ctx, c.Repo, panel, c.RunID, c.Holder, attempt.AttemptID)
 	if err != nil {
 		if errors.Is(err, ErrCancelBlocked) {

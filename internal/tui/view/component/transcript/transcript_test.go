@@ -62,7 +62,7 @@ func TestRenderGolden(t *testing.T) {
 	for _, ev := range events {
 		m, _ = m.HandleEvent(ev)
 	}
-	// C7: the fixture's dispatch_tasks row carries its child tree. The
+	// the fixture's dispatch_tasks row carries its child tree. The
 	// screen pushes this in live (child_tree.go) from the thread history
 	// it owns; the golden pins the same vocabulary at the component
 	// boundary, so the compact tree is part of both renderings' contract.

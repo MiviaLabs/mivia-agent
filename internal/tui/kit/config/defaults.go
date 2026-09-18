@@ -11,8 +11,7 @@ import "time"
 // 66ms is 15Hz, inside ux-rules.md rule 2.5's 10-20Hz repaint cap. The
 // prior 40ms (25Hz) sat above that cap; it was affordable only because
 // the streaming tail rendered plain text (render.Wrap). Once the tail
-// started rendering markdown through render.StreamRenderer (C6,
-// docs/design/chat-tui-crush-comparison.md), each flush costs a real
+// started rendering markdown through render.StreamRenderer, each flush costs a real
 // (cached-prefix) render rather than a wrap, so the tick now has to
 // respect the same budget every other repaint does.
 const TextDeltaFlushInterval = 66 * time.Millisecond
