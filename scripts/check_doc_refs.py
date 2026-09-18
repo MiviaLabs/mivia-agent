@@ -41,7 +41,7 @@ SCAN_DIRS = ("cmd", "internal")
 DOC_REF = re.compile(r"(?:docs|\.agents)/[A-Za-z0-9_./-]+\.(?:md|markdown)\b")
 # Case-sensitive, per the approved plan. Search applies to whole comment lines.
 PLAN_LABEL = re.compile(
-    r"§[0-9]|plan D[0-9]|Stage 0|Phase [0-9]|B\.[0-9] #|round [0-9]"
+    r"§[0-9]|plan D[0-9]|Stage 0|Phase [0-9]|B\.[0-9] #|round [0-9]|plan tools/|locked plan"
 )
 
 # Comment extraction: strip string literals, then collect // line comments

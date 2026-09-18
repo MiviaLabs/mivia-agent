@@ -90,8 +90,8 @@ def test_plan_label_flagged() -> None:
 
 def test_plan_label_patterns() -> None:
     mod = load_mod()
-    hits = ["§4 revisit", "plan D2 later", "Stage 0 done", "Phase 1 next", "B.1 # tag", "round 3 fix"]
-    misses = ["stage 0", "phase 12 ok?", "rounding", "§x", "B.1 no hash"]
+    hits = ["§4 revisit", "plan D2 later", "Stage 0 done", "Phase 1 next", "B.1 # tag", "round 3 fix", "plan tools/ update", "locked plan item"]
+    misses = ["stage 0", "phase 12 ok?", "rounding", "§x", "B.1 no hash", "planner handles it", "the plan is done"]
     for line in hits:
         assert mod.PLAN_LABEL.search(line), line
     for line in misses:
@@ -126,6 +126,28 @@ def test_baseline_gate_and_shrink() -> None:
         assert len(violations) == 1 and "internal/demo/demo.go:3" in violations[0], violations
 
 
+def test_new_plan_labels_flagged_and_baselined() -> None:
+    mod = load_mod()
+    with tempfile.TemporaryDirectory() as td:
+        pkg = Path(td) / "internal" / "demo"
+        pkg.mkdir(parents=True)
+        f = pkg / "demo.go"
+        f.write_text(
+            "package demo\n\n// plan tools/ mention\n// locked plan step\n"
+            "// planner handles the plan alone\nfunc Demo() {}\n",
+            encoding="utf-8",
+        )
+        matches = mod.find_plan_label_matches(Path(td))
+        assert matches == ["internal/demo/demo.go:3", "internal/demo/demo.go:4"], matches
+        # The non-matching line (5) must not appear; baselined lines pass.
+        base = Path(td) / "baseline.txt"
+        base.write_text(
+            "# header\ninternal/demo/demo.go:3\ninternal/demo/demo.go:4\n",
+            encoding="utf-8",
+        )
+        assert mod.check_plan_labels(Path(td), base) == []
+
+
 def main() -> None:
     test_dangling_doc_ref_flagged()
     test_existing_doc_ref_passes()
@@ -134,6 +156,7 @@ def main() -> None:
     test_plan_label_flagged()
     test_plan_label_patterns()
     test_baseline_gate_and_shrink()
+    test_new_plan_labels_flagged_and_baselined()
     print("test_check_doc_refs: ok")
 
 
