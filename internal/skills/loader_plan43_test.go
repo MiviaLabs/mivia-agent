@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Plan 43: duplicate tool names within one tools: list are rejected, not
+// Duplicate tool names within one tools: list are rejected, not
 // silently deduplicated.
 func TestSkillToolsDuplicateNamesRejected(t *testing.T) {
 	root := t.TempDir()
@@ -30,7 +30,7 @@ func TestSkillToolsDuplicateNamesRejected(t *testing.T) {
 	}
 }
 
-// Plan 43: a skill that statically declares an unknown tool name is rejected
+// A skill that statically declares an unknown tool name is rejected
 // by the strict loader and skipped with a bounded warning by the resilient
 // loader. The warning must not echo the skill or tool name.
 func TestSkillToolsUnknownNameRejected(t *testing.T) {
@@ -55,7 +55,7 @@ func TestSkillToolsUnknownNameRejected(t *testing.T) {
 	}
 }
 
-// Plan 43: a skill that statically declares the activation-only
+// A skill that statically declares the activation-only
 // read_skill_resource capability is rejected like any unknown static tool.
 func TestSkillToolsCannotDeclareActivationOnlyCapability(t *testing.T) {
 	root := t.TempDir()

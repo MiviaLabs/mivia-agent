@@ -451,7 +451,7 @@ func TestParseFrontmatterKeepsValidFlowSequences(t *testing.T) {
 	}
 }
 
-// Plan 43: a duplicate frontmatter key is a hard error rather than a silent
+// A duplicate frontmatter key is a hard error rather than a silent
 // last-wins overwrite. A repeated key means the file is ambiguous, and the
 // parser's contract is to reject ambiguity over guessing.
 func TestParseFrontmatterRejectsDuplicateKey(t *testing.T) {

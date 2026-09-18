@@ -42,7 +42,7 @@ func TestSingleParseSkillMarkdown(t *testing.T) {
 }
 
 // TestSkillToolsParsedAndPublished proves frontmatter tools reach Definition.Tools
-// with non-empty values when the fixture declares them (plan 06 phase 01).
+// with non-empty values when the fixture declares them.
 func TestSkillToolsParsedAndPublished(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "audit")

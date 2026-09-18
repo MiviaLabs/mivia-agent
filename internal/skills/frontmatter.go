@@ -323,7 +323,7 @@ func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int)
 	if key == "" {
 		return fmt.Errorf("line %d: empty key", lineNum)
 	}
-	// Plan 43: a repeated key is ambiguous and must not silently last-win.
+	// A repeated key is ambiguous and must not silently last-win.
 	if _, exists := p.result[key]; exists {
 		return fmt.Errorf("line %d: duplicate frontmatter key %q", lineNum, key)
 	}

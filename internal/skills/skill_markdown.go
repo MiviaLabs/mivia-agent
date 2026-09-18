@@ -177,7 +177,7 @@ func parseSkillSchemaJSON(raw any, field string) (map[string]any, error) {
 
 // parseSkillTools coerces frontmatter tools into a non-empty-name string list.
 // Omitted key yields nil. Empty list is valid (skill declares no required tools).
-// Duplicate names within one list are a hard error (plan 43): silent dedup
+// Duplicate names within one list are a hard error: silent dedup
 // would hide an ambiguous declaration.
 func parseSkillTools(raw any) ([]string, error) {
 	if raw == nil {
