@@ -37,8 +37,8 @@ var ErrCancelReconciliationPending = errors.New("panel cancel reconciliation is 
 // reconcilePanelCancelPending), and resume rejoining (D14,
 // findResumablePanelAttempt) are all implemented and covered by a hostile
 // concurrency audit and the full verification gate (build, vet, structure
-// checks, race, secret scan, docs, semgrep). See plan 62's completion record
-// for the audit history and any still-open follow-ups.
+// checks, race, secret scan, docs, semgrep). The audit history and any
+// still-open follow-ups live in the workflow completion record.
 const panelsEnabled = true
 
 // findResumablePanelAttempt finds the step's existing non-terminal panel

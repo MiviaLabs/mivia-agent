@@ -55,13 +55,12 @@ func applyContextSchemaV3(db *sql.DB) error {
 	return nil
 }
 
-// applyContextSchemaV4 adds the deferred-tool admission record (plan tools/05
-// D3). It is one row per named session: the admitted tool names plus the agent
+// applyContextSchemaV4 adds the deferred-tool admission record. It is one row per named session: the admitted tool names plus the agent
 // and tier digest they were admitted against, so a resume whose tier split has
 // changed drops the set fail-closed instead of re-advertising names that may no
 // longer mean what they meant.
 //
-// It is v4, not v3, because plan tools/05 was developed in parallel with the
+// It is v4, not v3, because the admission schema was developed in parallel with the
 // multi-chunk payload migration and both branches independently claimed v3.
 // v3 shipped to master first, so the admission table is renumbered here rather
 // than colliding: a store already at v3 has context_payload_chunks and is

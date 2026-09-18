@@ -422,7 +422,7 @@ func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []by
 // restoring a caller's id on a resumed run would collide with a freshly
 // re-minted one and mem.AppendEvent would reject it as a duplicate.
 //
-// Rows written before plan 21 hold a zero CreatedAt; with no schema version
+// Legacy rows hold a zero CreatedAt; with no schema version
 // to gate on, they're recognized by content (a zero arrives unstamped and
 // replays to the read instant) — pinned by
 // TestLegacyRowWithoutTimestampFallsBackToReadInstant.
