@@ -673,6 +673,45 @@ func TestRound9Thing(t *testing.T) {
         assert "round_named_test_file" in r.stdout
 
 
+def test_skip_policy_unstaged_edit_cannot_self_approve() -> None:
+    """The test-skips baseline must come from the COMMITTED reference: an
+    unstaged edit of .mivia/policy/test-skips.json cannot allowlist a staged
+    new t.Skip."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        (policy_dir / "test-skips.json").write_text(
+            '{\n  "knownSkips": {},\n  "allowedDeletions": []\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "empty policy", cwd=root)
+
+        (root / "pkg" / "skip_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSkipped(t *testing.T) {
+    t.Skip("unstaged allowlist attempt")
+    if 1 != 2 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        # UNSTAGED policy edit allowlisting the new skip.
+        (policy_dir / "test-skips.json").write_text(
+            '{\n  "knownSkips": {\n    "pkg/skip_test.go": '
+            '[{"reason": "unstaged allowlist attempt"}]\n  },\n'
+            '  "allowedDeletions": []\n}\n',
+            encoding="utf-8",
+        )
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"unstaged policy edit self-approved: {r.stdout}"
+        assert "unreviewed_test_skip" in r.stdout
+
+
 def main() -> int:
     tests = [
         v

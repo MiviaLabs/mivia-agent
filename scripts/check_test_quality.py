@@ -453,45 +453,13 @@ def policy_at(root: Path, ref: str) -> dict:
 
 
 def load_skip_policy(root: Path, diff_args: list[str] | None = None) -> dict:
-    policy_file = root / ".mivia" / "policy" / "test-skips.json"
-    if not policy_file.is_file():
-        return {}
-
-    raw_text = ""
-    is_modified_in_diff = False
-    if diff_args is not None:
-        r = subprocess.run(
-            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/test-skips.json"],
-            cwd=root, capture_output=True, text=True, check=False,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            is_modified_in_diff = True
-            # Only uncommitted shapes reach here (committed ranges returned
-            # above), so the pre-change state is always HEAD.
-            base_ref = "HEAD"
-
-            show_res = subprocess.run(
-                ["git", "show", f"{base_ref}:.mivia/policy/test-skips.json"],
-                cwd=root, capture_output=True, text=True, check=False,
-            )
-            print(
-                "check_test_quality: .mivia/policy/test-skips.json is modified in this diff; "
-                "evaluating skips against base policy to prevent same-commit bypass",
-                file=sys.stderr,
-            )
-            if show_res.returncode == 0 and show_res.stdout.strip():
-                raw_text = show_res.stdout
-            else:
-                # File does not exist at base ref or is empty: base policy has zero allowlisted skips
-                return {}
-
-    if not is_modified_in_diff:
-        raw_text = policy_file.read_text(encoding="utf-8")
-
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        return {}
+    """The test-skips policy as of the COMMITTED reference (HEAD; committed
+    ranges never reach this function - check_paths uses policy_at(tip) for
+    them). The working-tree copy is never trusted: a staged skip with an
+    unstaged policy edit, or a policy edit staged in the same change, cannot
+    allowlist itself. A missing or unparseable committed policy yields {},
+    i.e. no entry is allowlisted - fail closed."""
+    return policy_at(root, "HEAD")
 
 
 def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str, int, str]]:
