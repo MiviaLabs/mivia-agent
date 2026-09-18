@@ -170,7 +170,7 @@ func TestStorageLedger_CrashRecovery_MultipleRuns(t *testing.T) {
 // LedgerRepository and returns the resulting run snapshots and events.
 func applyEventSequence(repo LedgerRepository, now time.Time) error {
 	ctx := context.Background()
-	// Phase 1: Create run and tasks
+	// Step 1: Create run and tasks
 	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: "run-1", Status: RunStatusCreated}); err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func applyEventSequence(repo LedgerRepository, now time.Time) error {
 			return err
 		}
 	}
-	// Phase 2: Transition tasks with CAS version checks
+	// Step 2: Transition tasks with CAS version checks
 	for i := 1; i <= 3; i++ {
 		tid := fmt.Sprintf("t%d", i)
 		// queued -> running
@@ -201,7 +201,7 @@ func applyEventSequence(repo LedgerRepository, now time.Time) error {
 			return err
 		}
 	}
-	// Phase 3: Append lifecycle events
+	// Step 3: Append lifecycle events
 	events := []LifecycleEvent{
 		{ID: "e1", RunID: "run-1", Kind: "task_created", TaskID: "t1"},
 		{ID: "e2", RunID: "run-1", Kind: "task_running", TaskID: "t1"},
@@ -218,11 +218,11 @@ func applyEventSequence(repo LedgerRepository, now time.Time) error {
 			return err
 		}
 	}
-	// Phase 4: Attempt a stale version CAS (should fail with ErrConflict)
+	// Step 4: Attempt a stale version CAS (should fail with ErrConflict)
 	if err := repo.CompareAndSetTaskStatus(ctx, "run-1", "t1", 1, string(TaskStatusFailed)); err != ErrConflict {
 		return fmt.Errorf("expected ErrConflict for stale version, got %v", err)
 	}
-	// Phase 5: Close the run
+	// Step 5: Close the run
 	if err := repo.CloseRun(ctx, "run-1"); err != nil {
 		return err
 	}

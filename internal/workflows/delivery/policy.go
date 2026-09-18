@@ -78,7 +78,7 @@ type Policy struct {
 	// configuration (CompiledWorkflow.Stacking). Zero means no stacking
 	// config: delivery runs single-PR behavior with no size gate.
 	StackingHardLines int
-	// SplitDeferred mirrors StackingConfig.SplitDeferred (§5.2-5.3): when
+	// SplitDeferred mirrors StackingConfig.SplitDeferred: when
 	// true and a chunk's delivered diff exceeds StackingHardLines,
 	// checkChunkDiffSize computes a host-side deterministic split instead of
 	// returning a DiffSizeError. Opt-in (default false).

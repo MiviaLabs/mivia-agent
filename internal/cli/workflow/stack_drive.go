@@ -254,7 +254,7 @@ func driveStackToCompletion(ctx context.Context, prepared *PreparedWorkflowRun, 
 			return err
 		}
 		// A chunk that just delivered may have left a deferred commit
-		// (§5.2-5.3): admit its follow-up PR before deciding whether the
+		// admit its follow-up PR before deciding whether the
 		// stack is complete, so allTasksMerged below waits for it too.
 		if err := admitPendingFollowUps(ctx, prepared, ledger, stackID, byID, stdout, stderr); err != nil {
 			return fmt.Errorf("stack drive: %w", err)
@@ -286,7 +286,7 @@ func driveStackToCompletion(ctx context.Context, prepared *PreparedWorkflowRun, 
 			return waitIntegrationRunSettledFn(ctx, prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
 		}
 		// Every currently-known chunk merged, but an earlier decompose call
-		// declared more scope than it planned (§12.1). Request the next wave
+		// declared more scope than it planned. Request the next wave
 		// before considering the stack complete.
 		wave++
 		nextChunks, nextHasMore, nextRemaining, err := admitNextDecomposeWave(prepared, ledger, stackID, wave, chunks, remainingScope, planInputs, stdout, stderr)

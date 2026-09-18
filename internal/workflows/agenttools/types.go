@@ -31,7 +31,7 @@ const (
 	ToolWorkflowDelete   = "workflow_delete"
 )
 
-// AllToolNames returns the eight Phase 7 workflow tool names in stable order.
+// AllToolNames returns the eight workflow tool names in stable order.
 func AllToolNames() []string {
 	return []string{
 		ToolWorkflowRun,

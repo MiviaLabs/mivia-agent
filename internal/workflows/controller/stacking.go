@@ -202,7 +202,7 @@ func injectChunkModeInputBindings(synth *definition.CompiledWorkflow, inputs map
 // runStartStepID is the workflow's initial step, the stacking implement step
 // for chunk-mode runs, or the engine-synthesized decompose step for a
 // decompose-continuation run (a later wave of an incrementally-planned
-// stack, §12.1). The controller uses it for the persisted run's ActiveStepID
+// stack). The controller uses it for the persisted run's ActiveStepID
 // and for resume, so a chunk run always starts at implement and a
 // continuation run always starts at decompose.
 func (c *LinearController) runStartStepID() string {
@@ -356,8 +356,8 @@ func validateChunkPlanEntry(out *ChunkPlanValidation, chunk *chunkPlanEntry, ind
 		return
 	}
 	// "-deferred" is the driver's own naming convention for a follow-up chunk
-	// admitted from a diff-size repair's deferred commit (§5.2-5.3,
-	// internal/cli/stack_followup.go): a real chunk using this suffix would
+	// admitted from a diff-size repair's deferred commit
+	// (internal/cli/stack_followup.go): a real chunk using this suffix would
 	// collide with - and be silently skipped by - the driver's follow-up scan.
 	if strings.HasSuffix(chunk.ID, "-deferred") {
 		out.Valid = false

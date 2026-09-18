@@ -1,7 +1,6 @@
 package delivery
 
-// Split delivery (spec-auto-split-oversized-prs.md §5.2-5.3, revised per
-// §10): checkChunkDiffSize's own host-computed split decision (never an
+// Split delivery: checkChunkDiffSize's own host-computed split decision (never an
 // agent's claim) splits the fresh commit into a delivered commit (pushed)
 // and a deferred commit (saved under DeferredBranchName, never pushed on
 // the delivered branch). Uses the same real-git fixture as deliver_test.go,

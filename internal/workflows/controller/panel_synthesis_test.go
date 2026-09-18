@@ -584,7 +584,7 @@ func TestAdvancePanelSynthesis_RejectsMissingStepSkill(t *testing.T) {
 	}
 }
 
-// Bug-audit regression (round 3): coordinator.mapStatus treats Status as
+// Bug-audit regression: coordinator.mapStatus treats Status as
 // authoritative independent of Err, so a synthesis task can terminate
 // non-completed with a nil Err. panelSynthesisTaskStatusError must reject
 // that, the same way panelMemberResultError already rejects it for members

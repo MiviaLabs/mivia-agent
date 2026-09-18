@@ -244,7 +244,7 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 	if err != nil {
 		return ledger.InspectView{}, err
 	}
-	// Caller-identity participant gate (plan 59): a child task may only
+	// Caller-identity participant gate: a child task may only
 	// inspect runs whose attempts record its own coordinator run. Refusals
 	// are indistinguishable from the run not existing. No identity (root or
 	// interactive session) is unchanged.

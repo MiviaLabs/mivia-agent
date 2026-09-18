@@ -1,7 +1,6 @@
 package delivery
 
-// Split-delivery crash resume (spec-auto-split-oversized-prs.md §5.2-5.3,
-// revised per §10): freshDeliveryCommitSplit records the deferred-file list on
+// Split-delivery crash resume: freshDeliveryCommitSplit records the deferred-file list on
 // the pending DeliveryRecord BEFORE creating the delivered commit C1, then
 // performs C1 (delivered), C2 (deferred, saved under DeferredBranchName), and
 // finally resets the worktree back to C1. A crash or transient failure can

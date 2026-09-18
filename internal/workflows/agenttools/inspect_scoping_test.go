@@ -62,7 +62,7 @@ func seedRunForCoordinator(t *testing.T, repo ledger.Repository, runID, coordina
 }
 
 // TestInspectScopedToCallerRun pins the caller-identity participant gate on
-// workflow_inspect (plan 59): with a TaskIdentity on ctx, the requested run is
+// workflow_inspect: with a TaskIdentity on ctx, the requested run is
 // visible only when one of its attempts names the identity's RunID as the
 // coordinator run; otherwise the refusal is indistinguishable from the run not
 // existing. Without an identity (root/interactive session) the tool is

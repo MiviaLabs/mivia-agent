@@ -284,7 +284,7 @@ func TestAppendEventStampsBeforeMarshalling(t *testing.T) {
 	}
 }
 
-// TestLegacyRowWithoutTimestampFallsBackToReadInstant tests plan 21 §6's
+// TestLegacyRowWithoutTimestampFallsBackToReadInstant tests the
 // graceful-degradation claim instead of asserting it in prose. There is no schema
 // version anywhere - no version table, no PRAGMA user_version, the DDL is an
 // inline CREATE TABLE IF NOT EXISTS - so a database written by an earlier build

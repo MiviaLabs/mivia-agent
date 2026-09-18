@@ -485,7 +485,7 @@ func TestReviewZeroProgressLedgerReadFailureFailsStep(t *testing.T) {
 // A-B-A oscillation gap: a reviewer that alternates between two finding sets
 // never repeats CONSECUTIVELY, so comparing against only the immediately
 // prior round let it run until the loop cap and die at the duration bound as
-// an undiagnosed timeout. Round 3 reproduces round 1's set and must fail.
+// an undiagnosed timeout. Iteration 3 reproduces iteration 1's set and must fail.
 func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
 	wf := repairWorkflow(t, 30, 16)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{

@@ -173,8 +173,8 @@ func synthesizedStackingSteps(declared []Step, agent, planStep string) []Step {
 				// the first attempt (optional-absent).
 				{From: "steps." + stepDecompose + ".output", As: "prior_chunk_plan", Optional: true},
 				// remaining_scope is only present in the admission payload of
-				// a decompose-continuation run (stack_mode=decompose_continue,
-				// §12.1); a plan-mode run's inputs never carry it. Optional so
+				// a decompose-continuation run (stack_mode=decompose_continue);
+				// a plan-mode run's inputs never carry it. Optional so
 				// decompose.md can reference the placeholder unconditionally
 				// (it resolves to "" on every non-continuation call) instead
 				// of needing two template variants.

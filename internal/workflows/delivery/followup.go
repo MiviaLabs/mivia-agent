@@ -1,6 +1,6 @@
 package delivery
 
-// Follow-up PR publication (spec-auto-split-oversized-prs.md §5.2-5.3): after
+// Follow-up PR publication: after
 // checkChunkDiffSize splits an oversized diff, the delivered commit is
 // pushed and its PR created by the normal Deliver() path, but the DEFERRED
 // commit is only ever saved to a local branch (freshDeliveryCommitSplit) -
