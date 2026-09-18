@@ -506,7 +506,7 @@ fmt = ['make', 'fmt-check']
 structure = ['python3', 'scripts/check_go_structure.py', '--worktree']
 
 [tui]
-mouse = false
+mouse = true
 reduced_motion = false
 screen_reader = false
 scroll_lines = 3
