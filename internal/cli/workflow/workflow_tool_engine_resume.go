@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -38,16 +39,16 @@ type resumePrepared struct {
 // the re-ensured children register under; the common same-session resume
 // re-registers under its own session, and an idempotent re-registration keeps
 // the original owner while the old record survives.
-func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
+func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req workflowagenttools.StartRequest) (workflowagenttools.StartResult, error) {
 	ownerSessionID := workflowOwnerSessionID(ctx)
 	prepared, err := e.prepareResume(ctx, req, ownerSessionID, e.orchestrationRepo)
 	if err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	return e.launchResume(ctx, prepared)
 }
 
-func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowledger.StartRequest, ownerSessionID string, sessionRepo ledger.LedgerRepository) (resumePrepared, error) {
+func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowagenttools.StartRequest, ownerSessionID string, sessionRepo ledger.LedgerRepository) (resumePrepared, error) {
 	if strings.TrimSpace(req.RunID) == "" {
 		return resumePrepared{}, fmt.Errorf("resume requires run_id")
 	}
@@ -95,7 +96,7 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowl
 }
 
 // workForResume resolves the engine's workspace root for a resume.
-func workForResume(e *sessionWorkflowEngine, req workflowledger.StartRequest) string {
+func workForResume(e *sessionWorkflowEngine, req workflowagenttools.StartRequest) string {
 	root := e.root
 	if strings.TrimSpace(root) == "" {
 		return "."
@@ -107,7 +108,7 @@ func workForResume(e *sessionWorkflowEngine, req workflowledger.StartRequest) st
 // admitted snapshot, returning the resolved config, store, repo, run row,
 // snapshot, its raw admission bytes, the compiled workflow and inputs, and the
 // store close function.
-func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req workflowledger.StartRequest) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *definition.CompiledWorkflow, map[string]any, func(), error) {
+func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req workflowagenttools.StartRequest) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *definition.CompiledWorkflow, map[string]any, func(), error) {
 	root := workForResume(e, req)
 	work, err := workspace.Open(root)
 	if err != nil {
@@ -159,7 +160,7 @@ func refuseNonResumable(run workflowledger.RunSnapshot) error {
 	return nil
 }
 
-func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared) (workflowledger.StartResult, error) {
+func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared) (workflowagenttools.StartResult, error) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	e.mu.Lock()
@@ -235,7 +236,7 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 	}()
 	fresh, err := p.repo.GetRun(ctx, p.runID)
 	if err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
-	return workflowledger.StartResult{RunID: p.runID, Status: string(fresh.Status), Workflow: p.workflow, Resumed: true}, nil
+	return workflowagenttools.StartResult{RunID: p.runID, Status: string(fresh.Status), Workflow: p.workflow, Resumed: true}, nil
 }

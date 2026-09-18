@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// TestCoverageAttemptElapsedSecondsZeroStart pins attemptElapsedSeconds on an
+// TestAttemptElapsedSecondsZeroStart pins attemptElapsedSeconds on an
 // attempt with no start timestamp: it must return 0 without touching the
 // clock (covers the zero-start early return).
-func TestCoverageAttemptElapsedSecondsZeroStart(t *testing.T) {
+func TestAttemptElapsedSecondsZeroStart(t *testing.T) {
 	a := StepAttempt{
 		AttemptID: "cov-zero-start", RunID: "cov-run", StepID: "one", AttemptNo: 1,
 		Status: AttemptStatusRunning,
@@ -19,11 +19,11 @@ func TestCoverageAttemptElapsedSecondsZeroStart(t *testing.T) {
 	}
 }
 
-// TestCoverageAttemptElapsedSecondsNegativeSkew pins attemptElapsedSeconds on
+// TestAttemptElapsedSecondsNegativeSkew pins attemptElapsedSeconds on
 // a clock-skewed attempt whose finished timestamp precedes its start: the
 // negative duration must clamp to 0 (covers the negative-duration early
 // return).
-func TestCoverageAttemptElapsedSecondsNegativeSkew(t *testing.T) {
+func TestAttemptElapsedSecondsNegativeSkew(t *testing.T) {
 	finished := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	a := StepAttempt{
 		AttemptID: "cov-neg-skew", RunID: "cov-run", StepID: "one", AttemptNo: 1,
@@ -36,10 +36,10 @@ func TestCoverageAttemptElapsedSecondsNegativeSkew(t *testing.T) {
 	}
 }
 
-// TestCoverageAttemptElapsedSecondsCompleted pins the positive path so the
+// TestAttemptElapsedSecondsCompleted pins the positive path so the
 // zero-guard branches are verified against a real duration: a completed
 // attempt reports whole seconds of finished-minus-started.
-func TestCoverageAttemptElapsedSecondsCompleted(t *testing.T) {
+func TestAttemptElapsedSecondsCompleted(t *testing.T) {
 	started := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	finished := started.Add(90*time.Second + 400*time.Millisecond)
 	a := StepAttempt{

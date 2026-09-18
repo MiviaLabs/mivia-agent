@@ -1,4 +1,4 @@
-package ledger_test
+package agenttools_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	agenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -63,7 +64,7 @@ func TestFailedAttemptErrorRefSurfaces(t *testing.T) {
 	seedFailedAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
 
-	statusOut, err := findTool(t, svc, ledger.ToolWorkflowStatus).Execute(
+	statusOut, err := findTool(t, svc, agenttools.ToolWorkflowStatus).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +77,7 @@ func TestFailedAttemptErrorRefSurfaces(t *testing.T) {
 		t.Fatalf("status attempt error_ref = %+v, want sha256:errorbody", status.Attempts)
 	}
 
-	inspectOut, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+	inspectOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +157,7 @@ func TestFailedAttemptErrorTextSurfaces(t *testing.T) {
 	ref := seedFailedAttemptWithErrorText(t, repo, runID, errorText)
 	svc := testService(t, repo, nil)
 
-	inspectOut, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+	inspectOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +183,7 @@ func TestFailedAttemptErrorTextAbsentWhenContentMissing(t *testing.T) {
 	ref := seedFailedAttemptWithErrorText(t, repo, runID, "")
 	svc := testService(t, repo, nil)
 
-	inspectOut, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+	inspectOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +218,7 @@ func TestFailedAttemptErrorTextRedacted(t *testing.T) {
 	seedFailedAttemptWithErrorText(t, repo, runID, body)
 	svc := testService(t, repo, nil)
 
-	inspectOut, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+	inspectOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
 	if err != nil {
 		t.Fatal(err)

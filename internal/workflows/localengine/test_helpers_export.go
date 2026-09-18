@@ -3,6 +3,7 @@ package localengine
 import (
 	"context"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -14,7 +15,7 @@ func (e *Engine) EnsureRunWorktreeForTest(ctx context.Context, runID string, rec
 }
 
 // ResumeExistingInvocationForTest exposes resumeExistingInvocation.
-func (e *Engine) ResumeExistingInvocationForTest(ctx context.Context, run workflowledger.RunSnapshot, req workflowledger.StartRequest) (workflowledger.StartResult, bool, error) {
+func (e *Engine) ResumeExistingInvocationForTest(ctx context.Context, run workflowledger.RunSnapshot, req workflowagenttools.StartRequest) (workflowagenttools.StartResult, bool, error) {
 	return e.resumeExistingInvocation(ctx, run, req)
 }
 

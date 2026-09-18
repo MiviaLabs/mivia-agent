@@ -175,7 +175,7 @@ func applyPanelPhase(proj *Projection, ev storage.Event) error {
 		}
 		a.PanelExecution.Phase = p.Phase
 		if p.Phase == PanelPhaseSynthesisAdmitted {
-			a.PanelExecution.Synthesis = p.Synthesis.clone()
+			a.PanelExecution.Synthesis = p.Synthesis.Clone()
 		}
 		a.Version = p.Version
 		return nil

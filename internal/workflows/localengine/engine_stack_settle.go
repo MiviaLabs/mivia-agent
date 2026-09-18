@@ -13,6 +13,7 @@ import (
 	"log"
 	"time"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -39,7 +40,7 @@ func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnap
 		return
 	}
 	if !found {
-		res, serr := e.Start(ctx, workflowledger.StartRequest{
+		res, serr := e.Start(ctx, workflowagenttools.StartRequest{
 			Workflow:      planRun.WorkflowName,
 			Inputs:        inputs,
 			InvocationKey: key,

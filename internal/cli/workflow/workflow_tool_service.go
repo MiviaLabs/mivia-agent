@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -75,7 +76,7 @@ func SessionEngineConfigPath(root string, res *config.Resolved) string {
 // workspace. res carries the session config identity when available; nil
 // falls back to the workspace project config. Returns nil when the workspace
 // has no .mivia/workflows/ or the service cannot be built.
-func workflowToolService(root string, res *config.Resolved) *workflowledger.Service {
+func workflowToolService(root string, res *config.Resolved) *workflowagenttools.Service {
 	return WorkflowToolServiceWithBus(root, res, nil, false, false, nil)
 }
 
@@ -94,8 +95,8 @@ func workflowToolService(root string, res *config.Resolved) *workflowledger.Serv
 // the instance the access gate compares. The engine stamps it on every child
 // run it registers. Nil (no session wiring) keeps child-run registration
 // skipped: fail-closed, one notice.
-func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) *workflowledger.Service {
-	if !workflowledger.HasWorkflows(root) {
+func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, runSweep, quiet bool, sessionRepo ledger.LedgerRepository) *workflowagenttools.Service {
+	if !workflowagenttools.HasWorkflows(root) {
 		return nil
 	}
 	cfg := workflowToolSubagentConfig(root, res)
@@ -134,7 +135,7 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// NewService fails only when the repository factory is nil; this caller
 	// always provides one, so the error is impossible by construction and the
 	// branch would be dead code (diff-coverage gate).
-	svc, _ := workflowledger.NewService(workflowledger.ServiceOptions{
+	svc, _ := workflowagenttools.NewService(workflowagenttools.ServiceOptions{
 		Engine: engine,
 		Repo:   repoFactory,
 	})

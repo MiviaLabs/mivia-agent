@@ -1,7 +1,7 @@
 package workflow
 
 import (
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,7 +20,7 @@ import (
 func TestSessionActiveRunUseLiveCoordinatorNilCases(t *testing.T) {
 	called := func(a *sessionActiveRun) bool {
 		invoked := false
-		used, err := a.useLiveCoordinator(func(workflowledger.PanelChildCoordinator) error {
+		used, err := a.useLiveCoordinator(func(workflowpanel.PanelChildCoordinator) error {
 			invoked = true
 			return nil
 		})
@@ -53,7 +53,7 @@ func TestSessionActiveRunUseLiveCoordinatorUsesRunner(t *testing.T) {
 	coord := coordinator.New(nil, nil)
 	active := &sessionActiveRun{runner: controller.NewCoordinatorRunner(coord)}
 	var got any
-	used, err := active.useLiveCoordinator(func(c workflowledger.PanelChildCoordinator) error {
+	used, err := active.useLiveCoordinator(func(c workflowpanel.PanelChildCoordinator) error {
 		got = c
 		return nil
 	})
@@ -90,7 +90,7 @@ func TestSessionActiveRunCloseGuardedWaitsForInFlightUse(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, _ = active.useLiveCoordinator(func(workflowledger.PanelChildCoordinator) error {
+		_, _ = active.useLiveCoordinator(func(workflowpanel.PanelChildCoordinator) error {
 			close(inUse)
 			<-releaseUse
 			return nil
@@ -127,7 +127,7 @@ func TestSessionActiveRunCloseGuardedWaitsForInFlightUse(t *testing.T) {
 		t.Fatal("closeFn did not run after closeGuarded completed")
 	}
 
-	used, err := active.useLiveCoordinator(func(workflowledger.PanelChildCoordinator) error { return nil })
+	used, err := active.useLiveCoordinator(func(workflowpanel.PanelChildCoordinator) error { return nil })
 	if used {
 		t.Fatal("useLiveCoordinator reused the runner after closeGuarded ran")
 	}

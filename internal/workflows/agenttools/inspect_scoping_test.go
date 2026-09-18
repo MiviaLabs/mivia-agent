@@ -1,4 +1,4 @@
-package ledger_test
+package agenttools_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	agenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -82,7 +83,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 
 	t.Run("own run allowed", func(t *testing.T) {
 		ctx := runtime.ContextWithTaskIdentity(context.Background(), identity)
-		out, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+		out, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 			ctx, json.RawMessage(`{"run_id":"`+childRunID+`","step":"one","attempt":1}`))
 		if err != nil {
 			t.Fatalf("inspect own run: %v", err)
@@ -101,7 +102,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 
 	t.Run("non-member run refused indistinguishably", func(t *testing.T) {
 		ctx := runtime.ContextWithTaskIdentity(context.Background(), identity)
-		_, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+		_, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 			ctx, json.RawMessage(`{"run_id":"`+otherRunID+`","step":"one","attempt":1}`))
 		if err == nil {
 			t.Fatal("inspect non-member run: expected refusal")
@@ -112,7 +113,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 		}
 		// The same identity against a truly absent run yields the identical
 		// not-found class, so the caller cannot distinguish membership.
-		_, ghostErr := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+		_, ghostErr := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 			ctx, json.RawMessage(`{"run_id":"wfr-ghost","step":"one","attempt":1}`))
 		if ghostErr == nil {
 			t.Fatal("inspect ghost run: expected not-found")
@@ -123,7 +124,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 	})
 
 	t.Run("no identity allowed", func(t *testing.T) {
-		out, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+		out, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 			context.Background(), json.RawMessage(`{"run_id":"`+childRunID+`","step":"one","attempt":1}`))
 		if err != nil {
 			t.Fatalf("inspect without identity: %v", err)
@@ -148,7 +149,7 @@ func TestInspectToolPagingParams(t *testing.T) {
 	runID := "wfr-paging-1"
 	seedRunningAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
-	tool := findTool(t, svc, ledger.ToolWorkflowInspect)
+	tool := findTool(t, svc, agenttools.ToolWorkflowInspect)
 
 	t.Run("missing paging params behave as 0", func(t *testing.T) {
 		out, err := tool.Execute(context.Background(),

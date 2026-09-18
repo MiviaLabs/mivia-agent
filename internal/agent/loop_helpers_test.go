@@ -22,7 +22,7 @@ func (ephemeralCoverageTool) EphemeralResultMarker(args json.RawMessage) string 
 	return "marker:" + string(args)
 }
 
-func TestCoverageHelpersContextAndTruncate(t *testing.T) {
+func TestLoopHelpersContextAndTruncate(t *testing.T) {
 	if got := truncate("first\nsecond", 40); got != "first second" {
 		t.Fatalf("truncate unchanged length = %q", got)
 	}
@@ -50,7 +50,7 @@ func TestCoverageHelpersContextAndTruncate(t *testing.T) {
 	}
 }
 
-func TestCoverageHelpersScrubEphemeralToolMessages(t *testing.T) {
+func TestLoopHelpersScrubEphemeralToolMessages(t *testing.T) {
 	registry := tools.NewRegistry()
 	registry.Register(ephemeralCoverageTool{})
 	var call provider.ToolCall

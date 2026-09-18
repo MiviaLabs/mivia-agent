@@ -12,6 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -207,7 +208,7 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	}
 	fresh, getErr := repo.GetRun(ctx, runID)
 	if getErr == nil && fresh.Status == workflowledger.RunStatusRunning {
-		if _, err := e.resumeCLI(ctx, workflowledger.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
+		if _, err := e.resumeCLI(ctx, workflowagenttools.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
 			if !quiet {
 				log.Printf("workflow: session recovery: re-advance repair route for %s failed: %v", runID, err)
 			}
@@ -351,7 +352,7 @@ func (e *sessionWorkflowEngine) driveParkedStack(ctx context.Context, root strin
 // the human gate and re-park (pauseHumanGate is idempotent): the resume
 // never re-executes agents or auto-approves.
 func (e *sessionWorkflowEngine) reconcileParkedResume(ctx context.Context, runID string, quiet bool) {
-	if _, err := e.resumeCLI(ctx, workflowledger.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
+	if _, err := e.resumeCLI(ctx, workflowagenttools.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
 		if !quiet {
 			log.Printf("workflow: session recovery: resume %s skipped: %v", runID, err)
 		}

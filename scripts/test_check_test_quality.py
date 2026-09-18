@@ -561,6 +561,157 @@ def test_all_ignores_managed_worktrees_but_reports_repo_worktrees() -> None:
         assert ".mivia" not in r2.stdout
 
 
+def _round_policy(root: Path, allowed: list[str]) -> None:
+    policy_dir = root / ".mivia" / "policy"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    (policy_dir / "round-named-tests.json").write_text(
+        '{\n  "pattern": "coverage|pass[0-9]|round[0-9]|audit|wave",\n  "allowedFiles": '
+        + __import__("json").dumps(allowed, indent=2).replace("\n", "\n")
+        + "\n}\n",
+        encoding="utf-8",
+    )
+
+
+def test_new_round_named_test_file_rejected() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        _round_policy(root, [])
+        (root / "pkg" / "coverage_pass3_test.go").write_text(
+            """package pkg
+import "testing"
+func TestCoveragePass3(t *testing.T) {
+    if Add(1, 2) != 3 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"new round-named test file passed the gate: {r.stdout}"
+        assert "round_named_test_file" in r.stdout
+        assert "coverage_pass3_test.go" in r.stdout
+
+
+def test_baseline_round_named_file_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        _round_policy(root, ["pkg/coverage_pass3_test.go"])
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "baseline", cwd=root)
+        (root / "pkg" / "coverage_pass3_test.go").write_text(
+            """package pkg
+import "testing"
+func TestCoveragePass3Edited(t *testing.T) {
+    if Add(2, 2) != 4 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 0, f"allowlisted round-named file must pass: {r.stdout}"
+
+
+def test_round_baseline_growth_cannot_self_approve() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        _round_policy(root, [])
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "baseline", cwd=root)
+        (root / "pkg" / "audit_wave_test.go").write_text(
+            """package pkg
+import "testing"
+func TestAuditWave(t *testing.T) {
+    if Add(1, 2) != 3 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        _round_policy(root, ["pkg/audit_wave_test.go"])
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"same-change baseline growth self-approved: {r.stdout}"
+        assert "round_named_test_file" in r.stdout
+
+
+def test_round_gate_passes_when_no_round_names_present() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        _round_policy(root, [])
+        r = run_script(["--all"], cwd=root)
+        assert r.returncode == 0, f"clean tree flagged by round gate: {r.stdout}"
+
+
+def test_round_baseline_unstaged_edit_cannot_self_approve() -> None:
+    """The baseline is read from the COMMITTED reference, never from the
+    working tree: an unstaged policy edit cannot allowlist a staged
+    round-named test file."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        _round_policy(root, [])
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "baseline", cwd=root)
+        (root / "pkg" / "round9_thing_test.go").write_text(
+            """package pkg
+import "testing"
+func TestRound9Thing(t *testing.T) {
+    if Add(1, 2) != 3 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        # Unstaged policy edit allowing the new file.
+        _round_policy(root, ["pkg/round9_thing_test.go"])
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"unstaged policy edit self-approved: {r.stdout}"
+        assert "round_named_test_file" in r.stdout
+
+
+def test_skip_policy_unstaged_edit_cannot_self_approve() -> None:
+    """The test-skips baseline must come from the COMMITTED reference: an
+    unstaged edit of .mivia/policy/test-skips.json cannot allowlist a staged
+    new t.Skip."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        (policy_dir / "test-skips.json").write_text(
+            '{\n  "knownSkips": {},\n  "allowedDeletions": []\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "empty policy", cwd=root)
+
+        (root / "pkg" / "skip_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSkipped(t *testing.T) {
+    t.Skip("unstaged allowlist attempt")
+    if 1 != 2 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        # UNSTAGED policy edit allowlisting the new skip.
+        (policy_dir / "test-skips.json").write_text(
+            '{\n  "knownSkips": {\n    "pkg/skip_test.go": '
+            '[{"reason": "unstaged allowlist attempt"}]\n  },\n'
+            '  "allowedDeletions": []\n}\n',
+            encoding="utf-8",
+        )
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"unstaged policy edit self-approved: {r.stdout}"
+        assert "unreviewed_test_skip" in r.stdout
+
+
 def main() -> int:
     tests = [
         v

@@ -1,4 +1,6 @@
-package ledger
+package agenttools
+
+import "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 
 import (
 	"context"
@@ -85,7 +87,7 @@ func (s *Service) getEngine() Engine {
 	return s.engine
 }
 
-func (s *Service) openRepo(ctx context.Context) (Repository, func(), error) {
+func (s *Service) openRepo(ctx context.Context) (ledger.Repository, func(), error) {
 	if s == nil || s.repo == nil {
 		return nil, nil, fmt.Errorf("workflow tool service has no repository factory")
 	}
@@ -154,55 +156,55 @@ func (s *Service) Delete(ctx context.Context, runID string, force bool) (DeleteR
 }
 
 // Status returns a deep run overview from ledger projections only.
-func (s *Service) Status(ctx context.Context, runID string) (StatusView, error) {
+func (s *Service) Status(ctx context.Context, runID string) (ledger.StatusView, error) {
 	if strings.TrimSpace(runID) == "" {
-		return StatusView{}, fmt.Errorf("run_id is required")
+		return ledger.StatusView{}, fmt.Errorf("run_id is required")
 	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
-		return StatusView{}, err
+		return ledger.StatusView{}, err
 	}
 	defer closeFn()
-	return buildStatusView(ctx, repo, runID)
+	return ledger.BuildStatusView(ctx, repo, runID)
 }
 
 // Events returns a paged audit trail from the ledger.
-func (s *Service) Events(ctx context.Context, runID string, limit, offset int) (EventsPage, error) {
+func (s *Service) Events(ctx context.Context, runID string, limit, offset int) (ledger.EventsPage, error) {
 	if strings.TrimSpace(runID) == "" {
-		return EventsPage{}, fmt.Errorf("run_id is required")
+		return ledger.EventsPage{}, fmt.Errorf("run_id is required")
 	}
 	if limit < 0 || offset < 0 {
-		return EventsPage{}, fmt.Errorf("limit and offset must be >= 0")
+		return ledger.EventsPage{}, fmt.Errorf("limit and offset must be >= 0")
 	}
 	if limit == 0 {
 		limit = DefaultEventsPageSize
 	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
-		return EventsPage{}, err
+		return ledger.EventsPage{}, err
 	}
 	defer closeFn()
 	// Confirm the run exists before listing.
 	if _, err := repo.GetRun(ctx, runID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return EventsPage{}, fmt.Errorf("workflow run %q not found", runID)
+		if errors.Is(err, ledger.ErrNotFound) {
+			return ledger.EventsPage{}, fmt.Errorf("workflow run %q not found", runID)
 		}
-		return EventsPage{}, err
+		return ledger.EventsPage{}, err
 	}
 	events, err := repo.ListEvents(ctx, runID, limit, offset)
 	if err != nil {
-		return EventsPage{}, err
+		return ledger.EventsPage{}, err
 	}
-	out := make([]EventView, 0, len(events))
+	out := make([]ledger.EventView, 0, len(events))
 	for _, ev := range events {
-		out = append(out, EventView{
+		out = append(out, ledger.EventView{
 			Seq:       ev.Sequence,
-			Timestamp: formatTime(ev.CreatedAt),
+			Timestamp: ledger.FormatTime(ev.CreatedAt),
 			Kind:      ev.Kind,
 			Detail:    ev.Summary,
 		})
 	}
-	return EventsPage{RunID: runID, Events: out, Limit: limit, Offset: offset, Count: len(out)}, nil
+	return ledger.EventsPage{RunID: runID, Events: out, Limit: limit, Offset: offset, Count: len(out)}, nil
 }
 
 // Inspect returns one step attempt's validated output and route decision.
@@ -211,36 +213,36 @@ func (s *Service) Events(ctx context.Context, runID string, limit, offset int) (
 // final view is also guarded by the inspect result budget: a page that would
 // marshal over it is halved once and rebuilt before returning (bounded; the
 // tool's encodeJSON remains the outer fail-closed guard).
-func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, offset, limit int) (InspectView, error) {
+func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, offset, limit int) (ledger.InspectView, error) {
 	if strings.TrimSpace(runID) == "" {
-		return InspectView{}, fmt.Errorf("run_id is required")
+		return ledger.InspectView{}, fmt.Errorf("run_id is required")
 	}
 	if strings.TrimSpace(step) == "" {
-		return InspectView{}, fmt.Errorf("step is required")
+		return ledger.InspectView{}, fmt.Errorf("step is required")
 	}
 	if attemptNo < 1 {
-		return InspectView{}, fmt.Errorf("attempt must be >= 1")
+		return ledger.InspectView{}, fmt.Errorf("attempt must be >= 1")
 	}
 	if limit < 0 || offset < 0 {
-		return InspectView{}, fmt.Errorf("limit and offset must be >= 0")
+		return ledger.InspectView{}, fmt.Errorf("limit and offset must be >= 0")
 	}
 	if limit == 0 {
-		limit = DefaultInspectPageBytes
+		limit = ledger.DefaultInspectPageBytes
 	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
-		return InspectView{}, err
+		return ledger.InspectView{}, err
 	}
 	defer closeFn()
 	if _, err := repo.GetRun(ctx, runID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return InspectView{}, fmt.Errorf("workflow run %q not found", runID)
+		if errors.Is(err, ledger.ErrNotFound) {
+			return ledger.InspectView{}, fmt.Errorf("workflow run %q not found", runID)
 		}
-		return InspectView{}, err
+		return ledger.InspectView{}, err
 	}
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
-		return InspectView{}, err
+		return ledger.InspectView{}, err
 	}
 	// Caller-identity participant gate (plan 59): a child task may only
 	// inspect runs whose attempts record its own coordinator run. Refusals
@@ -255,10 +257,10 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 			}
 		}
 		if !member {
-			return InspectView{}, fmt.Errorf("workflow run %q not found", runID)
+			return ledger.InspectView{}, fmt.Errorf("workflow run %q not found", runID)
 		}
 	}
-	var found *StepAttempt
+	var found *ledger.StepAttempt
 	for i := range attempts {
 		if attempts[i].StepID == step && attempts[i].AttemptNo == attemptNo {
 			found = &attempts[i]
@@ -266,11 +268,11 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 		}
 	}
 	if found == nil {
-		return InspectView{}, fmt.Errorf("attempt %s#%d not found on run %q", step, attemptNo, runID)
+		return ledger.InspectView{}, fmt.Errorf("attempt %s#%d not found on run %q", step, attemptNo, runID)
 	}
 	view, err := s.inspectWithinBudget(ctx, repo, runID, *found, offset, limit)
 	if err != nil {
-		return InspectView{}, err
+		return ledger.InspectView{}, err
 	}
 	return view, nil
 }
@@ -280,41 +282,41 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 // result budget, halve the page once and rebuild it before returning. Bounded
 // (at most one shrink, never fail-closed on framing); the tool's encodeJSON
 // remains the outer fail-closed guard.
-func (s *Service) inspectWithinBudget(ctx context.Context, repo viewRepository, runID string, attempt StepAttempt, offset, limit int) (InspectView, error) {
-	view, err := buildInspectView(ctx, repo, runID, attempt, offset, limit)
+func (s *Service) inspectWithinBudget(ctx context.Context, repo ledger.ViewRepository, runID string, attempt ledger.StepAttempt, offset, limit int) (ledger.InspectView, error) {
+	view, err := ledger.BuildInspectView(ctx, repo, runID, attempt, offset, limit)
 	if err != nil {
-		return InspectView{}, err
+		return ledger.InspectView{}, err
 	}
 	if budget := s.budget("inspect"); budget > 0 {
 		encoded, err := json.Marshal(view)
 		if err != nil {
-			return InspectView{}, err
+			return ledger.InspectView{}, err
 		}
 		if len(encoded) > budget {
 			shrunk := limit / 2
 			if shrunk < 1 {
 				shrunk = 1
 			}
-			return buildInspectView(ctx, repo, runID, attempt, offset, shrunk)
+			return ledger.BuildInspectView(ctx, repo, runID, attempt, offset, shrunk)
 		}
 	}
 	return view, nil
 }
 
 // workflowRunStatuses is the accepted status filter set for ListRuns. It
-// mirrors the ledger's RunStatus values (and the CLI twin's
+// mirrors the ledger's ledger.RunStatus values (and the CLI twin's
 // workflowRunStatuses in internal/cli/workflow_runs.go); an unknown value is
 // rejected rather than silently filtering to zero rows.
-var workflowRunStatuses = map[string]RunStatus{
-	string(RunStatusPending):         RunStatusPending,
-	string(RunStatusRunning):         RunStatusRunning,
-	string(RunStatusWaitingApproval): RunStatusWaitingApproval,
-	string(RunStatusDeliveryPending): RunStatusDeliveryPending,
-	string(RunStatusSucceeded):       RunStatusSucceeded,
-	string(RunStatusFailed):          RunStatusFailed,
-	string(RunStatusCanceled):        RunStatusCanceled,
-	string(RunStatusTimedOut):        RunStatusTimedOut,
-	string(RunStatusDeliveryFailed):  RunStatusDeliveryFailed,
+var workflowRunStatuses = map[string]ledger.RunStatus{
+	string(ledger.RunStatusPending):         ledger.RunStatusPending,
+	string(ledger.RunStatusRunning):         ledger.RunStatusRunning,
+	string(ledger.RunStatusWaitingApproval): ledger.RunStatusWaitingApproval,
+	string(ledger.RunStatusDeliveryPending): ledger.RunStatusDeliveryPending,
+	string(ledger.RunStatusSucceeded):       ledger.RunStatusSucceeded,
+	string(ledger.RunStatusFailed):          ledger.RunStatusFailed,
+	string(ledger.RunStatusCanceled):        ledger.RunStatusCanceled,
+	string(ledger.RunStatusTimedOut):        ledger.RunStatusTimedOut,
+	string(ledger.RunStatusDeliveryFailed):  ledger.RunStatusDeliveryFailed,
 }
 
 // workflowRunStatusNames returns the accepted status filter values, sorted,
@@ -329,29 +331,29 @@ func workflowRunStatusNames() string {
 }
 
 // ListRuns lists active and historical runs with optional status filter.
-func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offset int) (ListRunsView, error) {
+func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offset int) (ledger.ListRunsView, error) {
 	if limit < 0 || offset < 0 {
-		return ListRunsView{}, fmt.Errorf("limit and offset must be >= 0")
+		return ledger.ListRunsView{}, fmt.Errorf("limit and offset must be >= 0")
 	}
 	if limit == 0 {
 		limit = DefaultListRunsPageSize
 	}
-	var statuses []RunStatus
+	var statuses []ledger.RunStatus
 	if trimmed := strings.TrimSpace(statusFilter); trimmed != "" {
 		status, ok := workflowRunStatuses[trimmed]
 		if !ok {
-			return ListRunsView{}, fmt.Errorf("unknown status %q (want one of %s)", trimmed, workflowRunStatusNames())
+			return ledger.ListRunsView{}, fmt.Errorf("unknown status %q (want one of %s)", trimmed, workflowRunStatusNames())
 		}
-		statuses = []RunStatus{status}
+		statuses = []ledger.RunStatus{status}
 	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
-		return ListRunsView{}, err
+		return ledger.ListRunsView{}, err
 	}
 	defer closeFn()
 	runs, err := repo.ListRuns(ctx, statuses...)
 	if err != nil {
-		return ListRunsView{}, err
+		return ledger.ListRunsView{}, err
 	}
 	// Apply offset/limit in-process (repository may return all matching).
 	if offset > len(runs) {
@@ -365,37 +367,37 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 	}
 	page := runs[offset:end]
 	now := time.Now()
-	items := make([]RunListItem, 0, len(page))
+	items := make([]ledger.RunListItem, 0, len(page))
 	for _, r := range page {
-		item := RunListItem{
+		item := ledger.RunListItem{
 			RunID:      r.RunID,
 			Workflow:   r.WorkflowName,
 			Status:     string(r.Status),
-			StartedAt:  formatTime(r.StartedAt),
+			StartedAt:  ledger.FormatTime(r.StartedAt),
 			ActiveStep: r.ActiveStepID,
 		}
 		if !r.StartedAt.IsZero() {
 			item.Age = now.UTC().Sub(r.StartedAt.UTC()).Truncate(time.Second).String()
 		}
-		if !IsTerminalRunStatus(r.Status) && r.ActiveStepID != "" {
-			item.LastHeartbeatAt = formatTime(activeStepHeartbeat(ctx, repo, r.RunID, r.ActiveStepID))
+		if !ledger.IsTerminalRunStatus(r.Status) && r.ActiveStepID != "" {
+			item.LastHeartbeatAt = ledger.FormatTime(activeStepHeartbeat(ctx, repo, r.RunID, r.ActiveStepID))
 		}
-		if r.Status == RunStatusDeliveryPending {
+		if r.Status == ledger.RunStatusDeliveryPending {
 			if _, at, ok, err := repo.GetRunClaim(ctx, r.RunID); err == nil && ok {
 				item.DeliveryClaimHeld = true
-				item.DeliveryClaimAt = formatTime(at)
+				item.DeliveryClaimAt = ledger.FormatTime(at)
 			}
 		}
 		items = append(items, item)
 	}
-	return ListRunsView{Runs: items, Limit: limit, Offset: offset, Count: len(items)}, nil
+	return ledger.ListRunsView{Runs: items, Limit: limit, Offset: offset, Count: len(items)}, nil
 }
 
 // activeStepHeartbeat returns the newest heartbeat recorded for runID's
 // active step, or the zero time when the run has no attempts on that step
 // yet or the ledger read fails - a list view degrades to "no heartbeat
 // column" rather than failing the whole listing over one run's read.
-func activeStepHeartbeat(ctx context.Context, repo viewRepository, runID, activeStepID string) time.Time {
+func activeStepHeartbeat(ctx context.Context, repo ledger.ViewRepository, runID, activeStepID string) time.Time {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return time.Time{}

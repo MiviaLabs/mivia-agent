@@ -1,4 +1,4 @@
-package ledger_test
+package agenttools_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	agenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -61,9 +62,9 @@ func seedRunningAttemptWithOutput(t *testing.T, repo ledger.Repository, runID st
 	}
 }
 
-func testService(t *testing.T, repo ledger.Repository, engine ledger.Engine) *ledger.Service {
+func testService(t *testing.T, repo ledger.Repository, engine agenttools.Engine) *agenttools.Service {
 	t.Helper()
-	svc, err := ledger.NewService(ledger.ServiceOptions{
+	svc, err := agenttools.NewService(agenttools.ServiceOptions{
 		Engine: engine,
 		Repo: func(context.Context) (ledger.Repository, func(), error) {
 			return repo, func() {}, nil
@@ -80,7 +81,7 @@ func TestStatusFromLedger(t *testing.T) {
 	runID := "wfr-status-1"
 	seedRunningAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
-	outStr, err := findTool(t, svc, ledger.ToolWorkflowStatus).Execute(
+	outStr, err := findTool(t, svc, agenttools.ToolWorkflowStatus).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +103,7 @@ func TestEventsFromLedger(t *testing.T) {
 	runID := "wfr-events-1"
 	seedRunningAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
-	evOut, err := findTool(t, svc, ledger.ToolWorkflowEvents).Execute(
+	evOut, err := findTool(t, svc, agenttools.ToolWorkflowEvents).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","limit":10}`))
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +255,7 @@ func TestInspectBudgetGuardHalvesPageOnce(t *testing.T) {
 	// exceed but a halved page (32 KiB) fits: the guard must halve once and
 	// rebuild, never fail closed on framing.
 	ctx := context.Background()
-	svc, err := ledger.NewService(ledger.ServiceOptions{
+	svc, err := agenttools.NewService(agenttools.ServiceOptions{
 		Repo: func(context.Context) (ledger.Repository, func(), error) {
 			return repo, func() {}, nil
 		},
@@ -288,7 +289,7 @@ func TestInspectFromLedger(t *testing.T) {
 	runID := "wfr-inspect-1"
 	seedRunningAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
-	insOut, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+	insOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +319,7 @@ func TestInspectRedactsConfiguredOutput(t *testing.T) {
 	runID := "wfr-inspect-redaction-1"
 	seedRunningAttemptWithOutput(t, repo, runID, []byte(`{"api_key":"test-secret-placeholder","note":"secret-abc123"}`))
 	svc := testService(t, repo, nil)
-	insOut, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
+	insOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +345,7 @@ func TestListRunsFromLedger(t *testing.T) {
 	runID := "wfr-list-1"
 	seedRunningAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
-	listOut, err := findTool(t, svc, ledger.ToolWorkflowListRuns).Execute(
+	listOut, err := findTool(t, svc, agenttools.ToolWorkflowListRuns).Execute(
 		context.Background(), json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -583,12 +584,12 @@ func TestListRunsSurfacesDeliveryClaim(t *testing.T) {
 
 func TestDeliverWithoutAllowPublishRefuses(t *testing.T) {
 	svc := testService(t, ledger.NewMemoryRepository(), &stubEngine{})
-	out, err := findTool(t, svc, ledger.ToolWorkflowDeliver).Execute(
+	out, err := findTool(t, svc, agenttools.ToolWorkflowDeliver).Execute(
 		context.Background(), json.RawMessage(`{"run_id":"wfr-x"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result ledger.DeliverResult
+	var result agenttools.DeliverResult
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
@@ -599,7 +600,7 @@ func TestDeliverWithoutAllowPublishRefuses(t *testing.T) {
 
 func TestRunRequiresWorkflowName(t *testing.T) {
 	svc := testService(t, ledger.NewMemoryRepository(), &stubEngine{})
-	_, err := findTool(t, svc, ledger.ToolWorkflowRun).Execute(
+	_, err := findTool(t, svc, agenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "workflow name") {
 		t.Fatalf("error = %v, want workflow name required", err)
@@ -609,7 +610,7 @@ func TestRunRequiresWorkflowName(t *testing.T) {
 func TestToolDescriptionsAreGeneric(t *testing.T) {
 	svc := testService(t, ledger.NewMemoryRepository(), nil)
 	bias := []string{"go test", "cmd/mivia", "github.com/MiviaLabs", "*.go", "golang"}
-	for _, tool := range ledger.Tools(svc) {
+	for _, tool := range agenttools.Tools(svc) {
 		text := tool.Description() + "\n" + flattenDescs(tool.Parameters())
 		for _, b := range bias {
 			if strings.Contains(strings.ToLower(text), strings.ToLower(b)) {
@@ -622,9 +623,9 @@ func TestToolDescriptionsAreGeneric(t *testing.T) {
 	}
 }
 
-func findTool(t *testing.T, svc *ledger.Service, name string) ledger.Tool {
+func findTool(t *testing.T, svc *agenttools.Service, name string) agenttools.Tool {
 	t.Helper()
-	for _, tool := range ledger.Tools(svc) {
+	for _, tool := range agenttools.Tools(svc) {
 		if tool.Name() == name {
 			return tool
 		}
@@ -654,15 +655,15 @@ func flattenDescs(v any) string {
 
 type stubEngine struct{}
 
-func (stubEngine) Start(context.Context, ledger.StartRequest) (ledger.StartResult, error) {
-	return ledger.StartResult{RunID: "wfr-stub", Status: "running"}, nil
+func (stubEngine) Start(context.Context, agenttools.StartRequest) (agenttools.StartResult, error) {
+	return agenttools.StartResult{RunID: "wfr-stub", Status: "running"}, nil
 }
-func (stubEngine) Cancel(context.Context, string) (ledger.CancelResult, error) {
-	return ledger.CancelResult{RunID: "wfr-stub", Status: "canceled"}, nil
+func (stubEngine) Cancel(context.Context, string) (agenttools.CancelResult, error) {
+	return agenttools.CancelResult{RunID: "wfr-stub", Status: "canceled"}, nil
 }
-func (stubEngine) Deliver(context.Context, string, bool) (ledger.DeliverResult, error) {
-	return ledger.DeliverResult{RunID: "wfr-stub", Status: "succeeded"}, nil
+func (stubEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
+	return agenttools.DeliverResult{RunID: "wfr-stub", Status: "succeeded"}, nil
 }
-func (stubEngine) Delete(context.Context, string, bool) (ledger.DeleteResult, error) {
-	return ledger.DeleteResult{RunID: "wfr-stub", Status: "succeeded", Deleted: true}, nil
+func (stubEngine) Delete(context.Context, string, bool) (agenttools.DeleteResult, error) {
+	return agenttools.DeleteResult{RunID: "wfr-stub", Status: "succeeded", Deleted: true}, nil
 }

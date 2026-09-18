@@ -1,6 +1,6 @@
 package config
 
-// Round-8 hostile audit of IsOllamaLoopback / validateBaseURL edge inputs.
+// IsOllamaLoopback / validateBaseURL edge inputs.
 // The predicate is hostname-literal per the locked plan (§3.1), so
 // malformed-but-loopback URL forms (trailing space in path, empty fragment,
 // empty/out-of-range port, unbracketed IPv6-with-port) are APPROVED. That is
@@ -18,7 +18,7 @@ import (
 	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
-func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {
+func TestIsOllamaLoopbackEdgeInputs(t *testing.T) {
 	cases := []struct {
 		raw   string
 		want  bool
@@ -66,7 +66,7 @@ func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {
 	}
 }
 
-// TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic pins
+// TestValidateBaseURLLoopbackRelaxationIsProviderAgnostic pins
 // validateBaseURL's OWN contract only: the https requirement relaxes for
 // ANY provider name on a verified loopback base_url, not just "ollama" -
 // every builtin provider now gets the same dial-pinning protection at
@@ -74,7 +74,7 @@ func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {
 // reason to single one out. This function was never about keyless-ness
 // (that is a separate, still ollama-only gate in provider.NewForProvider);
 // the prior name overstated its scope.
-func TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic(t *testing.T) {
+func TestValidateBaseURLLoopbackRelaxationIsProviderAgnostic(t *testing.T) {
 	cases := []struct {
 		raw        string
 		name       string
@@ -123,10 +123,10 @@ type baseURLError struct{}
 
 func (e *baseURLError) Error() string { return "base_url must use https" }
 
-// TestRound8ExampleConfigsLoad verifies the shipped example config behaves as
+// TestExampleConfigsLoad verifies the shipped example config behaves as
 // documented: the ollama cloud profile (key required) and the local-daemon
 // profile (no key) both load, and .env.example loads with all keys unset.
-func TestRound8ExampleConfigsLoad(t *testing.T) {
+func TestExampleConfigsLoad(t *testing.T) {
 	t.Setenv("OLLAMA_API_KEY", "")
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("OPENROUTER_API_KEY", "")

@@ -7,6 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // sessionActiveRun tracks one in-process session-driven workflow run so
@@ -36,7 +37,7 @@ type sessionActiveRun struct {
 // there is no runner or the run's resources already closed - the caller must
 // fall back to a freshly built coordinator in that case, never assume runner
 // is still usable from a bare nil check.
-func (a *sessionActiveRun) useLiveCoordinator(use func(workflowledger.PanelChildCoordinator) error) (used bool, err error) {
+func (a *sessionActiveRun) useLiveCoordinator(use func(workflowpanel.PanelChildCoordinator) error) (used bool, err error) {
 	if a == nil || a.runner == nil {
 		return false, nil
 	}
@@ -76,7 +77,7 @@ func (a *sessionActiveRun) closeGuarded() {
 func cancelRunWithGuardedCoordinator(ctx context.Context, active *sessionActiveRun, repo workflowledger.Repository, store *storage.SQLite, runID, holder string) ([]workflowledger.StepAttempt, error) {
 	var attempts []workflowledger.StepAttempt
 	var cancelErr error
-	usedLive, _ := active.useLiveCoordinator(func(coord workflowledger.PanelChildCoordinator) error {
+	usedLive, _ := active.useLiveCoordinator(func(coord workflowpanel.PanelChildCoordinator) error {
 		attempts, cancelErr = controller.CancelRunWithAttemptsWithClaim(ctx, repo, coord, runID, holder)
 		return cancelErr
 	})

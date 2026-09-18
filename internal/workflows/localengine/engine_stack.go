@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -440,7 +441,7 @@ func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapsh
 		if terr != nil || !ok {
 			continue
 		}
-		if _, serr := e.Start(ctx, workflowledger.StartRequest{
+		if _, serr := e.Start(ctx, workflowagenttools.StartRequest{
 			Workflow:      planRun.WorkflowName,
 			Inputs:        inputs,
 			InvocationKey: key,
