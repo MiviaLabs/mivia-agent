@@ -90,8 +90,8 @@ func benchTheme(b *testing.B) theme.Theme {
 // benchMarkdownDoc is a 40-line document that touches every block kind
 // the transcript renders through Markdown: headings, prose, emphasis,
 // inline code, lists, a fenced code block, a table, a blockquote, a
-// link, and a rule. It is the Phase 0 baseline the chat TUI polish
-// phases compare against (docs/design/chat-tui-crush-comparison.md).
+// link, and a rule. It is the repaint-cost baseline for transcript
+// layout work.
 const benchMarkdownDoc = `# Retry policy
 
 The client retries a failed request with exponential backoff, jitter,

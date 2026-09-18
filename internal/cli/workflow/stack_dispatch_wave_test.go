@@ -1,7 +1,6 @@
 package workflow
 
-// Concurrent wave dispatch (Phase 2 of
-// docs/architecture/spec-auto-split-oversized-prs.md): dispatchWave's
+// Concurrent wave dispatch: dispatchWave's
 // concurrency and aggregation contract, tested independently of driveChunk's
 // full workflow-run fixture requirements (see driveWave's doc comment).
 //

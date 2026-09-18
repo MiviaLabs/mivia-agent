@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// reconcileCase drives the pure §5a reconciler.
+// reconcileCase drives the pure stack reconciler.
 func reconcileCase(t *testing.T, task ledger.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
 	t.Helper()
 	return reconcileTask(task, run, merged, runPushed, maxAttempts)
@@ -337,7 +337,7 @@ func TestParseStackPlanOutputHasMoreIgnoredOutsideMulti(t *testing.T) {
 	}
 }
 
-// --- Decompose-continuation invocation keys (§12.1) -----------------------
+// --- Decompose-continuation invocation keys -----------------------------
 
 func TestStackDecomposeContinueKey(t *testing.T) {
 	key, err := stackDecomposeContinueKey("wfr-plan1", 1)

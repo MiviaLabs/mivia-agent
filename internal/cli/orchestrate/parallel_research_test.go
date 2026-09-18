@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// Phase 4 of the agent model routing plan: a parallel research fan-out must be
+// A parallel research fan-out must be
 // deterministic to aggregate, honest about partial failure, and carry enough
 // provenance and typed cause that a caller can act on a mixed outcome.
 

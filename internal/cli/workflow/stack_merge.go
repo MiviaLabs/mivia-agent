@@ -1,6 +1,6 @@
 package workflow
 
-// Stack merge policy (plan D2/D3/D8, §5a policy B): wait loops that land the
+// Stack merge policy (policy B): wait loops that land the
 // stack's PRs. Under merge_policy=auto the driver merges published chunk PRs
 // itself (mark ready -> CI green -> squash-merge), and the integration PR is
 // waited out to an actual git merge before the stack reports complete.

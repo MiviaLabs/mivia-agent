@@ -1,6 +1,6 @@
 package cli
 
-// mivia stack command (plan D2, slice S5): the generic stacking driver CLI.
+// mivia stack command: the generic stacking driver CLI.
 // Dispatch and the read-only commands (plan, status); drive lives in
 // stack_drive.go.
 

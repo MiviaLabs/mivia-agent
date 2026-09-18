@@ -1,6 +1,6 @@
 package workflow
 
-// mivia stack drive (plan D2/D3/D8, §5a): the driver loop. On start it
+// mivia stack drive: the driver loop. On start it
 // reconciles every chunk task against its run and git merge state (idempotent
 // recovery), then admits chunk runs in topological order with stable
 // admission keys, honors the merge policy (A approve / B auto), and finishes

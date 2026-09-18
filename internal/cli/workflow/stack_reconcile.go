@@ -1,7 +1,7 @@
 package workflow
 
 // Stack driver core: chunk-plan parsing, stable admission keys, topological
-// admission order, and idempotent task reconciliation (plan v2.1 §5a, D8).
+// admission order, and idempotent task reconciliation.
 // Every decision here is derived from durable state only - the task ledger,
 // the run ledger, and git merge state - never from driver memory.
 
@@ -115,7 +115,7 @@ type ReconcileAction struct {
 	Note          string
 }
 
-// Reconcile actions (§5a step 2).
+// Reconcile actions.
 const (
 	stackActionLeave         = "leave"
 	stackActionDeliver       = "deliver"
@@ -139,7 +139,7 @@ const (
 )
 
 // reconcileTask derives the idempotent recovery action for one non-terminal
-// chunk task from its run and git merge state (plan §5a). Terminal task
+// chunk task from its run and git merge state. Terminal task
 // statuses (delivery.TerminalStatuses: merged, failed, skipped, canceled)
 // always leave, BEFORE any other rule - a canceled dependent keeps a failed
 // run row, so a later short-circuit would let the reopen arm re-admit it,
@@ -291,7 +291,7 @@ func stackTaskReady(t workflowledger.Task, merged map[string]bool) bool {
 
 // nextAdmissionWave returns the chunk ids to admit now: planned/queued/
 // blocked/reopened tasks whose dependencies are all merged, in dependency
-// order (§5a step 4: schedule the next wave).
+// order (schedule the next wave).
 func nextAdmissionWave(tasksByID map[string]workflowledger.Task, merged map[string]bool, order []string) []string {
 	var wave []string
 	for _, id := range order {

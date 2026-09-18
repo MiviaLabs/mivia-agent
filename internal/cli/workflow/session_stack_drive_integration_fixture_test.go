@@ -299,7 +299,7 @@ func (r *stackITRunner) writeChunkFile(ctx context.Context, req controller.Agent
 // isStackIntegrationRun reports whether the run is the final full-suite
 // integration run of a stack: its stable admission key is
 // <stack-id>:integration (stackAdmissionKey(stackID,
-// stackIntegrationChunkID), plan D8), recorded on the run row as
+// stackIntegrationChunkID)), recorded on the run row as
 // InvocationKey.
 func isStackIntegrationRun(run workflowledger.RunSnapshot) bool {
 	return strings.HasSuffix(run.InvocationKey, ":"+stackIntegrationChunkID)

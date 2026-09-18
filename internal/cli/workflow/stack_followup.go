@@ -1,6 +1,6 @@
 package workflow
 
-// Follow-up PR admission (spec-auto-split-oversized-prs.md §5.3): after a
+// Follow-up PR admission: after a
 // chunk's delivery leaves a deferred commit on its own local branch
 // (delivery.DeferredBranchName), push that branch and open a stacked PR for
 // it - no agent/workflow run needed, since the deferred commit already

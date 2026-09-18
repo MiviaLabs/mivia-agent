@@ -20,7 +20,7 @@ import (
 )
 
 // configureChatWorkspace installs the session tool registry for chat.
-// res supplies tool policy and the subagent store path so Phase 7 workflow
+// res supplies tool policy and the subagent store path so the workflow
 // tools open the same ledger as CLI workflow commands.
 //
 // The returned function closes the session-owned memory store, if one was

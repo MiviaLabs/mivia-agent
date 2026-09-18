@@ -1,6 +1,6 @@
 package workflow
 
-// Drive-before-delivery ordering regressions (plan D2/D3/D8, §5a):
+// Drive-before-delivery ordering regressions:
 //
 // A stacking-enabled delivery workflow's plan run settles at delivery_pending:
 // its success terminal is delivery-policy active (multi -> chunk_plan_validate

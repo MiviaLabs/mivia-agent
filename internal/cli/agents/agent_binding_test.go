@@ -18,7 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Phase 2 of the agent model routing plan: every routed agent executes on a
+// Every routed agent executes on a
 // completer bound to its own resolved provider, never on the session's
 // completer by accident.
 
@@ -406,7 +406,7 @@ func TestRoutedBindingHonoursTighterLiveBudget(t *testing.T) {
 	}
 }
 
-// Phase 3: turn count and resource ceilings are independent. An agent with
+// Turn count and resource ceilings are independent. An agent with
 // unlimited turns must still be bounded in wall-clock time and spend.
 
 func TestAgentWallClockCeilingStopsUnlimitedTurns(t *testing.T) {

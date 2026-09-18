@@ -108,7 +108,7 @@ func stackPRBase(wf *definition.CompiledWorkflow) (string, error) {
 // can produce, so the skip-and-continue branch stays testable single-threaded.
 var applyReconcileActionFn = applyReconcileAction
 
-// reconcileStack applies the §5a recovery actions for every chunk task of
+// reconcileStack applies the recovery actions for every chunk task of
 // the stack: task ledger x run ledger x git merge state, idempotently.
 func reconcileStack(ctx context.Context, ledger *workflowledger.Store, repo workflowledger.Repository, checker MergeChecker, stackID string, maxAttempts int) ([]ReconcileAction, error) {
 	list, err := ledger.ListTasksByScope(StackScope(stackID))

@@ -1,7 +1,6 @@
 package workflow
 
-// Incremental, wave-scoped decompose (§12.1 of
-// docs/architecture/spec-auto-split-oversized-prs.md): the invocation-key
+// Incremental, wave-scoped decompose: the invocation-key
 // derivation and run-ledger lookups a decompose-continuation wave needs.
 // Split out of stack_reconcile.go to keep that file under the repo's
 // per-file line ceiling (.mivia/policy/go-structure.json).

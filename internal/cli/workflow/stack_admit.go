@@ -1,6 +1,6 @@
 package workflow
 
-// Stack chunk admission (plan D2/D3/D8, §5a): the drive pass that reconciles
+// Stack chunk admission: the drive pass that reconciles
 // the stack, admits chunk runs in topological order with stable invocation
 // keys, applies the merge policy per chunk, and finally admits the one
 // full-suite integration run once every chunk is merged.
@@ -22,7 +22,7 @@ import (
 // drive after a stop picks up from durable state.
 //
 // hasMore declares whether the latest decompose wave reported more scope than
-// it planned (§12.1 incremental decompose). While true, the final integration
+// it planned (incremental decompose). While true, the final integration
 // run must NOT be admitted: it would publish a full-suite PR over only the
 // already-known chunks while later waves' work is still pending. The caller
 // re-drives with hasMore=false once every continuation wave landed, and only

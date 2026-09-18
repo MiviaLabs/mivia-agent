@@ -1,6 +1,6 @@
 package workflow
 
-// Resume drive-before-delivery regressions (plan D2/D3/D8, §5a) on the CLI
+// Resume drive-before-delivery regressions on the CLI
 // resume surface:
 //
 // A stacking-enabled delivery workflow's plan run settles at delivery_pending
