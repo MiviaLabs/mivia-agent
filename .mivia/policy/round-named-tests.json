@@ -1,13 +1,6 @@
 {
   "pattern": "coverage|pass[0-9]|round[0-9]|audit|wave",
   "allowedFiles": [
-    "internal/agent/agentloop_adoption_coverage_test.go",
-    "internal/agent/audit_dump_sdkloop_test.go",
-    "internal/agent/audit_dump_test.go",
-    "internal/agent/coverage_helpers_test.go",
-    "internal/agent/sdk_adapter_coverage_test.go",
-    "internal/agent/sdk_pass1map_leak_test.go",
-    "internal/agent/shim_coverage_gate_test.go",
     "internal/automation/diff_coverage_gaps_test.go",
     "internal/chat/race_audit_test.go",
     "internal/cli/agents/diff_coverage_gaps_test.go",
@@ -114,9 +107,6 @@
     "internal/workflows/definition/coverage_graph_test.go",
     "internal/workflows/definition/coverage_synthesis_test.go",
     "internal/workflows/delivery/deliver_publish_coverage_test.go",
-    "internal/workflows/ledger/coverage_gaps_test.go",
-    "internal/workflows/ledger/events_summary_coverage_test.go",
-    "internal/workflows/ledger/status_coverage_test.go",
     "internal/workflows/localengine/coverage_gaps_test.go",
     "internal/workflows/localengine/coverage_localengine_test.go",
     "internal/workflows/localengine/coverage_test.go",
