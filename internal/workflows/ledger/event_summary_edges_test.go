@@ -14,11 +14,11 @@ import (
 // Coverage for events_summary.go summarize* builders (undecodable payloads)
 // ---------------------------------------------------------------------------
 
-// TestCoverageSummarizeEventUndecodablePayloads drives every summarize*
+// TestSummarizeEventUndecodablePayloads drives every summarize*
 // builder's error branch: an undecodable payload of a KNOWN kind must yield
 // ok=false from summarizeEvent, never a fabricated summary. This exercises
 // the `return "", time.Time{}, false` paths in events_summary.go.
-func TestCoverageSummarizeEventUndecodablePayloads(t *testing.T) {
+func TestSummarizeEventUndecodablePayloads(t *testing.T) {
 	kinds := []string{
 		eventKindRunCreated,
 		eventKindRunStatusChanged,
@@ -100,9 +100,9 @@ func runSummaryCase(t *testing.T, tc summaryCase) {
 	})
 }
 
-// TestCoverageSummarizeEventRunAndWorkflowCases drives the run/workflow event
+// TestSummarizeEventRunAndWorkflowCases drives the run/workflow event
 // summarize builders' success branches with decodable payloads.
-func TestCoverageSummarizeEventRunAndWorkflowCases(t *testing.T) {
+func TestSummarizeEventRunAndWorkflowCases(t *testing.T) {
 	cases := []summaryCase{
 		{
 			name: "run_created",
@@ -173,11 +173,11 @@ func TestCoverageSummarizeEventRunAndWorkflowCases(t *testing.T) {
 	}
 }
 
-// TestCoverageSummarizeEventAttemptAndApprovalCases drives the attempt and
+// TestSummarizeEventAttemptAndApprovalCases drives the attempt and
 // approval summarize builders, including the reason suffix on
 // wf_approval_resolved (the reason-append path in events_summary.go) and its
 // no-reason counterpart.
-func TestCoverageSummarizeEventAttemptAndApprovalCases(t *testing.T) {
+func TestSummarizeEventAttemptAndApprovalCases(t *testing.T) {
 	cases := []summaryCase{
 		{
 			name: "attempt_started",
@@ -249,10 +249,10 @@ func TestCoverageSummarizeEventAttemptAndApprovalCases(t *testing.T) {
 	}
 }
 
-// TestCoverageSummarizeEventApprovalResolvedNoReason covers the no-reason
+// TestSummarizeEventApprovalResolvedNoReason covers the no-reason
 // branch of wf_approval_resolved: the reason guard must keep the suffix OFF
 // the summary when the payload has none.
-func TestCoverageSummarizeEventApprovalResolvedNoReason(t *testing.T) {
+func TestSummarizeEventApprovalResolvedNoReason(t *testing.T) {
 	noReason, ok := summarizeEvent(storage.Event{
 		Kind: eventKindApprovalResolved,
 		Payload: coveragePayload(t, approvalResolvedPayload{
@@ -274,11 +274,11 @@ func TestCoverageSummarizeEventApprovalResolvedNoReason(t *testing.T) {
 // Coverage for truncateSummary (UTF-8 rune boundary)
 // ---------------------------------------------------------------------------
 
-// TestCoverageTruncateSummaryRuneBoundary exercises the rune-boundary loop in
+// TestTruncateSummaryRuneBoundary exercises the rune-boundary loop in
 // truncateSummary: a summary longer than MaxEventSummaryBytes whose byte at
 // the cut index is the CONTINUATION byte of a multi-byte rune forces the loop
 // to back off to a rune start, so the ellipsis never splits a rune.
-func TestCoverageTruncateSummaryRuneBoundary(t *testing.T) {
+func TestTruncateSummaryRuneBoundary(t *testing.T) {
 	// 508 ASCII bytes + "é" (2 bytes at indices 508-509) + padding: byte 509 is
 	// the continuation byte, so cut backs off from 509 to 508 (a rune start).
 	in := strings.Repeat("a", 508) + "é" + strings.Repeat("b", 32)
@@ -313,10 +313,10 @@ func TestCoverageTruncateSummaryRuneBoundary(t *testing.T) {
 // Coverage for RecordRunResumed error path (storage_runs.go)
 // ---------------------------------------------------------------------------
 
-// TestCoverageRecordRunResumedClosedRepo covers the ensureBuilt error branch
+// TestRecordRunResumedClosedRepo covers the ensureBuilt error branch
 // of RecordRunResumed: a closed repository must return ErrClosed before any
 // run lookup or append happens.
-func TestCoverageRecordRunResumedClosedRepo(t *testing.T) {
+func TestRecordRunResumedClosedRepo(t *testing.T) {
 	ctx := context.Background()
 	for name, repo := range repos(t) {
 		t.Run(name, func(t *testing.T) {
