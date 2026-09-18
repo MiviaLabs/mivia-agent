@@ -52,7 +52,7 @@ func installTestRedactionPolicy(t *testing.T) {
 	t.Cleanup(func() { redact.SetPolicy(nil) })
 }
 
-// TestPreviewsWithoutPolicyRedactNothing documents the posture plan 10 §5 sells:
+// TestPreviewsWithoutPolicyRedactNothing documents the posture:
 // an unconfigured workspace redacts nothing, anywhere. It is the load-bearing
 // test for this call site - if a pattern list ever grows back into the binary,
 // this is what fails.

@@ -53,7 +53,7 @@ func (m MessagingConfig) IsEnabled() bool {
 // SteerWatchdogSecondsResolved returns the effective steer watchdog interval
 // in seconds: nil → the default 300, an explicit 0 → disabled (unbounded),
 // otherwise the configured value. Single source of truth for the CLI handler
-// construction sites (plan 54 §4.5); the config-layer resolver
+// construction sites; the config-layer resolver
 // (resolveMessagingConfig) fills nil the same way, so this is idempotent on
 // both resolved and raw configs.
 func (m MessagingConfig) SteerWatchdogSecondsResolved() int {

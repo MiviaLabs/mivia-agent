@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// Phase 3 of the agent model routing plan: turn count and resource ceilings
+// Turn count and resource ceilings
 // are independent. max_turns = 0 stays unlimited iterations, but an agent must
 // still be bounded in wall-clock time and provider spend.
 

@@ -46,7 +46,7 @@ func AllToolNames() []string {
 		"memory_search",
 		"memory_delete",
 		SkillResourceToolName,
-		// Phase 7 workflow tools: registered only when the workspace has
+		// Workflow tools: registered only when the workspace has
 		// .mivia/workflows/. Names stay in the static catalogue so allowlist
 		// validation recognizes them regardless of workspace shape (same
 		// pattern as conditionally registered "extract").

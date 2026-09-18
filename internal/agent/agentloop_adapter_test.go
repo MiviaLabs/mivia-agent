@@ -214,7 +214,7 @@ func TestRunAgentLoop_FailsOnNilCompleter(t *testing.T) {
 	}
 }
 
-// TestWiringSetsSDKReasoningEffortOnRequest locks the B.2 #8
+// TestWiringSetsSDKReasoningEffortOnRequest locks the SDK
 // bridge: when internal/provider/reasoning.go's encoder runs on a
 // Request carrying ReasoningLevel=High, the request's
 // SDKReasoningEffort must equal the SDK's ReasoningEffortHigh

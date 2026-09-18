@@ -3,10 +3,9 @@
 // single seam between the agent runtime and every renderer; no renderer
 // imports internal/agent, and no agent code imports uievent.
 //
-// Phase 1 ships ONLY the pure translation layer. Session lifecycle
+// The pure translation layer ships on its own. Session lifecycle
 // (Conversation, TurnHandle, Cancel), approval gating, settings ports, and
-// the build/constructor live in later phases of docs/design/ui-replacement-
-// phases.md.
+// the build/constructor live in this package's other files.
 //
 // Empty-TurnID window: the first event on every turn is KindTurnStart
 // with TurnID="" (chat.Session only surfaces the real ID after

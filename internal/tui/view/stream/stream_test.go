@@ -201,7 +201,7 @@ func TestRenderToolStartNameErrorDoesNotMisformat(t *testing.T) {
 
 // TestRenderSmoke_RealisticOneUserInput pins the doubled-message
 // regression at the renderer boundary. This is the smoke test
-// surface for the new ui shipped in Phase 3 (commit de1d2e70):
+// surface for the new ui shipped in commit de1d2e70:
 // when `--demo=false` produced two `KindTurnStart` and two
 // identical `KindTextEnd` events on a single user input, the bug
 // appeared as the doubled assistant message in the rendered

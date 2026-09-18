@@ -1,7 +1,7 @@
 package config
 
 // IsOllamaLoopback / validateBaseURL edge inputs.
-// The predicate is hostname-literal per the locked plan (§3.1), so
+// The predicate is hostname-literal, so
 // malformed-but-loopback URL forms (trailing space in path, empty fragment,
 // empty/out-of-range port, unbracketed IPv6-with-port) are APPROVED. That is
 // safe: the provider layer (newLoopbackDialContext) independently re-verifies

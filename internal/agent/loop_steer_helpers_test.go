@@ -1,7 +1,7 @@
 package agent
 
 // Shared scripted-completer and harness helpers for the soft-interrupt (steer)
-// loop tests (plan 54 §7). Helpers in any _test.go file of package agent are
+// loop tests. Helpers in any _test.go file of package agent are
 // visible to the others, so steerStep, steerCompleter, gateTool, runLoop and
 // messagesContain live here for both loop_steer_test.go and
 // loop_steer_watchdog_test.go.

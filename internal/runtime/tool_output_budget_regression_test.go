@@ -14,7 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// Audit regression, round 2 (following 0f6e524 and 2dca36b).
+// Audit regression (following 0f6e524 and 2dca36b).
 //
 // DeriveOutputCeiling makes the dispatcher's hard-fail output backstop clear
 // every tool-DECLARED result budget. Three default tools declared none,

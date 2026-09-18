@@ -185,7 +185,7 @@ func validateInput(in Input) error {
 // around the registry New built (and that AttachMCPServers may have
 // merged MCP tools into). The registry is passed through both via the
 // dispatcher's Registry field and via composition.SessionInput's
-// PrebuiltRegistry seam (Phase 3 amendment AR-1) so MCP-merged tools
+// PrebuiltRegistry seam so MCP-merged tools
 // are visible to the dispatcher.
 func buildSessionWithRegistry(in Input, registry *tools.Registry) (*chat.Session, *storage.SQLite, contextstate.Principal, error) {
 	return composition.BuildSession(composition.SessionInput{

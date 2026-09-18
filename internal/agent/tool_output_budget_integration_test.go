@@ -14,7 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Audit regression round 2, end to end. Commit 2dca36b derived the
+// Audit regression, end to end. Commit 2dca36b derived the
 // dispatcher's output backstop from the result budgets tools DECLARE.
 // list_dir, glob and write_file declared none - they capped results by entry
 // count, match count, and request size, none of which bounds bytes - so a

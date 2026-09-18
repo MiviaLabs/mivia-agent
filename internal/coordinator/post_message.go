@@ -27,7 +27,7 @@ const LifecycleKindTaskAskDeclined = "task_ask_declined"
 // lifecycle subscribers. This is the seam child tools and parent tools use so
 // they never write ledger rows without a live announce.
 //
-// Phase 01: no delivery, mailbox, or model-visible tools. Callers construct
+// This surface has no delivery, mailbox, or model-visible tools. Callers construct
 // and validate the message first (agentmsg.NewMessage / Validate).
 //
 // Ordering is persist-then-announce: content store → AppendEvent → emit.

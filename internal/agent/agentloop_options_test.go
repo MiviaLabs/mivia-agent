@@ -1,6 +1,6 @@
 package agent
 
-// Tests for the B.2 #8 part 2 commit 3 surface: the tool-registry
+// Tests for the SDK options surface: the tool-registry
 // converter, the full options mapping, the request translator, and
 // the RunAgentLoopOnce helper.
 
