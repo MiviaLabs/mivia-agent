@@ -5,39 +5,26 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (s *StorageRepository) validateInitialPanelAttempt(ctx context.Context, attempt StepAttempt) error {
-	if err := attempt.PanelExecution.validateInitial(attempt.RunID, attempt.AttemptID); err != nil {
-		return err
-	}
-	if attempt.PanelExecution == nil {
-		return nil
-	}
-	for _, member := range attempt.PanelExecution.Members {
-		if err := s.validatePanelTaskContent(ctx, attempt.RunID, member.TaskID, member.Work); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validatePanelTaskContent reconstructs the same subagents.Task fingerprint
-// PanelCoordinator.request produced at creation. workflowRunID must match
-// what request used as SessionID (the panel's owning run id, threaded there
-// as PanelCoordinator.workflowRunID) or every validation here mismatches and
-// fails closed with ErrConflict even for an untampered task.
-func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, workflowRunID, taskID string, work PanelTaskSpec) error {
+// testPanelContentValidator mirrors panel.ValidateTaskContent
+// (internal/workflows/panel): the ledger's own tests cannot import that
+// package (the panel package imports ledger, so an in-package test import
+// would cycle). If the two implementations drift, the panel package's
+// ValidateTaskContent tests and these persistence tests diverge - keep the
+// bodies identical.
+func testPanelContentValidator(ctx context.Context, repo Repository, workflowRunID, taskID string, work PanelTaskSpec) error {
 	if err := work.Validate(); err != nil {
 		return err
 	}
 	content := make([][]byte, 3)
 	for i, item := range []struct{ ref, digest string }{{work.InputRef, work.InputDigest}, {work.InputSchemaRef, work.InputSchemaDigest}, {work.OutputSchemaRef, work.OutputSchemaDigest}} {
-		data, err := s.LoadContent(ctx, item.ref)
+		data, err := repo.LoadContent(ctx, item.ref)
 		if err != nil {
 			return err
 		}
@@ -64,4 +51,28 @@ func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, workfl
 		return ErrConflict
 	}
 	return nil
+}
+
+func init() {
+	SetPanelContentValidator(testPanelContentValidator)
+}
+
+// TestPanelAttemptFailsClosedWithoutValidator pins the fail-closed default:
+// with no registered validator the repository refuses every panel attempt.
+func TestPanelAttemptFailsClosedWithoutValidator(t *testing.T) {
+	SetPanelContentValidator(nil)
+	defer SetPanelContentValidator(testPanelContentValidator)
+
+	repo := newMemoryRepo(t)
+	ctx := context.Background()
+	run := runID(t)
+	snap, raw := newRun(t, run)
+	if err := repo.CreateRun(ctx, snap, raw); err != nil {
+		t.Fatal(err)
+	}
+	attempt := StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
+	storePanelExecution(t, repo, attempt.PanelExecution)
+	if err := repo.CreateStepAttempt(ctx, attempt); err == nil {
+		t.Fatal("panel attempt without a registered validator must be refused")
+	}
 }

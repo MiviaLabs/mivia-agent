@@ -1,4 +1,4 @@
-package ledger
+package panel
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // panelCancelHandlerFunc adapts a plain function to runtime.Handler.
@@ -24,7 +25,7 @@ func (f panelCancelHandlerFunc) Invoke(ctx context.Context, req runtime.Request)
 // panelCancelFixture builds a real PanelCoordinator over a real coordinator
 // and an admitted 2-member panel attempt in members_admitted phase, ready
 // for a test to drive toward cancel_pending.
-func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *StorageRepository, *coordinator.Coordinator, string, StepAttempt) {
+func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *ledger.StorageRepository, *coordinator.Coordinator, string, ledger.StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
 	// The pool routes by task.Name (validPanelTask sets TaskName to the
@@ -45,7 +46,7 @@ func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator
 	if err := repo.CreateRun(ctx, snap, raw); err != nil {
 		t.Fatal(err)
 	}
-	attempt := StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
+	attempt := ledger.StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
 	storePanelExecution(t, repo, attempt.PanelExecution)
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
@@ -58,14 +59,14 @@ func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator
 	return panel, repo, coord, run, stored
 }
 
-func claimAndCancelPending(t *testing.T, repo *StorageRepository, run string, attempt StepAttempt) context.Context {
+func claimAndCancelPending(t *testing.T, repo *ledger.StorageRepository, run string, attempt ledger.StepAttempt) context.Context {
 	t.Helper()
 	ctx := context.Background()
 	if err := repo.ClaimRun(ctx, run, "holder"); err != nil {
 		t.Fatal(err)
 	}
-	claimCtx := ContextWithClaimHolder(ctx, "holder")
-	if err := repo.CompareAndSetPanelPhase(claimCtx, run, attempt.AttemptID, attempt.Version, PanelPhaseMembersAdmitted, PanelPhaseCancelPending, nil); err != nil {
+	claimCtx := ledger.ContextWithClaimHolder(ctx, "holder")
+	if err := repo.CompareAndSetPanelPhase(claimCtx, run, attempt.AttemptID, attempt.Version, ledger.PanelPhaseMembersAdmitted, ledger.PanelPhaseCancelPending, nil); err != nil {
 		t.Fatal(err)
 	}
 	return claimCtx
@@ -91,7 +92,7 @@ func TestCancelOrTombstoneMember_TombstonesNeverDispatchedMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle, err := coord.EnsureSingleTaskRun(ContextWithPanelChildPrincipal(claimCtx, run), req)
+	handle, err := coord.EnsureSingleTaskRun(ledger.ContextWithPanelChildPrincipal(claimCtx, run), req)
 	if err != nil {
 		t.Fatalf("stale EnsureSingleTaskRun error = %v", err)
 	}
@@ -131,7 +132,7 @@ func TestCancelOrTombstoneMember_AlreadyTerminalAttemptReportsTerminalNotBlocked
 		t.Fatal(err)
 	}
 
-	outcome := AttemptOutcome{Status: AttemptStatusCanceled}
+	outcome := ledger.AttemptOutcome{Status: ledger.AttemptStatusCanceled}
 	if err := repo.CompleteStepAttempt(claimCtx, run, attempt.AttemptID, current.Version, outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestCancelOrTombstoneMember_RequiresCancelPendingPhase(t *testing.T) {
 	if err := repo.ClaimRun(ctx, run, "holder"); err != nil {
 		t.Fatal(err)
 	}
-	claimCtx := ContextWithClaimHolder(ctx, "holder")
+	claimCtx := ledger.ContextWithClaimHolder(ctx, "holder")
 
 	if _, err := panel.CancelOrTombstoneMember(claimCtx, attempt.AttemptID, "member-0"); err == nil {
 		t.Fatal("cancel before the phase reaches cancel_pending must fail")
@@ -188,7 +189,7 @@ func TestCancelOrTombstoneMember_CancelsLiveLocalActor(t *testing.T) {
 	defer close(release)
 
 	// Dispatch member-0 for real while still in members_admitted phase.
-	membersCtx := ContextWithClaimHolder(context.Background(), "holder")
+	membersCtx := ledger.ContextWithClaimHolder(context.Background(), "holder")
 	if err := repo.ClaimRun(membersCtx, run, "holder"); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestCancelOrTombstoneMember_SlowWorkerReportsPendingNotBlocked(t *testing.T
 	})
 	panel, repo, _, run, attempt := panelCancelFixture(t, handler)
 
-	membersCtx := ContextWithClaimHolder(context.Background(), "holder")
+	membersCtx := ledger.ContextWithClaimHolder(context.Background(), "holder")
 	if err := repo.ClaimRun(membersCtx, run, "holder"); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func (r *joinAsRecoveredRaceCoordinator) JoinAsRecovered(ctx context.Context, re
 // instances sharing one durable ledger (a stale forward dispatcher and the
 // canceler), plus an admitted 2-member panel attempt, for tests that need to
 // race a concurrent forward admission against a cancel call.
-func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner *coordinator.Coordinator, repo *StorageRepository, run string, attempt StepAttempt) {
+func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner *coordinator.Coordinator, repo *ledger.StorageRepository, run string, attempt ledger.StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
 	for _, name := range []string{"member-0", "member-1", "synthesis"} {
@@ -327,7 +328,7 @@ func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forw
 	if err := repo.CreateRun(ctx, snap, raw); err != nil {
 		t.Fatal(err)
 	}
-	attempt = StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
+	attempt = ledger.StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
 	storePanelExecution(t, repo, attempt.PanelExecution)
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
@@ -365,7 +366,7 @@ func TestCancelOrTombstoneMember_ConcurrentAdmissionWinnerIsNotFalselyTerminal(t
 		// Never-admitted member: a concurrent forward dispatcher wins the
 		// admission race for the same idempotency key right after this
 		// method observed ErrNotFound.
-		h, err := forwardDispatcher.EnsureSingleTaskRun(ContextWithPanelChildPrincipal(context.Background(), run), req)
+		h, err := forwardDispatcher.EnsureSingleTaskRun(ledger.ContextWithPanelChildPrincipal(context.Background(), run), req)
 		if err != nil {
 			t.Fatalf("concurrent forward dispatch error = %v", err)
 		}

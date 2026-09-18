@@ -1,4 +1,4 @@
-package ledger
+package panel
 
 import (
 	"context"
@@ -13,12 +13,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // panelRepo is the consumer-side subset of the ledger the panel
 // coordinator reads attempts from and claims runs with.
 type panelRepo interface {
-	GetStepAttempt(ctx context.Context, runID, attemptID string) (StepAttempt, error)
+	GetStepAttempt(ctx context.Context, runID, attemptID string) (ledger.StepAttempt, error)
 	ClaimRun(ctx context.Context, runID, holder string) error
 	ReleaseRun(ctx context.Context, runID, holder string) error
 	LoadContent(ctx context.Context, ref string) ([]byte, error)
@@ -58,7 +59,7 @@ func (p PanelCoordinator) MemberNeedsActorPermit(ctx context.Context, attemptID,
 	if err != nil {
 		return false, err
 	}
-	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseMembersAdmitted); err != nil {
+	if err := p.requireRunnablePhase(ctx, attemptID, ledger.PanelPhaseMembersAdmitted); err != nil {
 		return false, err
 	}
 	req, err := p.request(ctx, member.CoordinatorRunID, member.TaskID, member.Work, false)
@@ -77,7 +78,7 @@ func NewPanelCoordinator(workflowRunID string, inner PanelChildCoordinator, repo
 }
 
 func (p PanelCoordinator) childContext(ctx context.Context) context.Context {
-	return ContextWithPanelChildPrincipal(ctx, p.workflowRunID)
+	return ledger.ContextWithPanelChildPrincipal(ctx, p.workflowRunID)
 }
 
 func (p PanelCoordinator) EnsureMember(ctx context.Context, attemptID, memberID string) (*coordinator.RunHandle, error) {
@@ -85,7 +86,7 @@ func (p PanelCoordinator) EnsureMember(ctx context.Context, attemptID, memberID 
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseMembersAdmitted); err != nil {
+	if err := p.requireRunnablePhase(ctx, attemptID, ledger.PanelPhaseMembersAdmitted); err != nil {
 		return nil, err
 	}
 	return p.ensure(ctx, member.CoordinatorRunID, member.TaskID, member.Work, false)
@@ -122,7 +123,7 @@ func (p PanelCoordinator) ResumeMember(ctx context.Context, attemptID, memberID 
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseMembersAdmitted); err != nil {
+	if err := p.requireRunnablePhase(ctx, attemptID, ledger.PanelPhaseMembersAdmitted); err != nil {
 		return nil, err
 	}
 	return p.resume(ctx, member.CoordinatorRunID, member.TaskID, member.Work)
@@ -141,7 +142,7 @@ func (p PanelCoordinator) EnsureSynthesis(ctx context.Context, attemptID string)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseSynthesisAdmitted); err != nil {
+	if err := p.requireRunnablePhase(ctx, attemptID, ledger.PanelPhaseSynthesisAdmitted); err != nil {
 		return nil, err
 	}
 	return p.ensure(ctx, runID, taskID, work, false)
@@ -171,7 +172,7 @@ func (p PanelCoordinator) ResumeSynthesis(ctx context.Context, attemptID string)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseSynthesisAdmitted); err != nil {
+	if err := p.requireRunnablePhase(ctx, attemptID, ledger.PanelPhaseSynthesisAdmitted); err != nil {
 		return nil, err
 	}
 	return p.resume(ctx, runID, taskID, work)
@@ -210,7 +211,7 @@ func (p PanelCoordinator) CancelOrTombstoneMember(ctx context.Context, attemptID
 func (p PanelCoordinator) CancelOrTombstoneSynthesis(ctx context.Context, attemptID string) (bool, error) {
 	runID, taskID, work, err := p.synthesis(ctx, attemptID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ledger.ErrNotFound) {
 			return true, nil
 		}
 		return false, err
@@ -242,7 +243,7 @@ func (p PanelCoordinator) requireTerminalPhaseOrAlreadyDone(ctx context.Context,
 	if getErr != nil {
 		return false, err
 	}
-	if IsTerminalAttemptStatus(attempt.Status) {
+	if ledger.IsTerminalAttemptStatus(attempt.Status) {
 		return true, nil
 	}
 	return false, err
@@ -268,7 +269,7 @@ func (p PanelCoordinator) requireTerminalPhaseOrAlreadyDone(ctx context.Context,
 // slow-worker signal (D15 item 5), not an ambiguous claim (item 6): it
 // reports (false, nil) so the caller records progress and reports
 // cancel_pending, distinct from a genuine ambiguous-claim refusal (false, err).
-func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID string, work PanelTaskSpec) (bool, error) {
+func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID string, work ledger.PanelTaskSpec) (bool, error) {
 	req, err := p.request(ctx, runID, taskID, work, true)
 	if err != nil {
 		return false, err
@@ -278,7 +279,7 @@ func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID s
 	if errors.Is(err, coordledger.ErrNotFound) {
 		// EnsureTerminalSingleTaskRun's own returned handle is not trustworthy
 		// on its own: if a concurrent forward dispatcher wins the admission
-		// race in the gap between JoinAsRecovered's ErrNotFound and this call,
+		// race in the gap between JoinAsRecovered's ledger.ErrNotFound and this call,
 		// it returns that dispatcher's live, non-terminal join handle with a
 		// nil error instead of our tombstone. Route it through the same
 		// Cancel call below as any other found handle so a live winner is
@@ -312,45 +313,45 @@ func isPanelCancelContention(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, coordledger.ErrConflict)
 }
 
-func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string) (PanelMemberExecution, error) {
+func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string) (ledger.PanelMemberExecution, error) {
 	if p.repo == nil {
-		return PanelMemberExecution{}, ErrNotFound
+		return ledger.PanelMemberExecution{}, ledger.ErrNotFound
 	}
 	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
 	if err != nil || attempt.PanelExecution == nil {
-		return PanelMemberExecution{}, ErrNotFound
+		return ledger.PanelMemberExecution{}, ledger.ErrNotFound
 	}
 	for _, member := range attempt.PanelExecution.Members {
 		if member.MemberID == memberID {
-			return member.clone(), nil
+			return member.Clone(), nil
 		}
 	}
-	return PanelMemberExecution{}, ErrNotFound
+	return ledger.PanelMemberExecution{}, ledger.ErrNotFound
 }
 
-func (p PanelCoordinator) synthesis(ctx context.Context, attemptID string) (string, string, PanelTaskSpec, error) {
+func (p PanelCoordinator) synthesis(ctx context.Context, attemptID string) (string, string, ledger.PanelTaskSpec, error) {
 	if p.repo == nil {
-		return "", "", PanelTaskSpec{}, ErrNotFound
+		return "", "", ledger.PanelTaskSpec{}, ledger.ErrNotFound
 	}
 	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
 	if err != nil || attempt.PanelExecution == nil || attempt.PanelExecution.Synthesis == nil {
-		return "", "", PanelTaskSpec{}, ErrNotFound
+		return "", "", ledger.PanelTaskSpec{}, ledger.ErrNotFound
 	}
-	return attempt.PanelExecution.SynthesisRunID, attempt.PanelExecution.SynthesisTaskID, attempt.PanelExecution.Synthesis.Work.clone(), nil
+	return attempt.PanelExecution.SynthesisRunID, attempt.PanelExecution.SynthesisTaskID, attempt.PanelExecution.Synthesis.Work.Clone(), nil
 }
 
-func (p PanelCoordinator) requireRunnablePhase(ctx context.Context, attemptID string, want PanelPhase) error {
+func (p PanelCoordinator) requireRunnablePhase(ctx context.Context, attemptID string, want ledger.PanelPhase) error {
 	if p.repo == nil {
-		return ErrNotFound
+		return ledger.ErrNotFound
 	}
 	if err := p.requireWorkflowClaim(ctx); err != nil {
 		return err
 	}
 	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
 	if err != nil || attempt.PanelExecution == nil {
-		return ErrNotFound
+		return ledger.ErrNotFound
 	}
-	if IsTerminalAttemptStatus(attempt.Status) || attempt.PanelExecution.Phase != want {
+	if ledger.IsTerminalAttemptStatus(attempt.Status) || attempt.PanelExecution.Phase != want {
 		return coordledger.ErrConflict
 	}
 	return nil
@@ -358,16 +359,16 @@ func (p PanelCoordinator) requireRunnablePhase(ctx context.Context, attemptID st
 
 func (p PanelCoordinator) requireTerminalPhase(ctx context.Context, attemptID string) error {
 	if p.repo == nil {
-		return ErrNotFound
+		return ledger.ErrNotFound
 	}
 	if err := p.requireWorkflowClaim(ctx); err != nil {
 		return err
 	}
 	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
 	if err != nil || attempt.PanelExecution == nil {
-		return ErrNotFound
+		return ledger.ErrNotFound
 	}
-	if IsTerminalAttemptStatus(attempt.Status) || attempt.PanelExecution.Phase != PanelPhaseCancelPending {
+	if ledger.IsTerminalAttemptStatus(attempt.Status) || attempt.PanelExecution.Phase != ledger.PanelPhaseCancelPending {
 		return coordledger.ErrConflict
 	}
 	return nil
@@ -377,14 +378,14 @@ func (p PanelCoordinator) requireTerminalPhase(ctx context.Context, attemptID st
 // this claim while it dispatches panel children, so a different controller
 // cannot change the panel phase between its phase check and child admission.
 func (p PanelCoordinator) requireWorkflowClaim(ctx context.Context) error {
-	holder, ok := claimHolderFromContext(ctx)
+	holder, ok := ledger.ClaimHolderFromContext(ctx)
 	if !ok {
-		return ErrClaimNotHeld
+		return ledger.ErrClaimNotHeld
 	}
 	return p.repo.ClaimRun(ctx, p.workflowRunID, holder)
 }
 
-func (p PanelCoordinator) ensure(ctx context.Context, runID, taskID string, work PanelTaskSpec, terminal bool) (*coordinator.RunHandle, error) {
+func (p PanelCoordinator) ensure(ctx context.Context, runID, taskID string, work ledger.PanelTaskSpec, terminal bool) (*coordinator.RunHandle, error) {
 	req, err := p.request(ctx, runID, taskID, work, terminal)
 	if err != nil {
 		return nil, err
@@ -396,7 +397,7 @@ func (p PanelCoordinator) ensure(ctx context.Context, runID, taskID string, work
 	return h, err
 }
 
-func (p PanelCoordinator) join(ctx context.Context, runID, taskID string, work PanelTaskSpec, handle *coordinator.RunHandle) (*coordinator.RunResult, error) {
+func (p PanelCoordinator) join(ctx context.Context, runID, taskID string, work ledger.PanelTaskSpec, handle *coordinator.RunHandle) (*coordinator.RunResult, error) {
 	if err := p.requireWorkflowClaim(ctx); err != nil {
 		return nil, err
 	}
@@ -409,7 +410,7 @@ func (p PanelCoordinator) join(ctx context.Context, runID, taskID string, work P
 	return p.inner.Join(p.childContext(ctx), handle)
 }
 
-func (p PanelCoordinator) resume(ctx context.Context, runID, taskID string, work PanelTaskSpec) (*coordinator.RunHandle, error) {
+func (p PanelCoordinator) resume(ctx context.Context, runID, taskID string, work ledger.PanelTaskSpec) (*coordinator.RunHandle, error) {
 	req, err := p.request(ctx, runID, taskID, work, false)
 	if err != nil {
 		return nil, err
@@ -419,7 +420,7 @@ func (p PanelCoordinator) resume(ctx context.Context, runID, taskID string, work
 	return h, err
 }
 
-func (p PanelCoordinator) cancel(ctx context.Context, runID, taskID string, work PanelTaskSpec, handle *coordinator.RunHandle) error {
+func (p PanelCoordinator) cancel(ctx context.Context, runID, taskID string, work ledger.PanelTaskSpec, handle *coordinator.RunHandle) error {
 	if err := p.requireWorkflowClaim(ctx); err != nil {
 		return err
 	}
@@ -432,11 +433,11 @@ func (p PanelCoordinator) cancel(ctx context.Context, runID, taskID string, work
 	return p.inner.Cancel(p.childContext(ctx), handle)
 }
 
-func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, work PanelTaskSpec, allowExpired bool) (coordinator.EnsureRunRequest, error) {
+func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, work ledger.PanelTaskSpec, allowExpired bool) (coordinator.EnsureRunRequest, error) {
 	if p.repo == nil {
 		return coordinator.EnsureRunRequest{}, fmt.Errorf("panel repository is nil")
 	}
-	if err := work.validateLegacy(); err != nil {
+	if err := work.ValidateLegacy(); err != nil {
 		return coordinator.EnsureRunRequest{}, err
 	}
 	if !allowExpired && !time.Now().Before(work.DeadlineAt) {
@@ -456,7 +457,7 @@ func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, wor
 
 func panelWorkContent(ctx context.Context, loader interface {
 	LoadContent(context.Context, string) ([]byte, error)
-}, work PanelTaskSpec) (json.RawMessage, map[string]any, map[string]any, error) {
+}, work ledger.PanelTaskSpec) (json.RawMessage, map[string]any, map[string]any, error) {
 	refs := []struct{ ref, digest string }{{work.InputRef, work.InputDigest}, {work.InputSchemaRef, work.InputSchemaDigest}, {work.OutputSchemaRef, work.OutputSchemaDigest}}
 	data := make([][]byte, len(refs))
 	for i, item := range refs {

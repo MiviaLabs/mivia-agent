@@ -181,7 +181,7 @@ The Coordinator interface is larger than a Spawn/Inspect/Join/Cancel summary sug
 - An ask/question registry for agent-to-agent and agent-to-host questions.
 - A messaging subsystem between concurrent runs.
 - Referral spawning, where one run can hand off work to spawn another.
-- `PanelCoordinator` (`internal/workflows/ledger`), which binds every panel child operation to persisted panel state; it does not itself execute panel fan-out or aggregation — the workflow controller drives fan-out and calls `ComputeHostVerdict` (see [Panel review steps](workflows.md#panel-review-steps)).
+- `PanelCoordinator` (`internal/workflows/panel`), which binds every panel child operation to persisted panel state; it does not itself execute panel fan-out or aggregation — the workflow controller drives fan-out and calls `ComputeHostVerdict` (see [Panel review steps](workflows.md#panel-review-steps)). The panel child coordinator and the panel content validation are the only panel code outside the workflow ledger's persistence package: `internal/workflows/panel` imports the ledger for the durable panel types, and the ledger never imports the coordinator or subagent runtime.
 
 `Spawn` also enforces idempotency scoping and conflict detection. A caller-supplied scope key (`scopedKey`) colliding with a different in-flight or completed run's inputs fails closed with `ErrIdempotencyConflict`. The run is never silently reused or duplicated.
 

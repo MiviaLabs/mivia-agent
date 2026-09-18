@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -49,7 +50,7 @@ func TestEngineStartNewFailureRemovesFreshWorktree(t *testing.T) {
 	repo := &createRunFailingRepo{Repository: real, fail: errors.New("storage backend down (forced)")}
 	engine := newAdmissionTestEngine(repoRoot, repo, "wfr-startnew-leak")
 
-	_, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	_, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "build"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "storage backend down (forced)") {
@@ -108,7 +109,7 @@ func TestEngineStartRejectsDeliveryWithoutOriginLeavesNoWorktree(t *testing.T) {
 
 	repo := workflowledger.NewMemoryRepository()
 	engine := newAdmissionTestEngine(repoRoot, repo, "wfr-admission-leak")
-	_, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	_, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
 	})
 	if err == nil {
@@ -147,7 +148,7 @@ func TestEngineDeliveryActiveRefusesWithoutRunWorktree(t *testing.T) {
 
 		repo := workflowledger.NewMemoryRepository()
 		engine := newAdmissionTestEngine(repoRoot, repo, "wfr-deliver-no-wt")
-		_, err := engine.Start(context.Background(), workflowledger.StartRequest{
+		_, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 			Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
 		})
 		if err == nil || !strings.Contains(err.Error(), "delivery-active workflow cannot admit without a run worktree") {
@@ -167,7 +168,7 @@ func TestEngineDeliveryActiveRefusesWithoutRunWorktree(t *testing.T) {
 
 		repo := workflowledger.NewMemoryRepository()
 		engine := newAdmissionTestEngine(repoRoot, repo, "wfr-plain-no-wt")
-		started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+		started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 			Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 		})
 		if err != nil {
@@ -196,7 +197,7 @@ func TestEngineAdmissionHonorsPRBase(t *testing.T) {
 	t.Run("pr_base overrides the declared base at admission", func(t *testing.T) {
 		repo := workflowledger.NewMemoryRepository()
 		engine := newAdmissionTestEngine(repoRoot, repo, "wfr-pr-base")
-		started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+		started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 			Workflow: "deliver-to-dev", Inputs: map[string]any{"task": "x", "pr_base": "main"},
 		})
 		if err != nil {
@@ -218,7 +219,7 @@ func TestEngineAdmissionHonorsPRBase(t *testing.T) {
 	t.Run("declared base still governs without pr_base", func(t *testing.T) {
 		repo := workflowledger.NewMemoryRepository()
 		engine := newAdmissionTestEngine(repoRoot, repo, "wfr-declared-dev")
-		_, err := engine.Start(context.Background(), workflowledger.StartRequest{
+		_, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 			Workflow: "deliver-to-dev", Inputs: map[string]any{"task": "x"},
 		})
 		if err == nil {
@@ -236,7 +237,7 @@ func TestEngineAdmissionHonorsPRBase(t *testing.T) {
 		// base commit is not contained in dev, only in main).
 		repo := workflowledger.NewMemoryRepository()
 		engine := newAdmissionTestEngine(repoRoot, repo, "wfr-invalid-prbase")
-		_, err := engine.Start(context.Background(), workflowledger.StartRequest{
+		_, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 			Workflow: "deliver-to-dev", Inputs: map[string]any{"task": "x", "pr_base": "-bad/name"},
 		})
 		if err == nil {

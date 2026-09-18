@@ -1,29 +1,30 @@
-package ledger_test
+package agenttools_test
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
 
+	agenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 type recordingEngine struct {
-	started []ledger.StartRequest
+	started []agenttools.StartRequest
 }
 
-func (e *recordingEngine) Start(_ context.Context, req ledger.StartRequest) (ledger.StartResult, error) {
+func (e *recordingEngine) Start(_ context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
 	e.started = append(e.started, req)
-	return ledger.StartResult{RunID: "wfr-rec", Status: "running"}, nil
+	return agenttools.StartResult{RunID: "wfr-rec", Status: "running"}, nil
 }
-func (e *recordingEngine) Cancel(context.Context, string) (ledger.CancelResult, error) {
-	return ledger.CancelResult{}, nil
+func (e *recordingEngine) Cancel(context.Context, string) (agenttools.CancelResult, error) {
+	return agenttools.CancelResult{}, nil
 }
-func (e *recordingEngine) Deliver(context.Context, string, bool) (ledger.DeliverResult, error) {
-	return ledger.DeliverResult{}, nil
+func (e *recordingEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
+	return agenttools.DeliverResult{}, nil
 }
-func (e *recordingEngine) Delete(context.Context, string, bool) (ledger.DeleteResult, error) {
-	return ledger.DeleteResult{}, nil
+func (e *recordingEngine) Delete(context.Context, string, bool) (agenttools.DeleteResult, error) {
+	return agenttools.DeleteResult{}, nil
 }
 
 // TestRunToolPreservesLargeIntegerInputs pins that workflow_run decodes inputs
@@ -33,7 +34,7 @@ func (e *recordingEngine) Delete(context.Context, string, bool) (ledger.DeleteRe
 func TestRunToolPreservesLargeIntegerInputs(t *testing.T) {
 	engine := &recordingEngine{}
 	svc := testService(t, ledger.NewMemoryRepository(), engine)
-	if _, err := findTool(t, svc, ledger.ToolWorkflowRun).Execute(
+	if _, err := findTool(t, svc, agenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"w","inputs":{"n":9007199254740993}}`)); err != nil {
 		t.Fatal(err)
 	}

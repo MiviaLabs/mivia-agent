@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -189,7 +190,7 @@ func TestEngineStartCreatesRunWorktreeAndDelivers(t *testing.T) {
 		NewRunID: func() string { return "wfr-test" },
 		PR:       pr,
 	}
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
 	})
 	if err != nil {
@@ -263,7 +264,7 @@ func TestEngineStartRejectsDeliveryWithoutOrigin(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-no-origin" },
 	}
-	_, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	_, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
 	})
 	if err == nil {
@@ -303,7 +304,7 @@ func TestEngineResumeRefusesMissingRunWorktree(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-test" },
 	}
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 	})
 	if err != nil {
@@ -327,7 +328,7 @@ func TestEngineResumeRefusesMissingRunWorktree(t *testing.T) {
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, "workflow-wfr-test", "wf/"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = engine.Start(context.Background(), workflowledger.StartRequest{
+	_, err = engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Resume: true, RunID: started.RunID, Force: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "unfinished edits cannot be recovered") {

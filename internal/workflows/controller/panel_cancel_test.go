@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 func panelCancelReconcileFixture(t *testing.T, memberReport, synthesisOutput string) (*LinearController, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.StepAttempt, context.Context) {
@@ -48,7 +49,7 @@ func panelCancelReconcileFixture(t *testing.T, memberReport, synthesisOutput str
 func TestReconcilePanelCancellation_MembersAdmittedNeverDispatchedTombstonesAll(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
 
 	updated, allTerminal, err := ReconcilePanelCancellation(ctx, repo, panel, ctrl.RunID, ctrl.Holder, attempt.AttemptID)
 	if err != nil {
@@ -74,7 +75,7 @@ func TestReconcilePanelCancellation_MembersAdmittedNeverDispatchedTombstonesAll(
 func TestReconcilePanelCancellation_AlreadyTerminalAttemptIsNoOp(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
 
 	outcome := workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusFailed}
 	if err := repo.CompleteStepAttempt(ctx, ctrl.RunID, attempt.AttemptID, attempt.Version, outcome); err != nil {
@@ -97,7 +98,7 @@ func TestReconcilePanelCancellation_AlreadyTerminalAttemptIsNoOp(t *testing.T) {
 func TestReconcilePanelCancellation_MissingClaimHolderFails(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
 
 	if _, _, err := ReconcilePanelCancellation(ctx, repo, panel, ctrl.RunID, "", attempt.AttemptID); !errors.Is(err, workflowledger.ErrClaimNotHeld) {
 		t.Fatalf("error = %v, want ErrClaimNotHeld", err)
@@ -123,7 +124,7 @@ func TestReconcilePanelCancellation_RetryExhaustionReportsErrCancelBlocked(t *te
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	stuck := &alwaysConflictPanelPhaseRepository{Repository: repo}
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, stuck)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, stuck)
 
 	_, allTerminal, err := ReconcilePanelCancellation(ctx, stuck, panel, ctrl.RunID, ctrl.Holder, attempt.AttemptID)
 	if allTerminal {
@@ -164,7 +165,7 @@ func TestReconcilePanelCancellation_ClaimHeldOnPhaseWriteReportsErrCancelBlocked
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	takenOver := &claimHeldOnPanelPhaseWriteRepository{Repository: repo}
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, takenOver)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, takenOver)
 
 	_, allTerminal, err := ReconcilePanelCancellation(ctx, takenOver, panel, ctrl.RunID, ctrl.Holder, attempt.AttemptID)
 	if allTerminal {
@@ -223,7 +224,7 @@ func TestReconcilePanelCancellation_RetriesAfterLostCAS(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
 	conflicting := &conflictingPanelPhaseRepository{Repository: repo}
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, conflicting)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, conflicting)
 
 	updated, allTerminal, err := ReconcilePanelCancellation(ctx, conflicting, panel, ctrl.RunID, ctrl.Holder, attempt.AttemptID)
 	if err != nil {

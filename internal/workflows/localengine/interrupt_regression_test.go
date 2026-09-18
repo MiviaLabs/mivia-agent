@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -176,9 +177,9 @@ func newInterruptFenceEngine(t *testing.T) (*localengine.Engine, *interruptGateR
 	return engine, gate, block, entered
 }
 
-func startInterruptFenceRun(t *testing.T, engine *localengine.Engine, entered chan struct{}, cycle int) workflowledger.StartResult {
+func startInterruptFenceRun(t *testing.T, engine *localengine.Engine, entered chan struct{}, cycle int) workflowagenttools.StartResult {
 	t.Helper()
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})
@@ -204,7 +205,7 @@ func getRunInterrupt(t *testing.T, repo workflowledger.Repository, runID string,
 
 func resumeAndSucceed(t *testing.T, engine *localengine.Engine, gate *interruptGateRepository, runID string, cycle int) {
 	t.Helper()
-	resumed, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	resumed, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		RunID: runID, Resume: true, Force: true,
 	})
 	if err != nil {
@@ -244,7 +245,7 @@ func TestInterruptStopsControllerAfterAttemptPersistenceError(t *testing.T) {
 			return runner
 		},
 	}
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})
@@ -288,7 +289,7 @@ func TestInterruptStopsControllerBeforeClaimRelease(t *testing.T) {
 			return runner
 		},
 	}
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})
@@ -335,7 +336,7 @@ func TestInterruptBlocksResumeDuringClaimCleanup(t *testing.T) {
 			return &localengine.StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
 		},
 	}
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})
@@ -354,7 +355,7 @@ func TestInterruptBlocksResumeDuringClaimCleanup(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Interrupt did not start claim cleanup")
 	}
-	_, err = engine.Start(context.Background(), workflowledger.StartRequest{
+	_, err = engine.Start(context.Background(), workflowagenttools.StartRequest{
 		RunID:  started.RunID,
 		Resume: true,
 		Force:  true,
@@ -389,7 +390,7 @@ func TestInterruptRefusesForeignActiveRun(t *testing.T) {
 			return &localengine.StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
 		},
 	}
-	started, err := owner.Start(context.Background(), workflowledger.StartRequest{
+	started, err := owner.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})
@@ -462,7 +463,7 @@ func TestInterruptDoesNotStripForeignResumeClaim(t *testing.T) {
 			return runner
 		},
 	}
-	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
+	started, err := engine.Start(context.Background(), workflowagenttools.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "x"},
 	})

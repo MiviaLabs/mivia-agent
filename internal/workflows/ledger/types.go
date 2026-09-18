@@ -234,7 +234,7 @@ func (s StepAttempt) Clone() StepAttempt {
 	clone.Executions = cloneStepExecutions(s.Executions)
 	clone.DecisionJSON = append([]byte(nil), s.DecisionJSON...)
 	clone.EvidenceJSON = append([]byte(nil), s.EvidenceJSON...)
-	clone.PanelExecution = s.PanelExecution.clone()
+	clone.PanelExecution = s.PanelExecution.Clone()
 	if s.FinishedAt != nil {
 		t := *s.FinishedAt
 		clone.FinishedAt = &t

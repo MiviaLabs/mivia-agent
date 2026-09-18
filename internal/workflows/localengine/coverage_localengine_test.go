@@ -10,6 +10,7 @@ import (
 	"context"
 	"testing"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 )
@@ -53,7 +54,7 @@ func TestResumeExistingInvocationShortCircuitsOnTerminal(t *testing.T) {
 		if _, didResume, err := (&localengine.Engine{}).ResumeExistingInvocationForTest(
 			context.Background(),
 			workflowledger.RunSnapshot{RunID: "r", Status: status},
-			workflowledger.StartRequest{},
+			workflowagenttools.StartRequest{},
 		); didResume || err != nil {
 			t.Errorf("ResumeExistingInvocationForTest(%v) = (didResume=%v, err=%v); want short-circuit",
 				status, didResume, err)
@@ -70,7 +71,7 @@ func TestResumeExistingInvocationShortCircuitsWhenActive(t *testing.T) {
 	if _, didResume, err := e.ResumeExistingInvocationForTest(
 		context.Background(),
 		workflowledger.RunSnapshot{RunID: "run-y", Status: workflowledger.RunStatusRunning},
-		workflowledger.StartRequest{},
+		workflowagenttools.StartRequest{},
 	); didResume || err != nil {
 		t.Errorf("ResumeExistingInvocationForTest(active) = (didResume=%v, err=%v); want short-circuit",
 			didResume, err)
@@ -88,7 +89,7 @@ func TestResumeExistingInvocationCallsResume(t *testing.T) {
 	res, didResume, err := e.ResumeExistingInvocationForTest(
 		context.Background(),
 		workflowledger.RunSnapshot{RunID: "run-z", Status: workflowledger.RunStatusRunning},
-		workflowledger.StartRequest{Force: true, AllowPublish: true},
+		workflowagenttools.StartRequest{Force: true, AllowPublish: true},
 	)
 	if !didResume {
 		t.Errorf("ResumeExistingInvocationForTest(non-terminal, non-active) = didResume=false; want true")
