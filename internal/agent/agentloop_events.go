@@ -1,4 +1,4 @@
-// Package agent - event translation for the SDK-backed loop.
+// event translation for the SDK-backed loop.
 //
 // The SDK loop publishes lifecycle events onto an events.Bus (name +
 // string data); the CLI loop fans agent.Event values out to the
@@ -16,6 +16,7 @@
 // and cache usage, calibration deltas and tool_parallel, which nothing
 // on the CLI surface consumes from this bridge. EventAssistant is
 // bridged as a content-free completion flag; see the subscription below.
+
 package agent
 
 import (

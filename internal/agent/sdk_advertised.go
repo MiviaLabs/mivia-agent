@@ -1,4 +1,4 @@
-// Package agent - pinned advertised-tool-union carrier for the SDK
+// pinned advertised-tool-union carrier for the SDK
 // backend. See sdk_advertised_test.go for the pinned contracts.
 
 package agent

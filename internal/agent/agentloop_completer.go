@@ -1,4 +1,4 @@
-// Package agent - completer adapter for the SDK-backed inner loop.
+// completer adapter for the SDK-backed inner loop.
 //
 // agentLoopCompleter adapts an internal/provider.Completer (CLI shape)
 // to the mivia-ai-sdk/provider.Completer shape so the SDK-backed
@@ -11,6 +11,7 @@
 // single content chunk followed by one terminal chunk. True
 // streaming and request-shape translation are tracked as
 // follow-ups; the dispatcher gates them on commit 3.
+
 package agent
 
 import (

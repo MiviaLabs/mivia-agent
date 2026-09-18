@@ -1,4 +1,4 @@
-// Package agent - the SDK ContinueOnStop hook carrying this repo's two
+// the SDK ContinueOnStop hook carrying this repo's two
 // stop-time continuation policies.
 //
 // Two host policies re-drive a turn that the SDK loop stopped gracefully:

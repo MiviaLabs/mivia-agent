@@ -1,4 +1,3 @@
-// Package provider implements LLM chat adapters for mivia.
 package provider
 
 import (

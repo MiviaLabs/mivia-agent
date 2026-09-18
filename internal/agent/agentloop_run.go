@@ -1,4 +1,4 @@
-// Package agent - SDK agent-loop run driver.
+// SDK agent-loop run driver.
 //
 // RunAgentLoopOnce drives the SDK's mivia-ai-sdk/agentloop.Loop (built
 // by agentloop_adapter.go's buildAgentLoopOptions) for one turn: it
@@ -6,6 +6,7 @@
 // the prompt-too-long recovery retry, and returns the SDK Result. It
 // is ADDITIVE: the legacy (*Loop).Run in loop.go is unchanged, and the
 // dispatcher's "sdk" branch (loop_dispatch.go) chooses the runtime.
+
 package agent
 
 import (

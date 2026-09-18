@@ -1,4 +1,4 @@
-// Package agent - adoption slices for the SDK loop's own knobs.
+// adoption slices for the SDK loop's own knobs.
 //
 // Each adopt* function sets one row of the adoption table
 // (docs/development/sdk-backend-field-mapping.md): a knob the SDK
@@ -6,6 +6,7 @@
 // host-side counterpart of. Setting the field here keeps the
 // projection in one place, and the tests in agentloop_adapter_test.go
 // pin every row so a future edit cannot silently drop one.
+
 package agent
 
 import (
