@@ -734,6 +734,14 @@ func TestGapMarkMergedChunksWithMergedPROracle(t *testing.T) {
 		t.Fatal(err)
 	}
 	gapsSeedStackRun(t, repo, "stack-gap", "c4", workflowledger.RunStatusSucceeded, "https://github.com/acme/widgets")
+	// Durable pushed evidence: the deliverer writes a pushed record with the
+	// commit SHA before the PR can exist, and the merge oracle requires it.
+	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{
+		RunID: workflowledger.InvocationRunID("stack-gap:c4"), IdempotencyKey: "d4",
+		Status: "pushed", CommitSHA: "beef0001", HeadRef: "wf/workflow-" + workflowledger.InvocationRunID("stack-gap:c4"),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	e := &Engine{Repo: repo, PR: gapsMergedPR{}}
 	byID, err := delivery.TaskMap(context.Background(), ledgerStore, "stack-gap")
 	if err != nil {
