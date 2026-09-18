@@ -53,7 +53,7 @@ func TestInspectViewPagingRoundTrip(t *testing.T) {
 		Attempt:           2,
 		Status:            "succeeded",
 		CoordinatorRunID:  "coord-1",
-		TaskID:            "task-1",
+		TaskID:            "ta[redacted]",
 		Output:            map[string]any{"verdict": "ok"},
 		OutputRef:         "sha256:out",
 		OutputDigest:      "outdigest",
@@ -130,4 +130,29 @@ func TestEmptyInspectViewOmitsPagingFields(t *testing.T) {
 			t.Fatalf("empty page unexpectedly included %q: %s", key, raw)
 		}
 	}
+}
+
+// TestAllToolNamesAndUnsetRepo pins the stable tool-name order and the
+// unset-repository factory's fail-closed contract (the coverage gate flagged
+// both as changed-but-unexercised after the agenttools split).
+func TestAllToolNamesAndUnsetRepo(t *testing.T) {
+	want := []string{
+		agenttools.ToolWorkflowRun, agenttools.ToolWorkflowStatus,
+		agenttools.ToolWorkflowEvents, agenttools.ToolWorkflowInspect,
+		agenttools.ToolWorkflowListRuns, agenttools.ToolWorkflowDeliver,
+		agenttools.ToolWorkflowCancel, agenttools.ToolWorkflowDelete,
+	}
+	got := agenttools.AllToolNames()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("AllToolNames() = %v, want %v", got, want)
+	}
+
+	repo, closer, err := agenttools.UnsetRepoFactory(nil)
+	if repo != nil || closer == nil {
+		t.Fatalf("UnsetRepoFactory repo = %v, closer nil = %v", repo != nil, closer == nil)
+	}
+	if err != agenttools.ErrRepoUnset {
+		t.Fatalf("UnsetRepoFactory error = %v, want ErrRepoUnset", err)
+	}
+	closer()
 }

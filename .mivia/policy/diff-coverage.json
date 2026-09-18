@@ -181,6 +181,24 @@
       ],
       "reason": "buildAgentScopedSurface's LoadSessionSkills error check, same unreachable class as the accepted attach_rebuilt_surface.go 62-64 entry: LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error, so LoadSessionSkills can never return a non-nil error for this check to catch."
     },
+    "internal/workflows/localengine/engine_resume.go": {
+      "lines": [
+        38
+      ],
+      "reason": "resume's not-resumable guard is dead by the status partition: the two branches above already return for delivery_pending, delivery_failed, and every IsTerminalRunStatus (succeeded/failed/canceled/timed_out/delivery_failed), and IsResumableRunStatus (ledger/types.go) returns true for exactly the only statuses left - pending, running, waiting_approval. Every RunStatus value is therefore handled by an earlier return, so this guard can never fire. Reachability proof by exhaustive status check, not an ACCEPTED UNTESTED grant."
+    },
+    "internal/workflows/localengine/engine.go": {
+      "lines": [
+        183
+      ],
+      "reason": "startNew's SetAdmission error return is unreachable: LinearController.SetAdmission (controller/linear.go) fails only when c.started is already true, and the ctrl handed to it is freshly constructed by buildNewController on the startNew path, so started is always false here. Same defensive-double-check class as the chatsync/reconcile.go entry."
+    },
+    "internal/workflows/agenttools/service.go": {
+      "lines": [
+        293
+      ],
+      "reason": "inspectWithinBudget's json.Marshal(view) error wrap. InspectView contains only strings, ints, maps, slices, and pointers of those (ledger types.go); encoding/json cannot fail on that shape - it escapes invalid UTF-8 in strings rather than erroring. Same unreachable-error class as the accepted json.Marshal([]string) entries (chatsync/delivered_ledger.go 49-50)."
+    },
     "internal/cli/agents/markdown_store.go": {
       "lines": [
         276,

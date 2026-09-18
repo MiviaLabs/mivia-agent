@@ -15,6 +15,7 @@ import (
 // the concrete storage repository.
 type fakePanelRepo struct {
 	attempt ledger.StepAttempt
+	content map[string][]byte
 	claims  []string
 }
 
@@ -32,8 +33,12 @@ func (f *fakePanelRepo) ClaimRun(_ context.Context, _, holder string) error {
 
 func (f *fakePanelRepo) ReleaseRun(context.Context, string, string) error { return nil }
 
-func (f *fakePanelRepo) LoadContent(context.Context, string) ([]byte, error) {
-	return nil, errors.New("not implemented")
+func (f *fakePanelRepo) LoadContent(_ context.Context, ref string) ([]byte, error) {
+	value, ok := f.content[ref]
+	if !ok {
+		return nil, errors.New("not implemented")
+	}
+	return value, nil
 }
 
 // TestPanelCoordinatorWorksWithFakeRepo pins that the coordinator reads
