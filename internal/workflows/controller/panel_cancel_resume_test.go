@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // Cancellation matrix item 10: resume from cancel_pending repairs a crash
@@ -385,7 +386,7 @@ func twoCoordinatorPanelFixture(t *testing.T, blockingRelease <-chan struct{}) (
 	// a still-alive different executor. ctrlCoord (the workflow controller's
 	// own coordinator) shares the same durable ledger but has no in-process
 	// handle for that child.
-	otherPanel := workflowledger.NewPanelCoordinator(ctrl.RunID, otherCoord, repo)
+	otherPanel := workflowpanel.NewPanelCoordinator(ctrl.RunID, otherCoord, repo)
 	handle, err := otherPanel.EnsureMember(ctx, attempt.AttemptID, "security")
 	if err != nil {
 		t.Fatalf("EnsureMember() error = %v", err)

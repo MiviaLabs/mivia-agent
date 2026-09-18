@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // Cancellation matrix item 1: cancel before member dispatch creates no
@@ -71,7 +72,7 @@ func TestCancelRunWithAttemptsWithClaim_PanelRequiresCoordinator(t *testing.T) {
 func TestCancelRunWithAttemptsWithClaim_PanelCancelsLiveMember(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
 
 	handle, err := panel.EnsureMember(ctx, attempt.AttemptID, "security")
 	if err != nil {

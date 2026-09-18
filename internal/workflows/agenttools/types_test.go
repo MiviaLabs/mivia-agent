@@ -1,4 +1,4 @@
-package ledger_test
+package agenttools_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	agenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -17,7 +18,7 @@ import (
 // "name is too long" (that rejection contract is pinned by vcs tests).
 func TestInvocationRunIDFitsWorktreeNameLimit(t *testing.T) {
 	for _, k := range []string{"", "request-1", strings.Repeat("x", 4096)} {
-		runID := ledger.InvocationRunID(k)
+		runID := agenttools.InvocationRunID(k)
 		if got, want := len(runID), len("wfr-inv-")+32; got != want {
 			t.Fatalf("InvocationRunID(%q) length = %d, want %d", k, got, want)
 		}

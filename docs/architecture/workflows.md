@@ -42,6 +42,13 @@ Stack step synthesis (injecting `decompose` and `chunk_plan_validate` steps, res
 
 ## Runtime design
 
+The durable workflow state lives in `internal/workflows/ledger`: the workflow repository, the generic task ledger, and the observability views. Two sibling packages depend on it, never the reverse:
+
+- `internal/workflows/panel` owns the panel child coordinator and the panel content validation; it registers the validation into the ledger at init, and the ledger fails closed when no validator is registered.
+- `internal/workflows/agenttools` owns the eight `workflow_*` tools, their shared `Service`, and the `Engine` seam for mutations.
+
+`internal/workflows/ledger` imports neither the coordinator nor the subagent runtime; the import-layer policy denies both edges.
+
 Later phases persist an immutable run snapshot and separate projections for runs, numbered step attempts, transition decisions, loop counters, approvals, and deliveries. State mutation uses optimistic version compare-and-set. The controller records a selected transition and its explanation before dispatching the next state.
 
 Agent steps are adapted to one existing coordinator task. The adapter preserves existing agent scope, retries, cancellation, heartbeats, task routing, and recovery. Gates route only on typed evidence.

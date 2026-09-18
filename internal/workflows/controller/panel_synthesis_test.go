@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // fixedOutputHandler always returns the same raw JSON, regardless of input.
@@ -135,7 +136,7 @@ func driveAdvancePanelSynthesis(t *testing.T, ctrl *LinearController, repo Ledge
 		t.Fatalf("GetStepAttempt() error = %v", err)
 	}
 	runner := ctrl.Runner.(*CoordinatorRunner)
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, repo)
 	members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
 	for i, member := range attempt.PanelExecution.Members {
 		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
@@ -216,7 +217,7 @@ func TestAdvancePanelSynthesis_ReentrySkipsPhaseTransition(t *testing.T) {
 // commits, before EnsureSynthesis/JoinSynthesis ran. It reloads the attempt
 // into the exact nonterminal, synthesis_admitted state a real resume would
 // see, so a caller can then re-enter advancePanelSynthesis from there.
-func driveToSynthesisAdmitted(t *testing.T, ctx context.Context, ctrl *LinearController, repo workflowledger.Repository, step definition.Step) (workflowledger.RunSnapshot, workflowledger.StepAttempt, workflowledger.PanelCoordinator, PanelMembersResult) {
+func driveToSynthesisAdmitted(t *testing.T, ctx context.Context, ctrl *LinearController, repo workflowledger.Repository, step definition.Step) (workflowledger.RunSnapshot, workflowledger.StepAttempt, workflowpanel.PanelCoordinator, PanelMembersResult) {
 	t.Helper()
 	if err := ctrl.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -249,7 +250,7 @@ func driveToSynthesisAdmitted(t *testing.T, ctx context.Context, ctrl *LinearCon
 		t.Fatal(err)
 	}
 	runnerX := ctrl.Runner.(*CoordinatorRunner)
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runnerX.Coordinator, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, runnerX.Coordinator, repo)
 	members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
 	for i, m := range attempt.PanelExecution.Members {
 		members[i] = PanelMemberRequest{MemberID: m.MemberID, RunID: m.CoordinatorRunID}

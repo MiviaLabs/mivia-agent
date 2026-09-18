@@ -19,9 +19,9 @@ func (s PanelTaskSpec) Validate() error {
 	return s.validate(false)
 }
 
-// validateLegacy accepts an event written before work fingerprints existed.
+// ValidateLegacy accepts an event written before work fingerprints existed.
 // It still validates every other durable field. New admissions use Validate.
-func (s PanelTaskSpec) validateLegacy() error {
+func (s PanelTaskSpec) ValidateLegacy() error {
 	return s.validate(true)
 }
 
@@ -56,15 +56,15 @@ func (s PanelTaskSpec) validate(allowMissingWorkFingerprint bool) error {
 	if !s.Policy.NoRetry || !s.Policy.FailInterrupted || s.Policy.RetryMaxRetries != 0 || s.Policy.RetryBaseBackoff != 0 || s.Policy.RetryMaxBackoff != 0 || s.Policy.RetryBackoffFactor != 0 || s.Policy.RetryJitterFraction != 0 {
 		return fmt.Errorf("panel task policy must disable retries and fail interruptions")
 	}
-	if s.WorkFingerprint != "" && s.WorkFingerprint != s.workFingerprint() {
+	if s.WorkFingerprint != "" && s.WorkFingerprint != s.WorkFingerprintValue() {
 		return fmt.Errorf("invalid panel work fingerprint")
 	}
 	return nil
 }
 
-// workFingerprint covers durable work fields that the coordinator task model
+// WorkFingerprintValue covers durable work fields that the coordinator task model
 // does not carry, such as limits and the absolute deadline.
-func (s PanelTaskSpec) workFingerprint() string {
+func (s PanelTaskSpec) WorkFingerprintValue() string {
 	type work struct {
 		TaskName, InputRef, InputDigest, InputSchemaRef, InputSchemaDigest string
 		Budget                                                             int
@@ -92,7 +92,7 @@ func (s PanelTaskSpec) workFingerprint() string {
 // FinalizePanelTaskSpec records the fingerprint of the durable work fields.
 func FinalizePanelTaskSpec(spec *PanelTaskSpec) {
 	if spec != nil {
-		spec.WorkFingerprint = spec.workFingerprint()
+		spec.WorkFingerprint = spec.WorkFingerprintValue()
 	}
 }
 
@@ -183,7 +183,7 @@ type PanelTaskSpec struct {
 	CoordinatorRequestFingerprint string          `json:"coordinator_request_fingerprint"`
 }
 
-func (s PanelTaskSpec) clone() PanelTaskSpec {
+func (s PanelTaskSpec) Clone() PanelTaskSpec {
 	s.DependsOn = append([]string(nil), s.DependsOn...)
 	return s
 }
@@ -197,8 +197,8 @@ type PanelMemberExecution struct {
 	Order            int           `json:"order"`
 }
 
-func (m PanelMemberExecution) clone() PanelMemberExecution {
-	m.Work = m.Work.clone()
+func (m PanelMemberExecution) Clone() PanelMemberExecution {
+	m.Work = m.Work.Clone()
 	return m
 }
 
@@ -207,12 +207,12 @@ type PanelSynthesisExecution struct {
 	Work PanelTaskSpec `json:"work"`
 }
 
-func (s *PanelSynthesisExecution) clone() *PanelSynthesisExecution {
+func (s *PanelSynthesisExecution) Clone() *PanelSynthesisExecution {
 	if s == nil {
 		return nil
 	}
 	clone := *s
-	clone.Work = s.Work.clone()
+	clone.Work = s.Work.Clone()
 	return &clone
 }
 
@@ -225,16 +225,16 @@ type PanelExecution struct {
 	Phase           PanelPhase               `json:"phase"`
 }
 
-func (p *PanelExecution) clone() *PanelExecution {
+func (p *PanelExecution) Clone() *PanelExecution {
 	if p == nil {
 		return nil
 	}
 	clone := *p
 	clone.Members = make([]PanelMemberExecution, len(p.Members))
 	for i := range p.Members {
-		clone.Members[i] = p.Members[i].clone()
+		clone.Members[i] = p.Members[i].Clone()
 	}
-	clone.Synthesis = p.Synthesis.clone()
+	clone.Synthesis = p.Synthesis.Clone()
 	return &clone
 }
 
@@ -262,7 +262,7 @@ func (p *PanelExecution) validateInitial(workflowRunID, attemptID string) error 
 			return fmt.Errorf("invalid panel member identity")
 		}
 		seen[member.MemberID] = struct{}{}
-		if err := member.Work.validateLegacy(); err != nil {
+		if err := member.Work.ValidateLegacy(); err != nil {
 			return err
 		}
 	}

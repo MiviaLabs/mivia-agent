@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -19,17 +19,17 @@ func installTestWorkflowBuilder(t *testing.T) {
 		if opts.Workspace != nil {
 			root = opts.Workspace.Abs
 		}
-		if !ledger.HasWorkflows(root) {
+		if !workflowagenttools.HasWorkflows(root) {
 			return nil
 		}
-		svc, err := ledger.NewService(ledger.ServiceOptions{
-			Repo: ledger.UnsetRepoFactory,
+		svc, err := workflowagenttools.NewService(workflowagenttools.ServiceOptions{
+			Repo: workflowagenttools.UnsetRepoFactory,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		out := make([]tools.Tool, 0, 8)
-		for _, inner := range ledger.Tools(svc) {
+		for _, inner := range workflowagenttools.Tools(svc) {
 			out = append(out, &testWorkflowTool{inner: inner})
 		}
 		return out
@@ -38,7 +38,7 @@ func installTestWorkflowBuilder(t *testing.T) {
 }
 
 type testWorkflowTool struct {
-	inner ledger.Tool
+	inner workflowagenttools.Tool
 }
 
 func (t *testWorkflowTool) Name() string               { return t.inner.Name() }
@@ -60,7 +60,7 @@ func TestWorkflowToolsRegisteredWhenWorkflowsDirExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	for _, name := range ledger.AllToolNames() {
+	for _, name := range workflowagenttools.AllToolNames() {
 		if _, ok := reg.Get(name); !ok {
 			t.Errorf("expected %s registered when workflows dir exists", name)
 		}
@@ -75,7 +75,7 @@ func TestWorkflowToolsAbsentWithoutWorkflowsDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	for _, name := range ledger.AllToolNames() {
+	for _, name := range workflowagenttools.AllToolNames() {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("did not expect %s without workflows dir", name)
 		}
@@ -93,7 +93,7 @@ func TestWorkflowToolSurfaceIsGeneric(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	for _, name := range ledger.AllToolNames() {
+	for _, name := range workflowagenttools.AllToolNames() {
 		tool, ok := reg.Get(name)
 		if !ok {
 			t.Fatalf("missing %s", name)

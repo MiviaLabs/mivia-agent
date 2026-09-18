@@ -25,7 +25,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 )
 
 // defaultTurnTimeout bounds a headless turn when Config.TurnTimeout was
@@ -327,18 +327,18 @@ func (s *Service) runWorkflowStep(ctx context.Context, automationID, runID strin
 	return nil
 }
 
-// newWorkflowStartRequest builds the workflowledger.StartRequest for one
+// newWorkflowStartRequest builds the workflowagenttools.StartRequest for one
 // StepWorkflow step. Factored out of runWorkflowStep so a test can assert
 // AllowPublish stays at its zero value (false) without needing a live
 // workflow engine to observe it - the "never set for StepWorkflow"
 // requirement is a property of the REQUEST this package builds, not of
 // the engine it hands the request to.
-func newWorkflowStartRequest(runID string, stepIndex int, step Step) workflowledger.StartRequest {
+func newWorkflowStartRequest(runID string, stepIndex int, step Step) workflowagenttools.StartRequest {
 	inputs := make(map[string]any, len(step.Inputs))
 	for k, v := range step.Inputs {
 		inputs[k] = v
 	}
-	return workflowledger.StartRequest{
+	return workflowagenttools.StartRequest{
 		Workflow:      step.Ref,
 		InvocationKey: runID + ":" + strconv.Itoa(stepIndex),
 		Inputs:        inputs,

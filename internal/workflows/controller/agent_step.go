@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // AgentStepRunner executes one workflow agent step through the coordinator.
@@ -202,7 +203,7 @@ type AgentStepResult struct {
 // stepCoordinator is this package's consumer-side view of a coordinator:
 // ensure (plain, single-task, terminal), inspect, join, and cancel child
 // runs - for both linear steps and panel children (the panel child subset is
-// workflowledger.PanelChildCoordinator). The full coordinator carries far
+// workflowpanel.PanelChildCoordinator). The full coordinator carries far
 // more; the controller depends on the subset, not the fat interface. The
 // real coordinator type satisfies it.
 type stepCoordinator interface {
@@ -217,10 +218,10 @@ type stepCoordinator interface {
 
 // Compile-time checks that the real coordinator satisfies the step subset,
 // and that the step subset covers the panel child subset the panel step path
-// hands to workflowledger.NewPanelCoordinator.
+// hands to workflowpanel.NewPanelCoordinator.
 var (
-	_ stepCoordinator                      = (*coordinator.Coordinator)(nil)
-	_ workflowledger.PanelChildCoordinator = (stepCoordinator)(nil)
+	_ stepCoordinator                     = (*coordinator.Coordinator)(nil)
+	_ workflowpanel.PanelChildCoordinator = (stepCoordinator)(nil)
 )
 
 // CoordinatorRunner is the production implementation of AgentStepRunner.

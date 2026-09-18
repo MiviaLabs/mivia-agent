@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"io"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // readOnlyWorkflowService opens root's workflow ledger and wraps it as an
-// workflowledger.Service with no Engine - only the read tools (list/status)
+// workflowagenttools.Service with no Engine - only the read tools (list/status)
 // work; any mutating call refuses via the Service's own nil-Engine guard.
 // This is the one-shot machine-readable read path a caller polling on an
 // interval (e.g. mivia-agent-desktop; see workflow_progress_bus.go's doc
@@ -18,12 +19,12 @@ import (
 // is this project's sanctioned way to observe runs from outside the TUI
 // process) uses, never to drive them. The returned close func must be
 // deferred by the caller.
-func readOnlyWorkflowService(root, configPath string) (*workflowledger.Service, func(), error) {
+func readOnlyWorkflowService(root, configPath string) (*workflowagenttools.Service, func(), error) {
 	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	svc, err := workflowledger.NewService(workflowledger.ServiceOptions{
+	svc, err := workflowagenttools.NewService(workflowagenttools.ServiceOptions{
 		Repo: func(context.Context) (workflowledger.Repository, func(), error) {
 			return repo, func() {}, nil
 		},

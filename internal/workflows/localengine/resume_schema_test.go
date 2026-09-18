@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -79,7 +80,7 @@ func TestStartNewFailsClosedOnMissingSchemaFile(t *testing.T) {
 		},
 	}
 	svc := mustService(t, engine, repo)
-	_, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
+	_, err := mustTool(t, svc, workflowagenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"schema-step","inputs":{"task":"build"}}`))
 	if err == nil {
 		t.Fatal("startNew with a missing output_schema file must fail closed")
@@ -178,14 +179,14 @@ status = "succeeded"
 
 // startSchemaStep starts a schema-step run through the tool path and returns
 // the admission result.
-func startSchemaStep(t *testing.T, svc *workflowledger.Service) workflowledger.StartResult {
+func startSchemaStep(t *testing.T, svc *workflowagenttools.Service) workflowagenttools.StartResult {
 	t.Helper()
-	out, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
+	out, err := mustTool(t, svc, workflowagenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"schema-step","inputs":{"task":"x"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var started workflowledger.StartResult
+	var started workflowagenttools.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func (r *schemaEnforcingRunner) RunStep(ctx context.Context, req controller.Agen
 // until the returned channel is closed, mirroring startBlockedTwoStep. The
 // runner enforces the step's output_schema like the production coordinator
 // runner does.
-func startBlockedSchemaStep(t *testing.T) (*localengine.Engine, workflowledger.Repository, *workflowledger.Service, workflowledger.StartResult, chan struct{}, chan struct{}) {
+func startBlockedSchemaStep(t *testing.T) (*localengine.Engine, workflowledger.Repository, *workflowagenttools.Service, workflowagenttools.StartResult, chan struct{}, chan struct{}) {
 	t.Helper()
 	root := writeSchemaStepWorkspace(t, "schemas/out.json", schemaStepSchema)
 	repo := workflowledger.NewMemoryRepository()

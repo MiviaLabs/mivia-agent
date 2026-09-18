@@ -1,15 +1,6 @@
-// Package tasks provides a generic, durable plan and task ledger (D8).
-//
-// One mechanism serves many scopes: sessions, workflow steps, agents,
-// workflows and runs all store plans and task statuses through the same API.
-// The engine stores, transitions and queries; consumers define their own
-// status vocabulary. Statuses are OPAQUE strings: this package never
-// interprets them, only validates non-empty and journals transitions.
-//
-// Durability: every mutation appends one event to a shared storage.Store
-// (the same primitive the workflow ledger builds on). The in-memory
-// projection is rebuilt from the event log on catch-up, so state survives
-// restarts and each mutation is atomic with its journal entry.
+// Task ledger types (D8): scopes, sentinel errors and payloads. The task
+// ledger shares this package's durability mechanism; see ledger.go for the
+// package overview.
 package ledger
 
 import (
