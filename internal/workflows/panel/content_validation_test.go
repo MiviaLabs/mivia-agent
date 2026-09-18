@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -78,10 +77,9 @@ func TestValidateTaskContentRejectsSchemaFailingInput(t *testing.T) {
 
 func TestValidateTaskContentRejectsFingerprintFromAnotherTask(t *testing.T) {
 	work, repo := storedTask(t, `{"input":"x"}`, `{"type":"object"}`, "task")
-	// The fingerprint was minted for task ID "content-other"; validating under
-	// a different task ID must fail the fingerprint comparison.
-	work.CoordinatorRequestFingerprint = fmt.Sprintf("sha256:%s", shaHex("other"))
-	if err := ValidateTaskContent(context.Background(), repo, "run", "task", work); err == nil {
-		t.Fatal("mismatched coordinator fingerprint must fail")
+	// panelTaskWithID minted the fingerprint for task ID "task"; validating
+	// the same content under a different task ID must fail the comparison.
+	if err := ValidateTaskContent(context.Background(), repo, "run", "other-task", work); err == nil {
+		t.Fatal("fingerprint minted for another task ID must fail")
 	}
 }

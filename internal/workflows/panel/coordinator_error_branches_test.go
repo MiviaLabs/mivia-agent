@@ -39,10 +39,11 @@ func TestPanelCoordinatorMissingAttemptRefuses(t *testing.T) {
 	if _, _, _, err := panel.synthesis(ctx, "a"); err == nil {
 		t.Fatal("synthesis(missing attempt) must fail")
 	}
-	if err := panel.requireRunnablePhase(ctx, "a", ledger.PanelPhaseMembersAdmitted); err == nil {
+	claimed := ledger.ContextWithClaimHolder(ctx, "holder")
+	if err := panel.requireRunnablePhase(claimed, "a", ledger.PanelPhaseMembersAdmitted); err == nil {
 		t.Fatal("requireRunnablePhase(missing attempt) must fail")
 	}
-	if err := panel.requireTerminalPhase(ctx, "a"); err == nil {
+	if err := panel.requireTerminalPhase(claimed, "a"); err == nil {
 		t.Fatal("requireTerminalPhase(missing attempt) must fail")
 	}
 	if _, err := panel.ResumeMember(ctx, "a", "m"); err == nil {

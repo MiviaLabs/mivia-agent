@@ -183,15 +183,17 @@
     },
     "internal/workflows/localengine/engine_resume.go": {
       "lines": [
+        37,
         38
       ],
-      "reason": "resume's not-resumable guard is dead by the status partition: the two branches above already return for delivery_pending, delivery_failed, and every IsTerminalRunStatus (succeeded/failed/canceled/timed_out/delivery_failed), and IsResumableRunStatus (ledger/types.go) returns true for exactly the only statuses left - pending, running, waiting_approval. Every RunStatus value is therefore handled by an earlier return, so this guard can never fire. Reachability proof by exhaustive status check, not an ACCEPTED UNTESTED grant."
+      "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
     },
     "internal/workflows/localengine/engine.go": {
       "lines": [
+        182,
         183
       ],
-      "reason": "startNew's SetAdmission error return is unreachable: LinearController.SetAdmission (controller/linear.go) fails only when c.started is already true, and the ctrl handed to it is freshly constructed by buildNewController on the startNew path, so started is always false here. Same defensive-double-check class as the chatsync/reconcile.go entry."
+      "reason": "SetAdmission on the fresh controller in startNew can only fail with already-started, which cannot hold for a controller created in the same call"
     },
     "internal/workflows/agenttools/service.go": {
       "lines": [
@@ -376,18 +378,6 @@
         227
       ],
       "reason": "error wraps around calls that cannot fail through BuildSession: BuildRegistry is documented never to error, and BuildSession always overwrites the dispatcher registry with a freshly built non-nil one || ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
-    },
-    "internal/workflows/localengine/engine.go": {
-      "lines": [
-        182
-      ],
-      "reason": "SetAdmission on the fresh controller in startNew can only fail with already-started, which cannot hold for a controller created in the same call"
-    },
-    "internal/workflows/localengine/engine_resume.go": {
-      "lines": [
-        37
-      ],
-      "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
     },
     "internal/tui/adapter/session_pool_worktree.go": {
       "lines": [
