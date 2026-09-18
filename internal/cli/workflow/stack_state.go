@@ -25,7 +25,7 @@ func loadStackPlanOutput(repo workflowledger.Repository, stackID string) ([]byte
 
 // loadAllStackChunks reconstructs the FULL chunk list a stack has planned
 // across every already-admitted decompose wave: the plan run's own output
-// (wave 0), plus any decompose-continuation runs (§12.1, waves 1..N) found
+// (wave 0), plus any decompose-continuation runs (waves 1..N) found
 // in the run ledger. This is what lets a crashed-and-resumed `stack drive`
 // see wave-2+ chunks a prior process already admitted - driveStack's
 // dependency ordering and admission are derived entirely from the chunks

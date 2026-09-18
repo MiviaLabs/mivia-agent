@@ -42,7 +42,7 @@ func TestBuildAgentLoopOptionsPassesValidate(t *testing.T) {
 // BeforeStep, PreserveWorkLimits, and every WorkLimits field (including
 // MaxToolCalls, via the ToolBudget bridge in agentloop_toolbudget.go) all
 // moved to the carried table - see docs/development/sdk-backend-field-mapping.md
-// §1/§3. TestSDKDefaultBackendEnforcesCumulativeMaxToolCalls
+// sections 1 and 3. TestSDKDefaultBackendEnforcesCumulativeMaxToolCalls
 // (agentloop_toolbudget_test.go) is the regression that replaced this
 // table's last row.
 

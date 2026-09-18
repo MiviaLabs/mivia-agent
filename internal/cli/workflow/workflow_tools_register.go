@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	// Install the Phase 7 workflow tool builder so NewDefaultRegistry registers
+	// Install the workflow tool builder so NewDefaultRegistry registers
 	// the eight tools when a workspace has .mivia/workflows/.
 	tools.SetWorkflowToolsBuilder(buildWorkflowToolsForRegistry)
 }

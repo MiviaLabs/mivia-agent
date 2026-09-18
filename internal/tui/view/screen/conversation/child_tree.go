@@ -6,7 +6,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tui/view/render"
 )
 
-// C7's screen half (docs/design/chat-tui-crush-comparison.md §3): the root
+// Screen half of the compact child tree: the root
 // transcript's subagent progress events carry counters and log text only, so
 // the child calls a dispatched batch made are read from the one place this
 // screen already owns - ports.SubagentThreads.Thread(callID).History() - and

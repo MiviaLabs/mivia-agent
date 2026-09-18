@@ -23,7 +23,7 @@ import (
 const decomposeContinuePrefix = ":decompose:"
 
 // stackDecomposeContinueKey derives the stable invocation key for wave N's
-// decompose-continuation run (§12.1): re-admission after a restart resolves
+// decompose-continuation run: re-admission after a restart resolves
 // to the SAME run, exactly like stackAdmissionKey does for chunk runs.
 func stackDecomposeContinueKey(stackID string, wave int) (string, error) {
 	if strings.TrimSpace(stackID) == "" {
@@ -248,7 +248,7 @@ func succeededDecomposeContinueRunRef(repo workflowledger.Repository, stackID st
 }
 
 // admitNextWaveIfReady is runStackDrive's one-pass-per-invocation extension
-// point for §12.1 incremental decompose: if everything currently known just
+// point for incremental decompose: if everything currently known just
 // merged and the latest decompose wave declared more scope, request exactly
 // the next wave (a bounded extra step, not a full drive-to-completion loop -
 // the operator re-runs `stack drive` to keep advancing, matching this

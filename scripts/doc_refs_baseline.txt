@@ -5,7 +5,4 @@
 internal/agent/agentloop_adapter.go:237
 internal/agent/batch_budget_integration_test.go:121
 internal/agent/loop_steer_test.go:17
-internal/cli/workflow/workflow_tool_service.go:99
-internal/cli/workflow/workflow_tools_register.go:12
 internal/tui/view/component/composer/mention.go:45
-internal/tui/view/screen/conversation/keys.go:347

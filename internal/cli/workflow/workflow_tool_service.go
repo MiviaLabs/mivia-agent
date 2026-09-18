@@ -142,7 +142,7 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	return svc
 }
 
-// WireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions
+// WireWorkflowToolOptions attaches workflow tools to DefaultOptions
 // when the workspace has .mivia/workflows/. Reads and mutates share one config
 // identity (session ConfigPath or workspace project file). provider supplies
 // the session event bus for workflow progress lazily, so a bus created after

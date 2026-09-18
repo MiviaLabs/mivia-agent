@@ -369,7 +369,7 @@ func admitStackChunkRun(prepared *PreparedWorkflowRun, stackID, chunkID string, 
 }
 
 // admitDecomposeContinuationRun admits and runs a decompose-continuation run
-// for wave N (§12.1 incremental decompose): a fresh run of the same compiled
+// for wave N (incremental decompose): a fresh run of the same compiled
 // workflow, started directly at the decompose step (stack_mode=
 // decompose_continue), seeded with remaining_scope instead of a plan-step
 // output. It reuses admitStackChunkRun's exact admission path (same

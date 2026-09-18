@@ -12,8 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/uievent"
 )
 
-// TestChildTreeRendersUnderTheDispatchRow is C7's screen-wiring contract
-// (docs/design/chat-tui-crush-comparison.md §3 C7, Phase 8 slice 3): on each
+// TestChildTreeRendersUnderTheDispatchRow is the screen-wiring contract. On each
 // subagent progress event and on the dispatch call's own end, the screen
 // reads the thread history it already owns and pushes the child calls into
 // the transcript - without arming any clock - so the dispatch row shows what

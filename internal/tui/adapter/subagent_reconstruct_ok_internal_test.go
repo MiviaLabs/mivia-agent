@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// C7's sibling guard (see .agents/memories/sibling-implementations-drift):
+// sibling guard (see .agents/memories/sibling-implementations-drift):
 // toolCallSummariesToPortsToolCalls is the SECOND producer of history
 // ToolCalls - it serves both the resumed-session reconstruction path
 // (registerDispatchedTask) and the resolved-ref path (applyResolvedToolCalls).

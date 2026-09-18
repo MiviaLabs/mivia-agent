@@ -696,7 +696,7 @@ func TestConcurrentSpawnSameKeyDoesNotDoubleExecute(t *testing.T) {
 	a, b, _ := concurrentSpawnCoordinators(t, time.Now().Add(-2*abandonedRunGracePeriod), func() { invocations.Add(1) })
 	const key = "K"
 
-	// Phase 1 - A is mid-reclaim: it holds the probe claim on X (the window
+	// Step 1 - A is mid-reclaim: it holds the probe claim on X (the window
 	// between ClaimRun and DeleteRun in reclaimAbandonedRun). X is provably
 	// abandoned, so A's claim is provably stale: B clears it, re-probes, and
 	// reclaims X itself. B's Spawn must succeed - the key is NOT bricked - and

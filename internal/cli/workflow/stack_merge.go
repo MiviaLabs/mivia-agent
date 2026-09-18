@@ -100,7 +100,7 @@ func chunkMergePollPass(ctx context.Context, prepared *PreparedWorkflowRun, ledg
 	}
 	// A chunk delivered (by a human's `mivia workflow deliver
 	// --allow-publish` grant, or just landed since the last poll) may have
-	// left a deferred commit (§5.2-5.3): admit its follow-up PR so the
+	// left a deferred commit: admit its follow-up PR so the
 	// stack does not report complete while it is still open.
 	if err := admitPendingFollowUps(ctx, prepared, ledger, stackID, byID, stdout, stderr); err != nil {
 		return false, fmt.Errorf("stack drive: %w", err)

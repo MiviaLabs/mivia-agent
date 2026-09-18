@@ -16,7 +16,7 @@ import (
 // exercise the engine and this call site's wiring, not a list shipped in the
 // binary.
 //
-// Two deliberate departures from the recommended list in plan 10 §2, both
+// Two deliberate departures from the recommended redaction list, both
 // documented there as hazards of pattern ordering and shape rather than of this
 // package:
 //

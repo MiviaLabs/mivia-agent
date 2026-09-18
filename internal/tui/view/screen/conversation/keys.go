@@ -703,7 +703,6 @@ func (s Screen) cancelTurn() (app.Screen, tea.Cmd, bool) {
 		// happened (handleQueueKey's delete: "removed queued message";
 		// force_push.go's re-queue on send failure). Clearing the WHOLE
 		// queue is the biggest one; it must not be the only silent one.
-		// Found by C9's review round 2.
 		s.statusline.Notice("queue cleared")
 		return s, nil, true
 	}

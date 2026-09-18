@@ -109,7 +109,7 @@ type Request struct {
 	// produced by sdkadapter.LevelToReasoningEffort(ReasoningLevel). Empty
 	// string means "no SDK surface" (the user picked a level the SDK cannot
 	// carry on the wire, or the request is unset). Currently unused by any
-	// consumer in the tree; reserved for B.2 #8's SDK-backed inner loop.
+	// consumer in the tree; reserved for the SDK-backed inner loop.
 	SDKReasoningEffort sdkshape.ReasoningEffort `json:"sdk_reasoning_effort,omitempty"`
 	// SessionID is the caller's session/run identifier, threaded through
 	// unchanged from whatever principal issued this turn (chat session,

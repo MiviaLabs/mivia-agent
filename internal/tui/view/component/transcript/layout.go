@@ -225,7 +225,7 @@ func (m Model) workRunLen(i int) int {
 // screen hides - which is why RoleDanger is checked here rather than
 // left to the per-kind rules.
 func (m Model) settledWork(b Block) bool {
-	// A block with a child tree never folds (C7). The tree IS the row's
+	// A block with a child tree never folds . The tree IS the row's
 	// content - a summary row would swallow exactly what the reader is
 	// being shown - and it can grow while the batch runs, so the fold's
 	// "already settled" premise does not hold for it either.

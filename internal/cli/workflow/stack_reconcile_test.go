@@ -287,7 +287,7 @@ func TestParseStackPlanOutputMalformed(t *testing.T) {
 	}
 }
 
-// TestParseStackPlanOutputHasMore pins §12.1 incremental-decompose parsing:
+// TestParseStackPlanOutputHasMore pins incremental-decompose parsing:
 // has_more/remaining_scope round-trip for multi mode, default to
 // false/"" when absent (old decompose responses without the fields stay
 // valid), and are never set for single/no_bug (decompose.md's contract:

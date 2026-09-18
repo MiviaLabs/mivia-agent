@@ -179,7 +179,7 @@ func anyRequestCarriesSummary(requests []provider.Request) bool {
 	return false
 }
 
-// TestSummaryInjectionSentRequestCarriesSummary is the agent-loop Phase 2
+// TestSummaryInjectionSentRequestCarriesSummary is the end-to-end
 // proof: after a compacted preparation, the request actually sent to the
 // completer carries the context-summary message.
 func TestSummaryInjectionSentRequestCarriesSummary(t *testing.T) {
