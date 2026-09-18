@@ -3,13 +3,17 @@ package adapter_test
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
+	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/adapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -73,26 +77,47 @@ func TestCommandRunner_StartCompaction_NilSessionErrors(t *testing.T) {
 // not just a check that happens to race the same way in this test.
 func TestCommandRunner_StartCompaction_RejectsOverlapping(t *testing.T) {
 	// The first compaction must still be IN FLIGHT when the second call
-	// lands, or there is no overlap to reject. Nothing else holds it open:
-	// the handle's event channel is buffered wide enough that the worker
-	// never blocks on a send, so with an instant completer the worker can
-	// reach its onDone (clearing compactionActive) before the second call
-	// runs - which is exactly how this test failed under -race, where the
-	// worker goroutine won that footrace. Block the completer instead and
-	// release it only after the overlap has been rejected.
+	// lands, or there is no overlap to reject. A plain session's Compact
+	// fails fast ("context compaction is not configured") BEFORE any
+	// completer is reached, so a blocking completer never blocks anything:
+	// the worker cleared compactionActive and raced the second call, which
+	// is how this test failed under -race. Park the worker inside the
+	// session's real compact path instead: a PreparationManager whose
+	// Prepare call blocks until the overlap has been rejected. Receiving
+	// on entered is a happens-after proof the worker is inside
+	// sess.Compact with compactionActive still set.
 	release := make(chan struct{})
-	comp := &blockingCompleter{release: release}
-	res := &config.Resolved{ProviderName: "test", Model: "m1"}
-	sess := chat.NewSession(res, comp)
+	prep := newBlockingPreparation(release, contextmgr.StructuralPreparationManager{})
+	sess, res, cleanup := setupBlockingContextSession(t, prep)
+	defer cleanup()
 	runner := adapter.NewCommandRunner(sess, res, nil)
-	defer close(release)
 
+	// Initialize the durable session (a first turn creates the snapshot
+	// compactLoadSnapshot requires) and use a deadline on the entered
+	// signal so a regression that never reaches Prepare fails instead of
+	// hanging the suite.
+	if _, err := sess.SendUser(context.Background(), "hello", nil); err != nil {
+		t.Fatalf("SendUser: %v", err)
+	}
+
+	// Arm the blocker and start the compaction: only the manual compact
+	// path from here on parks in Prepare.
+	prep.arm()
 	first, err := runner.StartCompaction(context.Background(), "")
 	if err != nil {
 		t.Fatalf("first StartCompaction: unexpected error %v", err)
 	}
 	if first == nil {
 		t.Fatal("expected a non-nil handle from the first call")
+	}
+
+	// Deterministic in-flight proof: the worker is parked inside Prepare,
+	// so the second call cannot miss the window.
+	select {
+	case <-prep.entered:
+	case <-time.After(5 * time.Second):
+		evs := collectCompactionEvents(t, first)
+		t.Fatalf("worker never reached Prepare; overlap was not actually in flight; events: %+v", evs)
 	}
 
 	second, err := runner.StartCompaction(context.Background(), "")
@@ -106,10 +131,12 @@ func TestCommandRunner_StartCompaction_RejectsOverlapping(t *testing.T) {
 		t.Errorf("error = %q, want it to mention 'compaction already in progress'", err.Error())
 	}
 
-	// Drain the first operation to completion (it fails fast: the plain
-	// session has no context manager configured) so compactionActive
-	// resets and a fresh StartCompaction is accepted again - proving the
-	// flag is a real mutex-guarded lock, not a one-shot latch.
+	// Release the parked compact and drain the first operation to
+	// completion. With the blocker released and force=true, the compact
+	// declines ("made no reduction"), so compactionActive resets and a
+	// fresh StartCompaction is accepted again - proving the flag is a
+	// real mutex-guarded lock, not a one-shot latch.
+	close(release)
 	waitForCompactionDone(t, first)
 
 	third, err := runner.StartCompaction(context.Background(), "")
@@ -117,6 +144,77 @@ func TestCommandRunner_StartCompaction_RejectsOverlapping(t *testing.T) {
 		t.Fatalf("StartCompaction after the first completed: unexpected error %v", err)
 	}
 	waitForCompactionDone(t, third)
+}
+
+// armedPreparation delegates to inner until armed, then parks so a test
+// can hold the real compact path in flight. The warm-up turn (before arm)
+// must keep the structural behavior, or turn persistence breaks.
+type blockingPreparation struct {
+	entered chan struct{}
+	release chan struct{}
+	armed   chan struct{}
+	inner   contextmgr.PreparationManager
+}
+
+func newBlockingPreparation(release chan struct{}, inner contextmgr.PreparationManager) *blockingPreparation {
+	return &blockingPreparation{entered: make(chan struct{}), release: release, armed: make(chan struct{}), inner: inner}
+}
+
+func (p *blockingPreparation) arm() { close(p.armed) }
+
+func (p *blockingPreparation) Prepare(ctx context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	select {
+	case <-p.armed:
+		select {
+		case <-p.entered:
+		default:
+			close(p.entered)
+		}
+		<-p.release
+		return contextmgr.Preparation{}, nil
+	default:
+		return p.inner.Prepare(ctx, input)
+	}
+}
+
+func (p *blockingPreparation) Discard(contextmgr.Preparation) {}
+
+// setupBlockingContextSession wires a session with a real SQLite context
+// store but a caller-supplied PreparationManager, so tests can park the
+// compact path at a chosen point. Mirrors setupSessionStoreFixture.
+func setupBlockingContextSession(t *testing.T, prep contextmgr.PreparationManager) (*chat.Session, *config.Resolved, func()) {
+	t.Helper()
+	tmpDir, err := os.MkdirTemp("", "adapter-compaction-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
+	sess := chat.NewSession(res, &nullCompleter{})
+
+	store, err := storage.OpenSQLite(tmpDir + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := state.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  prep,
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := func() {
+		_ = store.Close()
+		_ = os.RemoveAll(tmpDir)
+	}
+	return sess, res, cleanup
 }
 
 // TestCommandRunner_StartCompaction_SuccessEmitsPreparingSummarizingNotice
