@@ -235,7 +235,7 @@ func (e *sessionWorkflowEngine) driveParkedStackIfNeeded(ctx context.Context, ro
 	}
 	// A terminally failed stack cannot complete, so fail-settle the plan
 	// run once instead of re-driving it forever on every sweep tick.
-	if gate := ClassifyStackPlanRunDeliveryFn(ctx, root, store, repo, runID, true); gate == stackPlanRunFailed {
+	if gate := ClassifyStackPlanRunDeliveryFn(ctx, root, store, repo, runID, true); gate == StackPlanRunFailed {
 		_, reason := StackPlanRunFailureReasonFn(ctx, root, store, repo, runID)
 		if reason == "" {
 			reason = "stack terminally failed"
@@ -267,7 +267,7 @@ func (e *sessionWorkflowEngine) driveParkedStackIfNeeded(ctx context.Context, ro
 		// example, a chunk task reached stackStatusFailed). Fail-settle
 		// once instead of leaving the run delivery_pending so the next
 		// sweep tick re-drives the dead stack.
-		if gate := ClassifyStackPlanRunDeliveryFn(ctx, root, store, repo, runID, true); gate == stackPlanRunFailed {
+		if gate := ClassifyStackPlanRunDeliveryFn(ctx, root, store, repo, runID, true); gate == StackPlanRunFailed {
 			reason := driveErr.Error()
 			if _, r := StackPlanRunFailureReasonFn(ctx, root, store, repo, runID); r != "" {
 				reason = r

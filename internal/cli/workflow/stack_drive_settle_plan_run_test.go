@@ -3,7 +3,7 @@ package workflow
 // Pins F11: `mivia stack drive` must settle the plan run's own
 // delivery_pending status once the stack it drives finishes - `workflow
 // deliver`, `resume`, and `cancel` all refuse a delivery_pending run (see
-// workflow_deliver_stack_refuse_test.go and ClassifyStackPlanRunDeliveryFunc),
+// workflow_deliver_stack_refuse_test.go and classifyStackPlanRunDelivery),
 // and before this fix `runStackDrive` never called any settle path of its
 // own, so a plain operator `mivia stack drive` invocation left the plan run
 // parked forever even after driving every chunk and the integration run to

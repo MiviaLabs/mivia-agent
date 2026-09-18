@@ -3,13 +3,13 @@
   "seams": {
     "internal/cli": 1,
     "internal/cli/agents": 8,
-    "internal/cli/chat": 13,
+    "internal/cli/chat": 9,
     "internal/cli/orchestrate": 1,
-    "internal/cli/workflow": 47,
+    "internal/cli/workflow": 20,
     "internal/cli/worktree": 1
   },
   "chat_workflows_fanout": {
-    "internal/cli/chat": 21
+    "internal/cli/chat": 2
   },
   "ignore": []
 }

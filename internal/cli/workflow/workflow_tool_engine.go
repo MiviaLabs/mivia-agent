@@ -296,7 +296,7 @@ func (e *sessionWorkflowEngine) LaunchStartedWorkflow(ctx context.Context, prepa
 		})
 	}
 	go func() {
-		SessionAutoDeliveryRepairLoopFunc(runCtx, prepared.Repo, prepared.Root, prepared.Res, prepared.Store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+		SessionAutoDeliveryRepairLoop(runCtx, prepared.Repo, prepared.Root, prepared.Res, prepared.Store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return controller.RunWithCancelReconciliationRetry(ctx, built.Controller.Run)
 		}, func(ctx context.Context) (bool, error) {
 			// A stacking plan run that settles delivery_pending with a multi-chunk

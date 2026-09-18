@@ -452,7 +452,7 @@ func TestSessionAutoDeliveryRepairLoopSettlesSkippedPlanAfterCancel(t *testing.T
 	runCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	SessionAutoDeliveryRepairLoopFunc(runCtx, repo, p.root, p.res, p.store, runID,
+	SessionAutoDeliveryRepairLoop(runCtx, repo, p.root, p.res, p.store, runID,
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			// The controller pass that parked the run at delivery_pending ran
 			// before the cancel; read the parked snapshot from a live context
@@ -487,14 +487,22 @@ func TestSessionAutoDeliveryRepairLoopSettlesSkippedPlanAfterCancel(t *testing.T
 // idempotent).
 func TestSessionAutoDeliveryRepairLoopBoundsTheDrive(t *testing.T) {
 	_, repo, p, runID, _ := newSessionAutoDeliveryRepairFixture(t)
+	// The production loop bounds the drive with autoDeliveryAttemptTimeout
+	// (session_delivery_repair.go); the uppercase var is the reconcile path's
+	// own bound. Stub both so either reader sees the 200ms budget.
 	prevTimeout := WorkflowAutoDeliveryAttemptTimeout
-	t.Cleanup(func() { WorkflowAutoDeliveryAttemptTimeout = prevTimeout })
+	prevLower := autoDeliveryAttemptTimeout
+	t.Cleanup(func() {
+		WorkflowAutoDeliveryAttemptTimeout = prevTimeout
+		autoDeliveryAttemptTimeout = prevLower
+	})
 	WorkflowAutoDeliveryAttemptTimeout = 200 * time.Millisecond
+	autoDeliveryAttemptTimeout = 200 * time.Millisecond
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		SessionAutoDeliveryRepairLoopFunc(context.Background(), repo, p.root, p.res, p.store, runID,
+		SessionAutoDeliveryRepairLoop(context.Background(), repo, p.root, p.res, p.store, runID,
 			func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 				return repo.GetRun(ctx, runID)
 			},
@@ -509,7 +517,7 @@ func TestSessionAutoDeliveryRepairLoopBoundsTheDrive(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("SessionAutoDeliveryRepairLoopFunc did not return within 3s of the drive attempt bound expiring")
+		t.Fatal("SessionAutoDeliveryRepairLoop did not return within 3s of the drive attempt bound expiring")
 	}
 
 	run, err := repo.GetRun(context.Background(), runID)

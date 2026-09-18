@@ -41,8 +41,8 @@ func TestClassifyStackPlanRunDeliveryIncompleteForUndrivenMultiChunkPlan(t *test
 	}
 	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
 
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, runID, true); got != stackPlanRunIncomplete {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() = %v, want stackPlanRunIncomplete for an undriven multi-chunk plan", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); got != StackPlanRunIncomplete {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want StackPlanRunIncomplete for an undriven multi-chunk plan", got)
 	}
 	err := ErrUndrivenStackPlanRunFunc(runID)
 	if !strings.Contains(err.Error(), "mivia stack drive") {
@@ -64,8 +64,8 @@ func TestClassifyStackPlanRunDeliveryIncompleteForUndrivenMultiChunkPlan(t *test
 func TestClassifyStackPlanRunDeliveryNotApplicableForEverythingElse(t *testing.T) {
 	root, _, store, repo, compiled := newWorkflowBuildFixture(t)
 	ctx := context.Background()
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, "wfr-does-not-exist", true); got != stackPlanRunNotApplicable {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() on an unknown run = %v, want stackPlanRunNotApplicable (best-effort, never blocks)", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, "wfr-does-not-exist", true); got != StackPlanRunNotApplicable {
+		t.Fatalf("classifyStackPlanRunDelivery() on an unknown run = %v, want StackPlanRunNotApplicable (best-effort, never blocks)", got)
 	}
 	runID := "wfr-chunk-c1"
 	snap := workflowledger.RunSnapshot{
@@ -76,8 +76,8 @@ func TestClassifyStackPlanRunDeliveryNotApplicableForEverythingElse(t *testing.T
 		t.Fatal(err)
 	}
 	// No decompose attempt at all (chunk runs never run decompose).
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, runID, true); got != stackPlanRunNotApplicable {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() on a chunk run = %v, want stackPlanRunNotApplicable", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); got != StackPlanRunNotApplicable {
+		t.Fatalf("classifyStackPlanRunDelivery() on a chunk run = %v, want StackPlanRunNotApplicable", got)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestClassifyStackPlanRunDeliveryCompleteForDrivenStack(t *testing.T) {
 	ctx := context.Background()
 	root, store, repo, stackID := seedUnmergedIntegrationStack(t)
 
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, stackID, true); got != stackPlanRunComplete {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() = %v, want stackPlanRunComplete for a driven approve-policy stack", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, stackID, true); got != StackPlanRunComplete {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want StackPlanRunComplete for a driven approve-policy stack", got)
 	}
 }

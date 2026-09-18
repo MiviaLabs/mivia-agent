@@ -89,7 +89,6 @@
       "internal/memory",
       "internal/miviaauth",
       "internal/runtime",
-      "internal/storage",
       "internal/tools",
       "internal/version",
       "internal/workflows/ledger"
@@ -168,10 +167,7 @@
       "internal/tools",
       "internal/vcs",
       "internal/workflows/controller",
-      "internal/workflows/definition",
-      "internal/workflows/delivery",
       "internal/workflows/ledger",
-      "internal/workflows/localengine",
       "internal/workspace"
     ],
     "internal/cli/orchestrate": [

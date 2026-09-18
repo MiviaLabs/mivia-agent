@@ -48,7 +48,7 @@ func settleStackPlanRunFailed(ctx context.Context, repo workflowledger.Repositor
 // terminal, or not parked at delivery_pending, so a repeated deliver stays
 // idempotent and still returns the refusal for a non-zero exit.
 func RefuseFailedStackPlanRunDelivery(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) error {
-	_, reason := StackPlanRunFailureReasonFunc(ctx, root, store, repo, runID)
+	_, reason := StackPlanRunFailureReasonFn(ctx, root, store, repo, runID)
 	if reason == "" {
 		reason = "stack terminally failed"
 	}
@@ -59,11 +59,11 @@ func RefuseFailedStackPlanRunDelivery(ctx context.Context, root string, store *s
 }
 
 // SettleFailedStackPlanRunIfNeeded fail-settles a delivery_pending stacking
-// plan run whose stack terminally failed (see StackPlanRunFailureReasonFunc),
+// plan run whose stack terminally failed (see StackPlanRunFailureReasonFn),
 // reporting whether it settled. Used by the in-session drive paths so a dead
 // stack settles once instead of being refused as merely incomplete forever.
 func SettleFailedStackPlanRunIfNeeded(ctx context.Context, prepared *PreparedWorkflowRun, runID, cause string) (bool, error) {
-	if ClassifyStackPlanRunDeliveryFunc(ctx, prepared.Root, prepared.Store, prepared.Repo, runID, true) != stackPlanRunFailed {
+	if ClassifyStackPlanRunDeliveryFn(ctx, prepared.Root, prepared.Store, prepared.Repo, runID, true) != StackPlanRunFailed {
 		return false, nil
 	}
 	if err := settleStackPlanRunFailed(ctx, prepared.Repo, runID, cause); err != nil {

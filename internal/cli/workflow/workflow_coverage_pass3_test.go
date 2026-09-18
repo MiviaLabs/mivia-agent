@@ -541,14 +541,14 @@ func TestSessionLaunchResumeDriveHookInvoked(t *testing.T) {
 	}
 
 	hookCalled := make(chan struct{})
-	originalLoop := SessionAutoDeliveryRepairLoopFunc
-	SessionAutoDeliveryRepairLoopFunc = func(runCtx context.Context, _ workflowledger.Repository, _ string, _ *config.Resolved, _ *storage.SQLite, _ string, _ func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), _ bool) {
+	originalLoop := SessionAutoDeliveryRepairLoop
+	SessionAutoDeliveryRepairLoop = func(runCtx context.Context, _ workflowledger.Repository, _ string, _ *config.Resolved, _ *storage.SQLite, _ string, _ func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), _ bool) {
 		if _, err := driveStack(runCtx); err != nil {
 			t.Errorf("driveStack hook error = %v", err)
 		}
 		close(hookCalled)
 	}
-	t.Cleanup(func() { SessionAutoDeliveryRepairLoopFunc = originalLoop })
+	t.Cleanup(func() { SessionAutoDeliveryRepairLoop = originalLoop })
 
 	engine := NewSessionWorkflowEngine(".", "")
 	prepared := resumePrepared{
@@ -589,11 +589,11 @@ func TestSessionLaunchResumeReadFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalLoop := SessionAutoDeliveryRepairLoopFunc
-	SessionAutoDeliveryRepairLoopFunc = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
+	originalLoop := SessionAutoDeliveryRepairLoop
+	SessionAutoDeliveryRepairLoop = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
 		return
 	}
-	t.Cleanup(func() { SessionAutoDeliveryRepairLoopFunc = originalLoop })
+	t.Cleanup(func() { SessionAutoDeliveryRepairLoop = originalLoop })
 
 	engine := NewSessionWorkflowEngine(".", "")
 	prepared := resumePrepared{

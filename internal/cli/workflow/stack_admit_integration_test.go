@@ -84,8 +84,8 @@ func TestIntegrationRunInputsStripSiblingFiles(t *testing.T) {
 // TestClassifyStackPlanRunDeliveryNotApplicableForIntegrationRun proves an
 // integration run (invocation key "<stack>:integration") that also has
 // decompose chunks (from re-planning mode=multi) is never misclassified as a
-// stack plan run. Without this guard, ClassifyStackPlanRunDeliveryFunc returned
-// stackPlanRunIncomplete and errUndrivenStackPlanRun seeded a phantom stack.
+// stack plan run. Without this guard, classifyStackPlanRunDelivery returned
+// StackPlanRunIncomplete and errUndrivenStackPlanRun seeded a phantom stack.
 func TestClassifyStackPlanRunDeliveryNotApplicableForIntegrationRun(t *testing.T) {
 	root, _, store, repo, compiled := newWorkflowBuildFixture(t)
 	ctx := context.Background()
@@ -100,8 +100,8 @@ func TestClassifyStackPlanRunDeliveryNotApplicableForIntegrationRun(t *testing.T
 	}
 	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
 
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, runID, true); got != stackPlanRunNotApplicable {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() = %v, want stackPlanRunNotApplicable for an integration run with decompose chunks", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); got != StackPlanRunNotApplicable {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want StackPlanRunNotApplicable for an integration run with decompose chunks", got)
 	}
 }
 
@@ -133,12 +133,12 @@ func TestClassifyStackPlanRunDeliveryFailedChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, runID, true); got != stackPlanRunFailed {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() = %v, want stackPlanRunFailed for a failed chunk", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); got != StackPlanRunFailed {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want StackPlanRunFailed for a failed chunk", got)
 	}
-	failed, reason := StackPlanRunFailureReasonFunc(ctx, root, store, repo, runID)
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, runID)
 	if !failed {
-		t.Fatal("StackPlanRunFailureReasonFunc() = false, want true")
+		t.Fatal("stackPlanRunFailureReason() = false, want true")
 	}
 	if !strings.Contains(reason, "chunk c2 failed terminally") {
 		t.Fatalf("reason = %q, want substring \"chunk c2 failed terminally\"", reason)
@@ -174,9 +174,9 @@ func TestStackPlanRunFailureReasonCanceledChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	failed, reason := StackPlanRunFailureReasonFunc(ctx, root, store, repo, runID)
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, runID)
 	if !failed {
-		t.Fatal("StackPlanRunFailureReasonFunc() = false, want true for a canceled chunk")
+		t.Fatal("stackPlanRunFailureReason() = false, want true for a canceled chunk")
 	}
 	if !strings.Contains(reason, "canceled") {
 		t.Fatalf("reason = %q, want it to mention canceled", reason)
@@ -189,12 +189,12 @@ func TestClassifyStackPlanRunDeliveryFailedIntegration(t *testing.T) {
 	ctx := context.Background()
 	root, store, repo, stackID := seedFailedIntegrationStack(t, workflowledger.RunStatusFailed)
 
-	if got := ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, stackID, true); got != stackPlanRunFailed {
-		t.Fatalf("ClassifyStackPlanRunDeliveryFunc() = %v, want stackPlanRunFailed for a failed integration run", got)
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, stackID, true); got != StackPlanRunFailed {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want StackPlanRunFailed for a failed integration run", got)
 	}
-	failed, reason := StackPlanRunFailureReasonFunc(ctx, root, store, repo, stackID)
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, stackID)
 	if !failed {
-		t.Fatal("StackPlanRunFailureReasonFunc() = false, want true")
+		t.Fatal("stackPlanRunFailureReason() = false, want true")
 	}
 	if !strings.Contains(reason, "integration run") || !strings.Contains(reason, string(workflowledger.RunStatusFailed)) {
 		t.Fatalf("reason = %q, want failed integration run substring", reason)

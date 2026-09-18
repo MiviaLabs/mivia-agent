@@ -848,7 +848,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	prevDispatcher := cliworkflow.WorkflowBuildDispatcher
 	prevSliceErrors := cliworkflow.SliceErrorsFunc
 	prevInitCoordinator := cliworkflow.InitCoordinatorFunc
-	prevAutoDeliveryLoop := cliworkflow.SessionAutoDeliveryRepairLoopFunc
+	prevAutoDeliveryLoop := cliworkflow.SessionAutoDeliveryRepairLoop
 
 	cliworkflow.ApplyPrivacyPolicyFunc = func(*config.Resolved) {}
 	cliworkflow.InitCoordinatorFunc = func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
@@ -860,7 +860,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	// no-op exactly like TestSessionLaunchResumeReadFailure
 	// (workflow_coverage_pass3_test.go) does - running the real loop here
 	// would race this test's own t.Cleanup/TempDir teardown.
-	cliworkflow.SessionAutoDeliveryRepairLoopFunc = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
+	cliworkflow.SessionAutoDeliveryRepairLoop = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
 	}
 	cliworkflow.SliceErrorsFunc = func(context string, errs []string) error {
 		if len(errs) == 0 {
@@ -909,7 +909,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 		// automation test can use the real loop because it is only wired
 		// by internal/cli's own wiring.
 		if prevAutoDeliveryLoop != nil {
-			cliworkflow.SessionAutoDeliveryRepairLoopFunc = prevAutoDeliveryLoop
+			cliworkflow.SessionAutoDeliveryRepairLoop = prevAutoDeliveryLoop
 		}
 	})
 }

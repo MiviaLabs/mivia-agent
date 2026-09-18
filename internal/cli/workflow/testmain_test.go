@@ -31,7 +31,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -98,53 +97,13 @@ func wireDeliverySeams() {
 	}
 }
 
-// wireStackReadSeams wires the ledger read helpers over delivery's logic.
-func wireStackReadSeams() {
-	ParseStackPlanOutputFunc = delivery.ParseStackPlanOutput
-	SeedStackLedgerFunc = func(l *workflowledger.Store, stackID string, chunks []delivery.ChunkPlan) error {
-		return delivery.SeedStackLedger(context.Background(), l, stackID, chunks)
-	}
-	StackPlanInputsFunc = func(repo workflowledger.Repository, stackID string) (map[string]string, error) {
-		return delivery.PlanInputs(context.Background(), repo, stackID)
-	}
-	StackTaskMapFunc = func(l *workflowledger.Store, stackID string) (map[string]workflowledger.Task, error) {
-		return delivery.TaskMap(context.Background(), l, stackID)
-	}
-	StackMergedSetFunc = delivery.MergedSet
-	AllChunksMergedFunc = delivery.AllChunksMerged
-	LoadStackPlanOutputFunc = loadStackPlanOutputLocal
-	LoadAllStackChunksFunc = loadAllStackChunksLocal
-	StackRunRefFunc = stackRunRefLocal
-	StackRunPushedFunc = stackRunPushedLocal
-	StackRunHeadCommitFunc = stackRunHeadCommitLocal
-	StackHeadBranchFunc = func(run workflowledger.RunSnapshot) string {
-		if run.WorktreeName == "" {
-			return ""
-		}
-		return "wf/" + run.WorktreeName
-	}
-	GitMergeCheckFunc = func(ctx context.Context, git delivery.GitRunner, pr delivery.PRClient, gc delivery.GitContext, headBranch, baseBranch, headCommit, repoSlug string, wasPushed bool) (bool, error) {
-		return false, nil
-	}
-	StackDecomposedChunksFunc = delivery.DecomposedChunks
-	StackingDriveAllowPublishFunc = func(compiled *definition.CompiledWorkflow) bool {
-		return compiled != nil && compiled.Stacking != nil && compiled.Stacking.MergePolicy == "auto"
-	}
-}
+// wireStackReadSeams no longer overrides anything: the stack helper seams
+// are initialized to the package's own (moved) production implementations,
+// which is exactly what the tests must exercise.
+func wireStackReadSeams() {}
 
-// wireStackGateSeams wires the plan-run gate and drive seams.
-func wireStackGateSeams() {
-	ClassifyStackPlanRunDeliveryFunc = ClassifyStackPlanRunDeliveryImpl
-	StackPlanRunFailureReasonFunc = StackPlanRunFailureReasonImpl
-	ErrFailedStackPlanRunFunc = errFailedStackPlanRunLocal
-	ErrUndrivenStackPlanRunFunc = errUndrivenStackPlanRunLocal
-	SettleStackPlanRunIfCompleteFn = settleStackPlanRunIfCompleteLocal
-	LoadAllStackChunksForDriveFunc = func(prepared *PreparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) ([]delivery.ChunkPlan, bool, bool, string, error) {
-		chunks, hasMore, remaining, err := loadAllStackChunksLocal(prepared.Repo, stackID)
-		return chunks, hasMore, false, remaining, err
-	}
-	StackRunPublishWithheldFunc = stackRunPublishWithheldLocal
-}
+// wireStackGateSeams no longer overrides anything (see wireStackReadSeams).
+func wireStackGateSeams() {}
 
 // wireSessionSeams wires the session, dispatcher, and messaging seams.
 func wireSessionSeams() {
@@ -198,7 +157,6 @@ func wireSessionSeams() {
 		}
 		return out
 	}
-	SessionAutoDeliveryRepairLoopFunc = sessionAutoDeliveryRepairLoopLocal
 }
 
 func loadAllStackChunksLocal(repo workflowledger.Repository, stackID string) (chunks []delivery.ChunkPlan, hasMore bool, remainingScope string, err error) {
@@ -332,11 +290,11 @@ func stackRunHeadCommitLocal(repo workflowledger.Repository, run workflowledger.
 // (stack_drive.go) over the local seams.
 func settleStackPlanRunIfCompleteLocal(ctx context.Context, prepared *PreparedWorkflowRun, stackID string, stdout io.Writer) error {
 	switch gate := ClassifyStackPlanRunDeliveryFn(ctx, prepared.Root, prepared.Store, prepared.Repo, stackID, true); gate {
-	case stackPlanRunNotApplicable, stackPlanRunIncomplete:
+	case StackPlanRunNotApplicable, StackPlanRunIncomplete:
 		return nil
-	case stackPlanRunFailed:
+	case StackPlanRunFailed:
 		return RefuseFailedStackPlanRunDelivery(ctx, prepared.Root, prepared.Store, prepared.Repo, stackID)
-	case stackPlanRunComplete:
+	case StackPlanRunComplete:
 		if SkipParkedPlanRunPublication(ctx, prepared.Store, prepared.Repo, stackID) {
 			if err := SettlePlanRunSkippedDelivery(ctx, prepared.Repo, stackID); err != nil {
 				return fmt.Errorf("stack drive: settle plan run: %w", err)
@@ -445,62 +403,6 @@ func errFailedStackPlanRunLocal(runID, reason string) error {
 // errUndrivenStackPlanRunLocal mirrors cli.errUndrivenStackPlanRun.
 func errUndrivenStackPlanRunLocal(runID string) error {
 	return fmt.Errorf("workflow run %q is the plan run of a stack that has not fully driven yet: finish it with `mivia stack drive <workflow> --stack %s`, then settle the plan run with `mivia workflow deliver %s` - delivering it now would abandon the undriven stack while reporting the plan run succeeded", runID, runID, runID)
-}
-
-// sessionAutoDeliveryRepairLoopLocal mirrors cli.sessionAutoDeliveryRepairLoop
-// (session_delivery_repair.go) over cliworkflow-owned functions.
-func sessionAutoDeliveryRepairLoopLocal(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), deliverPlanRun bool) {
-	snap, err := advance(runCtx)
-	if err != nil {
-		SettleSessionRunFailure(repo, runID, err)
-		return
-	}
-	for {
-		if snap.Status != workflowledger.RunStatusDeliveryPending {
-			return
-		}
-		if driveStack != nil {
-			driveCtx, cancelDrive := context.WithTimeout(runCtx, WorkflowAutoDeliveryAttemptTimeout)
-			drove, err := driveStack(driveCtx)
-			cancelDrive()
-			if err != nil {
-				log.Printf("workflow: run %s stack drive before delivery: %v", runID, err)
-				return
-			}
-			if drove && !deliverPlanRun {
-				if err := SettlePlanRunSkippedDelivery(context.Background(), repo, runID); err != nil {
-					log.Printf("workflow: run %s settle skipped plan run: %v", runID, err)
-				}
-				return
-			}
-		}
-		if StackRunPublishWithheldFunc(runCtx, repo, runID, false) {
-			return
-		}
-		deliverCtx, cancelDeliver := context.WithTimeout(runCtx, WorkflowDeliveryTimeout)
-		deliverErr := DeliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
-		cancelDeliver()
-		if deliverErr != nil && !DeliveryFaultTransient(deliverErr) {
-			RecordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
-		}
-		fresh, getErr := repo.GetRun(context.Background(), runID)
-		if getErr != nil {
-			log.Printf("workflow: run %s auto-delivery repair: re-read after delivery failed: %v", runID, getErr)
-			return
-		}
-		if workflowledger.IsTerminalRunStatus(fresh.Status) || fresh.Status == workflowledger.RunStatusDeliveryPending {
-			return
-		}
-		if !(fresh.Status == workflowledger.RunStatusRunning && fresh.ActiveStepID != "" && !workflowledger.IsTerminalStepID(fresh.ActiveStepID)) {
-			log.Printf("workflow: run %s auto-delivery repair: unexpected status %q; stopping loop", runID, fresh.Status)
-			return
-		}
-		snap, err = advance(runCtx)
-		if err != nil {
-			SettleSessionRunFailure(repo, runID, err)
-			return
-		}
-	}
 }
 
 // stackRunRefLocal mirrors cli.stackRunRef (stack_reconcile.go): the newest

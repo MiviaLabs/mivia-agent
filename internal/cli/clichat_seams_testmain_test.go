@@ -40,24 +40,6 @@ func TestMain(m *testing.M) {
 	chat.MemoryConfigOfFunc = func(state *AgentSessionState) config.MemoryConfig {
 		return memoryConfigOf(state)
 	}
-	chat.OpenStackLedgerFunc = openStackLedger
-	chat.ResolveStackIDFunc = resolveStackID
-	// The parseStackWorkflowArgs shim captures chat.ParseStackWorkflowArgsFunc
-	// before anything wires it (nil), so wire the real semantics here through
-	// the already-assigned FlagValueFunc instead of the shim.
-	chat.ParseStackWorkflowArgsFunc = func(args []string) (name, stackFlag string, rest []string, err error) {
-		stackFlag, rest, _, err = chat.FlagValueFunc(args, "--stack")
-		if err != nil {
-			return "", "", nil, err
-		}
-		if len(rest) != 1 {
-			if len(rest) == 0 {
-				return "", "", nil, fmt.Errorf("stack: expected a workflow name (or --stack <id> with a workflow name)")
-			}
-			return "", "", nil, fmt.Errorf("stack: unexpected argument %q", rest[0])
-		}
-		return rest[0], stackFlag, rest[1:], nil
-	}
 	// os.Exit skips deferred calls, so restore explicitly.
 	code := m.Run()
 	restoreHome()

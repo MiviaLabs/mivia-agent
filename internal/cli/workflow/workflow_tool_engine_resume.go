@@ -183,7 +183,7 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		// holder is harmless: ReleaseRun is a no-op when the caller is not the
 		// current holder.
 		defer releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
-		SessionAutoDeliveryRepairLoopFunc(runCtx, p.repo, p.root, p.res, p.store, p.runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+		SessionAutoDeliveryRepairLoop(runCtx, p.repo, p.root, p.res, p.store, p.runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return controller.RunWithCancelReconciliationRetry(ctx, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 				snap, err := WorkflowResumeRun(ctx, p.built)
 				// Release the preflight handoff claim BEFORE settling: settle

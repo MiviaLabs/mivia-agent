@@ -6,6 +6,7 @@ package cli
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"os"
@@ -62,11 +63,11 @@ var slashSurfaceBoth = chat.SlashSurfaceBoth
 // builtInSlashCommands delegates to the moved clichat catalog for tests.
 var builtInSlashCommands = chat.BuiltInSlashCommands
 
-// parseStackWorkflowArgs delegates to the moved clichat helper for tests.
-var parseStackWorkflowArgs = chat.ParseStackWorkflowArgsFunc
+// ParseStackWorkflowArgs delegates to the moved workflow helper for tests.
+var parseStackWorkflowArgs = workflow.ParseStackWorkflowArgs
 
-// resolveStackID delegates to the moved clichat helper for tests.
-var resolveStackID = chat.ResolveStackIDFunc
+// resolveStackID delegates to the moved workflow helper for tests.
+var resolveStackID = workflow.ResolveStackID
 
-// openStackLedger delegates to the moved clichat helper for tests.
-var openStackLedger = chat.OpenStackLedgerFunc
+// openStackLedger delegates to the moved workflow helper for tests.
+var openStackLedger = workflow.OpenStackLedger

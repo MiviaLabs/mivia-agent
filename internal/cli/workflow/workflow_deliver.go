@@ -77,13 +77,13 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 	// out of it reach DeliverRunWithStore below, so a gate value added later
 	// cannot silently publish over an ungated stack.
 	switch gate := ClassifyStackPlanRunDeliveryFn(ctx, work.Abs, store, repo, runID, true); gate {
-	case stackPlanRunNotApplicable:
+	case StackPlanRunNotApplicable:
 		// Not a multi-chunk plan run: normal delivery below.
-	case stackPlanRunIncomplete:
+	case StackPlanRunIncomplete:
 		return ErrUndrivenStackPlanRunFunc(runID)
-	case stackPlanRunFailed:
+	case StackPlanRunFailed:
 		return RefuseFailedStackPlanRunDelivery(ctx, work.Abs, store, repo, runID)
-	case stackPlanRunComplete:
+	case StackPlanRunComplete:
 		if SkipParkedPlanRunPublication(ctx, store, repo, runID) {
 			if err := SettlePlanRunSkippedDelivery(ctx, repo, runID); err != nil {
 				return err

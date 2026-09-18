@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/gittest"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli/agents"
@@ -18,7 +16,6 @@ import (
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	cliworktree "github.com/MiviaLabs/mivia-agent/internal/cli/worktree"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // TestMain wires the cli seam vars for the test binary. In production
@@ -112,7 +109,6 @@ func TestMain(m *testing.M) {
 	wireCliagentsSeams()
 	wireWorkflowSeams()
 	wireCliworkflowSeams()
-	wireStackSeams()
 	// os.Exit skips deferred calls, so restore the environment explicitly
 	// before exiting with the suite's own status.
 	code := m.Run()
@@ -195,46 +191,11 @@ func wireCliworkflowSeams() {
 	cliworkflow.InitCoordinatorFunc = orchestrate.InitCoordinator
 	cliworkflow.InjectBaselineMessagingFunc = injectBaselineMessaging
 	cliworkflow.MessagingDisallowedFunc = messagingDisallowed
-	cliworkflow.SessionAutoDeliveryRepairLoopFunc = sessionAutoDeliveryRepairLoop
-	cliworkflow.ErrStackAwaitsGrant = errStackAwaitsGrant
-	cliworkflow.StackingDriveAllowPublishFunc = stackingDriveAllowPublish
-	cliworkflow.ClassifyStackPlanRunDeliveryFunc = func(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, oracle bool) cliworkflow.StackPlanRunGate {
-		return cliworkflow.StackPlanRunGate(int(classifyStackPlanRunDelivery(ctx, root, store, repo, runID, oracle)))
-	}
-	cliworkflow.StackPlanRunFailureReasonFunc = stackPlanRunFailureReason
-	cliworkflow.ErrFailedStackPlanRunFunc = errFailedStackPlanRun
-	cliworkflow.ErrUndrivenStackPlanRunFunc = errUndrivenStackPlanRun
-	cliworkflow.LoadStackPlanOutputFunc = loadStackPlanOutput
-	cliworkflow.ParseStackPlanOutputFunc = parseStackPlanOutput
-	cliworkflow.StackPlanInputsFunc = stackPlanInputs
-	cliworkflow.LoadAllStackChunksForDriveFunc = loadAllStackChunksForDrive
-	cliworkflow.SeedStackLedgerFunc = seedStackLedger
-	cliworkflow.DriveStackToCompletionFunc = driveStackToCompletion
-	cliworkflow.LoadAllStackChunksFunc = loadAllStackChunks
-	cliworkflow.StackTaskMapFunc = stackTaskMap
-	cliworkflow.StackMergedSetFunc = stackMergedSet
-	cliworkflow.AllChunksMergedFunc = allChunksMerged
-	cliworkflow.StackRunRefFunc = stackRunRef
-	cliworkflow.StackHeadBranchFunc = stackHeadBranch
-	cliworkflow.StackRunHeadCommitFunc = stackRunHeadCommit
-	cliworkflow.StackRunPushedFunc = stackRunPushed
-	cliworkflow.StackRunPublishWithheldFunc = stackRunPublishWithheld
-	cliworkflow.StackDecomposedChunksFunc = stackDecomposedChunks
 	cliworkflow.OpenContextStoreFunc = openContextStore
 	cliworkflow.InjectSkillResourceToolFunc = InjectSkillResourceTool
-	cliworkflow.GitMergeCheckFunc = GitMergeCheck
-	cliworkflow.SettleStackPlanRunIfCompleteFn = settleStackPlanRunIfComplete
 	cliworkflow.InitCLIDefaults()
 }
 
 // installHookSessionStub stands in for cli.installHookSession in the
 // cliworkflow seam wiring.
 func installHookSessionStub(string, bool, bool) (func(), error) { return func() {}, nil }
-
-// wireStackSeams wires the stack command helper seams with the local
-// implementations that moved into this package.
-func wireStackSeams() {
-	OpenStackLedgerFunc = openStackLedger
-	ResolveStackIDFunc = resolveStackID
-	ParseStackWorkflowArgsFunc = parseStackWorkflowArgs
-}

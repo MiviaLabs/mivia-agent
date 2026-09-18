@@ -9,7 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // FlagValueFunc stands for cli.flagValue: it returns the value of the first
@@ -52,12 +51,3 @@ var MemoryConfigOfFunc func(state *AgentSessionState) config.MemoryConfig
 // TUILauncherFunc stands for the TUI launcher that cli owns. Wired by
 // internal/cli/tui_launcher.go.
 var TUILauncherFunc func(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *AgentSessionState, resumeSessionName string) error
-
-// OpenStackLedgerFunc stands for cli.openStackLedger.
-var OpenStackLedgerFunc func(root, configPath string) (*workflowledger.Store, workflowledger.Repository, func(), error)
-
-// ResolveStackIDFunc stands for cli.resolveStackID.
-var ResolveStackIDFunc func(repo workflowledger.Repository, workflowName, stackFlag string) (string, error)
-
-// ParseStackWorkflowArgsFunc stands for cli.parseStackWorkflowArgs.
-var ParseStackWorkflowArgsFunc func(args []string) (name, stackFlag string, rest []string, err error)

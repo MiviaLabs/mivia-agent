@@ -17,7 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -297,7 +296,7 @@ func SettlePlanRunSkippedDelivery(ctx context.Context, repo workflowledger.Repos
 // WorkflowStackDriveToCompletion is the stack driver invoked for a settled
 // multi-chunk plan run. It is a package variable so tests can stub the drive
 // and pin the drive-before-delivery ordering without running chunk agents.
-var WorkflowStackDriveToCompletion func(ctx context.Context, prepared *PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []delivery.ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error
+var WorkflowStackDriveToCompletion = driveStackToCompletion
 
 // finishWorkflowRunDelivery completes a run that settled at delivery_pending:
 // with --allow-publish it performs delivery and prints the settled status;
