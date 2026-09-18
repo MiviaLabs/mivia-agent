@@ -32,7 +32,7 @@ func pinFixtureTasks() []subagents.Task {
 	}}
 }
 
-// TestRequestFingerprintPin guards fingerprint stability for plan 53:
+// TestRequestFingerprintPin guards fingerprint stability:
 // message mailboxes and runtime message state travel via context or
 // non-fingerprinted handles only. Widening fingerprintTask fails this pin.
 func TestRequestFingerprintPin(t *testing.T) {

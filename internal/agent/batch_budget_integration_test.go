@@ -17,7 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Aggregate per-batch tool-result budget, end to end (plan tools/06).
+// Aggregate per-batch tool-result budget, end to end.
 //
 // These run the real agent loop against the real httptest provider, the real
 // tool registry, and a real remainder spool. The unit tests in

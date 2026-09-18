@@ -172,7 +172,7 @@ type shapeStore interface {
 }
 
 // shapeEnv carries the only I/O shapeBatch performs, plus the ref-only tool
-// set that decides whether a result is inlined at all (plan tools/06). The
+// set that decides whether a result is inlined at all. The
 // set is configuration rather than I/O, but shapeOne receives the env - and
 // shapeBatch's signature is pinned by tests - so the set rides here, empty
 // meaning the tier is off.
@@ -232,7 +232,7 @@ func (e shapeEnv) load(ref string) (string, bool) {
 // the final-floor tier (finalPreviewFloorBytes) fires instead, since that
 // tier is unpooled and never draws from previewReserve.
 func shapeOne(p resultParts, remaining, previewReserve int, env shapeEnv) (string, degradeState, bool, int) {
-	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
+	// Ref-only tier: a tool opted out of inlining is elided
 	// before the budget tiers see it. The notice is carried in fallback so
 	// the D8 status-line recomposition returns it verbatim, and refOnly marks
 	// the elision so shapeBatch charges its notice's bytes instead of

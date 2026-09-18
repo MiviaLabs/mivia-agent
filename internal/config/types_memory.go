@@ -1,6 +1,6 @@
 package config
 
-// MemoryConfig configures durable agent memory (plan 68).
+// MemoryConfig configures durable agent memory.
 //
 // Org identity is USER-owned: org_id is honored only from the user config
 // file (~/.mivia/mivia.toml). A workspace config is repo-controlled and must
@@ -31,9 +31,9 @@ type MemoryConfig struct {
 	// refused. Configuration-only, like the privacy redaction patterns.
 	BlockPatterns []string `toml:"block_patterns"`
 	// InjectCore enables auto-injecting the bounded "core" memory tier into
-	// the system prompt at session start (D1, plan 76). Default false: it
-	// changes every session's prompt composition, and round-2 review of
-	// plan 76 found operators who allowlist the mivia binary in
+	// the system prompt at session start (D1). Default false: it
+	// changes every session's prompt composition, and review found operators
+	// who allowlist the mivia binary in
 	// [tools].run_allowlist weaken D1a's promotion gate - shipping this off
 	// by default means an operator opts into that exposure per repo,
 	// consciously, rather than getting new prompt content on upgrade.

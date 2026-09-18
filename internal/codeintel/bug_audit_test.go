@@ -47,7 +47,7 @@ func TestRoleFilterInvalidRolesSilentlyIgnored(t *testing.T) {
 }
 
 // TestSameObjectDoesNotConflateFieldWithPackageLevelDecl confirms the fix for
-// the false-positive found in the bug audit of plan 18: sameObject used to
+// the false-positive found in a bug audit: sameObject used to
 // compare only Pkg().Path()+Name(), so a struct field sharing a name with an
 // unrelated package-level declaration (both have the same Pkg() and Name())
 // was misreported as a reference to that declaration.

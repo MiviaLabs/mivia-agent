@@ -147,7 +147,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 	return opts
 }
 
-// applyMailboxAccess wires the parent→child mailbox bundle (plan 54) into the
+// applyMailboxAccess wires the parent→child mailbox bundle into the
 // nested loop options when the coordinator stamped one on ctx: the step-boundary
 // drain, the soft-interrupt channel, the pending gate, the watchdog interval,
 // and the interrupt cooldown. A context without a bundle leaves opts untouched

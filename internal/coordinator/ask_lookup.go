@@ -8,7 +8,7 @@ import (
 // AgentName matches role (case-sensitive). Non-terminal is !IsTaskTerminal
 // (queued, running, awaiting_input, retry_pending, cancel_requested, …).
 // Queued same-role targets must be found so peer asks deliver via mailbox
-// instead of referral-as-spawn (plan 53.04: parent panel with detached siblings).
+// instead of referral-as-spawn (a parent panel with detached siblings).
 func (c *Coordinator) FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error) {
 	if role == "" {
 		return "", false, nil

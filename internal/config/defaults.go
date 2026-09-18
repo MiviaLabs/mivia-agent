@@ -115,7 +115,7 @@ const maxSpawnStaggerMs = 1000
 // "use the default 2" behavior; only 1..MaxSchemaRetryMax pass through.
 const MaxSchemaRetryMax = 10
 
-// Messaging defaults (plan 53.01). Messaging is always enabled; budgets and
+// Messaging defaults. Messaging is always enabled; budgets and
 // routing quotas are the only operational knobs.
 const (
 	defaultMessagingMaxBodyBytes         = 2048
@@ -138,7 +138,7 @@ func intPtr(v int) *int { return &v }
 // knob whose nil value means "enabled" (absent key).
 func boolPtr(v bool) *bool { return &v }
 
-// DefaultMemoryConfig is the resolved default for [memory] (plan 68).
+// DefaultMemoryConfig is the resolved default for [memory].
 var DefaultMemoryConfig = MemoryConfig{
 	StoreBackend:                "markdown",
 	MaxEntryBytes:               8192,

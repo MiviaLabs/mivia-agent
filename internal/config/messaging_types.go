@@ -23,7 +23,7 @@ type MessagingConfig struct {
 	// SteerWatchdogSeconds: nil = default (300s); explicit 0 = disabled
 	// (unbounded); positive = seconds.
 	SteerWatchdogSeconds *int `toml:"steer_watchdog_seconds"`
-	// Routing is parent-side Ask referral policy (plan 53.04). Always active.
+	// Routing is parent-side Ask referral policy. Always active.
 	Routing MessagingRoutingConfig `toml:"routing"`
 }
 

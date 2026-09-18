@@ -6,7 +6,7 @@ import (
 )
 
 // [tools] batch_result_budget_bytes - the aggregate per-batch tool-result
-// budget (plan tools/06). Unset (the key absent) resolves to derived: an
+// budget. Unset (the key absent) resolves to derived: an
 // operator who never heard of it gets the prompt-budget-derived bound, not
 // an accidentally disabled mechanism.
 

@@ -293,7 +293,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 			h.OnToolCancelReady(ctx, canceler)
 		}
 	}
-	// Parent→child steers (plan 54): step-boundary drain, soft interrupt of the
+	// Parent→child steers: step-boundary drain, soft interrupt of the
 	// in-flight LLM call, pending gate, watchdog, and cooldown. The mailbox
 	// bundle is optional; without one all steer machinery stays off.
 	h.applyMailboxAccess(callCtx, &opts)

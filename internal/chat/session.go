@@ -40,7 +40,7 @@ type Session struct {
 	allowedModels      []string
 	rejectedSavedModel *string
 	SystemPrompt       string
-	// BaseSystemPrompt is the memory-block-free prompt (plan 77, E3). The
+	// BaseSystemPrompt is the memory-block-free prompt. The
 	// core-memory block never enters the system prompt - it rides in a
 	// separate user-role message (setMemoryMessageLocked) - so SystemPrompt
 	// and BaseSystemPrompt are always equal. AgentSettings still returns

@@ -33,7 +33,7 @@ func newMemStore(cfg Config) *memStore {
 }
 
 // Save on this backend has no consolidation trigger.
-// (plan 76, D2): consolidation was scoped to the removed durable database -
+// Consolidation was scoped to the removed durable database -
 // it exists to keep a committed database growing gracefully, and this backend has
 // nothing committed to grow. A store_backend = "memory" config still hits
 // the hard MaxEntries refusal at the cap with no auto-consolidation; this is

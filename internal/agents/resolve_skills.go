@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// resolveSkillsAllowlist applies plan 06 nil/empty/explicit semantics and trust.
+// resolveSkillsAllowlist applies nil/empty/explicit semantics and trust.
 // nil → unrestricted (all trusted skills); empty → none; names → validated set.
 func resolveSkillsAllowlist(agentName string, skills *[]string, opts ResolveOptions) (*[]string, map[string]string, error) {
 	if skills == nil {

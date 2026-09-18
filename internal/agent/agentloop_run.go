@@ -211,7 +211,7 @@ const maxEmptyResponseRetries = 2
 // runSDKSteerable installs the steer-signal bridge on one built SDK loop and drives RunSteerable.
 func runSDKSteerable(ctx context.Context, l *Loop, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState) (sdkagentloop.Result, error) {
 	steer := sdkagentloop.NewSteer()
-	// BeforeStep carrier (plan 54, blocker 2 of the SDK convergence):
+	// BeforeStep carrier:
 	// install the legacy BeforeStep as the SDK's pull-based steer
 	// injector. The SDK drains it at the top of every iteration,
 	// mirroring the legacy context.go:15-19 placement. A steered stop

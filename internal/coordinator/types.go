@@ -68,14 +68,14 @@ type RunHandle struct {
 	// immutable thereafter). ParkQuestion declines such runs' child questions
 	// immediately at park time instead of parking and burning wait_seconds.
 	nonInteractiveParent bool
-	// mailboxes is parent→child delivery (plan 53.03). Context-only; never
+	// mailboxes is parent→child delivery. Context-only; never
 	// fingerprinted. Guarded by its own mutex (mailboxes.mu), not h.mu.
 	mailboxes *runMailboxes
 	// toolCalls buffers per-task raw tool-call lifecycle steps for ledger
 	// persistence at task finalize (Part B, chunk 4). Context-only; never
 	// fingerprinted.
 	toolCalls *runToolCallBuffer
-	// referrals tracks in-flight referral-as-spawn tasks (plan 53.04).
+	// referrals tracks in-flight referral-as-spawn tasks.
 	referrals *referralTracker
 }
 
@@ -106,16 +106,16 @@ type Coordinator struct {
 	retryPolicy     RetryPolicy
 	subscribers     []subscriberEntry
 	subMu           sync.RWMutex
-	// questions tracks parked child questions (plan 53.02).
+	// questions tracks parked child questions.
 	questions *questionRegistry
 	// msgQuota tracks per-task upstream message counts.
 	msgQuota *messageQuota
-	// asks tracks open peer asks and one-answer enforcement (plan 53.04).
+	// asks tracks open peer asks and one-answer enforcement.
 	asks *askRegistry
-	// maxBodyBytes bounds message bodies at PostTaskMessage (plan 53 messaging).
+	// maxBodyBytes bounds message bodies at PostTaskMessage.
 	// Zero means agentmsg.DefaultMaxBodyBytes.
 	maxBodyBytes int
-	// mailboxCapacity is parent→child mailbox depth (plan 53.03). Zero → 32.
+	// mailboxCapacity is parent→child mailbox depth. Zero → 32.
 	mailboxCapacity int
 }
 
@@ -134,7 +134,7 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) *Coordinator {
 		claimLease: defaultRunClaimLease, claimHeartbeat: defaultRunClaimLease / 3,
 		now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
 		// Pre-allocate so ParkQuestion / CountPendingQuestions never race on
-		// lazy nil-init of the questions pointer (plan 53.02 concurrency).
+		// lazy nil-init of the questions pointer.
 		questions:       &questionRegistry{byKey: map[string]*pendingQuestion{}},
 		msgQuota:        &messageQuota{count: map[string]int{}},
 		asks:            newAskRegistry(),

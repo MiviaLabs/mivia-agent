@@ -10,8 +10,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// testRedactionPatterns is a *workspace* policy, not a compiled default. Since
-// plan 10 nothing is a secret until configuration says so, so every test that
+// testRedactionPatterns is a *workspace* policy, not a compiled default.
+// Nothing is a secret until configuration says so, so every test that
 // asserts redaction fires has to bring its own policy; the assertions below
 // exercise the engine and this call site's wiring, not a list shipped in the
 // binary.

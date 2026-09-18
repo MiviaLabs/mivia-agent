@@ -71,10 +71,10 @@ type AgentFileSpec struct {
 	ToolsAdd        *[]string
 	ToolsRemove     *[]string
 	DisallowedTools *[]string
-	// ToolsCore overrides [tools] core for this agent (plan tools/05).
+	// ToolsCore overrides [tools] core for this agent.
 	// nil = inherit (parent's decision, else the global [tools] core).
 	ToolsCore *[]string
-	// Skills is the skill invocation allowlist for this agent (plan 06).
+	// Skills is the skill invocation allowlist for this agent.
 	// nil = omit (root: all trusted skills; inherited: parent decision);
 	// non-nil empty = none; non-nil with names = those skills only.
 	Skills *[]string
@@ -97,7 +97,7 @@ type AgentFileSpec struct {
 	MaxTokens      *int
 	SystemPrompt   *string
 	// OutputSchema is an optional JSON Schema for the agent's final reply
-	// (plan tools/02). Pointer preserves omit vs empty for inheritance.
+	// Pointer preserves omit vs empty for inheritance.
 	OutputSchema *map[string]any
 	// InputSchema optionally validates task input at admission.
 	InputSchema *map[string]any

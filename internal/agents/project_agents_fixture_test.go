@@ -75,7 +75,7 @@ func assertGoEngineerAgent(t *testing.T, reg *AgentRegistry) {
 	if len(eng.EffectiveTools) < 5 {
 		t.Fatalf("go-engineer tools too small: %v", eng.EffectiveTools)
 	}
-	// Plan 06: go-engineer ships an explicit skills allowlist (engineering set).
+	// go-engineer ships an explicit skills allowlist (engineering set).
 	if eng.Skills == nil || len(*eng.Skills) == 0 {
 		t.Fatal("go-engineer must declare a non-empty skills allowlist")
 	}
@@ -164,7 +164,7 @@ func assertAgentPromptsArePortable(t *testing.T, inputs []ResolveInput) {
 	}
 }
 
-// TestCommittedSkillsDeclareValidTools pins plan 43 phase 1: every checked-in
+// TestCommittedSkillsDeclareValidTools pins the declared-tool policy: every checked-in
 // skill under .agents/skills must declare explicit, minimal static tool
 // requirements, and every declared name must be in the declared-tool catalogue
 // (which excludes the activation-only read_skill_resource). This is what makes
@@ -313,7 +313,7 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 	return inputs
 }
 
-// TestCommittedRosterSkillCompatibilityMatrix pins plan 43 phase 3: the
+// TestCommittedRosterSkillCompatibilityMatrix pins roster compatibility: the
 // committed agent roster is mechanically compatible with its skill allowlists.
 // It loads the same skill registry and committed agent definitions used by
 // runtime, then asserts for every explicit agent/skill pairing that the

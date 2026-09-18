@@ -9,7 +9,7 @@ import (
 
 // mergeToolsRemoveIntoDisallowed promotes tools_remove entries into the
 // denylist so baseline capabilities (e.g. post_message inject) honor the
-// same opt-out surface as disallowed_tools (plan 53.02).
+// same opt-out surface as disallowed_tools.
 func mergeToolsRemoveIntoDisallowed(dis *[]string, spec config.AgentFileSpec) *[]string {
 	if spec.ToolsRemove == nil || len(*spec.ToolsRemove) == 0 {
 		return dis

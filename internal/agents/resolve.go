@@ -400,7 +400,7 @@ func validateCatalogueTools(agentName string, effective []string, known map[stri
 
 func checkInheritanceSourceBoundary(child ResolveInput, parent ResolvedAgent, _ config.AgentsGlobal) error {
 	// Inheritance is only between file-backed definitions of the SAME trust
-	// origin (plan 05 phase 03: source-boundary violations fail closed). A
+	// origin (source-boundary violations fail closed). A
 	// workspace definition must not be able to inject its prompt/tools/skills
 	// into a user-trusted definition (INV-AG-29: workspace configuration
 	// cannot inject untrusted content into gated prompt surfaces or widen the

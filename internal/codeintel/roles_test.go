@@ -79,7 +79,7 @@ func TestReferencesDedupsTestVariants(t *testing.T) {
 // statements. storage.ErrClaimHeld is checked exclusively via errors.Is in
 // this repo (internal/ledger/storage_claims.go), never raw ==/!=, so before
 // the fix a roles=["comparison"] query returned nothing for the tool's own
-// motivating example (plan 18 §1: "Where is ErrClaimHeld checked?").
+// motivating example.
 func TestReferencesClassifiesErrorsIsAsComparison(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

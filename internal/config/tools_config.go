@@ -111,7 +111,7 @@ type ToolsConfig struct {
 	SecretPathPatterns []string `toml:"secret_path_patterns,omitempty"`
 	// SecretPathExceptions adds exceptions to the secret path blocklist.
 	SecretPathExceptions []string `toml:"secret_path_exceptions,omitempty"`
-	// Core is the always-advertised tool tier (plan tools/05). nil (the key
+	// Core is the always-advertised tool tier. nil (the key
 	// omitted) keeps every authorized tool core, which is byte-identical to the
 	// behavior before deferred loading existed. When set, tools outside it are
 	// deferred: their schemas are advertised (plan tools-advertising/01) but

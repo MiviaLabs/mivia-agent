@@ -12,7 +12,7 @@ type askOwnerRef struct {
 	taskID string
 }
 
-// askRegistry tracks open asks and one-answer enforcement (plan 53.04).
+// askRegistry tracks open asks and one-answer enforcement.
 type askRegistry struct {
 	mu sync.Mutex
 	// open maps ask message ID → asker task ID (for routing answers back).
@@ -35,7 +35,7 @@ type askRegistry struct {
 	// referralTaskAsk maps referral task ID → open ask ID (close on fail).
 	referralTaskAsk map[string]string
 	// byTarget maps run\0task → ask IDs delivered to that task's mailbox
-	// (plan 53.04). Recorded in MailboxSend so finalize can decline asks to a
+	// Recorded in MailboxSend so finalize can decline asks to a
 	// task that reaches terminal status without answering. Deduped; pruned when
 	// the ask is sealed or completed.
 	byTarget map[string][]string

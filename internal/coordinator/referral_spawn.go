@@ -88,7 +88,7 @@ func (h *RunHandle) waitReferrals() {
 	h.mu.Unlock()
 }
 
-// SpawnReferral creates one same-run task and starts it concurrently (plan 53.04).
+// SpawnReferral creates one same-run task and starts it concurrently.
 // When askID is non-empty it is bound to the new task ID before the goroutine
 // starts so failed referrals always CloseAsk. When the run has already reached
 // its terminal referral wait (the DAG finished and waitReferrals settled), the

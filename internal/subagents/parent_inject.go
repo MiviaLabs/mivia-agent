@@ -29,7 +29,7 @@ func parentMessageBeforeStep(drain runtime.MailboxDrainFunc) func() []provider.M
 		var steerBodies []string
 		for _, m := range pending {
 			// answer at step boundary (not parked) degrades to steer;
-			// ask is parent-routed referral content (plan 53.04) and must
+			// ask is parent-routed referral content and must
 			// carry message_id so the target can post kind=answer.
 			switch m.Kind {
 			case "steer", "answer":

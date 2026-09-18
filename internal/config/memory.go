@@ -17,7 +17,7 @@ import (
 //
 // A workspace config is repo-controlled: any repository can ship its own
 // .mivia/mivia.toml, so it must not name the org store its agents write into
-// (plan 68, security disposition). org_id therefore comes from the user config
+// org_id therefore comes from the user config
 // file (~/.mivia/mivia.toml) unless the selected config IS that file.
 func resolveMemoryConfig(file File, selectedPath string, root string, projectConfigFound bool) (MemoryConfig, error) {
 	mc := file.Memory

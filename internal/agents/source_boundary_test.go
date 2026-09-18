@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// Source-boundary enforcement (INV-AG-29 / plan 05 phase 03):
+// Source-boundary enforcement (INV-AG-29):
 // inheritance may only occur within one trust origin. A USER agent
 // (~/.mivia/agents/) must NOT inherit a WORKSPACE agent (<ws>/.mivia/agents/),
 // and a WORKSPACE agent must NOT inherit a USER agent. Both directions must

@@ -82,7 +82,7 @@ func (s *Session) hotServeEligible(name string) bool {
 // PublishPendingAdmission attempts the turn-boundary surface publication for a
 // stage recorded during turn. It is called after the turn's history is durably
 // committed, so the generation bump can never fence that turn out of its own
-// persistence (plan tools/05 D6 ordering).
+// persistence.
 //
 // A stage that cannot publish now stays pending for the next qualifying
 // boundary; a stage whose binding has been replaced is dropped.
@@ -199,7 +199,7 @@ func (s *Session) publishPendingAdmissionFull(allowCurrentTurn, skipMessageRewri
 	// check and the swap, which is the R2-1 hazard.
 	turnID := s.turnID
 	// BaseSystemPrompt, not SystemPrompt: avoids double-composing the memory
-	// block on republish (plan 77, E3).
+	// block on republish.
 	prompt, maxSteps := s.BaseSystemPrompt, s.MaxSteps
 	pub := AgentSurfacePublication{
 		Prompt: prompt, MaxSteps: maxSteps,

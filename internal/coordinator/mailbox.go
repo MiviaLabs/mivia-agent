@@ -83,7 +83,7 @@ func (m *runMailboxes) Pending(taskID string) bool {
 
 // PendingInterrupt reports whether the task has at least one Interrupt-flagged
 // steer queued (false if absent). It is the distinct 'interrupt pending' gate
-// for the loop watcher's signal branch (plan 54 Step 5): a stale interrupt
+// for the loop watcher's signal branch: a stale interrupt
 // signal paired with a later NON-interrupt message must not count, so a
 // len()-based check is not enough — the queued messages themselves are
 // scanned.
@@ -170,7 +170,7 @@ func (m *runMailboxes) isTerminal(taskID string) bool {
 }
 
 // MailboxSend enqueues an already-persisted message to a task mailbox without
-// re-writing the ledger (plan 53.04 ask delivery after PostTaskMessage).
+// re-writing the ledger.
 // When a KindAsk message is successfully delivered, the target task is
 // recorded in the ask registry so finalize can decline the ask if the target
 // reaches terminal status without answering.

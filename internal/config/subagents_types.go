@@ -77,7 +77,7 @@ type SubagentConfig struct {
 	inlineOutputBytesSet bool
 
 	// SchemaRetryMax is how many corrective re-entries a multi-step child may
-	// take after an invalid schema-validated reply (plan tools/02). Default 2.
+	// take after an invalid schema-validated reply. Default 2.
 	// The initial attempt is separate: retry_max=2 allows two corrective turns.
 	// Clamped at load: <= 0 means the default 2; a positive value above
 	// MaxSchemaRetryMax is clamped to it.
@@ -101,7 +101,7 @@ type SubagentConfig struct {
 	// unexported fields, so the flag is set only by loadFile's raw-byte probe.
 	spawnStaggerMsSet bool
 
-	// Messaging configures typed agent-to-agent messaging (plan 53). Nested
+	// Messaging configures typed agent-to-agent messaging. Nested
 	// under [subagents.messaging]. Always enabled (product decision 2026-08-03).
 	Messaging MessagingConfig `toml:"messaging"`
 

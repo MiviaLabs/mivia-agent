@@ -128,7 +128,7 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		allowedModels: slices.Clone(res.Models),
 		SystemPrompt:  res.SystemPrompt,
 		// res.SystemPrompt at construction time has no memory block composed
-		// in yet (plan 77, E3) - it's the same value for both fields until
+		// in yet - it's the same value for both fields until
 		// the first PublishAgentSurface/SetAgentSettings call. Without this,
 		// AgentSettings() would return "" here instead of the real initial
 		// prompt, since it reads BaseSystemPrompt, not SystemPrompt.
@@ -327,7 +327,7 @@ func (s *Session) bindingAllowsLocked(providerName, model string) bool {
 // Profile.Reasoning.
 //
 // Folding here rather than threading the override separately is what keeps
-// every request path from plan 37 unchanged. Those paths already capture a
+// every existing request path unchanged. Those paths already capture a
 // binding under this lock and read Profile.Reasoning from it, so one fold
 // reaches all of them and the effort cannot change mid-turn. A separately
 // threaded override would be a second value with its own chance to drift.

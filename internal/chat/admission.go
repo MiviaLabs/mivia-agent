@@ -26,7 +26,7 @@ const maxConsecutiveAdmissionNoOps = 3
 
 // AdmissionStage is one turn's recorded intent to widen the tool surface.
 // load_tools executes inside a turn and cannot rebuild the surface it is
-// running on (plan tools/05 D6/F2), so it records intent here and the turn
+// running on, so it records intent here and the turn
 // boundary performs the publication.
 type AdmissionStage struct {
 	// Names are the deferred tools to admit, in the order they were staged.
@@ -86,8 +86,8 @@ func TurnIDFromContext(ctx context.Context) (uint64, bool) {
 type AgentSurfacePublication struct {
 	Prompt string
 	// MemoryBlock is the core-memory block delivered as a separate
-	// user-role message right after the system message (plan 77, E3/E5,
-	// revised for cache locality: it never enters Prompt, so a memory
+	// user-role message right after the system message
+	// (revised for cache locality: it never enters Prompt, so a memory
 	// change cannot invalidate the cached system-prompt prefix). Empty
 	// means no injection - setMemoryMessageLocked with "" is a true no-op.
 	MemoryBlock   string
@@ -192,7 +192,7 @@ func (s *Session) ChargeAdmissionAttempt() error {
 // out-of-band caller, because no turn's failure discards it.
 //
 // It charges the publication bound only when the call actually stages
-// something new (plan tools/05 F7), so an idempotent re-request is free. The
+// something new, so an idempotent re-request is free. The
 // attempt bound is charged by the caller via ChargeAdmissionAttempt; a call
 // that turns out to be a pure no-op is refunded here, because the frozen index
 // (D8) keeps advertising loaded tools as loadable and so invites exactly that
@@ -419,7 +419,7 @@ func (s *Session) ResetAdmissions() {
 //
 // Checking preconditions and publishing atomically is the whole point: a
 // separate check would let a force-sent sibling turn start in the gap and have
-// its dispatcher closed underneath it (plan tools/05 R2-1).
+// its dispatcher closed underneath it.
 func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	base := pub.Prompt
 	s.mu.Lock()

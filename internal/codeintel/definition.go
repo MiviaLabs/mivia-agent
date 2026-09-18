@@ -13,7 +13,7 @@ import (
 // the declaration source, read from disk at the reported position and bounded
 // to MaxDefinitionLines.
 //
-// Resolution is symbol-based only (plan tools/03 D4): "Name", "pkg.Name",
+// Resolution is symbol-based only: "Name", "pkg.Name",
 // "full/import/path.Name", and - unlike References - "Type.Method",
 // "pkg.Type.Method" and "Type.Field", including fields promoted from embedded
 // types. It returns ErrUnavailable when the workspace cannot be analyzed.
@@ -150,7 +150,7 @@ func pkgPathFor(candidates []candidate, obj types.Object) string {
 //
 // The text comes from DISK at the reported span rather than from a retained
 // AST, which is what keeps the cached load mode free to change without
-// changing this output (plan tools/03 D5).
+// changing this output.
 func readLines(path string, start, end, maxLines int) (string, bool, error) {
 	if start <= 0 {
 		return "", false, nil

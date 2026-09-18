@@ -56,13 +56,13 @@ type ResolvedAgent struct {
 	// carrying the denial in it is what makes it unforgettable rather than
 	// merely passed.
 	EffectiveDenylist []string
-	// CoreTools is the resolved always-advertised tool tier (plan tools/05).
+	// CoreTools is the resolved always-advertised tool tier.
 	// nil = no per-agent override; the host falls back to [tools] core, and a
 	// nil global keeps every effective tool core. Non-nil (including empty)
 	// states this agent's core tier explicitly. Always a subset decision, never
 	// an authority grant: the host intersects it with EffectiveTools.
 	CoreTools *[]string
-	// Skills is the resolved skill invocation allowlist (plan 06).
+	// Skills is the resolved skill invocation allowlist.
 	// nil = all trusted skills; non-nil empty = none; non-nil = named set only.
 	Skills *[]string
 	// SkillOrigins records the trusted origin for each explicitly allowed skill
@@ -78,7 +78,7 @@ type ResolvedAgent struct {
 	// from the position's registry (filled by Layer C; empty after resolve).
 	DisabledTools []string
 	// OutputSchema is the resolved JSON Schema for structured final replies
-	// (plan tools/02). Nil means free-text. Deep-copied by Clone.
+	// Nil means free-text. Deep-copied by Clone.
 	OutputSchema map[string]any
 	// InputSchema optionally validates task input at admission.
 	InputSchema map[string]any

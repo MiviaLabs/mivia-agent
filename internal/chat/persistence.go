@@ -107,7 +107,7 @@ func (s *Session) Save(name string) error {
 // admitted set and then decides from a snapshot taken outside the lock that
 // guards the surface - raced a live turn's own publication and wrote a stale
 // decision over it, leaving the registry advertising tools the session neither
-// reports nor persists (plan tools/05).
+// reports nor persists.
 func (s *Session) Load(name string) error {
 	release, err := s.BeginSessionLoad()
 	if err != nil {
@@ -147,7 +147,7 @@ func (s *Session) loadReserved(name string, readOnly bool) error {
 	s.loadedContextSession = isContextSession
 	s.mu.Unlock()
 	// Replay the admitted tool surface synchronously, before this session
-	// can issue its first request (plan tools/05 D3/R2-3).
+	// can issue its first request.
 	s.replayAdmission(resolved)
 	return nil
 }

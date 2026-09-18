@@ -12,7 +12,7 @@ import (
 )
 
 // TestUncappedRunCommandMultiMBSurvivesDispatcher is the production-path gate
-// for plan 48 success criterion 2: under default uncapped max_output_bytes=0,
+// for the uncapped default: under max_output_bytes=0,
 // an honest multi-MB run_command result must pass NewToolDispatcher.Invoke
 // without destroy-at-ceiling or tail-truncation.
 func TestUncappedRunCommandMultiMBSurvivesDispatcher(t *testing.T) {
