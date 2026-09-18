@@ -2,6 +2,7 @@
 // stack, and the terminal UI rendering support that the loop needs. It is
 // extracted from internal/cli and must never import internal/cli; the cli
 // package wires the seam vars below at process start.
+
 package chat
 
 import (

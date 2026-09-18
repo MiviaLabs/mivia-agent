@@ -3,6 +3,7 @@
 // later - the per-agent turn ledger. Glyphs are deliberately single-width
 // text, never emoji: emoji are double-width and font-dependent, which
 // misaligns columns in real terminals.
+
 package chat
 
 import (
