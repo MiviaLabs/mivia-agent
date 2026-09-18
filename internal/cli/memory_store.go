@@ -12,7 +12,7 @@ import (
 )
 
 // wireSessionMemory wires the memory store into the session tool options so
-// memory_save and memory_search register (plan 68). The org identity was
+// memory_save and memory_search register. The org identity was
 // resolved at config load from the user config file only; a workspace config
 // cannot name the org store. res.Memory is the fully resolved [memory]
 // section; a nil res leaves memory unwired.
@@ -79,7 +79,7 @@ func coreMemoryBlock(ctx context.Context, store memory.Store, scope memory.Scope
 }
 
 // coreMemoryBlockForState is coreMemoryBlock scoped to project-only
-// injection (plan 77, E4 - ScopeAll is invalid for CoreEntries, org-scope
+// injection (ScopeAll is invalid for CoreEntries; org-scope
 // injection is a deferred decision), reading state's session-lifetime
 // store. Callers hold state.mu (matching the LedgerRepo/Memory field
 // convention), so the field read is direct. context.Background() is used
@@ -95,7 +95,7 @@ func coreMemoryBlockForState(state *AgentSessionState) string {
 }
 
 // coreMemoryBlockForOpts is coreMemoryBlockForState's counterpart for the
-// subagent path (plan 77, E2/E5): opts.Memory is nil for every non-chat
+// subagent path: opts.Memory is nil for every non-chat
 // caller (workflow/background paths), which coreMemoryBlock already
 // degrades safely to "".
 func coreMemoryBlockForOpts(opts SessionDispatcherOpts) string {
@@ -103,7 +103,7 @@ func coreMemoryBlockForOpts(opts SessionDispatcherOpts) string {
 }
 
 // memoryOf and memoryConfigOf mirror chat_repl.go's ledgerRepoOf for the
-// memory store (plan 77, E2), for callers building SessionDispatcherOpts
+// memory store, for callers building SessionDispatcherOpts
 // that don't already hold state.mu.
 func memoryOf(state *AgentSessionState) memory.Store {
 	if state == nil {

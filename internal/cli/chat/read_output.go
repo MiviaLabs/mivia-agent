@@ -18,7 +18,7 @@ import (
 )
 
 // read_output pages a truncated tool-result remainder stored under a content
-// reference. It is the model-facing reader for plan tools/01: byte-offset
+// reference. It is the model-facing reader: byte-offset
 // pagination mirroring ledger_read, with stricter caller-scoped visibility.
 
 const (

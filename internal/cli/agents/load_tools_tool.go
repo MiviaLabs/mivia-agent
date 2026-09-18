@@ -24,7 +24,7 @@ const maxLoadToolsErrorNameLen = 64
 // loadToolsTool lets the model pull a deferred tool's schema into the
 // advertised surface. It is a privileged session tool; a nested agent must
 // never reach it. It only records intent — publication happens at the turn
-// boundary (plan tools/05 D6/F2).
+// boundary.
 // See cli/dispatcher.go for registration; see NewLoadToolsTool for construction.
 type loadToolsTool struct {
 	session    *chat.Session

@@ -93,7 +93,7 @@ type SessionDispatcherOpts struct {
 	// no hooks are wired, which is what every non-chat caller wants.
 	WorkspaceRoot string
 
-	// Memory is the session's memory store (plan 77, E2), the same instance
+	// Memory is the session's memory store, the same instance
 	// agentSessionState.Memory holds - not a second Open. Nil for every
 	// non-chat caller (workflow/background paths); CoreMemoryBlockForState
 	// already treats a nil store as "", so subagent prompt composition
@@ -140,7 +140,7 @@ type SessionDispatcherOpts struct {
 	WorkflowSkillSnapshots map[string]workflowledger.RefSnapshot
 
 	// SkillScope is the immutable per-instance skill policy for the selected
-	// root agent (plan 06). Zero value allows all skills (no agent selected).
+	// root agent. Zero value allows all skills (no agent selected).
 	SkillScope AgentSkillScope
 
 	// AgentRegistry is the caller-authorized immutable catalogue whose names

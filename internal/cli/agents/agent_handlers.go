@@ -143,7 +143,7 @@ func FilterSkillRegistryForGate(skillReg *skills.Registry, allowProject bool) *s
 // applySelectedAgent applies the selected agent's prompt and turn budget to
 // the session. max_turns: nil leaves the session default; 0 means unlimited.
 //
-// Runs even when selected is nil (plan 77: found via a live smoke test that
+// Runs even when selected is nil (found via a live smoke test that
 // a bare `mivia chat` with no --agent never reached this far otherwise -
 // chat_command.go's own fallback prompt resolution runs BEFORE the memory
 // store opens and is hardcoded to no injection, so this call, right after

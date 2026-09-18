@@ -142,7 +142,7 @@ func normalizeFilePath(p string) string {
 }
 
 // WireSessionMemory wires the memory store into the session tool options so
-// memory_save and memory_search register (plan 68). A nil res or a disabled
+// memory_save and memory_search register. A nil res or a disabled
 // [memory] section leaves opts.Memory unchanged.
 func WireSessionMemory(opts *tools.DefaultOptions, root string, res *config.Resolved) error {
 	if res == nil || !res.Memory.IsEnabled() {
@@ -190,15 +190,15 @@ func CoreMemoryBlockForState(state *AgentSessionState) string {
 	return coreMemoryBlock(context.Background(), state.Memory, memory.ScopeProject, state.MemoryConfig)
 }
 
-// CoreMemoryBlockForOpts is CoreMemoryBlockForState for the subagent path
-// (plan 77, E2/E5): opts.Memory is nil for workflow/background callers,
+// CoreMemoryBlockForOpts is CoreMemoryBlockForState for the subagent path.
+// opts.Memory is nil for workflow/background callers,
 // which coreMemoryBlock degrades safely to "".
 func CoreMemoryBlockForOpts(opts SessionDispatcherOpts) string {
 	return coreMemoryBlock(context.Background(), opts.Memory, memory.ScopeProject, opts.MemoryConfig)
 }
 
 // MemoryOf returns the session-lifetime memory store from state without
-// requiring the caller to hold state.mu (plan 77, E2).
+// requiring the caller to hold state.mu.
 func MemoryOf(state *AgentSessionState) memory.Store {
 	if state == nil {
 		return nil
@@ -207,7 +207,7 @@ func MemoryOf(state *AgentSessionState) memory.Store {
 }
 
 // MemoryConfigOf returns the resolved [memory] config from state without
-// requiring the caller to hold state.mu (plan 77, E2).
+// requiring the caller to hold state.mu.
 func MemoryConfigOf(state *AgentSessionState) config.MemoryConfig {
 	if state == nil {
 		return config.MemoryConfig{}

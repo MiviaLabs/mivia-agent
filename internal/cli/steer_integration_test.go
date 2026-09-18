@@ -131,7 +131,7 @@ func assertSteerLedgerParent(t *testing.T, coord *coordinator.Coordinator, runID
 	t.Fatalf("steer missing from ledger: %+v", list)
 }
 
-// TestSteerMidRunVisibleToMultiStepChild is the plan 53.03 integration gate:
+// TestSteerMidRunVisibleToMultiStepChild is the mid-run steer integration gate:
 // SendToTask enqueues a steer during the child's tool call; the next step
 // boundary injects a framed <parent-message> into history before the model call.
 func TestSteerMidRunVisibleToMultiStepChild(t *testing.T) {

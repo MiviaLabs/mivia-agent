@@ -35,7 +35,7 @@ func resolveSendTargetTaskID(ctx context.Context, repo ledger.LedgerRepository, 
 	return orchestrate.ResolveTaskID(snap.Tasks, rawID)
 }
 
-// sendToTaskTool is the parent-side tool for steer/answer delivery (plan 53.03).
+// sendToTaskTool is the parent-side tool for steer/answer delivery.
 type sendToTaskTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig

@@ -127,8 +127,8 @@ func TestAgentPromptsNameTheEditTools(t *testing.T) {
 	}
 }
 
-// TestAgentPromptsNeverSetHandlerField is a regression test for the plan 07.1
-// prompt/rules drift: dispatch_tasks/spawn_agent task objects have no `handler`
+// TestAgentPromptsNeverSetHandlerField is a regression test for a prompt/rules
+// drift: dispatch_tasks/spawn_agent task objects have no `handler`
 // field. The task schema accepts unread fields, but `handler` is a reserved
 // ROUTE selector (reservedTaskSelectors), so sending `handler:"multi_step"`
 // fails the WHOLE call with `"handler" is not a task field; route with

@@ -13,8 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// assertFeatureDeliveryReviewPanel pins the Wave 7 panel review gate (D1-D17,
-// plan 62): review_panel replaced the single-reviewer review step with three
+// assertFeatureDeliveryReviewPanel pins the panel review gate: review_panel replaced the single-reviewer review step with three
 // independent panel-reviewer members (distinct provider/model pairs, D4) and
 // a review-synthesizer synthesis step. Without this pin, a change could drop
 // a member, weaken require_distinct_bindings, or reintroduce a shared

@@ -69,7 +69,7 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *Ag
 }
 
 // buildWidenedWith derives the same binding's surface with admitted appended as
-// a tail (plan tools/05 D7). It reuses the frozen tier plan and the already
+// a tail. It reuses the frozen tier plan and the already
 // loaded skill registry, so it performs no disk I/O and cannot change the
 // prompt index, the core block, or the skill policy.
 func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *AgentSessionState, admitted []string) (*agentSurface, error) {
@@ -151,7 +151,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *Agent
 	authority, _ := ScopedRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions)
 	// The skill policy is built against the final live authority registry
 	// The skill policy is built against the final live authority registry
-	// (plan 43) and returned for the caller to install on commit.
+	// and returned for the caller to install on commit.
 	skillScope := SkillScopeFromAgentAndRegistry(selected, authority)
 	var dispatcher *runtime.Dispatcher
 	if NewSessionDispatcherVar != nil {
@@ -213,7 +213,7 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		// it would then close on publication - under the spool this surface
 		// carries. Callers hold state.mu, so the field is read directly.
 		Repo: state.LedgerRepo,
-		// Same story for the memory store (plan 77, E2): the same instance
+		// Same story for the memory store: the same instance
 		// configureChatWorkspace opened, never a second Open.
 		Memory:                    state.Memory,
 		MemoryConfig:              state.MemoryConfig,

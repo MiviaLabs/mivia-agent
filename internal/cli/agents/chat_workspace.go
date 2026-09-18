@@ -27,7 +27,7 @@ import (
 // opened. The CLI process never needs it (exit reclaims the handle), but a
 // test or embedding that tears the session down must release the SQLite
 // handle: Windows cannot delete a database file that is still open.
-// stashMemoryOnState is plan 77's E1: the store configureChatWorkspace just
+// stashMemoryOnState makes the store configureChatWorkspace just
 // opened becomes the single source of truth every SystemPrompt-composing
 // call site reads from - never a second Open of the same file. state may
 // be nil (a caller that doesn't participate in prompt-level core-memory

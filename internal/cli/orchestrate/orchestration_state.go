@@ -374,7 +374,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		SpawnStagger: time.Duration(cfg.SpawnStaggerMs) * time.Millisecond,
 	})
 	c := coordinator.New(repo, pool).WithRetryPolicy(TaskRetryPolicyFromConfig(cfg.TaskRetry))
-	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
+	// Wire [subagents.messaging] body/mailbox budgets.
 	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
 	active := actual.(*coordinator.Coordinator)

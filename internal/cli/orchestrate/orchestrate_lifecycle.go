@@ -156,7 +156,7 @@ func allResultsRecovered(result *coordinator.RunResult) bool {
 
 // RunTaskResults returns the model-visible task results for a completed run,
 // preferring the snapshot's stored references on the recovered/replay path.
-// When repo is non-nil, synopsis-only task messages are attached (plan 53.02).
+// When repo is non-nil, synopsis-only task messages are attached.
 func RunTaskResults(result *coordinator.RunResult, threshold int) []modelTaskResult {
 	return RunTaskResultsWithRepo(nil, result, threshold)
 }

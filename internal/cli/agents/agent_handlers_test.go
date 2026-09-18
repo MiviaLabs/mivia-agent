@@ -12,7 +12,7 @@ import (
 )
 
 // TestApplySelectedAgentPromptInjectsMemoryWithNoAgentSelected is a
-// regression for a gap a live smoke test found in plan 77's implementation:
+// regression for a gap a live smoke test found:
 // applySelectedAgentPrompt used to return immediately when selected was nil
 // (the common case - a bare `mivia chat` with no --agent flag), so it never
 // called sess.SetAgentSettings and core-tier memory injection never

@@ -35,7 +35,7 @@ func LoadAgentDefinitions(workspaceRoot, agentFlag string, skillReg *skills.Regi
 		}
 	}
 	// Pre-merge dual-origin catalogue so user skills win over workspace
-	// shadowing when resolving agent skills allowlists (plan 06).
+	// shadowing when resolving agent skills allowlists.
 	catalogue, catWarnings := BuildSkillCatalogue(workspaceRoot)
 	// Prefer gate from user config (same as LoadAndResolve).
 	globalPreview, _ := config.LoadAgentsGlobal(workspaceRoot)

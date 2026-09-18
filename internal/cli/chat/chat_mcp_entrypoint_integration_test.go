@@ -96,8 +96,8 @@ description = "root orchestrator"
 // TestRunConfiguredChatKeepsGlobalMCPToolInCoreTierEvenWithAConfiguredCoreList
 // is the regression test for the root cause behind a configured, successfully
 // -connected MCP server (e.g. codegraph) never actually being called: this
-// repo's real .mivia/mivia.toml sets [tools] core = [...] (plan tools/05's
-// deferred-tool tier) naming only compiled-in, statically-known tool names.
+// repo's real .mivia/mivia.toml sets [tools] core = [...] (the deferred-tool
+// tier) naming only compiled-in, statically-known tool names.
 // An MCP tool's name is a runtime hash of the remote tool name
 // (internal/mcp.EncodeToolName) that cannot be predicted or written into that
 // list ahead of time - before the fix, planToolTiers therefore silently

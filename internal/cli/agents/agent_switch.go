@@ -35,11 +35,11 @@ type AgentSessionState struct {
 	// discover newly selected server tools without starting another client.
 	MCPManager *mcp.Manager
 	// SkillScope is the immutable per-instance skill policy for the selected
-	// root agent, including the final live tool registry snapshot (plan 43).
+	// root agent, including the final live tool registry snapshot.
 	// Set at dispatcher attach and agent switch; read by the TUI slash path.
 	SkillScope AgentSkillScope
 	// TierPlan is the frozen core/deferred tool split for the current agent
-	// binding (plan tools/05 D8). Computed once per binding; never recomputed
+	// binding. Computed once per binding; never recomputed
 	// while it lives, so the prompt index it feeds stays byte-stable.
 	TierPlan ToolTierPlan
 	// SkillRegFull is the current binding's unfiltered skill registry. Surface
@@ -57,7 +57,7 @@ type AgentSessionState struct {
 	// close at cleanup. Nil when LedgerRepo is the process-wide memory default.
 	ownedLedgerStore *ledger.StorageLedgerRepository
 	// LastSchemaMass is the most recent advertised schema-mass measurement for
-	// this session's surface (plan tools/05 D5 telemetry). It is written by the
+	// this session's surface. It is written by the
 	// three publications that can change the split or the admitted tail: attach,
 	// /agent switch and tool admission. A /model rebuild republishes the same
 	// frozen tiers with the same admitted tail, so it deliberately leaves this
@@ -339,7 +339,7 @@ func (s *AgentSessionState) CloseOwnedLedgerStore() {
 }
 
 // memoryStore and memoryConfig mirror ledgerRepo for callers that do NOT
-// hold s.mu (plan 77, E1/E2).
+// hold s.mu.
 func (s *AgentSessionState) memoryStore() memory.Store {
 	if s == nil {
 		return nil
@@ -510,8 +510,7 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 
 // commitAgentSwitchSurface publishes a successfully built agent-switch
 // candidate and wires its admission state. A new binding starts from its own
-// core tier: admissions never carry across an /agent switch (plan tools/05
-// D4).
+// core tier: admissions never carry across an /agent switch.
 func commitAgentSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, candidate *agentSurface, agentName, prompt string, maxSteps int) {
 	sess.ResetAdmissions()
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg, CoreMemoryBlockForState(state), candidate.advertised)

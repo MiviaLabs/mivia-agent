@@ -99,7 +99,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 	if ContextDispatcherForVar != nil && res != nil {
 		contextWiring = ContextDispatcherForVar(sess, res.Subagents)
 	}
-	// Rebuild the skill policy against the live generation (plan 43) so a
+	// Rebuild the skill policy against the live generation so a
 	// skill requiring a disabled/denied tool cannot activate after a switch.
 	liveScope := SkillScopeFromAgentAndRegistry(agentCtx.Selected, toolGeneration)
 	if NewSessionDispatcherVar == nil {
@@ -120,7 +120,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		// Session-owned; see agentSessionState.LedgerRepo. Nil here is the
 		// hand-built caller with no agent state, which owns no session either.
 		Repo: repo,
-		// Same story for the memory store (plan 77, E2) - nil here for the
+		// Same story for the memory store - nil here for the
 		// same hand-built-caller reason.
 		Memory:                    memStore,
 		MemoryConfig:              memCfg,

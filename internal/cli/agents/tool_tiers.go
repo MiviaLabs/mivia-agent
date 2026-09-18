@@ -140,7 +140,7 @@ func authorizedNamesInRegistryOrder(base *tools.Registry, selected *agents.Resol
 }
 
 // tieredRootRegistry materializes the core tier in base order and appends the
-// admitted tools as a tail (plan tools/05 D8). An inert plan falls through to
+// admitted tools as a tail. An inert plan falls through to
 // the ordinary root scope so a zero-config session is byte-identical to a build
 // without deferred loading.
 func TieredRootRegistry(base *tools.Registry, selected *agents.ResolvedAgent, extraDenylist []string, plan ToolTierPlan, admitted []string) *tools.Registry {
