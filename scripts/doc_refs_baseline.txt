@@ -2,7 +2,7 @@
 # internal/ that carries a plan-work label. The baseline may only
 # shrink: fix the comment, then remove its line here in the same
 # change. The gate fails on any entry with no live match.
-internal/agent/agentloop_adapter.go:236
+internal/agent/agentloop_adapter.go:237
 internal/agent/agentloop_adapter_test.go:81
 internal/agent/agentloop_options_test.go:3
 internal/agent/batch_budget_integration_test.go:121
@@ -141,7 +141,6 @@ internal/workflows/delivery/stacking_commit_walk_test.go:3
 internal/workflows/delivery/stacking_commit_walk_test.go:34
 internal/workflows/delivery/stacking_plan.go:86
 internal/workflows/ledger/integration_test.go:3
-internal/workflows/ledger/ledger.go:6
 internal/workflows/ledger/recovery.go:11
 internal/workflows/ledger/types.go:109
 internal/workflows/ledger/types.go:95
