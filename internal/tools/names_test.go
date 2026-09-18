@@ -87,7 +87,7 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 }
 
 // TestGetDiagnosticsRegistrationConditions pins the get_diagnostics
-// registration contract (locked plan v2, task t6): the tool is advertised only
+// registration contract: the tool is advertised only
 // when it can succeed. It must be absent when DiagnosticsCommands is unset, and
 // absent when the default command's argv[0] is not on the effective run_command
 // allowlist; only configured AND allowlisted defaults register it. This mirrors
@@ -138,7 +138,7 @@ func TestGetDiagnosticsRegistrationConditions(t *testing.T) {
 	}
 }
 
-// TestDeclaredToolNamesExcludesActivationOnly pins plan 43: the static
+// TestDeclaredToolNamesExcludesActivationOnly pins the contract: the static
 // declared-tool catalogue used to validate skill frontmatter and agent TOML
 // tool requirements must exclude the activation-only read_skill_resource
 // capability. Neither a skill nor an agent may statically require or declare

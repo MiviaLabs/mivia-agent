@@ -371,7 +371,7 @@ func TestFindSymbolContextSortsReferencesBeforeTruncating(t *testing.T) {
 // same *codeintel.Analyzer instance registerCodeNavTools hands to
 // go_to_definition - not a second, independently constructed one. A second
 // analyzer would pay its own full packages.Load and defeat the whole point
-// of the shared cache (Design, plan 66 follow-on #1).
+// of the shared cache.
 func TestDefaultRegistryRegistersFindSymbolContextSharingAnalyzer(t *testing.T) {
 	_, reg := setupWS(t)
 

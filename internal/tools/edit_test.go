@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// Coverage for the in-place edit tools (plan 48 step 5): the file-size guard
+// Coverage for the in-place edit tools: the file-size guard
 // that used to be absent entirely, the declared result budget, mode-preserving
 // writes, and the batched multi_edit variant.
 
@@ -101,7 +101,7 @@ func TestMultiEditPreservesFileMode(t *testing.T) {
 	}
 }
 
-// TestEditToolsRefuseFileAboveReadBound: before plan 48 step 5, search_replace
+// TestEditToolsRefuseFileAboveReadBound: before the file-size guard, search_replace
 // read a file of ANY size into memory with no guard - the one workspace tool
 // with no bound at all. The refusal must state the real size and name a way
 // forward, or the model just retries the identical call.

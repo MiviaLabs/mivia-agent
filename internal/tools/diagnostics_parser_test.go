@@ -1,12 +1,12 @@
 package tools
 
-// RED-phase (locked plan v2, task p2) contract tests for the get_diagnostics
+// RED-phase contract tests for the get_diagnostics
 // parser. They pin grammar v1 and the summary accounting that a later wave
 // implements inside parseDiagnosticsOutput; the p1 skeleton returns an empty
 // result, so every assertion below (except the empty-input boundary) fails
 // until the parser lands. That is the intended RED state.
 //
-// Trust/security framing (locked plan v2 item 11): parseDiagnosticsOutput
+// Trust/security framing: parseDiagnosticsOutput
 // consumes raw captured subprocess output, which is untrusted data from the
 // model's point of view. The contract therefore demands the parser never drop
 // a line, strip C0 control characters (tab preserved) from line-mode text so

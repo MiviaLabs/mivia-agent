@@ -20,7 +20,7 @@ import (
 const findSymbolContextVersion = 1
 
 // Bounds and defaults for max_references and context_lines, matching
-// inspect_repository's convention (Design, plan 66 follow-on #1): defaults
+// inspect_repository's convention: defaults
 // apply when the field is absent from the request, and 0 is not itself a
 // meaningful "explicit" max_references (a caller asking for zero references
 // would get nothing useful), so an int with a <=0-means-default convention
@@ -38,8 +38,8 @@ const (
 // symbolContextResolver is the analyzer capability this tool needs: the
 // definition and reference lookups the three existing nav tools already call
 // against the one shared *codeintel.Analyzer. A superset of the existing
-// definitionResolver and referenceFinder interfaces (Design, plan 66
-// follow-on #1) rather than a new interface - *codeintel.Analyzer already
+// definitionResolver and referenceFinder interfaces rather than a new
+// interface - *codeintel.Analyzer already
 // satisfies it.
 type symbolContextResolver interface {
 	definitionResolver
