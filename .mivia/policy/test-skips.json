@@ -18,7 +18,7 @@
         "reason": "uses a POSIX command (true); no Windows equivalent wired here"
       }
     ],
-    "internal/agent/audit_dump_test.go": [
+    "internal/agent/provider_dump_test.go": [
       {
         "line": 282,
         "reason": "POSIX modes are not representable on Windows"
@@ -106,7 +106,7 @@
         "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ],
-    "internal/agent/shim_coverage_gate_test.go": [
+    "internal/agent/dispatcher_shim_gate_test.go": [
       {
         "line": 225,
         "reason": "the second call was not dedup-served; nothing to classify here"
