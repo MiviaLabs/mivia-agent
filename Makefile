@@ -197,6 +197,8 @@ agent-hook-test:
 	@python3 scripts/test_check_prose.py
 	@python3 scripts/check_test_skips.py
 	@python3 scripts/test_check_test_skips.py
+	@python3 scripts/test_check_doc_refs.py
+	@python3 scripts/check_doc_refs.py
 	@python3 scripts/test_import_layers.py
 	@python3 scripts/test_verify_skill_tree.py
 	@python3 scripts/test_check_memories.py
