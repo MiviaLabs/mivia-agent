@@ -1,4 +1,4 @@
-// Package agent - SDK agent-loop run driver.
+// SDK agent-loop run driver.
 //
 // RunAgentLoopOnce drives the SDK's mivia-ai-sdk/agentloop.Loop (built
 // by agentloop_adapter.go's buildAgentLoopOptions) for one turn: it
@@ -6,6 +6,7 @@
 // the prompt-too-long recovery retry, and returns the SDK Result. It
 // is ADDITIVE: the legacy (*Loop).Run in loop.go is unchanged, and the
 // dispatcher's "sdk" branch (loop_dispatch.go) chooses the runtime.
+
 package agent
 
 import (
@@ -210,7 +211,7 @@ const maxEmptyResponseRetries = 2
 // runSDKSteerable installs the steer-signal bridge on one built SDK loop and drives RunSteerable.
 func runSDKSteerable(ctx context.Context, l *Loop, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState) (sdkagentloop.Result, error) {
 	steer := sdkagentloop.NewSteer()
-	// BeforeStep carrier (plan 54, blocker 2 of the SDK convergence):
+	// BeforeStep carrier:
 	// install the legacy BeforeStep as the SDK's pull-based steer
 	// injector. The SDK drains it at the top of every iteration,
 	// mirroring the legacy context.go:15-19 placement. A steered stop

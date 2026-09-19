@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -75,93 +74,12 @@ func buildOversizedHistory() []provider.Message {
 	}
 }
 
-// A provider prompt-too-long rejection is recovered exactly once: the history
-// is compacted to the fixed 16K target and the call is retried, after which the
-// run completes normally with a bounded number of provider calls.
-func TestAgentRetriesOnceAfterPromptTooLongWithCompaction(t *testing.T) {
-	history := buildOversizedHistory()
-	beforeTokens := provider.MessagesTokens(history, provider.ContextAccountingProfile{})
-	if beforeTokens <= 16<<10 {
-		t.Fatalf("test history too small to exercise pruning: %d tokens", beforeTokens)
-	}
-
-	comp := &promptTooLongCompleter{
-		failN:            1,
-		promptTooLongErr: fmt.Errorf("deepseek: provider error (HTTP 400, type invalid_request_error): %w", provider.ErrPromptTooLong),
-		steps:            []provider.Response{{Content: "recovered", FinishReason: "stop"}},
-	}
-	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: history}
-
-	var prunedEvents []Event
-	text, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash",
-		MaxSteps: 5,
-		OnEvent: func(e Event) {
-			if e.Kind == EventPrune {
-				prunedEvents = append(prunedEvents, e)
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("run failed after one compaction retry: %v", err)
-	}
-	if text != "recovered" {
-		t.Fatalf("text = %q, want %q", text, "recovered")
-	}
-	if comp.calls != 2 {
-		t.Fatalf("completer called %d times, want exactly 2 (one fail + one retry)", comp.calls)
-	}
-
-	// The retry must carry the compacted history: below the 16K target and
-	// strictly smaller than what the provider rejected.
-	retryTokens := provider.MessagesTokens(comp.lastReq.Messages, provider.ContextAccountingProfile{})
-	if retryTokens >= 16<<10 {
-		t.Fatalf("retry history not compacted to 16K target: %d tokens", retryTokens)
-	}
-	if retryTokens >= beforeTokens {
-		t.Fatalf("retry history not pruned: before=%d after=%d", beforeTokens, retryTokens)
-	}
-	// Compaction must keep the system prompt and the newest turns.
-	if len(loop.Messages) == 0 || loop.Messages[0].Role != provider.RoleSystem || loop.Messages[0].Content != "you are a coding assistant" {
-		t.Fatalf("system prompt lost during compaction: %+v", loop.Messages)
-	}
-	if len(prunedEvents) != 1 || !strings.Contains(prunedEvents[0].Detail, "compacted to 16384 tokens and retrying once") {
-		t.Fatalf("expected one compaction prune event, got %+v", prunedEvents)
-	}
-}
-
-// A prompt-too-long rejection that survives the single retry must fail fast:
-// the error wraps ErrPromptTooLong, and the completer is called exactly twice
-// (never an unbounded retry loop).
-func TestAgentPromptTooLongFailsFastAfterOneRetry(t *testing.T) {
-	comp := &promptTooLongCompleter{
-		failN:            100,
-		promptTooLongErr: fmt.Errorf("deepseek: provider error (HTTP 400, type invalid_request_error): %w", provider.ErrPromptTooLong),
-	}
-	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
-
-	_, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash", MaxSteps: 5})
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if !errors.Is(err, provider.ErrPromptTooLong) {
-		t.Fatalf("expected error wrapping ErrPromptTooLong, got: %v", err)
-	}
-	if comp.calls != 2 {
-		t.Fatalf("completer called %d times, want exactly 2 (bounded retry, no loop)", comp.calls)
-	}
-}
-
-func TestAgentDoesNotCompactRetryWhenProviderReplayIsDisabled(t *testing.T) {
-	comp := &promptTooLongCompleter{failN: 1, promptTooLongErr: fmt.Errorf("%w", provider.ErrPromptTooLong)}
-	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
-	_, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash", MaxSteps: 5, DisableProviderReplay: true})
-	if !errors.Is(err, provider.ErrPromptTooLong) {
-		t.Fatalf("err=%v, want prompt-too-long error", err)
-	}
-	if comp.calls != 1 {
-		t.Fatalf("completer calls=%d, want one", comp.calls)
-	}
-}
+// The three host-backend prompt-too-long retry tests that used to live here
+// (TestAgentRetriesOnceAfterPromptTooLongWithCompaction,
+// TestAgentPromptTooLongFailsFastAfterOneRetry,
+// TestAgentDoesNotCompactRetryWhenProviderReplayIsDisabled) were exact
+// byte-identical duplicates of the SDK-backend versions in
+// agentloop_retry_test.go and were removed; see commit history.
 
 // A prompt-too-long rejection followed by one compaction retry must charge the
 // output allowance exactly once. requestStep reserves prompt+output before the

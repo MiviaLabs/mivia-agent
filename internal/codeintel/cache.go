@@ -24,7 +24,7 @@ type fileStamp struct {
 // snapshot is one cached packages.Load result plus everything needed to decide,
 // on the next query, whether the workspace still matches what was loaded.
 //
-// Invalidation is stat-on-hit over the whole recorded set (plan tools/03 D1):
+// Invalidation is stat-on-hit over the whole recorded set:
 // no bus events, no dirty set, no writer instrumentation. That is the only
 // scheme that is complete over every write path - the three file-writer tools,
 // run_command (gofmt, sed, git checkout), and edits made outside the agent

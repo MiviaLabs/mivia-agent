@@ -32,7 +32,7 @@ func validPanelTask(name string) PanelTaskSpec {
 		Policy:                        coordledger.RunPolicy{NoRetry: true, FailInterrupted: true},
 		CoordinatorRequestFingerprint: "sha256:" + panelDigest("request:"+name),
 	}
-	work.WorkFingerprint = work.workFingerprint()
+	work.WorkFingerprint = work.WorkFingerprintValue()
 	return work
 }
 
@@ -45,7 +45,7 @@ func panelTaskWithID(t *testing.T, name, taskID string) PanelTaskSpec {
 		t.Fatal(err)
 	}
 	work.CoordinatorRequestFingerprint = fingerprint
-	work.WorkFingerprint = work.workFingerprint()
+	work.WorkFingerprint = work.WorkFingerprintValue()
 	return work
 }
 
@@ -162,7 +162,7 @@ func TestPanelTaskSpecRejectsIncompleteWork(t *testing.T) {
 func TestPanelTaskSpecAcceptsUnlimitedPromptTokens(t *testing.T) {
 	work := validPanelTask("unlimited-prompt")
 	work.WorkLimits.MaxPromptTokens = 0
-	work.WorkFingerprint = work.workFingerprint()
+	work.WorkFingerprint = work.WorkFingerprintValue()
 	if err := work.Validate(); err != nil {
 		t.Fatalf("MaxPromptTokens 0 (unlimited cumulative prompt) must be accepted: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPanelTaskSpecAcceptsUnlimitedPromptTokens(t *testing.T) {
 func TestPanelTaskSpecRejectsNegativePromptTokens(t *testing.T) {
 	work := validPanelTask("negative-prompt")
 	work.WorkLimits.MaxPromptTokens = -1
-	work.WorkFingerprint = work.workFingerprint()
+	work.WorkFingerprint = work.WorkFingerprintValue()
 	if err := work.Validate(); err == nil {
 		t.Fatal("negative MaxPromptTokens must fail")
 	}
@@ -180,7 +180,7 @@ func TestPanelTaskSpecRejectsNegativePromptTokens(t *testing.T) {
 func TestPanelTaskSpecAcceptsAgentDefinitionDigest(t *testing.T) {
 	work := validPanelTask("agent-digest")
 	work.AgentDigest = "sha256:" + panelDigest("agent")
-	work.WorkFingerprint = work.workFingerprint()
+	work.WorkFingerprint = work.WorkFingerprintValue()
 	if err := work.Validate(); err != nil {
 		t.Fatalf("agent definition digest rejected: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestAppendPanelPhaseDuplicateIDConflictsOnDifferentTransition(t *testing.T)
 	conflicting := attempt.Clone()
 	conflicting.Version++
 	conflicting.PanelExecution.Phase = PanelPhaseSynthesisAdmitted
-	conflicting.PanelExecution.Synthesis = synthesis.clone()
+	conflicting.PanelExecution.Synthesis = synthesis.Clone()
 	// Same (attempt, version) as the first append -> same deterministic
 	// event ID -> but a different logical transition -> ErrConflict.
 	if err := repo.appendPanelPhase(ctx, run, attempt.AttemptID, "holder", PanelPhaseSynthesisAdmitted, synthesis, conflicting, 0); err != ErrConflict {

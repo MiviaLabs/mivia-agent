@@ -25,7 +25,7 @@ func routingPolicyFromConfig(cfg config.MessagingRoutingConfig) agentmsg.Routing
 	}
 }
 
-// handleAsk runs parent-routed Ask (plan 53.04). Returns tool JSON result.
+// handleAsk runs parent-routed Ask. Returns tool JSON result.
 func (t *postMessageTool) handleAsk(
 	ctx context.Context,
 	c chatCoordinator,

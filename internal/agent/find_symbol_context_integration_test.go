@@ -10,7 +10,7 @@ import (
 )
 
 // TestIntegrationFindSymbolContextCompletesSymbolEvidenceInOneToolCall proves
-// the turn reduction find_symbol_context exists for (plan 66, follow-on #1):
+// the turn reduction find_symbol_context exists for:
 // answering "what does this symbol do and who calls it" used to cost a
 // list_symbols/go_to_definition call plus a separate find_references call.
 // Here one find_symbol_context call, through the real agent loop, the real

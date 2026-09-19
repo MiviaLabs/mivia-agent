@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Parent-message framing for mid-task steers (plan 53.03). Separate from
+// Parent-message framing for mid-task steers. Separate from
 // lifecycle-hook framing so model-visible tags identify the source correctly.
 const (
 	parentMessageOpenTag  = "<parent-message>"

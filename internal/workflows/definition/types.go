@@ -286,7 +286,7 @@ type Stacking struct {
 	// and drives concurrently within one ready wave (0 = global default).
 	MaxConcurrentChunks int `toml:"max_concurrent_chunks" json:"max_concurrent_chunks,omitempty"`
 	// SplitDeferred enables follow-up PR creation from a repair-produced
-	// commit stack (spec-auto-split-oversized-prs.md §5.2-5.3): when a
+	// commit stack: when a
 	// chunk's delivered diff was still oversized despite a good estimate,
 	// the diff-size repair step commits the review-sized slice plus one or
 	// more additional commits for the deferred scope, and the driver admits
@@ -341,7 +341,7 @@ func (s *Stacking) StackingEnabled() bool {
 }
 
 // SplitDeferredEnabled reports whether the repair-produced commit-stack
-// correction path (§5.2-5.3) is enabled for the workflow. An explicit
+// correction path is enabled for the workflow. An explicit
 // per-workflow value wins; otherwise the global default (off - opt-in).
 func (s *Stacking) SplitDeferredEnabled() bool {
 	if s == nil || s.SplitDeferred == nil {

@@ -86,7 +86,7 @@ func (c *Coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 	casOK := c.tryTaskStatusCAS(persistCtx, h.runID, t.ID, taskSnap, newStatus, runErr)
 
 	if casOK {
-		// Terminal mailbox fence (plan 53.03): reject further sends without
+		// Terminal mailbox fence: reject further sends without
 		// close-on-terminal. Most terminals land here, not via transitionTask.
 		if IsTaskTerminal(newStatus) {
 			h.MarkTaskMailboxTerminal(t.ID)

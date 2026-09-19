@@ -1,4 +1,4 @@
-// Package agent - SDK agent-loop steer bridge.
+// SDK agent-loop steer bridge.
 //
 // bridgeSteerSignals wires the CLI's InterruptCh / MailboxPending /
 // MailboxPendingInterrupt onto the SDK's Steer. Each non-nil signal

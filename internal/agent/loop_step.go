@@ -8,7 +8,7 @@ import (
 // initialToolSpecs is the turn's step-1 advertised array, before the SDK's
 // per-iteration Options.Surface hook can rotate it (bridgeSDKBridgeSurface
 // skips the first iteration, mirroring the legacy skip-step-1 rule). A
-// host-pinned snapshot (plan tools-advertising/01) takes over the whole
+// host-pinned snapshot takes over the whole
 // turn; without one, fall back to the live registry (today's behavior -
 // subagent and workflow-engine loops).
 func (l *Loop) initialToolSpecs(opts Options) []provider.ToolSpec {

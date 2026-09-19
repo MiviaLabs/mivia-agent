@@ -662,7 +662,7 @@ func TestSettingsStore_ApplySync_ToggleOffThenOn_WritesTrue(t *testing.T) {
 }
 
 // TestSettingsStore_ApplySync_RollbackOnPersistFailure asserts the
-// rollback contract the locked plan called out: when persist fails, the
+// rollback contract: when persist fails, the
 // in-memory General view must NOT carry the failed edit. The failing-path
 // technique mirrors settings_persist_failure_test.go's unwritableConfigPath
 // helper - a config path whose PARENT is a regular file fails at

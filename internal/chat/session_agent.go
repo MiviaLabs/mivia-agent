@@ -39,7 +39,7 @@ func (s *Session) BeginSurfaceSwitch() (func(), error) {
 // tool surface from the persisted admitted set. Without a reservation it was
 // the only such entry point that could run beside a live turn, and its
 // admission replay then wrote a decision made from a stale snapshot over the
-// turn's own publication (plan tools/05).
+// turn's own publication.
 //
 // It is deliberately NOT BeginSurfaceSwitch: switching also fails closed
 // against surface publication, and a load publishes one itself through the
@@ -188,7 +188,7 @@ func (s *Session) RefreshPrefixIdentity() {
 
 // AgentSettings returns the current root prompt and turn limit atomically.
 // The returned prompt is BaseSystemPrompt (memory-block-free), not
-// SystemPrompt (plan 77, E3) - callers read-modify-write this value
+// SystemPrompt - callers read-modify-write this value
 // (appending a deferred-tool index, capturing a switch baseline) and pass
 // it back through SetAgentSettings/PublishAgentSurface, which recompose
 // the memory block fresh; returning the composed value here would let it

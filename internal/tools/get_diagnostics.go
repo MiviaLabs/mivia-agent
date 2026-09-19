@@ -1,13 +1,12 @@
 package tools
 
 // get_diagnostics.go is the tool-surface half of the get_diagnostics tool
-// (locked plan v2 item 5). It owns the struct, the registry name, the
+// It owns the struct, the registry name, the
 // description, the parameter schema, the scheduling metadata, and the Execute
 // pipeline: resolve the configured argv against the run_command allowlist,
 // run it under the same process guards and capture pattern as run_command,
 // redact the whole capture before parsing, and compose a budget-bounded JSON
-// envelope. The row and envelope shapes live in diagnostics.go (locked plan
-// v2 items p1 and p3) and this file reuses them.
+// envelope. The row and envelope shapes live in diagnostics.go, and this file reuses them.
 
 import (
 	"context"
@@ -41,7 +40,7 @@ type getDiagnosticsTool struct {
 	// selects its argv through the commands map instead.
 	argv []string
 	// commands maps a command name to its argv: the v2 selection surface
-	// (locked plan v2). When set, Execute selects the argv by the "command"
+	// When set, Execute selects the argv by the "command"
 	// argument, falling back to defaultName when the argument is omitted. A
 	// nil commands map keeps the legacy argv path.
 	commands map[string][]string
@@ -112,7 +111,7 @@ func (t *getDiagnosticsTool) Capability(json.RawMessage) Capability {
 // configured maxBytes.
 func (t *getDiagnosticsTool) ResultBudgetBytes() int { return t.maxBytes }
 
-// Execute runs the tool. Pipeline (locked plan v2 section 5): context check,
+// Execute runs the tool. Pipeline: context check,
 // decode max_rows and command, resolve the argv through the commands map
 // (the "command" argument selects the entry, defaultName when omitted; a
 // refusal is an envelope-level failure carried in the envelope Error field
@@ -143,7 +142,7 @@ func (t *getDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) 
 		return "", err
 	}
 
-	// v2 command selection (locked plan v2): a command-configured tool
+	// v2 command selection: a command-configured tool
 	// resolves its argv through the commands map by the "command" argument,
 	// falling back to defaultName when omitted; the legacy single-argv
 	// surface (argv) is unchanged for tools without commands.
@@ -174,7 +173,7 @@ func (t *getDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) 
 	}
 
 	// Redact each stream BEFORE parsing so a credential hidden inside a
-	// parsed file field can never reach a row (locked plan v2 item 11). The
+	// parsed file field can never reach a row. The
 	// streams stay separate: concatenating them would poison JSON detection
 	// whenever stderr carries any byte (audit finding E2).
 	redactedOut := redact.Text(capture.stdout)
@@ -185,7 +184,7 @@ func (t *getDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) 
 	}
 
 	// max_rows caps the rows the envelope carries; the summary always
-	// describes the rows actually returned (locked plan v2 item 6).
+	// describes the rows actually returned.
 	rows := parsed.Rows
 	maxRowTruncated := false
 	if in.MaxRows > 0 && len(rows) > in.MaxRows {
@@ -227,7 +226,7 @@ func (t *getDiagnosticsTool) runDiagnosticsCommand(ctx context.Context, bin stri
 }
 
 // resolveDiagnosticsCommand selects the argv for the "command" argument on a
-// command-configured tool (locked plan v2). It returns the entry name, its
+// command-configured tool. It returns the entry name, its
 // argv, and an errMsg when resolution fails. An omitted command resolves to
 // defaultName; with no default and more than one entry that is an ambiguity
 // error ('multiple diagnostics commands configured; specify which with

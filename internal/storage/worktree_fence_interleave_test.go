@@ -11,7 +11,7 @@ import (
 	contextstate "github.com/MiviaLabs/mivia-agent/internal/context/state"
 )
 
-// The interleaving tests implement plan 57 test #9 with deterministic
+// The interleaving tests run with deterministic
 // check-then-act hooks. A stale mutation pauses inside its transaction after
 // the in-transaction active check, a concurrent deletion commits, and the
 // stale write must fail atomically with no rows changed; a fresh retry then

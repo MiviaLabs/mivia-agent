@@ -65,7 +65,7 @@ func TestMemoryContextContentNeutralizesTagBreakout(t *testing.T) {
 	}
 }
 
-// TestMemoryContextContentEnforcesByteCap is D1d (plan 76, decision 1):
+// TestMemoryContextContentEnforcesByteCap is D1d:
 // the injected block gets its own fixed byte cap, independent of the
 // whole-context token budget, so core-tier injection can never be the
 // thing that silently introduces unbounded context growth - even

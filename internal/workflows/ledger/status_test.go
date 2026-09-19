@@ -14,7 +14,7 @@ import (
 )
 
 // seedCompletedAttempt mirrors seedRunningAttemptWithOutput's shape but runs
-// in the internal package so buildInspectView can be exercised directly with
+// in the internal package so BuildInspectView can be exercised directly with
 // explicit offset/limit. It returns the completed attempt carrying out.
 func seedCompletedAttempt(t *testing.T, repo Repository, runID string, out []byte) StepAttempt {
 	t.Helper()
@@ -129,7 +129,7 @@ func TestBuildInspectViewSmallArtifactBackwardCompat(t *testing.T) {
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
 	// Omitted offset/limit behaves like offset=0, limit=DefaultInspectPageBytes.
-	view, err := buildInspectView(context.Background(), repo, runID, attempt)
+	view, err := BuildInspectView(context.Background(), repo, runID, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestBuildInspectViewSmallArtifactBackwardCompat(t *testing.T) {
 	}
 
 	// An explicit offset 0 with a page that fits keeps the same behavior.
-	view2, err := buildInspectView(context.Background(), repo, runID, attempt, 0, 4096)
+	view2, err := BuildInspectView(context.Background(), repo, runID, attempt, 0, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestBuildInspectViewSmallNonJSONBackwardCompat(t *testing.T) {
 	raw := []byte("hello world\nline two\n")
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
-	view, err := buildInspectView(context.Background(), repo, runID, attempt)
+	view, err := BuildInspectView(context.Background(), repo, runID, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestBuildInspectViewPagesHugeArtifact(t *testing.T) {
 	runID := "wfr-page-huge-1"
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
-	view, err := buildInspectView(context.Background(), repo, runID, attempt)
+	view, err := BuildInspectView(context.Background(), repo, runID, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestBuildInspectViewPagesHugeArtifact(t *testing.T) {
 	sb.WriteString(view.OutputText)
 	next := view.OutputNextOffset
 	for next != 0 {
-		page, err := buildInspectView(context.Background(), repo, runID, attempt, next, 64<<10)
+		page, err := BuildInspectView(context.Background(), repo, runID, attempt, next, 64<<10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestBuildInspectViewRedactsSecretAcrossPageBoundary(t *testing.T) {
 	runID := "wfr-page-split-1"
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
-	page1, err := buildInspectView(context.Background(), repo, runID, attempt, 0, limit)
+	page1, err := BuildInspectView(context.Background(), repo, runID, attempt, 0, limit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestBuildInspectViewRedactsSecretAcrossPageBoundary(t *testing.T) {
 		t.Fatalf("page 1 leaks the boundary secret: %q", page1.OutputText)
 	}
 
-	page2, err := buildInspectView(context.Background(), repo, runID, attempt, page1.OutputNextOffset, limit)
+	page2, err := BuildInspectView(context.Background(), repo, runID, attempt, page1.OutputNextOffset, limit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestBuildInspectViewOffsetBeyondEndReturnsEmptyPage(t *testing.T) {
 	raw := []byte(`{"ok":true}`)
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
-	view, err := buildInspectView(context.Background(), repo, runID, attempt, len(raw)+100, 4096)
+	view, err := BuildInspectView(context.Background(), repo, runID, attempt, len(raw)+100, 4096)
 	if err != nil {
 		t.Fatalf("offset past the end must not error: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestBuildInspectViewPagesNonJSONRuneAligned(t *testing.T) {
 	next := 0
 	pages := 0
 	for {
-		view, err := buildInspectView(context.Background(), repo, runID, attempt, next, limit)
+		view, err := BuildInspectView(context.Background(), repo, runID, attempt, next, limit)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -399,7 +399,7 @@ func TestBuildInspectViewPagesNonJSONRuneAligned(t *testing.T) {
 	}
 
 	// An offset landing mid-rune must trim the partial rune and still advance.
-	mid, err := buildInspectView(context.Background(), repo, runID, attempt, 11, limit)
+	mid, err := BuildInspectView(context.Background(), repo, runID, attempt, 11, limit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestBuildInspectViewClampsLimit(t *testing.T) {
 	raw := []byte(fmt.Sprintf(`{"filler":"%s"}`, strings.Repeat("x", 100<<10)))
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
-	view, err := buildInspectView(context.Background(), repo, runID, attempt, 0, DefaultInspectPageBytes*8)
+	view, err := BuildInspectView(context.Background(), repo, runID, attempt, 0, DefaultInspectPageBytes*8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestBuildInspectViewRefusesOversizedArtifact(t *testing.T) {
 	raw := []byte(fmt.Sprintf(`{"filler":"%s"}`, strings.Repeat("x", MaxPageableBytes+1)))
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
-	_, err := buildInspectView(context.Background(), repo, runID, attempt)
+	_, err := BuildInspectView(context.Background(), repo, runID, attempt)
 	if err == nil {
 		t.Fatal("oversized artifact must be refused")
 	}
@@ -497,7 +497,7 @@ func TestBuildStatusViewCompletedAttemptTiming(t *testing.T) {
 	runID := "wfr-status-timing-1"
 	attempt := seedCompletedAttempt(t, repo, runID, []byte(`{"ok":true}`))
 
-	view, err := buildStatusView(context.Background(), repo, runID)
+	view, err := BuildStatusView(context.Background(), repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestBuildStatusViewRunningAttemptHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	view, err := buildStatusView(ctx, repo, runID)
+	view, err := BuildStatusView(ctx, repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestBuildStatusViewNoHeartbeatIsZero(t *testing.T) {
 	runID := "wfr-status-no-heartbeat-1"
 	seedRunningAttemptForStatus(t, repo, runID)
 
-	view, err := buildStatusView(context.Background(), repo, runID)
+	view, err := BuildStatusView(context.Background(), repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,7 +599,7 @@ func TestBuildStatusViewRunningAttemptTiming(t *testing.T) {
 	runID := "wfr-status-timing-running-1"
 	attempt := seedRunningAttemptForStatus(t, repo, runID)
 
-	view, err := buildStatusView(context.Background(), repo, runID)
+	view, err := BuildStatusView(context.Background(), repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +625,7 @@ func TestBuildInspectViewAttemptTiming(t *testing.T) {
 	runID := "wfr-inspect-timing-1"
 	attempt := seedCompletedAttempt(t, repo, runID, []byte(`{"ok":true}`))
 
-	view, err := buildInspectView(context.Background(), repo, runID, attempt)
+	view, err := BuildInspectView(context.Background(), repo, runID, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +693,7 @@ func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	view, err := buildStatusView(ctx, repo, runID)
+	view, err := BuildStatusView(ctx, repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +744,7 @@ func TestBuildStatusViewDeliveryClaim(t *testing.T) {
 		}
 	}
 
-	view, err := buildStatusView(ctx, repo, runID)
+	view, err := BuildStatusView(ctx, repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -758,7 +758,7 @@ func TestBuildStatusViewDeliveryClaim(t *testing.T) {
 	if err := repo.ClaimRun(ctx, runID, "delivery-worker"); err != nil {
 		t.Fatal(err)
 	}
-	view, err = buildStatusView(ctx, repo, runID)
+	view, err = BuildStatusView(ctx, repo, runID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -106,5 +106,5 @@ func validateWorkflowSnapshotReferences(wf *definition.CompiledWorkflow, snapsho
 			}
 		}
 	}
-	return SliceErrorsFunc("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
+	return SliceErrors("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
 }

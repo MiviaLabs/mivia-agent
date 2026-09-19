@@ -141,7 +141,7 @@ func TestMemoryAppendEventStampsOnlyUnstampedEvents(t *testing.T) {
 // is the one that bites, and it is not contrived - StorageLedgerRepository.AppendEvent
 // stamps CreatedAt before it allocates the store sequence, so under concurrent
 // appends to one run a later-sequenced event really can carry an earlier
-// timestamp (plan 21 correction C3).
+// timestamp.
 func TestListEventsOrderedBySequenceUnderTiedTimestamps(t *testing.T) {
 	frozen := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 

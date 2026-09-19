@@ -31,11 +31,11 @@ type AgentSkillScope struct {
 	enforceTools bool
 	agentTools   map[string]struct{}
 	// liveTools, when non-nil, is the final post-disable/deny tool registry
-	// snapshot (plan 43). Skill invocation requires every declared static tool
+	// snapshot. Skill invocation requires every declared static tool
 	// to be present here as well as in the agent's effective set.
 	liveTools map[string]struct{}
 	// origins maps skill name → bound origin from the resolved agent's
-	// allowlist (plan 43). A runtime-resolved definition whose origin differs
+	// allowlist. A runtime-resolved definition whose origin differs
 	// is an authorization event (a project skill silently shadowing a
 	// user-bound allowlist entry) and fails closed.
 	origins map[string]string
@@ -130,7 +130,7 @@ func (s AgentSkillScope) checkSkill(name string, skillTools []string) error {
 	return nil
 }
 
-// CheckSkillDefinition enforces the full plan 43 policy for one skill
+// CheckSkillDefinition enforces the full skill policy for one skill
 // definition: allowlist, declared-tool subset of the agent's effective tools
 // and the live registry, and origin fail-closed (a runtime definition whose
 // origin differs from the allowlist-bound origin for the same name is an

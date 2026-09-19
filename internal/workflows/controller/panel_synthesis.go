@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // PanelSynthesisOutput is the decoded review-panel-v1.json synthesizer
@@ -210,7 +211,7 @@ func panelDegradationFromEnvelope(attempt workflowledger.StepAttempt, envelope P
 	}
 }
 
-func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator, membersResult PanelMembersResult) (workflowledger.RunSnapshot, bool, error) {
+func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowpanel.PanelCoordinator, membersResult PanelMembersResult) (workflowledger.RunSnapshot, bool, error) {
 	var envelopeStruct PanelSynthesisEnvelope
 	switch attempt.PanelExecution.Phase {
 	case workflowledger.PanelPhaseMembersAdmitted:
@@ -270,7 +271,7 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 // of advancePanelSynthesis so the phase-switch envelope preparation and the
 // join/decode/settle tail each stay under the structure gate's function
 // length limit; the two halves share nothing but the envelope.
-func (c *LinearController) settlePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator, envelopeStruct PanelSynthesisEnvelope) (workflowledger.RunSnapshot, bool, error) {
+func (c *LinearController) settlePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowpanel.PanelCoordinator, envelopeStruct PanelSynthesisEnvelope) (workflowledger.RunSnapshot, bool, error) {
 	handle, err := panel.EnsureSynthesis(ctx, attempt.AttemptID)
 	if err != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)

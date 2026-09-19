@@ -8,6 +8,10 @@
 // shape drift. The .mivia/policy/import-layers.json file pins the allowed
 // import edges for this package.
 //
+// It may import internal/tools and internal/provider/reasoning, and the SDK
+// module. internal/agent, internal/cli/agents, and internal/tui/run may
+// import it; it may not import internal/agent.
+//
 // Applicable shape adapters have companion tests that verify round-trip
 // conversions between CLI and SDK representations. These tests convert
 // CLI to SDK to CLI or assert key fields on bridge output. The round-trip

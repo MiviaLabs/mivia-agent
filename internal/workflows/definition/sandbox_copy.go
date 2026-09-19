@@ -41,7 +41,7 @@ func copySandboxTree(source, destination string, policy secretpath.Policy) (stri
 			}
 			return nil
 		}
-		if policy.Match(rel) {
+		if policy.Match(rel) && !strings.HasSuffix(rel, "_test.go") {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

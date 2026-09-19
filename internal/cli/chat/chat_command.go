@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,7 +126,7 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 			return err
 		}
 	}
-	store, err := openContextStorePath(storePath)
+	store, err := workflow.OpenContextStorePath(storePath)
 	if err != nil {
 		return err
 	}
@@ -192,7 +193,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	sess.UseTools = useTools
 	applySessionApprovalPolicy(sess, invocation, res)
 	agents.InstallSessionIdentity(sess, agentState)
-	// BaseSystemPrompt, not SystemPrompt (plan 77, E3): equivalent right
+	// BaseSystemPrompt, not SystemPrompt: equivalent right
 	// now (NewSession sets both identically and no compose has happened
 	// yet), but reading the field that's guaranteed memory-block-free stays
 	// correct regardless of future ordering changes.

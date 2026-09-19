@@ -8,8 +8,7 @@ import (
 
 // FormatWorkflowExplain formats a compiled workflow as an explanatory view
 // showing the state graph, loop caps, delivery policy, resolved references,
-// and declared authority. No secret values or transition coverage analysis
-// (deferred to Phase 4 matcher).
+// and declared authority. No secret values or transition coverage analysis.
 func FormatWorkflowExplain(cw *CompiledWorkflowExplain) string {
 	var b strings.Builder
 

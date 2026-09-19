@@ -66,7 +66,7 @@ func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
 
 // The fail-open posture, tested at the audit boundary: an unconfigured
 // workspace writes whatever the handler saw into the Metadata previews. The
-// sink is what makes the previews exist at all (plan 11); it does not affect
+// sink is what makes the previews exist at all; it does not affect
 // what redaction does or does not remove, which is the point under test.
 func TestDispatcherWithNoPolicyRedactsNothing(t *testing.T) {
 	redact.SetPolicy(nil)
@@ -88,7 +88,7 @@ func TestDispatcherWithNoPolicyRedactsNothing(t *testing.T) {
 	}
 }
 
-// Plan 10 §4a: prompt and reasoning are the agent's own instructions and
+// Prompt and reasoning are the agent's own instructions and
 // deliberation, not the user's secrets. Eliding them made audit metadata
 // useless for reconstructing agent behaviour while protecting nothing, so they
 // are dropped from the key list and are NOT migrated into configuration.
@@ -358,7 +358,7 @@ func TestDispatcherConcurrentOnCloseAndCloseInvokesEveryHookOnce(t *testing.T) {
 	}
 }
 
-// Plan 11: the previews exist for a sink. With no sink attached there is no
+// The previews exist for a sink. With no sink attached there is no
 // consumer, so the dispatcher must not pay for them - on either the success or
 // the failure path. The redactMeta call below is the control: it shows the
 // payloads are perfectly previewable, so an empty field is the guard doing its

@@ -227,14 +227,14 @@ func printWorkflowDeliveries(ctx context.Context, stdout io.Writer, repo workflo
 }
 
 // printStackUndrivenNotice surfaces the exact condition
-// ClassifyStackPlanRunDeliveryFunc would refuse to deliver: a DELIVERY_PENDING run
+// ClassifyStackPlanRunDeliveryFn would refuse to deliver: a DELIVERY_PENDING run
 // that is the plan run of a multi-chunk stack whose stack has NOT finished
 // driving. Without this, an operator reading `workflow status` sees a plain
 // "status: delivery_pending" that looks identical to a normal, healthy
 // pending delivery - diagnosing a parked stack required manually reading
 // decompose output and cross-checking chunk admission (see the 2026-08-16
 // wfr-SHDHU4YMIGNP4GUM incident). The notice must gate on actual completion
-// (ClassifyStackPlanRunDeliveryFunc), not merely on the run being a multi-chunk
+// (ClassifyStackPlanRunDeliveryFn), not merely on the run being a multi-chunk
 // plan (StackDecomposedChunksFunc alone): a stack that already drove to
 // completion is no longer refused by `workflow deliver` (F11) - printing
 // "UNDRIVEN...refuses this run" for it would be actively wrong, telling the
@@ -242,13 +242,13 @@ func printWorkflowDeliveries(ctx context.Context, stdout io.Writer, repo workflo
 // settle/deliver call. The classification runs WITHOUT the remote merge
 // oracle (remoteMergeOracle=false): workflow status never contacts git or
 // gh, so the display verdict rests on the durable pushed evidence alone. A
-// lookup failure inside ClassifyStackPlanRunDeliveryFunc degrades to no notice
-// (stackPlanRunNotApplicable), matching its own fail-open behavior.
+// lookup failure inside ClassifyStackPlanRunDeliveryFn degrades to no notice
+// (StackPlanRunNotApplicable), matching its own fail-open behavior.
 func printStackUndrivenNotice(ctx context.Context, stdout io.Writer, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, status workflowledger.RunStatus) {
 	if status != workflowledger.RunStatusDeliveryPending {
 		return
 	}
-	if ClassifyStackPlanRunDeliveryFunc(ctx, root, store, repo, runID, false) != stackPlanRunIncomplete {
+	if ClassifyStackPlanRunDeliveryFn(ctx, root, store, repo, runID, false) != StackPlanRunIncomplete {
 		return
 	}
 	chunks, _ := StackDecomposedChunksFunc(ctx, repo, runID)
@@ -294,7 +294,7 @@ func openWorkflowReportContextWithStore(root, configPath string) (workflowledger
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, repo, closeFn, err := OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

@@ -7,7 +7,6 @@ package chat
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"strings"
@@ -16,15 +15,12 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	contextmgr "github.com/MiviaLabs/mivia-agent/internal/context/manager"
 	"github.com/MiviaLabs/mivia-agent/internal/context/state"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // --- agent_task_handler.go ---
@@ -193,53 +189,6 @@ func TestDiffCov2DisplaySessionNameAndAgeBranches(t *testing.T) {
 	}
 }
 
-// --- session_delivery_repair.go ---
-
-func TestDiffCov2SessionAutoDeliveryRepairLoopAdvanceErrors(t *testing.T) {
-	ctx := context.Background()
-	// The first advance fails: the loop settles the run failure and returns.
-	sessionAutoDeliveryRepairLoop(ctx, workflowledger.NewMemoryRepository(), "", nil, nil, "no-run",
-		func(context.Context) (workflowledger.RunSnapshot, error) {
-			return workflowledger.RunSnapshot{}, errors.New("advance boom")
-		}, nil, false)
-
-	// The second advance fails after one repair-continue attempt.
-	repo := workflowledger.NewMemoryRepository()
-	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
-		RunID: "wfr-run", WorkflowName: "wf", Status: workflowledger.RunStatusPending, ActiveStepID: "build",
-		StartedAt: time.Now(),
-	}, []byte("{}")); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CompareAndSetRunStatus(ctx, "wfr-run", 1, workflowledger.RunStatusRunning, nil); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	sessionAutoDeliveryRepairLoop(ctx, repo, "", nil, nil, "wfr-run",
-		func(context.Context) (workflowledger.RunSnapshot, error) {
-			calls++
-			if calls == 1 {
-				return workflowledger.RunSnapshot{RunID: "wfr-run", Status: workflowledger.RunStatusDeliveryPending}, nil
-			}
-			return workflowledger.RunSnapshot{}, errors.New("second advance boom")
-		}, nil, false)
-	if calls != 2 {
-		t.Fatalf("advance calls = %d; want 2", calls)
-	}
-}
-
-// --- stack_state.go ---
-
-func TestDiffCov2ChunkSettleSucceededNotNoDiff(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
-	store := workflowledger.NewStore(storage.NewMemory())
-	var buf bytes.Buffer
-	chunkSettleSucceeded(repo, store, "stk", "chk",
-		workflowledger.RunSnapshot{RunID: "r1", Status: workflowledger.RunStatusSucceeded}, &buf)
-	chunkSettleSucceeded(repo, store, "stk", "chk2",
-		workflowledger.RunSnapshot{RunID: "r2", Status: workflowledger.RunStatusFailed}, &buf)
-}
-
 // --- tool_wave_status.go ---
 
 func TestDiffCov2ToolWaveCountsAndNegativeElapsed(t *testing.T) {
@@ -319,29 +268,6 @@ func TestDiffCov2HandleSlashLoadContextSession(t *testing.T) {
 	}
 	if !strings.Contains(termOut(term), "context") {
 		t.Logf("/load output: %q", termOut(term))
-	}
-}
-
-// --- stack_decompose_continue.go ---
-
-func TestDiffCov2AdmitNextWaveHaltedAtMaxTotal(t *testing.T) {
-	store := workflowledger.NewStore(storage.NewMemory())
-	chunks := []ChunkPlan{{ID: "c1", Title: "one"}}
-	if err := seedStackLedger(store, "stk-max", chunks); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.TransitionTask("stk-max", "c1", stackStatusMerged); err != nil {
-		t.Fatal(err)
-	}
-	prepared := &workflow.PreparedWorkflowRun{
-		Repo: workflowledger.NewMemoryRepository(),
-		Compiled: &definition.CompiledWorkflow{
-			Stacking: &definition.StackingConfig{MaxTotalChunks: 1},
-		},
-	}
-	err := admitNextWaveIfReady(prepared, store, "stk-max", chunks, true, "more scope", nil, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "max_total_chunks") {
-		t.Fatalf("admitNextWaveIfReady(cap reached) err = %v; want max_total_chunks halt", err)
 	}
 }
 

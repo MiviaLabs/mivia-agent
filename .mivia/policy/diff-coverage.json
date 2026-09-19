@@ -181,6 +181,26 @@
       ],
       "reason": "buildAgentScopedSurface's LoadSessionSkills error check, same unreachable class as the accepted attach_rebuilt_surface.go 62-64 entry: LoadMarkdownSources' own final statement is `return registry, warnings, nil`, an unconditional nil error, so LoadSessionSkills can never return a non-nil error for this check to catch."
     },
+    "internal/workflows/localengine/engine_resume.go": {
+      "lines": [
+        37,
+        38
+      ],
+      "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
+    },
+    "internal/workflows/localengine/engine.go": {
+      "lines": [
+        182,
+        183
+      ],
+      "reason": "SetAdmission on the fresh controller in startNew can only fail with already-started, which cannot hold for a controller created in the same call"
+    },
+    "internal/workflows/agenttools/service.go": {
+      "lines": [
+        293
+      ],
+      "reason": "inspectWithinBudget's json.Marshal(view) error wrap. InspectView contains only strings, ints, maps, slices, and pointers of those (ledger types.go); encoding/json cannot fail on that shape - it escapes invalid UTF-8 in strings rather than erroring. Same unreachable-error class as the accepted json.Marshal([]string) entries (chatsync/delivered_ledger.go 49-50)."
+    },
     "internal/cli/agents/markdown_store.go": {
       "lines": [
         276,
@@ -358,18 +378,6 @@
         227
       ],
       "reason": "error wraps around calls that cannot fail through BuildSession: BuildRegistry is documented never to error, and BuildSession always overwrites the dispatcher registry with a freshly built non-nil one || ACCEPTED UNTESTED on release/v0.2.2 vs main after package-path moves (context/cli/tui regroup). NOT a reachability claim. These statement lines were in-scope for the PR merge-base diff because the files moved or were lightly edited; the tests still live under the old coverage profile mapping or were not rewritten to hit the new path. Prune by writing the test, not by copying this reason."
-    },
-    "internal/workflows/localengine/engine.go": {
-      "lines": [
-        182
-      ],
-      "reason": "SetAdmission on the fresh controller in startNew can only fail with already-started, which cannot hold for a controller created in the same call"
-    },
-    "internal/workflows/localengine/engine_resume.go": {
-      "lines": [
-        37
-      ],
-      "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
     },
     "internal/tui/adapter/session_pool_worktree.go": {
       "lines": [

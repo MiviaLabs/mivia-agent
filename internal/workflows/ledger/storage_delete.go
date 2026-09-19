@@ -36,7 +36,7 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 	}
 	tombstone := storage.Event{ID: EventID(runID, eventKindRunDeleted, fmt.Sprintf("%d", seq)), RunID: runID, Sequence: int(seq), Kind: eventKindRunDeleted, Payload: payload}
 	claim, _ := s.engine.Claims().GetClaim(runID)
-	if holder, bound := claimHolderFromContext(ctx); bound {
+	if holder, bound := ClaimHolderFromContext(ctx); bound {
 		claim.Holder = holder
 	}
 	if err := s.engine.Store().AppendAndDeleteRun(ctx, tombstone, claim); err != nil {

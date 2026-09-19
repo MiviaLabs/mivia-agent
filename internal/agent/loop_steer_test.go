@@ -1,11 +1,11 @@
 package agent
 
-// Soft-interrupt (steer) loop tests — plan 54 §7 (agent/loop list). Core
+// Soft-interrupt (steer) loop tests. Core
 // interrupt behavior; the watchdog/cooldown/stale-signal tests live in
 // loop_steer_watchdog_test.go and the shared scripted helpers in
 // loop_steer_helpers_test.go.
 //
-// Behavioral contract under test (plan 54 §4.3):
+// Behavioral contract under test:
 //   - a soft interrupt cancels ONLY the in-flight LLM call (llmCtx); the loop
 //     soft-continues, drains the steer at the next BeforeStep, and never
 //     aborts; the final turn text (including an interrupted partial stream)

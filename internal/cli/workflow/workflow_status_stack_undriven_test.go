@@ -1,6 +1,6 @@
 package workflow
 
-// Pins the self-diagnosing surface added alongside ClassifyStackPlanRunDeliveryFunc
+// Pins the self-diagnosing surface added alongside classifyStackPlanRunDelivery
 // (see workflow_deliver_stack_refuse_test.go): `mivia workflow status` on a
 // plan run parked at delivery_pending with an undriven multi-chunk stack must
 // print an explicit "stack: UNDRIVEN" notice instead of looking identical to

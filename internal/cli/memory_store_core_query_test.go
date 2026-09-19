@@ -82,7 +82,7 @@ func TestCoreMemoryBlockEmptyWhenNoCoreEntries(t *testing.T) {
 }
 
 // TestCoreMemoryBlockForStateNilIsSafe and
-// TestCoreMemoryBlockForOptsNilStoreIsSafe are plan 77's E1/E2 nil-degrade
+// TestCoreMemoryBlockForOptsNilStoreIsSafe are nil-degrade
 // coverage: a nil agentSessionState (e.g. non-chat callers) and a
 // zero-value SessionDispatcherOpts (e.g. workflow/background dispatcher
 // construction, which never sets Memory) must both compose to "", not

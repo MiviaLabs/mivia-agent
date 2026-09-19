@@ -77,7 +77,7 @@ func (s *Session) admissionCatalog() (state.SessionAdmissionCatalog, state.Princ
 
 // replayAdmission re-applies a persisted admitted set to the freshly loaded
 // session, synchronously and before the session can issue its first request
-// (plan tools/05 D3/R2-3). It runs on every load site because every load site
+// It runs on every load site because every load site
 // funnels through Session.Load.
 //
 // A record whose agent or tier digest no longer matches is dropped rather than
@@ -130,7 +130,7 @@ func (s *Session) replayAdmission(name string) {
 func (s *Session) republishSurface(admitted []string) bool {
 	s.mu.RLock()
 	widener := s.surfaceWidener
-	// BaseSystemPrompt, not SystemPrompt (plan 77, E3) - see admission_status.go's
+	// BaseSystemPrompt, not SystemPrompt - see admission_status.go's
 	// identical fix for why: this feeds AgentSurfacePublication.Prompt,
 	// which gets recomposed with the memory block fresh.
 	prompt, maxSteps := s.BaseSystemPrompt, s.MaxSteps

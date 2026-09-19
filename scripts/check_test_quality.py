@@ -453,45 +453,13 @@ def policy_at(root: Path, ref: str) -> dict:
 
 
 def load_skip_policy(root: Path, diff_args: list[str] | None = None) -> dict:
-    policy_file = root / ".mivia" / "policy" / "test-skips.json"
-    if not policy_file.is_file():
-        return {}
-
-    raw_text = ""
-    is_modified_in_diff = False
-    if diff_args is not None:
-        r = subprocess.run(
-            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/test-skips.json"],
-            cwd=root, capture_output=True, text=True, check=False,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            is_modified_in_diff = True
-            # Only uncommitted shapes reach here (committed ranges returned
-            # above), so the pre-change state is always HEAD.
-            base_ref = "HEAD"
-
-            show_res = subprocess.run(
-                ["git", "show", f"{base_ref}:.mivia/policy/test-skips.json"],
-                cwd=root, capture_output=True, text=True, check=False,
-            )
-            print(
-                "check_test_quality: .mivia/policy/test-skips.json is modified in this diff; "
-                "evaluating skips against base policy to prevent same-commit bypass",
-                file=sys.stderr,
-            )
-            if show_res.returncode == 0 and show_res.stdout.strip():
-                raw_text = show_res.stdout
-            else:
-                # File does not exist at base ref or is empty: base policy has zero allowlisted skips
-                return {}
-
-    if not is_modified_in_diff:
-        raw_text = policy_file.read_text(encoding="utf-8")
-
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        return {}
+    """The test-skips policy as of the COMMITTED reference (HEAD; committed
+    ranges never reach this function - check_paths uses policy_at(tip) for
+    them). The working-tree copy is never trusted: a staged skip with an
+    unstaged policy edit, or a policy edit staged in the same change, cannot
+    allowlist itself. A missing or unparseable committed policy yields {},
+    i.e. no entry is allowlisted - fail closed."""
+    return policy_at(root, "HEAD")
 
 
 def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str, int, str]]:
@@ -545,6 +513,65 @@ def get_git_diff_deleted_tests(diff_args: list[str], root: Path) -> list[tuple[s
     return deleted_tests
 
 
+ROUND_NAME_PATTERN_KEY = "pattern"
+ROUND_NAME_DEFAULT_PATTERN = r"coverage|pass[0-9]|round[0-9]|audit|wave"
+
+
+def _committed_round_policy_text(root: Path, ref: str) -> str:
+    r = subprocess.run(
+        ["git", "show", f"{ref}:.mivia/policy/round-named-tests.json"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    return r.stdout if r.returncode == 0 else ""
+
+
+def load_round_name_policy(root: Path, diff_args: list[str] | None, tip: str = "HEAD") -> dict:
+    """Round-named-test-file baseline. The baseline must be a COMMITTED one:
+    whenever the committed reference differs from the working tree, the
+    committed text wins (uncommitted modes use HEAD; a committed range uses
+    its tip). A staged round-named file with an unstaged policy edit, or a
+    policy edit in the same staged change, therefore cannot allowlist itself.
+    A missing committed baseline yields {} - fail closed."""
+    committed = _committed_round_policy_text(root, tip)
+    if not committed.strip():
+        return {}
+    raw_text = committed
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        return {}
+
+
+def round_name_violations(target_files: list[Path], root: Path, diff_args: list[str] | None, tip: str = "HEAD") -> list[str]:
+    """Reject test files named after audit rounds, coverage passes, or waves
+    unless they sit in the committed baseline. The baseline is always read
+    from the committed reference (HEAD for uncommitted shapes, the range tip
+    for committed ranges), so a policy edit - staged or not - can never
+    approve a new round-named file in the same change."""
+    policy = load_round_name_policy(root, diff_args, tip)
+    pattern_text = policy.get(ROUND_NAME_PATTERN_KEY) or ROUND_NAME_DEFAULT_PATTERN
+    try:
+        pattern = re.compile(pattern_text)
+    except re.error:
+        return [f".mivia/policy/round-named-tests.json: [round_name_pattern_invalid] pattern {pattern_text!r} does not compile"]
+    allowed = set(policy.get("allowedFiles", []))
+    out: list[str] = []
+    for f in target_files:
+        try:
+            rel = f.resolve().relative_to(root.resolve()).as_posix()
+        except (ValueError, OSError):
+            rel = f.as_posix()
+        stem = Path(rel).name
+        if stem.endswith("_test.go"):
+            stem = stem[: -len("_test.go")]
+        if pattern.search(stem) and rel not in allowed:
+            out.append(
+                f"{rel}: [round_named_test_file] test file named after a round/pass/audit/wave; "
+                "name it after the behaviour it owns (baseline: .mivia/policy/round-named-tests.json, may only shrink)"
+            )
+    return out
+
+
 def unit_violations(root: Path, diff_args: list[str], policy: dict) -> list[str]:
     """Evaluate ONE change unit (a staged set, a dirty tree, or a single
     commit) against the policy as it stood BEFORE that unit. An entry added
@@ -580,6 +607,7 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
     # evaded are recorded in this file's git history.)
     rng = committed_range(diff_args) if diff_args is not None else None
     policy = policy_at(root, rng[1]) if rng is not None else load_skip_policy(root, diff_args)
+    round_tip = rng[1] if rng is not None else "HEAD"
     known_zero_assertions = set(policy.get("knownZeroAssertions", []))
 
     for rep in reports:
@@ -588,6 +616,8 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
                 continue
             rel_file = str(Path(issue["file"]).relative_to(root)) if Path(issue["file"]).is_absolute() and str(issue["file"]).startswith(str(root)) else issue["file"]
             violations.append(f"{rel_file}:{issue['line']}: [{issue['kind']}] {issue['message']}")
+
+    violations.extend(round_name_violations(target_files, root, diff_args, round_tip))
 
     if diff_args is not None:
         violations.extend(unit_violations(root, diff_args, policy))

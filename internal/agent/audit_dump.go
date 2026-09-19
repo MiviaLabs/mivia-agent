@@ -1,4 +1,4 @@
-// Package agent - operator-invoked provider wire dump.
+// operator-invoked provider wire dump.
 //
 // A turn that came back empty left no evidence at all: no way to tell a
 // model that answered with nothing from a request this host built wrong.

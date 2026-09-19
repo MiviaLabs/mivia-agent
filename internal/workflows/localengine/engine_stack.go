@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -345,25 +346,29 @@ func (e *Engine) markMergedChunks(ctx context.Context, ledger *workflowledger.St
 }
 
 // prMerged reports whether the run's PR branch actually merged, via the
-// engine's PR adapter (delivery.PRClient.IsMerged). Mirrors the CLI's
-// MergeChecker.Merged for the in-process drive.
+// shared delivery.ProbeRunMerged oracle: the durable pushed evidence (head
+// branch + commit SHA from the run's delivery records) gates the probe, the
+// local git ancestor check answers normal and fast-forward merges without
+// network, and the PR adapter answers squash and rebase merges. Identical
+// semantics to the CLI driver's MergeChecker by construction; a squash merge
+// with a pruned branch resolves through the local ancestor check even when
+// the remote ref is gone. An unknown verdict (ErrMergeProbeUnavailable) is
+// an error, so the caller keeps waiting instead of guessing.
 func (e *Engine) prMerged(ctx context.Context, run workflowledger.RunSnapshot) (bool, error) {
-	if e.PR == nil || run.WorktreeName == "" {
+	if e.PR == nil {
 		return false, nil
 	}
-	slug, _ := delivery.ParseOwnerRepo(run.RemoteURL)
-	if slug == "" {
-		return false, nil
+	gc := delivery.GitContext{}
+	if e.Git != nil {
+		// The local ancestor probe needs the run's git context; without a
+		// git runner the probe falls through to the remote PR state only.
+		resolved, err := e.deliveryGitCtx(ctx, run)
+		if err != nil {
+			return false, nil
+		}
+		gc = resolved
 	}
-	head := "wf/" + run.WorktreeName
-	ref, err := e.PR.FindByHead(ctx, slug, head)
-	if err != nil {
-		return false, err
-	}
-	if ref == nil {
-		return false, nil
-	}
-	return e.PR.IsMerged(ctx, slug, head)
+	return delivery.ProbeRunMerged(ctx, e.Repo, run, e.Git, e.PR, gc)
 }
 
 // reopenOrFailStackTask reopens a failed chunk when its attempt budget
@@ -440,7 +445,7 @@ func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapsh
 		if terr != nil || !ok {
 			continue
 		}
-		if _, serr := e.Start(ctx, workflowledger.StartRequest{
+		if _, serr := e.Start(ctx, workflowagenttools.StartRequest{
 			Workflow:      planRun.WorkflowName,
 			Inputs:        inputs,
 			InvocationKey: key,

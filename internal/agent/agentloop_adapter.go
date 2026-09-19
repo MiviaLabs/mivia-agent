@@ -1,4 +1,4 @@
-// Package agent - SDK agent-loop adapter.
+// SDK agent-loop adapter.
 //
 // This file builds the SDK's agentloop.Options from a Loop and CLI
 // Options: it converts the CLI registry, wraps the CLI completer, and
@@ -14,6 +14,7 @@
 // The SDK imports are out-of-prefix; the gate filters them out of
 // the in-prefix edge set (scripts/check_import_layers.py
 // compute_edges), and the policy baseline is unchanged.
+
 package agent
 
 import (

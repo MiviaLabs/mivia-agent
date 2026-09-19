@@ -64,7 +64,7 @@ func (e *TransientError) Unwrap() error { return e.Err }
 
 // permanentError is the typed counterpart of TransientError: it pins a failure
 // as permanent so no text phrase can flip it back to transient. The provider
-// layer marks a refusal it knows holds (z.ai quota/plan 429 codes, for example)
+// layer marks a refusal it knows holds (z.ai 429 codes for quota or plan limits, for example)
 // so a caller's IsTransient cannot re-run a whole step on a permanent block.
 type permanentError struct{ err error }
 

@@ -26,7 +26,7 @@ func NewOllama(opts Options) (Completer, error) {
 		// Keyless local daemon mode. Resolve the loopback host once at
 		// construction and pin every dial to the verified address, so a
 		// resolver answering localhost with a non-loopback address fails
-		// closed instead of receiving keyless plaintext (plan §12 item 1).
+		// closed instead of receiving keyless plaintext.
 		apiKey = ""
 		var err error
 		dialContext, err = newLoopbackDialContext("ollama", base)
@@ -35,7 +35,7 @@ func NewOllama(opts Options) (Completer, error) {
 		}
 	} else if strings.TrimSpace(apiKey) == "" {
 		// Cloud/non-loopback mode must be keyed. Failing closed here (mirroring
-		// the NewForProvider gate) keeps the plan §12 invariant that a keyless
+		// the NewForProvider gate) keeps the invariant that a keyless
 		// ollama client is constructible iff the base_url is a verified
 		// loopback address: otherwise the exported constructor would return a
 		// keyless client on the default (unpinned) transport, and keyless

@@ -147,7 +147,7 @@ func (c *chainToolCompleter) askerTurn(req provider.Request) *provider.Response 
 
 // relayerTurn implements the four relay phases described on the completer.
 func (c *chainToolCompleter) relayerTurn(req provider.Request) *provider.Response {
-	// Phase 4: the relayer's answer back to the asker landed — the chain is
+	// Step 4: the relayer's answer back to the asker landed — the chain is
 	// complete for this task. The peer-answer result carries in_reply_to and
 	// no "answer" field, which is what distinguishes it from the end's answer.
 	if relayerAnsweredAsker(req) {
@@ -156,7 +156,7 @@ func (c *chainToolCompleter) relayerTurn(req provider.Request) *provider.Respons
 			FinishReason: "stop",
 		}
 	}
-	// Phase 3: the end answered the relayed ask; forward the end's answer to
+	// Step 3: the end answered the relayed ask; forward the end's answer to
 	// the asker (in_reply_to = the asker's ask_id, still in message history).
 	if res := lastToolResult(req, toolPostMessage); res != "" &&
 		strings.Contains(res, `"status":"answered"`) && strings.Contains(res, `"answer":`) {
@@ -167,7 +167,7 @@ func (c *chainToolCompleter) relayerTurn(req provider.Request) *provider.Respons
 			FinishReason: "tool_calls",
 		}
 	}
-	// Phase 2: the asker's ask is injected at a step boundary — relay it to
+	// Step 2: the asker's ask is injected at a step boundary — relay it to
 	// go-engineer with its own blocking ask (wait sized for the relay).
 	if id := extractAskID(req); id != "" {
 		c.relayPostedOnce.Do(func() { close(c.relayPosted) })
@@ -177,7 +177,7 @@ func (c *chainToolCompleter) relayerTurn(req provider.Request) *provider.Respons
 			FinishReason: "tool_calls",
 		}
 	}
-	// Phase 1: keep the loop alive until the asker's ask is injected. The
+	// Step 1: keep the loop alive until the asker's ask is injected. The
 	// first receive blocks on askPosted (closed exactly once, when the asker
 	// emits its ask tool call) so no step is burned before the asker has even
 	// emitted; the keepAliveYield after it guarantees the asker's ask tool —

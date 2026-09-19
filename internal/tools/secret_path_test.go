@@ -127,7 +127,7 @@ func TestIsSecretPathUnconfiguredFiltersNothing(t *testing.T) {
 
 // The legacy namespace is ordinary workspace content, not a protected path.
 // Asserted with the example secret patterns configured, since that is the only
-// way it could become unwritable by accident. Plan 04 §7; mutation proof M3.
+// way it could become unwritable by accident.
 func TestAgentCanEditLegacyAIDir(t *testing.T) {
 	ws, reg := setupWS(t)
 	if err := os.MkdirAll(filepath.Join(ws.Abs, ".ai"), 0o755); err != nil {

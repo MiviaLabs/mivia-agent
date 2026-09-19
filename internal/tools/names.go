@@ -46,7 +46,7 @@ func AllToolNames() []string {
 		"memory_search",
 		"memory_delete",
 		SkillResourceToolName,
-		// Phase 7 workflow tools: registered only when the workspace has
+		// Workflow tools: registered only when the workspace has
 		// .mivia/workflows/. Names stay in the static catalogue so allowlist
 		// validation recognizes them regardless of workspace shape (same
 		// pattern as conditionally registered "extract").
@@ -67,7 +67,7 @@ func AllToolNames() []string {
 // DeclaredToolNames returns the static declared-tool catalogue: every name in
 // AllToolNames except the activation-only read_skill_resource capability.
 // Skill frontmatter `tools:` requirements and agent TOML tool declarations are
-// validated against this catalogue (plan 43), so neither surface can statically
+// validated against this catalogue, so neither surface can statically
 // require or declare the invocation-scoped resource reader.
 func DeclaredToolNames() []string {
 	all := AllToolNames()
@@ -88,7 +88,7 @@ func IsKnownToolName(name string) bool {
 }
 
 // IsDeclaredToolName reports whether name is a statically declared tool that
-// skills and agent TOMLs may reference (plan 43). The activation-only
+// skills and agent TOMLs may reference. The activation-only
 // read_skill_resource capability is deliberately excluded.
 func IsDeclaredToolName(name string) bool {
 	_, ok := declaredToolNameSet()[name]

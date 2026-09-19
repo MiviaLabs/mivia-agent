@@ -129,7 +129,7 @@ func (c *Coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	h.localActor = true
 	h.mu.Unlock()
 	// Stamp pool context before starting the run goroutine so concurrent
-	// referral spawns never race the first poolCtx write (plan 53.04).
+	// referral spawns never race the first poolCtx write.
 	h.mu.Lock()
 	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes, h.toolCalls)
 	h.mu.Unlock()

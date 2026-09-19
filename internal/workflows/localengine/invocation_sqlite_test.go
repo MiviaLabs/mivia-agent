@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -42,11 +43,11 @@ func TestInvocationKeyAdmitsOneRunAcrossSQLiteRepositories(t *testing.T) {
 			return invocationCountingRunner{calls: &calls}
 		}})
 	}
-	results := make(chan workflowledger.StartResult, len(engines))
+	results := make(chan workflowagenttools.StartResult, len(engines))
 	errs := make(chan error, len(engines))
 	for _, engine := range engines {
 		go func(engine *localengine.Engine) {
-			result, startErr := engine.Start(context.Background(), workflowledger.StartRequest{
+			result, startErr := engine.Start(context.Background(), workflowagenttools.StartRequest{
 				Workflow: "two-step", Inputs: map[string]any{"task": "same"}, InvocationKey: "same-sqlite-request",
 			})
 			results <- result

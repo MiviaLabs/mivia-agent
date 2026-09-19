@@ -501,7 +501,7 @@ func TestMessagingConfigDefaults(t *testing.T) {
 	if m.MaxPendingQuestions != 1 {
 		t.Fatalf("MaxPendingQuestions = %d, want 1", m.MaxPendingQuestions)
 	}
-	// Routing defaults (plan 53.04) — always active with policy mode.
+	// Routing defaults — always active with policy mode.
 	if m.Routing.Mode != "policy" {
 		t.Fatalf("Routing.Mode = %q, want policy", m.Routing.Mode)
 	}

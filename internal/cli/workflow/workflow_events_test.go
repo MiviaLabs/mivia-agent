@@ -147,7 +147,7 @@ store_backend = "sqlite"
 	if err != nil {
 		t.Fatal(err)
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, _, closeFn, err = OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {
@@ -200,7 +200,7 @@ store_backend = "sqlite"
 	if err != nil {
 		t.Fatal(err)
 	}
-	ApplyPrivacyPolicyFunc(res)
+	ApplyPrivacyPolicy(res)
 	ApplyWorkflowStoreRoot(res, work.Abs)
 	store, _, closeFn, err = OpenWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {

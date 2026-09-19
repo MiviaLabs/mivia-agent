@@ -66,7 +66,7 @@ type Task struct {
 	DisableProviderReplay bool
 	IdempotencyKey        string
 	// OutputSchema, when non-nil, is the resolved JSON Schema the child's final
-	// reply must satisfy (plan tools/02). Nil means free-text output (today's
+	// reply must satisfy. Nil means free-text output (today's
 	// contract). Work-defining: included in the coordinator fingerprint.
 	OutputSchema map[string]any
 	// InputSchema, when non-nil, validates Task.Input at admission.
@@ -120,7 +120,7 @@ type Pool struct {
 	d *runtime.Dispatcher
 	p Policy
 	// ContextForTask, when set, derives a per-task context from the pool
-	// context before dispatch (plan 53). Used to inject task identity and
+	// context before dispatch. Used to inject task identity and
 	// (phase 03) mailbox handles without fingerprinted Task fields.
 	ContextForTask func(ctx context.Context, taskID string) context.Context
 	// OnTaskDone, when set, is invoked on the worker goroutine immediately
@@ -166,7 +166,7 @@ func (p *Pool) MaxFanout() int { return p.p.MaxFanout }
 func (p *Pool) MaxDepth() int { return p.p.MaxDepth }
 
 // MaxBudget and Timeout expose the pool ceilings so a caller restoring
-// persisted limits can clamp them rather than trust them (plan 12 §3).
+// persisted limits can clamp them rather than trust them.
 func (p *Pool) MaxBudget() int         { return p.p.MaxBudget }
 func (p *Pool) Timeout() time.Duration { return p.p.Timeout }
 

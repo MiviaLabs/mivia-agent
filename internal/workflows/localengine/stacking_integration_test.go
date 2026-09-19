@@ -20,6 +20,7 @@ import (
 	"sync"
 	"testing"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -175,14 +176,14 @@ func (r *scriptedAttemptRunner) callsFor(step string) int {
 
 // scriptedStackingEngine builds an engine over a fresh stacking workspace
 // with a scripted agent runner.
-func scriptedStackingEngine(t *testing.T, byStepCall map[string]json.RawMessage) (*localengine.Engine, *workflowledger.Service) {
+func scriptedStackingEngine(t *testing.T, byStepCall map[string]json.RawMessage) (*localengine.Engine, *workflowagenttools.Service) {
 	t.Helper()
 	return scriptedStackingEngineRoot(t, writeStackingWorkspace(t), byStepCall)
 }
 
 // scriptedStackingEngineRoot builds an engine over an already-written
 // workspace root with a scripted agent runner.
-func scriptedStackingEngineRoot(t *testing.T, root string, byStepCall map[string]json.RawMessage) (*localengine.Engine, *workflowledger.Service) {
+func scriptedStackingEngineRoot(t *testing.T, root string, byStepCall map[string]json.RawMessage) (*localengine.Engine, *workflowagenttools.Service) {
 	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	engine := &localengine.Engine{
@@ -197,21 +198,21 @@ func scriptedStackingEngineRoot(t *testing.T, root string, byStepCall map[string
 
 // scriptedStackingEngineMultiPhase builds an engine over a workspace whose
 // stacking workflow has a multi-step plan phase (the feature-delivery shape).
-func scriptedStackingEngineMultiPhase(t *testing.T, byStepCall map[string]json.RawMessage) (*localengine.Engine, *workflowledger.Service) {
+func scriptedStackingEngineMultiPhase(t *testing.T, byStepCall map[string]json.RawMessage) (*localengine.Engine, *workflowagenttools.Service) {
 	t.Helper()
 	return scriptedStackingEngineRoot(t, writeStackingWorkspaceMultiPhase(t), byStepCall)
 }
 
 // startStackingRun admits a run of the "stack-me" workflow with the given
 // extra inputs (nil for a plain plan-mode run).
-func startStackingRun(t *testing.T, svc *workflowledger.Service, extra map[string]string) workflowledger.StartResult {
+func startStackingRun(t *testing.T, svc *workflowagenttools.Service, extra map[string]string) workflowagenttools.StartResult {
 	t.Helper()
 	return startStackingRunFor(t, svc, "stack-me", extra)
 }
 
 // startStackingRunFor admits a run of the named workflow with the given extra
 // inputs (nil for a plain plan-mode run).
-func startStackingRunFor(t *testing.T, svc *workflowledger.Service, workflow string, extra map[string]string) workflowledger.StartResult {
+func startStackingRunFor(t *testing.T, svc *workflowagenttools.Service, workflow string, extra map[string]string) workflowagenttools.StartResult {
 	t.Helper()
 	inputs := map[string]any{"task": "build"}
 	for k, v := range extra {
@@ -221,11 +222,11 @@ func startStackingRunFor(t *testing.T, svc *workflowledger.Service, workflow str
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(context.Background(), payload)
+	out, err := mustTool(t, svc, workflowagenttools.ToolWorkflowRun).Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	var started workflowledger.StartResult
+	var started workflowagenttools.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func startStackingRunFor(t *testing.T, svc *workflowledger.Service, workflow str
 }
 
 // startStackingRunErr admits a run and expects the admission to fail.
-func startStackingRunErr(t *testing.T, svc *workflowledger.Service, extra map[string]string) error {
+func startStackingRunErr(t *testing.T, svc *workflowagenttools.Service, extra map[string]string) error {
 	t.Helper()
 	inputs := map[string]any{"task": "build"}
 	for k, v := range extra {
@@ -246,13 +247,13 @@ func startStackingRunErr(t *testing.T, svc *workflowledger.Service, extra map[st
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(context.Background(), payload)
+	_, err = mustTool(t, svc, workflowagenttools.ToolWorkflowRun).Execute(context.Background(), payload)
 	return err
 }
 
-func stackStatusView(t *testing.T, svc *workflowledger.Service, runID string) workflowledger.StatusView {
+func stackStatusView(t *testing.T, svc *workflowagenttools.Service, runID string) workflowledger.StatusView {
 	t.Helper()
-	out, err := mustTool(t, svc, workflowledger.ToolWorkflowStatus).Execute(
+	out, err := mustTool(t, svc, workflowagenttools.ToolWorkflowStatus).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, runID)))
 	if err != nil {
 		t.Fatal(err)

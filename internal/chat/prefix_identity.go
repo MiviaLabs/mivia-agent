@@ -6,7 +6,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider/reasoning"
 )
 
-// PrefixIdentity is the session's byte-prefix stability identity (plan 68).
+// PrefixIdentity is the session's byte-prefix stability identity.
 // The wire-affecting fields are exactly the inputs to the stable request
 // prefix that the trigger events can change: provider/model (temperature rides
 // with the model), the effective reasoning dial (level and provider-resolved

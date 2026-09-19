@@ -8,7 +8,7 @@ import (
 )
 
 // diagnostics_config_test.go is the config-layer contract for the
-// get_diagnostics command surface (locked plan v2). The config layer must
+// get_diagnostics command surface. The config layer must
 // validate every configured command the way the tools layer's run_command
 // gate does (internal/tools/run.go resolveAllowedCommand): argv[0] must be a
 // bare name on the resolved run allowlist. Bad values are LOAD errors - a

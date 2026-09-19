@@ -8,7 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
 
-// --- Wave 3 ref-only tier: never-inline tools (plan tools/06) ----------------
+// --- Ref-only tier: never-inline tools ------------------------------------
 //
 // RefOnlyTools opts a tool out of inlining entirely: when its raw body is at
 // least BatchDegradeFloorBytes and the result is not ephemeral, the WHOLE body

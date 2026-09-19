@@ -22,7 +22,7 @@ func ApplyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan Tool
 }
 
 // newSurfaceWidener returns the host-owned publisher for staged tool
-// admissions (plan tools/05 D7). internal/chat cannot build a session
+// admissions. internal/chat cannot build a session
 // dispatcher, so the session records intent and calls back here at the turn
 // boundary.
 //

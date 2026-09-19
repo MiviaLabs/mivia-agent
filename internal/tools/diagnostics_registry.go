@@ -1,7 +1,7 @@
 package tools
 
 // diagnostics_registry.go owns the registration side of the get_diagnostics
-// tool (locked plan v2): the declared result budget and the function that
+// tool: the declared result budget and the function that
 // decides whether the tool is advertised. Keeping registration here (instead
 // of in default_registry.go) keeps the default-registry file under the
 // structure policy and groups the tool's surface with its lifecycle.

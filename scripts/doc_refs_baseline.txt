@@ -1,0 +1,8 @@
+# Plan-label baseline. Each line is a Go comment line in cmd/ or
+# internal/ that carries a plan-work label. The baseline may only
+# shrink: fix the comment, then remove its line here in the same
+# change. The gate fails on any entry with no live match.
+internal/agent/agentloop_adapter.go:237
+internal/agent/batch_budget_integration_test.go:121
+internal/agent/loop_steer_test.go:17
+internal/tui/view/component/composer/mention.go:45

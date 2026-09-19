@@ -43,7 +43,7 @@ func eightChildren() []ChildCall {
 	return children
 }
 
-// TestSetChildrenRendersChildTree pins C7's row contract: at most
+// TestSetChildrenRendersChildTree pins row contract: at most
 // maxChildRows compact child rows under the parent block, then the "+N more"
 // count, with the outcome glyph carrying the state (so the tree survives
 // NO_COLOR, ux-rules 9.4). The child rows are BODY rows: Height and Render

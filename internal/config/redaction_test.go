@@ -19,7 +19,7 @@ func loadWith(t *testing.T, privacy string) (*Resolved, error) {
 }
 
 // A workspace that configures no patterns gets no policy, and therefore no
-// redaction anywhere. This is the documented default (plan 10 §5).
+// redaction anywhere. This is the documented default.
 func TestLoadWithoutPrivacySectionRedactsNothing(t *testing.T) {
 	res, err := loadWith(t, "")
 	if err != nil {

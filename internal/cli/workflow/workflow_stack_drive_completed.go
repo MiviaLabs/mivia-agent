@@ -90,7 +90,7 @@ func StackPlanMergePolicy(ctx context.Context, repo workflowledger.Repository, r
 // settles the DISPLAY verdict, and a read-only surface runs no probes.
 func StackDriveCompleted(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID, policy string, remoteMergeOracle bool) bool {
 	// LoadAllStackChunksFunc (not the plan run's own output alone) so a pending
-	// decompose-continuation wave (§12.1: hasMore=true with no continuation
+	// decompose-continuation wave (hasMore=true with no continuation
 	// admitted yet) is never mistaken for a complete stack just because every
 	// CURRENTLY KNOWN chunk merged.
 	chunks, hasMore, _, err := LoadAllStackChunksFunc(repo, runID)

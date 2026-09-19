@@ -81,7 +81,7 @@ func failureRoute(step definition.Step) RouteDecision {
 	return RouteDecision{ToStepID: failureTarget(step), TransitionIndex: -1}
 }
 
-// loopExhaustionRoute decides the exhausted-loop route (R2 Phase 2). A
+// loopExhaustionRoute decides the exhausted-loop route. A
 // transition that declares a partial_target is honored when the ledger still
 // holds verified outputs: the run advances to the target with run.salvage
 // bound as evidence, and the exhausted attempt is persisted with that route.
@@ -132,9 +132,9 @@ func failureTarget(step definition.Step) string {
 }
 
 // SalvagedAttempt names one durable step output preserved when a repair loop
-// exhausts, so the verified work survives the terminal failure (R2 Phase 2:
-// partial-accept foundation - the outputs are content-addressed and recoverable
-// by ref from the failure evidence).
+// exhausts, so the verified work survives the terminal failure. The outputs
+// are content-addressed and recoverable
+// by ref from the failure evidence.
 type SalvagedAttempt struct {
 	StepID       string `json:"step_id"`
 	AttemptNo    int    `json:"attempt_no"`
@@ -174,7 +174,7 @@ func (c *LinearController) salvageLoopSuccesses(ctx context.Context) ([]Salvaged
 // repair loop spends its budget. Its message names the loop, the cap, the
 // iterations spent, and the step whose route was refused, so a human or a
 // resumed run can recover the verified work without re-reading the whole
-// ledger (R2 Phase 1: the routing stays terminal, the evidence is enriched).
+// ledger. The routing stays terminal; the evidence is enriched.
 //
 // Findings carries the last review verdict(s) decoded from the salvaged
 // attempts, when any salvaged output is a panel member or synthesis report

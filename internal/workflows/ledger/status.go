@@ -13,11 +13,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 )
 
-// viewRepository is the read-side subset the status, inspect, list, and
+// ViewRepository is the read-side subset the status, inspect, list, and
 // events views use. The full ledger contract carries the write, claim, and
 // admin members these views never touch; they depend on the subset, not the
 // fat interface. Repository satisfies it.
-type viewRepository interface {
+type ViewRepository interface {
 	GetRun(ctx context.Context, runID string) (RunSnapshot, error)
 	ListRuns(ctx context.Context, status ...RunStatus) ([]RunSnapshot, error)
 	GetRunSnapshot(ctx context.Context, runID string) ([]byte, error)
@@ -30,9 +30,9 @@ type viewRepository interface {
 	GetLoopCounters(ctx context.Context, runID string) ([]LoopCounter, error)
 }
 
-var _ viewRepository = (Repository)(nil)
+var _ ViewRepository = (Repository)(nil)
 
-func buildStatusView(ctx context.Context, repo viewRepository, runID string) (StatusView, error) {
+func BuildStatusView(ctx context.Context, repo ViewRepository, runID string) (StatusView, error) {
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -46,9 +46,9 @@ func buildStatusView(ctx context.Context, repo viewRepository, runID string) (St
 		Status:     string(run.Status),
 		ActiveStep: run.ActiveStepID,
 		Version:    run.Version,
-		StartedAt:  formatTime(run.StartedAt),
-		DeadlineAt: formatTimePtr(run.DeadlineAt),
-		FinishedAt: formatTimePtr(run.FinishedAt),
+		StartedAt:  FormatTime(run.StartedAt),
+		DeadlineAt: FormatTimePtr(run.DeadlineAt),
+		FinishedAt: FormatTimePtr(run.FinishedAt),
 		BaseRef:    run.BaseRef,
 		BaseCommit: run.BaseCommit,
 		Worktree:   run.WorktreeName,
@@ -57,7 +57,7 @@ func buildStatusView(ctx context.Context, repo viewRepository, runID string) (St
 	if run.Status == RunStatusDeliveryPending {
 		if _, at, ok, err := repo.GetRunClaim(ctx, runID); err == nil && ok {
 			view.DeliveryClaimHeld = true
-			view.DeliveryClaimAt = formatTime(at)
+			view.DeliveryClaimAt = FormatTime(at)
 		}
 	}
 	attempts, err := repo.ListStepAttempts(ctx, runID)
@@ -139,10 +139,10 @@ func attemptView(a StepAttempt) AttemptView {
 		CoordinatorRunID:              a.CoordinatorRunID,
 		TaskID:                        a.TaskID,
 		MatchDigest:                   a.MatchDigest,
-		StartedAt:                     formatTime(a.StartedAt),
-		FinishedAt:                    formatTimePtr(a.FinishedAt),
+		StartedAt:                     FormatTime(a.StartedAt),
+		FinishedAt:                    FormatTimePtr(a.FinishedAt),
 		ElapsedSeconds:                attemptElapsedSeconds(a),
-		LastHeartbeatAt:               formatTime(a.LastHeartbeatAt),
+		LastHeartbeatAt:               FormatTime(a.LastHeartbeatAt),
 		LastHeartbeatStalenessSeconds: attemptHeartbeatStaleness(a),
 	}
 	if v := extractVerdict(a); v != "" {
@@ -212,7 +212,7 @@ func extractVerdict(a StepAttempt) string {
 	return ""
 }
 
-// buildInspectView renders one step attempt for workflow_inspect. offset and
+// BuildInspectView renders one step attempt for workflow_inspect. offset and
 // limit are byte offsets into the artifact's text form (limit clamped to
 // DefaultInspectPageBytes). The WHOLE artifact is redacted before any page is
 // sliced, so a secret split across a page boundary is redacted identically in
@@ -221,7 +221,7 @@ func extractVerdict(a StepAttempt) string {
 // limit=DefaultInspectPageBytes, which keeps the pre-pagination behavior for
 // artifacts that fit the page. Artifacts larger than MaxPageableBytes are
 // refused outright.
-func buildInspectView(ctx context.Context, repo viewRepository, runID string, attempt StepAttempt, page ...int) (InspectView, error) {
+func BuildInspectView(ctx context.Context, repo ViewRepository, runID string, attempt StepAttempt, page ...int) (InspectView, error) {
 	pageOffset, pageLimit := 0, DefaultInspectPageBytes
 	if len(page) > 0 {
 		pageOffset = page[0]
@@ -248,8 +248,8 @@ func buildInspectView(ctx context.Context, repo viewRepository, runID string, at
 		OutputRef:        attempt.OutputRef,
 		OutputDigest:     attempt.OutputDigest,
 		ErrorRef:         attempt.ErrorRef,
-		StartedAt:        formatTime(attempt.StartedAt),
-		FinishedAt:       formatTimePtr(attempt.FinishedAt),
+		StartedAt:        FormatTime(attempt.StartedAt),
+		FinishedAt:       FormatTimePtr(attempt.FinishedAt),
 		ElapsedSeconds:   attemptElapsedSeconds(attempt),
 	}
 	if len(attempt.EvidenceJSON) > 0 {

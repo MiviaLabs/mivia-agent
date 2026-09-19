@@ -16,7 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// Core tool schema token budget (plan 81, corrected numbers).
+// Core tool schema token budget.
 //
 // The core tier ships full JSON schemas on EVERY request; it is the largest
 // fixed per-request prompt cost. These tests pin that cost with the repo's

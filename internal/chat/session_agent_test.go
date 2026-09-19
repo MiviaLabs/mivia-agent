@@ -231,8 +231,7 @@ func TestClearKeepsMemoryMessage(t *testing.T) {
 }
 
 // TestToolAdmissionNeverDuplicatesMemoryBlockAcrossRepeatedAdmissions is the
-// literal Bug 1 regression from Step 5 hostile audit of the plan 77
-// implementation, restated: repeated widener publications with the same
+// literal Bug 1 regression from a hostile audit, restated: repeated widener publications with the same
 // memory block must keep exactly one memory message at index 1 and a
 // block-free prompt.
 func TestToolAdmissionNeverDuplicatesMemoryBlockAcrossRepeatedAdmissions(t *testing.T) {

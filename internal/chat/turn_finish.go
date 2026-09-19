@@ -15,7 +15,7 @@ import (
 // finishAgentTurn adopts a completed turn's history, commits it durably, and
 // only then publishes any tool admission the turn staged. The ordering is the
 // point: the generation bump a publication performs would fence this turn out
-// of its own persistence if it happened first (plan tools/05 D6).
+// of its own persistence if it happened first.
 func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
 	// The no-op streak is a within-turn loop detector; the boundary ends the
 	// turn it was counting.
@@ -94,7 +94,7 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 	if err != nil {
 		// The durable commit failed: the staging turn never committed, so its
 		// staged admission must not survive to publish at a later boundary
-		// (plan tools/05 D7 Commit-failure branch). Mirrors the legacy
+		// Mirrors the legacy
 		// persistErr != nil drop above.
 		s.dropPendingAdmissionForTurn(token.TurnID)
 	}
@@ -271,7 +271,7 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 	}
 	// Durably committed under this turn's own still-valid fence, so the
 	// generation bump below cannot fence the turn out of its own persistence
-	// (plan tools/05 D6 ordering). Publication happens whenever the commit
+	// Publication happens whenever the commit
 	// succeeded, regardless of outcome (OutcomeUpstreamErr included): if the
 	// turn's history is durably committed, the admission decision made
 	// against that history is committed too. This matches the legacy

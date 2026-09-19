@@ -11,7 +11,7 @@ import (
 )
 
 // TestIntegrationInspectRepositoryCompletesSearchEvidenceInOneToolCall proves
-// the turn reduction this tool exists for (plan 66): finding a match AND
+// the turn reduction this tool exists for: finding a match AND
 // seeing its surrounding lines used to cost a grep call plus a read_file
 // call. Here one inspect_repository call, through the real agent loop and
 // the real filesystem, must deliver both.

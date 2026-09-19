@@ -1,6 +1,6 @@
 package cli
 
-// Plan 54 §7 (cli/send_to_task e2e): mid-step steer delivery through the full
+// Send-to-task e2e: mid-step steer delivery through the full
 // coordinator path.
 //
 // TestSendToTaskInterruptBreaksIntoBlockedChild pins the interrupt contract:
@@ -10,7 +10,7 @@ package cli
 // steer, and the second call sees the steer body in its request history and
 // finishes normally.
 //
-// TestSteerLandsAtStepBoundaryUnchanged pins the plan 53.03 regression: a
+// TestSteerLandsAtStepBoundaryUnchanged pins this regression: a
 // non-urgent (Interrupt=false) steer to a child whose first call is gate-
 // blocked on a test-controlled release channel (NOT ctx.Done) never interrupts
 // the call; the steer waits, the released call completes, and the next call
@@ -313,7 +313,7 @@ func TestSendToTaskInterruptBreaksIntoBlockedChild(t *testing.T) {
 	}
 }
 
-// TestSteerLandsAtStepBoundaryUnchanged (plan 53.03 regression): a non-urgent
+// TestSteerLandsAtStepBoundaryUnchanged: a non-urgent
 // steer (Interrupt=false) to a child whose first call is gate-blocked on a
 // test-controlled release channel must never interrupt the call. The steer
 // waits; releasing the gate lets the first call complete, and the child's next

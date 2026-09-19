@@ -134,7 +134,7 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
-	// Price the tool schemas exactly once for this plan (plan tools/05 D5).
+	// Price the tool schemas exactly once for this plan.
 	// Every candidate selection below is scored against the SAME tool list, so
 	// re-marshaling all of them per candidate is pure waste - and with a full
 	// tool catalogue the schema block dominates the marshaling cost.

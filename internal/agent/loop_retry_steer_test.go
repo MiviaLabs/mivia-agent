@@ -1,7 +1,6 @@
 package agent
 
-// Soft steer racing a prompt-too-long rejection (plan 54 x prompt-too-long
-// recovery). Defect under test: requestStep ran retryAfterPromptTooLong on the
+// Soft steer racing a prompt-too-long rejection. Defect under test: requestStep ran retryAfterPromptTooLong on the
 // SAME llmCtx the steer watcher had already canceled, so the retry was always
 // doomed (immediate context.Canceled), was mis-mapped to errSteerInterrupt
 // (soft continue), and the compaction landed in history but was never

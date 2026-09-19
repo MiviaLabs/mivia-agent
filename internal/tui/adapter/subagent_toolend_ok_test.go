@@ -8,8 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/uievent"
 )
 
-// C7 (docs/design/chat-tui-crush-comparison.md §3, Phase 8) renders a
-// dispatch row's child tree from
+// Renders a dispatch row's child tree from
 // ports.SubagentThreads.Thread(callID).History()[].ToolCalls - history, not
 // the event stream, because the root transcript screen owns that read. The
 // screen can only mark a failed child "x" if the outcome is recorded ON the

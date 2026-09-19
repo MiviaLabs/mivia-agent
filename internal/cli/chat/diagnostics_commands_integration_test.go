@@ -1,7 +1,7 @@
 package chat
 
 // diagnostics_commands_integration_test.go is the INTEGRATION contract for the
-// get_diagnostics command surface (locked plan v2): the faithful chain from a
+// get_diagnostics command surface: the faithful chain from a
 // real .mivia/mivia.toml through the CLI's own wiring to a live registry
 // Execute call. It proves the pieces the unit tests cover separately actually
 // compose:
@@ -222,8 +222,7 @@ func requireRowAt(t *testing.T, rows []struct {
 	t.Errorf("no row for file %q in %+v", file, rows)
 }
 
-// TestIntegrationDiagnosticsCommands is the integration contract (locked plan
-// v2): a real .mivia/mivia.toml declaring two diagnostics commands reaches a
+// TestIntegrationDiagnosticsCommands is the integration contract: a real .mivia/mivia.toml declaring two diagnostics commands reaches a
 // live NewDefaultRegistry through the CLI's own DefaultOptions mapping, and
 // Execute behaves per command name. Each scenario is a helper function so the
 // test body stays within the function-LOC policy.

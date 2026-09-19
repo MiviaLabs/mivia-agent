@@ -125,7 +125,7 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 }
 
 // sendPlainContext streams a plain-chat turn through the context manager.
-// Phase 2 summary injection: the request carries the validated summary of the
+// Summary injection: the request carries the validated summary of the
 // omitted segment in an EPHEMERAL slice; `prepared` stays structural so the
 // durable commit (candidate, checkpoint ActiveContext, compaction event) never
 // contains summary content (INV-AG-32 omission stays).

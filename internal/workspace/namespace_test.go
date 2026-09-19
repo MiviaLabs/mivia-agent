@@ -60,7 +60,7 @@ func TestUserHomeDirUsesHomeOnAllPlatforms(t *testing.T) {
 // This test is the enforcement for that rule. A fallback, a deprecation
 // notice, or a "just one" path constant all reintroduce the squat, and each
 // looks harmless in isolation - so the guard is mechanical rather than a
-// review convention. See plan 04 (workspace namespace) §3.
+// review convention.
 // isNestedCheckout reports whether dir is the root of a second checkout of this
 // module - a git worktree or a vendored clone - which carries a full copy of
 // every file here. A worktree root is marked by a .git entry.

@@ -1,5 +1,5 @@
 // Package jschema is a fail-closed JSON Schema compile/validate wrapper for
-// structured subagent outputs (plan tools/02).
+// structured subagent outputs.
 //
 // Policy:
 //   - no remote $ref resolution (only the document under compile)

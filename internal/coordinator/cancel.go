@@ -10,7 +10,7 @@ import (
 )
 
 func (c *Coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
-	// Fence mailbox on cancel finalize (plan 53.03). Called after the terminal
+	// Fence mailbox on cancel finalize. Called after the terminal
 	// CAS; also covers paths where recordRunResults already left the task
 	// canceled and finalize only needs durable attempt/event bookkeeping.
 	h.MarkTaskMailboxTerminal(task.TaskID)
@@ -69,7 +69,7 @@ func (c *Coordinator) reconcileCancellation(h *RunHandle) {
 	if err == nil {
 		for _, task := range tasks {
 			// awaiting_input is non-terminal (parked on a question); cancel must
-			// reach it or the task is left stuck (plan 53.02).
+			// reach it or the task is left stuck.
 			if task.Status == string(ledger.TaskStatusQueued) ||
 				task.Status == string(ledger.TaskStatusRunning) ||
 				task.Status == string(ledger.TaskStatusAwaitingInput) {

@@ -1,6 +1,6 @@
 package ledger
 
-// Integration tests — Phase 2 exit criterion. These tests exercise the full
+// Integration tests. These tests exercise the full
 // synthetic workflow lifecycle over a SQLite-backed store: admission of a
 // canonical snapshot, a crashed holder's claim fencing a second executor,
 // operator force-release, resume planning, interrupted/succeeded attempt
@@ -453,7 +453,7 @@ func integrationAssertDurability(t *testing.T, ctx context.Context, repo *Storag
 	return runC, attempts, trans
 }
 
-// TestIntegrationInterruptedWorkflowResumes is the Phase 2 EXIT CRITERION: an
+// TestIntegrationInterruptedWorkflowResumes is an exit criterion: an
 // interrupted synthetic workflow resumes with the same snapshot and one
 // complete audit trail. A crashed holder's claim fences a second executor; the
 // operator force-releases it; the resume records the crashed attempt as

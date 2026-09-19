@@ -1,6 +1,7 @@
-// Package matcher provides closed structural transition matching for workflows.
+// Matcher provides closed structural transition matching for workflows.
 // It evaluates attempt status plus exact scalar/enum output fields only.
 // It is not an expression language: no regex, arithmetic, negation, or prose.
+
 package definition
 
 import (

@@ -175,7 +175,7 @@ func slashEligibilityWarnings(def Definition, exactNameExists bool, options Load
 }
 
 // validateDeclaredSkillTools rejects any declared tool name that is not in the
-// static declared-tool catalogue (plan 43). Omitted (nil) and explicit empty
+// static declared-tool catalogue. Omitted (nil) and explicit empty
 // tool lists pass; unknown names fail closed.
 func validateDeclaredSkillTools(names []string) error {
 	for _, name := range names {
@@ -316,7 +316,7 @@ func loadSkillDirAt(root *os.Root, dir, sourcePath string, origin Origin) (Defin
 		return Definition{}, false, "", fmt.Errorf("read skill %q: %w", dir, err)
 	}
 	def.location = skillLocation{path: filepath.Clean(sourcePath), info: locationInfo}
-	// Plan 43: every statically declared tool must be in the declared-tool
+	// Every statically declared tool must be in the declared-tool
 	// catalogue. Unknown names (including the activation-only
 	// read_skill_resource) fail closed. The strict single-source loader
 	// propagates the error; the resilient multi-source loader skips the

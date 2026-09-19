@@ -278,7 +278,7 @@ func TestEscClearsTheQueueWhenIdle(t *testing.T) {
 		if len(scr.queueOverlay.Items()) != 0 {
 			t.Errorf("got queueOverlay items %v, want them cleared too", scr.queueOverlay.Items())
 		}
-		// C9 review round 2: every OTHER queue mutation in this package
+		// Every OTHER queue mutation in this package
 		// (handleQueueKey's delete, force-send's re-queue) tells the
 		// user what happened via statusline.Notice - clearing the
 		// WHOLE queue with one keypress is the biggest queue mutation

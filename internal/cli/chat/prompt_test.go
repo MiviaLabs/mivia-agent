@@ -127,8 +127,8 @@ func TestAgentPromptsNameTheEditTools(t *testing.T) {
 	}
 }
 
-// TestAgentPromptsNeverSetHandlerField is a regression test for the plan 07.1
-// prompt/rules drift: dispatch_tasks/spawn_agent task objects have no `handler`
+// TestAgentPromptsNeverSetHandlerField is a regression test for a prompt/rules
+// drift: dispatch_tasks/spawn_agent task objects have no `handler`
 // field. The task schema accepts unread fields, but `handler` is a reserved
 // ROUTE selector (reservedTaskSelectors), so sending `handler:"multi_step"`
 // fails the WHOLE call with `"handler" is not a task field; route with
@@ -205,10 +205,9 @@ func TestRootPromptMessagingBlockOmitsHandler(t *testing.T) {
 }
 
 // TestProtocolMarkers pins the parent-side messaging vocabulary on the one
-// compiled prompt surface. This repo no longer ships its own root-agent
-// override (.agents/agents/mivia.md was removed so the dogfood workspace
-// exercises the same compiled fallback every user gets), so there is no
-// second surface to keep in agreement.
+// compiled prompt surface. This repo ships no root-agent override, so
+// the dogfood workspace exercises the same compiled fallback every user
+// gets; there is no second surface to keep in agreement.
 func TestProtocolMarkers(t *testing.T) {
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	if !strings.Contains(prompt, "send_to_task") {

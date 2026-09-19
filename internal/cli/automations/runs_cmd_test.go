@@ -2,13 +2,13 @@ package automations
 
 import (
 	"context"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/automation"
-	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tui/kit/ports"
 )
@@ -25,7 +25,7 @@ func automationStorePath(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatalf("resolveWorkspaceAndConfig(%q, \"\"): %v", root, err)
 	}
-	return chat.ContextStorePath(gotRoot, res.Subagents)
+	return workflow.ContextStorePath(gotRoot, res.Subagents)
 }
 
 // insertAutomationRun opens root's automation/session store (the same

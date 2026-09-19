@@ -18,7 +18,7 @@
         "reason": "uses a POSIX command (true); no Windows equivalent wired here"
       }
     ],
-    "internal/agent/audit_dump_test.go": [
+    "internal/agent/provider_dump_test.go": [
       {
         "line": 282,
         "reason": "POSIX modes are not representable on Windows"
@@ -27,7 +27,7 @@
     "internal/agent/advertised_tool_specs_test.go": [
       {
         "line": 129,
-        "reason": "accepted gap, not a regression: step 1's wire tools[] advertises registry-derived definitions with no Description (the pinned snapshot with descriptions applies from step 2 on) - documented in the Surface carrier row of docs/development/sdk-backend-field-mapping.md §1."
+        "reason": "accepted gap, not a regression: step 1's wire tools[] advertises registry-derived definitions with no Description (the pinned snapshot with descriptions applies from step 2 on) - documented in the Surface carrier row of docs/development/sdk-backend-field-mapping.md \u00a71."
       }
     ],
     "internal/agent/hang_regression_integration_test.go": [
@@ -55,7 +55,7 @@
     "internal/agent/heartbeat_kind_test.go": [
       {
         "line": 47,
-        "reason": "accepted gap, not a regression: the legacy model-thinking heartbeat has no SDK bridge - Event surface gap in docs/development/sdk-backend-field-mapping.md §2."
+        "reason": "accepted gap, not a regression: the legacy model-thinking heartbeat has no SDK bridge - Event surface gap in docs/development/sdk-backend-field-mapping.md \u00a72."
       }
     ],
     "internal/agent/loop_context_fix_test.go": [
@@ -106,7 +106,7 @@
         "reason": "platform still resolves an absolute path from a removed working directory"
       }
     ],
-    "internal/agent/shim_coverage_gate_test.go": [
+    "internal/agent/dispatcher_shim_gate_test.go": [
       {
         "line": 225,
         "reason": "the second call was not dedup-served; nothing to classify here"
@@ -439,6 +439,12 @@
         "line": 33,
         "reason": "shell-script hook fixture is POSIX-only; see internal/hooks/session/stop_test.go for the Windows translation this package does not duplicate"
       }
+    ],
+    "internal/cli/workflow/committed_workflow_fixture_test.go": [
+      {
+        "line": 21,
+        "reason": "committed feature-delivery workflow is not present: %v"
+      }
     ]
   },
   "allowedDeletions": [
@@ -449,11 +455,14 @@
     "TestAdmittedToolsSurviveSaveAndLoad",
     "TestAgentDialogLifecycle",
     "TestAgentDialogOpenAndSelect",
+    "TestAgentDoesNotCompactRetryWhenProviderReplayIsDisabled",
     "TestAgentEnumInParameters",
     "TestAgentEnumOmittedWhenRegistryEmpty",
     "TestAgentListRowsEmpty",
     "TestAgentListRowsMarksCurrent",
     "TestAgentListRowsWithCurrent",
+    "TestAgentPromptTooLongFailsFastAfterOneRetry",
+    "TestAgentRetriesOnceAfterPromptTooLongWithCompaction",
     "TestAgentSessionStateDisplayHelpers",
     "TestAgentSwitchResetsAdmissions",
     "TestAllKnownKinds_ContainsAllDeclaredKinds",
@@ -493,6 +502,10 @@
     "TestAssistantProseHasNoRail",
     "TestAsyncCreateMessageRetainsAllocatedInstance",
     "TestAsyncPasteDroppedWhileModalOpens",
+    "TestAuditOllamaEnvTrimming",
+    "TestAuditOllamaKeyFileInterplay",
+    "TestAuditOllamaLoadAndSelectableMatrix",
+    "TestAuditShippedExampleLoads",
     "TestAuroraWaveViewRendering",
     "TestAutoSave",
     "TestAutoSaveEmptySession",
@@ -563,6 +576,7 @@
     "TestClampToolScrollWithTwentyTools",
     "TestClampViewHeightLogic",
     "TestClassicSlashAgentDirect",
+    "TestClassifyStackPlanRunDeliveryWiringClosure",
     "TestClipPreviewLine",
     "TestClipPreviewLineNeverNegative",
     "TestClipPreviewLineUTF8Safe",
@@ -635,6 +649,18 @@
     "TestCopyLargeTextUsesLocalToolBeyondOSC52Limit",
     "TestCopyRightClickAckVisible",
     "TestCoreMemoryBlockForStateAndOpts",
+    "TestCoverageAttemptElapsedSecondsCompleted",
+    "TestCoverageAttemptElapsedSecondsNegativeSkew",
+    "TestCoverageAttemptElapsedSecondsZeroStart",
+    "TestCoverageHelpersContextAndTruncate",
+    "TestCoverageHelpersScrubEphemeralToolMessages",
+    "TestCoverageRecordRunResumedClosedRepo",
+    "TestCoverageRecordRunResumedNotFound",
+    "TestCoverageSummarizeEventApprovalResolvedNoReason",
+    "TestCoverageSummarizeEventAttemptAndApprovalCases",
+    "TestCoverageSummarizeEventRunAndWorkflowCases",
+    "TestCoverageSummarizeEventUndecodablePayloads",
+    "TestCoverageTruncateSummaryRuneBoundary",
     "TestCreateWorktreeAsyncDeliversMessage",
     "TestCreateWorktreeAsyncDuplicateName",
     "TestCreateWorktreeAsyncSuccessOnRealRepo",
@@ -725,13 +751,16 @@
     "TestDialogViewsStayWithinTerminalBoundsCompositor",
     "TestDiffBodyGuttersAndTruncationIsExplicit",
     "TestDiffBodyStartZeroTrailingUnchanged",
+    "TestDiffCov2AdmitNextWaveHaltedAtMaxTotal",
     "TestDiffCov2ChatBlockFromMessageAndHydrateDivider",
+    "TestDiffCov2ChunkSettleSucceededNotNoDiff",
     "TestDiffCov2HeaderGroupMemberAndExitTokens",
     "TestDiffCov2ReconstructStatusThinkingThenTool",
     "TestDiffCov2RenderCollapsedEditBlockFallbackPathAndFailed",
     "TestDiffCov2RenderDialogFrameRowRefit",
     "TestDiffCov2RenderPreformattedDefaultAndSystemArrow",
     "TestDiffCov2RenderThinkingBlockView",
+    "TestDiffCov2SessionAutoDeliveryRepairLoopAdvanceErrors",
     "TestDiffCov2ToolResultFailedMatrix",
     "TestDiffCov2ToolWaveFollowsWorkStatusSystem",
     "TestDiffCov2TuiFocusStringsAndSharedHelpers",
@@ -1321,6 +1350,7 @@
     "TestOpenSessionRefusesRestartWhileAgentRunning",
     "TestOpenSessionRejectsMissingDirectory",
     "TestOpenSessionRestartsInWorktree",
+    "TestOpenStackLedgerErrorBranches",
     "TestOpenWorktreeDialogListError",
     "TestOpenWorktreeRouteRestartsBeforeLoadingSession",
     "TestOptionsTypeAlias",
@@ -1356,6 +1386,7 @@
     "TestParseDiffHunks_KeepsBlankContextInsideHunk",
     "TestParseFTSQueryEligibility",
     "TestParseMemoryDumpArgsRejectsPositional",
+    "TestParseStackWorkflowArgsFlagError",
     "TestParseToolPathJSON",
     "TestParseToolPathWroteUpdated",
     "TestPasteAppendsToExistingDraft",
@@ -1420,6 +1451,8 @@
     "TestQueueRemoveAtSplicesAllThreeSlices",
     "TestQueueSlashOpensAndRefuses",
     "TestQueuedSelectTogglesImmediately",
+    "TestR4ConfigLoadDoesNotResolveDNS",
+    "TestR4OllamaSelectableMatrixHas17Combos",
     "TestREPLAutoRestoreSurfacesModelNotice",
     "TestRailConstructors",
     "TestRailForBlock_MatrixASCII",
@@ -1532,6 +1565,7 @@
     "TestResolveMemoryConfigOrgIDWhenUserFileIsSelected",
     "TestResolveMemoryConfigRejectsInvalidUserOrgID",
     "TestResolveMemoryConfigRejectsInvalidValues",
+    "TestResolveStackIDLatestPlanRun",
     "TestResolve_ReturnsLiveInstance",
     "TestResourceSkillInvocationGetsOnlyItsScopedReader",
     "TestRestoreQueueEditMultiLineCaretRow",
@@ -1543,6 +1577,9 @@
     "TestRevokeSuccessReturnsNil",
     "TestRightClickCopiesBlock",
     "TestRollingAutoSave",
+    "TestRound8ExampleConfigsLoad",
+    "TestRound8IsOllamaLoopbackEdgeInputs",
+    "TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic",
     "TestRouteFocusKey",
     "TestRouteFocusKeyFullMatrix",
     "TestRouteFocusKeyWorkflowsSidebar",
@@ -1679,6 +1716,7 @@
     "TestSeparatorVisible_EmptyWindow",
     "TestServiceEnsureAlreadyExpiredNeverCallsRefresh",
     "TestServiceEnsureRefreshSucceedsButSaveFailsReturnsNewBearerAndError",
+    "TestServiceEventsUnknownRunIsNotFound",
     "TestServiceVerifyClientErrorWraps",
     "TestServiceVerifySessionlessReturnsErrVerifiedNoSessionWithoutSaving",
     "TestServiceVerifySuccessSavesToken",
@@ -2047,6 +2085,7 @@
     "TestUnboundedConstant",
     "TestUnidentifiedToolCallIsGivenAnIDAndStaysPaired",
     "TestUnknownSlashDoesNotStartTurn",
+    "TestUnsetRepoFactoryReturnsErrRepoUnset",
     "TestUnwiredSessionDirRoundTripsTheAdmittedSet",
     "TestUpdateChatModeReachesFootDrain",
     "TestUpdateFromDrainResetStreamClearsStreamBuf",
@@ -2271,8 +2310,8 @@
     "TestCoverageAttachWorkflowProgressBusNilControllerSafe",
     "TestCoverageAttachWorkflowProgressBusNilSinkNoop",
     "TestCoverageSetEventBusProviderNilReceiverSafe",
-    "TestCoverageSummarizeEventAttemptAndApprovalCases",
-    "TestCoverageSummarizeEventRunAndWorkflowCases",
+    "TestSummarizeEventAttemptAndApprovalCases",
+    "TestSummarizeEventRunAndWorkflowCases",
     "TestCoverageUnreachableStepsThroughCompile",
     "TestCoverageValidateAgentReferencesTable",
     "TestCoverageValidateCyclesTable",

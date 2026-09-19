@@ -37,7 +37,7 @@ func installLocalhostResolver(t *testing.T, ip string) func(string) ([]net.IP, e
 }
 
 // TestOllamaKeylessLocalhostFailClosedOnNonLoopbackResolution pins the fixed
-// DNS-rebinding gate (plan §12 item 1): the keyless decision no longer trusts
+// DNS-rebinding gate: the keyless decision no longer trusts
 // the literal "localhost". Construction resolves the host once and refuses
 // keyless mode when it resolves anywhere other than loopback. A resolver
 // answering localhost with a non-loopback address must fail closed at

@@ -343,7 +343,7 @@ func TestParseFrontmatter_MultipleKeys(t *testing.T) {
 	}
 }
 
-// §6 requires rejection over guessing: an indented line inside a block
+// The parser must reject over guess: an indented line inside a block
 // sequence that is not a list item is a nested map, and must be a hard error
 // naming the line. Previously it was silently dropped.
 func TestParseFrontmatterRejectsNestedMapInBlockSequence(t *testing.T) {
@@ -365,7 +365,7 @@ func TestParseFrontmatterRejectsStrayIndentedLine(t *testing.T) {
 	}
 }
 
-// §6 says comments and blank lines are skipped - including between a key and
+// Comments and blank lines are skipped - including between a key and
 // its first list item, and between items.
 func TestParseFrontmatterSkipsCommentsAndBlanksInBlockSequence(t *testing.T) {
 	for name, in := range map[string]string{
@@ -451,7 +451,7 @@ func TestParseFrontmatterKeepsValidFlowSequences(t *testing.T) {
 	}
 }
 
-// Plan 43: a duplicate frontmatter key is a hard error rather than a silent
+// A duplicate frontmatter key is a hard error rather than a silent
 // last-wins overwrite. A repeated key means the file is ambiguous, and the
 // parser's contract is to reject ambiguity over guessing.
 func TestParseFrontmatterRejectsDuplicateKey(t *testing.T) {
@@ -516,7 +516,7 @@ func TestParseFrontmatterKnownWithClosingNoFrontmatter(t *testing.T) {
 	}
 }
 
-// §6: a scalar value that unquotes to the empty string is malformed.
+// A scalar value that unquotes to the empty string is malformed.
 // Rejecting beats guessing: an author writing name: "" or description: ”
 // produced a silent empty-string value instead of an error.
 func TestParseFrontmatterRejectsScalarEmptyAfterUnquote(t *testing.T) {

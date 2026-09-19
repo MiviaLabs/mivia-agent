@@ -20,6 +20,23 @@ catalog in TOML; there is no registry model fallback. The example config uses
 `deepseek` with `deepseek-v4-flash` and declares its context capacity.
 Config: TOML + env file for secrets. See `docs/product/config.md`.
 
+## Package families
+
+Internal packages form layers. Entrypoints import domain packages, domain packages import leaf packages, and leaf packages import nothing internal.
+
+- **Entrypoints**: `cmd/mivia` wires `internal/cli` and `internal/tui/run` into the `mivia` binary.
+- **CLI**: `internal/cli` is the command root. Subpackages own command surfaces: `internal/cli/chat` (REPL and slash commands), `internal/cli/workflow` (workflow engine, delivery, and `mivia stack drive`), `internal/cli/agents`, `internal/cli/orchestrate`, `internal/cli/automations`, `internal/cli/worktree`.
+- **TUI**: `internal/tui/run` composes the interactive surface through `internal/tui/adapter`. `internal/tui/kit` (`intent`, `ports`, `uievent`, `keymap`, `config`, `replay`, `termprobe`, `clipboardwrite`) and `internal/tui/view` (`app`, `screen/*`, `component/*`, `render`, `select`, `stream`, `theme`, `jsonout`) are self-contained: they import only kit vocabulary, never CLI packages.
+- **Session domain**: `internal/chat`, `internal/hub`, `internal/chatsync`, `internal/agentmsg`, `internal/agent`, `internal/coordinator`, `internal/subagents`, `internal/runtime`, `internal/sdkadapter`, `internal/prompts`, `internal/agents`, `internal/composition`, `internal/automation`.
+- **Workflows**: `internal/workflows/controller`, `internal/workflows/localengine`, `internal/workflows/definition`, `internal/workflows/delivery`, `internal/workflows/ledger`, `internal/workflows/agenttools`, `internal/workflows/panel`, `internal/evidencecheck`.
+- **Ledger and storage**: `internal/ledger`, `internal/ledger/core`, `internal/storage`, `internal/usage`.
+- **Context**: `internal/context/manager`, `internal/context/state`, `internal/events`, `internal/remainder`.
+- **Provider and transport**: `internal/provider`, `internal/provider/registry`, `internal/provider/reasoning`, `internal/mcp`, `internal/miviaauth`.
+- **Tools and workspace**: `internal/tools`, `internal/workspace`, `internal/codeintel`, `internal/diff`, `internal/jschema`, `internal/textutil`, `internal/vcs`, `internal/worktreeroute`, `internal/skills`, `internal/memory`, `internal/secretpath`, `internal/redact`.
+- **Support**: `internal/config`, `internal/hooks`, `internal/hooks/session`, `internal/orchestrationnotify`, `internal/cronschedule`, `internal/version`, and the test-only packages `internal/faultinject`, `internal/gittest`, `internal/testenv`.
+
+The allowed direction is entrypoints -> CLI/TUI -> session and workflow domain -> leaf packages. A package never imports a package above its own layer. `internal/tui/view/**` and `internal/tui/kit/**` must not import `internal/cli*`, `internal/chat`, `internal/agent`, `internal/coordinator`, or `internal/hub`; `internal/tui/adapter` is the only bridge (INV-TUI-29). `internal/chatsync` is a leaf and must not import `internal/chat` or `internal/tools`. `.mivia/policy/import-layers.json` declares the allowed-edge baseline, the edge cap, and the deny list. `scripts/check_import_layers.py` enforces the file.
+
 ## MCP client boundary
 
 `internal/config` loads secret-free MCP server definitions from user and project configuration. A project server with the same ID replaces the complete user server definition. `internal/mcp` owns one lazy client per selected server. It discovers tools with `tools/list` and calls them with `tools/call`. `internal/agents` resolves server IDs. The CLI scopes discovered wrappers for root agents, child agents, and workflow agents. The manager closes every client and stdio process at session or workflow cleanup.
@@ -181,7 +198,7 @@ The Coordinator interface is larger than a Spawn/Inspect/Join/Cancel summary sug
 - An ask/question registry for agent-to-agent and agent-to-host questions.
 - A messaging subsystem between concurrent runs.
 - Referral spawning, where one run can hand off work to spawn another.
-- `PanelCoordinator` (`internal/workflows/ledger`), which binds every panel child operation to persisted panel state; it does not itself execute panel fan-out or aggregation — the workflow controller drives fan-out and calls `ComputeHostVerdict` (see [Panel review steps](workflows.md#panel-review-steps)).
+- `PanelCoordinator` (`internal/workflows/panel`), which binds every panel child operation to persisted panel state; it does not itself execute panel fan-out or aggregation — the workflow controller drives fan-out and calls `ComputeHostVerdict` (see [Panel review steps](workflows.md#panel-review-steps)). The panel child coordinator and the panel content validation are the only panel code outside the workflow ledger's persistence package: `internal/workflows/panel` imports the ledger for the durable panel types, and the ledger never imports the coordinator or subagent runtime.
 
 `Spawn` also enforces idempotency scoping and conflict detection. A caller-supplied scope key (`scopedKey`) colliding with a different in-flight or completed run's inputs fails closed with `ErrIdempotencyConflict`. The run is never silently reused or duplicated.
 

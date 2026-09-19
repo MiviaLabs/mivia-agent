@@ -1,4 +1,4 @@
-// Package agent - bounded continuation for a turn that announced work and
+// bounded continuation for a turn that announced work and
 // then ended without doing any of it.
 //
 // The failure this exists for: a model answers "I am going to dispatch four

@@ -13,7 +13,7 @@ import (
 
 // FileOutline lists the declarations in a single file, in source order.
 //
-// This path parses ONE file with the standard parser (plan tools/03 D2): no
+// This path parses ONE file with the standard parser: no
 // type checking, no workspace load, no cache. It answers "what is in this
 // file" for the price of reading it, and keeps working when the workspace
 // snapshot is cold or the module does not build at all. The trade is that it

@@ -1,7 +1,6 @@
 package delivery
 
-// Split crash-resume (spec-auto-split-oversized-prs.md §5.2-5.3, revised per
-// §10): a split delivery (freshDeliveryCommitSplit) is NOT crash-atomic today
+// Split crash-resume: a split delivery (freshDeliveryCommitSplit) is NOT crash-atomic today
 // - the pending record is re-upserted with CommitSHA=C1 before C2 exists, so
 // a retry after a mid-split crash mis-routes: window A (after C1, before C2)
 // goes to commitWorktreeFollowUp, which commits the deferred files onto the

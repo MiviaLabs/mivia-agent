@@ -26,7 +26,7 @@ type Definition struct {
 	// Tools is the skill's declared tool requirements from SKILL.md frontmatter.
 	// Nil means the skill omitted tools metadata; non-nil (possibly empty) is
 	// author-declared. Agent skill binding uses this for the non-vacuous
-	// agent.Tools ⊇ skill.Tools check (plan 06).
+	// agent.Tools ⊇ skill.Tools check.
 	Tools []string
 	// Resources are explicitly declared, lazy text references. Paths and the
 	// source location remain host-private; callers can expose only ID+summary.

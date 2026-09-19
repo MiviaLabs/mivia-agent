@@ -171,7 +171,7 @@ func completeCheckpointBodies(t *testing.T, db *sql.DB, sessionID string) [][]by
 }
 
 // TestIntegrationElisionCommitsActiveWhilePriorCheckpointKeepsBody is the
-// durable §7 proof: turn 1 commits an oversized prior tool body; turn 2
+// durable proof: turn 1 commits an oversized prior tool body; turn 2
 // elides it in the new active context while the earlier complete checkpoint
 // row still holds the original bytes. Observation uses store.Load plus the
 // established test-only RO SQL pattern — no product history API.

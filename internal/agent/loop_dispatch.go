@@ -13,7 +13,7 @@ import (
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
-// errSteerInterrupt marks a turn a soft interrupt (plan 54) canceled:
+// errSteerInterrupt marks a turn a soft interrupt canceled:
 // the interrupted step's partial reply is returned alongside this
 // sentinel instead of a raw context.Canceled, so a caller can
 // distinguish "the model was asked to stop and complied" from a hard

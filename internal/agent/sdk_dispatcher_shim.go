@@ -1,4 +1,4 @@
-// Package agent - dispatcher+cap tool shim for the SDK backend.
+// dispatcher+cap tool shim for the SDK backend.
 //
 // The legacy loop executes every tool call through
 // Options.Dispatcher.Invoke (loop_tool_exec.go:40-47), which fires the
@@ -15,6 +15,7 @@
 // It is applied INNERMOST (before the ref-only shim and the turn
 // shaping wrapper) so later shapers see the same capped body the
 // legacy batch shaper sees.
+
 package agent
 
 import (

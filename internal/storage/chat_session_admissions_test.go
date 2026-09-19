@@ -148,7 +148,7 @@ func TestSessionAdmissionRejectsAnOversizedSet(t *testing.T) {
 // opened below v4 must reach v4 with the admission table present and the dirty
 // flag cleared.
 //
-// The admission table is v4, not v3: plan tools/05 and the multi-chunk payload
+// The admission table is v4, not v3: the admission schema and the multi-chunk payload
 // migration were developed in parallel and both claimed v3, and v3 shipped
 // first. See applyContextSchemaV4.
 func TestContextSchemaV4AddsTheAdmissionTable(t *testing.T) {

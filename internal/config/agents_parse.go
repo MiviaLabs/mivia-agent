@@ -150,8 +150,8 @@ func (r agentFileYAML) toSpec() AgentFileSpec {
 	}
 }
 
-// agentFileTOML is the on-disk shape. skills is the invocation allowlist
-// (plan 06); enforcement lives in internal/agents + internal/cli.
+// agentFileTOML is the on-disk shape. skills is the invocation allowlist;
+// enforcement lives in internal/agents + internal/cli.
 type agentFileTOML struct {
 	Name            *string         `toml:"name"`
 	Description     *string         `toml:"description"`

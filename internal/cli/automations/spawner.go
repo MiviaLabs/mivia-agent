@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"log"
 	"sync"
 
@@ -100,7 +101,7 @@ func (h *HeadlessSpawner) buildCompleter() (provider.Completer, error) {
 }
 
 // storePathFor resolves the checkpoint store path a spawned session
-// uses: root's own clichat.ContextStorePath(root, cfg), the SAME store
+// uses: root's own workflow.ContextStorePath(root, cfg), the SAME store
 // openAutomationStore (automations.go) opens for the Service's run
 // records.
 //
@@ -113,7 +114,7 @@ func (h *HeadlessSpawner) buildCompleter() (provider.Completer, error) {
 // history into its own SQLite file, invisible to `mivia automations
 // runs` and to the TUI's history for the same workspace.
 func storePathFor(root string, cfg config.SubagentConfig) string {
-	return clichat.ContextStorePath(root, cfg)
+	return workflow.ContextStorePath(root, cfg)
 }
 
 // CreateFreshInDir satisfies automation.SessionSpawner: builds a fresh

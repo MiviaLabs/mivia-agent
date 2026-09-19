@@ -192,7 +192,7 @@ func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResul
 		// RunTaskResultsWithRepo, not ModelTaskResultsWithRepo: on the idempotent-replay
 		// path the results are rebuilt from the ledger, so their references must come
 		// off the snapshot rather than be minted from recovery prose.
-		// repo attaches synopsis-only task messages (plan 53.02).
+		// repo attaches synopsis-only task messages.
 		result["task_results"] = RunTaskResultsWithRepo(repo, completed, threshold)
 	}
 	out, _ := json.Marshal(result)

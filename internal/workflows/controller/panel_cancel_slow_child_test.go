@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowpanel "github.com/MiviaLabs/mivia-agent/internal/workflows/panel"
 )
 
 // slowListTasksLedgerRepository delays ListTasks by delay before delegating.
@@ -137,7 +138,7 @@ func admitSlowPanelSecurityMemberAndReachCancelPending(t *testing.T, ctrl *Linea
 		t.Fatal(err)
 	}
 
-	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, coord, repo)
+	panel := workflowpanel.NewPanelCoordinator(ctrl.RunID, coord, repo)
 	handle, err := panel.EnsureMember(ctx, attempt.AttemptID, "security")
 	if err != nil {
 		t.Fatalf("EnsureMember() error = %v", err)

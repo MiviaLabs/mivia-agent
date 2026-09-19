@@ -9,7 +9,7 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 // filterEnvFor computes the minimal environment for a child process from the
 // workspace env policy. It is the single shared implementation for run_command
 // and get_diagnostics: the two tools must never drift apart on what a child
-// process may see (locked plan v2 item 11, review gate rev2 finding 2).
+// process may see.
 //
 // The result is guaranteed NON-NIL: an empty allowlist yields an empty slice
 // ([]string{}), never nil. Assigning nil to exec.Cmd.Env makes os/exec

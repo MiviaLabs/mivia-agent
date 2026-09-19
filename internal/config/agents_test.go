@@ -184,7 +184,7 @@ func TestDiscoverAgentFilesReportMarksWorkspaceShadow(t *testing.T) {
 }
 
 func TestAgentSkillsKeyParsed(t *testing.T) {
-	// Plan 06: skills is a first-class allowlist field.
+	// Skills is a first-class allowlist field.
 	body := []byte(`
 name = "a"
 description = "d"

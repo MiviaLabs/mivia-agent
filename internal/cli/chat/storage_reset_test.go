@@ -3,6 +3,7 @@ package chat
 import (
 	"bytes"
 	"context"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -76,7 +77,7 @@ func TestOpenOrchestrationStoreAtHardensTempTier(t *testing.T) {
 	root := t.TempDir()
 	storePath := config.TempStorePath(root, "orchestration")
 
-	store, err := openOrchestrationStoreAt(root, storePath)
+	store, err := workflow.OpenOrchestrationStoreAt(root, storePath)
 	if err != nil {
 		t.Fatalf("openOrchestrationStoreAt: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestOpenOrchestrationStoreAtLeavesOperatorPathAlone(t *testing.T) {
 	root := t.TempDir()
 	operatorPath := filepath.Join(root, "operator.db")
 
-	store, err := openOrchestrationStoreAt(root, operatorPath)
+	store, err := workflow.OpenOrchestrationStoreAt(root, operatorPath)
 	if err != nil {
 		t.Fatalf("openOrchestrationStoreAt: %v", err)
 	}

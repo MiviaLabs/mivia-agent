@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -24,7 +25,7 @@ func (h *activatedSkillHandler) Invoke(ctx context.Context, req runtime.Request)
 		return nil, err
 	}
 	defer activation.Close()
-	registry, err := InjectSkillResourceTool(h.template.FullRegistry, activation)
+	registry, err := workflow.InjectSkillResourceTool(h.template.FullRegistry, activation)
 	if err != nil {
 		return nil, err
 	}

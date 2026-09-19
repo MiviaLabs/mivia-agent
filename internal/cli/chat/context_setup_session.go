@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -24,11 +25,11 @@ func OpenRepositoryContextStore(root string) (*storage.SQLite, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openContextStorePath(path)
+	return workflow.OpenContextStorePath(path)
 }
 
 func setupSessionContext(sess *chat.Session, root string, res *config.Resolved) (*storage.SQLite, error) {
-	store, err := openContextStore(root, res.Subagents)
+	store, err := workflow.OpenContextStore(root, res.Subagents)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +39,7 @@ func setupSessionContext(sess *chat.Session, root string, res *config.Resolved) 
 // setupRepositorySessionContext stores sessions under the main repository.
 // The active workspace supplies each session's directory metadata.
 func setupRepositorySessionContext(sess *chat.Session, repositoryRoot, storePath string, res *config.Resolved) (*storage.SQLite, error) {
-	store, err := openContextStorePath(storePath)
+	store, err := workflow.OpenContextStorePath(storePath)
 	if err != nil {
 		return nil, err
 	}

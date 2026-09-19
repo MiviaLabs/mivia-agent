@@ -236,7 +236,7 @@ func TestValidateAgainstCatalogue_UnknownToolName(t *testing.T) {
 	}
 }
 
-// Plan 43: the activation-only read_skill_resource capability is not in the
+// The activation-only read_skill_resource capability is not in the
 // static declared-tool catalogue, so an agent TOML may not statically declare
 // it - via tools, tools_add, or inheritance. It is injected per invocation only.
 func TestAgentCannotStaticallyDeclareReadSkillResource(t *testing.T) {
@@ -295,7 +295,7 @@ func TestAgentCannotStaticallyDeclareReadSkillResource(t *testing.T) {
 	}
 }
 
-// Plan 43: an agent that omits tools inherits the default pool, which must be
+// An agent that omits tools inherits the default pool, which must be
 // the declared-tool catalogue (no activation-only capability).
 func TestDefaultToolPoolExcludesActivationOnly(t *testing.T) {
 	reg, _, err := ResolveAll([]ResolveInput{{

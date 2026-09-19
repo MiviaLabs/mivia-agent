@@ -106,7 +106,7 @@ func ScopedRegistry(src *Registry, opts ScopeOptions) *Registry {
 }
 
 // ScopedRegistryWithTail is ScopedRegistry with an explicit ordering contract
-// for host-mediated tool admission (plan tools/05 D8).
+// for host-mediated tool admission.
 //
 // opts.Allowlist selects the core block, which is materialized in src order.
 // Each name in tail is then appended in tail order, subject to the identical

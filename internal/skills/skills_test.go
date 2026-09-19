@@ -51,7 +51,7 @@ func TestSkillRegistryAfterDeadCodeRemoval(t *testing.T) {
 	if !ok {
 		t.Fatal("skill not registered")
 	}
-	// Verify Tools field exists and is assignable (plan 06 populates via loader).
+	// Verify Tools field exists and is assignable.
 	d.Tools = []string{"placeholder"}
 	if len(d.Tools) != 1 {
 		t.Fatal("Tools field missing")

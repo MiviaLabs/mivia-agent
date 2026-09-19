@@ -219,7 +219,7 @@ func (s Screen) handleTurnEventFrom(ev uievent.Event, source <-chan uievent.Even
 // applyTurnEventSideEffects is handleTurnEventFrom's per-kind arm: the work a
 // streamed event does BESIDES rendering into the transcript - the approval
 // prompt, the status line, the files panel, the blackboard, and the dispatch
-// row's child tree (C7). flushCmd is in/out: the progress arm may wrap it
+// row's child tree . flushCmd is in/out: the progress arm may wrap it
 // with the guarded animation tick, and the caller batches whatever comes
 // back with the read continuation.
 func (s *Screen) applyTurnEventSideEffects(ev uievent.Event, flushCmd *tea.Cmd) {
@@ -248,7 +248,7 @@ func (s *Screen) applyTurnEventSideEffects(ev uievent.Event, flushCmd *tea.Cmd) 
 		// from the same stream the transcript renders.
 		if b.Progress != nil {
 			s.panel.observeAgent(b.ToolCallID, b.Progress)
-			// The dispatch row's child tree (C7) rides the same progress
+			// The dispatch row's child tree  rides the same progress
 			// stream: the batch's settled child calls are re-read from the
 			// thread history and pushed into the transcript. No clock is
 			// armed for it - the tree repaints with the event.

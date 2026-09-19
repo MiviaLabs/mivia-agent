@@ -22,7 +22,7 @@ var (
 // recoverByIdempotencyKey looks up an existing run by idempotency key and
 // returns a recovered handle. If the run is terminal, the handle's result is
 // immediately available. If the run is non-terminal, Join/Cancel will return
-// errRecoveredRunNotResumable (conservative Phase 1 behaviour).
+// errRecoveredRunNotResumable (conservative behaviour).
 func (c *Coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerprint string) (*RunHandle, bool, error) {
 	snap, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if errors.Is(err, ledger.ErrNotFound) {

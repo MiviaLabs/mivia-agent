@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -35,7 +36,7 @@ var SessionDeliverLedgerReopenFunc = OpenWorkflowReportContext
 // TestSessionDeliverWaitsForActiveDoneThenProceeds.
 var sessionDeliverActiveWaitObserved = func(time.Duration) {}
 
-// Cancel implements workflowledger.Engine.
+// Cancel implements workflowagenttools.Engine.
 // Refusal gates first (a lock-free status read): a terminal run is an
 // idempotent no-op and a delivery_pending run is refused, both without
 // stopping the in-process controller (F13). Only then does it stop the
@@ -43,12 +44,12 @@ var sessionDeliverActiveWaitObserved = func(time.Duration) {}
 // path as `mivia workflow cancel` - the stop must precede the lock, because
 // the session's own run goroutine holds the per-run execution flock for its
 // whole lifetime and can only release it once stopped.
-func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (workflowledger.CancelResult, error) {
+func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (workflowagenttools.CancelResult, error) {
 	if e == nil {
-		return workflowledger.CancelResult{}, fmt.Errorf("workflow engine is nil")
+		return workflowagenttools.CancelResult{}, fmt.Errorf("workflow engine is nil")
 	}
 	if strings.TrimSpace(runID) == "" {
-		return workflowledger.CancelResult{}, fmt.Errorf("run_id is required")
+		return workflowagenttools.CancelResult{}, fmt.Errorf("run_id is required")
 	}
 	e.mu.Lock()
 	active := e.active[runID]
@@ -72,7 +73,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (workf
 	e.stopActive(ctx, runID)
 	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(ctx, e.root, e.configPath, runID, WorkflowResolutionLockWait)
 	if err != nil {
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	defer closeFn()
 	defer releaseExecution()
@@ -82,7 +83,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (workf
 	// (the periodic sweep re-drives the stopped delivery on its next tick).
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	if result, err, resolved := resolveSessionCancelRefusal(runID, run.Status); resolved {
 		return result, err
@@ -94,7 +95,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (workf
 // clear) the run, settle it canceled through the guarded coordinator, and
 // publish the terminal progress events. The caller holds the execution lock
 // and has already stopped the in-process controller.
-func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active *sessionActiveRun, repo workflowledger.Repository, store *storage.SQLite, runID string) (workflowledger.CancelResult, error) {
+func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active *sessionActiveRun, repo workflowledger.Repository, store *storage.SQLite, runID string) (workflowagenttools.CancelResult, error) {
 	// Never clear a held claim: cancel accepts any run_id, and a blind clear
 	// would strip a live delivery claim (held by this or another host mid-
 	// publish) and enable double-publish. Claim instead; an expired lease may
@@ -102,7 +103,7 @@ func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active 
 	// claim is refused outright.
 	holder := newWorkflowCancelHolder()
 	if err := claimForCancel(ctx, repo, runID, holder); err != nil {
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
 	attempts, err := cancelRunWithGuardedCoordinator(ctx, active, repo, store, runID, holder)
@@ -110,9 +111,9 @@ func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active 
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)
 		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
-			return workflowledger.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+			return workflowagenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 		}
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	// Terminal progress: one step_completed(canceled) per attempt the cancel
 	// settled, so TUI and metrics observe the operator cancel like any other
@@ -120,7 +121,7 @@ func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active 
 	e.publishCanceledAttempts(runID, attempts)
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
-		return workflowledger.CancelResult{}, err
+		return workflowagenttools.CancelResult{}, err
 	}
 	// Run-level terminal event: the operator cancel settled the run, so bus
 	// consumers see the same run_finished signal a controller-driven terminal
@@ -133,7 +134,7 @@ func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active 
 			})
 		}
 	}
-	return workflowledger.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+	return workflowagenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 }
 
 // readRunStatusForCancel is Cancel's lock-free gate read. A read failure
@@ -159,14 +160,14 @@ func (e *sessionWorkflowEngine) readRunStatusForCancel(ctx context.Context, runI
 // success (resolved with its settled result), a delivery_pending run is an
 // error (it waits on publication, not cancellation), and anything else
 // falls through to the actual cancel (resolved=false).
-func resolveSessionCancelRefusal(runID string, status workflowledger.RunStatus) (workflowledger.CancelResult, error, bool) {
+func resolveSessionCancelRefusal(runID string, status workflowledger.RunStatus) (workflowagenttools.CancelResult, error, bool) {
 	if workflowledger.IsTerminalRunStatus(status) {
-		return workflowledger.CancelResult{RunID: runID, Status: string(status)}, nil, true
+		return workflowagenttools.CancelResult{RunID: runID, Status: string(status)}, nil, true
 	}
 	if status == workflowledger.RunStatusDeliveryPending {
-		return workflowledger.CancelResult{}, fmt.Errorf("run %q is waiting for delivery; deliver it or leave it for cleanup before cancel", runID), true
+		return workflowagenttools.CancelResult{}, fmt.Errorf("run %q is waiting for delivery; deliver it or leave it for cleanup before cancel", runID), true
 	}
-	return workflowledger.CancelResult{}, nil, false
+	return workflowagenttools.CancelResult{}, nil, false
 }
 
 // newWorkflowCancelHolder mints the run-claim holder for a session-engine
@@ -185,7 +186,7 @@ func newWorkflowDeleteHolder() string {
 	return "wfdelete-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(value[:])
 }
 
-// Delete implements workflowledger.Engine.
+// Delete implements workflowagenttools.Engine.
 // It removes a run from the durable ledger via the same execution-lock +
 // claim path as `mivia workflow delete`. Settled runs (terminal or
 // delivery_pending) are always deletable; force also permits a non-terminal
@@ -195,25 +196,25 @@ func newWorkflowDeleteHolder() string {
 // or another host), and a refused delete must leave claims untouched. A fresh
 // claim held by a live executor is refused even with force; only an expired
 // lease is taken over, so an actively executing run can never be deleted.
-func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string, force bool) (workflowledger.DeleteResult, error) {
+func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string, force bool) (workflowagenttools.DeleteResult, error) {
 	if e == nil {
-		return workflowledger.DeleteResult{}, fmt.Errorf("workflow engine is nil")
+		return workflowagenttools.DeleteResult{}, fmt.Errorf("workflow engine is nil")
 	}
 	if strings.TrimSpace(runID) == "" {
-		return workflowledger.DeleteResult{}, fmt.Errorf("run_id is required")
+		return workflowagenttools.DeleteResult{}, fmt.Errorf("run_id is required")
 	}
 	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(ctx, e.root, e.configPath, runID, WorkflowResolutionLockWait)
 	if err != nil {
-		return workflowledger.DeleteResult{}, err
+		return workflowagenttools.DeleteResult{}, err
 	}
 	defer closeFn()
 	defer releaseExecution()
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
-		return workflowledger.DeleteResult{}, err
+		return workflowagenttools.DeleteResult{}, err
 	}
 	if !workflowledger.IsDeletableRunStatus(run.Status) && !force {
-		return workflowledger.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete, or pass force only after the prior executor stopped (a live claim is still refused)", runID, run.Status)
+		return workflowagenttools.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete, or pass force only after the prior executor stopped (a live claim is still refused)", runID, run.Status)
 	}
 	// Never clear a held claim: delete accepts any run_id, and a blind clear
 	// would strip a live delivery claim (held by this or another host mid-
@@ -221,27 +222,27 @@ func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string, force 
 	// be taken over, a fresh foreign claim is refused outright.
 	holder := newWorkflowDeleteHolder()
 	if err := ClaimWorkflowOperator(ctx, repo, runID, holder); err != nil {
-		return workflowledger.DeleteResult{}, fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
+		return workflowagenttools.DeleteResult{}, fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
 	}
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	if err := SessionDeleteRunFunc(ctx, repo, runID); err != nil {
-		return workflowledger.DeleteResult{}, err
+		return workflowagenttools.DeleteResult{}, err
 	}
-	return workflowledger.DeleteResult{RunID: runID, Status: string(run.Status), Deleted: true}, nil
+	return workflowagenttools.DeleteResult{RunID: runID, Status: string(run.Status), Deleted: true}, nil
 }
 
-// Deliver implements workflowledger.Engine.
+// Deliver implements workflowagenttools.Engine.
 // Publication uses the CLI deliver path (run-owned worktree + execution lock).
 // It never delivers from the caller workspace root via localengine.
-func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allowPublish bool) (workflowledger.DeliverResult, error) {
+func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allowPublish bool) (workflowagenttools.DeliverResult, error) {
 	if e == nil {
-		return workflowledger.DeliverResult{}, fmt.Errorf("workflow engine is nil")
+		return workflowagenttools.DeliverResult{}, fmt.Errorf("workflow engine is nil")
 	}
 	if strings.TrimSpace(runID) == "" {
-		return workflowledger.DeliverResult{}, fmt.Errorf("run_id is required")
+		return workflowagenttools.DeliverResult{}, fmt.Errorf("run_id is required")
 	}
 	if !allowPublish {
-		return workflowledger.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
+		return workflowagenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
 	}
 	var stdout, stderr strings.Builder
 	// Read the run status BEFORE delivery: an idempotent re-deliver of an
@@ -277,18 +278,18 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		if result, ok := sessionDeliverResultFromLedger(ctx, e.root, e.configPath, runID, err); ok {
 			return result, nil
 		}
-		return workflowledger.DeliverResult{}, err
+		return workflowagenttools.DeliverResult{}, err
 	}
 	repo, closeFn, err := SessionDeliverLedgerReopenFunc(e.root, e.configPath)
 	if err != nil {
-		return workflowledger.DeliverResult{RunID: runID, Status: "unknown"}, nil
+		return workflowagenttools.DeliverResult{RunID: runID, Status: "unknown"}, nil
 	}
 	defer closeFn()
 	run, getErr := repo.GetRun(ctx, runID)
 	if getErr != nil {
-		return workflowledger.DeliverResult{RunID: runID, Status: "unknown"}, nil
+		return workflowagenttools.DeliverResult{RunID: runID, Status: "unknown"}, nil
 	}
-	result := workflowledger.DeliverResult{RunID: runID, Status: string(run.Status)}
+	result := workflowagenttools.DeliverResult{RunID: runID, Status: string(run.Status)}
 	if rec, recErr := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(run.RunID, run.WorkflowDigest)); recErr == nil {
 		result.URL = rec.URL
 		result.Mode = rec.Mode
@@ -307,22 +308,22 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 // sessionDeliverResultFromLedger maps a refused tool delivery into a
 // structured result when the ledger still opens and shows the run settled
 // delivery_failed (a host refusal is a settled outcome, not a tool error).
-func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID string, deliverErr error) (workflowledger.DeliverResult, bool) {
+func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID string, deliverErr error) (workflowagenttools.DeliverResult, bool) {
 	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
-		return workflowledger.DeliverResult{}, false
+		return workflowagenttools.DeliverResult{}, false
 	}
 	defer closeFn()
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
-		return workflowledger.DeliverResult{}, false
+		return workflowagenttools.DeliverResult{}, false
 	}
 	// delivery_failed after a host refusal is a settled outcome, not a tool error.
 	if run.Status == workflowledger.RunStatusDeliveryFailed {
-		return workflowledger.DeliverResult{
+		return workflowagenttools.DeliverResult{
 			RunID: runID, Status: string(run.Status),
 			Refused: true, Reason: deliverErr.Error(),
 		}, true
 	}
-	return workflowledger.DeliverResult{}, false
+	return workflowagenttools.DeliverResult{}, false
 }

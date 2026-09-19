@@ -14,7 +14,7 @@ type runExecKey struct{}
 type runExecInfo struct {
 	runID     string
 	agents    map[string]string  // taskID → agent name
-	mailboxes *runMailboxes      // shared with RunHandle (plan 53.03)
+	mailboxes *runMailboxes      // shared with RunHandle
 	toolCalls *runToolCallBuffer // shared with RunHandle (Part B, chunk 4)
 }
 

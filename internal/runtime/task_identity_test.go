@@ -26,7 +26,7 @@ func TestTaskIdentityRoundTrip(t *testing.T) {
 }
 
 // TestMailboxAccessContextRoundTrip covers the bundled MailboxAccess context
-// plumbing (plan 54): set via ContextWithMailboxAccess, read back via
+// plumbing: set via ContextWithMailboxAccess, read back via
 // MailboxAccessFrom, behavioral checks on the returned bundle, and the legacy
 // MailboxDrainFrom reader on the bundle.
 func TestMailboxAccessContextRoundTrip(t *testing.T) {
@@ -93,7 +93,7 @@ func TestMailboxAccessContextRoundTrip(t *testing.T) {
 }
 
 // TestMailboxAccessContextBareAndLegacy covers the nil-safe readers on a bare
-// context and the backward-compat ContextWithMailboxDrain wrapper (plan 54).
+// context and the backward-compat ContextWithMailboxDrain wrapper.
 func TestMailboxAccessContextBareAndLegacy(t *testing.T) {
 	// Nil-safe readers on a bare context.
 	zero, ok := MailboxAccessFrom(context.Background())

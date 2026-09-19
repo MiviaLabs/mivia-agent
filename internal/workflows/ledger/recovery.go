@@ -8,7 +8,7 @@ import (
 // RecoveryPlan is the pure, ledger-typed encoding of what resuming a run
 // requires. It is computed from ledger state alone — no coordinator, compiler,
 // matcher or definition imports. Joining the stored coordinator run and
-// re-matching evidence are caller (controller, Phase 4) responsibilities that
+// re-matching evidence are caller (controller) responsibilities that
 // consume this plan.
 type RecoveryPlan struct {
 	// Run is the current run snapshot.

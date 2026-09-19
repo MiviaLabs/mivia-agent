@@ -5,7 +5,7 @@ package provider
 // base_url is NOT a verified loopback address and no non-blank API key is
 // provided. A keyless ollama client is constructible iff
 // config.IsOllamaLoopback(base_url) - at every entry point, including this
-// exported one - so keyless traffic can never leave the machine (plan §12).
+// exported one - so keyless traffic can never leave the machine.
 
 import (
 	"context"

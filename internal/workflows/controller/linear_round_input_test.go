@@ -9,11 +9,11 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// TestRoundInputEqualsLoopCounter pins convergence plan v3 part 2 end to end:
+// TestRoundInputEqualsLoopCounter pins round-input convergence end to end:
 // agentStepRequest injects a synthetic inputs.round equal to the step's loop
 // iteration counter read from the ledger. The review step is in the
-// review_repair loop: its first call runs before any completed iteration
-// (round 0), its second call after one completed back-edge (round 1). A step
+// review_repair loop: its first call runs before any completed iteration,
+// its second call after one completed back-edge. A step
 // outside a loop gets no round input.
 func TestRoundInputEqualsLoopCounter(t *testing.T) {
 	wf := repairWorkflow(t, -1, 12)

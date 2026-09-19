@@ -15,7 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// Audit regression, round 3 (following 0f6e524, 2dca36b and e4fbb4b).
+// Audit regression (following 0f6e524, 2dca36b and e4fbb4b).
 //
 // `search` (Tavily path) and `extract` read the provider's JSON response with
 // no bound and declared no result budget, so they were the last two recorded

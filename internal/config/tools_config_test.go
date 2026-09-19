@@ -6,7 +6,7 @@ import (
 )
 
 // [tools] ref_only_tools - opt-in list of tool names whose results are always
-// spooled and replaced by a ref-only notice (plan tools/06). resolveToolsConfig
+// spooled and replaced by a ref-only notice. resolveToolsConfig
 // normalizes it: trim whitespace, drop empty/whitespace-only entries, and
 // dedupe exact strings preserving first-seen order.
 

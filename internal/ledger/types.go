@@ -43,7 +43,7 @@ const (
 	TaskStatusCancelRequested TaskStatus = "cancel_requested"
 	TaskStatusRetryPending    TaskStatus = "retry_pending"
 	// TaskStatusAwaitingInput is non-terminal: the task is parked on a
-	// question (plan 53.02). Distinct from terminal TaskStatusBlocked
+	// question. Distinct from terminal TaskStatusBlocked
 	// (dependency failure; INV-AG-21). May return to running.
 	TaskStatusAwaitingInput TaskStatus = "awaiting_input"
 )
@@ -162,7 +162,7 @@ type TaskSnapshot struct {
 	// records DAG parentage, which resume needs. It is deliberately NOT restored
 	// into Task.Owner: doing so would make a resumed run's dispatcher ParentID and
 	// provenance attributable to a workspace-writable file.
-	// TestResumeDoesNotRestoreAuthorityFields is the tripwire. See plan 12 §3.
+	// TestResumeDoesNotRestoreAuthorityFields is the tripwire.
 	Input json.RawMessage `json:"input,omitempty"`
 	// Timeout, Budget and Depth are resource limits: restored on resume, but
 	// clamped to the live configuration so the ledger cannot raise a ceiling.

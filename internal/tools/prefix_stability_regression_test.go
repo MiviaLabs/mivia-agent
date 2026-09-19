@@ -10,7 +10,7 @@ import (
 // the empty set, and a previously rendered (frozen) index is never altered by
 // a later admission that would remove a name from a fresh render - so the
 // index embedded in one AgentSurfaceGeneration's system prompt stays stable
-// for the binding's lifetime (plan tools/05 D8, plan 68 W4).
+// for the binding's lifetime.
 func TestDeferredIndexUnchangedAcrossAdmissionsWithinOneGeneration(t *testing.T) {
 	candidates := []TierCandidate{
 		{Name: "alpha", Description: "Reads alpha. Then stops."},

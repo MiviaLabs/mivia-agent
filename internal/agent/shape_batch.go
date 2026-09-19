@@ -8,7 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
-// Aggregate per-batch tool-result budget (plan tools/06).
+// Aggregate per-batch tool-result budget.
 //
 // N parallel calls, each honestly under its own per-call cap, still blow the
 // context when they land together. The per-call cap cannot see them: it is
@@ -40,13 +40,13 @@ const (
 	// Cutting to exactly the remaining bytes is correct arithmetic and useless
 	// output: a 40-byte remainder buys the model nothing but a notice. One
 	// result per batch may overshoot the budget by up to this much - see the
-	// bound in shapeReport's doc and §5 of the plan.
+	// bound in shapeReport's doc.
 	BatchDegradeFloorBytes = 16 << 10
 
 	// statusLineMaxBytes bounds the D8 status line. It is a bound, not a
 	// format: statusLine composes four ints into a fixed template, and
 	// TestShapeBatchStatusLineIsBounded pins that even int-max arguments stay
-	// under this. The framing bound in §4.3 is stated in terms of it.
+	// under this. The framing bound in shapeReport's doc is stated in terms of it.
 	statusLineMaxBytes = 160
 
 	// Derived budget = MaxContextTokens x bytesPerToken x (1/derivedBudgetShare).
@@ -172,7 +172,7 @@ type shapeStore interface {
 }
 
 // shapeEnv carries the only I/O shapeBatch performs, plus the ref-only tool
-// set that decides whether a result is inlined at all (plan tools/06). The
+// set that decides whether a result is inlined at all. The
 // set is configuration rather than I/O, but shapeOne receives the env - and
 // shapeBatch's signature is pinned by tests - so the set rides here, empty
 // meaning the tier is off.
@@ -232,7 +232,7 @@ func (e shapeEnv) load(ref string) (string, bool) {
 // the final-floor tier (finalPreviewFloorBytes) fires instead, since that
 // tier is unpooled and never draws from previewReserve.
 func shapeOne(p resultParts, remaining, previewReserve int, env shapeEnv) (string, degradeState, bool, int) {
-	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
+	// Ref-only tier: a tool opted out of inlining is elided
 	// before the budget tiers see it. The notice is carried in fallback so
 	// the D8 status-line recomposition returns it verbatim, and refOnly marks
 	// the elision so shapeBatch charges its notice's bytes instead of

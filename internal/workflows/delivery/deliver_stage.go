@@ -126,7 +126,7 @@ func buildCommitMessage(title, body string) string {
 // and commits through Git (commitStagedTree). It returns the adopted HEAD
 // and its ACTUAL tree.
 //
-// When the repair step declared deferred_files (req.Inputs, §5.2), this
+// When the repair step declared deferred_files (req.Inputs), this
 // splits the single commit into two INSTEAD: the delivered commit (every
 // staged file except deferred_files, HEAD after this call, exactly what a
 // caller of this function expects) plus a second commit on a separate local

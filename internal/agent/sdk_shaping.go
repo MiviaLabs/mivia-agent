@@ -1,4 +1,4 @@
-// Package agent - turn-level result shaping for the SDK backend.
+// turn-level result shaping for the SDK backend.
 //
 // The SDK's former TurnResultBudget OMITTED an over-budget result with a bare
 // notice; the CLI's contract is the legacy batch shaper's three tiers
@@ -24,6 +24,7 @@
 // (already notice-sized) is charged as emitted. While this wrapper is
 // active the adapter leaves the SDK's own result budget unset so the
 // SDK's omission path never engages.
+
 package agent
 
 import (

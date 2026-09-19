@@ -1,7 +1,7 @@
 package tools
 
 // diagnostics_registry_test.go is the RED-phase contract test for the
-// get_diagnostics tool surface (locked plan v2, task t2). It drives the tool
+// get_diagnostics tool surface. It drives the tool
 // through a registry built from NewRegistry() plus Register. It does NOT use
 // the default registry, because default registration of get_diagnostics is a
 // later task.
@@ -17,7 +17,7 @@ package tools
 // Fixture-based tests skip on Windows. This mirrors the requirePOSIX guard in
 // internal/hooks/exec_test.go.
 //
-// Trust and security framing (locked plan v2 item 11): the command runs under
+// Trust and security framing: the command runs under
 // the same program allowlist as run_command. A non-allowlisted argv[0] must
 // produce run_command's refusal text. maxBytes bounds the capture; an
 // over-budget capture must refuse with an error that names the bound, not emit
@@ -601,7 +601,7 @@ func TestGetDiagnosticsJSONModeRedacts(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// v2t1 RED contract tests: command selection (locked plan v2). The production
+// v2t1 RED contract tests: command selection. The production
 // skeleton in get_diagnostics.go now carries the commands map + defaultName
 // fields and parses the "command" argument, but resolution is still the
 // not-implemented stub, so every assertion below fails until v2t2 lands real

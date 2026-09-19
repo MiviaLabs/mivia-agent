@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// WorkflowToolsBuilder constructs Phase 7 workflow tools for a workspace.
+// WorkflowToolsBuilder constructs workflow tools for a workspace.
 // The tools package must not import workflow packages (ledger/storage) or it
 // creates a test import cycle with internal/storage. CLI (and tests) set the
 // builder via SetWorkflowToolsBuilder.
@@ -41,7 +41,7 @@ func HasWorkflowsDir(root string) bool {
 	return err == nil && info.IsDir()
 }
 
-// registerWorkflowTools registers Phase 7 workflow tools when the workspace
+// registerWorkflowTools registers workflow tools when the workspace
 // has .mivia/workflows/ and a builder is installed.
 func registerWorkflowTools(register func(Tool), opts DefaultOptions) {
 	root := ""

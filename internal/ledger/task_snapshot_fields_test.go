@@ -9,7 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// Plan 12: the work-describing fields must survive a round trip through both
+// The work-describing fields must survive a round trip through both
 // repositories, or resume silently rebuilds an empty task again.
 func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 	ctx := context.Background()

@@ -1,4 +1,4 @@
-// Package provider - SDK capability mirror for AnthropicCompleter.
+// SDK capability mirror for AnthropicCompleter.
 //
 // AnthropicCompleter implements provider.ContextAccountant,
 // provider.ReasoningPolicy, and provider.TokenEstimator from
@@ -11,6 +11,7 @@
 // eight builtin providers (openai_compat.go and its per-vendor
 // wrappers) are deliberately left as follow-up - see the Pass 7
 // review report.
+
 package provider
 
 import (

@@ -2,42 +2,60 @@
 
 Multi-chunk stacking workflows deliver code changes in ordered waves of pull requests. A plan run transitions to `delivery_pending` upon completing its execution phase, then drives its chunk stack to completion before settling.
 
+## Implementation location
+
+The CLI-side stack driver lives in `internal/cli/workflow` (`stack_*.go`). It owns the operator `mivia stack drive` command (`RunStackDrive`), the in-process drive loop, and the stack ledger helpers. It also owns the merge and publish gates and the plan-run delivery gate. It moved there from `internal/cli/chat` (`internal/cli/workflow/seams.go:3`) so the workflow domain owns its own stack machinery and `internal/cli/chat` no longer reaches back into it through runtime seams.
+
 ## Stack drive lifecycle
 
 Stack driving executes in five stages:
 
-1. **Plan run execution**: The plan run finishes its step graph and enters the `delivery_pending` status (`internal/workflows/localengine/engine_stack.go:47`).
-2. **Ledger initialization**: The driver seeds chunk tasks into the stack ledger (`internal/workflows/delivery/stacking_plan.go`, `internal/workflows/localengine/engine_stack.go:92`).
+1. **Plan run execution**: The plan run finishes its step graph and enters the `delivery_pending` status (`internal/workflows/localengine/engine_stack.go:48`).
+2. **Ledger initialization**: The driver seeds chunk tasks into the stack ledger (`internal/workflows/delivery/stacking_plan.go`, `internal/workflows/localengine/engine_stack.go:93`).
 3. **Chunk execution and delivery**: Chunk runs execute in topological order (`delivery.TopologicalOrder`). Under `merge_policy = "auto"`, chunks deliver automatically and monitor pull requests for merge completion. Under `merge_policy = "approve"`, chunks transition to `reviewed` and pause for per-chunk delivery grants.
-4. **Integration run**: After all chunk pull requests merge, the driver admits the final full-suite integration run (`internal/workflows/localengine/engine_stack_settle.go:28`).
-5. **Plan run settlement**: Once the integration run completes and merges, the plan run settles. When `delivery.deliver_plan_run = false` (the default), the plan run settles as `succeeded` without creating a redundant plan pull request (`internal/cli/workflow/workflow_run.go:206`, `internal/workflows/localengine/engine_stack_settle.go:161`). When `delivery.deliver_plan_run = true`, the plan run remains at `delivery_pending` for explicit publication via `mivia workflow deliver`.
+4. **Integration run**: After all chunk pull requests merge, the driver admits the final full-suite integration run (`internal/workflows/localengine/engine_stack_settle.go:29`).
+5. **Plan run settlement**: Once the integration run completes and merges, the plan run settles. When `delivery.deliver_plan_run = false` (the default), the plan run settles as `succeeded` without creating a redundant plan pull request (`internal/cli/workflow/workflow_run.go:205`, `internal/workflows/localengine/engine_stack_settle.go:162`). When `delivery.deliver_plan_run = true`, the plan run remains at `delivery_pending` for explicit publication via `mivia workflow deliver`.
+
+## Merge authority (single merge decision, two drivers)
+
+Exactly one driver merges; the other observes. This is a documented product decision, not an accident of history:
+
+- **The CLI/session driver merges.** Under `merge_policy = "auto"`, the driver in `internal/cli/workflow` squash-merges published chunk PRs itself (`internal/cli/workflow/stack_merge.go`, `delivery.MergePullRequest`) and runs the overlap guard before every merge (`internal/cli/workflow/stack_merge_overlap.go`). The `OwnerCLIOnly` conformance rows pin this behavior.
+- **The engine never merges.** The local engine (`internal/workflows/localengine`) delivers (publishes) chunk runs and then only observes merges: `prMerged` (`engine_stack.go`) answers through the shared probe `delivery.ProbeRunMerged` (`internal/workflows/delivery/merge_probe.go`). Under `auto`, the engine waits for the host CLI, an operator, or the host's own auto-delivery to land merges; it cannot land them itself. The `TestMergeActionCallerSet` contract test (`internal/workflows/delivery/merge_callers_contract_test.go`) fails the build if any package outside `delivery` and the CLI driver ever calls the merge action.
+- **One merge oracle.** Both drivers resolve "did the PR land?" through the same probe, so a verdict cannot drift between paths: durable pushed evidence gates the probe, the local git ancestor check answers normal and fast-forward merges without network, the remote PR state answers squash and rebase merges (including squash merges whose head branch was pruned), and an unanswerable verdict is the fail-closed `delivery.ErrMergeProbeUnavailable` — the stack keeps waiting instead of guessing.
+- **Behavior change note (2026-09):** before the shared probe, the engine required `PRClient.FindByHead` to resolve before asking `IsMerged`, so a squash-merged PR with a deleted branch stalled engine-driven stacks forever. Engine-driven `merge_policy = "auto"` stacks in that state now settle; stacks that previously parked for manual inspection may complete without operator action.
+
+## Driver conformance
+
+`delivery.StackConformanceScenarios()` (`internal/workflows/delivery/stack_conformance.go`) is the single catalog of behavioural scenarios (waves merged, attempt-budget failure, cancel, overlap guard, squash-merge with pruned branch) with the required ledger end states. Both drivers run the catalog in their own packages (`internal/cli/workflow/stack_conformance_test.go`, `internal/workflows/localengine/stack_conformance_test.go`); a scenario added without a wired runner fails that driver's test. This is the anti-drift gate for the sibling-implementation defect class.
 
 ## Reconcile and drive entry points
 
-Stack driving runs across four operational paths:
+Stack driving runs across six operational paths:
 
-- **CLI foreground execution**: `ExecuteWorkflowRun` drives settled stacks via `maybeDriveSettledStack` before delivery (`internal/cli/workflow/workflow_run.go:173`).
+- **Operator foreground drive**: `RunStackDrive` runs `mivia stack drive` and advances an incomplete stack on demand (`internal/cli/workflow/stack_drive.go:55`).
+- **CLI foreground execution**: `ExecuteWorkflowRun` drives settled stacks via `maybeDriveSettledStack` before delivery (`internal/cli/workflow/workflow_run.go:172`).
 - **CLI foreground resume**: `ExecuteWorkflowResume` drives stacks during resume before publication (`internal/cli/workflow/workflow_resume.go:204`).
-- **Session engine hook**: The session workflow engine runs `maybeDriveSettledStack` inside its auto-delivery repair loop (`internal/cli/workflow/workflow_tool_engine.go:314`).
-- **Session recovery sweep**: The periodic engine recovery sweep scans parked runs and advances incomplete stacks through `driveParkedStackIfNeeded` (`internal/cli/workflow/workflow_tool_engine_reconcile.go:231, 343, 368`).
+- **Session engine hook**: The session workflow engine runs `maybeDriveSettledStack` inside its auto-delivery repair loop (`internal/cli/workflow/workflow_tool_engine.go:315`).
+- **Session recovery sweep**: The periodic engine recovery sweep scans parked runs and advances incomplete stacks through `driveParkedStackIfNeeded` (`internal/cli/workflow/workflow_tool_engine_reconcile.go:232, 344, 369`).
 - **Local engine drive loop**: The standalone engine advances stacks through `stackDriveAfterPark` and `driveStackLoop` (`internal/workflows/localengine/engine_stack.go:47, 139`).
 
 ## Failure propagation
 
-When a chunk fails terminally (`delivery.StatusFailed`) or cancels (`delivery.StatusCanceled`), the stack halts progress (`internal/workflows/localengine/engine_stack_settle.go:200`).
+When a chunk fails terminally (`delivery.StatusFailed`) or cancels (`delivery.StatusCanceled`), the stack halts progress (`internal/workflows/localengine/engine_stack_settle.go:201`).
 
 The failure propagates through these mechanisms:
 
 - **Failure classification**: `StackPlanRunFailureReasonImpl` inspects the task ledger and integration run status to detect terminal failures (`internal/cli/workflow/gate_impl.go:40`).
-- **Automated settlement**: The CLI run path and session recovery sweep fail-settle the plan run to `failed` using `settleStackPlanRunFailed` (`internal/cli/workflow/workflow_stack_settle.go:17, 65`, `internal/cli/workflow/workflow_run.go:183`, `internal/cli/workflow/workflow_tool_engine_reconcile.go:243, 275`).
-- **Delivery refusal**: `RefuseFailedStackPlanRunDelivery` rejects `mivia workflow deliver` on failed stacks and CAS-transitions the plan run to `failed` (`internal/cli/workflow/workflow_stack_settle.go:35`).
+- **Automated settlement**: The CLI run path and session recovery sweep fail-settle the plan run to `failed` using `settleStackPlanRunFailed` (`internal/cli/workflow/workflow_stack_settle.go:17, 69`, `internal/cli/workflow/workflow_run.go:182`, `internal/cli/workflow/workflow_tool_engine_reconcile.go:244, 276`).
+- **Delivery refusal**: `RefuseFailedStackPlanRunDelivery` rejects `mivia workflow deliver` on failed stacks and CAS-transitions the plan run to `failed` (`internal/cli/workflow/workflow_stack_settle.go:50`).
 
 ## Lock behavior
 
 Workflow execution uses file-backed flock coordination to serialize execution and settlement across processes (`internal/cli/workflow/workflow_resume_lock.go:38`).
 
-- **Lock timeout**: `WorkflowResolutionLockWait` bounds the lock acquisition wait to 60 seconds (`internal/cli/workflow/workflow_tool_engine.go:38`).
-- **Retry backoff**: Lock acquisition retries use exponential backoff with full jitter to avoid stampedes (`internal/cli/workflow/workflow_resume_lock.go:73`, tested in `internal/cli/workflow/workflow_resume_lock_findings_test.go:44`).
+- **Lock timeout**: `WorkflowResolutionLockWait` bounds the lock acquisition wait to 60 seconds (`internal/cli/workflow/workflow_tool_engine.go:39`).
+- **Retry backoff**: Lock acquisition retries use exponential backoff with full jitter to avoid stampedes (`internal/cli/workflow/workflow_resume_lock.go:183`, tested in `internal/cli/workflow/workflow_resume_lock_findings_test.go:44`).
 - **Error naming**: `LockWorkflowExecutionFile` wraps low-level file locks and applies `renameGitExcludeLockError` (`internal/cli/workflow/workflow_resume_lock.go:54`) to report errors under `lock workflow execution:` instead of Git exclude prefixes (`internal/cli/workflow/workflow_resume_lock_findings_test.go:20`).
 
 ## Known limitations

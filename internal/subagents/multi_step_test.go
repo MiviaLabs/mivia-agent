@@ -512,7 +512,7 @@ func TestMultiStepHandlerEmptyFinalAfterToolStaysCompleted(t *testing.T) {
 	}
 }
 
-// TestMailboxAccessBundleWiring verifies applyMailboxAccess (plan 54) wires a
+// TestMailboxAccessBundleWiring verifies applyMailboxAccess wires a
 // coordinator-stamped runtime.MailboxAccess bundle from ctx into the nested
 // agent.Options: the drain becomes a step-boundary BeforeStep frame hook, the
 // interrupt channel and pending gate pass through unchanged, and the watchdog

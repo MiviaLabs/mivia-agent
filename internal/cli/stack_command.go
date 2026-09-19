@@ -1,6 +1,6 @@
 package cli
 
-// mivia stack command (plan D2, slice S5): the generic stacking driver CLI.
+// mivia stack command: the generic stacking driver CLI.
 // Dispatch and the read-only commands (plan, status); drive lives in
 // stack_drive.go.
 
@@ -8,8 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/cli/chat"
-	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
+	workflow "github.com/MiviaLabs/mivia-agent/internal/cli/workflow"
 	"io"
 	"os"
 	"sort"
@@ -31,11 +30,11 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	var workspaceRoot, configPath string
 	var err error
-	workspaceRoot, args, _, err = flagValue(args, "--workspace")
+	workspaceRoot, args, _, err = workflow.FlagValue(args, "--workspace")
 	if err != nil {
 		return err
 	}
-	configPath, args, _, err = flagValue(args, "--config")
+	configPath, args, _, err = workflow.FlagValue(args, "--config")
 	if err != nil {
 		return err
 	}
@@ -46,7 +45,7 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 	case "plan":
 		return runStackPlan(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "drive":
-		return chat.RunStackDrive(args[1:], workspaceRoot, configPath, stdout, stderr)
+		return workflow.RunStackDrive(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "status":
 		return runStackStatus(args[1:], workspaceRoot, configPath, stdout, stderr)
 	default:
@@ -56,7 +55,7 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 
 // runStackPlan admits a plan-mode run for a stacking-enabled workflow using
 // the exact engine admission path the workflow CLI already uses
-// (cliworkflow.ExecuteWorkflowRun). A run started WITHOUT stack_mode IS plan mode (step
+// (workflow.ExecuteWorkflowRun). A run started WITHOUT stack_mode IS plan mode (step
 // 0): the workflow's planning steps plus the engine-injected decompose step
 // end with a chunk plan. The plan run id becomes the stack id.
 func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
@@ -66,7 +65,7 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 	name := args[0]
 	var buf bytes.Buffer
 	out := io.MultiWriter(stdout, &buf)
-	if err := cliworkflow.ExecuteWorkflowRun(name, workspaceRoot, configPath, nil, false, out, stderr); err != nil {
+	if err := workflow.ExecuteWorkflowRun(name, workspaceRoot, configPath, nil, false, out, stderr); err != nil {
 		return fmt.Errorf("stack plan: %w", err)
 	}
 	runID, status := parseRunLine(buf.String())
@@ -89,7 +88,7 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 // stack_grant_pause.go): the plan itself succeeded, but the stack awaits its
 // first drive. Reporting that as a plan failure misdiagnosed the designed
 // pause (F11); a merge_policy=auto stack either finishes here or blocks
-// inside cliworkflow.ExecuteWorkflowRun until it does (never returns delivery_pending to
+// inside workflow.ExecuteWorkflowRun until it does (never returns delivery_pending to
 // this point), so seeing delivery_pending here is unambiguously the pause.
 func stackPlanOutcomeLine(runID, status string) (string, error) {
 	switch status {
@@ -130,23 +129,23 @@ func parseRunLine(out string) (runID, status string) {
 // joined from the run ledger by the chunk's stable invocation key (task
 // fields are immutable once created; the run ledger is the durable source).
 func runStackStatus(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
-	name, stackFlag, rest, err := chat.ParseStackWorkflowArgsFunc(args)
+	name, stackFlag, rest, err := workflow.ParseStackWorkflowArgs(args)
 	if err != nil {
 		return err
 	}
 	if len(rest) != 0 {
 		return fmt.Errorf("stack status: unexpected argument %q", rest[0])
 	}
-	ledger, repo, closeFn, err := chat.OpenStackLedgerFunc(workspaceRoot, configPath)
+	ledger, repo, closeFn, err := workflow.OpenStackLedger(workspaceRoot, configPath)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
-	stackID, err := chat.ResolveStackIDFunc(repo, name, stackFlag)
+	stackID, err := workflow.ResolveStackID(repo, name, stackFlag)
 	if err != nil {
 		return err
 	}
-	list, err := ledger.ListTasksByScope(chat.StackScope(stackID))
+	list, err := ledger.ListTasksByScope(workflow.StackScope(stackID))
 	if err != nil {
 		return err
 	}
@@ -162,8 +161,8 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 	}
 	// Reviewed chunks wait on a human publish grant: print the exact
 	// command per chunk so status and the drive's pause guidance agree.
-	for _, line := range chat.StackGrantHintLines(list, func(chunkID string) string {
-		run, found, err := chat.StackRunRefExport(repo, stackID, chunkID)
+	for _, line := range workflow.StackGrantHintLines(list, func(chunkID string) string {
+		run, found, err := workflow.StackRunRef(repo, stackID, chunkID)
 		if err != nil || !found {
 			return ""
 		}
@@ -177,14 +176,14 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 // stackRunDisplay joins a chunk task with its latest run (by invocation key)
 // and the run's PR number, for status output.
 func stackRunDisplay(repo workflowledger.Repository, stackID, chunkID string) (runRef, pr string) {
-	run, found, err := chat.StackRunRefExport(repo, stackID, chunkID)
+	run, found, err := workflow.StackRunRef(repo, stackID, chunkID)
 	if err != nil || !found {
 		return "-", "-"
 	}
 	pr = "-"
 	deliveries, err := repo.ListDeliveries(context.Background(), run.RunID)
 	if err == nil && len(deliveries) > 0 {
-		pr = chat.StackPRNumber(deliveries[len(deliveries)-1].URL)
+		pr = workflow.StackPRNumber(deliveries[len(deliveries)-1].URL)
 		if pr == "" {
 			pr = "published"
 		}

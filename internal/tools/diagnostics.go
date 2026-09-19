@@ -1,14 +1,13 @@
 package tools
 
-// This file is the pure parser half of the get_diagnostics tool (locked plan
-// v2). It owns the data shapes the tool's envelope is built from - row,
+// This file is the pure parser half of the get_diagnostics tool. It owns the data shapes the tool's envelope is built from - row,
 // summary, envelope - and the deterministic parse entry point that turns raw
 // captured command output into structured rows. Purity is the point: nothing
 // here spawns a process, touches the filesystem, or reads configuration, so
 // the parser is unit-testable in isolation and the tool's Execute path stays a
 // thin composition (capture -> redact -> parse -> marshal).
 //
-// Grammar v1 (locked plan v2 item 6): the parser detects JSON mode first. When
+// Grammar v1: the parser detects JSON mode first. When
 // the trimmed input starts with "[" or "{" and parses as JSON, every array
 // element (or the rows array of an object) becomes a row. Any other input is
 // split into lines and matched against the gcc/vet/tsc line shapes. Unmatched
@@ -17,7 +16,7 @@ package tools
 // messages lose C0 control characters (tab preserved). The summary is an exact
 // tally of the returned rows.
 //
-// Security framing (locked plan v2 item 11): get_diagnostics adds no
+// Security framing: get_diagnostics adds no
 // execution authority beyond run_command - the command runs under the same
 // effective allowlist and the same process helpers. The envelope discloses
 // the per-call argv to the model, so operators who treat argv as sensitive
@@ -46,7 +45,7 @@ type diagnosticsRow struct {
 	Raw      bool   `json:"raw,omitempty"`
 }
 
-// diagnosticsSummary is the honest count contract (locked plan v2 item 6):
+// diagnosticsSummary is the honest count contract:
 // total is exactly errors+warnings+infos+raw, never an independent tally, and
 // files counts distinct relativized file paths across rows ("" excluded).
 // max_rows truncation happens after the summary is derived and adjusts these
@@ -73,7 +72,7 @@ type diagnosticsOutput struct {
 const diagnosticsEnvelopeVersion = 1
 
 // diagnosticsEnvelope is the model-facing JSON shape of the get_diagnostics
-// tool result (locked plan v2 item 5). command names the executed argv
+// tool result. command names the executed argv
 // (redacted, shell-safe formatted); command_name names the selected commands
 // entry and is omitted on the legacy single-argv surface. exit_code is a
 // pointer so it is omitted when the process never started; truncated reports

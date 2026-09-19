@@ -1,4 +1,4 @@
-// Package sdkadapter converts CLI tool registries to SDK tool registries.
+// This file converts CLI tool registries to SDK tool registries.
 //
 // The CLI internal/tools.Registry and SDK tools.Registry are distinct types.
 // The SDK loop consumes the SDK shape, so the bridge wraps every CLI tool
@@ -18,6 +18,7 @@
 // after this converter. It cannot live here because *remainder.Spool imports
 // sdkadapter for sdkadapter.Mint (preventing an import cycle).
 // See docs/development/sdk-backend-field-mapping.md.
+
 package sdkadapter
 
 import (

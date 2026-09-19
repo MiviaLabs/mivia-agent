@@ -150,10 +150,10 @@ func TestListEventsPreserveOriginalTimestampAcrossRebuild(t *testing.T) {
 	}
 	// The event id is still the storage row id, not the caller's. Restoring the
 	// caller's id would collide with the coordinator's process-local evt-N
-	// counter and make a resumed run's own events duplicates; see plan 21 C2.
+	// counter and make a resumed run's own events duplicates.
 	if got[0].ID == want.ID {
 		t.Errorf("rebuilt ID = %q, equal to the caller's - replayed events are "+
-			"expected to report the storage row id (see plan 21 C2)", got[0].ID)
+			"expected to report the storage row id", got[0].ID)
 	}
 }
 
@@ -284,7 +284,7 @@ func TestAppendEventStampsBeforeMarshalling(t *testing.T) {
 	}
 }
 
-// TestLegacyRowWithoutTimestampFallsBackToReadInstant tests plan 21 §6's
+// TestLegacyRowWithoutTimestampFallsBackToReadInstant tests the
 // graceful-degradation claim instead of asserting it in prose. There is no schema
 // version anywhere - no version table, no PRAGMA user_version, the DDL is an
 // inline CREATE TABLE IF NOT EXISTS - so a database written by an earlier build

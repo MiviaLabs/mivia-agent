@@ -5,54 +5,55 @@ import (
 	"errors"
 	"fmt"
 
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-func (e *Engine) resume(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
+func (e *Engine) resume(ctx context.Context, req workflowagenttools.StartRequest) (workflowagenttools.StartResult, error) {
 	resumeDone, err := e.reserveResume(req.RunID)
 	if err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	defer e.finishResume(req.RunID, resumeDone)
 	run, err := e.Repo.GetRun(ctx, req.RunID)
 	if err != nil {
 		if errors.Is(err, workflowledger.ErrNotFound) {
-			return workflowledger.StartResult{}, fmt.Errorf("workflow run %q not found", req.RunID)
+			return workflowagenttools.StartResult{}, fmt.Errorf("workflow run %q not found", req.RunID)
 		}
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	if run.Status == workflowledger.RunStatusDeliveryPending {
-		return workflowledger.StartResult{}, fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", req.RunID)
+		return workflowagenttools.StartResult{}, fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", req.RunID)
 	}
 	if run.Status == workflowledger.RunStatusDeliveryFailed {
-		return workflowledger.StartResult{}, fmt.Errorf("workflow run %q failed delivery; call workflow_deliver", req.RunID)
+		return workflowagenttools.StartResult{}, fmt.Errorf("workflow run %q failed delivery; call workflow_deliver", req.RunID)
 	}
 	if workflowledger.IsTerminalRunStatus(run.Status) {
 		// Terminal runs are not resumed. Callers must start a new run or deliver.
-		return workflowledger.StartResult{}, fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", req.RunID, run.Status)
+		return workflowagenttools.StartResult{}, fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", req.RunID, run.Status)
 	}
 	if !workflowledger.IsResumableRunStatus(run.Status) {
-		return workflowledger.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
+		return workflowagenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
 	}
 	if err := e.prepareResumeWorktree(ctx, run); err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	raw, err := e.Repo.GetRunSnapshot(ctx, req.RunID)
 	if err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	ctrl, err := e.buildResumeController(ctx, req, run, raw)
 	if err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	// Claim-liveness probe: the run may be executing on ANOTHER host even
 	// though this engine is not its executor. Per-step claims mean the claim
 	// is only held while a step runs, so this probe is the resume-time
 	// exclusion check (see probeResumeClaim).
 	if err := e.probeResumeClaim(ctx, req.RunID, ctrl.Holder, req.Force); err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	// The probe claim uses the controller's own holder and is deliberately
 	// kept: the first Advance refreshes it (same-holder refresh), so the run
@@ -60,16 +61,16 @@ func (e *Engine) resume(ctx context.Context, req workflowledger.StartRequest) (w
 	// claim is released so the run is not left claimed by a dead attempt.
 	if err := ctrl.Start(ctx); err != nil {
 		_ = e.Repo.ReleaseRun(context.Background(), req.RunID, ctrl.Holder)
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
 	e.launch(ctrl)
 	// Durable local trace for the resumed run (see startNew).
 	e.writeRunTrace(req.RunID)
 	fresh, err := e.Repo.GetRun(ctx, req.RunID)
 	if err != nil {
-		return workflowledger.StartResult{}, err
+		return workflowagenttools.StartResult{}, err
 	}
-	return workflowledger.StartResult{RunID: req.RunID, Status: string(fresh.Status), Workflow: run.WorkflowName, Resumed: true}, nil
+	return workflowagenttools.StartResult{RunID: req.RunID, Status: string(fresh.Status), Workflow: run.WorkflowName, Resumed: true}, nil
 }
 
 // probeResumeClaim acquires the run claim for resume with the controller's own
@@ -103,7 +104,7 @@ func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, for
 // from its durable snapshot: parse + compile the stored definition, restore
 // the admitted inputs, clear the abandon fence so the new controller may
 // write again after Interrupt, and re-apply the run's admission pins.
-func (e *Engine) buildResumeController(ctx context.Context, req workflowledger.StartRequest, run workflowledger.RunSnapshot, raw []byte) (*controller.LinearController, error) {
+func (e *Engine) buildResumeController(ctx context.Context, req workflowagenttools.StartRequest, run workflowledger.RunSnapshot, raw []byte) (*controller.LinearController, error) {
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
 		return nil, err
@@ -183,7 +184,7 @@ func (e *Engine) resumeCompileAndValidate(snapshot workflowledger.Snapshot, run 
 // newResumeController clears the abandon fence, rebuilds the pinned step
 // runtimes, and wires a fresh controller against them with the run's
 // admission pins re-applied.
-func (e *Engine) newResumeController(req workflowledger.StartRequest, run workflowledger.RunSnapshot, raw []byte, snapshot workflowledger.Snapshot, compiled *definition.CompiledWorkflow, inputs map[string]any) (*controller.LinearController, error) {
+func (e *Engine) newResumeController(req workflowagenttools.StartRequest, run workflowledger.RunSnapshot, raw []byte, snapshot workflowledger.Snapshot, compiled *definition.CompiledWorkflow, inputs map[string]any) (*controller.LinearController, error) {
 	// Clear abandon fence so a fresh controller may write again after Interrupt.
 	// Must use clearAbandon (holds fence.mu); bare delete races with isAbandoned.
 	_ = e.ctrlRepo()

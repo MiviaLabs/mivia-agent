@@ -31,7 +31,7 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 		}
 		if len(parts) == 2 && parts[0] == "run" && parts[1] == "salvage" {
 			// run.salvage binds the verified outputs preserved when a repair
-			// loop exhausted (R2 Phase 2). The partial_target step reads the
+			// loop exhausted. The partial_target step reads the
 			// content-addressed refs to recover or deliver the verified work.
 			salvaged, err := c.salvageLoopSuccesses(ctx)
 			if err != nil {

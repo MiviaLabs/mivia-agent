@@ -104,7 +104,7 @@ type MultiStepHandler struct {
 	RequestTimeout time.Duration
 	// SteerWatchdog bounds steer latency when no interrupt signal is wired: the
 	// loop's watcher cancels the in-flight LLM call once a steer has been
-	// pending for this long (plan 54 §4.5). 0 disables the watchdog.
+	// pending for this long. 0 disables the watchdog.
 	SteerWatchdog time.Duration
 	// TotalTimeout is the maximum wall-clock time for the entire sub-agent.
 	TotalTimeout time.Duration
@@ -293,7 +293,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 			h.OnToolCancelReady(ctx, canceler)
 		}
 	}
-	// Parent→child steers (plan 54): step-boundary drain, soft interrupt of the
+	// Parent→child steers: step-boundary drain, soft interrupt of the
 	// in-flight LLM call, pending gate, watchdog, and cooldown. The mailbox
 	// bundle is optional; without one all steer machinery stays off.
 	h.applyMailboxAccess(callCtx, &opts)

@@ -788,15 +788,15 @@ func TestRunStepUnknownKindRejected(t *testing.T) {
 // call panics on a nil func value rather than exercising the intended
 // error path.
 func TestRunStepWorkflowPropagatesEngineStartError(t *testing.T) {
-	prevApplyPrivacy := cliworkflow.ApplyPrivacyPolicyFunc
-	prevOpenStore := cliworkflow.OpenContextStoreFunc
-	cliworkflow.ApplyPrivacyPolicyFunc = func(*config.Resolved) {}
-	cliworkflow.OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+	prevApplyPrivacy := cliworkflow.ApplyPrivacyPolicy
+	prevOpenStore := cliworkflow.OpenContextStore
+	cliworkflow.ApplyPrivacyPolicy = func(*config.Resolved) {}
+	cliworkflow.OpenContextStore = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
 		return storage.OpenSQLite(filepath.Join(t.TempDir(), "workflow-step.db"))
 	}
 	t.Cleanup(func() {
-		cliworkflow.ApplyPrivacyPolicyFunc = prevApplyPrivacy
-		cliworkflow.OpenContextStoreFunc = prevOpenStore
+		cliworkflow.ApplyPrivacyPolicy = prevApplyPrivacy
+		cliworkflow.OpenContextStore = prevOpenStore
 	})
 
 	root := t.TempDir()
@@ -839,18 +839,18 @@ func (h fakeWorkflowRunHandler) Invoke(ctx context.Context, req runtime.Request)
 // test's own doc comment for why each seam is needed.
 func wireWorkflowStepSuccessSeams(t *testing.T) {
 	t.Helper()
-	prevApplyPrivacy := cliworkflow.ApplyPrivacyPolicyFunc
-	prevOpenStore := cliworkflow.OpenContextStoreFunc
+	prevApplyPrivacy := cliworkflow.ApplyPrivacyPolicy
+	prevOpenStore := cliworkflow.OpenContextStore
 	prevContextStorePath := cliworkflow.ContextStorePath
 	prevHooks := cliworkflow.WorkflowExecutionHooks
 	prevInstallHooks := cliworkflow.InstallHookSessionFunc
 	prevLoadSkills := cliworkflow.WorkflowBuildLoadSkills
 	prevDispatcher := cliworkflow.WorkflowBuildDispatcher
-	prevSliceErrors := cliworkflow.SliceErrorsFunc
+	prevSliceErrors := cliworkflow.SliceErrors
 	prevInitCoordinator := cliworkflow.InitCoordinatorFunc
-	prevAutoDeliveryLoop := cliworkflow.SessionAutoDeliveryRepairLoopFunc
+	prevAutoDeliveryLoop := cliworkflow.SessionAutoDeliveryRepairLoop
 
-	cliworkflow.ApplyPrivacyPolicyFunc = func(*config.Resolved) {}
+	cliworkflow.ApplyPrivacyPolicy = func(*config.Resolved) {}
 	cliworkflow.InitCoordinatorFunc = func(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
 		return coordinator.New(repos[0], subagents.New(d, subagents.Policy{Workers: 4}))
 	}
@@ -860,9 +860,9 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	// no-op exactly like TestSessionLaunchResumeReadFailure
 	// (workflow_coverage_pass3_test.go) does - running the real loop here
 	// would race this test's own t.Cleanup/TempDir teardown.
-	cliworkflow.SessionAutoDeliveryRepairLoopFunc = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
+	cliworkflow.SessionAutoDeliveryRepairLoop = func(context.Context, workflowledger.Repository, string, *config.Resolved, *storage.SQLite, string, func(context.Context) (workflowledger.RunSnapshot, error), func(context.Context) (bool, error), bool) {
 	}
-	cliworkflow.SliceErrorsFunc = func(context string, errs []string) error {
+	cliworkflow.SliceErrors = func(context string, errs []string) error {
 		if len(errs) == 0 {
 			return nil
 		}
@@ -871,7 +871,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	cliworkflow.ContextStorePath = func(root string, cfg config.SubagentConfig) string {
 		return filepath.Join(root, "workflow-step.db")
 	}
-	cliworkflow.OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+	cliworkflow.OpenContextStore = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
 		return storage.OpenSQLite(filepath.Join(root, "workflow-step.db"))
 	}
 	cliworkflow.InstallHookSessionFunc = func(string, bool, bool) (func(), error) { return func() {}, nil }
@@ -891,14 +891,14 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 	cliworkflow.InitCLIDefaults()
 
 	t.Cleanup(func() {
-		cliworkflow.ApplyPrivacyPolicyFunc = prevApplyPrivacy
-		cliworkflow.OpenContextStoreFunc = prevOpenStore
+		cliworkflow.ApplyPrivacyPolicy = prevApplyPrivacy
+		cliworkflow.OpenContextStore = prevOpenStore
 		cliworkflow.ContextStorePath = prevContextStorePath
 		cliworkflow.WorkflowExecutionHooks = prevHooks
 		cliworkflow.InstallHookSessionFunc = prevInstallHooks
 		cliworkflow.WorkflowBuildLoadSkills = prevLoadSkills
 		cliworkflow.WorkflowBuildDispatcher = prevDispatcher
-		cliworkflow.SliceErrorsFunc = prevSliceErrors
+		cliworkflow.SliceErrors = prevSliceErrors
 		cliworkflow.InitCoordinatorFunc = prevInitCoordinator
 		// This test binary never runs internal/cli's wiring init, so the
 		// seam var's unwired value here is nil. Restoring nil would let a
@@ -909,7 +909,7 @@ func wireWorkflowStepSuccessSeams(t *testing.T) {
 		// automation test can use the real loop because it is only wired
 		// by internal/cli's own wiring.
 		if prevAutoDeliveryLoop != nil {
-			cliworkflow.SessionAutoDeliveryRepairLoopFunc = prevAutoDeliveryLoop
+			cliworkflow.SessionAutoDeliveryRepairLoop = prevAutoDeliveryLoop
 		}
 	})
 }

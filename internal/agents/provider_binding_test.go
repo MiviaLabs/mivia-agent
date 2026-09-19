@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// Phase 1 of the agent model routing plan: an agent's execution target is one
+// An agent's execution target is one
 // explicit (provider, model) binding, resolved and validated fail-closed.
 
 // baselineDigestNoProvider is the digest an agent that declares no provider

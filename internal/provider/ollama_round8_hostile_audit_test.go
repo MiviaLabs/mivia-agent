@@ -344,7 +344,7 @@ func TestRound8EdgeURLConstruction(t *testing.T) {
 		{"http://LOCALHOST:11434/v1", true, true}, // case-insensitive
 		{"http://[::1]:11434/v1", true, true},
 		{"http://localhost:11434/v1", true, true},
-		// Malformed-but-loopback forms: the locked plan §3.1 predicate is
+		// Malformed-but-loopback forms: the predicate is
 		// hostname-literal, so these APPROVE and construct a keyless client
 		// whose dial is pinned to verified loopback. TestRound8PinnedDial-
 		// CoversApprovedEdgeURLs proves ANY dial target (even 203.0.113.7) is

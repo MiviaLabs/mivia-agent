@@ -209,7 +209,7 @@ func (t policyTestTool) Execute(context.Context, json.RawMessage) (string, error
 	return "ok", nil
 }
 
-// Plan 43 phase 2: a skill is invocable only when every declared static tool is
+// A skill is invocable only when every declared static tool is
 // present in the final live registry (post disable/deny filtering), not merely
 // in the agent TOML list.
 func TestSkillScopeLiveRegistryMissingTool(t *testing.T) {
@@ -227,7 +227,7 @@ func TestSkillScopeLiveRegistryMissingTool(t *testing.T) {
 	}
 }
 
-// Plan 43 phase 2: without a live registry the scope falls back to the agent's
+// Without a live registry the scope falls back to the agent's
 // effective tools (backward compatible for dispatchers without a registry).
 func TestSkillScopeWithoutLiveRegistryUsesAgentTools(t *testing.T) {
 	allowed := []string{"audit"}
@@ -242,7 +242,7 @@ func TestSkillScopeWithoutLiveRegistryUsesAgentTools(t *testing.T) {
 	}
 }
 
-// Plan 43 phase 2: the unrestricted compiled root (nil agent) stays open even
+// The unrestricted compiled root (nil agent) stays open even
 // when a live registry is supplied - it deliberately owns the full catalogue.
 func TestSkillScopeFromAgentAndRegistryNilAgentIsOpen(t *testing.T) {
 	reg := tools.NewRegistry()
@@ -256,7 +256,7 @@ func TestSkillScopeFromAgentAndRegistryNilAgentIsOpen(t *testing.T) {
 	}
 }
 
-// Plan 43 phase 2: a runtime-resolved skill definition whose origin differs
+// A runtime-resolved skill definition whose origin differs
 // from the allowlist-bound origin is an authorization event (a project skill
 // silently shadowing a user-bound allowlist entry) and fails closed.
 func TestSkillScopeOriginMismatchFailsClosed(t *testing.T) {
@@ -279,7 +279,7 @@ func TestSkillScopeOriginMismatchFailsClosed(t *testing.T) {
 	}
 }
 
-// Plan 43 phase 2: an agent binding resolved to the workspace origin matches a
+// An agent binding resolved to the workspace origin matches a
 // runtime project-origin skill (workspace and project are the same trust level).
 func TestSkillScopeWorkspaceBindingMatchesProjectOrigin(t *testing.T) {
 	allowed := []string{"shared"}
@@ -296,7 +296,7 @@ func TestSkillScopeWorkspaceBindingMatchesProjectOrigin(t *testing.T) {
 	}
 }
 
-// Plan 43 phase 2: an agent with no allowlist binding for a skill does not
+// An agent with no allowlist binding for a skill does not
 // trigger the origin check (root/omitted skills remain unbound).
 func TestSkillScopeOriginCheckSkipsUnboundSkills(t *testing.T) {
 	agent := &agents.ResolvedAgent{
@@ -317,7 +317,7 @@ func TestSkillScopeOriginCheckSkipsUnboundSkills(t *testing.T) {
 // TestHandlerTimeRejectsSkillWithLiveDisabledTool is in internal/cli/skill_policy_cli_test.go
 // (it needs cli-internal type agentTaskHandler).
 
-// Plan 43 phase 2: a project skill silently shadowing a user-bound allowlist
+// A project skill silently shadowing a user-bound allowlist
 // entry fails closed at execution (origin mismatch). Routed-task coverage of
 // the same policy engine (via cliorchestrate.ResolveTaskRoute, the one
 // production resolver) lives in internal/cli/orchestrate; this test covers
@@ -338,7 +338,7 @@ func TestOriginFailClosedAtExecution(t *testing.T) {
 	}
 }
 
-// Plan 43 phase 2: catalogue and runtime agree on origin precedence for
+// Catalogue and runtime agree on origin precedence for
 // same-named user/project skills: the catalogue marks both origins, the
 // allowlist binds the user origin, and the runtime-resolved project definition
 // is rejected as an authorization event rather than executed silently.
@@ -449,7 +449,7 @@ func TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff(t *testing.T) {
 }
 
 // TestSkillToolsSubsetNonVacuousFixture proves a skill with declared tools fails
-// when the agent omits one of them (plan 06 phase 01 guard).
+// when the agent omits one of them.
 func TestSkillToolsSubsetNonVacuousFixture(t *testing.T) {
 	allowed := []string{"review"}
 	scope := SkillScopeFromAgent(skillScopeAgent("dev", &allowed, "read_file"))

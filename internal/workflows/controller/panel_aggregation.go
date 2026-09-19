@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 )
 
-// Bounds. See plan 62, "Bounds": 24 KiB per raw and per canonical member
+// Bounds: 24 KiB per raw and per canonical member
 // report, 128 KiB total encoded synthesis envelope, 32 KiB final synthesis
 // output, panel-review-v1.json limits of 64-character finding IDs and 16
 // findings per report.

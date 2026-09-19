@@ -84,7 +84,7 @@ func TestContextForTaskResetsToolCallBufferOnRedispatch(t *testing.T) {
 }
 
 // TestContextForTaskStampsMailboxAccess verifies that contextForTask stamps
-// the run's shared mailbox access (plan 54, W2c validation): Drain, Interrupt,
+// the run's shared mailbox access: Drain, Interrupt,
 // and Pending hooks are wired to the run mailboxes for the task's ID, and a
 // delivered interrupt steer is visible via Pending/Interrupt/Drain.
 func TestContextForTaskStampsMailboxAccess(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	workflowagenttools "github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -152,7 +153,7 @@ func writeStackDriveWorkspace(t *testing.T) string {
 
 // stackDriveEngine builds an engine over the drive workspace with a shared
 // SQLite store (the task ledger) and the scripted runner.
-func stackDriveEngine(t *testing.T) (*localengine.Engine, *workflowledger.Service, *storage.SQLite) {
+func stackDriveEngine(t *testing.T) (*localengine.Engine, *workflowagenttools.Service, *storage.SQLite) {
 	t.Helper()
 	root := writeStackDriveWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -180,7 +181,7 @@ func stackDriveEngine(t *testing.T) (*localengine.Engine, *workflowledger.Servic
 // stackDriveEngineNoStore is the same engine without the shared store: the
 // drive cannot seed a task ledger and the engine degrades to the operator
 // drive.
-func stackDriveEngineNoStore(t *testing.T) (*localengine.Engine, *workflowledger.Service) {
+func stackDriveEngineNoStore(t *testing.T) (*localengine.Engine, *workflowagenttools.Service) {
 	t.Helper()
 	root := writeStackDriveWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -212,7 +213,7 @@ func ciDeadline(d time.Duration) time.Duration {
 	return d
 }
 
-func waitPlanRunStatus(t *testing.T, svc *workflowledger.Service, runID, want string, timeout time.Duration) {
+func waitPlanRunStatus(t *testing.T, svc *workflowagenttools.Service, runID, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
@@ -426,7 +427,7 @@ func TestEngineStackNoStoreDegradesToOperatorDrive(t *testing.T) {
 // stackDriveEngineWithGit is stackDriveEngine with a caller-supplied git
 // runner, so the drive tests can script refused and transient delivery
 // outcomes through the automatic stack drive.
-func stackDriveEngineWithGit(t *testing.T, git delivery.GitRunner) (*localengine.Engine, *workflowledger.Service, *storage.SQLite, string) {
+func stackDriveEngineWithGit(t *testing.T, git delivery.GitRunner) (*localengine.Engine, *workflowagenttools.Service, *storage.SQLite, string) {
 	t.Helper()
 	root := writeStackDriveWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()

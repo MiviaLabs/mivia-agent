@@ -110,7 +110,7 @@ func (c *countingStore) reads() (eventsRead, fullReadCalls int) {
 	return c.eventsRead, c.fullReadCalls
 }
 
-// TestProjectionSeesWritesFromAnotherRepository is the §5 regression: two
+// TestProjectionSeesWritesFromAnotherRepository is the projection regression: two
 // repository instances over ONE store. B builds its projection first, A then
 // writes, and B must observe A's write. Against the one-shot `built` flag B
 // reported "not found" and zero runs forever.
@@ -309,7 +309,7 @@ var catchupRunCreatedAt = time.Date(2026, 7, 30, 9, 15, 30, 0, time.UTC)
 // projectionState renders the comparable parts of a run's projection.
 //
 // Run CreatedAt IS compared. It used to be excluded because each projection
-// stamped its own, which was the defect plan 21 fixed: the projection now stamps
+// stamped its own, which the CreatedAt contract fixed: the projection now stamps
 // only what arrives unstamped, so a supplied timestamp survives both the original
 // create and every replay, and any two projections over one store must agree.
 func projectionState(t *testing.T, repo *StorageLedgerRepository, runID string) string {
